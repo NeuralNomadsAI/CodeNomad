@@ -280,8 +280,8 @@ fn slow_subscriber_overflow_closes_only_the_slow_subscriber_without_disrupting_s
     let client = backend.client.clone();
     let (gen0, seq0, _) = client.begin_meta_probe();
     assert!(client.observe_capabilities_at(gen0, seq0, true, true));
-    let (slow_guard, _) = client.track_stream("slow-tab");
-    let (fast_guard, _) = client.track_stream("fast-tab");
+    let slow_guard = client.track_stream("slow-tab");
+    let fast_guard = client.track_stream("fast-tab");
     let slow_watch = crate::provider_usage::Watch::default();
     let slow_ingress = crate::provider_usage::Ingress::new(
         slow_watch.clone(),
@@ -537,10 +537,8 @@ fn physical_close_revokes_attestation_immediately_and_queued_opened_cannot_reins
             // Do NOT pre-initialize open_streams: mark_open() itself must transition the guard
             // to open, finish() must immediately revoke it BEFORE Opened is popped, and draining
             // Opened afterwards via stream::opened() must NOT reinstate open_streams or clear outage.
-            let (guard, _) = client.track_stream(&backend.client_id);
-            let guard = Arc::new(guard);
+            let guard = Arc::new(client.track_stream(&backend.client_id));
             let state = State::default();
-            let _ = state.open_stream.set((client.clone(), guard.clone(), true));
             let sub = Subscriber::new(
                 1,
                 None,
@@ -581,11 +579,12 @@ fn physical_close_revokes_attestation_immediately_and_queued_opened_cannot_reins
             assert_eq!(client.transport_drops(&backend.client_id), 1);
             assert!(client.is_in_outage(&backend.client_id));
 
-            // Draining the already-queued Opened through the real stream::opened() helper must
-            // NOT increment open_streams or clear outage on a closed guard.
+            // Draining the already-queued Opened through the real stream::opened() helper or
+            // retrying try_mark_open() must NOT increment open_streams or clear outage.
             let (out, rx) = bounded(8);
             assert!(matches!(sub.pop(), Some(HubItem::Opened)));
             opened(1, &out, &state).await.unwrap();
+            assert!(!guard.try_mark_open(&client, true));
             assert!(matches!(rx.try_recv(), Ok(Input::Opened(1))));
             assert_eq!(
                 client.open_streams_counter().load(SeqCst),
@@ -816,6 +815,187 @@ fn shared_stream_staleness_and_hanging_pong_close_all_subscribers_and_unregister
                 .unwrap()
                 .unwrap();
             server.abort();
+        },
+    );
+}
+
+#[test]
+fn begin_close_revokes_guards_and_blocks_new_subscribers_before_finish() {
+    block_bounded(
+        "begin_close_revokes_guards_and_blocks_new_subscribers_before_finish",
+        async {
+            let hub = Arc::new(Hub::default());
+            let (stop_tx, _stop_rx) = bounded(1);
+            let (_done_tx, done_rx) = bounded(1);
+            let backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+            let client = backend.client.clone();
+            let (gen0, seq0, _) = client.begin_meta_probe();
+            assert!(client.observe_capabilities_at(gen0, seq0, true, true));
+            assert!(!client.needs_capability_recheck());
+
+            let guard = Arc::new(client.track_stream(&backend.client_id));
+            let watch = crate::provider_usage::Watch::default();
+            let ingress = crate::provider_usage::Ingress::new(
+                watch.clone(),
+                Arc::new(|| {}),
+                "ws-1".into(),
+                "ses-1".into(),
+            );
+            let sub = Subscriber::new(
+                1,
+                Some(ingress),
+                Some(GuardHook {
+                    http: client.clone(),
+                    guard: guard.clone(),
+                    count_open_stream: true,
+                }),
+            );
+            let shared = Arc::new(SharedStream {
+                base: backend.base.clone(),
+                inner: Mutex::new(StreamInner {
+                    phase: Phase::Connecting,
+                    subscribers: vec![sub.clone()],
+                    replays: HashMap::new(),
+                    replays_overflowed: false,
+                    chunk_active: false,
+                    stop: Some(stop_tx),
+                }),
+                done: done_rx,
+            });
+            hub.streams.lock().unwrap().insert(
+                backend.base.clone(),
+                StreamEntry {
+                    stream: shared.clone(),
+                    active: true,
+                },
+            );
+            assert!(shared.mark_open());
+            assert_eq!(client.open_streams_counter().load(SeqCst), 1);
+            assert!(matches!(sub.pop(), Some(HubItem::Opened)));
+            shared.broadcast_frame(
+                &hub,
+                "message".into(),
+                r#"{"type":"memory.changed"}"#.into(),
+            );
+
+            // Simulates EOF detected while pong teardown has not resolved yet:
+            // begin_close() must immediately deactivate the hub entry and revoke guards/quotas.
+            shared.begin_close(&hub);
+            assert_eq!(client.open_streams_counter().load(SeqCst), 0);
+            assert!(
+                client.needs_capability_recheck(),
+                "begin_close() must revoke attestation before awaiting pong teardown"
+            );
+            assert!(!client.supports_atomic_settings_patches());
+            assert_eq!(client.transport_drops(&backend.client_id), 1);
+            assert!(!watch.snapshot().online);
+            assert!(
+                !hub.streams.lock().unwrap()[&backend.base].active,
+                "closing hub entry must not accept new subscribers while pong teardown runs"
+            );
+            // Pre-EOF frame is still buffered ahead of Closed until finish() runs.
+            assert!(matches!(sub.pop(), Some(HubItem::Frame(_))));
+            assert!(sub.pop().is_none());
+
+            shared.finish(&hub, false);
+            assert!(matches!(
+                sub.pop(),
+                Some(HubItem::Closed {
+                    auth_expired: false
+                })
+            ));
+            assert!(hub.streams.lock().unwrap().is_empty());
+            // finish() must not double-count transport drops already recorded by begin_close().
+            assert_eq!(client.transport_drops(&backend.client_id), 1);
+        },
+    );
+}
+
+#[test]
+fn voluntary_detach_revokes_guard_immediately_without_outage_before_pump_exits() {
+    block_bounded(
+        "voluntary_detach_revokes_guard_immediately_without_outage_before_pump_exits",
+        async {
+            let hub = Arc::new(Hub::default());
+            let (stop_tx, _stop_rx) = bounded(1);
+            let (_done_tx, done_rx) = bounded(1);
+            let backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+            let client = backend.client.clone();
+            let (gen0, seq0, _) = client.begin_meta_probe();
+            assert!(client.observe_capabilities_at(gen0, seq0, true, true));
+            assert!(!client.needs_capability_recheck());
+
+            let guard = Arc::new(client.track_stream(&backend.client_id));
+            let watch = crate::provider_usage::Watch::default();
+            let ingress = crate::provider_usage::Ingress::new(
+                watch.clone(),
+                Arc::new(|| {}),
+                "ws-1".into(),
+                "ses-1".into(),
+            );
+            let sub = Subscriber::new(
+                1,
+                Some(ingress),
+                Some(GuardHook {
+                    http: client.clone(),
+                    guard: guard.clone(),
+                    count_open_stream: true,
+                }),
+            );
+            let shared = Arc::new(SharedStream {
+                base: backend.base.clone(),
+                inner: Mutex::new(StreamInner {
+                    phase: Phase::Connecting,
+                    subscribers: vec![sub.clone()],
+                    replays: HashMap::new(),
+                    replays_overflowed: false,
+                    chunk_active: false,
+                    stop: Some(stop_tx),
+                }),
+                done: done_rx,
+            });
+            hub.streams.lock().unwrap().insert(
+                backend.base.clone(),
+                StreamEntry {
+                    stream: shared.clone(),
+                    active: true,
+                },
+            );
+            assert!(shared.mark_open());
+            assert_eq!(client.open_streams_counter().load(SeqCst), 1);
+            assert!(watch.snapshot().online);
+
+            let mut subscription = Subscription {
+                hub: hub.clone(),
+                shared: shared.clone(),
+                sub,
+                closed: false,
+            };
+            // Voluntary detach while pump has NOT exited yet (done_tx still held):
+            // open_streams must immediately drop to 0 and bump drop_generation without outage.
+            let done = subscription.detach();
+            assert!(done.is_some());
+            assert_eq!(client.open_streams_counter().load(SeqCst), 0);
+            assert!(
+                client.needs_capability_recheck(),
+                "last subscriber voluntary detach must immediately bump drop_generation before pump exits"
+            );
+            assert_eq!(
+                client.transport_drops(&backend.client_id),
+                0,
+                "voluntary detach must not record a transport outage"
+            );
+            assert!(!watch.snapshot().online);
+
+            // A new stream opening before the old pump exits transitions 0 -> 1 cleanly.
+            let next_guard = client.track_stream(&backend.client_id);
+            assert!(next_guard.try_mark_open(&client, true));
+            assert_eq!(client.open_streams_counter().load(SeqCst), 1);
+            // Final cleanup of the detached guard must be a no-op and keep next_guard's count at 1.
+            guard.close_and_revoke(&client, true, false);
+            assert_eq!(client.open_streams_counter().load(SeqCst), 1);
+            drop(next_guard);
+            assert_eq!(client.open_streams_counter().load(SeqCst), 0);
         },
     );
 }

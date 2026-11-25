@@ -41,7 +41,6 @@ pub struct State {
     pub(crate) history_revision: AtomicU64,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     preferences_notices: std::sync::OnceLock<Arc<[AtomicU64; 3]>>,
-    open_stream: std::sync::OnceLock<(crate::http::Http, Arc<crate::http::StreamDropGuard>, bool)>,
     catalogue: Option<Arc<catalogue::Signals>>,
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
     closed: (Sender<()>, crate::Receiver<()>),
@@ -60,7 +59,6 @@ impl Default for State {
             history_revision: AtomicU64::new(0),
             preferences: None,
             preferences_notices: std::sync::OnceLock::new(),
-            open_stream: std::sync::OnceLock::new(),
             catalogue: None,
             placement: None,
             closed: crate::bounded(1),
@@ -264,14 +262,8 @@ pub(crate) async fn read(
     out: &Sender<Input>,
     state: &State,
 ) -> Result<()> {
-    let (stream_guard, _open_flag) = backend.client.track_stream(&backend.client_id);
-    let stream_guard = Arc::new(stream_guard);
+    let stream_guard = Arc::new(backend.client.track_stream(&backend.client_id));
     let count_open_stream = state.catalogue.is_none();
-    let _ = state.open_stream.set((
-        backend.client.clone(),
-        stream_guard.clone(),
-        count_open_stream,
-    ));
     let notices = backend.client.preferences_notices();
     let _ = state.preferences_notices.set(notices.clone());
     let result = hub::read_shared(
@@ -289,9 +281,6 @@ pub(crate) async fn read(
 }
 
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
-    if let Some((client, guard, count_open_stream)) = state.open_stream.get() {
-        guard.try_mark_open(client, *count_open_stream);
-    }
     if let Some(signals) = &state.catalogue {
         signals.reconnected();
     }

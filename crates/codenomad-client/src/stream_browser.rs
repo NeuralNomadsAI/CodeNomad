@@ -127,6 +127,7 @@ fn spawn_pong(
     crate::runtime::spawn(async move {
         let _done = done_tx;
         let _guard = ClearOnDrop(in_flight);
+        let pong_probe = pong_probe;
         enum PongStep {
             Done(std::result::Result<reqwest::Response, reqwest::Error>),
             Stale,
@@ -165,6 +166,9 @@ fn spawn_pong(
             }
             PongStep::Cancelled => {}
         }
+        drop(pong_probe);
+        drop(_guard);
+        drop(_done);
     });
     Some(done_rx)
 }
@@ -354,6 +358,7 @@ pub(super) async fn pump_shared(
         drop(pong_cancel_tx);
         drop(global_probe);
         drop(_source);
+        shared.begin_close(&hub);
         if let Some(done) = pong_done {
             let _ = done.recv().await;
         }

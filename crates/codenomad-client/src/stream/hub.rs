@@ -133,7 +133,8 @@ impl Subscriber {
         let _ = self.wake_tx.try_send(());
     }
 
-    /// Returns `false` if this subscriber exceeded its local queue budget and was closed.
+    /// Returns `false` if this subscriber exceeded its local queue budget.
+    /// Caller revokes guard and quota before calling `close_overflow()`.
     fn try_push_frame(&self, frame: Arc<(String, String)>) -> bool {
         let size = frame.0.len().saturating_add(frame.1.len());
         let mut queue = self.queue.lock().unwrap();
@@ -143,13 +144,6 @@ impl Subscriber {
         if queue.items.len() >= queue.max_items()
             || queue.bytes.saturating_add(size) > MAX_SUBSCRIBER_BYTES
         {
-            queue.closed = true;
-            queue.items.clear();
-            queue.bytes = 0;
-            queue.items.push_back(HubItem::Closed {
-                auth_expired: false,
-            });
-            let _ = self.wake_tx.try_send(());
             false
         } else {
             queue.bytes = queue.bytes.saturating_add(size);
@@ -157,6 +151,20 @@ impl Subscriber {
             let _ = self.wake_tx.try_send(());
             true
         }
+    }
+
+    fn close_overflow(&self) {
+        let mut queue = self.queue.lock().unwrap();
+        if queue.closed {
+            return;
+        }
+        queue.closed = true;
+        queue.items.clear();
+        queue.bytes = 0;
+        queue.items.push_back(HubItem::Closed {
+            auth_expired: false,
+        });
+        let _ = self.wake_tx.try_send(());
     }
 
     fn push_skipped(&self) {
@@ -208,6 +216,7 @@ impl Subscriber {
 enum Phase {
     Connecting,
     Open,
+    Closing,
     Closed { auth_expired: bool },
 }
 
@@ -255,7 +264,9 @@ impl SharedStream {
         let mut wakes = Vec::new();
         {
             let mut inner = self.inner.lock().unwrap();
-            if inner.subscribers.is_empty() || matches!(inner.phase, Phase::Closed { .. }) {
+            if inner.subscribers.is_empty()
+                || matches!(inner.phase, Phase::Closing | Phase::Closed { .. })
+            {
                 return false;
             }
             inner.phase = Phase::Open;
@@ -280,7 +291,7 @@ impl SharedStream {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn begin_chunk(&self) -> ChunkGuard<'_> {
         let mut inner = self.inner.lock().unwrap();
-        if !matches!(inner.phase, Phase::Closed { .. }) {
+        if !matches!(inner.phase, Phase::Closing | Phase::Closed { .. }) {
             inner.chunk_active = true;
             for sub in &inner.subscribers {
                 if let Some(quota) = &sub.quota {
@@ -322,7 +333,7 @@ impl SharedStream {
         let mut wakes = Vec::new();
         let became_empty = {
             let mut inner = self.inner.lock().unwrap();
-            if matches!(inner.phase, Phase::Closed { .. }) {
+            if matches!(inner.phase, Phase::Closing | Phase::Closed { .. }) {
                 return;
             }
             match replay_update {
@@ -350,6 +361,7 @@ impl SharedStream {
                     {
                         wakes.push(quota.clone());
                     }
+                    sub.close_overflow();
                     return false;
                 }
                 if notify_quota
@@ -383,13 +395,52 @@ impl SharedStream {
         let mut wakes = Vec::new();
         {
             let inner = self.inner.lock().unwrap();
-            if matches!(inner.phase, Phase::Closed { .. }) {
+            if matches!(inner.phase, Phase::Closing | Phase::Closed { .. }) {
                 return;
             }
             for sub in &inner.subscribers {
                 sub.push_skipped();
                 if let Some(quota) = &sub.quota
                     && quota.skipped_quiet()
+                {
+                    wakes.push(quota.clone());
+                }
+            }
+        }
+        for quota in wakes {
+            quota.wake();
+        }
+    }
+
+    /// Immediately deactivates the hub entry and revokes all subscriber guards/quotas upon
+    /// EOF/disconnect, before awaiting pong teardown and publishing `Closed` behind pre-EOF frames.
+    pub(super) fn begin_close(&self, hub: &Hub) {
+        let mut wakes = Vec::new();
+        {
+            let mut streams = hub.streams.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap();
+            if matches!(inner.phase, Phase::Closing | Phase::Closed { .. }) {
+                return;
+            }
+            inner.phase = Phase::Closing;
+            inner.replays.clear();
+            inner.replays_overflowed = false;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                inner.chunk_active = false;
+            }
+            inner.stop.take();
+            if let Some(entry) = streams.get_mut(&self.base)
+                && std::ptr::eq(Arc::as_ptr(&entry.stream), self)
+            {
+                entry.active = false;
+            }
+            for sub in &inner.subscribers {
+                if let Some(hook) = &sub.guard_hook {
+                    hook.revoke(true);
+                }
+                if let Some(quota) = &sub.quota
+                    && quota.transport_quiet(false)
                 {
                     wakes.push(quota.clone());
                 }
@@ -511,7 +562,7 @@ impl Hub {
                     } else {
                         let existing = entry.stream.clone();
                         let mut inner = existing.inner.lock().unwrap();
-                        if !matches!(inner.phase, Phase::Closed { .. })
+                        if !matches!(inner.phase, Phase::Closing | Phase::Closed { .. })
                             && !inner.subscribers.is_empty()
                         {
                             let mut wake_quota = None;
@@ -617,14 +668,20 @@ impl Subscription {
             return None;
         }
         self.closed = true;
-        if let Some(quota) = &self.sub.quota {
-            quota.transport(false);
-        }
-        let last = {
+        let (last, wake_quota) = {
             let mut streams = self.hub.streams.lock().unwrap();
             let mut inner = self.shared.inner.lock().unwrap();
+            if let Some(hook) = &self.sub.guard_hook {
+                hook.revoke(false);
+            }
+            let wake_quota = self
+                .sub
+                .quota
+                .as_ref()
+                .filter(|quota| quota.transport_quiet(false))
+                .cloned();
             inner.subscribers.retain(|s| s.id != self.sub.id);
-            if inner.subscribers.is_empty() {
+            let last = if inner.subscribers.is_empty() {
                 if let Some(entry) = streams.get_mut(&self.shared.base)
                     && Arc::ptr_eq(&entry.stream, &self.shared)
                 {
@@ -634,8 +691,12 @@ impl Subscription {
                 true
             } else {
                 false
-            }
+            };
+            (last, wake_quota)
         };
+        if let Some(quota) = wake_quota {
+            quota.wake();
+        }
         last.then(|| self.shared.done.clone())
     }
 
