@@ -83,6 +83,7 @@ impl CancelWrite {
 struct WriteCancelState {
     generation: u64,
     fut: Option<AbortFuture>,
+    body_finished: bool,
 }
 
 #[derive(Clone, Default)]
@@ -92,10 +93,76 @@ impl WriteCancel {
     pub fn new() -> Self {
         Self::default()
     }
-    fn set(&self, fut: Option<AbortFuture>) {
-        let mut state = self.0.lock().unwrap();
+    fn set(&self, fut: Option<AbortFuture>) -> u64 {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         state.generation = state.generation.wrapping_add(1);
-        state.fut = fut;
+        state.body_finished = fut.is_none();
+        let old = std::mem::replace(&mut state.fut, fut);
+        let generation = state.generation;
+        drop(state);
+        drop(old);
+        generation
+    }
+    fn mark_finished(&self, generation: u64) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.generation == generation {
+            state.body_finished = true;
+        }
+    }
+    fn is_finished(&self, generation: u64) -> bool {
+        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.generation == generation && state.body_finished
+    }
+}
+
+/// Marks a response body finished so `WriteStallIo::poll_flush` disarms its `CancelWrite` once
+/// the final bytes flush and never aborts an idle keep-alive connection on a later workspace close,
+/// daemon retirement, or stream-lifetime timer.
+struct FinishBody {
+    inner: axum::body::Body,
+    cancel: WriteCancel,
+    generation: u64,
+}
+
+impl FinishBody {
+    fn mark_finished(&self) {
+        self.cancel.mark_finished(self.generation);
+    }
+}
+
+impl Drop for FinishBody {
+    fn drop(&mut self) {
+        self.mark_finished();
+    }
+}
+
+impl hyper::body::Body for FinishBody {
+    type Data = axum::body::Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        let result = std::pin::Pin::new(&mut self.inner).poll_frame(cx);
+        if matches!(&result, std::task::Poll::Ready(None))
+            || (matches!(&result, std::task::Poll::Ready(Some(Ok(_)))) && self.inner.is_end_stream())
+        {
+            self.mark_finished();
+        }
+        result
+    }
+
+    fn is_end_stream(&self) -> bool {
+        let ended = self.inner.is_end_stream();
+        if ended {
+            self.mark_finished();
+        }
+        ended
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.inner.size_hint()
     }
 }
 
@@ -121,12 +188,18 @@ pub fn abortable_service(
         let cancel = cancel.clone();
         async move {
             cancel.set(None);
-            let res = hyper::service::Service::call(&svc, req).await.map_err(std::io::Error::other)?;
+            let mut res = hyper::service::Service::call(&svc, req).await.map_err(std::io::Error::other)?;
             if res.extensions().get::<AbortResponse>().is_some() {
                 return Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "response aborted"));
             }
-            if let Some(write) = res.extensions().get::<CancelWrite>() {
-                cancel.set(write.take());
+            if let Some(write) = res.extensions().get::<CancelWrite>()
+                && let Some(fut) = write.take()
+            {
+                let generation = cancel.set(Some(fut));
+                let finish_cancel = cancel.clone();
+                res = res.map(move |body| {
+                    axum::body::Body::new(FinishBody { inner: body, cancel: finish_cancel, generation })
+                });
             }
             Ok(res)
         }
@@ -515,6 +588,10 @@ impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStallIo<T>
         match std::pin::Pin::new(&mut this.inner).poll_flush(cx) {
             std::task::Poll::Ready(result) => {
                 this.stall = None;
+                if result.is_ok() && this.cancel.is_finished(this.seen_generation) {
+                    this.wait_cancel = None;
+                    this.aborted = false;
+                }
                 std::task::Poll::Ready(result)
             }
             std::task::Poll::Pending => {
@@ -595,3 +672,6 @@ pub async fn serve_local(
     while tasks.join_next().await.is_some() {}
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
