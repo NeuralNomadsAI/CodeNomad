@@ -3,6 +3,9 @@ use rune::{TextEdit, Tx};
 use rune_kit::{ButtonVariant, IconButton, IconButtonVariant, TextArea};
 use std::sync::OnceLock;
 
+mod anchor;
+pub use anchor::{LineAnchor, SourceLayout};
+
 // Rune's TextArea keeps the multiline editor; a full-width scroll surface determines wrap.
 // Pinned TextArea metrics in rune-kit/src/controls/text_input.rs.
 const INSET: f32 = 8.0;
@@ -51,6 +54,7 @@ pub fn editor_view(
     text: &str,
     wrap: bool,
     viewport_width: Option<f32>,
+    anchor_watch: El,
 ) -> El {
     // The gutter's wrap width excludes the TextArea's inner chrome; its logical lines
     // use the same line spacing as the editor.
@@ -67,7 +71,8 @@ pub fn editor_view(
             .w_full()
             .literal_direction()
             .child(gutter_style(dark, text, width, style, INSET).pt(INSET))
-            .child(field),
+            .child(field)
+            .child(anchor_watch.pin(Some(0.0), Some(0.0), None, None)),
         wrap,
     )
 }
@@ -91,16 +96,22 @@ const SAVE: rune::Icon = rune::Icon {
 pub fn save<S: 'static>(
     dark: bool,
     label: &str,
+    shortcut: &str,
     disabled: bool,
     press: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
-    IconButton::new(&SAVE)
+    let button = IconButton::new(&SAVE)
         .variant(IconButtonVariant::Neutral)
         .label(label)
-        .shortcut("mod+s")
+        .help(label)
         .disabled(disabled)
-        .on_press_tx(press)
-        .build(kit(dark))
+        .on_press_tx(press);
+    let button = if shortcut.is_empty() {
+        button
+    } else {
+        button.shortcut(shortcut)
+    };
+    button.build(kit(dark))
 }
 
 pub fn confirmation<S: 'static>(

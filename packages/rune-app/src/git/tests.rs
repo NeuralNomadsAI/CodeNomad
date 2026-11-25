@@ -2,6 +2,56 @@ use super::*;
 use codenomad_client::git::{Change, Commit, Status};
 use codenomad_client::{git::Section, transport::WorkspaceEvent};
 
+#[test]
+fn history_uses_the_inventory_label_and_falls_back_to_branch_then_slug() {
+    let mut state = crate::init();
+    let mut owner = ui();
+    owner.inventory = Some(Worktrees {
+        repository: Repository::Git,
+        trees: vec![
+            Worktree {
+                slug: "owned-review".into(),
+                label: None,
+                directory: "D:/repo/review".into(),
+                service_directory: None,
+                branch: Some("review/feature".into()),
+                head: Some("not-a-label".into()),
+                missing: false,
+            },
+            Worktree {
+                slug: "detached".into(),
+                label: Some("Review checkout".into()),
+                directory: "D:/repo/detached".into(),
+                service_directory: None,
+                branch: None,
+                head: Some("not-a-label".into()),
+                missing: false,
+            },
+        ],
+    });
+    state.git.owner = Some(owner);
+    assert_eq!(
+        history_worktree(&state, "owned-review"),
+        Some("review/feature")
+    );
+    assert_eq!(
+        history_worktree(&state, "detached"),
+        Some("Review checkout")
+    );
+    state
+        .git
+        .owner
+        .as_mut()
+        .unwrap()
+        .inventory
+        .as_mut()
+        .unwrap()
+        .trees[1]
+        .label = None;
+    assert_eq!(history_worktree(&state, "detached"), Some("detached"));
+    assert_eq!(history_worktree(&state, "foreign"), None);
+}
+
 fn change(path: impl Into<String>, staged: bool, whitespace: bool, score: u64) -> Status {
     let counts = Change {
         kind: "modified".into(),
@@ -74,6 +124,7 @@ fn ui() -> Ui {
         session: "session".into(),
         client: codenomad_client::http::Http::new().unwrap(),
         client_id: "test".into(),
+        session_directory: None,
         fresh_mode: false,
     };
     let mut ui = Ui::new(
@@ -89,6 +140,7 @@ fn ui() -> Ui {
             trees: vec![
                 Worktree {
                     slug: "root".into(),
+                    label: None,
                     directory: "D:/repo".into(),
                     branch: Some("main".into()),
                     head: Some("a".repeat(40)),
@@ -97,6 +149,7 @@ fn ui() -> Ui {
                 },
                 Worktree {
                     slug: "other".into(),
+                    label: None,
                     directory: "D:/other".into(),
                     branch: None,
                     head: None,
@@ -123,6 +176,72 @@ fn the_linked_conversation_owns_the_git_target_without_a_root_fallback() {
     ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
     assert!(ui.tree().is_none());
     assert!(!ui.can_mutate());
+}
+
+#[test]
+fn late_worktree_inventory_syncs_the_tree_without_closing_a_session_link() {
+    for native in ["D:/other", "/mnt/d/other"] {
+        let mut s = crate::init();
+        let mut owner = ui();
+        let mut inventory = owner.inventory.take().unwrap();
+        inventory
+            .trees
+            .iter_mut()
+            .find(|tree| tree.slug == "other")
+            .unwrap()
+            .service_directory = Some("/mnt/d/other".into());
+        let mut backend = owner.backend.clone();
+        backend.session_directory = Some(native.into());
+        assert!(owner.bind_placed(&backend, Some("other")));
+        s.files = Some(crate::files::Ui::new(
+            backend.clone(),
+            "D:/repo".into(),
+            s.reads.clone(),
+            s.wake.clone(),
+        ));
+        s.git.owner = Some(owner);
+        let (_, directory) = super::file_link_scope(&s).unwrap();
+        assert_eq!(directory, native);
+        assert!(crate::files::open_session_path(
+            &mut s,
+            &backend,
+            native.into(),
+            "notes.txt".into()
+        ));
+        let scope = s.files.as_ref().unwrap().document.scope();
+
+        let publish = |s: &mut crate::State, inventory| {
+            s.git
+                .owner
+                .as_mut()
+                .unwrap()
+                .accept(Lane::Worktrees, Value::Worktrees(inventory));
+            super::binding::sync_files(s);
+        };
+        publish(&mut s, inventory.clone());
+        let files = s.files.as_ref().unwrap();
+        assert_eq!(files.tree.directory(), "D:/other");
+        assert_eq!(
+            files
+                .reader
+                .target()
+                .map(|target| target.directory.as_str()),
+            Some(native)
+        );
+        assert_eq!(
+            files.document.scope(),
+            scope,
+            "tree sync must not reopen the reader"
+        );
+        assert_eq!(super::file_link_scope(&s).unwrap().1, "D:/other");
+
+        inventory.trees.retain(|tree| tree.slug == "root");
+        publish(&mut s, inventory);
+        assert!(
+            !crate::files::has_preview(&s),
+            "authoritative removal still closes the reader"
+        );
+    }
 }
 
 #[test]
@@ -569,6 +688,15 @@ fn changing_session_closes_preview_and_resets_manually_selected_worktree() {
     assert!(ui.bind(&backend));
     assert!(!ui.has_preview());
     assert_eq!(ui.tree().unwrap().slug, "root");
+
+    // Switching to another session (including session-new) preserves a non-empty commit draft
+    // in a manually selected checkout instead of resetting Changes.
+    ui.select_tree("other".into());
+    ui.changes.draft = rune::edit::TextEdit::new("wip commit");
+    backend.session = "newer-session".into();
+    assert!(ui.bind(&backend));
+    assert_eq!(ui.tree().unwrap().slug, "other");
+    assert_eq!(ui.changes.draft.text, "wip commit");
 }
 
 #[test]

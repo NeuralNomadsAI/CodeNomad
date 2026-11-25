@@ -2,14 +2,26 @@
 use crate::history::Result;
 use reqwest::{Client, RequestBuilder};
 use std::{
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
-pub struct Http(Client, Arc<OnceLock<String>>, Arc<crate::stream::Children>);
+pub struct Http(
+    Client,
+    Arc<OnceLock<Identity>>,
+    Arc<crate::stream::Children>,
+    Arc<AtomicBool>,
+);
+struct Identity {
+    server: String,
+    capabilities: Vec<String>,
+}
 impl Http {
     pub fn new() -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -21,7 +33,12 @@ impl Http {
             .build()?;
         #[cfg(target_arch = "wasm32")]
         let client = Client::new();
-        Ok(Self(client, Arc::new(OnceLock::new()), Arc::default()))
+        Ok(Self(
+            client,
+            Arc::new(OnceLock::new()),
+            Arc::default(),
+            Arc::new(AtomicBool::new(true)),
+        ))
     }
     pub fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.1, &other.1)
@@ -30,10 +47,27 @@ impl Http {
         &self.2
     }
     pub fn server_identity(&self) -> Option<&str> {
-        self.1.get().map(String::as_str)
+        self.1.get().map(|identity| identity.server.as_str())
     }
-    pub(crate) fn verify_server_identity(&self, id: &str) -> bool {
-        self.1.get_or_init(|| id.to_owned()) == id
+    pub fn supports(&self, capability: &str) -> bool {
+        self.1
+            .get()
+            .is_some_and(|identity| identity.capabilities.iter().any(|item| item == capability))
+    }
+    pub(crate) fn attest(&self, id: &str, capabilities: Vec<String>) -> bool {
+        self.1
+            .get_or_init(|| Identity {
+                server: id.to_owned(),
+                capabilities,
+            })
+            .server
+            == id
+    }
+    pub fn supports_service_usage(&self) -> bool {
+        self.3.load(Ordering::Relaxed)
+    }
+    pub(crate) fn observe_service_usage(&self, advertised: bool) {
+        self.3.store(advertised, Ordering::Relaxed);
     }
     fn request(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
         let request = self.0.request(method, url).timeout(REQUEST_TIMEOUT);
@@ -148,16 +182,80 @@ pub fn client_id() -> Result<String> {
 }
 /// Parse an external link without accepting credentials or active schemes.
 pub fn external_http_url(raw: &str) -> Option<(String, String)> {
-    let url = reqwest::Url::parse(raw).ok()?;
+    let url = credential_free_http_url(raw)?;
+    let mut host = url.host_str()?.to_owned();
+    if let Some(port) = url.port() {
+        host.push_str(&format!(":{port}"));
+    }
+    Some((url.into(), host))
+}
+
+fn credential_free_http_url(raw: &str) -> Option<reqwest::Url> {
+    let trimmed = raw.trim();
+    if trimmed.chars().any(|c| c.is_control() || c == '\\') {
+        return None;
+    }
+    let (scheme, rest) = trimmed.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    if rest.split(['/', '?', '#']).next()?.contains('@') {
+        return None;
+    }
+    let url = reqwest::Url::parse(trimmed).ok()?;
     if !matches!(url.scheme(), "http" | "https")
         || !url.username().is_empty()
         || url.password().is_some()
     {
         return None;
     }
-    let mut host = url.host_str()?.to_owned();
-    if let Some(port) = url.port() {
-        host.push_str(&format!(":{port}"));
+    Some(url)
+}
+
+/// Match Solid's explicit HTTP(S) conversation links, using the parsed host.
+pub fn is_loopback_http_url(raw: &str) -> bool {
+    credential_free_http_url(raw).is_some_and(|url| {
+        url.host_str().is_some_and(|host| {
+            matches!(host, "localhost" | "0.0.0.0" | "[::1]")
+                || host
+                    .parse::<std::net::Ipv4Addr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        })
+    })
+}
+
+#[cfg(test)]
+#[test]
+fn loopback_requires_an_explicit_http_scheme_and_literal_host() {
+    for host in ["localhost", "127.0.0.1", "[::1]", "127.1", "0.0.0.0"] {
+        assert!(is_loopback_http_url(&format!(
+            "http://{host}:9200/a%2Fb?mode=1#target"
+        )));
     }
-    Some((url.into(), host))
+    assert!(is_loopback_http_url(" http://127.0.0.1:8123/view "));
+    for raw in [
+        "https://127.0.0.1.example.org/",
+        "//localhost:8080/",
+        "http:localhost:8123/",
+        "mailto:local@example.org",
+        "http://alice:demo@localhost:8123/",
+        "http://alice@127.0.0.1:8123/",
+        "https://:demo@[::1]:8123/",
+        "http://@localhost:8123/",
+        "http://:@localhost:8123/",
+        "http://127.0.0.1:8123/ok\ncmd",
+        "http://127.0.0.1:8123/ok\tcmd",
+        "http://127.0.0.1:8123\\@evil.example/",
+    ] {
+        assert!(!is_loopback_http_url(raw), "{raw:?}");
+    }
+    for rejected in [
+        "http:localhost:8123/",
+        "http://alice:demo@localhost:8123/",
+        "http://@localhost:8123/",
+        "http://127.0.0.1:8123/ok\ncmd",
+        "http://127.0.0.1:8123\\@evil.example/",
+    ] {
+        assert!(external_http_url(rejected).is_none(), "{rejected:?}");
+    }
 }

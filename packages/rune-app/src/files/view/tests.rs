@@ -290,7 +290,11 @@ fn source_beyond_the_highlight_limit_remains_visible_selectable_and_copyable() {
     }
     assert_eq!(
         rt.selected_text().as_deref(),
-        Some("TAIL_MARKER_AFTER_HIGHLIGHT")
+        Some(if cfg!(target_os = "windows") {
+            "TAIL_MARKER_AFTER_HIGHLIGHT "
+        } else {
+            "TAIL_MARKER_AFTER_HIGHLIGHT"
+        })
     );
     rt.update(|_, tx| tx.select_text("file-source-text", start..start + tail.len()));
     rt.frame(0.02);

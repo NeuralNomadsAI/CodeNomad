@@ -14,6 +14,7 @@ fn direct_compaction_waits_for_the_first_root_snapshot() {
             &Snapshot {
                 models: None,
                 current: None,
+                directory: None,
                 session_known: true,
                 running: false,
                 root_directory: directory.clone(),
@@ -212,6 +213,7 @@ fn notification_observation_requires_a_root_and_a_new_confirmed_idle() {
     let mut snapshot = Snapshot {
         models: None,
         current: None,
+        directory: None,
         session_known: true,
         running: false,
         root_directory: None,
@@ -221,6 +223,8 @@ fn notification_observation_requires_a_root_and_a_new_confirmed_idle() {
             id: "form-1".into(),
             title: "Question".into(),
             fields: vec![],
+            tool: None,
+            infer_websearch: false,
         }]),
     };
     attention.observe(&snapshot, true);

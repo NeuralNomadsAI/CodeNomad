@@ -28,7 +28,7 @@ pub(crate) fn conversation_authentication(
     true
 }
 
-fn authentication_required(s: &mut State, expired: &crate::backend::Backend) -> bool {
+pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::Backend) -> bool {
     let mut prefs = s.settings.shared.borrow_mut();
     let current = match s.screen.launcher() {
         Some(launcher) => launcher.connection.as_ref(),
@@ -92,6 +92,24 @@ pub(super) fn provider_changed(s: &State, workspace: &str) {
 pub(crate) fn connection_event(s: &State, event: &crate::transport::Event) {
     use codenomad_client::transport::{Event, WorkspaceEvent};
     match event {
+        Event::Workspace(WorkspaceEvent::StatsChanged {
+            workspace_id,
+            urgent,
+        }) => {
+            if s.screen
+                .launcher()
+                .is_some_and(|l| l.catalogue_watch.is_some())
+            {
+                return;
+            }
+            let mut prefs = s.settings.shared.borrow_mut();
+            if let Some(target) = prefs.provider_target.as_mut() {
+                target.stats_hint(workspace_id, *urgent);
+                if let Some(wake) = &prefs.window_wake {
+                    wake();
+                }
+            }
+        }
         Event::Workspace(WorkspaceEvent::MemoryChanged) => {
             s.settings.shared.borrow_mut().memory.invalidate();
         }

@@ -41,9 +41,18 @@ let cachedCharacters = 0
 export async function encodePartition(value: unknown, maxBytes = Infinity): Promise<EncodedPartition> {
   const plain = JSON.stringify(value)
   if (plain === undefined) throw new TypeError("Client state partition must be JSON-serializable")
+  return encodeCachedPartition(plain, () => canonicalJson(value), maxBytes)
+}
+
+/** Store pre-serialized canonical text in the same bounded cache as other partitions. */
+export function encodeCanonicalPartition(text: string): Promise<EncodedPartition> {
+  return encodeCachedPartition(text, () => text, Infinity)
+}
+
+async function encodeCachedPartition(plain: string, canonicalize: () => string, maxBytes: number): Promise<EncodedPartition> {
   const hit = cache.get(plain)
   if (hit) { cache.delete(plain); cache.set(plain, hit); return hit }
-  const text = canonicalJson(value)
+  const text = canonicalize()
   const raw = encoder.encode(text)
   const bytes = raw.byteLength
   if (bytes > maxBytes) return { key: "", text, bytes }

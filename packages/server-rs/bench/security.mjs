@@ -2,21 +2,24 @@
 // Host and Origin, throttling, single use, revocation closing a live SSE), then Rust's certificate reuse,
 // provided chain and SAN rotation across restarts. `node security.mjs <opencode executable>`
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID, X509Certificate } from "node:crypto"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { brotliCompressSync } from "node:zlib"
 import http from "node:http"
 import https from "node:https"
 import path from "node:path"
 import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
-import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
 import { setTimeout as delay } from "node:timers/promises"
-import { dist, dropRegistration, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { dist, dropRegistration, fromDist, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 const exe=process.argv[2]
 assert(path.isAbsolute(exe??""),"usage: node security.mjs <absolute opencode executable>")
 const bin=rustBinary()
 await useBenchTemp()
+const { isHtmlBundlePath } = await fromDist("remote-control/gate.js")
+assert(isHtmlBundlePath?.("/index.html.br"),
+  `Rebuild the TypeScript reference at ${dist.href}: its remote gate must protect precompressed HTML`)
 // The TS test surface with a real connection manager, so that revocation closes live streams.
 const surface=new URL("remote-control/test-support/surface.js",dist)
 const wired=new URL("surface-bench.mjs",surface)
@@ -55,6 +58,58 @@ async function pairingNavigation(title, targets, rootHeaders={}) {
     if(method==="HEAD") assert(pages.every(r=>r.body===""),title)
     reports.push({title:`${title}: ${method}`,statuses:pages.map(r=>r.status),rootStatuses:roots.map(r=>r.status)})
   }
+}
+const scriptPath="/assets/solid-fixture.js"
+const script="export const solid = true;\n".repeat(64)
+async function solidAssets(dir) {
+  await mkdir(path.join(dir,"assets"),{recursive:true})
+  const index=`<!doctype html><title>Solid fixture</title><script type="module" src="${scriptPath}"></script>`
+  await writeFile(path.join(dir,"index.html"),index)
+  await writeFile(path.join(dir,"index.html.br"),brotliCompressSync(index))
+  await writeFile(path.join(dir,"manifest.webmanifest"),JSON.stringify({name:"CodeNomad"}))
+  await writeFile(path.join(dir,scriptPath),script)
+  await writeFile(path.join(dir,`${scriptPath}.br`),brotliCompressSync(script))
+}
+async function checkSolid(title, targets, origins, issue) {
+  for (const [index, target] of targets.entries()) {
+    const origin=origins[index]
+    const publicAsset=await target({url:"/manifest.webmanifest"})
+    assert.equal(publicAsset.status,200,title)
+    assert.equal(publicAsset.body.name,"CodeNomad")
+    const backend=index===0?"TypeScript":"Rust"
+    for(const url of ["/index.html","/index.html.br"])
+      assert.equal((await target({url})).status,index===0&&title==="direct"?302:401,`${backend}: unpaired ${title} ${url}`)
+    if(title==="ingress"){
+      const unpairedPage=await target({url:"/index.html",headers:{accept:"text/html"}})
+      assert.equal(unpairedPage.status,302)
+      assert.equal(unpairedPage.headers.location,"/remote-pair")
+    }
+    const pairing=await target({url:"/api/remote-control/pair",method:"POST",...json({code:await issue[index]()}),
+      headers:{"content-type":"application/json",origin}})
+    assert.equal(pairing.status,200,`${title}: ${JSON.stringify(pairing.body)}`)
+    const cookie=pairing.headers["set-cookie"][0].split(";",1)[0]
+    const headers={cookie,accept:"text/html"}
+    const page=await target({url:"/",headers})
+    assert.equal(page.status,200)
+    assert.equal(page.headers["cache-control"],"no-store")
+    assert.match(page.body,/Solid fixture/)
+    assert.equal((await target({url:"/",method:"HEAD",headers})).body,"")
+    const deepPage=await target({url:"/settings",method:"HEAD",headers:{...headers,"accept-encoding":"br"}})
+    assert.equal(deepPage.status,200)
+    assert.equal(deepPage.headers["cache-control"],"no-store")
+    assert.equal(deepPage.headers["content-encoding"],"br")
+    const resource=await target({url:scriptPath,headers:{cookie}})
+    assert.equal(resource.status,200)
+    assert.match(resource.headers["content-type"],/javascript/)
+    assert.equal(resource.body,script)
+    const compressed=await target({url:scriptPath,method:"HEAD",headers:{cookie,"accept-encoding":"br, gzip"}})
+    assert.equal(compressed.status,200)
+    assert.equal(compressed.headers["content-encoding"],"br")
+    assert.match(compressed.headers.vary,/Accept-Encoding/i)
+    assert.equal(compressed.body,"")
+    assert.equal((await target({url:"/api/solid-fixture-missing.js",headers:{cookie}})).status,404)
+  }
+  reports.push({title:`Solid app shell and assets (${title})`})
 }
 async function query(rust,ts) {
   const pairs=[ts,rust]
@@ -133,9 +188,14 @@ await withProductRuntime(exe,async()=>({}),async ({root:home,env,connection})=>{
       assert(local&&remote,lines)
       return {local,remote}
     }
-    return {child,stopped,origins,close:async()=>{await (child.exitCode===null?stopFixtureChild(child,stopped):stopped);await dropRegistration(env,child.pid)}}
+    const pid=fixtureChildPid(child)
+    return {child,stopped,origins,close:async()=>{await stopFixtureChild(child,stopped);await dropRegistration(env,await pid)}}
   }
-  const server=start("risk"),{child,stopped}=server
+  const solidDir=path.join(home,"solid")
+  await solidAssets(solidDir)
+  await mkdir(path.join(solidDir,"api"))
+  await writeFile(path.join(solidDir,"api","solid-fixture-missing.js"),script)
+  const server=start("risk",{CNRS_FIXTURE_UI_DIR:solidDir}),{child,stopped}=server
   const cleanup=[]
   try {
     const {local:rsBase,remote:tls}=await server.origins()
@@ -166,6 +226,8 @@ await withProductRuntime(exe,async()=>({}),async ({root:home,env,connection})=>{
       return new URL(issued.body.url).hash.slice(1)
     })
     const ts=await build(tsLocal,tsRemote,async()=>new URL(tsFixture.manager.createPairing().url).hash.slice(1))
+    await solidAssets(path.join(path.dirname(tsFixture.registryPath),"ui"))
+    await checkSolid("ingress",[tsRemote,rsRemote],[`https://${FAKE_TUNNEL_HOST}`,tls],[ts.issue,rust.issue])
     // Separate surface: its failure bucket uses the real clock.
     const expiryFixture=await startRemoteSurface({after(fn){cleanup.push(fn)}},{now:()=>clock,password})
     const expired=new URL(expiryFixture.manager.createPairing().url).hash.slice(1)
@@ -182,9 +244,9 @@ await withProductRuntime(exe,async()=>({}),async ({root:home,env,connection})=>{
     result.tls={trusted:true,rejectsUntrusted:true,rejectsWrongName:true,leafFingerprintMatches:true}
     await query(rust,ts)
     const name="direct.fixture.test"
-    const direct=start("direct",{CNRS_FIXTURE_INGRESS:"0",CNRS_HTTPS_NAME:name})
+    const direct=start("direct",{CNRS_FIXTURE_INGRESS:"0",CNRS_HTTPS_NAME:name,CNRS_FIXTURE_UI_DIR:solidDir})
     try {
-      const {remote}=await direct.origins()
+      const {local,remote}=await direct.origins()
       const authority=`${name}:${new URL(remote).port}`
       const directCa=await readFile(path.join(home,"direct.data/tls/ca-cert.pem"))
       const directTs=await startRemoteSurface({after(fn){cleanup.push(fn)}},{allowedOrigins:[`https://${authority}`],password})
@@ -195,6 +257,16 @@ await withProductRuntime(exe,async()=>({}),async ({root:home,env,connection})=>{
         ...options,headers:{...headers,Host:authority}
       })
       await pairingNavigation("External direct HTTPS navigation",[tsDirect,rustDirect],{cookie:"__Host-codenomad_device=stale"})
+      await solidAssets(path.join(path.dirname(directTs.registryPath),"ui"))
+      const directRust=await build(use(local),rustDirect,async admin=>{
+        const issued=await admin("/api/remote-control/pairings",{method:"POST",...json({origin:remote})})
+        assert.equal(issued.status,200,JSON.stringify(issued.body))
+        return new URL(issued.body.url).hash.slice(1)
+      })
+      await checkSolid("direct",[tsDirect,rustDirect],[remote,remote],[
+        ()=>new URL(directTs.manager.createDirectPairing(remote).url).hash.slice(1),
+        directRust.issue,
+      ])
     } finally { await direct.close() }
     const code=await rust.issue()
     const fresh=await rsRemote({url:"/api/remote-control/server-pair",method:"POST",...json({code,hostName:"Shutdown fixture"}),

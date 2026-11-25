@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import path from "node:path"
 import { fixtureEnvironment } from "../native-product-fixture.mjs"
-import { stopFixtureChild } from "../native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "../native-fixture-guards.mjs"
 import { privatePath } from "./isolation.mjs"
 import { json, now, sleep } from "./lib.mjs"
 
@@ -110,9 +110,10 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
     }
     const call = (method, route, body) => json(`${url}${route}`, { method, body, headers: { authorization } })
     const info = await call("GET", "/api/info")
-    assert.equal(info.pid, child.pid, "Bench daemon did not prove its identity")
+    const pid = await fixtureChildPid(child)
+    assert.equal(info.pid, pid, "Bench daemon did not prove its identity")
     await pruning?.activate({project,url,authorization},()=>assert.equal(child.exitCode,null,'Owned pruning daemon exited'))
-    await run({ project, env, url, password, authorization, call, markers, pid: child.pid, cli, pruning,
+    await run({ project, env, url, password, authorization, call, markers, pid, cli, pruning,
       arm(pass, size) {
         const { promise: start, resolve: release } = Promise.withResolvers()
         batch = { pass, size, start, release, ready: new Set() }

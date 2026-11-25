@@ -215,6 +215,10 @@ bootStage("preferences-after")
     new Map([[sessionId, { actualUsageTokens: used, contextAvailableTokens: available } as any]]))),
   setLocale: (locale: "en" | "he") => updatePreferences({ locale }),
   setWorking: () => setSessionStatus(id, sessionId, "working", { force: true }),
+  retry: () => emit("session.retry.scheduled", {
+    sessionID: sessionId, assistantMessageID: "msg_retry", attempt: 1, at: Date.now() + 3_000,
+    error: { name: "UnknownError", message: "Fixture backoff" },
+  }),
   setIdle: () => setSessionStatus(id, sessionId, "idle", { force: true }),
   escapeStates: () => escapeStates,
   interrupts: () => interrupts,

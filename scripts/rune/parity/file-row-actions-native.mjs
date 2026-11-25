@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../native-fixture-guards.mjs'
 import {copyFile,mkdir,readFile,writeFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
 import path from 'node:path'

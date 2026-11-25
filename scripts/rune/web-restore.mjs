@@ -8,11 +8,12 @@ import {chromium} from 'playwright'
 import {pendingBrowser} from './web-pending-open.mjs'
 import {fileWrapBrowser} from './web-file-wrap.mjs'
 import {keyboardViewport} from './web-keyboard-viewport.mjs'
+import {outlineRestore} from './web-outline-restore.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
-const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},'keyboard-viewport':{type:'boolean'}}})
+const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},'keyboard-viewport':{type:'boolean'},outline:{type:'boolean'}}})
 assert(values.url&&values.project&&values['storage-state']&&values.out,'Pass --url --project --storage-state --out')
 const url=new URL(values.url)
 assert(['127.0.0.1','localhost','[::1]'].includes(url.hostname)&&['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&url.pathname==='/'&&!url.hash,'Explicit isolated loopback root required')
@@ -21,7 +22,7 @@ const out=path.resolve(values.out)
 const {profile,storage,inside}=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
 await mkdir(out,{recursive:true});assert(inside(profile,await realpath(out)),'Output link escapes fixture')
 const m=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/catalogues/fr.json'),'utf8'))
-assert(!values['keyboard-viewport']||(!values['pending-open']&&!values['file-wrap']),'Keyboard viewport mode cannot combine with --pending-open or --file-wrap')
+assert(!values['keyboard-viewport']||(!values['pending-open']&&!values['file-wrap']&&!values.outline),'Keyboard viewport mode cannot combine with --pending-open, --file-wrap or --outline')
 if(values['pending-open']){await pendingBrowser({values,m,out,storage});process.exit(0)}
 if(values['file-wrap']){await fileWrapBrowser({values,m,out,storage,url,root});process.exit(0)}
 const KEY='codenomad.rune.alpha.client-state.v1',RELEASED='codenomad.rune.alpha.records-released'
@@ -47,14 +48,15 @@ try {
         name:`keyboard-${shortSide}-${landscape?'landscape':'portrait'}`,width:landscape?longSide:shortSide,
         height:landscape?shortSide:longSide,colorScheme:'light',touch:true,
       })))
-    : [{name:'desktop-light',width:1100,height:900,colorScheme:'light',touch:false},{name:'phone-dark',width:390,height:844,colorScheme:'dark',touch:true}]
+    : [{name:'desktop-light',width:values.outline?1400:1100,height:900,colorScheme:'light',touch:false},{name:'phone-dark',width:390,height:844,colorScheme:'dark',touch:true}]
   for(const spec of sizes) {
+    if(values.outline&&spec.touch)continue
     if(values['keyboard-viewport'])await resetKeyboard()
     const context=await browser.newContext({viewport:{width:spec.width,height:spec.height},deviceScaleFactor:1,colorScheme:spec.colorScheme,isMobile:spec.touch,hasTouch:spec.touch,storageState:storage})
     const page=await context.newPage();page.setDefaultTimeout(20000)
     const record={context:spec.name,phoneEmulated:spec.touch,requests:[],eventSource:[],storage:[],storageLocal:[],history:[],errors:[],forbidden:[],stages:[]}
     results.push(record)
-    let forbidRelease=false,sequence=0
+    let forbidRelease=false,sequence=0,outlineGate
     const policy=workspacePolicy({origin:url.origin,project:values.project,assets,keyboardActions:Boolean(values['keyboard-viewport'])}),workspaces=policy.workspaces
     const stamp=()=>++sequence
     await page.addInitScript(({key,released,proof})=>{
@@ -143,7 +145,7 @@ try {
       const entry={sequence:stamp(),method,path:p,status:allowed?'allowed':'refused',...(requested.searchParams.has('cursor')?{pagination:true}:{})}
       if(record.requests.length<4000)record.requests.push(entry);else allowed=false
       if(!allowed){record.forbidden.push(entry);return route.abort('blockedbyclient')}
-      if(method==='POST'&&p==='/api/workspaces'){
+       if(method==='POST'&&p==='/api/workspaces'){
         try {
           Object.assign(entry,await fulfillWorkspaceCreation(route,policy))
           return
@@ -151,8 +153,13 @@ try {
           record.errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'})
           return route.abort('blockedbyclient')
         }
-      }
-      await route.continue()
+       }
+       if(outlineGate&&method==='POST'&&p.endsWith('/session-history/outline')){
+         const gate=outlineGate
+         outlineGate=undefined
+         if(await gate===503)return route.fulfill({status:503})
+       }
+       await route.continue()
     })
     const mirror=()=>page.locator('[data-rune-a11y]')
     const press=async locator=>{
@@ -176,8 +183,18 @@ try {
       assert.equal(await page.evaluate(()=>globalThis.__codenomadRuneBoot.state),'ready')
       await button(m['folderSelection.servers.dialog.connect']).waitFor({state:'attached'})
     }
-    const field=async label=>{
-      for(let i=0;i<64;i++){
+     const field=async label=>{
+       if(values.outline&&label===m['rune.prompt']){
+         const group=mirror().getByRole('group',{name:label,exact:true})
+         await group.waitFor()
+         const editor=await group.boundingBox(),send=await button(m['promptInput.overlay.send']).boundingBox()
+         assert(editor&&send&&send.y>editor.y,'The composer has a visible field above Send')
+         await page.mouse.click(editor.x+editor.width/2,(editor.y+send.y)/2)
+         const input=page.locator('textarea:focus').and(page.getByRole('textbox',{name:label,exact:true}))
+         await input.waitFor({state:'attached'})
+         return input
+       }
+       for(let i=0;i<64;i++){
         const focused=page.locator('textarea:focus')
         if(await focused.count()&&await focused.getAttribute('aria-label')===label)return focused
         await page.keyboard.press('Tab')
@@ -296,6 +313,13 @@ try {
         continue
       }
       await openSessions();await press(sessionRow('Existing history'));await reading('ses_existing');await type(m['rune.prompt'],draftA)
+      if(values.outline){
+        record.outline=await outlineRestore({page,m,boot,connect,draft:()=>reading('ses_existing',draftA),
+          holdNext:gate=>{outlineGate=gate}})
+        assert.deepEqual(record.errors,[])
+        assert.deepEqual(record.forbidden,[])
+        continue
+      }
       await press(button(m['instanceTabs.new.ariaLabel']))
       await type(m['instanceInfo.labels.folder'],values.project);await page.keyboard.press('Enter')
       await openSessions();await press(button(m['rune.more']));await press(sessionRow('Another session'));await reading('ses_another');await type(m['rune.prompt'],draftB)

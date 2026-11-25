@@ -1,5 +1,6 @@
 use crate::{State, agent_view, chat, composer, git, shell, transcript};
 use rune::{Cx, El};
+use rune_theme_codenomad::layout;
 
 pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let expanded = interruption_expanded(s);
@@ -20,6 +21,17 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     );
     let mut overlays = Vec::new();
     let worktree = git::session_worktree(s, &mut overlays);
+    overlays.extend(super::media::preview(s));
+    super::message_actions::overlays(s, &mut overlays);
+    let controls = (!git::has_preview(s) && !crate::files::has_preview(s)).then(|| {
+        layout::action_row().child(crate::settings::transcript_filters::trigger(
+            s,
+            &mut overlays,
+            cx.touch_controls(),
+        ))
+    });
+    let (more, menu) = composer::menu::view(s);
+    overlays.extend(menu);
     let scroll_stack = layout.scrolls_stack();
     let stack_scroll = s.tool_diff_preferences.stack_scroll.clone();
     let (caret_pins, caret_probe) =
@@ -69,13 +81,20 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             scroll_stack,
         ))
         .children(chat::reading::wheel_restore_probe(s, cx))
+        .children(controls)
+        .children(super::message_actions::restore(s))
         .child(shell::reader(s, || {
             let history = rune_theme_codenomad::interruption::history(layout)
                 .role("region")
                 .label(crate::strings::t("settings.voice.conversation.title"))
                 .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
+                .children(super::receipts::session(s))
                 .child(transcript::rows(s));
-            chat::reading::viewport(s, history, scroll_stack)
+            crate::timeline::view(
+                s,
+                chat::reading::viewport(s, crate::timeline::watch(s, history), scroll_stack),
+                expanded,
+            )
         }))
         .child(
             agent_view::view(s, cx, layout_viewport_height).on_layout_tx(
@@ -90,7 +109,7 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         )
         .children(chat::attachments::error(s))
         .child(
-            composer::view::view(s, layout, caret_pins, Some(worktree)).on_layout_tx(
+            composer::view::view(s, layout, caret_pins, Some(worktree), more).on_layout_tx(
                 move |s: &mut State, _, tx| {
                     if !s.screen.is_launcher() {
                         chat::ToolDiffPreferences::composer_layout(s, scroll_stack, tx);
@@ -100,7 +119,14 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 },
             ),
         );
-    rune_theme_codenomad::git_panel::with_overlays(body, overlays)
+    crate::timeline::search::overlay(s, cx, &mut overlays);
+    if s.paging {
+        overlays.push(rune_theme_codenomad::timeline::navigation_status(
+            crate::strings::t("history.navigation.loading"),
+        ));
+    }
+    overlays.extend(crate::timeline::preview_overlay(s));
+    rune_theme_codenomad::layout::with_overlays(body, overlays).key(crate::timeline::search::HOST)
 }
 
 fn interruption_expanded(s: &State) -> bool {

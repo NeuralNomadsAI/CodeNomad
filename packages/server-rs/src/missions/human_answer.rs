@@ -7,7 +7,6 @@ use std::{
 
 use axum::http::{Method, StatusCode as Status, request::Parts};
 use serde_json::{Value, json};
-use tokio::sync::OwnedMutexGuard;
 use uuid::Uuid;
 
 use crate::{
@@ -247,7 +246,7 @@ pub(crate) async fn reply(
     row: &Value,
     form: &str,
     input: &Value,
-    hold: &mut Option<OwnedMutexGuard<()>>,
+    hold: &mut Option<crate::worktrees::fence::Entered>,
 ) -> Result<bool, Error> {
     let session = row["id"].as_str().ok_or_else(upstream_error)?;
     let directory = row["location"]["directory"].as_str().ok_or_else(upstream_error)?;

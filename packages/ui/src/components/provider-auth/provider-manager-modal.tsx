@@ -21,6 +21,7 @@ import {
 } from "../../lib/provider-auth"
 import { instances } from "../../stores/instances"
 import { fetchProviders, getActiveCatalogLocation } from "../../stores/sessions"
+import { isCatalogEvent } from "../../lib/catalog-events"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
 import { getRootClient } from "../../stores/opencode-client"
 import { ProviderAuthForm } from "./provider-auth-form"
@@ -347,12 +348,15 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     }
     const events = serverEvents.on("instance.event", payload => {
       if (payload.type === "instance.event" && payload.instanceId === instanceId
-        && ["integration.updated", "credential.updated", "credential.switched", "model.updated", "config.updated"].includes(payload.event.type)) refresh()
+        && (["integration.updated", "credential.updated", "credential.switched", "config.updated"].includes(payload.event.type)
+          || isCatalogEvent(payload.event.type))) refresh()
     })
     const status = serverEvents.on("instance.eventStatus", payload => {
       if (payload.type === "instance.eventStatus" && payload.instanceId === instanceId && payload.status === "connected") refresh()
     })
     const reconnect = serverEvents.forInstance(() => instanceId).onOpen(() => refresh())
+    // An event that arrived during any other read (initial, reconnect, mutation) runs one trailing reread.
+    createEffect(on(loading, active => { if (!active && trailing) { trailing = false; refresh() } }, { defer: true }))
     onCleanup(() => { disposed = true; events(); status(); reconnect() })
   })
 

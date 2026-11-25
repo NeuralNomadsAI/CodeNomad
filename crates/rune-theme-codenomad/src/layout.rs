@@ -182,6 +182,10 @@ pub fn announce_polite(tx: &mut rune::Tx, text: impl Into<String>) {
     tx.announce(text, rune::LiveRegion::Polite);
 }
 
+pub fn announce_alert(tx: &mut rune::Tx, message: &str) {
+    tx.announce(message, rune::LiveRegion::Assertive);
+}
+
 pub fn suggestion_list<S: 'static>(
     key: &str,
     anchor: &str,

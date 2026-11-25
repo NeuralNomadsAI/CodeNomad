@@ -1,6 +1,19 @@
 //! Safe interface to Windows locale and local civil time.
 mod icu;
 
+pub fn local_time_zone() -> Option<String> {
+    icu::timezone()
+}
+
+pub fn local_date_time(millis: u64, locale: &str, zone: &str) -> Option<String> {
+    icu::format(
+        millis as f64,
+        locale,
+        "yMdjms",
+        (zone == "UTC").then_some("UTC"),
+    )
+}
+
 use std::ptr::null;
 use windows_sys::Win32::{
     Foundation::{FILETIME, SYSTEMTIME},
@@ -23,23 +36,43 @@ pub fn local_month_day(stamp: &str, locale: &str) -> Option<String> {
     icu::month_day(millis, locale).or_else(|| win32_month_day(ticks, locale))
 }
 
-fn win32_month_day(ticks: u64, locale: &str) -> Option<String> {
+pub fn local_clock(seconds: i64) -> Option<(i32, i32, i32, i32, i32)> {
+    let ticks = u64::try_from((i128::from(seconds) + 11_644_473_600) * 10_000_000).ok()?;
+    let local = local_time(ticks)?;
+    Some((
+        local.wYear.into(),
+        local.wMonth.into(),
+        local.wDay.into(),
+        local.wHour.into(),
+        local.wMinute.into(),
+    ))
+}
+
+fn local_time(ticks: u64) -> Option<SYSTEMTIME> {
     let file = FILETIME {
         dwHighDateTime: (ticks >> 32) as u32,
         dwLowDateTime: ticks as u32,
     };
     let mut utc = SYSTEMTIME::default();
     let mut local = SYSTEMTIME::default();
-    let locale: Vec<_> = locale.encode_utf16().chain([0]).collect();
-    let mut pattern = [0; 128];
-    let mut output = [0; 128];
-    // The buffers have the advertised sizes; a null zone selects the user's current one.
+    // A null zone selects the user's current one.
     unsafe {
         if FileTimeToSystemTime(&file, &mut utc) == 0
             || SystemTimeToTzSpecificLocalTimeEx(null(), &utc, &mut local) == 0
         {
             return None;
         }
+    }
+    Some(local)
+}
+
+fn win32_month_day(ticks: u64, locale: &str) -> Option<String> {
+    let local = local_time(ticks)?;
+    let locale: Vec<_> = locale.encode_utf16().chain([0]).collect();
+    let mut pattern = [0; 128];
+    let mut output = [0; 128];
+    // The buffers have the advertised sizes and the locale and pattern are NUL-terminated.
+    unsafe {
         let len = GetLocaleInfoEx(
             locale.as_ptr(),
             LOCALE_SMONTHDAY,

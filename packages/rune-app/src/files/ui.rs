@@ -47,11 +47,21 @@ pub struct Ui {
     clock: f64,
     last_passive: Option<f64>,
     pending: Option<(f64, Changes)>,
+    session_preview: bool,
     pub stopped: bool,
 }
 impl Ui {
+    pub(crate) fn workspace_id(&self) -> &str {
+        &self.backend.workspace
+    }
+
     pub(crate) fn uses_connection(&self, backend: &Backend) -> bool {
         self.backend.client.same_connection(&backend.client)
+    }
+
+    pub(crate) fn same_server_identity(&self, backend: &Backend) -> bool {
+        let previous = self.backend.client.server_identity();
+        previous.is_some() && previous == backend.client.server_identity()
     }
 
     pub fn new(backend: Backend, directory: String, reads: Reads, wake: Wake) -> Self {
@@ -88,6 +98,7 @@ impl Ui {
             clock: 0.0,
             last_passive: None,
             pending: None,
+            session_preview: false,
             stopped: false,
         }
     }
@@ -133,10 +144,16 @@ impl Ui {
         if self.tree.directory() != directory {
             self.actions.revoke();
             self.tree_scroll = Default::default();
-            self.close_reader();
+            if !self.session_preview() {
+                self.close_reader();
+            }
             self.tree.switch(directory);
             self.demand();
         }
+    }
+
+    pub(crate) fn session_preview(&self) -> bool {
+        self.session_preview && self.reader.target().is_some()
     }
     pub fn drawer(&self) -> super::layout::Drawer {
         super::layout::resolve(self.host_width.unwrap_or(0.0), self.panel)
@@ -159,6 +176,26 @@ impl Ui {
             tx.focus("files-toggle", true);
         }
         self.demand();
+    }
+    pub fn detach_session(&mut self) {
+        self.close_reader();
+        self.backend.session.clear();
+    }
+    pub fn rebind_session(&mut self, backend: &Backend) {
+        let renewed = !self.uses_connection(backend);
+        self.close_reader();
+        self.backend = backend.clone();
+        self.reader.rebind_session(backend);
+        self.document.rebind_session(backend);
+        if !backend.session.is_empty() {
+            self.online(false);
+        }
+        if renewed {
+            self.actions.revoke();
+            self.tree.invalidate_all();
+            self.pending = None;
+            self.demand();
+        }
     }
     pub fn online(&mut self, online: bool) {
         if !online {
@@ -188,6 +225,16 @@ impl Ui {
                 session_id,
             } if workspace_id == self.backend.workspace && session_id == self.backend.session => {
                 self.close_reader();
+            }
+            WorkspaceEvent::NativeFilesystemChanged { workspace_id }
+            | WorkspaceEvent::WorktreesChanged { workspace_id }
+                if workspace_id == self.backend.workspace && !self.stopped =>
+            {
+                let due = self
+                    .last_passive
+                    .map_or(self.clock + 0.1, |last| (last + 5.0).max(self.clock + 0.1));
+                let (_, pending) = self.pending.get_or_insert_with(|| (due, None));
+                *pending = None;
             }
             WorkspaceEvent::FilesChanged {
                 workspace_id,
@@ -362,14 +409,24 @@ impl Ui {
         }
     }
     pub fn open(&mut self, path: String) {
+        self.open_at(self.tree.directory().into(), path, false);
+    }
+
+    pub(super) fn open_session_path(&mut self, directory: String, path: String) -> bool {
+        self.open_at(directory, path, true)
+    }
+
+    fn open_at(&mut self, directory: String, path: String, session_preview: bool) -> bool {
         if !self.stopped {
+            self.session_preview = session_preview;
             self.pictures.suspend();
             self.reader_close = Default::default();
             self.presentation.reset();
-            self.document
-                .open(self.tree.directory().into(), path.clone());
-            self.reader.open(self.tree.directory().into(), path);
+            self.document.open(directory.clone(), path.clone());
+            self.reader.open(directory, path);
+            return true;
         }
+        false
     }
     pub fn reader_link(&self, target: &str, tx: &mut rune::Tx) {
         if let Some(url) = self.backend.file_link(target) {
@@ -377,6 +434,7 @@ impl Ui {
         }
     }
     pub fn close_reader(&mut self) {
+        self.session_preview = false;
         self.pictures.suspend();
         self.presentation.reset();
         self.document.close();
@@ -415,6 +473,19 @@ impl Ui {
             return true;
         }
         false
+    }
+    pub(crate) fn next_wake(&self) -> Option<f64> {
+        if self.stopped {
+            return None;
+        }
+        let pending = self.pending.as_ref().map(|(due, _)| *due);
+        let refresh = (self.active && self.tree_visible() && self.online)
+            .then_some(self.due)
+            .flatten();
+        match (pending, refresh) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
     pub fn poll(&mut self, now: f64) -> bool {
         self.clock = now;
@@ -466,10 +537,11 @@ impl Ui {
             self.snapshot();
             self.due.get_or_insert(now + 0.1);
         }
-        if self
-            .reader
-            .target()
-            .is_some_and(|target| target.directory != self.tree.directory())
+        if !self.session_preview
+            && self
+                .reader
+                .target()
+                .is_some_and(|target| target.directory != self.tree.directory())
         {
             self.reader.close();
             self.document.close();

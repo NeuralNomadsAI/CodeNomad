@@ -57,7 +57,7 @@ Use **Reload OpenCode configuration**, under **Troubleshooting** when the runnin
 ## Session environment {#session-environment}
 
 1. Open **Settings → Advanced** and expand **Environment Variables**.
-2. Add overrides, edit their values or remove them; saved names are read-only and each change is saved immediately.
+2. Add overrides, edit their values or remove them. Saved names are read-only. In Rune, select a variable, edit its value, then choose **Save**.
 3. Send the next prompt, custom command or session shell request through CodeNomad to apply the current environment to that conversation.
 
 This is a configuration-profile setting. Merely opening/reading a conversation or saving settings does not alter a native session. Removing an override restores the execution host's inherited value, or removes it if absent there.

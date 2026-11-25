@@ -1,4 +1,4 @@
-use super::{connection, keys, right_panel, sidebar};
+use super::{connection, panel_keys, right_panel, sidebar};
 use crate::{State, strings};
 use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
@@ -39,6 +39,10 @@ impl Default for Panels {
     }
 }
 impl Panels {
+    pub(crate) fn width(&self) -> f32 {
+        self.width
+    }
+
     pub fn restore_widths(&mut self, widths: [Option<u16>; 2]) {
         for (i, width) in widths.into_iter().enumerate() {
             if let Some(width) = width {
@@ -273,7 +277,7 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
     if project || !s.chat_title.is_empty() || s.files.is_some() {
         center = center.child(header(s, project, docked, touch));
     } else if let Some(warning) = connection_warning(s) {
-        center = center.child(shell::floating_notice(warning));
+        center = center.child(shell::floating_notice(warning).key("connection-warning"));
     }
     let center = center.child(body.remaining());
     let mut columns = shell::columns();
@@ -289,7 +293,7 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
         .on_layout_tx(move |s: &mut State, [_, _, width, height], tx| {
             s.shell.measure(width, height, touch, tx)
         })
-        .on_key(keys);
+        .on_key(panel_keys);
     if project {
         for i in 0..2 {
             root = root.child(shell::toggle(
@@ -327,7 +331,7 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
         [
             shell::spacer(),
             shell::panel_title(title).key("chat-title").role("heading"),
-            shell::spacer(),
+            crate::timeline::search::trigger(s).unwrap_or_else(shell::spacer),
             crate::files::view::toggle(s),
             connection_warning(s).unwrap_or_else(col),
         ],

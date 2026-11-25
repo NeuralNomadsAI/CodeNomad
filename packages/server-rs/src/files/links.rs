@@ -21,11 +21,51 @@ pub fn target(base: &Path, relative: &str) -> PathBuf {
     if relative == "." { base.to_path_buf() } else { base.join(relative) }
 }
 
+fn is_dir_link(path: &Path, link: &Path) -> bool {
+    let raw = link.to_string_lossy();
+    if raw.ends_with('/') || cfg!(windows) && raw.ends_with('\\') {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+        if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0) {
+            return true;
+        }
+    }
+    let _ = path;
+    false
+}
+
+/// Resolve the file or its parent before admitting a write, including a
+/// not-yet-created file behind a directory link.
+pub(super) fn write_target(mut path: PathBuf, reject_dir_link: bool) -> Result<PathBuf, Error> {
+    for _ in 0..40 {
+        if let Ok(real) = dunce::canonicalize(&path) {
+            return Ok(real);
+        }
+        if let Ok(link) = std::fs::read_link(&path) {
+            if reject_dir_link && is_dir_link(&path, &link) {
+                return Err(not_file());
+            }
+            let parent = dunce::canonicalize(path.parent().ok_or_else(unavailable)?).map_err(|_| unavailable())?;
+            path = parent.join(link);
+        } else {
+            let parent = dunce::canonicalize(path.parent().ok_or_else(unavailable)?).map_err(|_| unavailable())?;
+            return Ok(parent.join(path.file_name().ok_or_else(unavailable)?));
+        }
+    }
+    Err(unavailable())
+}
+
 /// Refuses a link whose target lies in this project's protected names
 /// (`.git`, reserved device names). A missing, dangling or unresolvable
 /// target (loop) passes: the access itself then fails as in the reference.
 pub fn guard(base: &Path, relative: &str) -> Result<(), Error> {
-    let Ok(real) = dunce::canonicalize(target(base, relative)) else { return Ok(()) };
+    let candidate = target(base, relative);
+    let resolved = dunce::canonicalize(&candidate).or_else(|_| write_target(candidate, false).map_err(|_| ()));
+    let Ok(real) = resolved else { return Ok(()) };
     match real.strip_prefix(base) {
         Ok(inside) => {
             let inside = inside.to_str().ok_or_else(unavailable)?.replace('\\', "/");
@@ -87,19 +127,49 @@ mod tests {
     fn links_are_followed_outside_but_not_into_git() {
         let top = crate::shared::test_dir("links");
         let (base, outside) = (top.join("project"), top.join("outside"));
-        std::fs::create_dir_all(base.join(".git")).unwrap();
+        std::fs::create_dir_all(base.join(".git").join("hooks")).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("note.txt"), "outside\n").unwrap();
         std::fs::write(base.join(".git").join("config"), "[core]\n").unwrap();
         link_dir(&outside, &base.join("out")).unwrap();
         link_dir(&base.join(".git"), &base.join("gitalias")).unwrap();
+        link_dir(&base.join(".git").join("hooks"), &base.join("hooksalias")).unwrap();
         assert_eq!(read(&base, "out/note.txt", 64).unwrap().unwrap(), b"outside\n");
         assert!(guard(&base, "gitalias/config").is_err(), "a link into .git stays refused");
+        assert!(guard(&base, "gitalias/new-hook").is_err(), "a missing file behind a link into .git stays refused");
+        let symlink_result = {
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_file("..\\new-hook", base.join(".git").join("hooks").join("rel"))
+            }
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink("../new-hook", base.join(".git").join("hooks").join("rel"))
+            }
+        };
+        if symlink_result.is_ok() {
+            assert!(
+                guard(&base, "hooksalias/rel").is_err(),
+                "a dangling relative symlink behind a directory link into .git stays refused"
+            );
+        }
         assert!(read(&base, "missing.txt", 64).unwrap().is_none());
         assert!(!matches!(read(&base, "out", 64), Ok(Some(_))), "a directory yields no bytes");
         assert!(read_lenient(&base, "out", 64).unwrap().is_none());
         std::fs::write(outside.join("big.txt"), "x".repeat(65)).unwrap();
         assert!(read_lenient(&base, "out/big.txt", 64).is_err());
+        let deleted = top.join("deleted-dir");
+        std::fs::create_dir_all(&deleted).unwrap();
+        #[cfg(windows)]
+        link_dir(&deleted, &base.join("broken-dir-link")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(format!("{}/", deleted.display()), base.join("broken-dir-link")).unwrap();
+        std::fs::remove_dir(&deleted).unwrap();
+        assert!(
+            write_target(base.join("broken-dir-link"), true).is_err(),
+            "a broken directory link or junction is not a writable file target"
+        );
+        assert!(!deleted.exists());
         let _ = std::fs::remove_dir_all(top);
     }
 }

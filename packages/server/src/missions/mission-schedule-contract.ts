@@ -140,6 +140,13 @@ export const missionScheduleRpcMethods = {
     output: { type: "object", properties: { enabled: { type: "boolean" },
       provenance: { type: "string", enum: ["environment", "experimental-block", "all-flags", "channel-default"] } },
       required: ["enabled", "provenance"], additionalProperties: false } },
+  // scheduleFlag plus the deciding source and hidden OFF layers; backends fall back to scheduleFlag.
+  scheduleSetting: { input: { type: "object", properties: {}, additionalProperties: false },
+    output: { type: "object", properties: { enabled: { type: "boolean" },
+      provenance: { type: "string", enum: ["environment", "experimental-block", "all-flags", "channel-default", "automations-setting"] },
+      path: { type: "string", minLength: 1, maxLength: 4096 },
+      hiddenOff: { type: "array", maxItems: 256, items: { type: "string", minLength: 1, maxLength: 4096 } } },
+      required: ["enabled", "provenance", "hiddenOff"], additionalProperties: false } },
   scheduleList: { input: { type: "object", properties: { after: text, limit: { type: "integer", minimum: 1, maximum: MISSION_SCHEDULE_PAGE_MAX } }, additionalProperties: false },
     output: { type: "object", properties: { version: { const: 1 }, projectID: text, next: text,
       schedules: { type: "array", maxItems: MISSION_SCHEDULE_PAGE_MAX, items: summary } }, required: ["version", "projectID", "schedules"], additionalProperties: false } },

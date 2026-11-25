@@ -161,7 +161,8 @@ pub(crate) fn reader(s: &State) -> El {
         Some(Diff::Binary) => theme::note(t("instanceShell.gitChanges.binaryViewer"), "status"),
         Some(Diff::Image { .. }) => image_diff(ui, path, split),
         Some(Diff::Text { .. }) => {
-            let selected = ui.reader.state.selection();
+            let can_insert = !s.screen.is_launcher();
+            let selected = can_insert.then(|| ui.reader.state.selection()).flatten();
             let comment = run_for_lines(s, target.clone());
             let action = selected
                 .filter(|range| range.start.side == Side::New && range.end.side == Side::New)
@@ -193,7 +194,11 @@ pub(crate) fn reader(s: &State) -> El {
                             .as_mut()
                             .map_or(&mut s.git.detached_diff, |ui| &mut ui.reader.state)
                     },
-                    Some(std::rc::Rc::new(run_for_lines(s, target))),
+                    if can_insert {
+                        Some(std::rc::Rc::new(run_for_lines(s, target)))
+                    } else {
+                        None
+                    },
                 ))
         }
         None if lane.error.is_none() => theme::note(t("instanceInfo.loading"), "status"),
@@ -206,6 +211,9 @@ fn run_for_lines(
     target: Preview,
 ) -> impl Fn(&mut State, LineRange, &mut Tx) + Clone + 'static {
     action(s, move |s, range: LineRange, tx| {
+        if s.screen.is_launcher() {
+            return;
+        }
         let Some(ui) = s
             .git
             .owner

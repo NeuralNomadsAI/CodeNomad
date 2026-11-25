@@ -13,7 +13,7 @@ async function handler(file,assets,connected=true){
   assert.equal(callbacks.length,1);assert(ts.isArrowFunction(callbacks[0]))
   const policy=workspacePolicy({origin,project,assets}),input={path:project,requestId:'owned'}
   policy.allows('POST','/api/workspaces',input);policy.admit(input,{id:'one',requestId:'owned',location:{directory:project}},origin)
-  const callback=new Function('assert','url','values','policy','routes','errors','forbiddenRequests','fulfillWorkspaceCreation','record','stamp','forbidRelease','missions',`return (${callbacks[0].getText(ast)})`)(assert,new URL(origin),{connected,project},policy,[],[],[],fulfillWorkspaceCreation,{requests:[],forbidden:[],errors:[]},()=>1,false,null)
+  const callback=new Function('assert','url','values','policy','assets','routes','errors','forbiddenRequests','fulfillWorkspaceCreation','record','stamp','forbidRelease','missions','holdOlder','holdAnchor','holdPreview','outlineGate','holdRecall','markRecall','recallGate','moreActionsOnly','menuPrompt',`return (${callbacks[0].getText(ast)})`)(assert,new URL(origin),{connected,project},policy,assets,[],[],[],fulfillWorkspaceCreation,{requests:[],forbidden:[],errors:[]},()=>1,false,null,undefined,undefined,undefined,undefined,false,undefined,undefined,false,undefined)
   return async(method,pathname,{cookie='private=fixture',body,base=origin}={})=>{
     let disposition
     await callback({request:()=>({url:()=>new URL(pathname,base).href,method:()=>method,postDataJSON:()=>body,allHeaders:async()=>({cookie})}),continue:async()=>{disposition='continued'},abort:async()=>{disposition='aborted'},fetch:async()=>{throw Error('The boundary reproduction must never use the network')}})

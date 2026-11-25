@@ -141,6 +141,7 @@ fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
             let ui = state.agent.as_mut().unwrap();
             ui.selected = "permission-fixture".into();
             ui.permissions.push(Permission {
+                tool: None,
                 id: ui.selected.clone(),
                 action: "read".into(),
                 resources: (0..40)
@@ -218,7 +219,7 @@ fn question_fields_model_list_and_composer_remain_scroll_reachable() {
         let mut state = state();
         let ui = state.agent.as_mut().unwrap();
         ui.selected = "form-fixture".into();
-        ui.forms.push(Form { id: ui.selected.clone(), title: "Synthetic question".into(), fields: (0..24).map(|i| json!({"key":format!("field{i}"),"type":"string","title":format!("Synthetic field {i}")})).collect() });
+        ui.forms.push(Form { tool: None, infer_websearch: false, id: ui.selected.clone(), title: "Synthetic question".into(), fields: (0..24).map(|i| json!({"key":format!("field{i}"),"type":"string","title":format!("Synthetic field {i}")})).collect() });
         agent_forms::seed(&ui.forms, &mut ui.drafts);
         let mut rt = runtime(state, size);
         reveal(&mut rt, "field-field23");
@@ -263,6 +264,7 @@ fn audit_settlement_during_edit(permission: bool) {
     let key;
     if permission {
         ui.permissions.push(Permission {
+            tool: None,
             id: ui.selected.clone(),
             action: "read".into(),
             resources: vec!["/synthetic".into()],
@@ -273,6 +275,8 @@ fn audit_settlement_during_edit(permission: bool) {
         key = "reason-audit_pending";
     } else {
         ui.forms.push(Form {
+            tool: None,
+            infer_websearch: false,
             id: ui.selected.clone(),
             title: "Synthetic question".into(),
             fields: vec![json!({"key":"answer","type":"string"})],
@@ -296,6 +300,7 @@ fn audit_settlement_during_edit(permission: bool) {
                 Snapshot {
                     models: None,
                     current: None,
+                    directory: None,
                     session_known: true,
                     root_directory: None,
                     usage: None,
@@ -303,7 +308,8 @@ fn audit_settlement_during_edit(permission: bool) {
                     permissions: Some(vec![]),
                     forms: Some(vec![]),
                 },
-                false
+                false,
+                0
             ))
             .is_ok()
     );
@@ -337,6 +343,7 @@ fn late_editor_event_cannot_change_a_replacement_session_with_the_same_request_i
     let ui = initial.agent.as_mut().unwrap();
     ui.selected = "reused-request".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: ui.selected.clone(),
         action: "read".into(),
         resources: vec![],
@@ -431,6 +438,7 @@ fn keyboard_viewport_matrix_preserves_reading_draft_and_actions() {
             if permission {
                 ui.selected = "perm-1".into();
                 ui.permissions.push(Permission {
+                    tool: None,
                     id: "perm-1".into(),
                     action: "edit".into(),
                     resources: (0..18).map(|i| format!("/synthetic/file-{i}.rs")).collect(),
@@ -442,6 +450,8 @@ fn keyboard_viewport_matrix_preserves_reading_draft_and_actions() {
             } else {
                 ui.selected = "form-1".into();
                 ui.forms.push(Form {
+                    tool: None,
+                    infer_websearch: false,
                     id: "form-1".into(),
                     title: "Choose a target".into(),
                     fields: (0..12)
@@ -566,6 +576,7 @@ fn multiple_pending_requests_show_navigation_controls() {
     ui.selected = "perm-a".into();
     for id in ["perm-a", "perm-b"] {
         ui.permissions.push(Permission {
+            tool: None,
             id: id.into(),
             action: "read".into(),
             resources: vec!["/synthetic/a".into()],
@@ -964,6 +975,7 @@ fn ultra_short_touch_drag_reaches_permission_and_shallow_height_only_resize_neve
     let ui = s.agent.as_mut().unwrap();
     ui.selected = "perm-1".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-1".into(),
         action: "edit".into(),
         resources: (0..12).map(|i| format!("/synthetic/file-{i}.rs")).collect(),
@@ -1236,6 +1248,7 @@ fn ultra_short_touch_drag_reaches_permission_and_shallow_height_only_resize_neve
     let ui = s.agent.as_mut().unwrap();
     ui.selected = "perm-short".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-short".into(),
         action: "edit".into(),
         resources: (0..12).map(|i| format!("/synthetic/file-{i}.rs")).collect(),
@@ -1522,6 +1535,7 @@ fn ultra_short_touch_drag_reaches_permission_and_shallow_height_only_resize_neve
     ui.error = true;
     ui.selected = "perm-err".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-err".into(),
         action: "edit".into(),
         resources: (0..12).map(|i| format!("/synthetic/err-{i}.rs")).collect(),
@@ -1668,6 +1682,7 @@ fn ultra_short_touch_drag_reaches_permission_and_shallow_height_only_resize_neve
     ui.current = Some("provider/very-long-model-name-for-wrapping".into());
     ui.selected = "perm-wrap".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-wrap".into(),
         action: "edit".into(),
         resources: vec!["/synthetic/wrap.rs".into()],
@@ -1725,6 +1740,8 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
     let mut s = state();
     seed_passages(&mut s, 16);
     let form = Form {
+        tool: None,
+        infer_websearch: false,
         id: "q-focus".into(),
         title: "Scrollable question with multiple fields".into(),
         fields: (0..6)
@@ -1795,6 +1812,7 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
         let ui = s.agent.as_mut().unwrap();
         ui.selected = "perm-live".into();
         ui.permissions.push(Permission {
+            tool: None,
             id: "perm-live".into(),
             action: "edit".into(),
             resources: (0..4).map(|i| format!("/synthetic/live-{i}.rs")).collect(),
@@ -1890,6 +1908,7 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
     let ui = s.agent.as_mut().unwrap();
     ui.selected = "perm-ultra-caret".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-ultra-caret".into(),
         action: "edit".into(),
         resources: vec!["/synthetic/ultra.rs".into()],
@@ -2178,6 +2197,7 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
     let ui = s.agent.as_mut().unwrap();
     ui.selected = "perm-22b".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-22b".into(),
         action: "edit".into(),
         resources: vec!["/synthetic/22b.rs".into()],
@@ -2222,6 +2242,7 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
     let ui = s.agent.as_mut().unwrap();
     ui.selected = "perm-r2b3-1".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-r2b3-1".into(),
         action: "edit".into(),
         resources: vec!["/synthetic/r2b3.rs".into()],
@@ -2252,6 +2273,7 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
     rt.update(|s, _| {
         let ui = s.agent.as_mut().unwrap();
         ui.permissions.push(Permission {
+            tool: None,
             id: "perm-r2b3-2".into(),
             action: "bash".into(),
             resources: vec!["/synthetic/r2b3-2.rs".into()],
@@ -2335,6 +2357,7 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
     let ui = s.agent.as_mut().unwrap();
     ui.selected = "perm-r1m3".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-r1m3".into(),
         action: "edit".into(),
         resources: vec!["/synthetic/r1m3.rs".into()],
@@ -2397,6 +2420,8 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
         "type": "string"
     }));
     ui.forms.push(Form {
+        tool: None,
+        infer_websearch: false,
         id: "form-r2m1".into(),
         title: "Key collision check".into(),
         fields,
@@ -2447,6 +2472,7 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
         .collect();
     ui.selected = "perm-27a".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-27a".into(),
         action: "edit".into(),
         resources: vec!["/synthetic/27a.rs".into()],
@@ -2454,6 +2480,7 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
         supported: true,
     });
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-27b".into(),
         action: "edit".into(),
         resources: vec!["/synthetic/27b.rs".into()],
@@ -2542,6 +2569,7 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
     let ui = s.agent.as_mut().unwrap();
     ui.selected = "perm-29".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-29".into(),
         action: "edit".into(),
         resources: vec!["/synthetic/perm-29.rs".into()],
@@ -2626,6 +2654,7 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
     let ui = s.agent.as_mut().unwrap();
     ui.selected = "perm-31".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-31".into(),
         action: "edit".into(),
         resources: (0..8)
@@ -2734,6 +2763,8 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
     let ui = s.agent.as_mut().unwrap();
     ui.selected = "form-33".into();
     let form_33 = Form {
+        tool: None,
+        infer_websearch: false,
         id: "form-33".into(),
         title: "Confirm deployment target?".into(),
         fields: vec![serde_json::json!({
@@ -2800,6 +2831,7 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
     let ui = s.agent.as_mut().unwrap();
     ui.selected = "perm-34".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: "perm-34".into(),
         action: "edit".into(),
         resources: vec!["/synthetic/footer-focus.rs".into()],

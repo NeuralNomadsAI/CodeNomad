@@ -40,6 +40,8 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
     let selector =
         theme::fit_modes(&MODE_NAMES.map(t), title, mode, width, set_mode).key("git-mode");
     let mut overlay = Vec::new();
+    let can_retry_detached =
+        !ui.online && crate::launcher::can_retry_detached_workspace(s, ui.workspace_id());
     let context = theme::context()
         .key("git-context")
         .child(
@@ -49,9 +51,19 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
                     "git-refresh",
                     &theme::REFRESH_CW,
                     t("instanceShell.rightPanel.actions.refresh"),
-                    ui.loading() || !ui.online,
+                    ui.loading() || (!ui.online && !can_retry_detached),
                     None,
                     run(s, |s, _| {
+                        if s.git.owner.as_ref().is_some_and(|ui| {
+                            !ui.online
+                                && crate::launcher::can_retry_detached_workspace(
+                                    s,
+                                    ui.workspace_id(),
+                                )
+                        }) {
+                            crate::launcher::retry_detached_reconcile(s);
+                            return;
+                        }
                         if let Some(ui) = &mut s.git.owner {
                             ui.refresh();
                         }

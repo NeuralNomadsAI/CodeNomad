@@ -121,7 +121,7 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
                 .child(text(t(status)).text_role(TextRole::Label)),
         );
         if expanded && input.is_object() {
-            row = row.child(if let Some(input) = input_json(input) {
+            row = row.child(if let Some(input) = input_json(input, TOOL_LIMIT, false) {
                 markdown::tool_pane(
                     window(
                         s,
@@ -223,16 +223,11 @@ fn execute_progress_is_rendered_and_keeps_an_open_call() {
     );
     rt.poll = Some(crate::poll);
     rt.frame(0.0);
-    for key in [
-        "toggle-tool-step:4:call",
-        "toggle-tool-step:4:call-execute-call-0",
-    ] {
-        let (x, y) = rt.find(key).unwrap();
-        rt.pointer_down(x, y);
-        rt.pointer_up(x, y);
-        for _ in 0..12 {
-            rt.frame(1.0 / 60.0);
-        }
+    let (x, y) = rt.find("toggle-tool-step:4:call-execute-call-0").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
     }
     let tree = rt.accessibility_json().to_string();
     assert!(tree.contains("visible argument") && tree.contains("Nested tool calls"));

@@ -5,8 +5,9 @@ use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Weak},
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -253,7 +254,7 @@ impl Control {
                 }
                 let remaining = slot.expires - now;
                 wake.wait_for(&mut slot, remaining);
-            } else if slot.cancelled {
+            } else if slot.cancelled || slot.committing {
                 wake.wait(&mut slot);
             } else if now >= slot.deadline {
                 slot.cancel(Some(SpeechError::Failed));
@@ -285,6 +286,7 @@ struct Slot {
     #[cfg(target_os = "linux")]
     microphone_claimed: bool,
     cancelled: bool,
+    committing: bool,
     reason: Option<SpeechError>,
 }
 
@@ -295,7 +297,7 @@ impl Slot {
     }
 
     fn cancel(&mut self, reason: Option<SpeechError>) {
-        if !self.cancelled && !self.state.terminal() {
+        if !self.cancelled && !self.committing && !self.state.terminal() {
             self.cancelled = true;
             self.reason = reason;
             self.state = Operation::Stopping;
@@ -323,6 +325,9 @@ impl MicrophoneLease {
 struct Slots {
     operations: [Option<Control>; 2],
     microphone: Option<MicrophoneLease>,
+    documents: HashMap<String, Weak<()>>,
+    selection_revision: u64,
+    selecting: bool,
 }
 
 impl Slots {
@@ -352,6 +357,20 @@ pub(crate) struct DeviceSpeech {
     api_microphone: microphone::ApiMicrophone,
     #[cfg(target_os = "linux")]
     remote_microphone: RemoteMicrophone,
+}
+
+pub(crate) struct SpeechPreflight {
+    document: Arc<()>,
+    selection_revision: u64,
+    choice: Option<Result<preference::Preference, SpeechError>>,
+    hex: Option<Hex>,
+    audio: Option<Vec<u8>>,
+}
+
+pub(crate) enum SpeechAdmission {
+    Complete(Value),
+    Select(Engine, Hex, SpeechPreflight),
+    CancelCommit(Control),
 }
 
 impl DeviceSpeech {
@@ -408,21 +427,199 @@ impl DeviceSpeech {
         self.store.read().map(|preference| preference.engine)
     }
 
+    // Capture a revocable document witness before any bounded-but-blocking probe.
+    pub(crate) fn document_witness(&self, owner: &str) -> (Arc<()>, u64) {
+        let mut slots = self.slots.lock();
+        slots
+            .documents
+            .retain(|_, document| document.strong_count() != 0);
+        let entry = slots.documents.entry(owner.to_string()).or_default();
+        let document = entry.upgrade().unwrap_or_else(|| {
+            let document = Arc::new(());
+            *entry = Arc::downgrade(&document);
+            document
+        });
+        (document, slots.selection_revision)
+    }
+
+    pub(crate) fn preflight(
+        &self,
+        (document, selection_revision): (Arc<()>, u64),
+        input: &Request,
+    ) -> SpeechPreflight {
+        let reads_choice = matches!(
+            input,
+            Request::Read {} | Request::Prepare { .. } | Request::Start { .. }
+        );
+        #[cfg(target_os = "linux")]
+        let reads_choice = reads_choice || matches!(input, Request::AuthorizeApiMicrophone { .. });
+        SpeechPreflight {
+            document,
+            selection_revision,
+            choice: reads_choice.then(|| self.store.read()),
+            hex: matches!(
+                input,
+                Request::Read {}
+                    | Request::Select { .. }
+                    | Request::Prepare { .. }
+                    | Request::Start { .. }
+            )
+            .then(|| self.capabilities()),
+            audio: match input {
+                Request::Finish { wav, .. } => decode_wav(wav),
+                _ => None,
+            },
+        }
+    }
+
+    fn check_preflight(
+        slots: &Slots,
+        owner: &str,
+        preflight: &SpeechPreflight,
+    ) -> Result<(), SpeechError> {
+        if !Self::document_current(slots, owner, preflight) {
+            return Err(SpeechError::NotOwned);
+        }
+        if slots.selecting || slots.selection_revision != preflight.selection_revision {
+            return Err(SpeechError::Busy);
+        }
+        Ok(())
+    }
+
+    fn document_current(slots: &Slots, owner: &str, preflight: &SpeechPreflight) -> bool {
+        slots
+            .documents
+            .get(owner)
+            .is_some_and(|document| document.ptr_eq(&Arc::downgrade(&preflight.document)))
+    }
+
+    #[cfg(test)]
     pub(crate) fn request(&self, owner: &str, input: Request) -> Result<Value, SpeechError> {
-        self.request_with_microphone_scope(owner, input, false)
+        let preflight = self.preflight(self.document_witness(owner), &input);
+        match self.admit(owner, input, preflight, false)? {
+            SpeechAdmission::Complete(value) => Ok(value),
+            SpeechAdmission::Select(engine, caps, preflight) => {
+                self.finish_selection(owner, engine, caps, preflight, |admit| admit())
+            }
+            SpeechAdmission::CancelCommit(control) => self.finish_cancel(owner, control),
+        }
     }
 
     pub(crate) fn request_remote(&self, owner: &str, input: Request) -> Result<Value, SpeechError> {
-        self.request_with_microphone_scope(owner, input, true)
+        if !matches!(
+            input,
+            Request::ClaimMicrophone { .. } | Request::ReleaseMicrophone { .. }
+        ) {
+            return Err(SpeechError::Unavailable);
+        }
+        let preflight = self.preflight(self.document_witness(owner), &input);
+        match self.admit(owner, input, preflight, true)? {
+            SpeechAdmission::Complete(value) => Ok(value),
+            _ => unreachable!(),
+        }
     }
 
-    fn request_with_microphone_scope(
+    pub(crate) fn admit(
         &self,
         owner: &str,
         input: Request,
+        mut preflight: SpeechPreflight,
+        remote: bool,
+    ) -> Result<SpeechAdmission, SpeechError> {
+        let check_choice = matches!(
+            input,
+            Request::Select { .. } | Request::Prepare { .. } | Request::Start { .. }
+        );
+        let mut slots = self.slots.lock();
+        if check_choice {
+            Self::check_preflight(&slots, owner, &preflight)?;
+        } else if !Self::document_current(&slots, owner, &preflight) {
+            return Err(SpeechError::NotOwned);
+        }
+        if let Request::Select { engine } = input {
+            let caps = preflight.hex.take().expect("selection probes capabilities");
+            if slots.active(Kind::Prepare) {
+                return Err(SpeechError::Busy);
+            }
+            if engine == Engine::Hex && !matches!(caps, Hex::Ready { .. }) {
+                return Err(SpeechError::Unavailable);
+            }
+            slots.selecting = true;
+            return Ok(SpeechAdmission::Select(engine, caps, preflight));
+        }
+        if let Request::Cancel { id } = &input {
+            if let Some(control) = &slots.operations[Kind::Prepare as usize] {
+                let slot = control.0 .0.lock();
+                if slot.committing && slot.id == *id && slot.owner.as_deref() == Some(owner) {
+                    return Ok(SpeechAdmission::CancelCommit(control.clone()));
+                }
+            }
+        }
+        self.request_in_slots(&mut slots, owner, input, preflight, remote)
+            .map(SpeechAdmission::Complete)
+    }
+
+    // A cancellation that lost the commit race still receives the durable outcome.
+    pub(crate) fn finish_cancel(
+        &self,
+        owner: &str,
+        control: Control,
+    ) -> Result<Value, SpeechError> {
+        let (lock, wake) = &*control.0;
+        let mut slot = lock.lock();
+        while slot.committing && slot.owner.as_deref() == Some(owner) {
+            wake.wait(&mut slot);
+        }
+        if slot.owner.as_deref() != Some(owner) {
+            return Err(SpeechError::NotOwned);
+        }
+        let receipt = if matches!(slot.state, Operation::Prepared) {
+            json!(slot.state)
+        } else {
+            Value::Null
+        };
+        slot.forget();
+        wake.notify_all();
+        Ok(receipt)
+    }
+
+    pub(crate) fn finish_selection(
+        &self,
+        owner: &str,
+        engine: Engine,
+        caps: Hex,
+        preflight: SpeechPreflight,
+        commit_allowed: impl FnOnce(&dyn Fn() -> bool) -> bool,
+    ) -> Result<Value, SpeechError> {
+        let result = self.store.select_if(engine, None, || {
+            commit_allowed(&|| Self::document_current(&self.slots.lock(), owner, &preflight))
+        });
+        let mut slots = self.slots.lock();
+        slots.selecting = false;
+        if !result? {
+            return Err(SpeechError::NotOwned);
+        }
+        slots.selection_revision = slots.selection_revision.wrapping_add(1);
+        if engine != Engine::Hex {
+            if let Some(control) = &slots.operations[Kind::Dictation as usize] {
+                control.0 .0.lock().cancel(None);
+                control.0 .1.notify_all();
+            }
+            if let Some(hex) = &self.hex {
+                hex.request_stop();
+            }
+        }
+        Ok(json!({ "engine": engine, "hex": caps }))
+    }
+
+    fn request_in_slots(
+        &self,
+        slots: &mut Slots,
+        owner: &str,
+        input: Request,
+        preflight: SpeechPreflight,
         remote: bool,
     ) -> Result<Value, SpeechError> {
-        let mut slots = self.slots.lock();
         let now = Instant::now();
         slots.expire_microphone(now);
         for entry in &mut slots.operations {
@@ -434,12 +631,11 @@ impl DeviceSpeech {
                 entry.take();
             }
         }
-        let snapshot = |engine, hex| json!({ "engine": engine, "hex": hex });
         match input {
             Request::ClaimMicrophone { id, purpose } => {
                 let id = microphone_id(&id).ok_or(SpeechError::Unavailable)?;
                 let busy = self
-                    .native_microphone_busy(&slots)
+                    .native_microphone_busy(slots)
                     .or_else(|| slots.microphone.as_ref().map(|lease| lease.purpose));
                 if busy.is_none() {
                     slots.microphone = Some(MicrophoneLease {
@@ -469,41 +665,26 @@ impl DeviceSpeech {
                 // These requests additionally require the IPC caller's document.
                 Err(SpeechError::Unavailable)
             }
-            Request::Read {} => Ok(snapshot(self.store.read()?.engine, self.capabilities())),
-            Request::Select { engine } => {
-                if slots.active(Kind::Prepare) {
-                    return Err(SpeechError::Busy);
-                }
-                let caps = self.capabilities();
-                if engine == Engine::Hex && !matches!(caps, Hex::Ready { .. }) {
-                    return Err(SpeechError::Unavailable);
-                }
-                self.store.select(engine, None)?;
-                if engine != Engine::Hex {
-                    if let Some(control) = &slots.operations[Kind::Dictation as usize] {
-                        control.0 .0.lock().cancel(None);
-                        control.0 .1.notify_all();
-                    }
-                    if let Some(hex) = &self.hex {
-                        hex.request_stop();
-                    }
-                }
-                Ok(snapshot(Some(engine), caps))
-            }
+            Request::Read {} => Ok(json!({
+                "engine": preflight.choice.expect("read probes choice")?.engine,
+                "hex": preflight.hex.expect("read probes capabilities"),
+            })),
+            Request::Select { .. } => unreachable!(),
             Request::Prepare { plan_id } => {
                 if slots.active(Kind::Prepare) || slots.active(Kind::Dictation) {
                     return Err(SpeechError::Busy);
                 }
                 let hex = self.hex.clone().ok_or(SpeechError::Unavailable)?;
-                let (plan, needs_preparation) = match hex.capabilities() {
-                    Hex::Ready { plan } => (plan, false),
-                    Hex::NeedsPreparation { plan } => (plan, true),
-                    Hex::Unavailable => return Err(SpeechError::Unavailable),
-                };
+                let (plan, needs_preparation) =
+                    match preflight.hex.expect("prepare probes capabilities") {
+                        Hex::Ready { plan } => (plan, false),
+                        Hex::NeedsPreparation { plan } => (plan, true),
+                        Hex::Unavailable => return Err(SpeechError::Unavailable),
+                    };
                 if plan.id != plan_id {
                     return Err(SpeechError::PlanChanged);
                 }
-                let revision = self.store.read()?.revision;
+                let revision = preflight.choice.expect("prepare probes choice")?.revision;
                 let store = self.store.clone();
                 Self::begin(
                     &mut slots.operations,
@@ -516,15 +697,18 @@ impl DeviceSpeech {
                         if !matches!(hex.capabilities(), Hex::Ready { .. }) {
                             return Err(SpeechError::Failed);
                         }
-                        // Linearize selection against host-side cancellation.
-                        let mut slot = control.0 .0.lock();
-                        if slot.cancelled {
+                        // Reserve publication against cancellation, then replace the file
+                        // without holding the operation lock that native revoke needs.
+                        if !store.select_if(Engine::Hex, Some(&revision), || {
+                            let mut slot = control.0 .0.lock();
+                            if slot.cancelled || slot.owner.is_none() {
+                                return false;
+                            }
+                            slot.committing = true;
+                            true
+                        })? {
                             return Ok(Operation::Cancelled);
                         }
-                        store.select(Engine::Hex, Some(&revision))?;
-                        slot.state = Operation::Prepared;
-                        slot.expires = Instant::now() + LEASE;
-                        control.0 .1.notify_all();
                         Ok(Operation::Prepared)
                     },
                 )
@@ -533,10 +717,10 @@ impl DeviceSpeech {
                 microphone_lease_id,
                 ..
             } => {
-                if self.native_microphone_busy(&slots).is_some() || slots.active(Kind::Prepare) {
+                if self.native_microphone_busy(slots).is_some() || slots.active(Kind::Prepare) {
                     return Err(SpeechError::Busy);
                 }
-                if self.preferred_engine()? != Some(Engine::Hex) {
+                if preflight.choice.expect("start probes choice")?.engine != Some(Engine::Hex) {
                     return Err(SpeechError::Unavailable);
                 }
                 if let Some(lease) = &slots.microphone {
@@ -551,7 +735,10 @@ impl DeviceSpeech {
                     return Err(SpeechError::NotOwned);
                 }
                 let hex = self.hex.clone().ok_or(SpeechError::Unavailable)?;
-                if !matches!(hex.capabilities(), Hex::Ready { .. }) {
+                if !matches!(
+                    preflight.hex.expect("start probes capabilities"),
+                    Hex::Ready { .. }
+                ) {
                     return Err(SpeechError::Unavailable);
                 }
                 let store = self.store.clone();
@@ -598,7 +785,7 @@ impl DeviceSpeech {
                             }
                             Ok(json!(slot.state))
                         }
-                        Request::Finish { wav, .. }
+                        Request::Finish { .. }
                             if slot.kind == Kind::Dictation
                                 && !slot.cancelled
                                 && !slot.state.terminal() =>
@@ -606,7 +793,7 @@ impl DeviceSpeech {
                             if slot.finish {
                                 return Err(SpeechError::Busy);
                             }
-                            slot.audio = Some(decode_wav(&wav).ok_or(SpeechError::Failed)?);
+                            slot.audio = Some(preflight.audio.ok_or(SpeechError::Failed)?);
                             slot.finish = true;
                             control.0 .1.notify_all();
                             Ok(Value::Null)
@@ -638,6 +825,11 @@ impl DeviceSpeech {
 
     pub(crate) fn revoke(&self, owner: Option<&str>) {
         let mut slots = self.slots.lock();
+        if let Some(owner) = owner {
+            slots.documents.remove(owner);
+        } else {
+            slots.documents.clear();
+        }
         if slots
             .microphone
             .as_ref()
@@ -707,6 +899,7 @@ impl DeviceSpeech {
                 #[cfg(target_os = "linux")]
                 microphone_claimed: false,
                 cancelled: false,
+                committing: false,
                 reason: None,
             }),
             Condvar::new(),
@@ -727,6 +920,7 @@ impl DeviceSpeech {
             if slot.state.terminal() {
                 return;
             }
+            slot.committing = false;
             slot.state = if let Some(error) = slot.reason {
                 Operation::Error { error }
             } else if slot.cancelled {

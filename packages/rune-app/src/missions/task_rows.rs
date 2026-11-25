@@ -15,6 +15,14 @@ pub(super) struct TaskRows {
 }
 
 impl TaskRows {
+    pub fn len(&self) -> u64 {
+        self.rows.len() as u64
+    }
+
+    pub fn contains(&self, key: &str) -> bool {
+        self.keys.contains_key(key)
+    }
+
     pub fn new(mut tasks: Vec<Task>) -> Self {
         tasks.sort_unstable_by_key(|task| task.order);
         let mut own = Self {

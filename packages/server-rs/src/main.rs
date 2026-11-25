@@ -173,7 +173,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
             .merge(auth::remote_routes())
             .fallback(|| async { unavailable() })
             .layer(from_fn(panic_guard::catch))
-            .layer(from_fn_with_state((state.clone(), launch.ui.remote_rune()), auth::remote::admit))
+            .layer(from_fn_with_state((state.clone(), launch.ui.remote_bundle()), auth::remote::admit))
             .layer(from_fn(bench::refusal_trace))
             .with_state(state.clone());
         if !launch.serve {
@@ -206,6 +206,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .with_state(state.clone());
     tokio::spawn(auth::Auth::sweep(state.clone()));
     tokio::spawn(events::bridge(state.clone()));
+    tokio::spawn(meta::releases::run(state.clone(), shutdown.clone()));
     let local_url = format!("http://127.0.0.1:{port}");
     if launch.serve {
         // The remote listener is HTTPS when enabled, else the (then visible) HTTP one.

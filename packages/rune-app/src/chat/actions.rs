@@ -16,8 +16,13 @@ pub struct Display {
     stream: StreamRender,
     live_ansi: RefCell<VecDeque<(String, rune_theme_codenomad::ansi::Stream)>>,
     pub(super) diffs: super::tool_diff::Cache,
+    pub(crate) timeline: crate::timeline::Timeline,
+    pub(crate) search_highlight: Option<super::search_hit::SearchHit>,
     pub(super) children: super::tools::children::Children,
     pub(crate) usage_family: super::usage::family::Totals,
+    pub(crate) pictures: super::media::Pictures,
+    pub(crate) receipts: super::receipts::Receipts,
+    pub(crate) messages: super::message_actions::Actions,
 }
 
 #[derive(Default)]
@@ -31,24 +36,32 @@ struct StreamRender {
 struct SessionDisplay {
     reading: super::reading::Reading,
     toggled: HashSet<String>,
+    expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
+    diagram_sources: HashMap<String, BTreeSet<usize>>,
     compact_diffs: (u64, HashSet<String>),
 }
 impl Display {
     pub(crate) fn evict_rendered(&mut self) {
+        self.suspend_rendered();
+        self.receipts.clear();
+    }
+    pub(super) fn suspend_rendered(&mut self) {
+        self.messages.suspend();
         self.diffs = Default::default();
         self.stream = StreamRender::default();
         self.live_ansi.get_mut().clear();
         self.children.clear();
         self.usage_family.close();
+        self.pictures.clear();
+        self.receipts.suspend();
+    }
+    pub(crate) fn reading_mut(&mut self) -> &mut super::reading::Reading {
+        &mut self.active.reading
     }
     pub(super) fn reading(&self) -> &super::reading::Reading {
         &self.active.reading
-    }
-
-    pub(super) fn reading_mut(&mut self) -> &mut super::reading::Reading {
-        &mut self.active.reading
     }
 
     pub fn bind(&mut self, server: &str, workspace: &str, session: &str) {
@@ -63,6 +76,9 @@ impl Display {
                 ..Self::default()
             };
         } else if self.session != session {
+            self.messages = Default::default();
+            self.timeline = Default::default();
+            self.search_highlight = None;
             let mut next = self.saved.remove(session).unwrap_or_default();
             next.reading.clear_row_guard();
             self.saved.insert(
@@ -73,12 +89,26 @@ impl Display {
             self.live_ansi.get_mut().clear();
             self.children.clear();
             self.usage_family.close();
+            self.pictures.clear();
+            self.receipts.clear();
             self.diffs = Default::default();
         }
     }
 
     pub fn toggled(&self, key: &str) -> bool {
         self.active.toggled.contains(key)
+    }
+
+    pub(super) fn expanded(&self, key: &str, default: bool) -> bool {
+        self.active.expansion.get(key).copied().unwrap_or(default)
+    }
+
+    pub(super) fn set_expanded(s: &mut State, key: &str, expanded: bool) {
+        s.transcript_display
+            .active
+            .expansion
+            .insert(key.into(), expanded);
+        s.revision += 1;
     }
 
     pub(super) fn compact_split(&self, epoch: u64, key: &str) -> bool {
@@ -112,17 +142,23 @@ impl Display {
         self.active.revealed.get(key).copied().unwrap_or_default()
     }
 
-    pub(super) fn live_ansi(&self, key: &str, source: &str, wrap: bool) -> rune::El {
+    pub(super) fn live_ansi(
+        &self,
+        key: &str,
+        source: &str,
+        wrap: bool,
+        query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+    ) -> rune::El {
         let mut cache = self.live_ansi.borrow_mut();
         let prior = cache
             .iter()
             .position(|(id, _)| id == key)
             .and_then(|index| cache.remove(index));
         if source.len() > 256 * 1024 {
-            return rune_theme_codenomad::ansi::code(source, wrap);
+            return rune_theme_codenomad::ansi::search_code(source, wrap, query);
         }
         let (id, mut stream) = prior.unwrap_or_else(|| (key.into(), Default::default()));
-        let output = stream.code(source, wrap);
+        let output = stream.code(source, wrap, query);
         if cache.len() == 4 {
             cache.pop_front();
         }
@@ -135,6 +171,7 @@ impl Display {
     }
 
     pub fn poll(s: &mut State, changed: bool, now: f64, tx: &mut rune::Tx) -> bool {
+        let timeline = crate::timeline::poll(s, tx) | crate::timeline::search::poll(s, now, tx);
         let stream = &mut s.transcript_display.stream;
         if changed {
             stream.pending = s.messages.last().is_some_and(|row| {
@@ -150,11 +187,11 @@ impl Display {
             });
         }
         if !stream.pending {
-            return false;
+            return timeline;
         }
         if now < stream.due {
             tx.wake_at(stream.due);
-            return false;
+            return timeline;
         }
         stream.pending = false;
         stream.due = now + RENDER_INTERVAL;
@@ -168,15 +205,20 @@ impl Display {
     }
 
     pub fn toggle_code(s: &mut State, key: &str, index: usize) {
-        let blocks = s
-            .transcript_display
-            .active
-            .unwrapped
-            .entry(key.into())
-            .or_default();
-        if !blocks.remove(&index) {
-            blocks.insert(index);
-        }
+        toggle_index(&mut s.transcript_display.active.unwrapped, key, index);
+        s.revision += 1;
+    }
+
+    pub(super) fn diagram_sources(&self, key: &str) -> BTreeSet<usize> {
+        self.active
+            .diagram_sources
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn toggle_diagram_source(s: &mut State, key: &str, index: usize) {
+        toggle_index(&mut s.transcript_display.active.diagram_sources, key, index);
         s.revision += 1;
     }
 
@@ -196,7 +238,17 @@ impl Display {
             .entry(key.into())
             .or_default();
         *steps = steps.saturating_add(1);
+        if key.starts_with("parts-gap-") {
+            crate::timeline::structure_changed(s);
+        }
         s.revision += 1;
+    }
+}
+
+fn toggle_index(groups: &mut HashMap<String, BTreeSet<usize>>, key: &str, index: usize) {
+    let indices = groups.entry(key.into()).or_default();
+    if !indices.remove(&index) {
+        indices.insert(index);
     }
 }
 

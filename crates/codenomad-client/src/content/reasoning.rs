@@ -5,6 +5,7 @@ use serde_json::Value;
 /// A native reasoning fragment, identified by its ordinal within the assistant step.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Reasoning {
+    pub part_index: Option<usize>,
     pub ordinal: usize,
     pub text: String,
     pub units: usize,
@@ -75,6 +76,7 @@ fn apply(row: &mut Message, event: &ReasoningEvent, capacity: usize) -> TextFit 
             TextFit::Repair
         } else {
             row.parts.push(Part::Reasoning(Reasoning {
+                part_index: None,
                 ordinal,
                 text: String::new(),
                 units: 0,
@@ -131,11 +133,12 @@ fn apply(row: &mut Message, event: &ReasoningEvent, capacity: usize) -> TextFit 
     TextFit::Applied
 }
 
-pub(super) fn decode(part: &Value, ordinal: usize, row_completed: bool) -> Reasoning {
+pub(super) fn decode(part: &Value, ordinal: usize, index: usize, row_completed: bool) -> Reasoning {
     let created = part["time"]["created"].as_u64();
     let completed = part["time"]["completed"].as_u64();
     let text = part["text"].as_str().unwrap_or_default();
     Reasoning {
+        part_index: Some(index),
         ordinal,
         text: text.into(),
         units: text.encode_utf16().count(),

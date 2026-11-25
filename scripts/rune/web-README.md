@@ -1,5 +1,7 @@
 # Coquille web Rune
 
+`packages/rune-app/fixtures/launcher-fixture.mjs --web-git-images` ouvre les différences SVG et AVIF d’un dépôt privé. Le banc vérifie les octets Git, les deux noms accessibles et les couleurs réellement peintes dans le canvas Chromium. Utiliser un bundle produit dédié via `RUNE_WEB_DIR`.
+
 `packages/rune-app/fixtures/launcher-fixture.mjs --web-missions` vérifie le panneau Missions monté avec le bundle produit (`RUNE_WEB_DIR`), un serveur Rust privé et des réponses de page déterministes. Chromium charge le WASM via HTTP avec WebCrypto désactivée. La sonde vérifie la reprise après refus d’ordre, la fiche sélectionnée, la pagination du répertoire et des tâches, l’activité et les tâches à examiner dans l’arborescence accessible.
 
 Compiler le même binaire `codenomad-rune` pour `wasm32-unknown-unknown`, puis empaqueter son fichier `.wasm` explicitement. Le cache Cargo reste celui du développeur. `bundle-web.mjs` utilise le contrat de `Rune/scripts/web-build.sh` : génération `wasm-bindgen --target web`, copie des snippets et des faces Inter complètes à côté de `app.js`.
@@ -44,6 +46,12 @@ node packages/rune-app/fixtures/launcher-fixture.mjs --web-mobile
 Il vérifie l'appairage HTTPS depuis une autre origine, les sessions du dossier et des worktrees liés sans recherche, la recherche hors page, le SSE et sa reprise après la coupure de l'amont puis après un vrai redémarrage du serveur Rust sur le même port. Le toucher au centre, l'IME injectée, le redimensionnement et la conservation du brouillon lors du redémarrage et du réappairage sont vérifiés. Le profil Chromium Android portrait couvre clair, sombre et DPR 1 ; « Anciens » est signalé comme écart connu si le miroir accessible le présente comme actif ([Rune #118](https://github.com/anomalyco/rune/issues/118)).
 
 Le contrôle `--web-mobile --same-origin-pairing` ouvre les liens sans page référente ; son rapport distingue ce contrôle du parcours complet avec `Referer`.
+
+`--web-mobile --history-return-only` isole le retour à une conversation déjà lue : la fixture retient le GET du rappel des envois, puis exige le texte du fil avant de libérer ce GET. Le rapport contient `transcriptWhileRecallHeld`.
+
+`--web-mobile-more-actions` vérifie ce retour puis le menu du composeur sur un seul profil portrait clair : focus DOM après rappel et effacement sans retoucher le champ, annulation de l’effacement, sélection d’un fichier et mise en file effective pendant une réponse.
+
+Rune [#1713](https://github.com/anomalyco/rune/issues/1713) suit le focus DOM à la souris ; [#1677](https://github.com/anomalyco/rune/issues/1677) suit la projection des rôles. Le banc relève les rôles projetés, et le test natif exige le menu et sa ligne désactivée.
 
 `node packages/rune-app/fixtures/launcher-fixture.mjs --web-android` utilise Chrome et le clavier logiciel d'un émulateur Android jetable déjà démarré, avec `RUNE_ANDROID_ADB` (chemin absolu), `RUNE_ANDROID_ADB_PORT` (serveur ADB privé) et `RUNE_ANDROID_SERIAL` (unique `emulator-*`). Le parcours suit un lien d'appairage externe, ouvre la conversation, défile via un geste Android, injecte un texte par CDP puis l'envoie via l'interface. Le banc coupe l'amont SSE et redémarre le serveur Rust sans recharger le document. `android-proof.json` contient les temps au premier contenu, les intervalles rAF du geste et la PSS des processus Chrome. Le cache HTTP est désactivé et le certificat de fixture épinglé. La dictée, la composition propre à Gboard et TalkBack gardent leurs essais distincts.
 

@@ -1,5 +1,8 @@
 use super::{Backend, Owner, platform};
-use crate::settings::notification_routing::{self, Category, Destination};
+use crate::settings::{
+    notification_routing::{self, Category, Destination},
+    transcript_preset::{self, Row},
+};
 use codenomad_client::{Receiver, bounded};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -8,10 +11,16 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) enum Choice {
     Locale,
     Contrast,
+    Shortcut(&'static str),
+    ShortcutReset,
+    GeneralBehavior(crate::settings::preferences::behavior::GeneralToggle),
     NewConversationPermissions,
-    UsageVisible,
-    UsageExpansion,
+    TranscriptPreset,
+    TranscriptRow(Row),
     LogLevel,
+    UpdateFeed,
+    Advanced(crate::settings::advanced::Toggle),
+    Environment,
     NotificationRoute(Category, Destination),
     NotificationsFocused,
     Mode,
@@ -19,11 +28,41 @@ pub(super) enum Choice {
 }
 
 impl Choice {
-    fn put(self, patch: &mut Value, value: &'static str) {
+    fn put(self, patch: &mut Value, value: &ChoiceValue, snapshot: &Value) {
+        if self == Self::ShortcutReset {
+            patch["settings"]["hotkeyOverrides"] = Value::Null;
+            return;
+        }
+        if let Self::Shortcut(id) = self {
+            if let ChoiceValue::Shortcut(binding) = value {
+                patch["settings"]["hotkeyOverrides"][id] = binding.clone();
+            }
+            return;
+        }
+        if let (
+            Self::Environment,
+            ChoiceValue::Environment {
+                name,
+                value,
+                secure,
+            },
+        ) = (self, value)
+        {
+            patch["environmentVariables"][name] = value.clone().map_or(Value::Null, Value::String);
+            if let Some(secure) = secure {
+                patch["secureEnvVars"] = json!(secure);
+            }
+            return;
+        }
+        let ChoiceValue::Text(value) = *value else {
+            return;
+        };
         match self {
             Self::Locale => patch["settings"]["locale"] = json!(value),
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
             Self::LogLevel => patch["logLevel"] = json!(value),
+            Self::UpdateFeed => patch["updateFeed"] = json!(value),
+            Self::Advanced(choice) => patch["settings"][choice.key()] = json!(value == "true"),
             Self::NotificationRoute(category, destination) => {
                 patch["settings"]["notificationRouting"][category.key()][destination.key()] =
                     json!(value == "true");
@@ -31,12 +70,24 @@ impl Choice {
             Self::NotificationsFocused => {
                 patch["settings"]["osNotificationsAllowWhenVisible"] = json!(value == "true");
             }
+            Self::GeneralBehavior(toggle) => {
+                patch["settings"][toggle.key()] = toggle.json_value(value == "true");
+            }
             Self::NewConversationPermissions => {
                 patch["settings"]["newConversationPermissions"] = json!(value)
             }
-            Self::UsageVisible => patch["settings"]["showUsageMetrics"] = json!(value == "on"),
-            Self::UsageExpansion => patch["settings"]["usageMetricsExpansion"] = json!(value),
+            Self::TranscriptPreset => {
+                if let Value::Object(fields) = transcript_preset::patch(value) {
+                    for (key, value) in fields {
+                        patch["settings"][key] = value;
+                    }
+                }
+            }
+            Self::TranscriptRow(row) => {
+                row.put(&mut patch["settings"], &snapshot["settings"], value)
+            }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
+            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment => (),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 patch["appearancePreferences"][mode] = json!({
@@ -46,12 +97,42 @@ impl Choice {
         }
     }
 
-    fn confirmed(self, value: &'static str, snapshot: &Value) -> bool {
+    fn confirmed(self, value: &ChoiceValue, snapshot: &Value) -> bool {
+        if self == Self::ShortcutReset {
+            let overrides = &snapshot["settings"]["hotkeyOverrides"];
+            return overrides.is_null() || overrides.as_object().is_some_and(|map| map.is_empty());
+        }
+        if let Self::Shortcut(id) = self {
+            return matches!(value, ChoiceValue::Shortcut(binding)
+                if &snapshot["settings"]["hotkeyOverrides"][id] == binding);
+        }
+        if let (
+            Self::Environment,
+            ChoiceValue::Environment {
+                name,
+                value,
+                secure,
+            },
+        ) = (self, value)
+        {
+            let saved = &snapshot["environmentVariables"][name];
+            return value
+                .as_ref()
+                .map_or_else(|| saved.is_null(), |value| saved == value)
+                && secure
+                    .as_ref()
+                    .is_none_or(|secure| snapshot["secureEnvVars"] == json!(secure));
+        }
+        let ChoiceValue::Text(value) = *value else {
+            return false;
+        };
         let appearance = &snapshot["appearancePreferences"];
         match self {
             Self::Locale => snapshot["settings"]["locale"] == value,
             Self::Contrast => snapshot["settings"]["highContrast"] == value,
             Self::LogLevel => snapshot["logLevel"] == value,
+            Self::UpdateFeed => snapshot["updateFeed"] == value,
+            Self::Advanced(choice) => snapshot["settings"][choice.key()] == (value == "true"),
             Self::NotificationRoute(category, destination) => {
                 snapshot["settings"]["notificationRouting"][category.key()][destination.key()]
                     == (value == "true")
@@ -59,12 +140,16 @@ impl Choice {
             Self::NotificationsFocused => {
                 snapshot["settings"]["osNotificationsAllowWhenVisible"] == (value == "true")
             }
+            Self::GeneralBehavior(toggle) => {
+                snapshot["settings"][toggle.key()] == toggle.json_value(value == "true")
+            }
             Self::NewConversationPermissions => {
                 snapshot["settings"]["newConversationPermissions"] == value
             }
-            Self::UsageVisible => snapshot["settings"]["showUsageMetrics"] == (value == "on"),
-            Self::UsageExpansion => snapshot["settings"]["usageMetricsExpansion"] == value,
+            Self::TranscriptPreset => transcript_preset::confirmed(value, &snapshot["settings"]),
+            Self::TranscriptRow(row) => row.mode(&snapshot["settings"]) == value,
             Self::Mode => appearance["mode"] == value,
+            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment => false,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 let slot = &appearance[mode];
@@ -76,16 +161,38 @@ impl Choice {
             }
         }
     }
+
+    fn has_dedicated_error(self) -> bool {
+        matches!(
+            self,
+            Self::Contrast
+                | Self::NewConversationPermissions
+                | Self::Shortcut(_)
+                | Self::ShortcutReset
+                | Self::UpdateFeed
+        )
+    }
 }
 
-type Choices = BTreeMap<Choice, &'static str>;
+#[derive(Clone, PartialEq)]
+enum ChoiceValue {
+    Text(&'static str),
+    Shortcut(Value),
+    Environment {
+        name: String,
+        value: Option<String>,
+        secure: Option<Vec<String>>,
+    },
+}
+
+type Choices = BTreeMap<Choice, ChoiceValue>;
 
 #[derive(Default)]
 struct Write {
     requested: Choices,
     pending: BTreeSet<Choice>,
     failed: BTreeSet<Choice>,
-    retry: bool,
+    retry: BTreeSet<Choice>,
 }
 
 #[derive(Default)]
@@ -96,7 +203,7 @@ struct Read {
 }
 
 enum Operation {
-    Read { retry: bool },
+    Read { retry: BTreeSet<Choice> },
     Write(Choices),
 }
 
@@ -143,7 +250,7 @@ impl Document {
         if let Some(flight) = self.flight.take() {
             match flight.operation {
                 Operation::Write(_) => self.barrier = Some(flight),
-                Operation::Read { retry } => self.write.retry |= retry,
+                Operation::Read { retry } => self.write.retry.extend(retry),
             }
         }
         self.read.reattach = true;
@@ -153,16 +260,20 @@ impl Document {
         self.read.queued = true;
     }
 
-    pub(super) fn retry(&mut self) {
+    pub(super) fn retry(&mut self, accepts: impl Fn(Choice) -> bool) {
         let operation = self.flight.as_ref().map(|flight| &flight.operation);
-        if matches!(operation, Some(Operation::Read { retry: true })) {
-            return;
-        }
-        self.write.retry |= self.write.failed.iter().any(|choice| {
-            !self.write.pending.contains(choice)
+        self.write
+            .retry
+            .extend(self.write.failed.iter().copied().filter(|choice| {
+            accepts(*choice)
+                && !self.write.pending.contains(choice)
                 && !matches!(operation, Some(Operation::Write(sent)) if sent.contains_key(choice))
-        });
-        if self.read.failed && !self.write.retry {
+                && !matches!(operation, Some(Operation::Read { retry }) if retry.contains(choice))
+        }));
+        if self.read.failed
+            && self.write.retry.is_empty()
+            && !matches!(operation, Some(Operation::Read { .. }))
+        {
             self.invalidate();
         }
     }
@@ -175,24 +286,102 @@ impl Document {
         self.snapshot.is_none() && !self.read.failed
     }
 
+    #[cfg(test)]
     pub(super) fn write_failed(&self) -> bool {
         !self.write.failed.is_empty()
     }
 
+    pub(super) fn any_failure(&self, accepts: impl Fn(Choice) -> bool) -> bool {
+        self.write.failed.iter().copied().any(accepts)
+    }
+
+    #[cfg(test)]
     pub(super) fn write_failed_other_than(&self, choice: Choice) -> bool {
         self.write.failed.iter().any(|failed| *failed != choice)
     }
 
     pub(super) fn stage(&mut self, choice: Choice, value: &'static str) {
+        self.stage_value(choice, ChoiceValue::Text(value));
+    }
+
+    pub(super) fn stage_shortcut(&mut self, id: &'static str, binding: Value) {
+        self.stage_value(Choice::Shortcut(id), ChoiceValue::Shortcut(binding));
+    }
+
+    pub(super) fn stage_environment(
+        &mut self,
+        name: String,
+        value: Option<String>,
+        secure: Option<Vec<String>>,
+    ) {
+        self.stage_value(
+            Choice::Environment,
+            ChoiceValue::Environment {
+                name,
+                value,
+                secure,
+            },
+        );
+    }
+
+    pub(super) fn environment_pending(&self) -> bool {
+        self.write.requested.contains_key(&Choice::Environment)
+            && !self.choice_failed(Choice::Environment)
+    }
+
+    pub(super) fn reset_shortcuts(&mut self) {
+        if !self.shortcuts_pending() {
+            self.write
+                .requested
+                .retain(|k, _| !matches!(k, Choice::Shortcut(_)));
+            self.write
+                .failed
+                .retain(|k| !matches!(k, Choice::Shortcut(_)));
+            self.stage_value(Choice::ShortcutReset, ChoiceValue::Shortcut(Value::Null));
+        }
+    }
+
+    pub(super) fn shortcuts_pending(&self) -> bool {
+        self.write.requested.keys().any(|choice| {
+            matches!(choice, Choice::Shortcut(_) | Choice::ShortcutReset)
+                && !self.choice_failed(*choice)
+        })
+    }
+
+    pub(super) fn resetting_shortcuts(&self) -> bool {
+        self.write.requested.contains_key(&Choice::ShortcutReset)
+    }
+
+    fn stage_value(&mut self, choice: Choice, value: ChoiceValue) {
+        let obsolete = |prior: &Choice| match choice {
+            Choice::TranscriptPreset => matches!(prior, Choice::TranscriptRow(_)),
+            Choice::TranscriptRow(_) => {
+                *prior == Choice::TranscriptPreset && self.write.failed.contains(prior)
+            }
+            _ => false,
+        };
+        self.write.requested.retain(|prior, _| !obsolete(prior));
+        self.write
+            .pending
+            .retain(|prior| self.write.requested.contains_key(prior));
+        self.write
+            .failed
+            .retain(|prior| self.write.requested.contains_key(prior));
         if matches!(
             choice,
             Choice::Contrast
+                | Choice::GeneralBehavior(_)
                 | Choice::NewConversationPermissions
-                | Choice::UsageVisible
-                | Choice::UsageExpansion
+                | Choice::TranscriptPreset
+                | Choice::TranscriptRow(_)
                 | Choice::LogLevel
+                | Choice::UpdateFeed
+                | Choice::Advanced(_)
+                | Choice::Environment
                 | Choice::NotificationRoute(..)
                 | Choice::NotificationsFocused
+                | Choice::Shortcut(_)
+                | Choice::ShortcutReset
         ) {
             self.write.failed.remove(&choice);
         }
@@ -201,18 +390,33 @@ impl Document {
     }
 
     pub(super) fn requested(&self, choice: Choice) -> Option<&'static str> {
-        self.write.requested.get(&choice).copied()
+        match self.write.requested.get(&choice)? {
+            ChoiceValue::Text(value) => Some(*value),
+            ChoiceValue::Shortcut(_) | ChoiceValue::Environment { .. } => None,
+        }
     }
 
     pub(super) fn choice_failed(&self, choice: Choice) -> bool {
         self.write.failed.contains(&choice)
     }
 
+    pub(super) fn choice_pending(&self, choice: Choice) -> bool {
+        let in_flight = |flight: &Option<Flight>| match flight.as_ref().map(|f| &f.operation) {
+            Some(Operation::Write(sent)) => sent.contains_key(&choice),
+            Some(Operation::Read { retry }) => retry.contains(&choice),
+            None => false,
+        };
+        self.write.pending.contains(&choice)
+            || self.write.retry.contains(&choice)
+            || in_flight(&self.flight)
+            || in_flight(&self.barrier)
+    }
+
     pub(super) fn unsettled(&self) -> bool {
         self.flight.is_some()
             || self.barrier.is_some()
             || !self.write.pending.is_empty()
-            || self.write.retry
+            || !self.write.retry.is_empty()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -231,27 +435,46 @@ impl Document {
     pub(super) fn draining(&self) -> bool {
         self.has_unconfirmed()
             && (self.flight.is_some()
-                || self.write.retry
+                || !self.write.retry.is_empty()
                 || self.read.queued
                 || !self.read.failed && !self.write.pending.is_empty())
     }
 
     fn settle(&mut self, operation: Operation, snapshot: Option<Value>, current: bool) {
         if let Operation::Write(sent) = &operation {
-            for (&choice, &value) in sent {
-                if !self.write.pending.contains(&choice)
+            for (&choice, value) in sent {
+                if self.write.requested.get(&choice) == Some(value)
+                    && !self.write.pending.contains(&choice)
                     && !snapshot
                         .as_ref()
                         .is_some_and(|data| choice.confirmed(value, data))
                 {
-                    self.write.failed.insert(choice);
-                    self.notification_failure |=
-                        current && choice != Choice::NewConversationPermissions;
+                    if choice == Choice::TranscriptPreset
+                        && self
+                            .write
+                            .pending
+                            .iter()
+                            .any(|prior| matches!(prior, Choice::TranscriptRow(_)))
+                    {
+                        self.write.requested.remove(&choice);
+                    } else {
+                        self.write.failed.insert(choice);
+                        self.notification_failure |= current && !choice.has_dedicated_error();
+                    }
                 }
             }
         }
         if current {
             self.read.failed = snapshot.is_none();
+            // Info has an independent authoritative metadata read after every feed gesture.
+            // Settle a refused preflight so that read can proceed; retry needs a new gesture.
+            if self.read.failed {
+                for choice in [Choice::UpdateFeed, Choice::Environment] {
+                    if self.write.pending.remove(&choice) {
+                        self.write.failed.insert(choice);
+                    }
+                }
+            }
         }
         if let Some(snapshot) = snapshot {
             self.write.requested.retain(|&choice, value| {
@@ -269,8 +492,10 @@ impl Document {
                     true
                 }
             });
-            if matches!(operation, Operation::Read { retry: true }) {
-                self.write.pending.extend(&self.write.failed);
+            if let Operation::Read { retry } = operation {
+                self.write
+                    .pending
+                    .extend(retry.intersection(&self.write.failed));
             }
             if current {
                 self.snapshot = Some(snapshot);
@@ -304,23 +529,42 @@ impl Document {
                 changed = true;
             }
         }
-        let operation = if self.write.retry {
-            self.write.retry = false;
+        let operation = if !self.write.retry.is_empty() {
             self.read.reattach = false;
             self.read.queued = false;
-            Operation::Read { retry: true }
+            Operation::Read {
+                retry: std::mem::take(&mut self.write.retry),
+            }
         } else if std::mem::take(&mut self.read.reattach) {
             self.read.queued = false;
-            Operation::Read { retry: false }
+            Operation::Read {
+                retry: BTreeSet::new(),
+            }
         } else if !self.read.failed && !self.write.pending.is_empty() {
+            // A preset is one authoritative write. Build following per-row edits from its receipt.
+            let preset = self.write.pending.contains(&Choice::TranscriptPreset);
+            let mut pending = std::mem::take(&mut self.write.pending);
+            if preset {
+                self.write.pending.extend(
+                    pending.extract_if(.., |choice| matches!(choice, Choice::TranscriptRow(_))),
+                );
+            }
             Operation::Write(
-                std::mem::take(&mut self.write.pending)
+                pending
                     .into_iter()
-                    .filter_map(|choice| self.requested(choice).map(|value| (choice, value)))
+                    .filter_map(|choice| {
+                        self.write
+                            .requested
+                            .get(&choice)
+                            .cloned()
+                            .map(|value| (choice, value))
+                    })
                     .collect(),
             )
         } else if std::mem::take(&mut self.read.queued) {
-            Operation::Read { retry: false }
+            Operation::Read {
+                retry: BTreeSet::new(),
+            }
         } else {
             return changed;
         };
@@ -334,8 +578,12 @@ impl Document {
             {
                 patch["settings"]["notificationRouting"] = notification_routing::seed(before);
             }
-            for (&choice, &value) in sent {
-                choice.put(&mut patch, value);
+            for (&choice, value) in sent {
+                choice.put(
+                    &mut patch,
+                    value,
+                    self.snapshot.as_ref().unwrap_or(&Value::Null),
+                );
             }
             Some(patch)
         } else {
@@ -372,6 +620,42 @@ fn notification_routes_do_not_read_an_invalidated_document() {
     assert!(document.confirmed().is_some());
     document.invalidate();
     assert!(document.confirmed().is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn dedicated_error_choices_do_not_emit_generic_save_notification() {
+    let unchanged = json!({"settings":{"hotkeyOverrides":{"file-save":[]}}});
+    for (choice, value) in [
+        (Choice::Contrast, ChoiceValue::Text("on")),
+        (
+            Choice::NewConversationPermissions,
+            ChoiceValue::Text("manual"),
+        ),
+        (
+            Choice::Shortcut("close-instance"),
+            ChoiceValue::Shortcut(json!([])),
+        ),
+        (Choice::ShortcutReset, ChoiceValue::Shortcut(Value::Null)),
+        (Choice::UpdateFeed, ChoiceValue::Text("stable")),
+    ] {
+        let mut document = Document::default();
+        document.write.requested.insert(choice, value.clone());
+        let sent = BTreeMap::from([(choice, value)]);
+        document.settle(Operation::Write(sent), Some(unchanged.clone()), true);
+        assert!(document.choice_failed(choice));
+        assert!(!document.take_notification_failure());
+    }
+    let mut document = Document::default();
+    let value = ChoiceValue::Text("fr");
+    document
+        .write
+        .requested
+        .insert(Choice::Locale, value.clone());
+    let sent = BTreeMap::from([(Choice::Locale, value)]);
+    document.settle(Operation::Write(sent), Some(unchanged), true);
+    assert!(document.choice_failed(Choice::Locale));
+    assert!(document.take_notification_failure());
 }
 
 impl Flight {

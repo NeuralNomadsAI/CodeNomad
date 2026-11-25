@@ -1,16 +1,20 @@
 use std::collections::{BTreeMap, BTreeSet};
 mod cache;
 pub(crate) mod opening;
+pub(crate) mod outlines;
 mod persistence;
 mod save_snapshot;
 mod snapshot_budget;
 mod state;
 pub(crate) use persistence::finish;
+pub(crate) use state::active_workspace;
 pub(crate) use state::contains_project;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use state::evict_for_probe;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use state::native_window_store;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::poll_cached_notifications;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use state::set_files_tab;
 pub(crate) use state::{
@@ -21,12 +25,14 @@ pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
     close, connected, draft_changed, file_wrap, files_tab, has_conversation_stream, input_ready,
     new_tab, opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume,
-    retry, schedule_catalogue, select, status, strip, toggle_file_wrap, unselect_missing,
+    retry, schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative,
+    status, strip, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
 };
-#[cfg(target_arch = "wasm32")]
-pub(crate) use state::{active_workspace, poll_cached_notifications};
 pub(crate) use state::{
-    mission_event, mission_panel, mission_supported, right_panel_tab, set_right_panel_tab,
+    deliver_detached_events, detached_workspace_ids, has_detached_panels,
+    has_unopened_detached_panels, mission_confirmation, mission_event, mission_observation_project,
+    mission_panel, mission_supported, missions_composing, reconcile_detached_online,
+    right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
     suspend_missions,
 };
 

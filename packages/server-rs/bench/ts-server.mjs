@@ -21,6 +21,19 @@ if (process.env.CNRS_FIXTURE_URL) {
   OpenCodeCliService.prototype.discover = async () => endpoint
   for (const action of ["ensure", "restart"]) OpenCodeCliService.prototype[action] = async () => { throw new Error(`Fixture forbids service ${action}`) }
 }
+if (process.env.CNRS_FIXTURE_RELEASES) {
+  const { Agent, setGlobalDispatcher } = await import("undici")
+  const fixture = new URL(process.env.CNRS_FIXTURE_RELEASES)
+  assert.equal(fixture.href, `${fixture.origin}/`)
+  assert(fixture.hostname === "127.0.0.1" && fixture.protocol === "http:" && fixture.port)
+  setGlobalDispatcher(new class extends Agent {
+    dispatch(options, handler) {
+      if (String(options.origin) === "https://api.github.com" && options.path.startsWith("/repos/NeuralNomadsAI/CodeNomad/releases"))
+        return super.dispatch({ ...options, origin: fixture.origin }, handler)
+      return super.dispatch(options, handler)
+    }
+  }())
+}
 // `providers` mode: every HTTPS request goes to the bench's fake provider (`https://host/path` →
 // `<fake>/host/path`), so no provider is ever contacted.
 if (process.env.CNRS_FIXTURE_PROVIDERS) {

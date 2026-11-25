@@ -26,6 +26,7 @@ mod settings;
 mod shell;
 use shell::render::view;
 mod strings;
+mod timeline;
 use screen::Screen;
 mod workspace;
 #[cfg(test)]
@@ -54,6 +55,10 @@ struct State {
     #[cfg(target_arch = "wasm32")]
     pairing: platform::pairing::Recovery,
     transcript_display: transcript_state::Display,
+    rail_excerpts: timeline::ExcerptCache,
+    saved_outlines: workspace::outlines::Cache,
+    rail_filter_revision: u64,
+    window_size: [f32; 2],
     tool_diff_preferences: chat::ToolDiffPreferences,
     screen: Screen,
     settings: settings::Host,
@@ -66,10 +71,14 @@ struct State {
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
     shell: shell::Panels,
+    status_permissions: shell::status_permissions::Permissions,
+    status_usage: shell::status_usage::Panel,
     chat_title: String,
     messages: Vec<history::Row>,
     draft: TextEdit,
     composer: composer::Owner,
+    prompt_history: composer::recall::History,
+    command_receipts: composer::command_receipts::CommandReceipts,
     incoming: Option<Receiver<Event>>,
     reader: Option<chat::reader::Reader>,
     commands: Option<Sender<Command>>,
@@ -108,6 +117,10 @@ fn init() -> State {
         #[cfg(target_arch = "wasm32")]
         pairing: Default::default(),
         transcript_display: Default::default(),
+        rail_excerpts: Default::default(),
+        saved_outlines: Default::default(),
+        rail_filter_revision: 0,
+        window_size: [0.0; 2],
         tool_diff_preferences: Default::default(),
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
@@ -120,10 +133,14 @@ fn init() -> State {
         rejected_edit: TextEdit::new(""),
         workspace: None,
         shell: Default::default(),
+        status_permissions: Default::default(),
+        status_usage: Default::default(),
         chat_title: String::new(),
         messages: vec![],
         draft: TextEdit::new(""),
         composer: Default::default(),
+        prompt_history: Default::default(),
+        command_receipts: Default::default(),
         incoming: None,
         reader: None,
         commands: None,
@@ -135,12 +152,40 @@ fn init() -> State {
         history_detached: false,
     }
 }
+#[cfg(feature = "test-support")]
+fn load_loopback_scene(s: &mut State) {
+    s.messages.push(
+        Message {
+            id: "loopback-fixture".into(),
+            role: "assistant".into(),
+            completed: true,
+            parts: vec![],
+            usage: None,
+            body: chat::LOOPBACK_LINK_SCENE.into(),
+        }
+        .into(),
+    );
+    s.phase = Phase::Ready;
+}
 fn setup(s: &mut State, wake: rune::Waker) {
     #[cfg(target_arch = "wasm32")]
     let wake = shell::notifications::with_background_wake(s, wake);
     s.wake = wake.clone();
+    #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
+    if platform::scene_is("transcript-images") {
+        chat::images_fixture::load(s);
+        return;
+    }
+    #[cfg(feature = "test-support")]
+    if platform::scene_is("transcript-loopback") {
+        #[cfg(target_arch = "wasm32")]
+        load_loopback_scene(s);
+        return;
+    }
     #[cfg(feature = "test-support")]
     if platform::scene_is("transcript") {
+        #[cfg(target_arch = "wasm32")]
+        transcript::load_scene(s);
         return;
     }
     #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
@@ -173,14 +218,9 @@ fn local_stress() -> bool {
 fn send(s: &mut State, tx: &mut Tx) {
     composer::send(s, tx, false);
 }
-fn request_older(s: &mut State, _: &mut Tx) {
-    if s.can_older
-        && !s.paging
-        && s.commands
-            .as_ref()
-            .is_some_and(|c| c.try_send(Command::Older).is_ok())
-    {
-        s.paging = true;
+fn request_older(s: &mut State, tx: &mut Tx) {
+    if chat::reader::older(s) {
+        chat::reader::announce_paging(tx);
     }
 }
 fn latest(s: &mut State, tx: &mut Tx) {
@@ -202,11 +242,13 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 
 fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     chat::reader::expire_sync_undo(s);
+    let gesture = timeline::poll_edge(s, tx);
     let defer_reader_sync = !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)
         && !s.messages.is_empty();
-    let chat = chat::events::poll_chat_for_window(s, 64, defer_reader_sync);
+    let chat = !timeline::input_precedes_admission(s, tx)
+        && chat::events::poll_chat_for_window(s, 64, defer_reader_sync);
     shell::notifications::collect(s, workspace::notification_target);
     if s.reader
         .as_ref()
@@ -233,20 +275,34 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             .is_some_and(chat::reader::Reader::awaits_history_width)
             || s.tool_diff_preferences.history_width() > 0.0)
         && chat::reader::renderer_ready(s, tx);
-    let mut changed = chat | restored | transcript_state::Display::poll(s, chat, now, tx);
+    let mut changed = gesture | chat | restored | transcript_state::Display::poll(s, chat, now, tx);
     changed |= chat::ToolDiffPreferences::sync_focused_agent_control(s, tx.focused());
     changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
+    changed |= composer::recall::poll(s);
+    changed |= composer::menu::poll(s, tx);
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);
+    changed |= chat::message_actions::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     {
         changed |= platform::pairing::poll(s, tx);
     }
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
-    changed |= settings::poll(s) | settings::poll_memory_cleanup(s, tx);
+    let transcript_revision = s.revision;
+    changed |= settings::poll(s, tx) | settings::poll_window_actions(s, tx);
+    if s.revision != transcript_revision {
+        timeline::filters_changed(s);
+    }
+    changed |= timeline::search::settle_destination(s, tx);
+    #[cfg(target_arch = "wasm32")]
+    {
+        changed |= settings::poll_stats(s, now, tx);
+    }
+    changed |= shell::status_permissions::poll(s, tx);
+    changed |= shell::status_usage::poll(s, now, tx);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
         changed |= launcher::reopen(s);
@@ -328,7 +384,9 @@ fn run_app() {
                     s.phase = Phase::Ready;
                 }),
                 #[cfg(not(target_arch = "wasm32"))]
-                ("transcript", probes::transcript_scene::load),
+                ("transcript", transcript::load_scene),
+                #[cfg(not(target_arch = "wasm32"))]
+                ("transcript-loopback", load_loopback_scene),
                 #[cfg(not(target_arch = "wasm32"))]
                 ("git-changes", probes::git_scene::changes),
                 #[cfg(not(target_arch = "wasm32"))]

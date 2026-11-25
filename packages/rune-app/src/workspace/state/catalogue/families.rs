@@ -86,6 +86,7 @@ mod tests {
         let linked = Worktree {
             head: None,
             slug: "linked".into(),
+            label: None,
             directory: "D:/linked".into(),
             service_directory: Some("/mnt/d/linked".into()),
             branch: None,

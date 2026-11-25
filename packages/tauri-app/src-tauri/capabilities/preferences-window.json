@@ -22,6 +22,7 @@
     "allow-data-profiles-set-next-launch",
     "allow-data-profiles-relaunch",
     "allow-window-control",
+    "allow-start-native-window-drag",
     "dialog:allow-open",
     "allow-open-external-url",
     "notification:allow-is-permission-granted",

@@ -144,6 +144,16 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - name: Setup Rust (Windows fixture job)
+        if: runner.os == 'Windows'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.1'
+      - name: Restore Cargo downloads (Windows fixture job)
+        if: ${{ runner.os == 'Windows' && hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
       - run: npm ci --ignore-scripts
       - name: Install browser for native pruning UI checks
         run: npx --workspace @codenomad/ui playwright install --with-deps chromium
@@ -160,6 +170,10 @@ jobs:
       - name: Test the installed plugin with an isolated official runtime
         shell: pwsh
         run: |
+          if ($env:RUNNER_OS -eq 'Windows') {
+            cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
           $platform = node -p "process.platform === 'win32' ? 'windows' : process.platform"
           $arch = node -p "process.arch"
           $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
@@ -233,9 +247,20 @@ jobs:
       - run: npm run build:automation --workspace @neuralnomads/codenomad
       - run: npm run build:missions --workspace @neuralnomads/codenomad
       - run: npm run build:memory --workspace @neuralnomads/codenomad
+      - name: Setup Rust (Windows fixture job)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.1'
+      - name: Restore Cargo downloads (Windows fixture job)
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
       - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
+          cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $fixtures = Join-Path $env:RUNNER_TEMP 'runtime-contract-fixtures'
           New-Item -ItemType Directory -Force $fixtures | Out-Null
           "RUNTIME_CONTRACT_FIXTURES=$fixtures" >> $env:GITHUB_ENV
@@ -617,6 +642,7 @@ jobs:
           packages/ui/src/components/mission-native-execution.test.ts
           packages/ui/src/components/mission-picker-model.test.ts
           packages/ui/src/components/mission-profile-controls-data.test.ts
+          packages/ui/src/components/catalog-refresh.test.ts
           packages/ui/src/components/mission-profile-summary-data.test.ts
           packages/ui/src/components/mission-progress-model.test.ts
           packages/ui/src/components/mission-reader-locales.test.ts
@@ -731,7 +757,6 @@ jobs:
           packages/ui/src/stores/session-child-transcript-watch.test.ts
           packages/ui/src/stores/opencode-inbox-rebinding.test.ts
           packages/ui/src/stores/opencode-transcript-replay.test.ts
-          packages/ui/src/stores/opencode-compaction.test.ts
           packages/ui/src/lib/message-part-grouping.test.ts
           packages/ui/src/lib/settings/behavior-registry.test.ts
           packages/ui/src/components/instance/shell/right-panel/core-plugin.test.ts
@@ -754,6 +779,9 @@ jobs:
           packages/ui/src/stores/interruption-scope.test.ts
           packages/ui/src/stores/session-workspace-scope.test.ts
           packages/ui/src/stores/session-projection-cost.test.ts
+          packages/ui/src/stores/session-projection.test.ts
+          packages/ui/src/lib/deadline-memo.test.ts
+          packages/ui/src/lib/server-events-lifecycle.test.ts
           packages/ui/src/stores/session-outline.test.ts
           packages/ui/src/stores/runtime-contract.test.ts
           packages/ui/src/stores/session-lifecycle-signals.test.ts
@@ -774,6 +802,10 @@ jobs:
           packages/ui/src/stores/project-names.test.ts
           packages/ui/src/stores/temporary-instances.test.ts
           packages/ui/src/stores/closed-workspace-drafts.test.ts
+
+      - name: Test compaction and verify natural exit
+        timeout-minutes: 1
+        run: node --conditions=browser --import tsx --test packages/ui/src/stores/opencode-compaction.test.ts
 
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"
@@ -946,6 +978,18 @@ jobs:
           node-version-file: .node-version
           cache: npm
 
+      - name: Setup Rust (Windows fixture job)
+        if: runner.os == 'Windows'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.1'
+
+      - name: Restore Cargo downloads (Windows fixture job)
+        if: ${{ runner.os == 'Windows' && hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
+
       - name: Install dependencies
         run: npm ci
 
@@ -981,6 +1025,10 @@ jobs:
           "packages/server/src/opencode-update/*.test.ts"
           packages/ui/src/lib/launch-errors.test.ts
 
+      - name: Build Windows fixture job launcher
+        if: runner.os == 'Windows'
+        run: cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
+
       - name: Test first installation without system Node
         timeout-minutes: 10
         run: node scripts/test-opencode-install-native.mjs
@@ -1012,6 +1060,7 @@ jobs:
             node scripts/test-opencode-install-native.mjs
 
       - name: Test migration failure guards
+        shell: bash
         run: node --test scripts/native-fixture-guards.test.mjs "scripts/fixtures/wsl-*.test.mjs"
 
       - name: Certify native migration and Git-degraded conversations at the minimum and latest stable

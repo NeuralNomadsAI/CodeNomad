@@ -1,7 +1,7 @@
 // Hosts the frame probe in real Electron with the real preload and the webPreferences
 // of createWindow (read from main.ts). No CodeNomad backend, profile or daemon is involved.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import os from "node:os"

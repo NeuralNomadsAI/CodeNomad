@@ -12,6 +12,8 @@ Tauri (`cli_manager.rs`, `Runner::Rust`) runs the binary directly with the TypeS
 
 `serve` reads `server.opencodeBinary` from the selected profile at startup. A saved custom executable takes precedence over automatic discovery; an empty selection, `opencode` or `opencode2` uses discovery.
 
+The HTTPS listener serves the selected static UI bundle (Solid or Rune) to paired browsers. Solid’s non-HTML assets, including the PWA manifest, can be fetched without a device cookie. Both bundles use the same static encoding negotiation as the local listener.
+
 The positional launch `codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>` (bench and user service, `src/bench.rs`) keeps its data beside the identity file, its settings there or at `CLI_CONFIG`, and reads `CLI_UNRESTRICTED_ROOT`, `CNRS_SERVER_PASSWORD`, `CNRS_HTTPS_*` and `CNRS_TLS_*`.
 
 ## Architecture
@@ -70,6 +72,8 @@ Prompt forwarding keeps native fields (`text`, `files`, `agents`, `skills`, `met
 Slash commands retain native `name`, `text`, delivery and attachment fields inside the 1 MiB mutation bound. Sends read the profile environment at admission, preserve native session ownership and use the same validated connection for the environment and input writes. `bench/compare.mjs command-admission` exercises these checks without a model or OpenCode process.
 
 Prompt and command sends accept sessions in existing subfolders of the opened workspace or a live linked checkout. The proxy verifies the physical directory and native checkout registration before updating the environment and forwarding the input.
+
+Instance storage accepts workspace IDs and directory keys. A verified linked checkout of an open project uses its supplied directory spelling as the document key. The shared GET and PUT carry the same document as the TypeScript server.
 
 Known divergence: when a platform package does not match its registry integrity, the TypeScript server installs it anyway through `@opencode/cli`'s postinstall fallback; Rust refuses it (`bench/opencode-install.mjs`). OpenCode 1.x npm replacement is not ported: such an installation is refused.
 

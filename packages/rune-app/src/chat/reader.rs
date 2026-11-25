@@ -1,5 +1,8 @@
 use super::reading::{Bookmark, Reading};
-use crate::{State, transport::Event};
+use crate::{
+    State,
+    transport::{Event, HistoryEdge},
+};
 use codenomad_client::{
     Receiver, bounded,
     recovery::{
@@ -46,6 +49,7 @@ pub(crate) struct Reader {
     deferred_sync: Option<(u64, u64, Event, u8, u64)>,
     sync_undo: Option<SyncUndo>,
     awaiting_manual_probe: u8,
+    installed: bool,
     hidden: bool,
     resume_pending: bool,
     pending_scroll: bool,
@@ -85,6 +89,7 @@ impl Reader {
                 deferred_sync: None,
                 sync_undo: None,
                 awaiting_manual_probe: 0,
+                installed: false,
                 hidden: false,
                 resume_pending: false,
                 pending_scroll: false,
@@ -231,6 +236,10 @@ impl Reader {
         self.hidden || self.resume_pending || self.gap || self.parked || self.settling
     }
 
+    pub(crate) fn has_visible_window(&self) -> bool {
+        self.installed && !self.hidden && !self.resume_pending
+    }
+
     pub(crate) fn needs_latest(&self) -> bool {
         self.gap || self.resume_pending
     }
@@ -300,6 +309,7 @@ impl Reader {
     }
 
     pub(crate) fn install(&mut self, gap: bool) {
+        self.installed = true;
         self.gap = gap;
         self.parked = false;
         self.pending_scroll |= self.resume_pending;
@@ -450,6 +460,7 @@ pub(crate) fn reconnecting(s: &mut State) {
         reader.reconnecting(s.transcript_display.reading_mut(), s.paging, history_bounds);
     }
 
+    cancel_page(s);
     s.paging = false;
 }
 
@@ -462,6 +473,15 @@ pub(crate) fn invalidate(s: &mut State) {
         if !reader.hidden {
             reader.resume(Bookmark::Latest);
         }
+    }
+}
+
+pub(super) fn refresh_after_message_action(s: &mut State) {
+    if let Some(reader) = &mut s.reader {
+        reader.resume(Bookmark::Latest);
+        s.paging = false;
+    } else if let Some(command) = &s.commands {
+        let _ = command.try_send(crate::transport::Command::Latest);
     }
 }
 
@@ -617,6 +637,9 @@ pub(crate) fn reconcile_bookmark(s: &mut State, page: &crate::history::Page) -> 
 pub(crate) fn suspend(s: &mut State) {
     let width = s.tool_diff_preferences.history_width();
     let history_bounds = s.tool_diff_preferences.history_bounds.get();
+    cancel_page(s);
+    crate::timeline::suspend(s);
+    crate::settings::transcript_filters::close(s);
     if let Some(reader) = &mut s.reader {
         reader.deferred_sync = None;
         let reading = s.transcript_display.reading();
@@ -640,8 +663,8 @@ pub(crate) fn suspend(s: &mut State) {
             s.phase = crate::Phase::Ready;
         }
         s.paging = false;
-        s.transcript_display.evict_rendered();
     }
+    s.transcript_display.suspend_rendered();
 }
 
 pub(crate) fn resume(s: &mut State, tx: &mut Tx) {
@@ -675,6 +698,8 @@ pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
     s.transcript_display
         .reading_mut()
         .reset_to_latest(s.revision);
+    cancel_page(s);
+    crate::timeline::cancel_jump(s);
     let covered = crate::files::has_preview(s) || crate::git::has_preview(s);
     if let Some(reader) = &mut s.reader
         && (reader.needs_latest() || s.history_error)
@@ -738,212 +763,21 @@ pub(crate) fn retry(s: &mut State, tx: &mut Tx) {
     }
 }
 
+mod pages;
+pub(super) use pages::install_page;
+pub(crate) use pages::{
+    admit_page, announce_paging, cancel_page, install_anchor, older, oldest, request_page,
+    set_timeline_position,
+};
+
 #[cfg(test)]
-mod tests {
+mod tests;
+
+#[cfg(test)]
+mod resume_tests {
     use super::*;
-    use crate::{Phase, init, poll_chat};
+    use crate::{Phase, init};
     use rune::{Env, Runtime};
-
-    #[test]
-    fn receipt_updates_the_bookmark_of_a_hidden_optimistic_row() {
-        let mut state = init();
-        let (mut reader, lane) = Reader::open();
-        reader.resume(Bookmark::Message {
-            id: "attempt".into(),
-            offset: -15.0,
-        });
-        reader.stop_content();
-        state.reader = Some(reader);
-        settle_bookmark(&mut state, "attempt", Some("confirmed"));
-        assert!(lane.demand.current().target.is_none());
-        assert_eq!(
-            state.reader.as_ref().unwrap().bookmark,
-            Bookmark::Message {
-                id: "confirmed".into(),
-                offset: -15.0,
-            }
-        );
-        settle_bookmark(&mut state, "confirmed", None);
-        assert_eq!(state.reader.as_ref().unwrap().bookmark, Bookmark::Latest);
-    }
-
-    #[test]
-    fn queued_content_cannot_reopen_admission_after_a_disconnect() {
-        let mut state = init();
-        let (reader, lane) = Reader::open();
-        state.reader = Some(reader);
-        let (out, incoming) = bounded(1);
-        state.incoming = Some(incoming);
-        lane.events
-            .try_send((
-                0,
-                0,
-                Event::Sync(crate::history::Page {
-                    rows: vec![],
-                    older: None,
-                    newer: None,
-                    running: false,
-                    user_file_references: false,
-                }),
-            ))
-            .unwrap();
-        lane.events.try_send((0, 0, Event::Done)).unwrap();
-        lane.connection.store(1, SeqCst);
-        out.try_send(Event::Reconnecting).unwrap();
-        assert!(poll_chat(&mut state, 8));
-        assert!(state.phase == Phase::Reconnecting);
-        lane.events
-            .try_send((
-                0,
-                1,
-                Event::Sync(crate::history::Page {
-                    rows: vec![],
-                    older: None,
-                    newer: None,
-                    running: false,
-                    user_file_references: false,
-                }),
-            ))
-            .unwrap();
-        assert!(poll_chat(&mut state, 8));
-        assert!(state.phase == Phase::Ready);
-    }
-
-    #[test]
-    fn a_page_queued_before_an_activity_change_cannot_reopen_admission() {
-        for previous in [false, true] {
-            let mut state = init();
-            let (reader, lane) = Reader::open();
-            state.reader = Some(reader);
-            let (out, incoming) = bounded(2);
-            state.incoming = Some(incoming);
-            let queue_page = |running, version| {
-                lane.events
-                    .try_send((
-                        0,
-                        0,
-                        Event::ReaderSync {
-                            page: crate::history::Page {
-                                rows: vec![],
-                                older: None,
-                                newer: None,
-                                running,
-                                user_file_references: false,
-                            },
-                            version,
-                        },
-                    ))
-                    .unwrap();
-            };
-            queue_page(previous, 1);
-            out.try_send(Event::ObservedRunning {
-                running: !previous,
-                version: 2,
-            })
-            .unwrap();
-            assert!(poll_chat(&mut state, 8));
-            assert!(state.phase == Phase::Streaming);
-            assert!(state.reader.as_ref().unwrap().blocks_send());
-            out.try_send(Event::ObservedRunning {
-                running: false,
-                version: 3,
-            })
-            .unwrap();
-            queue_page(false, 3);
-            assert!(poll_chat(&mut state, 8));
-            assert!(state.phase == Phase::Ready);
-            assert!(!state.reader.as_ref().unwrap().blocks_send());
-        }
-    }
-
-    #[test]
-    fn a_disconnect_reissues_an_uninstalled_around_snapshot() {
-        let mut state = init();
-        let (mut reader, lane) = Reader::open();
-        reader.resume(Bookmark::Message {
-            id: "saved-anchor".into(),
-            offset: -17.0,
-        });
-        let previous = lane.demand.current();
-        state.reader = Some(reader);
-        let (out, incoming) = bounded(1);
-        state.incoming = Some(incoming);
-        lane.events
-            .try_send((
-                previous.generation,
-                0,
-                Event::Sync(crate::history::Page {
-                    rows: vec![],
-                    older: None,
-                    newer: Some(serde_json::json!({"kind":"after"})),
-                    running: false,
-                    user_file_references: false,
-                }),
-            ))
-            .unwrap();
-        lane.connection.store(1, SeqCst);
-        out.try_send(Event::Reconnecting).unwrap();
-        assert!(poll_chat(&mut state, 8));
-        assert!(state.reader.as_ref().unwrap().resume_pending);
-        let resumed = lane.demand.current();
-        assert_eq!(resumed.target, previous.target);
-        assert_ne!(resumed.generation, previous.generation);
-    }
-
-    #[test]
-    fn terminal_observation_settles_when_suspension_cancels_the_tail_read() {
-        let mut state = init();
-        let (reader, _lane) = Reader::open();
-        state.reader = Some(reader);
-        state.phase = Phase::Streaming;
-        let (out, incoming) = bounded(1);
-        state.incoming = Some(incoming);
-        out.try_send(Event::ObservedRunning {
-            running: false,
-            version: 1,
-        })
-        .unwrap();
-        assert!(poll_chat(&mut state, 8));
-        assert!(
-            state.phase == Phase::Streaming,
-            "visible tail still needs the content read"
-        );
-        assert!(state.reader.as_ref().unwrap().blocks_send());
-        suspend(&mut state);
-        assert!(
-            state.phase == Phase::Ready,
-            "hidden execution status settles without content"
-        );
-    }
-
-    #[test]
-    fn retry_keeps_the_original_anchor_even_without_cached_rows() {
-        let mut state = init();
-        let (mut reader, lane) = Reader::open();
-        let anchor = Bookmark::Message {
-            id: "saved-anchor".into(),
-            offset: -17.0,
-        };
-        reader.resume(anchor.clone());
-        let previous = lane.demand.current();
-        reader.failed();
-        state.reader = Some(reader);
-        state.phase = Phase::Reconnecting;
-        state.history_error = true;
-        assert!(!state.can_older && state.messages.is_empty());
-        let mut rt = Runtime::new(state, crate::view, (960.0, 760.0), Env::new(false, 1.0));
-        rt.frame(0.02);
-        let (x, y) = rt
-            .find("older")
-            .expect("Retry is available without an Older cursor");
-        rt.pointer_down(x, y);
-        rt.pointer_up(x, y);
-        rt.frame(0.02);
-        assert!(!rt.state.history_error);
-        assert_eq!(rt.state.reader.as_ref().unwrap().bookmark, anchor);
-        assert_eq!(lane.demand.current().target, previous.target);
-        assert_ne!(lane.demand.current().generation, previous.generation);
-    }
 
     #[test]
     fn reconcile_and_latest_reset_reading_so_resize_stays_at_tail() {

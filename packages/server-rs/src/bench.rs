@@ -72,6 +72,24 @@ pub fn native_endpoint_set() -> bool {
     env::var_os("CNRS_FIXTURE_URL").is_some()
 }
 
+pub fn releases_fixture() -> Option<reqwest::Url> {
+    if crate::config::serve() || !native_endpoint_set() {
+        return None;
+    }
+    let url: reqwest::Url = env::var("CNRS_FIXTURE_RELEASES").ok()?.parse().expect("Invalid release fixture URL");
+    assert!(
+        url.scheme() == "http"
+            && url.host_str() == Some("127.0.0.1")
+            && url.port().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none()
+    );
+    Some(url)
+}
+
 /// On a positional fixture launch every provider request is sent to a local recorder.
 pub fn provider_fixture() -> Option<reqwest::Url> {
     if crate::config::serve() || !native_endpoint_set() {

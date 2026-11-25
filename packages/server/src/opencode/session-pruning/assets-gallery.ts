@@ -5,12 +5,12 @@ import type { HistoryScope } from "./history-store"
 import type { AssetReadResult, AssetTarget } from "./assets-contract"
 import { assetBytes, cursorSchema, hash, listed, MESSAGE_LIMIT, storedAsset } from "./assets-store"
 import { GALLERY_RESPONSE_LIMIT, type GalleryEntry, type GenerationTarget, type ImageReferenceResult, type ImagesResult } from "./assets-gallery-contract"
-import { after, annotate, coverage, generationState, IMAGE_TOOL, interval, isGalleryFile, key, labelOf, promptFields, relativeInside, resolveName,
+import { after, annotate, coverage, generationState, isImageTool, interval, isGalleryFile, key, labelOf, promptFields, relativeInside, resolveName,
   sameFile, visible, writes, writesAnyFile, type Coverage, type Part } from "./assets-gallery-proof"
 import { messageStorage } from "./message-storage"
 
 // The image gallery (dev-docs/SESSION_PRUNING_RPC.md#image-gallery): image `read` parts and
-// `experimental_image_generate` calls of one session, recomputed from the transcript on every request.
+// `generate_image` (or `experimental_image_generate`) calls of one session, recomputed from the transcript on every request.
 const WINDOW_MESSAGES = 32, WINDOW_BYTES = 32 * 1024 * 1024, PAGE_ENTRIES = 64
 
 function owned(db: DatabaseSync, scope: HistoryScope) {
@@ -57,7 +57,7 @@ export async function listGalleryImages(db: DatabaseSync, scope: HistoryScope, c
       if (!files) return { status: "blocked", reason: "unsupported_storage" }
       preloaded.set(String(row.id), data)
       const calls: Array<{ part: number; index?: number }> = (Array.isArray(data.content) ? data.content as Part[] : [])
-        .flatMap((part, index) => part?.type === "tool" && part.name === IMAGE_TOOL ? [{ part: index }] : [])
+        .flatMap((part, index) => part?.type === "tool" && isImageTool(part.name) ? [{ part: index }] : [])
       const items = [...calls, ...files.filter(file => isGalleryFile(data.content[file.part], file.file)).map(file => ({ part: file.part, index: file.index }))]
         .sort((a, b) => a.part - b.part || (a.index ?? -1) - (b.index ?? -1))
       window.push({ id: String(row.id), seq, data, items })
@@ -141,7 +141,7 @@ export async function galleryImageReference(db: DatabaseSync, scope: HistoryScop
       if (!row) return refused("missing")
       if (typeof row.data !== "string") return refused("unverifiable")
       const data = JSON.parse(row.data), part = data.content?.[target.part]
-      if (part?.type !== "tool" || part.name !== IMAGE_TOOL || generationDigest(part, part.state?.metadata?.jobID) !== target.digest) return refused("changed")
+      if (part?.type !== "tool" || !isImageTool(part.name) || generationDigest(part, part.state?.metadata?.jobID) !== target.digest) return refused("changed")
       seq = Number(row.seq)
       const cov = coverage(db, sessionID, boundary, seq, through, new Map([[target.messageID, data]]), 1), state = generationState(cov, part)
       if (state.outcome !== "completed" || !state.notice?.file) return refused("unverifiable")

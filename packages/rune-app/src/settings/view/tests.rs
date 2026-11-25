@@ -3,6 +3,130 @@ use rune::{Env, Runtime};
 use serde_json::Value;
 
 #[test]
+fn unsupported_advanced_switch_is_disabled_with_keyboard_help() {
+    fn find_switch(tree: &Value) -> Option<&Value> {
+        if tree["role"] == "switch" && tree["name"] == "Hold long assistant replies" {
+            return Some(tree);
+        }
+        tree["children"].as_array()?.iter().find_map(find_switch)
+    }
+
+    let state = Window {
+        section: Section::Advanced,
+        ..Window::default()
+    };
+    let mut prefs = state.shared.borrow_mut();
+    prefs.fixture();
+    prefs.fixture_locale("en");
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    drop(prefs);
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    let switch = find_switch(&tree).unwrap();
+    assert!(
+        switch["states"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::from("disabled"))
+    );
+    rt.update(|_, tx| tx.focus("advanced-help-holdLongAssistantReplies", true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text(" ".into()),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(rt.state.advanced_help == Some(crate::settings::advanced::Toggle::LongReplies));
+}
+
+#[test]
+fn keyboard_shortcuts_records_the_focused_save_binding() {
+    let mut state = Window {
+        section: Section::Shortcuts,
+        ..Window::default()
+    };
+    state.shortcut_filter.replace_text("Save file");
+    state.shared.borrow_mut().fixture();
+    state.shared.borrow_mut().fixture_locale("en");
+    state.shared.borrow_mut().backend =
+        Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.02);
+    let click_edit = |rt: &mut Runtime<Window>| {
+        let (x, y) = rt.find("settings-file-save-edit").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.02);
+        assert!(rt.state.recording_shortcut);
+    };
+    click_edit(&mut rt);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Escape,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    assert!(!rt.state.shared.borrow().file_save_pending());
+    click_edit(&mut rt);
+    rt.window_focus(false);
+    rt.frame(0.02);
+    rt.window_focus(true);
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    // Newly wired shell shortcuts have unique edit keys and can record bindings too.
+    rt.update(|s, _| s.shortcut_filter.replace_text("Previous app tab"));
+    rt.frame(0.02);
+    let (x, y) = rt.find("settings-instance-prev-edit").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.state.recording_shortcut);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Escape,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    rt.update(|s, _| s.shortcut_filter.replace_text("Save file"));
+    rt.frame(0.02);
+
+    click_edit(&mut rt);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Function(8),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    assert!(rt.state.shared.borrow().file_save_pending());
+}
+
+#[test]
+fn stats_tab_mounts_without_opening_a_project() {
+    let state = Window::default();
+    state.shared.borrow_mut().fixture();
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let (x, y) = rt.find("settings-stats").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.state.section == Section::Stats);
+    let tree = rt.accessibility_json().to_string();
+    let expected = crate::strings::with_locale(
+        rt.state
+            .shared
+            .borrow()
+            .locale()
+            .unwrap_or_else(crate::strings::locale),
+        || t("settings.usage.noProject"),
+    );
+    assert!(tree.contains(expected), "{tree}");
+    assert!(rt.find("stats-refresh").is_none());
+    assert!(rt.find("stats-period").is_none());
+}
+
+#[test]
 fn notifications_tab_mounts_the_routing_table_and_the_focused_switch() {
     let state =
         Window::default().with_notification_permission(notification_settings::Permission::Granted);
@@ -509,4 +633,156 @@ fn native_preferences_close_requires_discard_consent_from_both_paths() {
     runtime.pointer_up(x, y);
     runtime.frame(0.02);
     assert!(!runtime.state.memory_editor.has_unsaved());
+}
+
+#[test]
+fn general_behavior_renders_six_checkboxes_natively_and_hides_keep_awake_on_web() {
+    let state = Window::default();
+    {
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture_locale("en");
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    let expected = [
+        (
+            "behavior-showMessageTimeline",
+            "Show the message timeline",
+            true,
+        ),
+        (
+            "behavior-scrollControlsInTimelineCorner",
+            "Put the first/latest message arrows under the timeline",
+            false,
+        ),
+        ("behavior-diffViewMode", "Split tool-call diffs", true),
+        (
+            "behavior-autoExpandActiveSubsessions",
+            "Automatically expand subsessions",
+            true,
+        ),
+        ("behavior-followUpBehavior", "Queue sent prompts", false),
+        (
+            "behavior-keepComputerAwake",
+            "Keep the computer awake while CodeNomad is running",
+            false,
+        ),
+    ];
+    for (key, name, checked) in expected {
+        let checkbox = node(&tree, key).unwrap_or_else(|| panic!("missing {key}"));
+        assert_eq!(checkbox["role"], "check-box");
+        assert_eq!(checkbox["name"], name);
+        let states = checkbox["states"].as_array().unwrap();
+        assert_eq!(
+            states.contains(&Value::from("checked")),
+            checked,
+            "{key}: {states:?}"
+        );
+    }
+    assert!(node(&tree, "behavior-help-autoExpandActiveSubsessions").is_some());
+    assert!(node(&tree, "behavior-help-newConversationPermissions").is_some());
+    assert!(node(&tree, "behavior-help-keepComputerAwake").is_some());
+
+    rt.update(|_, tx| tx.focus("behavior-showMessageTimeline", true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text(" ".into()),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    let tree = rt.accessibility_json();
+    let timeline = node(&tree, "behavior-showMessageTimeline").unwrap();
+    let states = timeline["states"].as_array().unwrap();
+    assert!(
+        states.contains(&Value::from("focused")),
+        "pending toggle keeps focus: {states:?}"
+    );
+    assert!(
+        states.contains(&Value::from("checked")),
+        "authoritative value stays checked until confirmed: {states:?}"
+    );
+    assert!(rt.state.shared.borrow().general_toggle_pending(
+        super::super::preferences::behavior::GeneralToggle::MessageTimeline
+    ));
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Tab,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Tab,
+        mods: rune::Mods {
+            shift: true,
+            ..Default::default()
+        },
+    });
+    rt.frame(0.02);
+    let tree = rt.accessibility_json();
+    let states = node(&tree, "behavior-showMessageTimeline").unwrap()["states"]
+        .as_array()
+        .unwrap();
+    assert!(
+        states.contains(&Value::from("focused")),
+        "Tab navigation still includes the pending checkbox: {states:?}"
+    );
+    let revision_before = rt.state.shared.borrow().revision;
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text(" ".into()),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert_eq!(
+        rt.state.shared.borrow().revision,
+        revision_before,
+        "a second press while pending must not restage the toggle"
+    );
+
+    struct WebCard {
+        shared: Rc<RefCell<Preferences>>,
+        behavior: super::super::behavior::General,
+    }
+    let shared = Rc::new(RefCell::new(Preferences::default()));
+    {
+        let mut prefs = shared.borrow_mut();
+        prefs.fixture_locale("en");
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
+    let mut web_rt = Runtime::new(
+        WebCard {
+            shared,
+            behavior: Default::default(),
+        },
+        |s, cx| {
+            let prefs = s.shared.borrow();
+            render_with(cx, &prefs, false, |_| {
+                let mut layers = Vec::new();
+                s.behavior
+                    .view(&s.shared, false, &mut layers, |s: &mut WebCard| {
+                        &mut s.behavior
+                    })
+                    .children(layers)
+            })
+        },
+        chrome::WINDOW_SIZE,
+        Env::new(false, 1.0),
+    );
+    web_rt.frame(0.0);
+    let web_tree = web_rt.accessibility_json();
+    for (key, _, _) in &expected[..5] {
+        assert!(node(&web_tree, key).is_some(), "web missing {key}");
+    }
+    assert!(node(&web_tree, "new-conversation-permissions-trigger").is_some());
+    assert!(
+        node(&web_tree, "behavior-keepComputerAwake").is_none(),
+        "keepComputerAwake must stay native-only"
+    );
+    assert!(
+        !web_tree
+            .to_string()
+            .contains("Keep the computer awake while CodeNomad is running")
+    );
 }

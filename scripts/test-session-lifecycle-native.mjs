@@ -4,7 +4,6 @@
 // session.execution.* and session.retry.scheduled, never the deprecated V1
 // session.idle/session.status declarations. No service discovery or real provider.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { createServer } from "node:http"
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
@@ -12,7 +11,7 @@ import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const cli = process.argv[2]
 if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute CLI path; shared service discovery is forbidden")

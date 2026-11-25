@@ -113,6 +113,8 @@ Wenn das System Benachrichtigungsaktionen unterstützt, zeigt ein Klick auf die 
 
 ## Erweiterte Optionen {#advanced}
 
+In Rune zeigt das **i** neben einem deaktivierten Schalter den Grund an, wenn Sie es fokussieren. Der Konfigurationseditor nennt bei JSON-/JSONC-Syntaxfehlern die Zeile; Speichern bleibt möglich.
+
 1. Öffnen Sie **Erweitert**.
 2. Aktivieren oder deaktivieren Sie nur die benötigten Optionen; jede Änderung wird über die CodeNomad-Einstellungen gespeichert. Um die Ausführungsumgebung der Sitzung zu ändern, klappen Sie die eingeklappte Gruppe **Umgebungsvariablen** am Ende auf.
 

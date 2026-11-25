@@ -28,6 +28,24 @@ impl std::fmt::Display for SessionMissing {
 }
 impl std::error::Error for SessionMissing {}
 
+#[derive(Debug)]
+pub struct LocationUnavailable;
+impl std::fmt::Display for LocationUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("worktree location does not belong to workspace")
+    }
+}
+impl std::error::Error for LocationUnavailable {}
+
+#[derive(Debug)]
+pub struct CreateRejected;
+impl std::fmt::Display for CreateRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("session creation rejected before admission")
+    }
+}
+impl std::error::Error for CreateRejected {}
+
 async fn creation_response(response: reqwest::Response) -> Result<Value> {
     if response.status() != reqwest::StatusCode::BAD_REQUEST {
         return read_json(response.error_for_status()?).await;
@@ -74,22 +92,48 @@ pub struct Sessions {
 }
 
 impl Backend {
-    pub async fn server_id(&self) -> Result<String> {
-        server_id(
-            &read_json(
-                self.client
-                    .get(format!("{}api/meta", self.base))
-                    .send()
-                    .await?
-                    .error_for_status()?,
-            )
-            .await?,
+    async fn server_meta(&self) -> Result<Value> {
+        read_json(
+            self.client
+                .get(format!("{}api/meta", self.base))
+                .send()
+                .await?
+                .error_for_status()?,
         )
+        .await
+    }
+
+    fn observe_service_usage(&self, meta: &Value, id: &str) {
+        if self
+            .client
+            .server_identity()
+            .is_none_or(|current| current == id)
+            && let Some(capabilities) = meta["capabilities"].as_array()
+        {
+            self.client
+                .observe_service_usage(capabilities.iter().any(|cap| cap == "service-usage"));
+        }
+    }
+
+    pub async fn server_id(&self) -> Result<String> {
+        let meta = self.server_meta().await?;
+        let id = server_id(&meta)?;
+        self.observe_service_usage(&meta, &id);
+        Ok(id)
     }
 
     pub async fn attest_server(&self) -> Result<String> {
-        let id = self.server_id().await?;
-        if self.client.verify_server_identity(&id) {
+        let meta = self.server_meta().await?;
+        let id = server_id(&meta)?;
+        let capabilities = meta["capabilities"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        if self.client.attest(&id, capabilities) {
+            self.observe_service_usage(&meta, &id);
             Ok(id)
         } else {
             Err("Server identity changed".into())
@@ -246,7 +290,11 @@ impl Backend {
                 }
             }
         };
-        let data = read_json(request.send().await?.error_for_status()?).await?;
+        let response = request.send().await?;
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            return Err(LocationUnavailable.into());
+        }
+        let data = read_json(response.error_for_status()?).await?;
         let page = inventory::decode_page(&data)?;
         let mut sessions = vec![];
         for member in page.members {
@@ -328,19 +376,54 @@ impl Backend {
         if title.trim().is_empty() || title.len() > 512 {
             return Err("session title required".into());
         }
-        let data = read_json(
-            self.client
-                .post(format!(
-                    "{}workspaces/{}/instance/api/session",
-                    self.base, project.id
-                ))
-                .json(&json!({"title":title.trim(),"location":{"directory":project.path}}))
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await?;
+        let response = self
+            .client
+            .post(format!(
+                "{}workspaces/{}/instance/api/session",
+                self.base, project.id
+            ))
+            .json(&json!({"title":title.trim(),"location":{"directory":project.path}}))
+            .send()
+            .await?;
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(CreateRejected.into());
+        }
+        let data = read_json(response.error_for_status()?).await?;
         session(&data["data"], project)
+    }
+    pub async fn create_untitled_session(
+        &self,
+        project: &Project,
+        directory: &str,
+    ) -> Result<Session> {
+        let same_root = crate::server_path::same(&project.path, directory);
+        let location = if same_root {
+            project.path.as_str()
+        } else {
+            directory
+        };
+        let mut request = self.client.post(format!(
+            "{}workspaces/{}/instance/api/session",
+            self.base, project.id
+        ));
+        if !same_root {
+            request = request.query(&[("directory", location)]);
+        }
+        let response = request
+            .json(&json!({"location":{"directory":location}}))
+            .send()
+            .await?;
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(CreateRejected.into());
+        }
+        let data = read_json(response.error_for_status()?).await?;
+        session_at(&data["data"], location)
     }
 }
 fn server_id(data: &Value) -> Result<String> {

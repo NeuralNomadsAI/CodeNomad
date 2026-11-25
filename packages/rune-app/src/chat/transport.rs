@@ -1,7 +1,9 @@
 //! Commands and display events for the native prototype.
 #[cfg(any(test, feature = "test-support"))]
 use crate::{CODE, Message};
-pub use codenomad_client::transport::{Command, Event, PromptOutcome, publish, run_backend};
+pub use codenomad_client::transport::{
+    Command, Event, HistoryEdge, PromptOutcome, publish, run_backend,
+};
 #[cfg(test)]
 pub use codenomad_client::wire::decode_event;
 use codenomad_client::{Receiver, Sender, bounded};
@@ -27,19 +29,31 @@ pub fn synthetic() -> Vec<crate::history::Row> {
 }
 pub fn start(s: &mut crate::State, bootstrap: bool) {
     s.agent = None;
-    launch(s, Startup::Configured { bootstrap });
+    launch(s, Startup::Configured { bootstrap }, None);
 }
 
 pub(crate) fn start_bound(s: &mut crate::State, backend: crate::backend::Backend) {
-    launch(s, Startup::Bound(backend));
+    start_bound_at(s, backend, None);
 }
 
+pub(crate) fn start_bound_at(
+    s: &mut crate::State,
+    backend: crate::backend::Backend,
+    anchor: Option<String>,
+) {
+    launch(s, Startup::Bound(backend), anchor);
+}
 enum Startup {
     Configured { bootstrap: bool },
     Bound(crate::backend::Backend),
 }
 
-fn launch(s: &mut crate::State, startup: Startup) {
+fn launch(s: &mut crate::State, startup: Startup, anchor: Option<String>) {
+    s.status_usage.attach();
+    s.status_permissions.attach(match &startup {
+        Startup::Bound(backend) => Some(backend),
+        Startup::Configured { .. } => None,
+    });
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);
@@ -47,9 +61,11 @@ fn launch(s: &mut crate::State, startup: Startup) {
     let reading = match &startup {
         Startup::Bound(_) => {
             let (mut reader, lane) = super::reader::Reader::open();
-            let width = s.tool_diff_preferences.history_width();
-            let history_bounds = s.tool_diff_preferences.history_bounds.get();
-            if let Some(previous) = &s.reader {
+            if let Some(id) = anchor {
+                reader.resume(super::reading::Bookmark::Message { id, offset: 0.0 });
+            } else if let Some(previous) = &s.reader {
+                let width = s.tool_diff_preferences.history_width();
+                let history_bounds = s.tool_diff_preferences.history_bounds.get();
                 reader.resume_from(
                     previous,
                     s.transcript_display.reading_mut(),
@@ -112,7 +128,7 @@ async fn run_configured(
 }
 
 pub(crate) async fn authenticate_and_run(
-    target: crate::backend::Backend,
+    mut target: crate::backend::Backend,
     password: String,
     token: Option<String>,
     out: Sender<Event>,
@@ -128,7 +144,10 @@ pub(crate) async fn authenticate_and_run(
         return;
     }
     match result {
-        Ok(()) => run_bound(Ok(target), out, input, wake, None).await,
+        Ok(()) => {
+            target.session_directory = target.prompt_directory().await.ok();
+            run_bound(Ok(target), out, input, wake, None).await;
+        }
         Err(error) if codenomad_client::http::authentication_expired(&error) => {
             publish(&out, &wake, Event::authentication_required(target)).await;
             drop(out);

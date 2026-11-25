@@ -1,6 +1,6 @@
 //! Owned Rust static server and browser smoke fixture; upstream service discovery is closed.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
 import {createHash} from 'node:crypto'
 import {access, mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'

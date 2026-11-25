@@ -1,7 +1,8 @@
 // Real, unmodified CodeNomad Rust server; only its upstream OpenCode service is synthetic.
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
+import {execFileSync} from 'node:child_process'
 import {mkdir, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {createHash,randomUUID} from 'node:crypto'
@@ -16,11 +17,23 @@ assert(path.isAbsolute(artifacts),'Fixture artifacts directory must be absolute'
 const profile = path.join(artifacts,randomUUID())
 const project = path.join(profile,'projects','synthetic')
 await mkdir(project,{recursive:true})
+const env=await privateEnvironment(profile)
+const history = process.argv.includes('--prompt-history')
+const linked = process.argv.includes('--history-worktree') ? path.join(path.dirname(project),'linked checkout') : null
+if(linked) {
+  assert(history)
+  const git = (...args) => execFileSync('git',args,{cwd:project,env,windowsHide:true})
+  git('init','--quiet')
+  git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','--quiet','--allow-empty','-m','fixture')
+  git('worktree','add','--quiet','--detach',linked,'HEAD')
+}
+const directory = linked ?? project
 const session = 'ses_rune_synthetic'
 const code = 'fn main() {\n    println!("Rune · Code Nomad");\n}'
-const record = {id:session,projectID:'global',location:{directory:project},time:{created:1},title:'Synthetic Rune'}
+const record = {id:session,projectID:linked?'fixture-project':'global',location:{directory},time:{created:1},title:'Synthetic Rune'}
 const fresh = process.argv.includes('--fresh-probe')
-const slash = process.argv.includes('--probe-slash')
+const slash = !linked && (history || process.argv.includes('--probe-slash'))
+const historyText = linked ? 'Historique lié 🦀' : '/review résumé 🦀'
 const attachments = process.argv.includes('--probe-attachments')
 const bytes = Buffer.from('Rune attachment fixture 🦀\r\n')
 const capture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aN0AAAAASUVORK5CYII=','base64')
@@ -30,7 +43,7 @@ if(attachments) {
     await writeFile(file,bytes)
   await writeFile(path.join(profile,'capture.png'),capture)
 }
-const store = new FixtureStore(fresh||slash||attachments?0:10000)
+const store = new FixtureStore(fresh||slash||history||attachments?0:10000)
 const upstreamStreams = new Set()
 const requests = []
 const commands = []
@@ -47,17 +60,24 @@ const upstream = createServer(async(req,res)=>{
     res.write(`data: ${JSON.stringify({id:'connected',type:'server.connected',created:Date.now(),data:{}})}\n\n`)
     upstreamStreams.add(res);req.on('close',()=>upstreamStreams.delete(res));return
   }
-  if(url.pathname==='/api/location') return json({data:{directory:project}})
+  if(url.pathname==='/api/location') {
+    if(!linked) return json({data:{directory:project}})
+    const found=url.searchParams.get('location[directory]')??project
+    return json({directory:found,project:{id:'fixture-project',canonical:project,directory:found}})
+  }
+  if(linked&&url.pathname==='/api/worktree') return json([{directory:project},{directory:linked}])
+  if(linked&&url.pathname==='/api/model') return json({location:{directory},data:[]})
+  if(linked&&[ `/api/session/${session}/permission`, `/api/session/${session}/form` ].includes(url.pathname)) return json({data:[]})
   if(slash&&url.pathname==='/api/command') {
     assert.equal(req.method,'GET')
-    return json({location:{directory:project},data:[{name:'review',description:'Review changes'}]})
+    return json({location:{directory},data:[{name:'review',description:'Review changes'}]})
   }
   if(url.pathname===`/api/session/${session}`) return json({data:record})
   if(url.pathname===`/api/session/${session}/message`) {
     const limit=Number(url.searchParams.get('limit'));assert([1,200].includes(limit));
     return json({data:store.rows.slice(-limit),cursor:{}})
   }
-  if(url.pathname==='/api/plugin') return json({location:{directory:project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
+  if(url.pathname==='/api/plugin') return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
   if(['/api/rpc/codenomad.session-pruning/window','/api/rpc/codenomad.session-pruning/windowUserFilesV1'].includes(url.pathname)) {
     assert.equal(JSON.parse(raw).input.sessionID,session)
     const window=store.window(JSON.parse(raw).input.target)
@@ -91,7 +111,14 @@ const upstream = createServer(async(req,res)=>{
     assert.equal(req.method,'POST');assert.equal(typeof JSON.parse(raw).text,'string')
     assert(upstreamStreams.size>0,'Rust bridge connected')
     const emit=(type,data)=>{for(const stream of upstreamStreams)stream.write(`data: ${JSON.stringify({id:randomUUID(),type,
-      created:Date.now(),location:{directory:project},data:{sessionID:session,...data}})}\n\n`)}
+      created:Date.now(),location:{directory},data:{sessionID:session,...data}})}\n\n`)}
+    if(linked) {
+      const input = JSON.parse(raw)
+      assert.equal(input.text,historyText)
+      const row = store.append('user',input.text)
+      row.id = input.id
+      return json({data:{id:input.id,sessionID:session,type:'user',payload:{text:input.text}}})
+    }
     if(attachments) {
       const input=JSON.parse(raw)
       assert.equal(input.text,'./sample.txt')
@@ -128,7 +155,6 @@ const upstream = createServer(async(req,res)=>{
 })
 await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 // Build a minimal child environment: user config, credentials and daemon overrides never inherit.
-const env=await privateEnvironment(profile)
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,
   CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,
   CODENOMAD_REMOTE_CONTROL:'disabled',RUST_BACKTRACE:'1'})
@@ -148,14 +174,55 @@ try {
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await fetch(`${origin}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({path:project})})
   const workspace=await opened.json();assert.equal(opened.status,201,JSON.stringify(workspace))
+  const rootInstance = `${origin}/api/storage/instances/${workspace.id}`
+  const instance = `${origin}/api/storage/instances/${encodeURIComponent(directory)}`
+  const agentModelSelections = { build: { providerId: 'fixture', modelId: 'fixture' } }
+  const prior = Array.from({length:100}, (_, i) => `older ${i}`)
+  if(history) {
+    const seed = await fetch(instance, {method:'PUT', headers:{'content-type':'application/json',cookie}, body:JSON.stringify({messageHistory:prior,agentModelSelections})})
+    assert.equal(seed.status,204)
+    if(linked) {
+      const inventory = await fetch(`${origin}/api/workspaces`, {headers:{cookie}})
+      assert.deepEqual((await inventory.json()).map(w=>w.id),[workspace.id])
+      const rootData = await fetch(rootInstance,{headers:{cookie}})
+      assert.deepEqual(await rootData.json(),{messageHistory:[],agentModelSelections:{}})
+      const foreign = path.join(path.dirname(project), 'unregistered')
+      await mkdir(foreign)
+      assert.equal((await fetch(`${origin}/api/storage/instances/${encodeURIComponent(foreign)}`, {headers:{cookie}})).status,404)
+      const client = (route, init={}) => fetch(`${origin}${route}`, {...init,headers:{...init.headers,cookie}})
+      const prefix = `/workspaces/${workspace.id}/instance/api`
+      const sessionData = await (await client(`${prefix}/session/${session}`)).json()
+      assert.equal(sessionData.data?.location?.directory, linked, JSON.stringify(sessionData))
+      const window = await (await client(`/api/workspaces/${workspace.id}/session-history/window`, {
+        method:'POST',headers:{'content-type':'application/json','x-codenomad-user-files':'reference-v1'},
+        body:JSON.stringify({sessionID:session,target:{kind:'latest'}}),
+      })).json()
+      assert.equal(window.status,'window',JSON.stringify(window))
+    }
+  }
   for(const end=Date.now()+10000;upstreamStreams.size===0;){assert(Date.now()<end,'Rust event bridge');await new Promise(r=>setTimeout(r,50))}
   const args=process.argv.slice(2)
-  const runeArgs=fresh?['--probe-fresh']:args.includes('--window')?args.filter(arg=>arg!=='--window'):args.length?args:['--probe-contract']
-  child=spawn(clientBinary,runeArgs,{
-    cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
-      RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0'},
-  })
-  result=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+  const runeArgs=history?['--probe-slash']:fresh?['--probe-fresh']:args.includes('--window')?args.filter(arg=>arg!=='--window'):args.length?args:['--probe-contract']
+  const run = (stage = {}) => {
+    child=spawn(clientBinary,runeArgs,{
+      cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
+        RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0',...(linked?{RUNE_HISTORY_WORKTREE:'1'}:{}),...stage},
+    })
+    return new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+  }
+  result=await run(history?{RUNE_PROMPT_HISTORY_STAGE:'write'}:{})
+  if(history) {
+    assert.equal(result,0)
+    const stored = await fetch(instance, {headers:{cookie}})
+    assert.equal(stored.status,200)
+    assert.deepEqual(await stored.json(), {messageHistory:[historyText, ...prior.slice(0,99)],agentModelSelections})
+    if(linked) {
+      const rootData = await fetch(rootInstance,{headers:{cookie}})
+      assert.deepEqual(await rootData.json(),{messageHistory:[],agentModelSelections:{}})
+    }
+    result=await run({RUNE_PROMPT_HISTORY_STAGE:'read'})
+    if(linked) assert.equal(requests.filter(request=>request===`POST /api/session/${session}/prompt`).length,1)
+  }
   if(attachments&&result===0) {
     child=spawn(clientBinary,runeArgs,{
       cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
@@ -183,5 +250,6 @@ try {
   for(const stream of upstreamStreams)stream.end()
   upstream.closeAllConnections();upstream.close()
   await writeFile(path.join(profile,'server.log'),log)
+  await writeFile(path.join(profile,'upstream-requests.json'),JSON.stringify(requests,null,2))
 }
 process.exitCode=result??1

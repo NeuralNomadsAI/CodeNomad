@@ -113,6 +113,8 @@ Sistem bildirim eylemlerini destekliyorsa, bildirime tıkladığınızda konuşm
 
 ## Gelişmiş seçenekler {#advanced}
 
+Rune’da bir anahtarın neden devre dışı olduğunu görmek için yanındaki **i** simgesine odaklanın. Yapılandırma düzenleyicisi JSON/JSONC söz dizimi hatalarının satırını gösterir ve kaydetmeye izin verir.
+
 1. **Gelişmiş** öğesini açın.
 2. Yalnızca ihtiyacınız olan seçenekleri işaretleyin veya işaretini kaldırın; her değişiklik CodeNomad tercihleri aracılığıyla kaydedilir. Oturum yürütme ortamını değiştirmek için sondaki katlanmış **Ortam Değişkenleri** grubunu genişletin.
 

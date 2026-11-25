@@ -4,6 +4,7 @@ mod connection;
 #[cfg(not(target_arch = "wasm32"))]
 mod device_file;
 pub(crate) mod device_picker;
+pub(crate) mod diagnostics;
 #[cfg(target_os = "windows")]
 pub(crate) use codenomad_windows_notifications as notifications;
 #[cfg(target_arch = "wasm32")]
@@ -16,7 +17,11 @@ pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
 #[cfg(target_arch = "wasm32")]
+pub(crate) mod web_alert;
+#[cfg(target_arch = "wasm32")]
 mod web_attachment;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use web_attachment::download as download_file;
 pub(crate) mod workspace_open;
 pub(crate) use connection::configured_target;
 #[cfg(not(target_arch = "wasm32"))]
@@ -288,6 +293,16 @@ pub fn locale() -> String {
             .unwrap_or_else(|| "fr".into())
     }
 }
+pub fn web_origin() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window().and_then(|window| web_sys::Location::origin(&window.location()).ok())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
 pub fn default_backend() -> String {
     if let Some(base) = setting("RUNE_BACKEND") {
         return base;
@@ -298,8 +313,7 @@ pub fn default_backend() -> String {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        web_sys::window()
-            .and_then(|window| web_sys::Location::origin(&window.location()).ok())
+        web_origin()
             .map(|origin| format!("{origin}/"))
             .unwrap_or_default()
     }

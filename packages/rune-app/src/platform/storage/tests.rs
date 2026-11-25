@@ -39,6 +39,33 @@ fn restart_retains_last_complete_write_and_releases_lock() {
 }
 
 #[test]
+fn optional_outline_bytes_round_trip_without_touching_restored_drafts() {
+    let root = Root::new();
+    crate::platform::block_on(async {
+        let path = root.0.join("rune");
+        let first = super::Store::open(path.clone()).await.unwrap();
+        first.stage(b"workspace", &[]);
+        first.save(b"workspace".to_vec()).await.unwrap();
+        first.save_file_drafts(b"document").unwrap();
+        first.save_outlines(b"structure".to_vec()).await.unwrap();
+        drop(first);
+        let second = super::Store::open(path.clone()).await.unwrap();
+        assert_eq!(second.load_outlines().await.unwrap().unwrap(), b"structure");
+        fs::write(
+            path.join("outlines-v1.json"),
+            vec![0; super::OUTLINE_BYTES + 1],
+        )
+        .unwrap();
+        assert!(second.load_outlines().await.is_err());
+        assert_eq!(second.load().await.unwrap().unwrap(), b"workspace");
+        assert_eq!(
+            second.load_file_drafts().await.unwrap().unwrap(),
+            b"document"
+        );
+    });
+}
+
+#[test]
 fn oversized_write_preserves_previous_snapshot() {
     let root = Root::new();
     let store = root.open();

@@ -13,6 +13,42 @@ export function command(action) {
   })
 }
 
+export async function openSessionSearch(page, sidebar, messages, tap) {
+  const name=messages['sessionList.filter.ariaLabel']
+  const create=sidebar.getByRole('button',{name:messages['rune.create'],exact:true})
+  const before=await create.count()
+  const trigger=sidebar.getByRole('button',{name,exact:true})
+  const touch=async (locator, role)=>{
+    await locator.waitFor()
+    const box=await locator.boundingBox()
+    assert(box&&box.width>0&&box.height>0)
+    await tap(box.x+box.width/2,box.y+box.height/2,{label:name,role})
+  }
+  const field=sidebar.getByRole('group',{name,exact:true})
+  let started=await page.evaluate(()=>performance.now())
+  let stage='open'
+  try {
+    await touch(trigger,'button')
+    await field.waitFor()
+    assert.equal(await trigger.getAttribute('aria-expanded'),'true')
+    // A project without a conversation already shows the creation form.
+    assert.equal(await create.count(),before,
+      'Opening session search must not open New Session')
+    stage='focus'
+    started=await page.evaluate(()=>performance.now())
+    const editor=page.locator('textarea:focus').and(page.getByRole('textbox',{name,exact:true}))
+    assert.equal(await editor.count(),0,'Opening search must not focus the field')
+    await touch(field,'group')
+    await editor.waitFor({state:'attached'})
+  } catch (error) {
+    const [expanded, elapsed]=await Promise.all([
+      trigger.getAttribute('aria-expanded').catch(()=>null),
+      page.evaluate(started=>Math.round(performance.now()-started),started).catch(()=>null),
+    ])
+    throw new Error(`Session search ${stage}; expanded: ${expanded}; DOM elapsed: ${elapsed} ms: ${error.message}`,{cause:error})
+  }
+}
+
 export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
   const text=value=>page.getByText(value,{exact:true})
   const connecting=text(messages['instanceShell.connection.connecting'])
@@ -55,7 +91,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
       await tap(box.x+box.width/2,box.y+box.height/2)
     }
     await hit(left)
-    await hit(search)
+    await openSessionSearch(page, sidebar, messages, tap)
     await page.locator('textarea:focus').fill('Another session')
     await sidebar.getByRole('listitem',{name:'Another session',exact:true}).waitFor()
     const afterTransport=eventSources()
@@ -129,35 +165,39 @@ export async function revokedLauncher({context,url,messages}){
     const connect=page.getByRole('button',{name:messages['folderSelection.servers.dialog.connect'],exact:true})
     await connect.waitFor()
     const password=messages['authRecovery.password']
+    // Playwright's DOM-based snapshot still lists inert controls.
+    const accessibility=await context.newCDPSession(page)
     const observePassword=async()=>{
       assert.equal(await page.getByText(password,{exact:true}).count(),0)
       assert.equal(await page.getByLabel(password,{exact:true}).count(),0)
       const generic=await page.getByLabel('Password input',{exact:true}).evaluateAll(fields=>fields.map(field=>{
         const rect=field.getBoundingClientRect(),style=getComputedStyle(field)
         return {bridge:field instanceof HTMLInputElement&&field.type==='password'&&field.parentElement===document.body&&
-          field.tabIndex===-1&&field!==document.activeElement&&style.opacity==='0'&&style.pointerEvents==='none',
+          field.inert&&field.tabIndex===-1&&field!==document.activeElement&&style.opacity==='0'&&style.pointerEvents==='none',
           tag:field.tagName,type:field.type,tabIndex:field.tabIndex,focused:field===document.activeElement,
           opacity:style.opacity,pointerEvents:style.pointerEvents,rect:[rect.width,rect.height]}
       }))
       assert(generic.length<=1&&generic.every(field=>field.bridge),`Only Rune's hidden password proxy may carry the generic label: ${JSON.stringify(generic)}`)
       assert.equal(await page.locator('input[type=password]').count(),generic.length,'Reject password controls with any other label')
-      const mirror=await page.locator('body').ariaSnapshot()
-      return mirror.includes('textbox "Password input"')
+      const {nodes}=await accessibility.send('Accessibility.getFullAXTree')
+      assert(!nodes.some(node=>!node.ignored&&node.name?.value==='Password input'),'The inactive password proxy must stay out of the accessibility tree')
     }
     for(let i=0;i<4;i++){
       await page.keyboard.press('Tab')
       assert.equal(await page.locator('input[type=password]:focus').count(),0,'No launcher gesture may activate a password field')
     }
-    const beforeRevocation=await observePassword()
+    await observePassword()
     await command('revoke')
     const box=await connect.boundingBox();assert(box)
     await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
     await page.getByRole('dialog',{name:messages['authRecovery.pairingTitle'],exact:true}).waitFor()
-    const afterRevocation=await observePassword()
+    await observePassword()
     assert.equal(await connect.count(),0,'Pairing replaces the launcher form instead of covering it')
-    return {launcherRevokedNoPassword:true,passwordProxy:beforeRevocation||afterRevocation?
-      {status:'known-gap',issue:'https://github.com/anomalyco/rune/issues/594'}:{status:'not-observed'}}
-  } finally { await page.close() }
+    return {launcherRevokedNoPassword:true}
+  } finally {
+    await page.evaluate(()=>globalThis.__fixtureFlushTouches?.()).catch(()=>{})
+    await page.close()
+  }
 }
 
 export async function navigatePair(tab, url, {fromLink=false,assets,waitForRune=Boolean(assets),returnLocale=url.searchParams.get('locale')}={}){

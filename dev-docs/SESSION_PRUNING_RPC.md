@@ -123,7 +123,7 @@ stops before the revert boundary (`id < revert.messageID`).
 
 - `images({ sessionID, cursor?, prompts? })` lists, newest first, one `image` entry
   per image file (`image/png|jpeg|gif|webp|avif`) of a `read` tool part and one
-  `generation` entry per `experimental_image_generate` part, in part and file order. A page holds
+  `generation` entry per image tool part (`generate_image`, or `experimental_image_generate`, both recognized), in part and file order. A page holds
   at most 32 assistant messages, 32 MiB of stored JSON (each row size-checked
   before it loads; a row over 16 MiB gives `blocked: limit`), 64 entries and 1 MiB
   serialized. Every admitted row is emitted before the cursor advances: a row the
@@ -149,7 +149,7 @@ decoded by SQLite only for rows of at most 64 KiB. A read of file `F` over
 undecoded row is dated at or before the read's end, the scan covers the item's whole
 range (its message and the 31 before it, within 32 MiB, unless the session starts
 sooner; a range an oversized row or the scan budget cuts proves nothing), exactly one
-`experimental_image_generate` call that may write `F` in that range started before that end
+image tool call that may write `F` in that range started before that end
 (a call whose single decoded notice reports `error` before that call's start does not count:
 OpenCode delivers a failed job's notice once its run has settled, and the run's last step is the
 write, so a failed attempt followed by a retry under the same name stays provable; a cancelled
@@ -158,8 +158,8 @@ completed with a `jobID` before the read began, its single
 decoded notice names `F` between the call's start and the read's start, and no
 other completed notice names `F` from then until the read's end. Parents of a proven
 call follow the same rule over the generation's own interval. Only a `completed`
-`experimental_image_generate` part with `metadata.path` names the file it writes (that stem);
-every other `experimental_image_generate` part (streaming, running, errored or completed without
+image tool part with `metadata.path` names the file it writes (that stem);
+every other image tool part (streaming, running, errored or completed without
 `metadata.path`) may write any file, so it leaves every proof and reference it could
 affect unverifiable. Relative read names and parent references resolve lexically against the session directory in the daemon's
 path style (Windows without case); one outside the location has no label and no
@@ -179,7 +179,7 @@ notice naming the file after it (`changed`). A generation target is also refused
 its file, started before its notice (or at an unknown time) in the item's range or
 later, lacks a completion time or a decoded notice of its own.
 
-Consumed contracts: `read` tool `state.content` files, `experimental_image_generate` parts
+Consumed contracts: `read` tool `state.content` files, image tool parts under either name
 (`state.status`, `state.input.prompt|images`, `state.metadata.path` as the stem, `jobID`, `model`,
 `time.ran|completed`) and its synthetic notices (`metadata.source|jobID|state|path`,
 text `Saved image: <file> (`). A change leaves generations `unknown` and images

@@ -145,7 +145,7 @@ pub fn skill_chip(skill: &crate::content::Skill) -> rune::El {
 }
 
 pub fn file_chip(s: &State, file: &crate::content::File) -> rune::El {
-    use rune_theme_codenomad::{attachment, workspace_tree::icons};
+    use rune_theme_codenomad::{Space, attachment, layout::Layout, workspace_tree::icons};
     let icon = if file.mime.starts_with("image/") {
         &icons::IMAGE
     } else {
@@ -171,5 +171,22 @@ pub fn file_chip(s: &State, file: &crate::content::File) -> rune::El {
                 }),
             )
         });
-    attachment::chip(name, Some(icon), button).key(file.id.clone())
+    let chip = attachment::chip(name, Some(icon), button);
+    if let Some(picture) = &file.picture {
+        rune::col()
+            .full_width()
+            .separate(Space::Sm)
+            .key(file.id.clone())
+            .child(chip)
+            .child(super::media::view(
+                s,
+                format!("{}-image", file.id),
+                picture,
+                name,
+                &file.mime,
+                true,
+            ))
+    } else {
+        chip.key(file.id.clone())
+    }
 }

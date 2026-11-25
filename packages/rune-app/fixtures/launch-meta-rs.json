@@ -1,0 +1,5 @@
+{
+  "apiContract": 1,
+  "serverId": "<fixture>",
+  "capabilities": ["workspaces", "events", "workspace-files", "workspace-git", "linked-worktrees", "config-files", "sidecars", "service-usage", "provider-usage", "missions"]
+}

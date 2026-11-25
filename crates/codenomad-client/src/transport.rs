@@ -8,6 +8,10 @@ pub struct DirectoryChange {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
+    StatsChanged {
+        workspace_id: String,
+        urgent: bool,
+    },
     SessionCompacted {
         id: String,
     },
@@ -29,6 +33,9 @@ pub enum WorkspaceEvent {
     SessionExecution {
         notice: Option<String>,
     },
+    PermissionModeChanged {
+        root: Option<String>,
+    },
     CommandsChanged,
     MentionsChanged,
     ComposerCataloguesChanged,
@@ -36,6 +43,7 @@ pub enum WorkspaceEvent {
     ProvidersChanged {
         workspace_id: String,
     },
+    ProviderUsageRefresh(Option<String>),
     UiPreferencesChanged,
     MissionChanged {
         workspace_id: String,
@@ -47,6 +55,9 @@ pub enum WorkspaceEvent {
     },
     MissionActivityChanged {
         workspace_id: String,
+    },
+    PermissionReceiptsChanged {
+        message: Option<String>,
     },
     NativeFilesystemChanged {
         workspace_id: String,
@@ -75,9 +86,18 @@ pub enum Command {
         text: String,
     },
     Older,
+    Page(HistoryEdge, Receiver<()>),
+    Anchor(crate::timeline::Jump),
     Latest,
     Retry,
     Close,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HistoryEdge {
+    Before,
+    After,
+    Oldest,
 }
 #[derive(Debug)]
 pub enum PromptOutcome {
@@ -93,6 +113,7 @@ pub struct Authentication {
 #[derive(Debug)]
 pub enum Event {
     Connected(crate::backend::Backend),
+    ProviderUsageWatch(crate::provider_usage::Watch),
     Workspace(WorkspaceEvent),
     Preferences(crate::settings::Owner),
     AgentHint(bool),
@@ -109,6 +130,18 @@ pub enum Event {
         version: u64,
     },
     Older(Page),
+    PageOffered {
+        page: Page,
+        admit: crate::timeline::Admission,
+        cancelled: Receiver<()>,
+    },
+    PageFailed(Receiver<()>),
+    Anchor {
+        ticket: u64,
+        page: Page,
+        admit: crate::timeline::Admission,
+    },
+    AnchorFailed(u64),
     Message(Message),
     PromptAcknowledged {
         attempted: String,
@@ -125,6 +158,7 @@ pub enum Event {
     WorkspaceMissing,
     Reconnecting,
     HistoryInvalidated,
+    RevertChanged,
     PagingFailed,
 }
 
