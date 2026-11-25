@@ -682,7 +682,7 @@ async fn deliver(
             if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
                 break;
             }
-            let rev = crate::worktrees::inventory_revision(app);
+            let rev = crate::worktrees::event_inventory_revision(app, workspace.id);
             let mut inbox_proof = None;
             let owned = if let Some(dir) = directory.as_deref() {
                 if inbox {
@@ -718,7 +718,7 @@ async fn deliver(
             } else {
                 true
             };
-            if crate::worktrees::inventory_revision(app) != rev {
+            if crate::worktrees::event_inventory_revision(app, workspace.id) != rev {
                 continue;
             }
             if !owned {
@@ -735,7 +735,7 @@ async fn deliver(
                 })
                 .await
                 .unwrap_or(false);
-                if crate::worktrees::inventory_revision(app) != rev {
+                if crate::worktrees::event_inventory_revision(app, workspace.id) != rev {
                     continue;
                 }
                 if !still_live

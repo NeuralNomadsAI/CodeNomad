@@ -24,7 +24,9 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 struct Gate {
-    hold: AtomicBool,
+    hold_all: AtomicBool,
+    hold_once: AtomicBool,
+    waiting_open: AtomicBool,
     entered: Notify,
     release: Notify,
     entries: AtomicUsize,
@@ -34,7 +36,9 @@ struct Gate {
 impl Gate {
     fn new() -> Self {
         Self {
-            hold: AtomicBool::new(false),
+            hold_all: AtomicBool::new(false),
+            hold_once: AtomicBool::new(false),
+            waiting_open: AtomicBool::new(false),
             entered: Notify::new(),
             release: Notify::new(),
             entries: AtomicUsize::new(0),
@@ -44,19 +48,31 @@ impl Gate {
 
     fn arm(&self) {
         self.armed_at.store(self.entries.load(Ordering::SeqCst), Ordering::SeqCst);
-        self.hold.store(true, Ordering::SeqCst);
+        self.hold_once.store(false, Ordering::SeqCst);
+        self.waiting_open.store(true, Ordering::SeqCst);
+        self.hold_all.store(true, Ordering::SeqCst);
+    }
+
+    /// Block only the first caller that reaches `pass()`; subsequent callers proceed immediately.
+    fn arm_once(&self) {
+        self.armed_at.store(self.entries.load(Ordering::SeqCst), Ordering::SeqCst);
+        self.hold_all.store(false, Ordering::SeqCst);
+        self.waiting_open.store(true, Ordering::SeqCst);
+        self.hold_once.store(true, Ordering::SeqCst);
     }
 
     fn open(&self) {
-        self.hold.store(false, Ordering::SeqCst);
+        self.hold_once.store(false, Ordering::SeqCst);
+        self.hold_all.store(false, Ordering::SeqCst);
+        self.waiting_open.store(false, Ordering::SeqCst);
         self.release.notify_waiters();
     }
 
     async fn pass(&self) {
-        if self.hold.load(Ordering::SeqCst) {
+        if self.hold_once.swap(false, Ordering::SeqCst) || self.hold_all.load(Ordering::SeqCst) {
             self.entries.fetch_add(1, Ordering::SeqCst);
             self.entered.notify_waiters();
-            while self.hold.load(Ordering::SeqCst) {
+            while self.waiting_open.load(Ordering::SeqCst) {
                 self.release.notified().await;
             }
         }
@@ -64,9 +80,21 @@ impl Gate {
 
     async fn wait_entered(&self) {
         let baseline = self.armed_at.load(Ordering::SeqCst);
-        while self.entries.load(Ordering::SeqCst) <= baseline {
-            self.entered.notified().await;
-        }
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while self.entries.load(Ordering::SeqCst) <= baseline {
+                self.entered.notified().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for gate entry");
+    }
+}
+
+async fn wait_for(label: &str, mut cond: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !cond() {
+        assert!(Instant::now() < deadline, "timed out waiting for {label}");
+        tokio::task::yield_now().await;
     }
 }
 
@@ -77,6 +105,7 @@ struct FakeNative {
     worktree_gets: AtomicUsize,
     worktree_refreshes: AtomicUsize,
     gate: Gate,
+    post_get_gate: Gate,
 }
 
 async fn fake_native(State(f): State<Arc<FakeNative>>, request: Request) -> Response {
@@ -111,6 +140,9 @@ async fn fake_native(State(f): State<Arc<FakeNative>>, request: Request) -> Resp
             for dir in f.extra.lock().unwrap().iter() {
                 rows.push(json!({"directory": dir}));
             }
+            // Capture rows before passing `post_get_gate` so tests can mutate `extra` after a
+            // flight has already observed the older snapshot.
+            f.post_get_gate.pass().await;
             Json(json!(rows)).into_response()
         }
         _ => Status::NOT_IMPLEMENTED.into_response(),
@@ -174,6 +206,7 @@ impl Harness {
             worktree_gets: AtomicUsize::new(0),
             worktree_refreshes: AtomicUsize::new(0),
             gate: Gate::new(),
+            post_get_gate: Gate::new(),
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let native = Native::test_connection(listener.local_addr().unwrap());
@@ -308,9 +341,7 @@ async fn http_cache_hits_within_ttl_and_lazy_refreshes_after_expiry() {
     let app_for_val = h.app.clone();
     let ws_for_val = h.ws.clone();
     let validated = tokio::spawn(async move { http_read(&app_for_val, &ws_for_val, ReadMode::Validated).await });
-    while h.app.linked_events.lock().unwrap().test_joins == 0 {
-        tokio::task::yield_now().await;
-    }
+    wait_for("Validated join", || h.app.linked_events.lock().unwrap().test_joins > 0).await;
     assert!(!validated.is_finished(), "Validated must wait for the in-flight refresh, not return expired data");
 
     h.native.gate.open();
@@ -383,9 +414,7 @@ async fn coalesces_concurrent_reads_fences_invalidated_flight_and_respects_forge
     let (a3, w3) = (h.app.clone(), h.ws.clone());
     let r2 = tokio::spawn(async move { http_read(&a2, &w2, ReadMode::Validated).await });
     let r3 = tokio::spawn(async move { http_read(&a3, &w3, ReadMode::Validated).await });
-    while h.app.linked_events.lock().unwrap().test_joins < 2 {
-        tokio::task::yield_now().await;
-    }
+    wait_for("concurrent Join count", || h.app.linked_events.lock().unwrap().test_joins >= 2).await;
     h.native.gate.open();
     assert!(r1.await.unwrap().is_ok());
     assert!(r2.await.unwrap().is_ok());
@@ -402,9 +431,7 @@ async fn coalesces_concurrent_reads_fences_invalidated_flight_and_respects_forge
     invalidate_blocking(&h.app);
     let (aw, ww) = (h.app.clone(), h.ws.clone());
     let wait_prev_task = tokio::spawn(async move { http_read(&aw, &ww, ReadMode::Validated).await });
-    while h.app.linked_events.lock().unwrap().test_wait_previous < 1 {
-        tokio::task::yield_now().await;
-    }
+    wait_for("WaitPrevious count", || h.app.linked_events.lock().unwrap().test_wait_previous >= 1).await;
     h.native.gate.open();
     let fresh_snap = fresh_task.await.unwrap().unwrap();
     let waited_snap = wait_prev_task.await.unwrap().unwrap();
@@ -421,9 +448,8 @@ async fn coalesces_concurrent_reads_fences_invalidated_flight_and_respects_forge
     h.native.gate.wait_entered().await;
     let (aj, wj) = (h.app.clone(), h.ws.clone());
     let follower = tokio::spawn(async move { http_read(&aj, &wj, ReadMode::Fresh).await });
-    while h.app.linked_events.lock().unwrap().test_joins <= joins_before_abort {
-        tokio::task::yield_now().await;
-    }
+    wait_for("follower Join before abort", || h.app.linked_events.lock().unwrap().test_joins > joins_before_abort)
+        .await;
     leader.abort();
     let _ = leader.await;
     h.native.gate.open();
@@ -499,6 +525,24 @@ async fn backoff_retains_last_display_snapshot_and_sse_cache_stays_isolated() {
         !h.app.linked_events.lock().unwrap().sse_entries.contains_key(&h.id),
         "HTTP snapshot change must invalidate the stale SSE entry"
     );
+
+    // Cold HTTP/SSE race: an in-flight SSE scan that captured 2 worktrees before an HTTP scan
+    // publishes 3 worktrees must be revoked (sse_generation bumped) and never publish the stale
+    // 2-worktree snapshot into `sse_entries`.
+    h.native.post_get_gate.arm_once();
+    let (as_sse, ws_sse) = (h.app.clone(), h.ws.clone());
+    let sse_task = tokio::spawn(async move { event_catalogue(&as_sse, &ws_sse).await });
+    h.native.post_get_gate.wait_entered().await;
+    let _wt_cold = h.add_linked("wt-cold-http-sse").await;
+    let fresh_http = http_read(&h.app, &h.ws, ReadMode::Fresh).await.unwrap();
+    assert_eq!(fresh_http.snapshot.catalogue().unwrap().trees.len(), 3);
+    h.native.post_get_gate.open();
+    let sse_after = sse_task.await.unwrap().expect("SSE catalogue retries after HTTP revocation");
+    assert_eq!(
+        sse_after.trees.len(),
+        3,
+        "revoked cold SSE flight must not return or publish the stale 2-worktree snapshot"
+    );
 }
 
 #[tokio::test]
@@ -518,21 +562,21 @@ async fn refreshed_on_miss_is_atomic_and_passive_refresh_retries_after_invalidat
     assert!(warm.from_cache && !warm.refreshed_on_miss);
     let obs_gen = warm.generation;
 
-    // 1. Concurrent RefreshOnMiss calls for the same generation coalesce into ONE Fresh scan.
+    // 1. A RefreshOnMiss joining an in-flight ordinary Validated scan marks `refreshed_on_miss`
+    //    atomically on publication, and concurrent RefreshOnMiss calls share one scan.
     let joins_before = h.app.linked_events.lock().unwrap().test_joins;
     h.native.gate.arm();
     let (a1, w1) = (h.app.clone(), h.ws.clone());
-    let m1 = tokio::spawn(async move { http_read(&a1, &w1, ReadMode::RefreshOnMiss(obs_gen)).await });
+    let m1 = tokio::spawn(async move { http_read(&a1, &w1, ReadMode::Fresh).await });
     h.native.gate.wait_entered().await;
     let (a2, w2) = (h.app.clone(), h.ws.clone());
     let m2 = tokio::spawn(async move { http_read(&a2, &w2, ReadMode::RefreshOnMiss(obs_gen)).await });
-    while h.app.linked_events.lock().unwrap().test_joins <= joins_before {
-        tokio::task::yield_now().await;
-    }
+    wait_for("RefreshOnMiss joining ordinary scan", || h.app.linked_events.lock().unwrap().test_joins > joins_before)
+        .await;
     h.native.gate.open();
     let r1 = m1.await.unwrap().unwrap();
     let r2 = m2.await.unwrap().unwrap();
-    assert_eq!(h.gets(), 2, "concurrent RefreshOnMiss must share one Fresh scan");
+    assert_eq!(h.gets(), 2, "RefreshOnMiss joining an ordinary scan must share that scan");
     assert!(r1.refreshed_on_miss && r2.refreshed_on_miss);
     assert_eq!(r1.generation, r2.generation);
     assert_ne!(r1.generation, obs_gen);
@@ -544,15 +588,18 @@ async fn refreshed_on_miss_is_atomic_and_passive_refresh_retries_after_invalidat
     assert!(!owns(&h.app, &h.ws, foreign2.to_str().unwrap()).await);
     assert_eq!(h.gets(), 2, "repeated misses inside one TTL must not repeat scans");
 
-    // 2. Passive refresh invalidated mid-flight automatically follows up without a new request.
+    // 2. Passive refresh invalidated mid-flight AFTER capturing the older 2-worktree snapshot
+    //    must discard the stale 2-worktree response and automatically run a follow-up scan
+    //    that publishes 3 worktrees with no new caller.
+    let gets_before_passive = h.gets();
     h.app.linked_events.lock().unwrap().advance_for_test(Duration::from_secs(11));
-    h.native.gate.arm();
+    h.native.post_get_gate.arm_once();
     let stale_display = h.list_json(None).await;
     assert_eq!(stale_display["worktrees"].as_array().unwrap().len(), 2);
-    h.native.gate.wait_entered().await;
+    h.native.post_get_gate.wait_entered().await;
     let _wt3 = h.add_linked("wt-passive-retry").await;
     invalidate(&h.app);
-    h.native.gate.open();
+    h.native.post_get_gate.open();
     // Wait for the background follow-up scan to publish the 3-worktree snapshot with no caller.
     // Acquire `app.inner` before `app.linked_events` so observing the published snapshot also
     // orders strictly after `finish_http_scan`'s `workspace.worktreesChanged` emission.
@@ -573,19 +620,43 @@ async fn refreshed_on_miss_is_atomic_and_passive_refresh_retries_after_invalidat
         assert!(Instant::now() < deadline, "passive refresh did not follow up after mid-flight invalidation");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    assert_eq!(h.gets(), gets_before_passive + 2, "must execute both the overtaken scan and the follow-up scan");
     assert_eq!(h.drain_worktrees_changed(), 1);
 
-    // 3. Local live() check detects removed checkout immediately even on a warm cache, and
-    //    strict resolve_checked reports Err(()) (unverifiable) when the opened .git is broken.
+    // 3. Local live() check detects removed checkout AND invalid HEAD on the opened root even
+    //    while the 10 s cache entry is still warm.
     std::fs::remove_file(linked.join(".git")).unwrap();
     assert!(!owns(&h.app, &h.ws, linked.to_str().unwrap()).await);
 
-    let broken_root = h._dir.0.join("foreign-1");
-    std::fs::remove_dir_all(h.ws.path.join(".git")).unwrap();
-    std::fs::write(h.ws.path.join(".git"), "gitdir: /nonexistent-corrupt-gitdir\n").unwrap();
-    invalidate_blocking(&h.app);
+    // Corrupting HEAD on the root invalidates `root_live_for`, and replacing `.git` with an
+    // incomplete directory leaves strict `resolve_checked` on an internal subfolder returning
+    // `Err(())` (unverifiable) through the cached `NonGit` path rather than `Ok(None)`.
+    let inside = h.ws.path.join("inside-sub");
+    std::fs::create_dir(&inside).unwrap();
+    std::fs::write(h.ws.path.join(".git").join("HEAD"), "not-a-valid-head\n").unwrap();
     assert!(
-        crate::worktrees::ownership::resolve_checked(&h.app, &h.ws, broken_root.to_str().unwrap(), true).await.is_err(),
-        "strict resolve_checked must treat a broken .git checkout as unverifiable Err(())"
+        !h.app
+            .linked_events
+            .lock()
+            .unwrap()
+            .http_entries
+            .get(&h.id)
+            .and_then(|e| e.value.as_ref())
+            .and_then(|v| match v {
+                HttpSnapshot::Git(cat) => Some(cat.root_live_for(&h.ws.path)),
+                _ => None,
+            })
+            .unwrap_or(true),
+        "corrupted root HEAD must fail root_live_for immediately"
+    );
+    std::fs::remove_dir_all(h.ws.path.join(".git")).unwrap();
+    std::fs::create_dir(h.ws.path.join(".git")).unwrap();
+    invalidate_blocking(&h.app);
+    // Warm the cache with the display `NonGit` classification of the incomplete `.git` dir.
+    let display = h.list_json(None).await;
+    assert_eq!(display["isGitRepo"], false);
+    assert!(
+        crate::worktrees::ownership::resolve_checked(&h.app, &h.ws, inside.to_str().unwrap(), true).await.is_err(),
+        "strict resolve_checked must treat a cached NonGit over an incomplete .git dir as unverifiable Err(())"
     );
 }

@@ -3,7 +3,7 @@ pub use super::inventory::{
     Catalogue, EventCache, Tree, blocking_invalidation, catalogue, event_catalogue, forget, invalidate,
     invalidate_blocking, readable_checkout, scope,
 };
-pub(crate) use super::inventory::{HttpSnapshot, ReadMode, http_read};
+pub(crate) use super::inventory::{HttpSnapshot, ReadMode, emit_worktrees_changed, http_read};
 use crate::{App, Error, Shared, Workspace, error, files, git, opencode::proxy};
 use axum::{
     Extension, Json,
@@ -130,7 +130,7 @@ pub(super) fn host(path: &Path) -> Result<&str, Error> {
 
 fn announce(app: &App, w: &Workspace) {
     invalidate_blocking(app);
-    app.emit(json!({"type":"workspace.worktreesChanged","workspaceId":w.id}));
+    emit_worktrees_changed(app, w.id);
 }
 
 async fn repo_common(path: &Path, non_git: Status) -> Result<PathBuf, Error> {

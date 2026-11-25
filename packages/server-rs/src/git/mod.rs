@@ -230,6 +230,27 @@ async fn repo_target(
                     }
                     crate::worktrees::linked::HttpSnapshot::Git(cat) => cat,
                 };
+                if fresh.from_cache {
+                    let cat_clone = std::sync::Arc::clone(&cat);
+                    let slug_owned = slug.to_owned();
+                    let still_live = tokio::task::spawn_blocking(move || {
+                        cat_clone.get(&slug_owned).ok().is_none_or(|t| t.direct_folder() && t.contains_live(&t.path))
+                    })
+                    .await
+                    .unwrap_or(false);
+                    if !still_live {
+                        let forced =
+                            crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Fresh)
+                                .await?;
+                        cat = match forced.snapshot {
+                            crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(missing_git()),
+                            crate::worktrees::linked::HttpSnapshot::NonGit => {
+                                return Err(bad("Workspace is not a Git repository"));
+                            }
+                            crate::worktrees::linked::HttpSnapshot::Git(cat) => cat,
+                        };
+                    }
+                }
             }
         }
     }
@@ -456,7 +477,7 @@ pub async fn init(
         200..=299 => {
             worktrees::linked::invalidate_blocking(&app);
             notify(&app, &w);
-            app.emit(json!({"type":"workspace.worktreesChanged","workspaceId":w.id}));
+            worktrees::linked::emit_worktrees_changed(&app, w.id);
             Ok(Json(json!({"ok":true})))
         }
         409 => Err(exists()),

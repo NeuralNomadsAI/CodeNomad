@@ -13,8 +13,9 @@ mod media_path;
 #[cfg(test)]
 mod tests;
 
+pub(in crate::worktrees) use git_discovery::valid_git_admin;
 pub use git_discovery::{common_directory, resolve_directory, within};
-use git_discovery::{head_cannot_name_repository, read_common_directory, repository_root, shares_common_directory};
+use git_discovery::{head_cannot_name_repository, repository_root, shares_common_directory, strict_common_directory};
 pub(crate) use media_path::{
     catalogue_owns_event, directory_anchor, media_directory, media_directory_with_slot, resolve_media_path,
     resolve_media_path_checked,
@@ -489,16 +490,21 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
     }
     let hit = match crate::worktrees::linked::http_read(app, w, crate::worktrees::linked::ReadMode::Validated).await {
         Ok(hit) => hit,
-        Err(_) if strict && matches!(read_common_directory(root).await, Ok(None)) => return Ok(None),
+        Err(_) if strict && matches!(strict_common_directory(root).await, Ok(None)) => return Ok(None),
         Err(_) => return Err(()),
     };
-    let Some(catalogue) = hit.snapshot.catalogue() else {
-        // Strict discovery distinguishes a confirmed non-Git folder (`Ok(None)`) from unreadable
-        // `.git` metadata or missing `git` on a Git checkout (`Err(())`).
-        if strict && matches!(read_common_directory(root).await, Ok(None)) {
-            return Ok(None);
+    let catalogue = match hit.snapshot {
+        crate::worktrees::linked::HttpSnapshot::Git(catalogue) => catalogue,
+        // `MissingGit` (`directoryOnly`) is never a strict absence verdict (TS `worktree-directory.ts:233`).
+        crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(()),
+        // `NonGit`: in strict mode, confirm absence directly on disk so an incomplete/broken `.git`
+        // stays an unverifiable `Err(())` (TS `worktree-directory.ts:236`).
+        crate::worktrees::linked::HttpSnapshot::NonGit => {
+            if strict && matches!(strict_common_directory(root).await, Ok(None)) {
+                return Ok(None);
+            }
+            return Err(());
         }
-        return Err(());
     };
     let (owner, root_live) = {
         let cat = std::sync::Arc::clone(&catalogue);
@@ -532,14 +538,18 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
         };
         let refreshed = match crate::worktrees::linked::http_read(app, w, retry_mode).await {
             Ok(hit) => hit,
-            Err(_) if strict && matches!(read_common_directory(root).await, Ok(None)) => return Ok(None),
+            Err(_) if strict && matches!(strict_common_directory(root).await, Ok(None)) => return Ok(None),
             Err(_) => return Err(()),
         };
-        let Some(catalogue) = refreshed.snapshot.catalogue() else {
-            if strict && matches!(read_common_directory(root).await, Ok(None)) {
-                return Ok(None);
+        let catalogue = match refreshed.snapshot {
+            crate::worktrees::linked::HttpSnapshot::Git(catalogue) => catalogue,
+            crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(()),
+            crate::worktrees::linked::HttpSnapshot::NonGit => {
+                if strict && matches!(strict_common_directory(root).await, Ok(None)) {
+                    return Ok(None);
+                }
+                return Err(());
             }
-            return Err(());
         };
         let res_owned = resolved.clone();
         let owner = tokio::task::spawn_blocking(move || {

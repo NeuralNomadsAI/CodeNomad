@@ -134,6 +134,7 @@ pub type EventCache = std::sync::Mutex<InventoryCache>;
 pub struct InventoryCache {
     serial: u64,
     reset: u64,
+    next_generation: u64,
     changed: HashMap<String, u64>,
     sse_generation: HashMap<Uuid, u64>,
     sse_entries: HashMap<Uuid, SseEntry>,
@@ -221,14 +222,16 @@ impl InventoryCache {
             })
             .and_then(|e| e.value.as_ref())
             .is_some_and(|old| !old.same_snapshot(latest));
-        let sse_differs = self.sse_entries.get(&id).and_then(|e| {
-            let old = e.value.as_ref()?;
-            Some(match (latest, endpoint) {
+        let sse_differs = self.sse_entries.get(&id).is_some_and(|e| match &e.value {
+            Some(old) => match (latest, endpoint) {
                 (HttpSnapshot::Git(cat), Some(ep)) if Arc::ptr_eq(&e.endpoint, ep) => !old.same_snapshot(cat),
                 _ => true,
-            })
+            },
+            // A cold SSE flight already in progress may hold an older observation than this HTTP
+            // publication; revoke it so it cannot commit stale data after HTTP succeeds.
+            None => e.loading.is_some(),
         });
-        if http_changed || sse_differs.unwrap_or(false) {
+        if http_changed || sse_differs {
             let generation = self.sse_generation.entry(id).or_insert(0);
             *generation = generation.wrapping_add(1);
             if let Some(sse) = self.sse_entries.get_mut(&id) {
@@ -305,6 +308,20 @@ pub fn blocking_invalidation(app: &App) -> BlockingInvalidation<'_> {
 
 pub(in crate::worktrees) fn revision(app: &App) -> u64 {
     app.linked_events.lock().unwrap().stamp()
+}
+
+pub(in crate::worktrees) fn event_revision(app: &App, workspace_id: Uuid) -> (u64, u64) {
+    let cache = app.linked_events.lock().unwrap();
+    (cache.stamp(), cache.sse_gen(workspace_id))
+}
+
+/// Emit `workspace.worktreesChanged` under `app.inner` only while the workspace is still alive,
+/// matching `App::remove` so it can never trail `workspace.stopped`.
+pub(crate) fn emit_worktrees_changed(app: &App, workspace_id: Uuid) {
+    let workspaces = app.inner.lock().unwrap();
+    if workspaces.workspaces.iter().any(|item| item.id == workspace_id) {
+        app.emit(json!({"type":"workspace.worktreesChanged","workspaceId":workspace_id}));
+    }
 }
 
 pub fn forget(app: &App, id: Uuid) {
@@ -410,14 +427,13 @@ fn finish_http_scan(
                     .and_then(|e| e.value.as_ref())
                     .is_some_and(|prev| !prev.same_snapshot(&snapshot));
                 cache.invalidate_sse_for_http_change(w.id, endpoint.as_ref(), &snapshot);
-                cache.evict_http_if_full(w.id);
-                let mut generation = 0u64;
+                cache.next_generation = cache.next_generation.wrapping_add(1).max(1);
+                let generation = cache.next_generation;
                 let mut refreshed_on_miss = false;
                 if let Some(entry) = cache.http_entries.get_mut(&w.id) {
                     refreshed_on_miss = entry.pending_refreshed_on_miss;
                     entry.pending_refreshed_on_miss = false;
-                    entry.generation = entry.generation.wrapping_add(1);
-                    generation = entry.generation;
+                    entry.generation = generation;
                     entry.at = Instant::now();
                     entry.expired = false;
                     entry.retry_at = None;
@@ -427,6 +443,7 @@ fn finish_http_scan(
                     entry.endpoint = endpoint.clone();
                     entry.loading = None;
                 }
+                cache.evict_http_if_full(w.id);
                 (Some(Ok((snapshot, endpoint, generation, refreshed_on_miss))), changed)
             }
         }
@@ -507,8 +524,9 @@ pub(in crate::worktrees) async fn http_list(
                             if retry {
                                 // An invalidation or endpoint rotation overtook the passive
                                 // refresh: follow up immediately without waiting for another
-                                // display request (TS `worktree-inventory.ts:61-78`).
-                                let _ = http_read_core(&shared, &w_owned, ReadMode::Validated, None).await;
+                                // display request; passive follow-ups are not capped by the
+                                // strict-read restart budget (TS `worktree-inventory.ts:61-78`).
+                                let _ = http_read_core(&shared, &w_owned, ReadMode::Validated, None, usize::MAX).await;
                             }
                         });
                     }
@@ -522,11 +540,11 @@ pub(in crate::worktrees) async fn http_list(
             return Ok(display);
         }
     }
-    http_read_core(app, w, mode, None).await.map(|hit| hit.snapshot)
+    http_read_core(app, w, mode, None, RESTART_LIMIT).await.map(|hit| hit.snapshot)
 }
 
 pub(crate) async fn http_read(app: &App, w: &Workspace, mode: ReadMode) -> Result<CachedHttp, Error> {
-    http_read_core(app, w, mode, None).await
+    http_read_core(app, w, mode, None, RESTART_LIMIT).await
 }
 
 pub(in crate::worktrees) async fn media_http_read(
@@ -535,7 +553,7 @@ pub(in crate::worktrees) async fn media_http_read(
     endpoint: &Arc<crate::opencode::Endpoint>,
     mode: ReadMode,
 ) -> Result<CachedHttp, Error> {
-    http_read_core(app, w, mode, Some(endpoint)).await
+    http_read_core(app, w, mode, Some(endpoint), RESTART_LIMIT).await
 }
 
 async fn http_read_core(
@@ -543,11 +561,14 @@ async fn http_read_core(
     w: &Workspace,
     mode: ReadMode,
     pinned_endpoint: Option<&Arc<crate::opencode::Endpoint>>,
+    max_restarts: usize,
 ) -> Result<CachedHttp, Error> {
     let mut restarts = 0usize;
     let mut wait_turns = 0usize;
+    let max_wait_turns = max_restarts.saturating_mul(2).saturating_add(2);
     loop {
         enum Step {
+            VerifyRoot(CachedHttp),
             WaitPrevious(HttpRead),
             Join(u64, HttpRead),
             RunInline { flight_id: Uuid, epoch: u64, done: tokio::sync::oneshot::Sender<HttpFlightResult> },
@@ -577,6 +598,7 @@ async fn http_read_core(
             }
             let epoch = cache.stamp();
             let now = Instant::now();
+            let mut verified_hit = None;
             if let Some(entry) = cache.http_entries.get(&w.id)
                 && let Some(val) = &entry.value
                 && pinned_endpoint.is_none_or(|ep| entry.endpoint.as_ref().is_none_or(|cur| Arc::ptr_eq(cur, ep)))
@@ -590,14 +612,17 @@ async fn http_read_core(
                     }
                 };
                 if return_fresh {
-                    return Ok(CachedHttp {
+                    let hit = CachedHttp {
                         snapshot: val.clone(),
                         from_cache: true,
                         refreshed_on_miss: entry.refreshed_on_miss,
                         generation: entry.generation,
-                    });
-                }
-                if mode == ReadMode::Cached && !entry.require_validation {
+                    };
+                    if mode == ReadMode::Cached || !matches!(hit.snapshot, HttpSnapshot::Git(_)) {
+                        return Ok(hit);
+                    }
+                    verified_hit = Some(hit);
+                } else if mode == ReadMode::Cached && !entry.require_validation {
                     return Ok(CachedHttp {
                         snapshot: val.clone(),
                         from_cache: true,
@@ -606,7 +631,9 @@ async fn http_read_core(
                     });
                 }
             }
-            if let Some(entry) = cache.http_entries.get_mut(&w.id)
+            if let Some(hit) = verified_hit {
+                Step::VerifyRoot(hit)
+            } else if let Some(entry) = cache.http_entries.get_mut(&w.id)
                 && let Some(flight) = entry.loading.as_ref()
             {
                 if flight.epoch == epoch {
@@ -651,9 +678,38 @@ async fn http_read_core(
             }
         };
         match step {
+            Step::VerifyRoot(candidate) => {
+                let root_live = if let HttpSnapshot::Git(cat) = &candidate.snapshot {
+                    let cat = Arc::clone(cat);
+                    let opened = w.path.clone();
+                    tokio::task::spawn_blocking(move || cat.root_live_for(&opened)).await.unwrap_or(false)
+                } else {
+                    true
+                };
+                if pinned_endpoint.is_some_and(|ep| !app.native.current(ep)) {
+                    return Err(crate::opencode::upstream_error());
+                }
+                if root_live {
+                    return Ok(candidate);
+                }
+                {
+                    let mut cache = app.linked_events.lock().unwrap();
+                    if let Some(entry) = cache.http_entries.get_mut(&w.id)
+                        && entry.generation == candidate.generation
+                    {
+                        entry.expired = true;
+                        entry.require_validation = true;
+                    }
+                }
+                restarts += 1;
+                if restarts > max_restarts {
+                    return Err(crate::opencode::upstream_error());
+                }
+                continue;
+            }
             Step::WaitPrevious(prev) => {
                 wait_turns += 1;
-                if wait_turns > RESTART_LIMIT * 2 + 2 {
+                if wait_turns > max_wait_turns {
                     return Err(crate::opencode::upstream_error());
                 }
                 if let Some(ep) = pinned_endpoint {
@@ -668,7 +724,15 @@ async fn http_read_core(
                 continue;
             }
             Step::Join(epoch, loading) => {
-                let outcome = loading.await;
+                let outcome = if let Some(ep) = pinned_endpoint {
+                    tokio::select! {
+                        biased;
+                        _ = app.native.wait_retired(ep) => return Err(crate::opencode::upstream_error()),
+                        res = loading => res,
+                    }
+                } else {
+                    loading.await
+                };
                 let workspaces = app.inner.lock().unwrap();
                 if !workspaces.workspaces.iter().any(|item| item.id == w.id) {
                     return Err(error(Status::NOT_FOUND, "Workspace not found"));
@@ -695,7 +759,7 @@ async fn http_read_core(
                         drop(cache);
                         drop(workspaces);
                         restarts += 1;
-                        if restarts > RESTART_LIMIT {
+                        if restarts > max_restarts {
                             return Err(crate::opencode::upstream_error());
                         }
                         continue;
@@ -715,7 +779,7 @@ async fn http_read_core(
                     Some(Err((err, _))) => return Err(to_error(err)),
                     None => {
                         restarts += 1;
-                        if restarts > RESTART_LIMIT {
+                        if restarts > max_restarts {
                             return Err(crate::opencode::upstream_error());
                         }
                         continue;
@@ -733,7 +797,10 @@ pub(in crate::worktrees) async fn history_catalogue(
     w: &Workspace,
     endpoint: &Arc<crate::opencode::Endpoint>,
 ) -> Option<Arc<Catalogue>> {
-    http_read_core(app, w, ReadMode::Validated, Some(endpoint)).await.ok().and_then(|hit| hit.snapshot.catalogue())
+    http_read_core(app, w, ReadMode::Validated, Some(endpoint), RESTART_LIMIT)
+        .await
+        .ok()
+        .and_then(|hit| hit.snapshot.catalogue())
 }
 
 pub async fn event_catalogue(app: &Shared, w: &Workspace) -> Option<Arc<Catalogue>> {

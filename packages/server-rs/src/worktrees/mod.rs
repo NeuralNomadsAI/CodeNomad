@@ -11,6 +11,10 @@ pub(crate) fn inventory_revision(app: &App) -> u64 {
     inventory::revision(app)
 }
 
+pub(crate) fn event_inventory_revision(app: &App, workspace_id: uuid::Uuid) -> (u64, u64) {
+    inventory::event_revision(app, workspace_id)
+}
+
 pub fn routes() -> axum::Router<Shared> {
     use axum::routing::{delete, get, post};
     axum::Router::new()
@@ -317,7 +321,12 @@ async fn lookup_owned_tree(app: &App, w: &Workspace, directory: &str) -> Result<
             return Err(());
         };
         let dir = directory.to_owned();
-        return Ok(tokio::task::spawn_blocking(move || cat.by_directory(&dir).cloned()).await.unwrap_or(None));
+        let check_live = fresh.from_cache;
+        return Ok(tokio::task::spawn_blocking(move || {
+            cat.by_directory(&dir).filter(|t| !check_live || t.contains_live(&t.path)).cloned()
+        })
+        .await
+        .unwrap_or(None));
     }
     Ok(None)
 }
