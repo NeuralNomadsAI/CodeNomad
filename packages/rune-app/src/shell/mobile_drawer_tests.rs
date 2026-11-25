@@ -672,7 +672,12 @@ fn git_changes_row_action_menu_closes_on_floating_to_docked_rotation_and_offline
 fn delayed_screen_orientation_change_event_remeasures_without_resize() {
     let mut tablet = touch_init();
     fixture(&mut tablet);
-    let mut rt = Runtime::new(tablet, english_touch, (1366.0, 1024.0), Env::new(false, 1.0));
+    let mut rt = Runtime::new(
+        tablet,
+        english_touch,
+        (1366.0, 1024.0),
+        Env::new(false, 1.0),
+    );
     settle(&mut rt);
     assert!(rt.state.shell.visible(0) && rt.state.shell.visible(1));
 
@@ -787,9 +792,7 @@ fn offline_during_session_placement_picker_returns_focus_to_composer() {
     };
     workspace::bound(&mut state, &backend);
     let mut agent = crate::agent::Ui::new(crate::agent::start(backend.clone(), state.wake.clone()));
-    agent.reading = false;
-    agent.pending_known = true;
-    agent.online = true;
+    agent.fixture_ready();
     state.agent = Some(agent);
     crate::git::connected(&mut state, &backend);
     crate::git::fixture_worktrees(&mut state);
@@ -802,7 +805,7 @@ fn offline_during_session_placement_picker_returns_focus_to_composer() {
     rt.update(|s, _| crate::git::fixture_open_placement_picker(s));
     settle(&mut rt);
     assert!(crate::git::overlay_open(&rt.state));
-    assert_ne!(focused_key(&rt).as_deref(), Some("composer"));
+    assert!(!focus_inside(&rt, "/composer/"));
 
     // Going offline disables placement; git::poll must close placement_picker and return focus to composer.
     rt.update(|s, tx| {
@@ -811,9 +814,9 @@ fn offline_during_session_placement_picker_returns_focus_to_composer() {
     });
     settle(&mut rt);
     assert!(!crate::git::overlay_open(&rt.state));
-    assert_eq!(
-        focused_key(&rt).as_deref(),
-        Some("composer"),
-        "going offline while placement_picker is open must let git::poll return focus to composer"
+    assert!(
+        focus_inside(&rt, "/composer/"),
+        "going offline while placement_picker is open must let git::poll return focus to composer, got {:?}",
+        focused_key(&rt)
     );
 }

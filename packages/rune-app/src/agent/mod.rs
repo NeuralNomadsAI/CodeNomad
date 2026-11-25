@@ -207,6 +207,13 @@ impl Ui {
     pub fn idle(&self) -> bool {
         !self.reading && !self.busy && !self.stopping && self.trailing.is_none()
     }
+    #[cfg(test)]
+    pub(crate) fn fixture_ready(&mut self) {
+        self.reading = false;
+        self.known = true;
+        self.pending_known = true;
+        self.online = true;
+    }
     pub fn new(handle: Handle) -> Self {
         let mut ui = Self {
             handle,
