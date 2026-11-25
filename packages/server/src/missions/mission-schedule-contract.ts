@@ -147,7 +147,7 @@ export const missionScheduleRpcMethods = {
       path: { type: "string", minLength: 1, maxLength: 4096 },
       hiddenOff: { type: "array", maxItems: 256, items: { type: "string", minLength: 1, maxLength: 4096 } } },
       required: ["enabled", "provenance", "hiddenOff"], additionalProperties: false } },
-  scheduleList: { input: { type: "object", properties: { after: text, limit: { type: "integer", minimum: 1, maximum: MISSION_SCHEDULE_PAGE_MAX } }, additionalProperties: false },
+  scheduleList: { input: { type: "object", properties: { after: text, limit: { type: "integer", minimum: 1, maximum: MISSION_SCHEDULE_PAGE_MAX }, kind: { enum: ["schedule"] } }, additionalProperties: false },
     output: { type: "object", properties: { version: { const: 1 }, projectID: text, next: text,
       schedules: { type: "array", maxItems: MISSION_SCHEDULE_PAGE_MAX, items: summary } }, required: ["version", "projectID", "schedules"], additionalProperties: false } },
   scheduleRead: { input: { type: "object", properties: { missionID: text, requestID: text }, required: ["missionID"], additionalProperties: false }, output: result },

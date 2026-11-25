@@ -889,7 +889,7 @@ export function createServerApi(ctx: BackendHttp) {
     fetchMissionPlaybooks(taskMode: import("../../../server/src/missions/task-execution-mode").MissionTaskMode): Promise<import("../../../server/src/missions/playbook-details").MissionPlaybookDetails> {
       return request(`/api/missions/playbooks?taskMode=${encodeURIComponent(taskMode)}`)
     },
-    fetchMissionSchedules(instanceId: string, input: { after?: string; limit?: number; directory?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleList> {
+    fetchMissionSchedules(instanceId: string, input: { after?: string; limit?: number; directory?: string; kind?: "schedule" } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleList> {
       const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
       return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled?${query}`, { signal }))
     },
