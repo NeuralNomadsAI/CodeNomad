@@ -86,6 +86,21 @@ impl Groups {
             {
                 continue;
             }
+            if message.role == "assistant"
+                && !message.parts.is_empty()
+                && !message.parts.iter().any(|part| match part {
+                    Part::Text(text) => !text.text.trim().is_empty(),
+                    Part::Reasoning(fragment) => show_thinking && fragment.visible(),
+                    Part::Tool(tool) => {
+                        index.awaiting(&message.id, &tool.id)
+                            || tools::visible(s, &message.id, tool)
+                    }
+                    Part::SubagentReport(_) => false,
+                    _ => true,
+                })
+            {
+                continue;
+            }
             if message.role != "assistant"
                 || message.parts.is_empty() && !message.body.trim().is_empty()
             {
@@ -104,12 +119,13 @@ impl Groups {
             let (head, tail) = super::transcript::part_window(message.parts.len(), steps);
             for (part, content) in message.parts.iter().enumerate() {
                 if part >= head && part < tail {
-                    index.finish(run.take(), false);
+                    index.finish(run.take(), true);
                     continue;
                 }
                 match content {
                     Part::Text(text) if text.text.trim().is_empty() => (),
-                    Part::Reasoning(fragment) if !show_thinking || !fragment.visible() => (),
+                    Part::Reasoning(fragment) if !fragment.visible() => (),
+                    Part::Reasoning(_) if !show_thinking => index.finish(run.take(), true),
                     Part::Reasoning(fragment) => {
                         if run
                             .as_ref()
@@ -161,24 +177,21 @@ impl Groups {
                         if run.as_ref().is_some_and(|run| run.summary.kind != kind) {
                             index.finish(run.take(), true);
                         }
-                        let member = tools::tool_key(&message.id, &tool.id);
-                        let run = run.get_or_insert_with(|| {
-                            let key = format!("group-{member}");
-                            Run {
-                                summary: Summary {
-                                    key: key.clone(),
-                                    keys: vec![key],
-                                    message: message.id.clone(),
-                                    kind,
-                                    count: 0,
-                                    reads: 0,
-                                    duration_ms: 0,
-                                    title: None,
-                                    completed: false,
-                                    search_hit: false,
-                                },
-                                chunks: Vec::new(),
-                            }
+                        let member = format!("group-{}", tools::tool_key(&message.id, &tool.id));
+                        let run = run.get_or_insert_with(|| Run {
+                            summary: Summary {
+                                key: member.clone(),
+                                keys: Vec::new(),
+                                message: message.id.clone(),
+                                kind,
+                                count: 0,
+                                reads: 0,
+                                duration_ms: 0,
+                                title: None,
+                                completed: false,
+                                search_hit: false,
+                            },
+                            chunks: Vec::new(),
                         });
                         run.summary.keys.push(member);
                         run.summary.count += 1;
@@ -253,6 +266,13 @@ impl Groups {
     }
 
     fn chunk_for_part_key(&self, s: &State, message: &str, key: &str) -> Option<&Chunk> {
+        if let Some((_, chunk)) = self
+            .chunks
+            .iter()
+            .find(|(_, chunk)| chunk.summary.message == message && chunk.summary.key == key)
+        {
+            return Some(chunk);
+        }
         let rows = s.transcript_display.messages.visible(&s.messages);
         let (row, current) = rows.iter().enumerate().find(|(_, row)| row.id == message)?;
         let part = current.parts.iter().position(|part| match part {
@@ -274,16 +294,6 @@ impl Groups {
         let chunk = self.chunk_for_part_key(s, message, key)?;
         (!chunk.expanded(s)).then(|| format!("{}/{}", chunk.summary.message, chunk.summary.key))
     }
-
-    pub(super) fn member_group_keys(
-        &self,
-        s: &State,
-        message: &str,
-        key: &str,
-    ) -> Option<Vec<String>> {
-        self.chunk_for_part_key(s, message, key)
-            .map(|chunk| chunk.summary.keys.clone())
-    }
 }
 
 fn waiting(s: &State, rows: &[Row]) -> HashMap<String, HashSet<String>> {
@@ -302,13 +312,8 @@ fn waiting(s: &State, rows: &[Row]) -> HashMap<String, HashSet<String>> {
             .or_default()
             .insert(target.call.clone());
     }
-    let pool = if s.messages.is_empty() {
-        rows
-    } else {
-        &s.messages
-    };
     if agent.forms.iter().any(|form| form.infer_websearch)
-        && let Some((message, call)) = pool.iter().rev().find_map(|message| {
+        && let Some((message, call)) = rows.iter().rev().find_map(|message| {
             message.parts.iter().rev().find_map(|part| match part {
                 Part::Tool(tool) if tool.name == "websearch" => Some((&message.id, &tool.id)),
                 _ => None,
@@ -325,15 +330,24 @@ fn waiting(s: &State, rows: &[Row]) -> HashMap<String, HashSet<String>> {
 
 impl Chunk {
     fn expanded(&self, s: &State) -> bool {
+        if self.summary.search_hit {
+            let search_id = s
+                .transcript_display
+                .search_highlight
+                .as_ref()
+                .map_or(0, |hit| hit.id);
+            return !s
+                .transcript_display
+                .group_search_collapsed(search_id, &self.summary.keys);
+        }
         let default_row = match self.summary.kind {
             Kind::Reasoning => TranscriptRow::Thinking,
             Kind::Exploration | Kind::Shell => TranscriptRow::Groups,
         };
         let default = transcript_mode(s, default_row) == "expanded";
-        match s.transcript_display.group_expanded(&self.summary.keys) {
-            Some(explicit) => explicit,
-            None => self.summary.search_hit || default,
-        }
+        s.transcript_display
+            .group_expanded(&self.summary.keys)
+            .unwrap_or(default)
     }
 
     pub(super) fn view<'a>(
@@ -346,6 +360,15 @@ impl Chunk {
     ) -> Option<El> {
         let summary = &self.summary;
         let expanded = self.expanded(s);
+        let search_id = summary
+            .search_hit
+            .then(|| {
+                s.transcript_display
+                    .search_highlight
+                    .as_ref()
+                    .map(|hit| hit.id)
+            })
+            .flatten();
         if summary.kind == Kind::Reasoning {
             return reasoning::view_chunk(
                 s,
@@ -360,6 +383,7 @@ impl Chunk {
                     title: summary.title.as_deref(),
                     completed: summary.completed,
                     expanded,
+                    search_id,
                     first: self.first,
                 },
                 marker,
@@ -369,13 +393,20 @@ impl Chunk {
         if !self.first && !expanded {
             return None;
         }
-        let toggle = summary.keys.clone();
         let header = self.first.then(|| {
+            let toggle = summary.keys.clone();
             layout::button(
                 &summary.label(),
                 false,
                 screen::action(&s.input_scope, move |s| {
-                    Display::set_group_expanded(s, &toggle, !expanded);
+                    if let Some(id) = search_id {
+                        Display::set_group_search_collapsed(s, id, &toggle, expanded);
+                        if !expanded {
+                            Display::set_group_expanded(s, &toggle, true);
+                        }
+                    } else {
+                        Display::set_group_expanded(s, &toggle, !expanded);
+                    }
                 }),
             )
             .key(format!("toggle-{key}"))

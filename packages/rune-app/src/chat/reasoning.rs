@@ -27,10 +27,11 @@ pub(super) fn duration_ms(part: &Reasoning) -> u64 {
 pub(super) fn extract_title(text: &str) -> Option<String> {
     text.trim().strip_prefix("**").and_then(|source| {
         let (title, rest) = source.split_once("**")?;
-        (!title.is_empty()
+        let trimmed = title.trim();
+        (!trimmed.is_empty()
             && !title.contains(['*', '\n'])
             && (rest.is_empty() || rest.starts_with("\n\n") || rest.starts_with("\r\n\r\n")))
-        .then(|| title.trim().chars().take(250).collect())
+        .then(|| trimmed.chars().take(250).collect())
     })
 }
 
@@ -42,6 +43,7 @@ pub(super) struct GroupView<'a> {
     pub title: Option<&'a str>,
     pub completed: bool,
     pub expanded: bool,
+    pub search_id: Option<u64>,
     pub first: bool,
 }
 
@@ -151,13 +153,21 @@ pub(super) fn view_chunk<'a>(
     let duration = super::tools::duration::caption(group.duration_ms, false);
     let toggle = group.keys.to_vec();
     let expanded = group.expanded;
+    let search_id = group.search_id;
     let header = layout::action_row()
         .child(
             layout::button(
                 base,
                 false,
                 screen::action(&s.input_scope, move |s| {
-                    Display::set_group_expanded(s, &toggle, !expanded);
+                    if let Some(id) = search_id {
+                        Display::set_group_search_collapsed(s, id, &toggle, expanded);
+                        if !expanded {
+                            Display::set_group_expanded(s, &toggle, true);
+                        }
+                    } else {
+                        Display::set_group_expanded(s, &toggle, !expanded);
+                    }
                 }),
             )
             .key(format!("toggle-{}", group.key))
@@ -494,8 +504,17 @@ fn reasoning_groups_merge_across_adjacent_messages_and_sum_duration() {
     let tree = rt.accessibility_json().to_string();
     assert!(!tree.contains("Older thought") && !tree.contains("Second step thought"));
 
-    // Duration rounding never overflows even at u64::MAX.
+    // Duration rounding uses exact quotient/remainder and whitespace-only titles fall back.
+    assert_eq!(extract_title("**   **\n\nBody"), None);
     crate::strings::with_locale("en", || {
+        assert_eq!(
+            super::tools::duration::caption(1_499, false).as_deref(),
+            Some("1s")
+        );
+        assert_eq!(
+            super::tools::duration::caption(1_500, false).as_deref(),
+            Some("2s")
+        );
         assert!(super::tools::duration::caption(u64::MAX, false).is_some());
     });
 }
@@ -601,6 +620,30 @@ fn hidden_tools_and_blank_fragments_are_transparent_for_reasoning_groups() {
     crate::settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":true}));
     assert!(super::anchors::collapsed_group_target(&s, &rows, 3, 0, 0).is_none());
 
+    // Within a mixed message that stays visible because of its tools, non-empty reasoning still
+    // splits adjacent exploration tools even when thinking is hidden (matching Solid), while a
+    // blank reasoning fragment stays transparent.
+    let mixed_hidden_thought: crate::history::Row = crate::history::decode_message(&json!({
+        "id":"mixed","type":"assistant","time":{"completed":1},"content":[
+            {"type":"tool","id":"a","name":"read","state":{"status":"completed","input":{}}},
+            {"type":"reasoning","text":"Non-empty thought"},
+            {"type":"tool","id":"b","name":"grep","state":{"status":"completed","input":{}}}
+        ]
+    }))
+    .unwrap()
+    .into();
+    crate::settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":false}));
+    assert!(
+        super::anchors::collapsed_group_target(
+            &s,
+            std::slice::from_ref(&mixed_hidden_thought),
+            0,
+            0,
+            2,
+        )
+        .is_none()
+    );
+    crate::settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":true}));
     let with_blank_thought: crate::history::Row = crate::history::decode_message(&json!({
         "id":"joined","type":"assistant","time":{"completed":1},"content":[
             {"type":"tool","id":"a","name":"read","state":{"status":"completed","input":{}}},
@@ -686,7 +729,8 @@ fn collapsed_cross_message_reasoning_anchors_and_search_expand_the_shared_group(
             .contains("Needle in second step")
     );
 
-    // Clicking the group toggle collapses the group even while search_highlight stays active.
+    // Clicking the group toggle collapses the group even while search_highlight stays active,
+    // and clearing search_highlight keeps a search-opened group closed.
     let (x, y) = rt.find("toggle-reasoning-m1:0").unwrap();
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
@@ -695,15 +739,17 @@ fn collapsed_cross_message_reasoning_anchors_and_search_expand_the_shared_group(
     }
     assert!(rt.find(&block_key("m2", 0)).is_none());
 
-    // A pagination gap inside an active assistant message must not mark its reasoning completed.
-    let mut parts = Vec::with_capacity(super::transcript::PART_LIMIT + 2);
-    for idx in 0..(super::transcript::PART_LIMIT + 2) {
-        parts.push(json!({"type":"reasoning","text":format!("Step {idx}")}));
-    }
-    let streaming = crate::history::decode_message(&json!({
-        "id":"live","type":"assistant","content":parts
+    // A trailing reasoning fragment inside an active assistant message stays Thinking even if
+    // its fragment provenance is closed, until message completion or a following visible part.
+    let mut streaming = crate::history::decode_message(&json!({
+        "id":"live","type":"assistant","content":[
+            {"type":"reasoning","text":"Still streaming"}
+        ]
     }))
     .unwrap();
+    if let crate::content::Part::Reasoning(fragment) = &mut streaming.parts[0] {
+        fragment.provenance = TextProvenance::Closed;
+    }
     rt.update(|s, _| {
         s.transcript_display.search_highlight = None;
         s.messages = vec![streaming.into()];

@@ -308,7 +308,6 @@ fn settle(s: &mut State, m: &Marker, (align_message, key, steps): (String, Strin
             .is_some_and(|hit| hit.message == m.message)
     {
         s.transcript_display.mark_search_revealed(&key);
-        anchors::expand_search_group(s, &m.message, &key);
     }
     let t = owner(s);
     t.changed = true;
@@ -419,7 +418,6 @@ pub(crate) fn restore_search(s: &mut State) {
         Landing::Visible(key, steps) => {
             anchors::reveal_parts(s, &hit.message, steps);
             s.transcript_display.mark_search_revealed(&key);
-            anchors::expand_search_group(s, &hit.message, &key);
             owner(s).jump.align = Some((hit.message, key));
         }
         Landing::Filtered => refuse_filtered(s),

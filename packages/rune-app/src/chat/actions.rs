@@ -61,6 +61,7 @@ struct SessionDisplay {
     toggled: HashSet<String>,
     expansion_serial: u64,
     expansion: HashMap<String, (u64, bool)>,
+    group_search_collapsed: (u64, HashSet<String>),
     revealed: HashMap<String, usize>,
     task_revealed: HashMap<String, usize>,
     task_mount_gen: HashMap<String, u64>,
@@ -184,6 +185,34 @@ impl Display {
         let serial = active.expansion_serial;
         for key in keys {
             active.expansion.insert(key.clone(), (serial, expanded));
+        }
+        s.revision += 1;
+    }
+
+    pub(super) fn group_search_collapsed(&self, search_id: u64, keys: &[String]) -> bool {
+        let (id, collapsed) = &self.active.group_search_collapsed;
+        search_id != 0 && *id == search_id && keys.iter().any(|key| collapsed.contains(key))
+    }
+
+    pub(super) fn set_group_search_collapsed(
+        s: &mut State,
+        search_id: u64,
+        keys: &[String],
+        collapsed: bool,
+    ) {
+        let entry = &mut s.transcript_display.active.group_search_collapsed;
+        if entry.0 != search_id {
+            entry.0 = search_id;
+            entry.1.clear();
+        }
+        if collapsed {
+            for key in keys {
+                entry.1.insert(key.clone());
+            }
+        } else {
+            for key in keys {
+                entry.1.remove(key);
+            }
         }
         s.revision += 1;
     }

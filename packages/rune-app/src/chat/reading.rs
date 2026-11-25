@@ -96,7 +96,9 @@ pub(crate) fn passage_target(s: &State) -> Option<(String, f32)> {
         let group = matches!(
             passage.mode,
             Some(
-                crate::settings::TranscriptRow::Tool(_) | crate::settings::TranscriptRow::Thinking
+                crate::settings::TranscriptRow::Tool(_)
+                    | crate::settings::TranscriptRow::Thinking
+                    | crate::settings::TranscriptRow::Groups
             )
         )
         .then(|| super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key))

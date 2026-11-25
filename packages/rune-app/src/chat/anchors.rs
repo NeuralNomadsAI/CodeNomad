@@ -203,13 +203,6 @@ pub(crate) fn collapsed_group_target(
         .collapsed_target(s, row_index, part)
 }
 
-pub(crate) fn expand_search_group(s: &mut State, message: &str, key: &str) {
-    let keys = super::tool_groups::Groups::project(s).member_group_keys(s, message, key);
-    if let Some(keys) = keys {
-        super::actions::Display::set_group_expanded(s, &keys, true);
-    }
-}
-
 pub(super) fn reasoning_changed(
     rows: &[Row],
     id: &str,
