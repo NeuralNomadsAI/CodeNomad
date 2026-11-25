@@ -539,6 +539,19 @@ try {
     requestAnimationFrame(() => requestAnimationFrame(resolve))))
   const radio = name => page.getByRole('radio',{name,exact:true})
   const visible = name => page.getByText(name,{exact:true}).waitFor({state:'attached',timeout:15000})
+  const mirrorTextbox = label => page.locator(`[data-rune-a11y] [role="textbox"][aria-label="${label}"]`)
+  const fillField = async (label, value) => {
+    const mirror = mirrorTextbox(label)
+    const focused = page.locator('textarea:focus').and(page.getByRole('textbox',{name:label,exact:true}))
+    if (!await focused.count()) {
+      await mirror.waitFor({state:'attached',timeout:15000})
+      await mirror.evaluate(el => el.click())
+      await focused.waitFor({state:'attached',timeout:15000})
+    }
+    await mirror.waitFor({state:'detached',timeout:15000})
+    assert.equal(await page.getByRole('textbox',{name:label,exact:true}).count(),1,`Focused textbox ${label} must not duplicate its mirror`)
+    await focused.fill(value)
+  }
   await page.goto(`http://127.0.0.1:${server.address().port}/?locale=en`)
   await Promise.all([
     page.waitForResponse(response=>new URL(response.url()).pathname==='/api/storage/config/ui'),
@@ -563,9 +576,7 @@ try {
     await click('Settings')
     await radio('Config Files').press('Enter')
     await visible('~/.config/opencode/opencode.jsonc')
-    const focused = page.getByRole('textbox',{name:'Config Files',exact:true})
-    for (let i=0;i<24 && !await focused.count();i++) await page.keyboard.press('Tab')
-    await focused.fill('{\n  // edited\n  "key": invalid\n}\n')
+    await fillField('Config Files','{\n  // edited\n  "key": invalid\n}\n')
     await visible('Unsaved changes')
     await visible('Syntax error on line 3')
     await radio('OpenCode Global Config').press('Enter')
@@ -601,18 +612,21 @@ try {
     await info.press('Enter')
     assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
     await page.getByRole('button',{name:'Environment Variables (0 variables)',exact:true}).press('Enter')
-    const focusField = async (label, value) => {
-      const field = page.locator(`[aria-label="${label}"]:focus`)
-      for (let i=0;i<24 && !await field.count();i++) await page.keyboard.press('Tab')
-      await field.fill(value)
-    }
     await page.getByRole('button',{name:'Show value',exact:true}).press('Enter')
-    await focusField('Variable name','CN_FIXTURE')
+    await fillField('Variable name','CN_FIXTURE')
     // Move directly from the name to the value on Rune's input bridge.
     await page.keyboard.press('Tab')
+    // Blurring Variable name restores its unfocused mirror in [data-rune-a11y].
+    await mirrorTextbox('Variable name').waitFor({state:'attached',timeout:15000})
     // Rune uses one private password input for secure editors, also when revealed.
     await page.locator('input[type=password]:focus').waitFor({state:'attached'})
+    const valueMirror = mirrorTextbox('Variable value')
+    await valueMirror.waitFor({state:'detached',timeout:15000})
     await page.keyboard.insertText('fixture')
+    await page.keyboard.press('Tab')
+    await valueMirror.waitFor({state:'attached',timeout:15000})
+    assert.equal(await valueMirror.evaluate(el => el.textContent?.includes('fixture') || [...el.attributes].some(attr => attr.value.includes('fixture'))),false,'Blurred password mirror must not expose secret value')
+    assert(!(await page.locator('[data-rune-a11y]').innerText()).includes('fixture'),'Mirror must never expose secret value')
     await page.getByRole('button',{name:'Add variable',exact:true}).press('Enter')
     await page.getByRole('button',{name:'Environment Variables (1 variable)',exact:true}).waitFor({state:'attached'})
     assert.deepEqual(secureEnvVars,['CN_FIXTURE'])
@@ -706,13 +720,17 @@ try {
     const inactive = page.getByRole('group',{name:'Open command palette',exact:true})
     assert.equal(await inactive.getAttribute('aria-description'),'This action has no configurable shortcut in Rune yet.')
     assert.equal(await inactive.getByRole('button',{name:'Edit',exact:true}).count(),0)
-    // Rune assigns the browser textbox its accessible label when its field gains focus.
+    const filter = page.locator('textarea:focus').and(page.getByRole('textbox',{name:'Filter shortcuts',exact:true}))
     const filterFocused = () => page.evaluate(() =>
       document.activeElement?.getAttribute('aria-label')==='Filter shortcuts')
     const capture = page.getByRole('button',{name:'Press a key combination',exact:true})
+    await mirrorTextbox('Filter shortcuts').waitFor({state:'attached',timeout:15000})
     for (let i=0;i<24 && !await filterFocused();i++) await page.keyboard.press('Tab')
     assert(await filterFocused())
-    const caret = await page.getByRole('textbox',{name:'Filter shortcuts',exact:true}).boundingBox()
+    await filter.waitFor({state:'attached',timeout:15000})
+    await mirrorTextbox('Filter shortcuts').waitFor({state:'detached',timeout:15000})
+    assert.equal(await page.getByRole('textbox',{name:'Filter shortcuts',exact:true}).count(),1,'Focused Filter shortcuts must not duplicate its mirror')
+    const caret = await filter.boundingBox()
     assert(caret)
     await edit.press('Enter')
     await capture.waitFor({state:'attached'})
@@ -745,8 +763,8 @@ try {
     ])
     await save.getByText('Ctrl+F8',{exact:true}).waitFor({state:'attached'})
     // An unrelated failed write must neither announce a conflict nor suppress the next one.
-    const filter = page.getByRole('textbox',{name:'Filter shortcuts',exact:true})
     await page.mouse.click(caret.x + 4, caret.y + caret.height / 2)
+    await filter.waitFor({state:'attached',timeout:15000})
     await filter.press('Control+a')
     await filter.press('Backspace')
     const close = page.getByRole('group',{name:'Close app tab',exact:true})
@@ -1027,20 +1045,8 @@ try {
   await page.getByRole('button',{name:'Entries 1/200 Needs review',exact:true}).waitFor({state:'attached'})
   await click('Project memory')
   await visible('Excluded from agent context')
-  const edit = async (label, value) => {
-    for (let i=0; i<24; i++) {
-      const field = page.locator('textarea:focus')
-      if (await field.count() && await field.getAttribute('aria-label') === label) {
-        await field.fill(value)
-        return
-      }
-      await page.keyboard.press('Tab')
-      await page.waitForTimeout(20)
-    }
-    assert.fail(`Missing editable field: ${label}`)
-  }
   const editedTitle = 'Edited project memory'
-  await edit('Title',editedTitle)
+  await fillField('Title',editedTitle)
   // The DOM input updates before Rune draws the dirty form. The pinned mirror
   // exposes Save even while disabled; the counter confirms the edited frame.
   await visible(`${[...editedTitle].length}/60`)

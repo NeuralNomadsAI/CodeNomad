@@ -163,5 +163,6 @@ fn build(dark: bool) -> Kit {
         ring: None,
         invalid_text: false,
         forced: None,
+        metrics: rune_kit::Metrics::default(),
     }
 }
