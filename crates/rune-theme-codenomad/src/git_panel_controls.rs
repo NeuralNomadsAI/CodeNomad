@@ -229,6 +229,7 @@ pub fn worktree_picker<S: 'static>(
         .width(super::selector_width(width))
         .open(open)
         .disabled(disabled)
+        .step_closed(true)
         .on_toggle(toggle)
         .on_close(close)
         .on_choose(choose);
@@ -258,6 +259,7 @@ pub fn session_worktree_picker<S: 'static>(
         .current(current)
         .open(open)
         .disabled(disabled)
+        .step_closed(true)
         .on_toggle(toggle)
         .on_close(close)
         .on_choose(choose)
