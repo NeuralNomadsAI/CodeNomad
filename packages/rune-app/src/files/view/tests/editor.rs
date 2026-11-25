@@ -612,6 +612,12 @@ fn isolated_editor_edit_arms_wake_and_persists_draft_while_idle() {
         workspace.fixture_store(store.clone());
         rt.state.workspace = Some(workspace);
         open(&mut rt, &http, "main.rs", "YQ==").await;
+        rt.state
+            .files
+            .as_mut()
+            .unwrap()
+            .document
+            .fixture_saved_key("installation", "/private");
         let input = rt
             .elements()
             .into_iter()
