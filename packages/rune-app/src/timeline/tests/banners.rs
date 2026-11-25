@@ -24,6 +24,16 @@ pub(super) fn anchor_offset(rt: &Runtime<State>) -> (f32, f32) {
     (history[3], row[1] - history[1])
 }
 
+pub(super) fn arm_rail_collision(rt: &mut Runtime<State>) {
+    rt.update(|s, tx| {
+        let mut sc = owner(s).scroll.get();
+        let target = sc.at.max[1].max(120.0);
+        sc.programmatic_rail = Some(target);
+        owner(s).scroll.set(sc);
+        rune_theme_codenomad::timeline::scroll_rail_to(target, tx);
+    });
+}
+
 pub(super) fn snapshot(rt: &Runtime<State>) -> Snapshot {
     let filtered_text = crate::strings::t("history.destinationFiltered");
     let session_unavailable_text = crate::strings::t("history.sessionUnavailable");

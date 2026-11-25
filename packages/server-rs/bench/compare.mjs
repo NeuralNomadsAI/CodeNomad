@@ -7,21 +7,24 @@ import { copyFile, cp, lstat, mkdir, writeFile } from "node:fs/promises"
 import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { chromium } from "playwright"
-import { fixtureChildPid, spawnFixtureChild, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { dropRegistration, fromDist, installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
-import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
-import { browserFiles, populate } from "./files.mjs"
-import { browserWorktrees } from "./worktrees.mjs"
+import { inspect } from "node:util"
+import { assertPrivateOpenCodeExecutable, assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 
 const MODES = ["http", "files", "contract", "history-bytes", "history-search", "attachment-history", "workspace-claims", "agent-controls", "remote-session-controls", "static-assets", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
-const [mode, exe] = process.argv.slice(2)
+const [mode, rawExe] = process.argv.slice(2)
 MODES.push("provider-logins", "receipt-worktree", "receipt-reconnect", "meta-update", "mutation-fence")
 if (["prompt-admission", "command-admission"].includes(mode)) {
   await (await import("./prompt-admission.mjs")).run(mode === "command-admission")
   process.exit(process.exitCode ?? 0)
 }
-assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
+assert(MODES.includes(mode) && path.isAbsolute(rawExe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
+const exe = await assertPrivateOpenCodeExecutable(rawExe)
+
+const { chromium } = await import("playwright")
+const { fixtureChildPid, spawnFixtureChild, stopFixtureChild } = await import("../../../scripts/native-fixture-guards.mjs")
+const { dropRegistration, fromDist, installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, waitForPruningPlugin, writeJson } = await import("./fixtures.mjs")
+const { browserFiles, populate } = await import("./files.mjs")
+const { browserWorktrees } = await import("./worktrees.mjs")
 const bin = rustBinary()
 if (mode === "attachment-history") {
   const contract = await fromDist("opencode/session-pruning/navigation-contract.js")
@@ -279,9 +282,50 @@ async function qualify(ts, rs, password, rsRoot) {
   result.tests.push("restricted filesystem, workspace claims, root worktree, instance storage and pending snapshot (RS)")
 }
 
+/** Warm up TS's project folder and pruning plugin with the same budget as `rustPruning.ready`. */
+async function warmTsPruning(tsHost, client, folder, directory) {
+  const opened = await tsHost.call("/api/workspaces", jsonBody({ path: folder }))
+  assert.equal(opened.status, 201)
+  const { id, location } = await opened.json()
+  let failed = false
+  try {
+    await waitForPruningPlugin(client, location?.directory ?? directory)
+  } catch (error) {
+    failed = true
+    throw error
+  } finally {
+    try {
+      const closed = await tsHost.call(`/api/workspaces/${id}`, { method: "DELETE" })
+      if (!failed) assert.equal(closed.status, 204)
+    } catch (cleanupError) {
+      if (!failed) throw cleanupError
+    }
+  }
+}
+
+function formatError(error, depth = 0, seen = new Set()) {
+  if (!error || typeof error !== "object") return String(error)
+  if (seen.has(error)) return "[Circular]"
+  seen.add(error)
+  try {
+    const text = typeof error.stack === "string" && error.stack.length > 0 ? error.stack : inspect(error, { depth: 3 })
+    if (depth >= 4) return text
+    const extras = []
+    if (Array.isArray(error.errors) && error.errors.length) {
+      extras.push(...error.errors.map((item, i) => `Error[${i}]: ${formatError(item, depth + 1, seen)}`))
+    }
+    if (error.cause !== undefined) {
+      extras.push(`Caused by: ${formatError(error.cause, depth + 1, seen)}`)
+    }
+    return extras.length ? `${text}\n${extras.join("\n")}` : text
+  } finally {
+    seen.delete(error)
+  }
+}
+
 /** Both servers through one sequence each; their observations must be identical. */
 async function compareSides(sides) {
-  const settle = run => run.then(value => value, error => ({ error: error?.stack ?? String(error), partial: error?.partial }))
+  const settle = run => run.then(value => value, error => ({ error: formatError(error), partial: error?.partial }))
   const order = mode === "missions-family" && process.env.CNRS_BENCH_RS_FIRST === "1" ? [1, 0] : [0, 1]
   for (const i of order) result[i === 0 ? "typescript" : "rust"] = await settle(bench.run(sides[i]))
   assert(!result.typescript.error && !result.rust.error, "a bench sequence raised")
@@ -511,6 +555,9 @@ try {
         hosts.push({ call: (route, init) => host.request(route, withCookie(cookie, init)), origin: host.origin, cookie,
           ...(bench?.remoteIngress || bench?.remoteDirect ? { secureOrigin: host.secureOrigin, ingress: host.ingress } : {}) })
       }
+      if (!missionServe && ["attachment-history", "history-search", "history-bytes", "contract"].includes(mode)) {
+        await warmTsPruning(hosts[0], local.client, "Local Project", path.join(tsRoot, "Local Project"))
+      }
       if (bench.pair) { result[mode] = await bench.pair(...hosts); return }
       await compareSides([
         { ...hosts[0], fixture: local, folder: "Local Project", root: tsRoot, other: path.join(tsRoot, "No Repository"), pid: ts.pid, native: ts.native },
@@ -530,7 +577,7 @@ try {
     assert(!result.leaks, "A server logged a synthetic provider credential")
   }, runtime), runtime)
 } catch (error) {
-  result.error = String(error.stack)
+  result.error = formatError(error)
   console.error(result.error)
   process.exitCode = 1
 } finally {

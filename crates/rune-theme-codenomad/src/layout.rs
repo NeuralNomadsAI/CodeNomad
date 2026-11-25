@@ -62,6 +62,15 @@ pub fn button_tx<S: 'static>(
         button.on_key(enter_action(action))
     }
 }
+/// Disabled kit button visuals that remain keyboard-focusable (`aria-disabled`).
+pub fn focusable_disabled_button(label: &str) -> El {
+    rune_kit::Button::new(label)
+        .disabled(true)
+        .build(kit(dark()))
+        .disabled(false)
+        .focusable(true)
+        .aria_disabled(true)
+}
 
 pub(crate) fn enter_action<S: 'static>(
     action: Rc<impl Fn(&mut S, &mut rune::Tx) + 'static>,
@@ -340,6 +349,75 @@ mod tests {
                 };
                 assert_eq!(inspect(false), inspect(true));
             }
+        }
+    }
+    #[test]
+    fn focusable_disabled_button_keeps_disabled_appearance_and_focus() {
+        fn view(focusable_disabled: &bool, cx: &mut rune::Cx<bool>) -> El {
+            render(cx, |_| {
+                if *focusable_disabled {
+                    focusable_disabled_button("Save").key("save")
+                } else {
+                    button("Save", true, |_: &mut bool| {}).key("save")
+                }
+            })
+        }
+        for dark in [false, true] {
+            let inspect = |focusable_disabled| {
+                let mut rt = rune::Runtime::new(
+                    focusable_disabled,
+                    view,
+                    (320.0, 180.0),
+                    rune::Env::new(dark, 1.0),
+                );
+                rt.frame(1.0);
+                let visuals: Vec<_> = rt
+                    .elements()
+                    .into_iter()
+                    .map(|e| {
+                        (
+                            e.role,
+                            e.label,
+                            e.rect,
+                            e.radius,
+                            e.fill,
+                            e.text_color,
+                            e.opacity,
+                        )
+                    })
+                    .collect();
+                let instances: Vec<_> = rt
+                    .instances
+                    .iter()
+                    .map(|i| (i.rect, i.fill, i.border, i.params))
+                    .collect();
+                let dimmed = rt
+                    .instances
+                    .iter()
+                    .any(|i| i.params[1] == rune::render::KIND_LAYER && i.fill[3] < 1.0);
+                let root = rt
+                    .elements()
+                    .into_iter()
+                    .find(|e| e.key.as_deref() == Some("save"))
+                    .unwrap();
+                (visuals, instances, root.focusable, dimmed, rt)
+            };
+            let (plain_vis, plain_inst, plain_focus, plain_dimmed, _) = inspect(false);
+            let (keep_vis, keep_inst, keep_focus, keep_dimmed, mut rt) = inspect(true);
+            assert_eq!(keep_vis, plain_vis);
+            assert_eq!(keep_inst, plain_inst);
+            assert!(!plain_focus);
+            assert!(keep_focus);
+            assert!(plain_dimmed);
+            assert!(keep_dimmed);
+            rt.update(|_, tx| tx.focus("save", true));
+            rt.frame(1.0 / 60.0);
+            let states = rt.accessibility_json()["children"][0]["states"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            assert!(states.contains(&serde_json::Value::from("disabled")));
+            assert!(states.contains(&serde_json::Value::from("focused")));
         }
     }
     #[test]

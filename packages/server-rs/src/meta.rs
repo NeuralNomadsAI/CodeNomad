@@ -71,6 +71,7 @@ pub fn document(
         meta["remoteUrl"] = json!(tls.origin);
         meta["remotePort"] = json!(address.port());
         meta["tlsFingerprint"] = json!(tls.fingerprint);
+        meta["addresses"] = json!(tls.addresses);
         // The remote listener's interface, as `serverMeta.host` and `listeningMode` follow it.
         if !address.ip().is_loopback() {
             (meta["host"], meta["hostLabel"], meta["listeningMode"]) =

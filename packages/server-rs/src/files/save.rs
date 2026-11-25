@@ -72,12 +72,12 @@ fn replace_with(
         if handle != identity {
             return Err(changed());
         }
-        check_version(actual.as_ref(), expected)?;
         if let Ok(directory) = &directory
             && !directory.current(parent)
         {
             return Err(changed());
         }
+        check_version(actual.as_ref(), expected)?;
         Ok(actual)
     };
     let in_place = || {
@@ -126,6 +126,12 @@ fn replace_with(
     let directory = match &directory {
         Ok(directory) => directory,
         Err(err) => {
+            if super::is_missing_or_not_dir(err) {
+                if expected.is_some() {
+                    return Err(changed());
+                }
+                current()?;
+            }
             return limitation(err.raw_os_error().map_or_else(|| err.kind().into(), io::Error::from_raw_os_error));
         }
     };
@@ -339,11 +345,22 @@ impl Directory {
     }
 }
 
+fn is_dir_or_link_error(err: &io::Error) -> bool {
+    if err.kind() == io::ErrorKind::IsADirectory {
+        return true;
+    }
+    #[cfg(unix)]
+    if matches!(err.raw_os_error(), Some(libc::EISDIR | libc::ELOOP)) {
+        return true;
+    }
+    false
+}
+
 fn open_original(path: &Path, read: bool) -> io::Result<Option<File>> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if !metadata.is_file() => return Err(io::ErrorKind::InvalidInput.into()),
         Ok(_) => {}
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if super::is_missing_or_not_dir(&e) => return Ok(None),
         Err(e) => return Err(e),
     }
     let mut options = OpenOptions::new();
@@ -359,7 +376,12 @@ fn open_original(path: &Path, read: bool) -> io::Result<Option<File>> {
         use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
         options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
-    let file = options.open(path)?;
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(e) if super::is_missing_or_not_dir(&e) => return Ok(None),
+        Err(e) if is_dir_or_link_error(&e) => return Err(io::ErrorKind::InvalidInput.into()),
+        Err(e) => return Err(e),
+    };
     let metadata = file.metadata()?;
     if !metadata.is_file() {
         return Err(io::ErrorKind::InvalidInput.into());

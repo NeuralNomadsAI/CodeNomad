@@ -172,6 +172,9 @@ pub fn list(s: &mut State, more: bool) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
+    if !more && l.projects_stale {
+        super::connection::start_projects_refresh(l);
+    }
     if !more && l.show_search && !l.search.text.trim().is_empty() {
         l.search_results = Default::default();
     }

@@ -41,6 +41,7 @@ pub fn positional(args: &[String]) -> Result<host::Launch, Box<dyn std::error::E
         file: None,
         cookie: auth::DEFAULT_COOKIE.into(),
         token: false,
+        managed_local: false,
         skip: false,
         idle: Duration::from_secs(86400),
         absolute: Duration::from_secs(7 * 86400),

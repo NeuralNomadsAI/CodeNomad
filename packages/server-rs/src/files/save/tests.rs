@@ -367,10 +367,75 @@ fn keeps_mode_and_replaces_a_symlinks_target() {
     fs::write(&path, b"old").unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
     symlink("note.txt", &alias).unwrap();
-    let target = super::super::super::links::write_target(alias.clone()).unwrap();
+    let target = super::super::links::write_target(alias.clone(), true, false).unwrap();
     replace(&target, None, || Ok(()), |file| file.write_all(b"new")).unwrap();
     assert_eq!(fs::read_link(&alias).unwrap(), Path::new("note.txt"));
     assert_eq!(fs::read(&alias).unwrap(), b"new");
     assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o750);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn hardlink_in_place_refuses_replaced_inode_and_concurrent_alias_edit() {
+    let dir = crate::shared::test_dir("atomic-save-hardlink-race");
+    let (path, alias) = (dir.join("hl-a.txt"), dir.join("hl-b.txt"));
+    fs::write(&path, b"orig").unwrap();
+    fs::hard_link(&path, &alias).unwrap();
+    let v1 = version(b"orig");
+
+    // 1. Replacing the hardlinked path with a new inode before in-place write must return 409 without mutating either file.
+    let swapped = std::cell::Cell::new(false);
+    let result = replace(
+        &path,
+        Some(&v1),
+        || {
+            if !swapped.replace(true) {
+                fs::remove_file(&path).unwrap();
+                fs::write(&path, b"replaced-inode").unwrap();
+            }
+            Ok(())
+        },
+        |_| panic!("must not write after inode replacement"),
+    );
+    assert_eq!(result.unwrap_err().0, Status::CONFLICT);
+    assert_eq!(fs::read(&path).unwrap(), b"replaced-inode");
+    assert_eq!(fs::read(&alias).unwrap(), b"orig");
+
+    // 2. Concurrent content edit through the hardlink alias before in-place write must return 409 without writing.
+    fs::remove_file(&path).unwrap();
+    fs::hard_link(&alias, &path).unwrap();
+    let edited = std::cell::Cell::new(false);
+    let result = replace(
+        &path,
+        Some(&v1),
+        || {
+            if !edited.replace(true) {
+                fs::write(&alias, b"external-alias-edit").unwrap();
+            }
+            Ok(())
+        },
+        |_| panic!("must not write after concurrent hardlink edit"),
+    );
+    assert_eq!(result.unwrap_err().0, Status::CONFLICT);
+    assert_eq!(fs::read(&path).unwrap(), b"external-alias-edit");
+    assert_eq!(fs::read(&alias).unwrap(), b"external-alias-edit");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn conditional_replace_returns_conflict_when_parent_deleted_or_replaced_by_file() {
+    let dir = crate::shared::test_dir("atomic-save-parent-conflict");
+    let sub = dir.join("sub");
+    let path = sub.join("note.txt");
+    fs::create_dir(&sub).unwrap();
+    fs::write(&path, b"v1").unwrap();
+    let v1 = version(b"v1");
+
+    fs::remove_dir_all(&sub).unwrap();
+    assert_eq!(replace(&path, Some(&v1), || Ok(()), |_| panic!("must not write")).unwrap_err().0, Status::CONFLICT);
+
+    fs::write(&sub, b"now-a-file").unwrap();
+    assert_eq!(replace(&path, Some(&v1), || Ok(()), |_| panic!("must not write")).unwrap_err().0, Status::CONFLICT);
+
     fs::remove_dir_all(dir).unwrap();
 }

@@ -3,18 +3,28 @@ use crate::{backend::Backend, history::Result};
 use codenomad_client::Receiver;
 use std::{
     path::PathBuf,
-    sync::{Mutex, OnceLock, mpsc},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread::JoinHandle,
 };
 
+enum HostCommand {
+    Stop,
+    Renew(codenomad_client::Sender<crate::host::ManagedRenewal>),
+}
+
 #[derive(Default)]
-struct Workers(Vec<(mpsc::SyncSender<()>, JoinHandle<()>)>);
+struct Workers(Vec<(Arc<AtomicBool>, mpsc::Sender<HostCommand>, JoinHandle<()>)>);
 impl Workers {
     fn finish(self) {
-        for (stop, _) in &self.0 {
-            let _ = stop.try_send(());
+        for (stopping, commands, _) in &self.0 {
+            stopping.store(true, Ordering::SeqCst);
+            let _ = commands.send(HostCommand::Stop);
         }
-        for (_, worker) in self.0 {
+        for (_, _, worker) in self.0 {
             let _ = worker.join();
         }
     }
@@ -30,17 +40,52 @@ pub fn finish() {
 
 #[derive(Debug)]
 pub struct LocalHost {
-    shutdown: mpsc::SyncSender<()>,
+    stopping: Arc<AtomicBool>,
+    commands: mpsc::Sender<HostCommand>,
     state_directory: Option<PathBuf>,
 }
 impl LocalHost {
     pub fn state_directory(&self) -> Option<PathBuf> {
         self.state_directory.clone()
     }
+    pub fn renew_managed_session(&self) -> Option<Receiver<crate::host::ManagedRenewal>> {
+        if self.stopping.load(Ordering::SeqCst) {
+            return None;
+        }
+        let (reply, receiver) = codenomad_client::bounded(1);
+        self.commands
+            .send(HostCommand::Renew(reply))
+            .ok()
+            .map(|()| receiver)
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture(
+        handler: impl FnMut() -> crate::host::ManagedRenewal + Send + 'static,
+    ) -> Self {
+        let (commands, rx) = mpsc::channel();
+        let stopping = Arc::new(AtomicBool::new(false));
+        let mut handler = handler;
+        std::thread::spawn(move || {
+            while let Ok(command) = rx.recv() {
+                match command {
+                    HostCommand::Stop => break,
+                    HostCommand::Renew(reply) => {
+                        let _ = reply.send_blocking(handler());
+                    }
+                }
+            }
+        });
+        Self {
+            stopping,
+            commands,
+            state_directory: None,
+        }
+    }
 }
 impl Drop for LocalHost {
     fn drop(&mut self) {
-        let _ = self.shutdown.try_send(());
+        self.stopping.store(true, Ordering::SeqCst);
+        let _ = self.commands.send(HostCommand::Stop);
     }
 }
 struct Request {
@@ -91,8 +136,10 @@ pub fn start(wake: rune::Waker) -> Option<Receiver<Result<(Backend, LocalHost)>>
         super::setting("RUNE_HOST_PERSISTENT"),
     )?;
     let (out, input) = codenomad_client::bounded(1);
-    let (shutdown, stop) = mpsc::sync_channel(1);
-    let registry_shutdown = shutdown.clone();
+    let stopping = Arc::new(AtomicBool::new(false));
+    let (commands, rx) = mpsc::channel();
+    let registry_stopping = stopping.clone();
+    let registry_commands = commands.clone();
     let worker = std::thread::spawn(move || {
         let result = request.and_then(|request| {
             let configure = if request.persistent {
@@ -106,13 +153,28 @@ pub fn start(wake: rune::Waker) -> Option<Receiver<Result<(Backend, LocalHost)>>
             let mut child = controller.launch(config)?;
             let backend = child.connect()?;
             let guard = LocalHost {
-                shutdown,
+                stopping: stopping.clone(),
+                commands,
                 state_directory,
             };
             if out.send_blocking(Ok((backend, guard))).is_ok() {
                 wake();
                 // Dropping the UI guard only signals; shutdown waits stay on this owner worker.
-                let _ = stop.recv();
+                while let Ok(command) = rx.recv() {
+                    match command {
+                        HostCommand::Stop => break,
+                        HostCommand::Renew(reply) => {
+                            let renewed = if stopping.load(Ordering::SeqCst) {
+                                crate::host::ManagedRenewal::Denied
+                            } else {
+                                child
+                                    .renew_managed_session(&stopping)
+                                    .unwrap_or(crate::host::ManagedRenewal::Denied)
+                            };
+                            let _ = reply.send_blocking(renewed);
+                        }
+                    }
+                }
             }
             let _ = child.stop();
             Ok(())
@@ -127,7 +189,7 @@ pub fn start(wake: rune::Waker) -> Option<Receiver<Result<(Backend, LocalHost)>>
         .lock()
         .unwrap()
         .0
-        .push((registry_shutdown, worker));
+        .push((registry_stopping, registry_commands, worker));
     Some(input)
 }
 #[cfg(test)]
@@ -172,12 +234,15 @@ mod tests {
     }
     #[test]
     fn releasing_ui_ownership_signals_the_worker() {
-        let (shutdown, owner) = mpsc::sync_channel(1);
+        let (commands, owner) = mpsc::channel();
+        let stopping = Arc::new(AtomicBool::new(false));
         drop(LocalHost {
-            shutdown,
+            stopping: stopping.clone(),
+            commands,
             state_directory: None,
         });
-        assert_eq!(owner.try_recv(), Ok(()));
+        assert!(stopping.load(Ordering::SeqCst));
+        assert!(matches!(owner.try_recv(), Ok(HostCommand::Stop)));
     }
     #[test]
     fn persistent_setting_requires_explicit_true_and_complete_inputs() {
@@ -215,13 +280,14 @@ mod tests {
     }
     #[test]
     fn final_shutdown_waits_for_owned_worker_completion() {
-        let (shutdown, stop) = mpsc::sync_channel(1);
+        let stopping = Arc::new(AtomicBool::new(false));
+        let (commands, stop) = mpsc::channel();
         let (done, result) = mpsc::sync_channel(1);
         let worker = std::thread::spawn(move || {
-            stop.recv().unwrap();
+            assert!(matches!(stop.recv(), Ok(HostCommand::Stop)));
             done.send(()).unwrap();
         });
-        Workers(vec![(shutdown, worker)]).finish();
+        Workers(vec![(stopping, commands, worker)]).finish();
         assert_eq!(result.try_recv(), Ok(()));
     }
 }
