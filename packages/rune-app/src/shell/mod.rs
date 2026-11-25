@@ -178,9 +178,7 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             } else {
                 crate::chat::reading::restore_position(s, tx);
             }
-            if let Some(focus) = back {
-                tx.focus(focus, tx.focus_visible());
-            }
+            workspace::restore_mission_reader_focus(s, back, tx);
             return true;
         }
     }

@@ -9,7 +9,7 @@ use codenomad_client::{
     history::Result,
     missions::{
         BodyDescriptor, ContentOutcome, ContentRefusal, ContentSelector, ContentSlice,
-        READER_PAGE_SIZE, body_covers, body_need, utf16_len,
+        READER_PAGE_SIZE, body_covers, body_need, content_digest, utf16_len,
     },
 };
 use std::collections::{HashMap, HashSet};
@@ -18,6 +18,7 @@ pub(super) const MAX_BODY_CACHE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_WHOLE_BODY_UNITS: u64 = (MAX_BODY_CACHE_BYTES / 2) as u64;
 const MAX_RETAINED_BODIES: usize = 128;
 const MAX_RESTARTS: u8 = 4;
+const MAX_SLICES_PER_BODY: u16 = 128;
 
 pub(crate) type BodyKey = (String, String, ContentSelector);
 
@@ -63,6 +64,8 @@ struct BodyEntry {
     stale: bool,
     parked: bool,
     restarts: u8,
+    slices: u16,
+    missing_revision: Option<u64>,
     flight: Option<BodyFlight>,
     last_used: u64,
 }
@@ -79,6 +82,8 @@ impl Default for BodyEntry {
             stale: false,
             parked: false,
             restarts: 0,
+            slices: 0,
+            missing_revision: None,
             flight: None,
             last_used: 0,
         }
@@ -93,9 +98,11 @@ impl BodyEntry {
     }
 
     fn utf16_bytes(&self) -> usize {
-        let a = self.display.as_ref().map_or(0, |b| b.utf16_len as usize);
-        let b = self.pending.as_ref().map_or(0, |b| b.utf16_len as usize);
-        (a + b).saturating_mul(2)
+        let measure = |b: &LoadedBody| b.text.len().max((b.utf16_len as usize).saturating_mul(2));
+        self.display
+            .as_ref()
+            .map_or(0, measure)
+            .saturating_add(self.pending.as_ref().map_or(0, measure))
     }
 
     fn covers(&self, body: &LoadedBody) -> bool {
@@ -217,7 +224,11 @@ impl BodyCache {
         }
         let body = entry.display.as_ref()?;
         let digest_ok = expected_digest.is_none_or(|digest| body.digest == digest);
-        (digest_ok && body.utf16_len >= body.characters).then_some(body.text.as_str())
+        (digest_ok
+            && body.utf16_len == body.characters
+            && body.utf16_len <= MAX_WHOLE_BODY_UNITS
+            && content_digest(&body.text) == body.digest)
+            .then_some(body.text.as_str())
     }
 
     pub(super) fn need_for_paged(&self, key: &BodyKey, desc: &BodyDescriptor, page: usize) -> u64 {
@@ -240,6 +251,63 @@ impl BodyCache {
                 )
             }
             None => body_need(None, desc.characters, false, page, READER_PAGE_SIZE),
+        }
+    }
+
+    /// Updates each demanded entry's expected `(revision, digest)` BEFORE draining in-flight
+    /// completions so an older slice or refusal completing in the same poll is evaluated against
+    /// the newly installed header rather than a superseded expectation.
+    pub(super) fn sync_expectations(
+        &mut self,
+        revision: u64,
+        demands: &[(BodyKey, BodyDescriptor, u64)],
+    ) {
+        for (key, descriptor, _) in demands {
+            let Some(entry) = self.entries.get_mut(key) else {
+                continue;
+            };
+            let new_expected = Some((revision, descriptor.digest.clone()));
+            let expected_changed = entry
+                .expected
+                .as_ref()
+                .is_none_or(|(old_rev, old_d)| revision > *old_rev || old_d != &descriptor.digest);
+            if expected_changed {
+                let digest_changed = entry
+                    .expected
+                    .as_ref()
+                    .is_some_and(|(_, old)| old != &descriptor.digest);
+                entry.expected = new_expected;
+                if digest_changed {
+                    entry.parked = false;
+                    entry.restarts = 0;
+                    entry.missing_revision = None;
+                } else if entry.status == BodyStatus::Missing
+                    && entry
+                        .missing_revision
+                        .is_none_or(|missing_rev| revision > missing_rev)
+                {
+                    entry.parked = false;
+                    entry.restarts = 0;
+                    entry.missing_revision = None;
+                    entry.status = BodyStatus::Loading;
+                    entry.stale = true;
+                }
+                if entry
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| !entry.satisfies(pending))
+                {
+                    entry.pending = None;
+                }
+                if digest_changed
+                    && entry
+                        .flight
+                        .as_ref()
+                        .is_some_and(|f| f.digest.as_deref() != Some(descriptor.digest.as_str()))
+                {
+                    entry.cancel();
+                }
+            }
         }
     }
 
@@ -281,7 +349,9 @@ impl BodyCache {
                     entry.pending = None;
                     self.auth_expired = Some(backend.clone());
                 }
-                Ok(ContentOutcome::Refused { refusal, .. }) => match refusal {
+                Ok(ContentOutcome::Refused {
+                    revision, refusal, ..
+                }) => match refusal {
                     ContentRefusal::ContentChanged => {
                         entry.pending = None;
                         if entry.restarts < MAX_RESTARTS {
@@ -293,10 +363,28 @@ impl BodyCache {
                         }
                     }
                     ContentRefusal::MissionNotFound | ContentRefusal::ContentNotFound => {
-                        entry.display = None;
-                        entry.pending = None;
-                        entry.status = BodyStatus::Missing;
-                        entry.parked = true;
+                        let older_than_expected = revision.is_some_and(|rev| {
+                            entry
+                                .expected
+                                .as_ref()
+                                .is_some_and(|(exp_rev, _)| rev < *exp_rev)
+                        });
+                        if older_than_expected {
+                            entry.pending = None;
+                            if entry.restarts < MAX_RESTARTS {
+                                entry.restarts += 1;
+                                entry.stale = true;
+                            } else {
+                                entry.status = BodyStatus::Error;
+                                entry.parked = true;
+                            }
+                        } else {
+                            entry.display = None;
+                            entry.pending = None;
+                            entry.status = BodyStatus::Missing;
+                            entry.missing_revision = revision;
+                            entry.parked = true;
+                        }
                     }
                 },
                 Ok(ContentOutcome::Slice { revision, slice }) => {
@@ -376,6 +464,17 @@ impl BodyCache {
                 if digest_changed {
                     entry.parked = false;
                     entry.restarts = 0;
+                    entry.missing_revision = None;
+                } else if entry.status == BodyStatus::Missing
+                    && entry
+                        .missing_revision
+                        .is_none_or(|missing_rev| revision > missing_rev)
+                {
+                    entry.parked = false;
+                    entry.restarts = 0;
+                    entry.missing_revision = None;
+                    entry.status = BodyStatus::Loading;
+                    entry.stale = true;
                 }
                 if entry
                     .pending
@@ -483,6 +582,12 @@ impl BodyCache {
 fn accept_slice(entry: &mut BodyEntry, offset: u64, revision: u64, slice: ContentSlice) {
     let slice_units = utf16_len(&slice.text) as u64;
     if offset == 0 {
+        if slice_units > MAX_WHOLE_BODY_UNITS || slice_units > slice.characters {
+            entry.pending = None;
+            entry.status = BodyStatus::Error;
+            entry.parked = true;
+            return;
+        }
         if let Some((exp_rev, exp_digest)) = &entry.expected
             && revision < *exp_rev
             && &slice.digest != exp_digest
@@ -497,6 +602,13 @@ fn accept_slice(entry: &mut BodyEntry, offset: u64, revision: u64, slice: Conten
             }
             return;
         }
+        if slice_units == slice.characters && content_digest(&slice.text) != slice.digest {
+            entry.pending = None;
+            entry.status = BodyStatus::Error;
+            entry.parked = true;
+            return;
+        }
+        entry.slices = 1;
         let body = LoadedBody {
             digest: slice.digest,
             revision,
@@ -508,6 +620,12 @@ fn accept_slice(entry: &mut BodyEntry, offset: u64, revision: u64, slice: Conten
         if let Some(display) = &mut entry.display
             && display.digest == body.digest
         {
+            if display.characters != body.characters || display.json != body.json {
+                entry.pending = None;
+                entry.status = BodyStatus::Error;
+                entry.parked = true;
+                return;
+            }
             display.revision = display.revision.max(revision);
             if body.utf16_len > display.utf16_len {
                 display.text = body.text;
@@ -522,7 +640,14 @@ fn accept_slice(entry: &mut BodyEntry, offset: u64, revision: u64, slice: Conten
         && pending.digest == slice.digest
         && pending.utf16_len == offset
     {
-        if pending.json != slice.json || pending.characters != slice.characters || slice_units == 0
+        entry.slices = entry.slices.saturating_add(1);
+        let next_len = offset.saturating_add(slice_units);
+        if entry.slices > MAX_SLICES_PER_BODY
+            || next_len > MAX_WHOLE_BODY_UNITS
+            || next_len > pending.characters
+            || pending.json != slice.json
+            || pending.characters != slice.characters
+            || slice_units == 0
         {
             entry.pending = None;
             entry.status = BodyStatus::Error;
@@ -531,24 +656,52 @@ fn accept_slice(entry: &mut BodyEntry, offset: u64, revision: u64, slice: Conten
         }
         pending.revision = pending.revision.max(revision);
         pending.text.push_str(&slice.text);
-        pending.utf16_len += slice_units;
+        pending.utf16_len = next_len;
+        if pending.utf16_len == pending.characters
+            && content_digest(&pending.text) != pending.digest
+        {
+            entry.pending = None;
+            entry.status = BodyStatus::Error;
+            entry.parked = true;
+            return;
+        }
     } else if let Some(display) = &mut entry.display
         && display.digest == slice.digest
         && display.utf16_len == offset
     {
-        if display.json != slice.json || display.characters != slice.characters || slice_units == 0
+        entry.slices = entry.slices.saturating_add(1);
+        let next_len = offset.saturating_add(slice_units);
+        if entry.slices > MAX_SLICES_PER_BODY
+            || next_len > MAX_WHOLE_BODY_UNITS
+            || next_len > display.characters
+            || display.json != slice.json
+            || display.characters != slice.characters
+            || slice_units == 0
         {
             entry.status = BodyStatus::Error;
             entry.parked = true;
             return;
         }
+        if next_len == display.characters {
+            let mut candidate = String::with_capacity(display.text.len() + slice.text.len());
+            candidate.push_str(&display.text);
+            candidate.push_str(&slice.text);
+            if content_digest(&candidate) != display.digest {
+                entry.status = BodyStatus::Error;
+                entry.parked = true;
+                return;
+            }
+            display.text = candidate;
+        } else {
+            display.text.push_str(&slice.text);
+        }
         display.revision = display.revision.max(revision);
-        display.text.push_str(&slice.text);
-        display.utf16_len += slice_units;
+        display.utf16_len = next_len;
     } else {
         return;
     }
 
+    entry.missing_revision = None;
     entry.promote();
     entry.status = if entry.display.is_some() {
         BodyStatus::Ready

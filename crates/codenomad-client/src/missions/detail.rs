@@ -110,7 +110,7 @@ impl Report {
                 .any(|key| self.extra.contains_key(*key))
     }
 
-    fn same_compact_report(&self, other: &Self) -> bool {
+    pub fn same_compact_report(&self, other: &Self) -> bool {
         self.task_key == other.task_key
             && self.session_id == other.session_id
             && self.outcome == other.outcome
@@ -315,7 +315,9 @@ impl Backend {
             task_key.filter(|s| !s.is_empty()),
         ) {
             (Some(id), _) if panel_id(id) => TaskQuery::LookupId(id.to_owned()),
-            (None, Some(key)) if panel_id(key) => TaskQuery::LookupKey(key.to_owned()),
+            (None, Some(key)) if panel_id(key) && units(key) <= 64 => {
+                TaskQuery::LookupKey(key.to_owned())
+            }
             _ => return invalid(),
         };
         task_read(self, project, header, query)

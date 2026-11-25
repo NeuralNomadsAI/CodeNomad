@@ -60,7 +60,10 @@ pub(super) fn current_task_report<'a>(
     {
         return None;
     }
-    snapshot.report(&nested.id).or(Some(nested))
+    snapshot
+        .report(&nested.id)
+        .filter(|top| top.task_key == task.key && top.same_compact_report(nested))
+        .or(Some(nested))
 }
 
 /// Retained non-current reports for a task (late or superseded attempts), newest first.
@@ -74,9 +77,12 @@ pub(super) fn task_history_reports<'a>(snapshot: &'a Snapshot, task: &'a Task) -
     }
     for nested in task.report().into_iter().chain(task.late_reports()) {
         if nested.task_key == task.key && Some(nested.id.as_str()) != current_id {
-            by_id
-                .entry(nested.id.as_str())
-                .or_insert_with(|| snapshot.report(&nested.id).unwrap_or(nested));
+            by_id.entry(nested.id.as_str()).or_insert_with(|| {
+                snapshot
+                    .report(&nested.id)
+                    .filter(|top| top.task_key == task.key && top.same_compact_report(nested))
+                    .unwrap_or(nested)
+            });
         }
     }
     let mut list: Vec<&'a Report> = by_id.into_values().collect();
@@ -131,6 +137,9 @@ pub(crate) struct Reader {
     pending_copy: Option<(BodyKey, Option<String>)>,
     ready_copy: Option<String>,
     return_focus: Option<String>,
+    pending_lookup: Option<(String, String)>,
+    lookup_missing: Option<String>,
+    focus_close_pending: bool,
 }
 
 impl Reader {
@@ -157,6 +166,12 @@ impl Reader {
         )
     }
 
+    pub(crate) fn set_return_focus(&mut self, key: String) {
+        if !key.is_empty() {
+            self.return_focus = Some(key);
+        }
+    }
+
     pub(crate) fn capture_return_focus(&mut self, key: String) {
         if self.return_focus.is_none() && !key.is_empty() {
             self.return_focus = Some(key);
@@ -167,6 +182,37 @@ impl Reader {
         self.return_focus.take()
     }
 
+    pub(crate) fn take_focus_close(&mut self) -> bool {
+        std::mem::take(&mut self.focus_close_pending)
+    }
+
+    pub(super) fn request_task_lookup(&mut self, mission_id: String, task_key: String) {
+        self.lookup_missing = None;
+        self.pending_lookup = Some((mission_id, task_key));
+    }
+
+    pub(super) fn pending_lookup(&self) -> Option<(&str, &str)> {
+        self.pending_lookup
+            .as_ref()
+            .map(|(mid, key)| (mid.as_str(), key.as_str()))
+    }
+
+    pub(super) fn lookup_missing(&self) -> Option<&str> {
+        self.lookup_missing.as_deref()
+    }
+
+    pub(super) fn resolve_lookup(&mut self, mission_id: String, task_id: String, task_key: String) {
+        self.pending_lookup = None;
+        self.lookup_missing = None;
+        self.open_task(mission_id, task_id, task_key);
+        self.focus_close_pending = true;
+    }
+
+    pub(super) fn fail_lookup(&mut self, task_key: String) {
+        self.pending_lookup = None;
+        self.lookup_missing = Some(task_key);
+    }
+
     pub(crate) fn open_overview(&mut self, mission_id: String) {
         let next = ReaderTarget::Overview { mission_id };
         if self.target.as_ref() != Some(&next) {
@@ -175,6 +221,8 @@ impl Reader {
             self.disclosures.clear();
             self.pending_copy = None;
             self.ready_copy = None;
+            self.pending_lookup = None;
+            self.lookup_missing = None;
             self.target = Some(next);
         }
     }
@@ -191,6 +239,8 @@ impl Reader {
             self.disclosures.clear();
             self.pending_copy = None;
             self.ready_copy = None;
+            self.pending_lookup = None;
+            self.lookup_missing = None;
             self.target = Some(next);
         }
     }
@@ -220,6 +270,9 @@ impl Reader {
         self.disclosures.clear();
         self.pending_copy = None;
         self.ready_copy = None;
+        self.pending_lookup = None;
+        self.lookup_missing = None;
+        self.focus_close_pending = false;
         self.cache.evict_unused(&HashSet::new());
     }
 
@@ -275,6 +328,14 @@ impl Reader {
         expected_digest: Option<String>,
         characters: u64,
     ) -> Option<String> {
+        if self
+            .target
+            .as_ref()
+            .is_none_or(|target| target.mission_id() != key.1)
+        {
+            self.pending_copy = None;
+            return None;
+        }
         if characters > MAX_WHOLE_BODY_UNITS {
             self.pending_copy = None;
             return None;
@@ -288,6 +349,12 @@ impl Reader {
         }
         self.pending_copy = Some((key, expected_digest));
         None
+    }
+
+    pub(super) fn is_copy_loading(&self, key: &BodyKey) -> bool {
+        self.pending_copy
+            .as_ref()
+            .is_some_and(|(copy_key, _)| copy_key == key)
     }
 
     pub(crate) fn take_ready_copy(&mut self) -> Option<String> {
@@ -320,15 +387,24 @@ impl Reader {
         reads: &Reads,
         wake: &Wake,
     ) -> bool {
+        let active_snap = self.target.as_ref().and_then(|target| {
+            let project_id = project_id?;
+            let snapshot = snapshot.filter(|s| s.header.root.id == target.mission_id())?;
+            Some((target.clone(), project_id, snapshot))
+        });
+
+        // Synchronize expected `(revision, digest)` BEFORE draining in-flight completions so a
+        // body from an older revision completing in the same poll cannot publish over a newer header.
+        if let Some((ref target, project_id, snapshot)) = active_snap {
+            let pre_demands = self.collect_demands(target, project_id, snapshot);
+            self.cache
+                .sync_expectations(snapshot.header.root.revision, &pre_demands);
+        }
+
         let mut changed = self.cache.poll_flights(backend);
 
-        let Some(target) = self.target.clone() else {
-            return changed;
-        };
-        let Some(project_id) = project_id else {
-            return changed;
-        };
-        let Some(snapshot) = snapshot.filter(|s| s.header.root.id == target.mission_id()) else {
+        let Some((target, project_id, snapshot)) = active_snap else {
+            self.pending_copy = None;
             return changed;
         };
 
@@ -350,7 +426,14 @@ impl Reader {
             if !still_valid {
                 self.pending_copy = None;
             } else if let Some(text) = self.cache.complete_text(&copy_key, exp_digest.as_deref()) {
-                self.ready_copy = Some(text.to_owned());
+                // On wasm32, calling navigator.clipboard outside a live user gesture can be
+                // rejected without feedback; keep the verified body cached so the user's Copy
+                // click succeeds synchronously in the gesture.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.ready_copy = Some(text.to_owned());
+                }
+                let _ = text;
                 self.pending_copy = None;
                 changed = true;
             } else if matches!(
@@ -475,14 +558,14 @@ impl Reader {
                                 Some(&desc),
                             );
                         }
-                        if let Some(desc) = report.body("evidence") {
+                        if let Some(desc) = report.body("evidence").filter(|b| b.characters > 2) {
                             push_whole(
                                 &mut out,
                                 ContentSelector::report(report.id.clone(), "evidence"),
                                 Some(&desc),
                             );
                         }
-                        if let Some(desc) = report.body("next") {
+                        if let Some(desc) = report.body("next").filter(|b| b.characters > 2) {
                             push_whole(
                                 &mut out,
                                 ContentSelector::report(report.id.clone(), "next"),
@@ -500,6 +583,17 @@ impl Reader {
                             );
                         }
                     }
+                    if self.is_disclosure_open("task-all-history") {
+                        let desc = task.body("reports").cloned().unwrap_or(BodyDescriptor {
+                            characters: MAX_WHOLE_BODY_UNITS,
+                            digest: String::new(),
+                        });
+                        push_whole(
+                            &mut out,
+                            ContentSelector::task(task.key.clone(), "reports"),
+                            Some(&desc),
+                        );
+                    }
                     for report in task_history_reports(snapshot, task) {
                         let disc = format!("history-report-{}", report.id);
                         if !self.is_disclosure_open(&disc) {
@@ -513,17 +607,28 @@ impl Reader {
                                 Some(&desc),
                             );
                         }
-                        if let Some(desc) = report.body("evidence") {
+                        if let Some(desc) = report.body("evidence").filter(|b| b.characters > 2) {
                             push_whole(
                                 &mut out,
                                 ContentSelector::report(report.id.clone(), "evidence"),
                                 Some(&desc),
                             );
                         }
-                        if let Some(desc) = report.body("next") {
+                        if let Some(desc) = report.body("next").filter(|b| b.characters > 2) {
                             push_whole(
                                 &mut out,
                                 ContentSelector::report(report.id.clone(), "next"),
+                                Some(&desc),
+                            );
+                        }
+                        let art_disc = format!("report-artifact-{}", report.id);
+                        if self.is_disclosure_open(&art_disc)
+                            && let Some(desc) = report.body("artifact")
+                        {
+                            push_paged(
+                                &mut out,
+                                &art_disc,
+                                ContentSelector::report(report.id.clone(), "artifact"),
                                 Some(&desc),
                             );
                         }

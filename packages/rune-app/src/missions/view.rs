@@ -41,14 +41,14 @@ impl<S> Scoped<S> {
 /// Panel content only. The Shell owns its occurrence, visibility and mounting.
 #[cfg(test)]
 pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
-    panel_body(ui, owner, rune::el(), |_| {})
+    panel_body(ui, owner, rune::el(), |_, _| {})
 }
 
 pub(crate) fn panel_body<S: 'static>(
     ui: &Panel,
     owner: Owner<S>,
     actions: El,
-    on_reader_open: fn(&mut S),
+    on_reader_open: fn(&mut S, &mut Tx),
 ) -> El {
     let heading = t("missions.control.mapLabel");
     let search = t("missionsPanel.picker.search");
@@ -93,10 +93,10 @@ pub(crate) fn panel_body<S: 'static>(
                             if let Some(panel) = scoped_eye.get(state).0 {
                                 let eye_key = format!("mission-row-eye-{eye_id}");
                                 if panel.toggle_overview(&eye_id) {
-                                    panel.reader.capture_return_focus(
+                                    panel.reader.set_return_focus(
                                         tx.focused().unwrap_or(&eye_key).to_owned(),
                                     );
-                                    on_reader_open(state);
+                                    on_reader_open(state, tx);
                                     tx.focus("mission-reader-close", tx.focus_visible());
                                 } else if let Some(back) = panel.reader.take_return_focus() {
                                     tx.focus(back, tx.focus_visible());
@@ -239,7 +239,7 @@ fn page_footer<S: 'static>(ui: &Panel, owner: Scoped<S>, kind: Kind) -> El {
     footer
 }
 
-fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>, on_reader_open: fn(&mut S)) -> El {
+fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>, on_reader_open: fn(&mut S, &mut Tx)) -> El {
     let detail = &ui.detail;
     let mut result = col()
         .full_width()
@@ -322,8 +322,8 @@ fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>, on_reader_open: fn(&mut S)) 
                     if panel.toggle_task(&mission_id, &task_id, &task_key) {
                         panel
                             .reader
-                            .capture_return_focus(tx.focused().unwrap_or(&eye_key).to_owned());
-                        on_reader_open(s);
+                            .set_return_focus(tx.focused().unwrap_or(&eye_key).to_owned());
+                        on_reader_open(s, tx);
                         tx.focus("mission-reader-close", tx.focus_visible());
                     } else if let Some(back) = panel.reader.take_return_focus() {
                         tx.focus(back, tx.focus_visible());

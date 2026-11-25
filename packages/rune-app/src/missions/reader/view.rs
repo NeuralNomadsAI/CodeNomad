@@ -4,7 +4,7 @@ use super::{
         directory::{Panel, title},
         view::status,
     },
-    ReaderTarget, current_task_report, overview_progress,
+    BodyStatus, ReaderTarget, current_task_report, overview_progress,
     sections::{
         body_status_note, json_list_section, local_section, remote_section, task_status_label,
     },
@@ -15,7 +15,7 @@ use crate::{
     strings::{locale, t},
 };
 use codenomad_client::missions::{
-    BriefingDoc, BriefingItem, ContentSelector, Report, ReportOutcome, Task,
+    BriefingDoc, BriefingItem, ContentSelector, FullTaskReport, Report, ReportOutcome, Task,
 };
 use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
@@ -116,6 +116,7 @@ pub(crate) fn view<S: 'static>(
                                 move |s: &mut S| {
                                     if let Some(p) = retry_owner.get(s) {
                                         p.detail.retry();
+                                        p.wake();
                                     }
                                 },
                             )
@@ -127,6 +128,11 @@ pub(crate) fn view<S: 'static>(
                 }
             }
         }
+        if panel.reader.pending_lookup().is_some() {
+            content = content.child(theme::note(t("missions.control.loading"), "status"));
+        } else if panel.reader.lookup_missing().is_some() {
+            content = content.child(theme::note(t("missions.control.reader.missing"), "status"));
+        }
     } else if panel.detail.failed {
         let retry_owner = scoped.clone();
         content = content
@@ -135,6 +141,7 @@ pub(crate) fn view<S: 'static>(
                 layout::button(t("missionsPanel.reader.retry"), false, move |s: &mut S| {
                     if let Some(p) = retry_owner.get(s) {
                         p.detail.retry();
+                        p.wake();
                     }
                 })
                 .key("mission-reader-detail-retry"),
@@ -250,6 +257,7 @@ fn overview_body<S: 'static>(
                     "missions.control.summary",
                     &doc.summary,
                     false,
+                    true,
                 ));
             }
             for (name, label, items) in [
@@ -263,6 +271,9 @@ fn overview_body<S: 'static>(
                 {
                     body = body.child(el);
                 }
+            }
+            if view.status == BodyStatus::Error {
+                body = body.child(body_status_note(BodyStatus::Error, key, "briefing", scoped));
             }
         } else {
             body = body.child(body_status_note(view.status, key, "briefing", scoped));
@@ -325,6 +336,7 @@ fn overview_body<S: 'static>(
             "missions.control.objective",
             &root.excerpt,
             false,
+            true,
         ));
     }
 
@@ -356,6 +368,8 @@ fn progress_section<S: 'static>(
 ) -> El {
     let mut parts = Vec::new();
     let mut task_keys = Vec::new();
+    let mut all_complete = true;
+    let mut errors = Vec::new();
     for (task, report) in entries {
         let title = if task.title.is_empty() {
             task.key.as_str()
@@ -363,13 +377,21 @@ fn progress_section<S: 'static>(
             task.title.as_str()
         };
         let selector = ContentSelector::report(report.id.clone(), "summary");
-        let summary = panel
-            .reader
-            .body_view(project_id, mission_id, &selector)
+        let view = panel.reader.body_view(project_id, mission_id, &selector);
+        let complete = view
             .body
-            .map(|b| b.text.as_str())
-            .or_else(|| report.excerpt())
-            .unwrap_or_default();
+            .filter(|b| b.utf16_len >= b.characters)
+            .map(|b| b.text.as_str());
+        if report.body("summary").is_some_and(|b| b.characters > 0) && complete.is_none() {
+            all_complete = false;
+        }
+        if view.status == BodyStatus::Error {
+            errors.push((
+                (project_id.to_owned(), mission_id.to_owned(), selector),
+                format!("progress-{name}-{}", report.id),
+            ));
+        }
+        let summary = complete.or_else(|| report.excerpt()).unwrap_or_default();
         parts.push(if summary.is_empty() {
             title.to_owned()
         } else {
@@ -385,7 +407,11 @@ fn progress_section<S: 'static>(
         label_key,
         &joined,
         false,
+        all_complete,
     );
+    for (key, sec_id) in errors {
+        section = section.child(body_status_note(BodyStatus::Error, key, &sec_id, scoped));
+    }
     if let Some(links) = task_links_row(
         snapshot,
         mission_id,
@@ -423,6 +449,7 @@ fn briefing_section<S: 'static>(
         label,
         &joined,
         false,
+        true,
     );
     let keys: Vec<&str> = items
         .iter()
@@ -468,14 +495,19 @@ fn task_links_row<S: 'static>(
             })
             .unwrap_or(key);
         let mid = mission_id.to_owned();
-        let tid = target.map(|t| t.id.clone()).unwrap_or_default();
+        let tid = target.map(|t| t.id.clone());
         let tkey = key.to_owned();
         let owner = scoped.clone();
         buttons.push(
             layout::button_tx(label, false, move |s: &mut S, tx: &mut Tx| {
                 if let Some(p) = owner.get(s) {
-                    p.reader.open_task(mid.clone(), tid.clone(), tkey.clone());
-                    tx.focus("mission-reader-close", tx.focus_visible());
+                    if let Some(tid) = &tid {
+                        p.reader.open_task(mid.clone(), tid.clone(), tkey.clone());
+                        tx.focus("mission-reader-close", tx.focus_visible());
+                    } else {
+                        p.reader.request_task_lookup(mid.clone(), tkey.clone());
+                    }
+                    p.wake();
                 }
             })
             .key(format!("mission-reader-{prefix}-{key}")),
@@ -521,14 +553,19 @@ fn task_body<S: 'static>(
             );
             let owner = scoped.clone();
             let mid = mission_id.to_owned();
-            let tid = target.map(|t| t.id.clone()).unwrap_or_default();
+            let tid = target.map(|t| t.id.clone());
             let tkey = dep_key.clone();
             let disabled = target.is_none() && !has_offpage;
             deps = deps.child(
                 layout::button_tx(&label, disabled, move |s: &mut S, tx: &mut Tx| {
                     if let Some(p) = owner.get(s) {
-                        p.reader.open_task(mid.clone(), tid.clone(), tkey.clone());
-                        tx.focus("mission-reader-close", tx.focus_visible());
+                        if let Some(tid) = &tid {
+                            p.reader.open_task(mid.clone(), tid.clone(), tkey.clone());
+                            tx.focus("mission-reader-close", tx.focus_visible());
+                        } else {
+                            p.reader.request_task_lookup(mid.clone(), tkey.clone());
+                        }
+                        p.wake();
                     }
                 })
                 .key(format!("mission-reader-dep-{dep_key}")),
@@ -537,49 +574,120 @@ fn task_body<S: 'static>(
         body = body.child(deps);
     }
 
-    if let Some(report) = current_task_report(snapshot, task) {
+    let current = current_task_report(snapshot, task);
+    let current_id = current.map(|r| r.id.as_str());
+    if let Some(report) = current {
         body = render_report(
-            body, panel, scoped, project_id, mission_id, report, "report", true,
+            body,
+            panel,
+            scoped,
+            project_id,
+            mission_id,
+            report,
+            "report",
+            "report-artifact",
         );
     }
 
-    let history = task_history_reports(snapshot, task);
-    for report in history {
-        let disc_id = format!("history-report-{}", report.id);
-        let open = panel.reader.is_disclosure_open(&disc_id);
-        let kind_label = t(if report.is_late() {
-            "missions.control.report.late"
-        } else {
-            "missions.progress.previousAttempt"
+    let compact_history = task_history_reports(snapshot, task);
+    let loaded_total = compact_history.len() as u64 + u64::from(current.is_some());
+    let omitted_history = task.report_count.saturating_sub(loaded_total);
+    let all_history_open = panel.reader.is_disclosure_open("task-all-history");
+    let full_history_selector = ContentSelector::task(task.key.clone(), "reports");
+    let full_history_view = all_history_open.then(|| {
+        panel
+            .reader
+            .body_view(project_id, mission_id, &full_history_selector)
+    });
+    let full_history: Option<Vec<FullTaskReport>> = full_history_view
+        .and_then(|v| v.body.filter(|b| b.utf16_len >= b.characters))
+        .and_then(|loaded| serde_json::from_str::<Vec<FullTaskReport>>(&loaded.text).ok())
+        .map(|mut list| {
+            list.retain(|r| Some(r.id.as_str()) != current_id);
+            list.sort_unstable_by(|a, b| {
+                b.created_at
+                    .cmp(&a.created_at)
+                    .then_with(|| a.id.cmp(&b.id))
+            });
+            list
         });
-        let label = match report.excerpt().filter(|s| !s.is_empty()) {
-            Some(excerpt) => format!("{kind_label} · {excerpt}"),
-            None => kind_label.to_owned(),
-        };
-        let toggle_owner = scoped.clone();
-        let toggle_id = disc_id.clone();
-        let mut block = col().full_width().separate(Space::Xs).child(
-            layout::button(&label, false, move |s: &mut S| {
-                if let Some(p) = toggle_owner.get(s) {
-                    p.reader.toggle_disclosure(&toggle_id);
-                }
-            })
-            .expanded(open)
-            .key(format!("mission-reader-toggle-{disc_id}")),
-        );
-        if open {
-            block = render_report(
-                block,
-                panel,
-                scoped,
-                project_id,
-                mission_id,
-                report,
-                &format!("history-{}", report.id),
-                false,
+
+    if !compact_history.is_empty() || omitted_history > 0 {
+        if !all_history_open && omitted_history > 0 {
+            let toggle_owner = scoped.clone();
+            body = body.child(
+                layout::button(
+                    t("missionsPanel.task.showAllHistory"),
+                    false,
+                    move |s: &mut S| {
+                        if let Some(p) = toggle_owner.get(s) {
+                            p.reader.toggle_disclosure("task-all-history");
+                            p.wake();
+                        }
+                    },
+                )
+                .key("mission-reader-show-all-history"),
             );
         }
-        body = body.child(block);
+        if let Some(view) = full_history_view
+            && (full_history.is_none() || view.status == BodyStatus::Error)
+        {
+            let key = (
+                project_id.to_owned(),
+                mission_id.to_owned(),
+                full_history_selector,
+            );
+            body = body.child(body_status_note(
+                view.status,
+                key,
+                "task-all-history",
+                scoped,
+            ));
+        }
+        if let Some(full_list) = &full_history {
+            for report in full_list {
+                body = render_full_history_item(body, panel, scoped, report);
+            }
+        } else {
+            for report in compact_history {
+                let disc_id = format!("history-report-{}", report.id);
+                let open = panel.reader.is_disclosure_open(&disc_id);
+                let kind_label = t(if report.is_late() {
+                    "missions.control.report.late"
+                } else {
+                    "missions.progress.previousAttempt"
+                });
+                let label = match report.excerpt().filter(|s| !s.is_empty()) {
+                    Some(excerpt) => format!("{kind_label} · {excerpt}"),
+                    None => kind_label.to_owned(),
+                };
+                let toggle_owner = scoped.clone();
+                let toggle_id = disc_id.clone();
+                let mut block = col().full_width().separate(Space::Xs).child(
+                    layout::button(&label, false, move |s: &mut S| {
+                        if let Some(p) = toggle_owner.get(s) {
+                            p.reader.toggle_disclosure(&toggle_id);
+                            p.wake();
+                        }
+                    })
+                    .expanded(open)
+                    .key(format!("mission-reader-toggle-{disc_id}")),
+                );
+                if open {
+                    block = render_report(
+                        block,
+                        panel,
+                        scoped,
+                        project_id,
+                        mission_id,
+                        report,
+                        &format!("history-{}", report.id),
+                        &format!("report-artifact-{}", report.id),
+                    );
+                }
+                body = body.child(block);
+            }
+        }
     }
 
     if task.body("brief").is_some() {
@@ -589,6 +697,7 @@ fn task_body<S: 'static>(
             layout::button(t("missions.control.brief"), false, move |s: &mut S| {
                 if let Some(p) = toggle_owner.get(s) {
                     p.reader.toggle_disclosure("task-brief");
+                    p.wake();
                 }
             })
             .expanded(open)
@@ -611,6 +720,116 @@ fn task_body<S: 'static>(
     body
 }
 
+fn render_full_history_item<S: 'static>(
+    body: El,
+    panel: &Panel,
+    scoped: &Scoped<S>,
+    report: &FullTaskReport,
+) -> El {
+    let disc_id = format!("history-report-{}", report.id);
+    let open = panel.reader.is_disclosure_open(&disc_id);
+    let kind_label = t(if report.late {
+        "missions.control.report.late"
+    } else {
+        "missions.progress.previousAttempt"
+    });
+    let label = if report.summary.is_empty() {
+        kind_label.to_owned()
+    } else {
+        let first_line = report.summary.lines().next().unwrap_or_default().trim();
+        format!("{kind_label} · {first_line}")
+    };
+    let toggle_owner = scoped.clone();
+    let toggle_id = disc_id.clone();
+    let mut block = col().full_width().separate(Space::Xs).child(
+        layout::button(&label, false, move |s: &mut S| {
+            if let Some(p) = toggle_owner.get(s) {
+                p.reader.toggle_disclosure(&toggle_id);
+                p.wake();
+            }
+        })
+        .expanded(open)
+        .key(format!("mission-reader-toggle-{disc_id}")),
+    );
+    if open {
+        let outcome = t(match report.outcome {
+            ReportOutcome::Completed => "missions.control.report.outcome.completed",
+            ReportOutcome::Blocked => "missions.control.report.outcome.blocked",
+            ReportOutcome::Failed => "missions.control.report.outcome.failed",
+        });
+        block = block.child(text(outcome).text_role(TextRole::Small));
+        if report.late {
+            block = block.child(text(t("missions.control.report.late")).text_role(TextRole::Small));
+        }
+        if !report.summary.is_empty() {
+            block = block.child(local_section(
+                panel,
+                scoped,
+                &format!("history-{}-summary", report.id),
+                "missions.control.summary",
+                &report.summary,
+                false,
+                true,
+            ));
+        }
+        if !report.next.is_empty() {
+            let joined = report.next.join("\n\n");
+            block = block.child(local_section(
+                panel,
+                scoped,
+                &format!("history-{}-next", report.id),
+                "missions.control.report.next",
+                &joined,
+                false,
+                true,
+            ));
+        }
+        if !report.evidence.is_empty() {
+            let joined = report.evidence.join("\n\n");
+            block = block.child(local_section(
+                panel,
+                scoped,
+                &format!("history-{}-evidence", report.id),
+                "missions.control.report.evidence",
+                &joined,
+                false,
+                true,
+            ));
+        }
+        if let Some(artifact) = &report.artifact
+            && let Ok(pretty) = serde_json::to_string_pretty(artifact)
+        {
+            let art_disc = format!("report-artifact-{}", report.id);
+            let art_open = panel.reader.is_disclosure_open(&art_disc);
+            let art_owner = scoped.clone();
+            let art_key = art_disc.clone();
+            let mut art_block = col().full_width().separate(Space::Xs).child(
+                layout::button(t("missions.control.artifact"), false, move |s: &mut S| {
+                    if let Some(p) = art_owner.get(s) {
+                        p.reader.toggle_disclosure(&art_key);
+                        p.wake();
+                    }
+                })
+                .expanded(art_open)
+                .key(format!("mission-reader-toggle-{art_disc}")),
+            );
+            if art_open {
+                art_block = art_block.child(local_section(
+                    panel,
+                    scoped,
+                    &art_disc,
+                    "missions.control.artifact",
+                    &pretty,
+                    true,
+                    true,
+                ));
+            }
+            block = block.child(art_block);
+        }
+    }
+    body.child(block)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_report<S: 'static>(
     mut body: El,
@@ -620,7 +839,7 @@ fn render_report<S: 'static>(
     mission_id: &str,
     report: &Report,
     prefix: &str,
-    allow_artifact: bool,
+    artifact_disc: &str,
 ) -> El {
     let outcome = t(match report.outcome {
         ReportOutcome::Completed => "missions.control.report.outcome.completed",
@@ -653,9 +872,10 @@ fn render_report<S: 'static>(
             "missions.control.summary",
             excerpt,
             false,
+            true,
         ));
     }
-    if report.body("next").is_some_and(|b| b.characters > 0) {
+    if report.body("next").is_some_and(|b| b.characters > 2) {
         body = body.child(json_list_section(
             panel,
             scoped,
@@ -666,7 +886,7 @@ fn render_report<S: 'static>(
             ContentSelector::report(report.id.clone(), "next"),
         ));
     }
-    if report.body("evidence").is_some_and(|b| b.characters > 0) {
+    if report.body("evidence").is_some_and(|b| b.characters > 2) {
         body = body.child(json_list_section(
             panel,
             scoped,
@@ -677,23 +897,25 @@ fn render_report<S: 'static>(
             ContentSelector::report(report.id.clone(), "evidence"),
         ));
     }
-    if allow_artifact && report.body("artifact").is_some_and(|b| b.characters > 0) {
-        let open = panel.reader.is_disclosure_open("report-artifact");
+    if report.body("artifact").is_some_and(|b| b.characters > 0) {
+        let open = panel.reader.is_disclosure_open(artifact_disc);
         let toggle_owner = scoped.clone();
+        let toggle_disc = artifact_disc.to_owned();
         let mut block = col().full_width().separate(Space::Xs).child(
             layout::button(t("missions.control.artifact"), false, move |s: &mut S| {
                 if let Some(p) = toggle_owner.get(s) {
-                    p.reader.toggle_disclosure("report-artifact");
+                    p.reader.toggle_disclosure(&toggle_disc);
+                    p.wake();
                 }
             })
             .expanded(open)
-            .key("mission-reader-toggle-report-artifact"),
+            .key(format!("mission-reader-toggle-{artifact_disc}")),
         );
         if open {
             block = block.child(remote_section(
                 panel,
                 scoped,
-                "report-artifact",
+                artifact_disc,
                 "missions.control.artifact",
                 project_id,
                 mission_id,

@@ -31,6 +31,7 @@ pub(super) struct Detail {
     pending: Option<Demand>,
     retry: Option<Demand>,
     looked_up: HashSet<(String, String)>,
+    auth_expired: Option<Backend>,
     pub failed: bool,
     pub map_reads: u64,
 }
@@ -153,6 +154,20 @@ impl Detail {
         self.looked_up
             .contains(&(task_id.to_owned(), task_key.to_owned()))
     }
+    pub fn cancel_lookup(&mut self) {
+        if matches!(self.active.as_ref(), Some((Demand::Lookup { .. }, _))) {
+            self.active = None;
+        }
+        if matches!(self.staged.as_ref(), Some((Demand::Lookup { .. }, _))) {
+            self.staged = None;
+        }
+        if matches!(self.pending.as_ref(), Some(Demand::Lookup { .. })) {
+            self.pending = None;
+        }
+    }
+    pub fn take_auth_expired(&mut self) -> Option<Backend> {
+        self.auth_expired.take()
+    }
     pub fn more(&mut self) {
         if !self.busy()
             && self
@@ -198,11 +213,16 @@ impl Detail {
         self.revision_floor(id, revision);
         if let Some((demand, result)) = self.staged.take() {
             self.active = None;
-            self.retry = None;
-            self.failed = match result {
+            let is_lookup = matches!(demand, Demand::Lookup { .. });
+            if !is_lookup {
+                self.retry = None;
+            }
+            let failed = match result {
                 Ok(answer) if Some(answer.revision()) < self.observed => {
-                    self.retry = Some(Demand::Refresh);
-                    true
+                    if !is_lookup {
+                        self.retry = Some(Demand::Refresh);
+                    }
+                    !is_lookup
                 }
                 Ok(answer) => {
                     self.observed = self.observed.max(Some(answer.revision()));
@@ -247,32 +267,46 @@ impl Detail {
                         }
                         Answer::Lookup(window, _, req_id, req_key) => {
                             self.looked_up.insert((req_id, req_key));
-                            self.snapshot.as_mut().is_none_or(|snapshot| {
-                                if !Rc::make_mut(&mut snapshot.tasks).extend(window.tasks, 0, 0) {
-                                    return true;
-                                }
+                            if let Some(snapshot) = self.snapshot.as_mut()
+                                && Rc::make_mut(&mut snapshot.tasks).extend(window.tasks, 0, 0)
+                            {
                                 snapshot.merge_reports(window.reports);
-                                false
-                            })
+                            }
+                            false
                         }
                     }
                 }
                 Err(error) => {
+                    if codenomad_client::http::authentication_expired(&error) {
+                        self.auth_expired = Some(backend.clone());
+                    }
                     if let Some(changed) = error.downcast_ref::<RevisionChanged>() {
                         self.observed = self.observed.max(Some(changed.0));
                     }
-                    self.retry = Some(
+                    if let Demand::Lookup { task_id, task_key } = demand {
+                        self.looked_up
+                            .insert((task_id.unwrap_or_default(), task_key.unwrap_or_default()));
                         if error.is::<DirectoryChanged>() || error.is::<RevisionChanged>() {
-                            Demand::Refresh
-                        } else {
-                            demand
-                        },
-                    );
-                    true
+                            self.refresh();
+                        }
+                        false
+                    } else {
+                        self.retry = Some(
+                            if error.is::<DirectoryChanged>() || error.is::<RevisionChanged>() {
+                                Demand::Refresh
+                            } else {
+                                demand
+                            },
+                        );
+                        true
+                    }
                 }
             };
-            if self.failed && self.retry.is_none() {
-                self.retry = Some(Demand::Refresh);
+            if !is_lookup {
+                self.failed = failed;
+                if self.failed && self.retry.is_none() {
+                    self.retry = Some(Demand::Refresh);
+                }
             }
             changed = true;
         }
@@ -414,6 +448,13 @@ impl Snapshot {
 
     fn merge_reports(&mut self, reports: Vec<Report>) {
         for report in reports {
+            if self
+                .reports
+                .get(&report.id)
+                .is_some_and(|existing| existing.task_key != report.task_key)
+            {
+                continue;
+            }
             self.reports.insert(report.id.clone(), report);
         }
     }

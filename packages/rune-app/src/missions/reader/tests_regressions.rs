@@ -11,7 +11,7 @@ use crate::{
 };
 use codenomad_client::{
     bounded,
-    missions::{ContentSelector, Status, Summary},
+    missions::{ContentSelector, Status, Summary, content_digest},
 };
 use rune::{Env, Runtime};
 use serde_json::json;
@@ -72,7 +72,7 @@ fn switching_overview_to_another_mission_keeps_reader_open_and_toggles_on_second
 #[test]
 fn withdrawn_and_mismatched_task_reports_render_only_as_history_disclosures() {
     crate::platform::block_on(async {
-        let digest = "e".repeat(43);
+        let digest = content_digest("Old attempt body");
         let report_requests = Arc::new(AtomicUsize::new(0));
         let req_c = report_requests.clone();
         let d_c = digest.clone();
@@ -190,8 +190,8 @@ fn withdrawn_and_mismatched_task_reports_render_only_as_history_disclosures() {
 #[test]
 fn body_cache_promotes_newer_revision_stays_fresh_on_same_digest_and_rejects_bad_continuation() {
     crate::platform::block_on(async {
-        let digest_a = "a".repeat(43);
-        let digest_b = "b".repeat(43);
+        let digest_a = content_digest("Stable digest");
+        let digest_b = content_digest("Newer rev text");
         let mode = Arc::new(AtomicUsize::new(0));
         let calls = Arc::new(AtomicUsize::new(0));
         let mode_c = mode.clone();
@@ -234,7 +234,10 @@ fn body_cache_promotes_newer_revision_stays_fresh_on_same_digest_and_rejects_bad
                     )
                 }
                 _ => {
-                    // Multi-slice where second slice lies about total `characters`.
+                    // Multi-slice where the second slice is individually valid at the HTTP client
+                    // layer (offset=6000, text=6000 units, characters=12000, next=None) so it
+                    // reaches BodyCache::accept_slice, which must reject the total mismatch vs
+                    // slice 1's characters=10000.
                     if offset == 0 {
                         let chunk = "X".repeat(6000);
                         (
@@ -258,6 +261,7 @@ fn body_cache_promotes_newer_revision_stays_fresh_on_same_digest_and_rejects_bad
                             }),
                         )
                     } else {
+                        let chunk = "Y".repeat(6000);
                         (
                             200,
                             json!({
@@ -271,9 +275,9 @@ fn body_cache_promotes_newer_revision_stays_fresh_on_same_digest_and_rejects_bad
                                     "field": "summary",
                                     "digest": da,
                                     "offset": offset,
-                                    "characters": 9999,
+                                    "characters": 12000,
                                     "json": false,
-                                    "text": "mismatch"
+                                    "text": chunk
                                 }
                             }),
                         )
@@ -369,9 +373,9 @@ fn body_cache_promotes_newer_revision_stays_fresh_on_same_digest_and_rejects_bad
 #[test]
 fn async_copy_delivers_bound_digest_cancels_on_change_and_refuses_oversized() {
     crate::platform::block_on(async {
-        let digest_a = "f".repeat(43);
-        let digest_b = "g".repeat(43);
         let full = "Hello ".repeat(2200); // 13_200 units (> 9_000 page, 3 chunks of 5_000)
+        let digest_a = content_digest(&full);
+        let digest_b = content_digest("Changed digest body");
         let total = full.encode_utf16().count();
         let switch_digest = Arc::new(AtomicBool::new(false));
         let sw_c = switch_digest.clone();
@@ -569,10 +573,8 @@ fn hidden_panel_preserves_refresh_and_suspend_revalidates_on_return() {
 #[test]
 fn overview_progress_fallback_and_offpage_task_lookup() {
     crate::platform::block_on(async {
-        const OFFPAGE_TASKS: &str = r#"{"taskPage":{"order":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","offset":0,"end":0,"total":60,"reports":2,"counts":{"completed":60}},"tasks":[{"id":"tsk_far","key":"task-far","title":"Offpage Task","role":"specialist","status":"completed","blockedBy":[],"order":55,"createdAt":1,"updatedAt":1,"dependents":0,"reportCount":1,"outstandingExecution":false,"bodies":{"brief":{"characters":12,"digest":"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"}},"report":{"id":"rep_tsk_far","taskKey":"task-far","sessionId":"ses_task","outcome":"completed","excerpt":"Excerpt for task-far","createdAt":2}}],"reports":[{"id":"rep_tsk_far","taskKey":"task-far","sessionId":"ses_task","outcome":"completed","excerpt":"Excerpt for task-far","createdAt":2,"bodies":{"summary":{"characters":24,"digest":"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"},"evidence":{"characters":20,"digest":"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"},"next":{"characters":2,"digest":"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"}}}]}"#;
-        const OFFPAGE_DIGEST: &str = "2LMOQBIXuElvuUus8x_L-5nOkvPXE2TRv-SO1HGn-RE";
-        let digest = "h".repeat(43);
-        let d_c = digest.clone();
+        const OFFPAGE_TASKS: &str = r#"{"taskPage":{"order":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","offset":0,"end":0,"total":60,"reports":2,"counts":{"completed":60}},"tasks":[{"id":"tsk_far","key":"task-far","title":"Offpage Task","role":"specialist","status":"completed","blockedBy":[],"order":55,"createdAt":1,"updatedAt":1,"dependents":0,"reportCount":1,"outstandingExecution":false,"bodies":{"brief":{"characters":12,"digest":"mPPnWrHj4vEFmX9TRzV2jvYMian4OZjG3wx189MckAU"}},"report":{"id":"rep_tsk_far","taskKey":"task-far","sessionId":"ses_task","outcome":"completed","excerpt":"Excerpt for task-far","createdAt":2}}],"reports":[{"id":"rep_tsk_far","taskKey":"task-far","sessionId":"ses_task","outcome":"completed","excerpt":"Excerpt for task-far","createdAt":2,"bodies":{"summary":{"characters":24,"digest":"mwKfd7N-_i81PRfQA3tUMgTlcMxZN6otlkuGGAlVLFo"},"evidence":{"characters":20,"digest":"miBWWG3jJlR9rjbI4TGbcmpBlZ8cwEvRfQCGUzUiU-Y"},"next":{"characters":2,"digest":"XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc"}}}]}"#;
+        const OFFPAGE_DIGEST: &str = "Ef_gOvbQNxC9Ft1k1PBB0ll16tmt2zrK-4Zg5L9e0QY";
         let http = Http::new().await;
         let mut backend = http.backend.clone();
         backend.workspace = "project".into();
@@ -620,12 +622,13 @@ fn overview_progress_fallback_and_offpage_task_lookup() {
                         "next" => ("[]", true),
                         _ => ("{}", true),
                     };
+                    let digest = content_digest(text);
                     let (st, body) = slice_reply(
                         5,
                         "report",
                         field,
                         json!({ "reportId": params.get("reportId").cloned().unwrap_or_default() }),
-                        &d_c,
+                        &digest,
                         text,
                         0,
                         60_000,
@@ -754,12 +757,282 @@ fn return_focus_tracks_first_trigger_and_restores_on_close() {
         assert!(panel.toggle_overview("msn_1"));
         panel
             .reader
-            .capture_return_focus("mission-eye-msn_1".into());
-        // Navigating inside the reader must not overwrite the original opening trigger.
+            .set_return_focus("mission-row-eye-msn_1".into());
+        // Navigating inside the reader via capture_return_focus must not overwrite the opening trigger.
         panel
             .reader
             .capture_return_focus("mission-reader-dep-task-a".into());
-        assert_eq!(panel.close_reader().as_deref(), Some("mission-eye-msn_1"));
+        assert_eq!(
+            panel.close_reader().as_deref(),
+            Some("mission-row-eye-msn_1")
+        );
         assert!(panel.close_reader().is_none());
     });
+}
+
+#[test]
+fn tampered_body_digest_fails_closed_and_older_not_found_unparks_on_restore() {
+    crate::platform::block_on(async {
+        let genuine = "Restored notes body";
+        let genuine_digest = content_digest(genuine);
+        let phase = Arc::new(AtomicUsize::new(0));
+        let phase_c = phase.clone();
+        let d_c = genuine_digest.clone();
+        let backend = spawn_http(move |_| match phase_c.load(Ordering::SeqCst) {
+            0 => slice_reply(
+                3,
+                "mission",
+                "notes",
+                json!({}),
+                &d_c,
+                "TAMPERED notes body",
+                0,
+                6000,
+                false,
+            ),
+            1 => (
+                200,
+                json!({
+                    "available": true,
+                    "version": 1,
+                    "projectID": "project",
+                    "missionID": "msn_1",
+                    "revision": 4,
+                    "refused": "content-not-found"
+                }),
+            ),
+            _ => slice_reply(
+                5,
+                "mission",
+                "notes",
+                json!({}),
+                &d_c,
+                genuine,
+                0,
+                6000,
+                false,
+            ),
+        })
+        .await;
+
+        let (wake_tx, wake_rx) = bounded(32);
+        let wake: Wake = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        let reads = Reads::default();
+        let mut reader = Reader::default();
+        reader.open_overview("msn_1".into());
+        let sel = ContentSelector::mission("notes");
+        let key = ("project".into(), "msn_1".into(), sel.clone());
+        let snap_v3 = header_with(
+            "msn_1",
+            3,
+            json!({ "notes": { "characters": genuine.len(), "digest": genuine_digest } }),
+            vec![],
+        );
+
+        wait(async {
+            loop {
+                reader.poll(&backend, Some("project"), Some(&snap_v3), &reads, &wake);
+                if reader.body_view("project", "msn_1", &sel).status == BodyStatus::Error {
+                    break;
+                }
+                wake_rx.recv().await.unwrap();
+            }
+        })
+        .await;
+        assert!(reader.body_view("project", "msn_1", &sel).body.is_none());
+        assert!(
+            reader
+                .request_copy(
+                    key.clone(),
+                    Some(genuine_digest.clone()),
+                    genuine.len() as u64
+                )
+                .is_none()
+        );
+
+        phase.store(1, Ordering::SeqCst);
+        let snap_v4 = header_with(
+            "msn_1",
+            4,
+            json!({ "notes": { "characters": genuine.len(), "digest": genuine_digest } }),
+            vec![],
+        );
+        reader.retry(&key);
+        wait(async {
+            loop {
+                reader.poll(&backend, Some("project"), Some(&snap_v4), &reads, &wake);
+                if reader.body_view("project", "msn_1", &sel).status == BodyStatus::Missing {
+                    break;
+                }
+                wake_rx.recv().await.unwrap();
+            }
+        })
+        .await;
+
+        phase.store(2, Ordering::SeqCst);
+        let snap_v5 = header_with(
+            "msn_1",
+            5,
+            json!({ "notes": { "characters": genuine.len(), "digest": genuine_digest } }),
+            vec![],
+        );
+        wait(async {
+            loop {
+                reader.poll(&backend, Some("project"), Some(&snap_v5), &reads, &wake);
+                if reader
+                    .body_view("project", "msn_1", &sel)
+                    .body
+                    .is_some_and(|b| b.text == genuine)
+                {
+                    break;
+                }
+                wake_rx.recv().await.unwrap();
+            }
+        })
+        .await;
+        assert_eq!(
+            reader
+                .request_copy(key, Some(genuine_digest), genuine.len() as u64)
+                .as_deref(),
+            Some(genuine)
+        );
+    });
+}
+
+#[test]
+fn rebind_preserves_open_reader_and_missing_offpage_lookup_keeps_current_view() {
+    crate::platform::block_on(async {
+        const EMPTY_TASKS: &str = r#"{"taskPage":{"order":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","offset":0,"end":0,"total":60,"reports":2,"counts":{"completed":60}},"tasks":[],"reports":[]}"#;
+        const EMPTY_DIGEST: &str = "mJ1imXdP_i7bo88sVwOZGOR9y0Xazue3EWYDorWcORs";
+        let http = Http::new().await;
+        let mut backend_a = http.backend.clone();
+        backend_a.workspace = "project".into();
+        let backend_b = backend_a.clone();
+        crate::platform::spawn(async move {
+            loop {
+                let req = http.accept().await;
+                if req.header.contains("/missions/panel") && req.body["source"] == "tasks" {
+                    let _ = req
+                        .try_reply(
+                            200,
+                            json!({
+                                "available": true,
+                                "version": 1,
+                                "source": "tasks",
+                                "projectID": "project",
+                                "missionID": "msn_1",
+                                "revision": 5,
+                                "discardedEvents": 0,
+                                "controlUnavailable": false,
+                                "notificationUnavailable": false,
+                                "cleanupUnavailable": false,
+                                "page": {
+                                    "digest": EMPTY_DIGEST,
+                                    "total": 1,
+                                    "pieces": [{
+                                        "index": 0,
+                                        "offset": 0,
+                                        "characters": EMPTY_TASKS.encode_utf16().count(),
+                                        "text": EMPTY_TASKS
+                                    }]
+                                }
+                            }),
+                        )
+                        .await;
+                } else {
+                    let _ = req.try_reply(503, json!({})).await;
+                }
+            }
+        });
+
+        let (wake_tx, wake_rx) = bounded(32);
+        let wake: Wake = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        let mut panel = Panel::new(backend_a, Some("project".into()), Reads::default(), wake);
+        panel.summaries = vec![summary_row("msn_1", "Alpha")];
+        panel.detail.observe("msn_1", 5);
+        let (done_task, done_rep) = task_and_report(
+            "tsk_done",
+            "task-done",
+            "Completed Work",
+            "completed",
+            "completed",
+            &["task-ghost"],
+            0,
+        );
+        let (other_task, other_rep) = task_and_report(
+            "tsk_other",
+            "task-other",
+            "Other Work",
+            "completed",
+            "completed",
+            &[],
+            1,
+        );
+        panel.detail.snapshot = Some(header_with_reports(
+            "msn_1",
+            5,
+            json!({}),
+            vec![done_task, other_task],
+            vec![done_rep, other_rep],
+            Some(60),
+        ));
+        panel.selected = Some("msn_1".into());
+        panel.reader.open_overview("msn_1".into());
+
+        // Non-destructive off-page lookup for a missing task must keep the overview open and
+        // never mark the shared Detail failed.
+        panel
+            .reader
+            .request_task_lookup("msn_1".into(), "task-ghost".into());
+        wait(async {
+            loop {
+                panel.poll();
+                if panel.reader.lookup_missing() == Some("task-ghost") {
+                    break;
+                }
+                wake_rx.recv().await.unwrap();
+            }
+        })
+        .await;
+        assert!(panel.reader.is_overview_open("msn_1"));
+        assert!(!panel.detail.failed);
+
+        // Rebinding after sign-in on the same workspace preserves the open reader target.
+        assert!(panel.same_workspace(&backend_b));
+        panel.rebind(backend_b);
+        assert!(panel.reader.is_overview_open("msn_1"));
+    });
+}
+
+#[test]
+fn cross_page_report_id_collision_cannot_substitute_foreign_report() {
+    let (task_a, _) = task_and_report(
+        "tsk_a",
+        "task-a",
+        "Task A",
+        "completed",
+        "completed",
+        &[],
+        0,
+    );
+    // Foreign top-level report reusing rep_tsk_a under another taskKey must not substitute.
+    let foreign_rep: codenomad_client::missions::Report = serde_json::from_value(json!({
+        "id": "rep_tsk_a",
+        "taskKey": "task-foreign",
+        "sessionId": "ses_other",
+        "outcome": "completed",
+        "excerpt": "Foreign excerpt",
+        "createdAt": 9,
+        "bodies": { "summary": { "characters": 7, "digest": content_digest("Foreign") } }
+    }))
+    .unwrap();
+    let snap = header_with_reports("msn_1", 2, json!({}), vec![task_a], vec![foreign_rep], None);
+    let task = snap.tasks.find_by_key("task-a").unwrap();
+    let resolved = current_task_report(&snap, task).expect("nested fallback");
+    assert_eq!(resolved.task_key, "task-a");
+    assert!(resolved.body("summary").is_none());
 }

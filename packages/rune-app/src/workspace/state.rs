@@ -28,8 +28,8 @@ pub(crate) use panel_state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
     has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_reader,
     mission_observation_project, mission_panel, mission_reader, mission_supported,
-    missions_composing, reconcile_detached_online, right_panel_tab, set_detached_online,
-    set_right_panel_tab, stop_unlisted_detached, suspend_missions,
+    missions_composing, reconcile_detached_online, restore_mission_reader_focus, right_panel_tab,
+    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_missions,
 };
 pub use polling::{file_draft_status, poll, poll_file_drafts, status};
 pub use strip::strip;

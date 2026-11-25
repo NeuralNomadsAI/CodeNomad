@@ -26,10 +26,28 @@ pub(super) fn json_list_section<S: 'static>(
     if let Some(loaded) = view.body
         && loaded.utf16_len >= loaded.characters
     {
-        let joined = serde_json::from_str::<Vec<String>>(&loaded.text)
+        let parsed = serde_json::from_str::<Vec<String>>(&loaded.text);
+        if let Ok(items) = &parsed
+            && items.is_empty()
+        {
+            if view.status == BodyStatus::Error {
+                return col()
+                    .full_width()
+                    .separate(Space::Xs)
+                    .key(format!("mission-reader-section-{section_id}"))
+                    .child(text(t(label_key)).role("heading"))
+                    .child(body_status_note(BodyStatus::Error, key, section_id, scoped));
+            }
+            return rune::el();
+        }
+        let joined = parsed
             .map(|items| items.join("\n\n"))
             .unwrap_or_else(|_| loaded.text.clone());
-        return local_section(panel, scoped, section_id, label_key, &joined, false);
+        let mut section = local_section(panel, scoped, section_id, label_key, &joined, false, true);
+        if view.status == BodyStatus::Error {
+            section = section.child(body_status_note(BodyStatus::Error, key, section_id, scoped));
+        }
+        return section;
     }
     col()
         .full_width()
@@ -67,21 +85,24 @@ pub(super) fn remote_section<S: 'static>(
         let copy_digest = loaded.digest.clone();
         let copy_chars = loaded.characters;
         let can_copy = copy_chars <= MAX_WHOLE_BODY_UNITS;
+        let copy_loading = panel.reader.is_copy_loading(&key);
         section = section.child(section_toolbar(
             scoped,
             section_id,
             page,
             total,
-            can_copy,
+            can_copy && !copy_loading,
             move |s: &mut S, tx: &mut Tx| {
-                if let Some(p) = copy_owner.get(s)
-                    && let Some(text) = p.reader.request_copy(
+                if let Some(p) = copy_owner.get(s) {
+                    if let Some(text) = p.reader.request_copy(
                         copy_key.clone(),
                         Some(copy_digest.clone()),
                         copy_chars,
-                    )
-                {
-                    tx.copy(text);
+                    ) {
+                        tx.copy(text);
+                    } else {
+                        p.wake();
+                    }
                 }
             },
         ));
@@ -114,6 +135,7 @@ pub(super) fn local_section<S: 'static>(
     label_key: &str,
     source: &str,
     raw: bool,
+    can_copy: bool,
 ) -> El {
     let characters = utf16_len(source) as u64;
     let total = page_count(characters, READER_PAGE_SIZE);
@@ -129,7 +151,7 @@ pub(super) fn local_section<S: 'static>(
             section_id,
             page,
             total,
-            true,
+            can_copy,
             move |_: &mut S, tx: &mut Tx| tx.copy(copy_text.as_str()),
         ));
     if let Some(content) = markdown_page(source, page, READER_PAGE_SIZE) {
@@ -172,6 +194,7 @@ fn section_toolbar<S: 'static>(
                     move |s: &mut S| {
                         if let Some(p) = prev_owner.get(s) {
                             p.reader.set_page(&prev_id, page.saturating_sub(1));
+                            p.wake();
                         }
                     },
                 )
@@ -185,6 +208,7 @@ fn section_toolbar<S: 'static>(
                     move |s: &mut S| {
                         if let Some(p) = next_owner.get(s) {
                             p.reader.set_page(&next_id, (page + 1).min(total - 1));
+                            p.wake();
                         }
                     },
                 )
@@ -255,6 +279,7 @@ pub(super) fn body_status_note<S: 'static>(
                     layout::button(t("missionsPanel.reader.retry"), false, move |s: &mut S| {
                         if let Some(p) = owner.get(s) {
                             p.reader.retry(&key);
+                            p.wake();
                         }
                     })
                     .key(format!("mission-reader-body-retry-{section_id}")),

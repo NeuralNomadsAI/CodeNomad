@@ -13,8 +13,8 @@ pub use attention::Attention;
 pub use codec::RevisionChanged;
 pub use content::{
     BodyDescriptor, BriefingDoc, BriefingItem, ContentOutcome, ContentRefusal, ContentSelector,
-    ContentSlice, MarkdownPage, READER_PAGE_SIZE, body_covers, body_need, markdown_page,
-    page_count, utf16_len,
+    ContentSlice, FullTaskReport, MarkdownPage, READER_PAGE_SIZE, body_covers, body_need,
+    content_digest, markdown_page, page_count, utf16_len,
 };
 pub use control_fields::{ControlPage, ControlPart, ControlRow, ReceiptContent};
 pub use detail::{

@@ -108,6 +108,35 @@ impl Panel {
         }
     }
 
+    pub(super) fn wake(&self) {
+        (self.wake)();
+    }
+
+    pub(crate) fn same_workspace(&self, backend: &Backend) -> bool {
+        self.backend.base == backend.base && self.backend.workspace == backend.workspace
+    }
+
+    /// Rebinds the authenticated HTTP client after sign-in while preserving the selected Mission
+    /// and any open Mission reader so the user returns to their reading state and revalidates it.
+    pub(crate) fn rebind(&mut self, backend: Backend) {
+        self.backend = backend;
+        self.cancel_probe();
+        for lane in &mut self.lanes {
+            if let Some((_, cancel)) = lane.active.take() {
+                cancel.close();
+            }
+            lane.owed = false;
+        }
+        self.control_fields.cancel();
+        self.observation.cancel();
+        self.detail.cancel();
+        self.reader.invalidate();
+        if self.visible || self.reader.is_open() {
+            self.refresh();
+        }
+        (self.wake)();
+    }
+
     pub(crate) fn has_reader(&self) -> bool {
         self.reader.is_open()
     }
@@ -115,6 +144,7 @@ impl Panel {
     pub(crate) fn close_reader(&mut self) -> Option<String> {
         let back = self.reader.take_return_focus();
         self.reader.close();
+        self.detail.cancel_lookup();
         self.reader_suspended = false;
         if !self.visible {
             self.refresh_due = None;
@@ -133,22 +163,30 @@ impl Panel {
     }
 
     pub(crate) fn take_reader_auth_expired(&mut self) -> Option<Backend> {
-        self.reader.take_auth_expired()
+        self.reader
+            .take_auth_expired()
+            .or_else(|| self.detail.take_auth_expired())
     }
 
     pub(crate) fn take_reader_copy(&mut self) -> Option<String> {
         self.reader.take_ready_copy()
     }
 
+    pub(crate) fn take_reader_focus_close(&mut self) -> bool {
+        self.reader.take_focus_close()
+    }
+
     pub(super) fn toggle_overview(&mut self, id: &str) -> bool {
         if self.reader.is_overview_open(id) {
             self.reader.close();
+            self.detail.cancel_lookup();
             false
         } else {
             if self.selected.as_deref() != Some(id) {
                 self.select(id);
             }
             self.reader.open_overview(id.to_owned());
+            (self.wake)();
             true
         }
     }
@@ -156,6 +194,7 @@ impl Panel {
     pub(super) fn toggle_task(&mut self, mission_id: &str, task_id: &str, task_key: &str) -> bool {
         if self.reader.is_task_open(mission_id, task_id) {
             self.reader.close();
+            self.detail.cancel_lookup();
             false
         } else {
             if self.selected.as_deref() != Some(mission_id) {
@@ -166,6 +205,7 @@ impl Panel {
                 task_id.to_owned(),
                 task_key.to_owned(),
             );
+            (self.wake)();
             true
         }
     }
@@ -451,24 +491,6 @@ impl Panel {
             self.reader_suspended = false;
             self.detail.refresh();
         }
-        if let Some(super::reader::ReaderTarget::Task {
-            mission_id,
-            task_id,
-            task_key,
-        }) = self.reader.target().cloned()
-            && let Some(snapshot) = &self.detail.snapshot
-            && snapshot.header.root.id == mission_id
-        {
-            if let Some(task) = snapshot.tasks.find_by_id_or_key(&task_id, &task_key) {
-                self.reader
-                    .bind_task_identity(&mission_id, &task.id, &task.key);
-            } else {
-                self.detail.lookup_task(
-                    (!task_id.is_empty()).then_some(task_id.as_str()),
-                    (!task_key.is_empty()).then_some(task_key.as_str()),
-                );
-            }
-        }
         if self.visible
             && let (Some(project), Some(id)) = (&self.project, &self.selected)
         {
@@ -529,6 +551,31 @@ impl Panel {
             self.observation = Observation::default();
             self.reader.follow_selection(None);
         }
+        // Resolve or dispatch pending off-page task lookups AFTER detail.poll() so a lookup queued
+        // behind Refresh/More/Attention starts in the same cycle once detail settles.
+        let mut started_lookup = false;
+        if let Some((mid, tkey)) = self
+            .reader
+            .pending_lookup()
+            .map(|(m, k)| (m.to_owned(), k.to_owned()))
+            && let Some(snapshot) = &self.detail.snapshot
+            && snapshot.header.root.id == mid
+        {
+            if let Some(task) = snapshot.tasks.find_by_key(&tkey) {
+                let tid = task.id.clone();
+                let key = task.key.clone();
+                self.reader.resolve_lookup(mid, tid, key);
+                changed = true;
+            } else if snapshot.tasks.len() >= snapshot.header.tasks.page.total
+                || self.detail.lookup_settled("", &tkey)
+            {
+                self.reader.fail_lookup(tkey);
+                changed = true;
+            } else if !self.detail.busy() {
+                self.detail.lookup_task(None, Some(&tkey));
+                started_lookup = true;
+            }
+        }
         if let Some(super::reader::ReaderTarget::Task {
             mission_id,
             task_id,
@@ -536,10 +583,38 @@ impl Panel {
         }) = self.reader.target().cloned()
             && let Some(snapshot) = &self.detail.snapshot
             && snapshot.header.root.id == mission_id
-            && let Some(task) = snapshot.tasks.find_by_id_or_key(&task_id, &task_key)
         {
-            self.reader
-                .bind_task_identity(&mission_id, &task.id, &task.key);
+            if let Some(task) = snapshot.tasks.find_by_id_or_key(&task_id, &task_key) {
+                self.reader
+                    .bind_task_identity(&mission_id, &task.id, &task.key);
+            } else if !self.detail.busy()
+                && !self.detail.lookup_settled(&task_id, &task_key)
+                && snapshot.tasks.len() < snapshot.header.tasks.page.total
+            {
+                self.detail.lookup_task(
+                    (!task_id.is_empty()).then_some(task_id.as_str()),
+                    (!task_key.is_empty()).then_some(task_key.as_str()),
+                );
+                started_lookup = true;
+            }
+        }
+        if started_lookup
+            && let Some(snapshot) = &self.detail.snapshot
+            && let Some(project) = self
+                .project
+                .as_deref()
+                .or(Some(snapshot.header.root.project_id()))
+                .map(str::to_owned)
+        {
+            let target_id = snapshot.header.root.id.clone();
+            changed |= self.detail.poll(
+                &self.backend,
+                &project,
+                &target_id,
+                None,
+                &self.reads,
+                &self.wake,
+            );
         }
         let reader_project = self.project.as_deref().or_else(|| {
             self.detail
@@ -631,6 +706,19 @@ impl Panel {
             self.observation = Observation::default();
             self.selected = Some(id.into());
             self.reader.follow_selection(Some(id));
+        }
+    }
+
+    pub(crate) fn has_eye_trigger(&self, key: &str) -> bool {
+        if let Some(mission_id) = key.strip_prefix("mission-row-eye-") {
+            self.shown_rows().any(|row| row.id == mission_id)
+        } else if let Some(task_id) = key.strip_prefix("mission-task-eye-") {
+            self.detail
+                .snapshot
+                .as_ref()
+                .is_some_and(|snap| snap.tasks.find_by_id_or_key(task_id, "").is_some())
+        } else {
+            false
         }
     }
 

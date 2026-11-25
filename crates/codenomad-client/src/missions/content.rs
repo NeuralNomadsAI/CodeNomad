@@ -11,9 +11,29 @@ use crate::{
     backend::{Backend, read_json_limited},
     history::{Result, valid_id},
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use reqwest::Url;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::time::Duration;
+
+/// SHA-256 of the text's UTF-16LE code units, base64url without padding, matching
+/// `packages/server/src/missions/content-digest.ts`.
+pub fn content_digest(text: &str) -> String {
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 2048];
+    let mut written = 0;
+    for unit in text.encode_utf16() {
+        buffer[written..written + 2].copy_from_slice(&unit.to_le_bytes());
+        written += 2;
+        if written == buffer.len() {
+            hash.update(buffer);
+            written = 0;
+        }
+    }
+    hash.update(&buffer[..written]);
+    URL_SAFE_NO_PAD.encode(hash.finalize())
+}
 
 const SAFE: u64 = (1 << 53) - 1;
 const MAX_QUERY_OFFSET: u64 = 999_999_999_999_999;
@@ -50,6 +70,27 @@ pub struct BriefingDoc {
     pub obstacles: Vec<BriefingItem>,
     #[serde(default)]
     pub next: Vec<BriefingItem>,
+}
+
+/// Full report element returned by `{ kind: "task", taskKey, field: "reports" }` when the user
+/// expands "Show all history" on a paged Mission map.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FullTaskReport {
+    pub id: String,
+    pub task_key: String,
+    pub outcome: super::detail::ReportOutcome,
+    #[serde(default)]
+    pub late: bool,
+    pub created_at: u64,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub evidence: Vec<String>,
+    #[serde(default)]
+    pub next: Vec<String>,
+    #[serde(default)]
+    pub artifact: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

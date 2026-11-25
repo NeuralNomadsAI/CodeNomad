@@ -6,7 +6,7 @@ use crate::{
 };
 use codenomad_client::{
     bounded,
-    missions::{ContentSelector, MapHeader, Report, Task},
+    missions::{ContentSelector, MapHeader, Report, Task, content_digest},
 };
 use rune::{Env, Runtime};
 use serde_json::{Value, json};
@@ -104,7 +104,11 @@ pub(super) fn task_and_report(
     blocked_by: &[&str],
     order: u64,
 ) -> (Task, Report) {
-    let digest = "c".repeat(43);
+    let brief_digest = content_digest("Task brief!!");
+    let summary_digest = content_digest("All passed!");
+    let evidence_digest = content_digest("[\"cargo test ok\"]");
+    let next_digest = content_digest("[\"ship it!\"]");
+    let artifact_digest = content_digest("{\"artifactMarker\":true}");
     let report_id = format!("rep_{id}");
     let task: Task = serde_json::from_value(json!({
         "id": id,
@@ -120,7 +124,7 @@ pub(super) fn task_and_report(
         "reportCount": 1,
         "outstandingExecution": false,
         "bodies": {
-            "brief": { "characters": 12, "digest": digest }
+            "brief": { "characters": 12, "digest": brief_digest }
         },
         "report": {
             "id": report_id,
@@ -140,10 +144,10 @@ pub(super) fn task_and_report(
         "excerpt": format!("Excerpt for {key}"),
         "createdAt": 2,
         "bodies": {
-            "summary": { "characters": 11, "digest": digest },
-            "evidence": { "characters": 17, "digest": digest },
-            "next": { "characters": 12, "digest": digest },
-            "artifact": { "characters": 23, "digest": digest }
+            "summary": { "characters": 11, "digest": summary_digest },
+            "evidence": { "characters": 17, "digest": evidence_digest },
+            "next": { "characters": 12, "digest": next_digest },
+            "artifact": { "characters": 23, "digest": artifact_digest }
         }
     }))
     .unwrap();
@@ -231,8 +235,8 @@ pub(super) fn slice_reply(
 #[test]
 fn multi_slice_body_pages_and_copies_whole_digest() {
     crate::platform::block_on(async {
-        let digest = "1".repeat(43);
         let full = "Alpha ".repeat(1800); // 10_800 UTF-16 units (> READER_PAGE_SIZE = 9_000)
+        let digest = content_digest(&full);
         let total_units = full.encode_utf16().count();
         let requests = Arc::new(AtomicUsize::new(0));
         let req_c = requests.clone();
@@ -297,37 +301,48 @@ fn multi_slice_body_pages_and_copies_whole_digest() {
 #[test]
 fn content_changed_refusal_stops_after_four_restarts_and_recovers_on_retry() {
     crate::platform::block_on(async {
-        let digest = "2".repeat(43);
-        let calls = Arc::new(AtomicUsize::new(0));
-        let calls_c = calls.clone();
+        // Real server sequence: offset=0 succeeds with slice 1 (next=6000), then the digest-bound
+        // continuation (offset=6000) is refused with `content-changed` across 1 initial + 4 bounded
+        // restarts before parking in BodyStatus::Error until Retry recovers both slices.
+        let full = "Recov ".repeat(1800); // 10_800 UTF-16 units (> 6000 chunk)
+        let total_units = full.encode_utf16().count();
+        let digest = content_digest(&full);
+        let refusals = Arc::new(AtomicUsize::new(0));
+        let ref_c = refusals.clone();
         let d_c = digest.clone();
-        let backend = spawn_http(move |_| {
-            let n = calls_c.fetch_add(1, Ordering::SeqCst);
-            if n < 5 {
-                (
-                    200,
-                    json!({
-                        "available": true,
-                        "version": 1,
-                        "projectID": "project",
-                        "missionID": "msn_1",
-                        "revision": 4,
-                        "refused": "content-changed"
-                    }),
-                )
-            } else {
-                slice_reply(
-                    4,
-                    "mission",
-                    "objective",
-                    json!({}),
-                    &d_c,
-                    "Recovered body",
-                    0,
-                    6000,
-                    false,
-                )
+        let full_c = full.clone();
+        let backend = spawn_http(move |params| {
+            let offset = params
+                .get("offset")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            if offset > 0 {
+                let n = ref_c.fetch_add(1, Ordering::SeqCst);
+                if n < 5 {
+                    return (
+                        200,
+                        json!({
+                            "available": true,
+                            "version": 1,
+                            "projectID": "project",
+                            "missionID": "msn_1",
+                            "revision": 4,
+                            "refused": "content-changed"
+                        }),
+                    );
+                }
             }
+            slice_reply(
+                4,
+                "mission",
+                "objective",
+                json!({}),
+                &d_c,
+                &full_c,
+                offset,
+                6000,
+                false,
+            )
         })
         .await;
 
@@ -340,7 +355,7 @@ fn content_changed_refusal_stops_after_four_restarts_and_recovers_on_retry() {
         let snap = header_with(
             "msn_1",
             4,
-            json!({ "objective": { "characters": 14, "digest": digest } }),
+            json!({ "objective": { "characters": total_units, "digest": digest } }),
             vec![],
         );
         let reads = Reads::default();
@@ -357,19 +372,22 @@ fn content_changed_refusal_stops_after_four_restarts_and_recovers_on_retry() {
         })
         .await;
         assert_eq!(
-            calls.load(Ordering::SeqCst),
+            refusals.load(Ordering::SeqCst),
             5,
-            "1 initial + 4 bounded restarts"
+            "1 initial + 4 bounded continuation restarts"
         );
 
         reader.poll(&backend, Some("project"), Some(&snap), &reads, &wake);
-        assert_eq!(calls.load(Ordering::SeqCst), 5);
+        assert_eq!(refusals.load(Ordering::SeqCst), 5);
 
         reader.retry(&("project".into(), "msn_1".into(), sel.clone()));
         wait(async {
             loop {
                 reader.poll(&backend, Some("project"), Some(&snap), &reads, &wake);
-                if reader.body_view("project", "msn_1", &sel).status == BodyStatus::Ready {
+                let v = reader.body_view("project", "msn_1", &sel);
+                if v.status == BodyStatus::Ready
+                    && v.body.is_some_and(|b| b.utf16_len == total_units as u64)
+                {
                     break;
                 }
                 wake_rx.recv().await.unwrap();
@@ -382,7 +400,7 @@ fn content_changed_refusal_stops_after_four_restarts_and_recovers_on_retry() {
                 .body
                 .unwrap()
                 .text,
-            "Recovered body"
+            full
         );
     });
 }
@@ -431,7 +449,6 @@ fn unauthorized_content_surfaces_auth_expired_and_parks() {
 #[test]
 fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
     crate::platform::block_on(async {
-        let digest = "c".repeat(43);
         let briefing_json = json!({
             "basedOnRevision": 1,
             "summary": "Briefing summary text",
@@ -442,11 +459,12 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
         })
         .to_string();
         let briefing_len = briefing_json.encode_utf16().count();
+        let briefing_digest = content_digest(&briefing_json);
+        let objective_digest = content_digest("Mission objective markdown");
         let brief_requests = Arc::new(AtomicUsize::new(0));
         let artifact_requests = Arc::new(AtomicUsize::new(0));
         let brief_c = brief_requests.clone();
         let artifact_c = artifact_requests.clone();
-        let d_c = digest.clone();
         let b_c = briefing_json.clone();
         let backend = spawn_http(move |params| {
             let kind = params.get("kind").map(String::as_str).unwrap_or_default();
@@ -457,7 +475,7 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
                     "mission",
                     "briefing",
                     json!({}),
-                    &d_c,
+                    &content_digest(&b_c),
                     &b_c,
                     0,
                     60_000,
@@ -468,7 +486,7 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
                     "mission",
                     "objective",
                     json!({}),
-                    &d_c,
+                    &content_digest("Mission objective markdown"),
                     "Mission objective markdown",
                     0,
                     60_000,
@@ -481,7 +499,7 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
                         "task",
                         "brief",
                         json!({ "taskKey": params.get("taskKey").cloned().unwrap_or_default() }),
-                        &d_c,
+                        &content_digest("Task brief!!"),
                         "Task brief!!",
                         0,
                         60_000,
@@ -493,7 +511,7 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
                     "report",
                     "summary",
                     json!({ "reportId": params.get("reportId").cloned().unwrap_or_default() }),
-                    &d_c,
+                    &content_digest("All passed!"),
                     "All passed!",
                     0,
                     60_000,
@@ -504,7 +522,7 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
                     "report",
                     "evidence",
                     json!({ "reportId": params.get("reportId").cloned().unwrap_or_default() }),
-                    &d_c,
+                    &content_digest("[\"cargo test ok\"]"),
                     "[\"cargo test ok\"]",
                     0,
                     60_000,
@@ -515,7 +533,7 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
                     "report",
                     "next",
                     json!({ "reportId": params.get("reportId").cloned().unwrap_or_default() }),
-                    &d_c,
+                    &content_digest("[\"ship it!\"]"),
                     "[\"ship it!\"]",
                     0,
                     60_000,
@@ -528,7 +546,7 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
                         "report",
                         "artifact",
                         json!({ "reportId": params.get("reportId").cloned().unwrap_or_default() }),
-                        &d_c,
+                        &content_digest("{\"artifactMarker\":true}"),
                         "{\"artifactMarker\":true}",
                         0,
                         60_000,
@@ -568,8 +586,8 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
             "msn_1",
             5,
             json!({
-                "objective": { "characters": 26, "digest": digest },
-                "briefing": { "characters": briefing_len, "digest": digest },
+                "objective": { "characters": 26, "digest": objective_digest },
+                "briefing": { "characters": briefing_len, "digest": briefing_digest },
             }),
             vec![task_a, task_b],
             vec![rep_a, rep_b],
@@ -712,10 +730,10 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
 #[test]
 fn pagination_controls_and_hidden_panel_keep_reader_alive() {
     crate::platform::block_on(async {
-        let digest = "d".repeat(43);
         let page_one_marker = "START_MARKER_PAGE_ONE ";
         let page_two_marker = " END_MARKER_PAGE_TWO";
         let full = format!("{page_one_marker}{}{page_two_marker}", "word ".repeat(2200));
+        let digest = content_digest(&full);
         let total_units = full.encode_utf16().count();
         let d_c = digest.clone();
         let full_c = full.clone();

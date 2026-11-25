@@ -113,6 +113,21 @@ pub(crate) fn close_mission_reader(s: &mut State) -> Option<String> {
     None
 }
 
+pub(crate) fn restore_mission_reader_focus(s: &State, back: Option<String>, tx: &mut rune::Tx) {
+    let visible =
+        crate::shell::right_panel_visible(s) && right_panel_tab(s) == RightPanelTab::Missions;
+    let mounted = visible
+        && back
+            .as_deref()
+            .is_some_and(|key| mission_owner(s).is_some_and(|panel| panel.has_eye_trigger(key)));
+    let target = if mounted {
+        back.unwrap_or_else(|| "right-panel-toggle".into())
+    } else {
+        "right-panel-toggle".into()
+    };
+    tx.focus(target, tx.focus_visible());
+}
+
 pub(crate) fn mission_reader(s: &State) -> El {
     if !mission_has_reader(s) {
         return rune::el();
@@ -127,9 +142,7 @@ pub(crate) fn mission_reader(s: &State) -> El {
         } else {
             crate::chat::reading::restore_position(s, tx);
         }
-        if let Some(focus) = back {
-            tx.focus(focus, tx.focus_visible());
-        }
+        restore_mission_reader_focus(s, back, tx);
     })
 }
 
@@ -141,8 +154,9 @@ fn mission_reader_owner(s: &mut State) -> Option<&mut missions::Panel> {
     ui.entries[ui.active].missions.as_mut()
 }
 
-fn on_mission_reader_open(s: &mut State) {
+fn on_mission_reader_open(s: &mut State, tx: &mut rune::Tx) {
     s.notifications.supersede_navigation();
+    let _ = s.shell.close_floating(tx);
     crate::git::close_preview(s);
     if let Some(files) = &mut s.files {
         files.close_reader();
@@ -263,9 +277,18 @@ pub(super) fn poll_missions(
         {
             ui.mission_lifecycle.retain_checks_for(None);
             ui.mission_lifecycle.confirmation = None;
-            let mut panel = missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone());
-            panel.selected.clone_from(&saved.view.selected_mission);
-            entry.missions = Some(panel);
+            if let Some(existing) = entry
+                .missions
+                .as_mut()
+                .filter(|panel| panel.same_workspace(&backend))
+            {
+                existing.rebind(backend);
+            } else {
+                let mut panel =
+                    missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone());
+                panel.selected.clone_from(&saved.view.selected_mission);
+                entry.missions = Some(panel);
+            }
             changed = true;
         }
         if let Some(panel) = &mut entry.missions {
@@ -286,11 +309,17 @@ pub(super) fn poll_missions(
                 panel.refresh_when_due(ui.clock, tx);
             }
             changed |= panel.poll();
-            if let Some(text) = panel.take_reader_copy() {
-                tx.copy(text);
-            }
             if let Some(expired) = panel.take_reader_auth_expired() {
                 auth_expired = Some(expired);
+            }
+            if let Some(text) = panel.take_reader_copy()
+                && auth_expired.is_none()
+                && panel.has_reader()
+            {
+                tx.copy(text);
+            }
+            if panel.take_reader_focus_close() && panel.has_reader() {
+                tx.focus("mission-reader-close", tx.focus_visible());
             }
             panel.show(panel.supported() && visible);
             if panel.supported() && visible {
