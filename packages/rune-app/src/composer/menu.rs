@@ -127,8 +127,8 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
                 super::shortcuts::Action::NextPrompt
             }
             .label(s);
-            // Keep editor focus in the selecting gesture.
-            item.select_before_close = true;
+            // Close the menu and focus the editor in the same release gesture.
+            item.select_on_close = true;
             Rc::new(item)
         }));
     }
@@ -139,7 +139,7 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
     );
     clear.disabled = !can_clear(s);
     clear.description = super::shortcuts::Action::Clear.label(s);
-    clear.select_before_close = true;
+    clear.select_on_close = true;
     items.push(Rc::new(clear));
     let label = t("messageItem.actions.more");
     action_menu::view(
@@ -248,14 +248,26 @@ mod tests {
         rt.frame(0.0);
         click(&mut rt, "composer-more:trigger");
         click(&mut rt, "composer-more:item:previous");
+        assert!(!rt.state.composer.menu.is_open(KEY));
         assert_eq!(rt.state.draft.text, "A");
         assert_eq!(rt.state.draft.range(), (1, 1));
         assert!(rt.state.draft.focused);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| node.focused && node.path.ends_with("/composer/scroll/input"))
+        );
         click(&mut rt, "composer-more:trigger");
         click(&mut rt, "composer-more:item:clear");
+        assert!(!rt.state.composer.menu.is_open(KEY));
         assert!(rt.state.draft.text.is_empty());
         assert!(rt.state.composer.recall.is_none());
         assert!(rt.state.draft.focused);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| node.focused && node.path.ends_with("/composer/scroll/input"))
+        );
         rt.update(|s, _| {
             s.draft.undo();
         });

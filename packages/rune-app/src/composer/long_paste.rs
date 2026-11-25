@@ -134,7 +134,7 @@ pub(super) fn expand(text: String, parts: &[Attachment]) -> Option<(String, Vec<
 mod tests {
     use super::*;
     use crate::composer::{draft::Draft, draft_storage::SavedParts};
-    use rune::{Env, Key, KeyEvent, Mods, Runtime};
+    use rune::{Env, Key, KeyEvent, Mods, PhysicalInput, PhysicalKeyCode, Runtime};
 
     #[test]
     fn native_paste_replaces_the_selection_and_sends_one_inline_expansion() {
@@ -152,18 +152,45 @@ mod tests {
         let text = "first\r\n@./literal [pasted #8]\r\nthird\r\nlast 🦀";
         clipboard.set_text(text);
         rt.use_clipboard(&clipboard);
-        rt.key(KeyEvent {
+        let mods = Mods {
+            cmd: true,
+            ctrl: !cfg!(target_os = "macos"),
+            ..Mods::default()
+        };
+        let paste_key = KeyEvent {
             key: Key::Command('v'),
-            mods: Mods {
-                cmd: true,
-                ctrl: !cfg!(target_os = "macos"),
-                ..Mods::default()
+            mods,
+        };
+        rt.physical_key_input(
+            PhysicalInput::Key {
+                key: PhysicalKeyCode::KeyV,
+                mods,
+                pressed: true,
+                repeat: false,
+                text: None,
+                consumed_mods: Default::default(),
             },
-        });
+            paste_key.clone(),
+            Some('v'),
+        );
+        // Key repeat must not queue a second paste read or duplicate the placeholder.
+        rt.physical_key_input(
+            PhysicalInput::Key {
+                key: PhysicalKeyCode::KeyV,
+                mods,
+                pressed: true,
+                repeat: true,
+                text: None,
+                consumed_mods: Default::default(),
+            },
+            paste_key,
+            Some('v'),
+        );
         rt.frame(0.0);
         rt.frame(0.0);
         assert_eq!(rt.state.draft.text, "before [pasted #9] after");
         assert!(rt.find("attachment-0").is_some());
+        assert!(rt.find("attachment-1").is_none());
         rt.update(|s, _| s.draft.undo());
         rt.frame(0.0);
         assert_eq!(rt.state.draft.text, "before selection after");
@@ -455,8 +482,8 @@ mod tests {
             .find(|node| node.key.as_deref() == Some("send"))
             .expect("trailing send button");
         assert!(
-            send.path.contains("/composer/trailing/send"),
-            "send button must mount inside TextArea::trailing, got {}",
+            send.path.contains("/composer-box/trailing/send"),
+            "send button must mount in the composer trailing slot, got {}",
             send.path
         );
 
@@ -472,27 +499,107 @@ mod tests {
             "focusing composer must focus the inner TextArea input, not the trailing button"
         );
 
+        let mods = Mods {
+            cmd: true,
+            ctrl: !cfg!(target_os = "macos"),
+            ..Mods::default()
+        };
+        let before_copy = crate::chat::tools::children::clipboard_write_epoch();
         rt.key(KeyEvent {
             key: Key::Command('c'),
-            mods: Mods {
-                cmd: true,
-                ctrl: !cfg!(target_os = "macos"),
-                ..Mods::default()
-            },
+            mods,
         });
         rt.frame(0.0);
         assert_eq!(
             clipboard.text().as_deref().map(String::as_str),
             Some("hello")
         );
+        assert!(
+            crate::chat::tools::children::clipboard_write_epoch() > before_copy,
+            "on_input_copy must record clipboard writes on copy"
+        );
 
-        let (x, y) = rt.find("send").expect("send center");
-        rt.pointer_down(x, y);
-        rt.pointer_up(x, y);
+        let before_cut = crate::chat::tools::children::clipboard_write_epoch();
+        rt.update(|s, _| s.draft.set_selection(0, 6));
+        rt.key(KeyEvent {
+            key: Key::Command('x'),
+            mods,
+        });
+        rt.frame(0.0);
+        assert_eq!(
+            clipboard.text().as_deref().map(String::as_str),
+            Some("hello ")
+        );
+        assert_eq!(rt.state.draft.text, "trailing");
+        assert!(
+            crate::chat::tools::children::clipboard_write_epoch() > before_cut,
+            "on_input_copy must record clipboard writes on cut"
+        );
+
+        rt.key(KeyEvent {
+            key: Key::Tab,
+            mods: Mods::default(),
+        });
+        rt.frame(0.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| node.focused && node.path.ends_with("/composer-box/trailing/send")),
+            "Tab from composer input must focus the trailing Send button"
+        );
+        rt.key(KeyEvent {
+            key: Key::Enter,
+            mods: Mods::default(),
+        });
         rt.frame(0.0);
         let crate::transport::Command::Prompt(prompt) = commands.try_recv().unwrap() else {
             panic!("expected prompt");
         };
-        assert_eq!(prompt.text, "hello trailing");
+        assert_eq!(prompt.text, "trailing");
+    }
+
+    #[test]
+    fn trailing_send_stays_on_locale_edge_across_draft_scripts() {
+        for (locale, rtl) in [("en", false), ("he", true)] {
+            let mut s = crate::init();
+            s.phase = crate::Phase::Ready;
+            crate::settings::notification_fixture(&s);
+            crate::settings::notification_test_config(
+                &s,
+                serde_json::json!({"settings": {"locale": locale}}),
+            );
+            s.draft = TextEdit::new("hello world");
+            let mut rt = Runtime::new(s, crate::view, (800.0, 600.0), Env::new(false, 1.0));
+            rt.frame(0.0);
+            let box_for = |rt: &Runtime<crate::State>, key: &str| {
+                rt.elements()
+                    .into_iter()
+                    .find(|node| node.key.as_deref() == Some(key))
+                    .expect(key)
+                    .rect
+            };
+            let composer_latin = box_for(&rt, "composer-box");
+            let send_latin = box_for(&rt, "send");
+            if rtl {
+                assert!(
+                    send_latin[0] < composer_latin[0] + composer_latin[2] / 2.0,
+                    "RTL locale must keep Send on the left edge"
+                );
+            } else {
+                assert!(
+                    send_latin[0] > composer_latin[0] + composer_latin[2] / 2.0,
+                    "LTR locale must keep Send on the right edge"
+                );
+            }
+            rt.update(|s, _| s.draft = TextEdit::new("שלום עולם"));
+            rt.frame(0.0);
+            let send_hebrew = box_for(&rt, "send");
+            assert!(
+                (send_hebrew[0] - send_latin[0]).abs() <= 0.5,
+                "Send must stay on the same edge across Latin and Hebrew drafts in locale {locale}: latin={} hebrew={}",
+                send_latin[0],
+                send_hebrew[0]
+            );
+        }
     }
 }

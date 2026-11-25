@@ -20,40 +20,85 @@ pub enum Source {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Origin {
+    Drop,
+    Paste,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn valid_mime(mime: &str) -> Option<&str> {
+    let mime = mime.trim();
+    let (kind, subtype) = mime.split_once('/')?;
+    let token = |part: &str| {
+        !part.is_empty()
+            && part.bytes().all(|b| {
+                b.is_ascii_alphanumeric()
+                    || matches!(
+                        b,
+                        b'!' | b'#' | b'$' | b'&' | b'-' | b'^' | b'_' | b'.' | b'+'
+                    )
+            })
+    };
+    (token(kind) && token(subtype)).then_some(mime)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn web_file_metadata(name: &str, mime: &str) -> (String, String) {
-    let mime = if mime.is_empty() {
-        "application/octet-stream"
-    } else {
-        mime
-    };
-    let name = if !name.is_empty() {
-        name
+    let mime = valid_mime(mime).unwrap_or("application/octet-stream");
+    let name = if !name.trim().is_empty() {
+        name.to_owned()
     } else if mime == "image/png" {
-        "clipboard.png"
+        "clipboard.png".into()
     } else {
-        "attachment"
+        t("messageItem.attachment.defaultName").into()
     };
-    (name.into(), mime.into())
+    (name, mime.into())
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
 fn web_files_keep_text(
+    origin: Option<Origin>,
     file_count: usize,
     first_mime: Option<&str>,
     has_image: bool,
     has_text: bool,
 ) -> bool {
-    has_image && has_text && file_count == 1 && first_mime == Some("image/png")
+    if !has_text {
+        return false;
+    }
+    match origin {
+        Some(Origin::Drop) => false,
+        Some(Origin::Paste) => true,
+        None => has_image || (file_count == 1 && first_mime == Some("image/png")),
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
-fn web_file_offer(file: &rune::clipboard::WebFile) -> Offer {
+pub(crate) fn set_composer_epoch(epoch: u64) {
+    web_fence::set_epoch(epoch);
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn sync_web_input_fence(epoch: u64) {
+    web_fence::sync(epoch);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn web_file_offer(
+    index: usize,
+    origin: Option<Origin>,
+    file: &rune::clipboard::WebFile,
+    reused_png: &mut Option<&rune::clipboard::ClipboardImage>,
+) -> Offer {
     let (name, mime) = web_file_metadata(file.name(), file.mime());
-    Offer {
-        name,
-        mime,
-        source: Source::WebFile(file.clone()),
-    }
+    let match_png = mime == "image/png" && (origin != Some(Origin::Drop) || index == 0);
+    let source = if match_png && let Some(image) = reused_png.take() {
+        Source::Png(image.clone())
+    } else {
+        Source::WebFile(file.clone())
+    };
+    Offer { name, mime, source }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -79,8 +124,26 @@ pub fn paste(s: &mut State, content: &rune::clipboard::ClipboardContent) -> bool
     #[cfg(target_arch = "wasm32")]
     if !content.web_files().is_empty() {
         let files = content.web_files();
-        device::enqueue(s, files.iter().take(MAX_FILES + 1).map(web_file_offer));
+        let mut origin = None;
+        for file in files {
+            if let Some((seen_origin, epoch)) = web_fence::inspect(file) {
+                if epoch != s.web_composer_input_epoch {
+                    return true;
+                }
+                origin.get_or_insert(seen_origin);
+            }
+        }
+        let mut reused_png = content.image();
+        device::enqueue(
+            s,
+            files
+                .iter()
+                .take(MAX_FILES + 1)
+                .enumerate()
+                .map(|(index, file)| web_file_offer(index, origin, file, &mut reused_png)),
+        );
         return !web_files_keep_text(
+            origin,
             files.len(),
             files.first().map(|file| file.mime()),
             content.image().is_some(),
@@ -159,7 +222,11 @@ pub async fn read(source: &Source, limit: usize) -> Result<Arc<[u8]>, Error> {
         #[cfg(not(target_arch = "wasm32"))]
         Source::Path(path) => super::device_file::read(path.clone(), limit).await,
         Source::Png(image) if image.png().len() <= limit => Ok(image.png().into()),
-        Source::Png(_) => Err(Error::Limit),
+        Source::Png(_) => Err(if limit == MAX_FILE {
+            Error::TooLarge
+        } else {
+            Error::Limit
+        }),
         #[cfg(target_arch = "wasm32")]
         Source::WebFile(file) => {
             let over = if limit == MAX_FILE {
@@ -168,6 +235,7 @@ pub async fn read(source: &Source, limit: usize) -> Result<Arc<[u8]>, Error> {
                 Error::Limit
             };
             let js = file.js_file().ok_or(Error::Unreadable)?;
+            // rune-style-policy reserves .size() for layout; read File.size from the JS handle.
             if js_file_size(&js)? > limit as f64 {
                 return Err(over);
             }
@@ -250,14 +318,10 @@ impl Choice {
                             .filter_map(move |index| files.get(index))
                     })
                     .map(|source| {
-                        let mime = source.type_();
+                        let (name, mime) = web_file_metadata(&source.name(), &source.type_());
                         Offer {
-                            name: source.name(),
-                            mime: if mime.is_empty() {
-                                "application/octet-stream".into()
-                            } else {
-                                mime
-                            },
+                            name,
+                            mime,
                             source: Source::File(source),
                         }
                     })
@@ -300,36 +364,204 @@ impl Drop for Choice {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+mod web_fence {
+    use super::Origin;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use wasm_bindgen::{JsCast, JsValue, closure::Closure};
+
+    static EPOCH: AtomicU64 = AtomicU64::new(0);
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+
+    fn map() -> Option<js_sys::WeakMap> {
+        let global = js_sys::global();
+        let key = js_sys::Symbol::for_("codenomad.composerWebFileOrigins");
+        if let Ok(existing) = js_sys::Reflect::get(&global, &key)
+            && let Ok(map) = existing.dyn_into::<js_sys::WeakMap>()
+        {
+            return Some(map);
+        }
+        let map = js_sys::WeakMap::new();
+        js_sys::Reflect::set(&global, &key, &map).ok()?;
+        Some(map)
+    }
+
+    fn stamp_files(event: &web_sys::Event, prop: &str, origin: Origin) {
+        let Ok(transfer) = js_sys::Reflect::get(event, &JsValue::from_str(prop)) else {
+            return;
+        };
+        if transfer.is_null() || transfer.is_undefined() {
+            return;
+        }
+        let Ok(files) = js_sys::Reflect::get(&transfer, &JsValue::from_str("files")) else {
+            return;
+        };
+        let Ok(files) = files.dyn_into::<web_sys::FileList>() else {
+            return;
+        };
+        let Some(map) = map() else {
+            return;
+        };
+        let epoch = EPOCH.load(Ordering::SeqCst);
+        let entry = js_sys::Array::of2(
+            &JsValue::from_f64(match origin {
+                Origin::Drop => 1.0,
+                Origin::Paste => 2.0,
+            }),
+            &JsValue::from_f64(epoch as f64),
+        );
+        for index in 0..files.length().min(rune::clipboard::MAX_WEB_FILES as u32) {
+            if let Some(file) = files.get(index) {
+                let _ = map.set(file.as_ref(), &entry);
+            }
+        }
+    }
+
+    pub(crate) fn set_epoch(epoch: u64) {
+        EPOCH.store(epoch, Ordering::SeqCst);
+    }
+
+    pub(crate) fn sync(epoch: u64) {
+        set_epoch(epoch);
+        if INSTALLED.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let drop = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            stamp_files(&event, "dataTransfer", Origin::Drop);
+        });
+        let paste = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            stamp_files(&event, "clipboardData", Origin::Paste);
+        });
+        let target: &web_sys::EventTarget = window.as_ref();
+        if target
+            .add_event_listener_with_callback_and_bool("drop", drop.as_ref().unchecked_ref(), true)
+            .is_err()
+        {
+            return;
+        }
+        if target
+            .add_event_listener_with_callback_and_bool(
+                "paste",
+                paste.as_ref().unchecked_ref(),
+                true,
+            )
+            .is_err()
+        {
+            let _ = target.remove_event_listener_with_callback_and_bool(
+                "drop",
+                drop.as_ref().unchecked_ref(),
+                true,
+            );
+            return;
+        }
+        drop.forget();
+        paste.forget();
+        INSTALLED.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn inspect(file: &rune::clipboard::WebFile) -> Option<(Origin, u64)> {
+        let js = file.js_file()?;
+        let obj = js.dyn_ref::<js_sys::Object>()?;
+        let value = map()?.get(obj);
+        let pair = value.dyn_into::<js_sys::Array>().ok()?;
+        let origin = match pair.get(0).as_f64()? as u8 {
+            1 => Origin::Drop,
+            2 => Origin::Paste,
+            _ => return None,
+        };
+        let epoch = pair.get(1).as_f64()? as u64;
+        Some((origin, epoch))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn web_file_metadata_preserves_names_and_normalizes_empty_fields() {
+    fn web_file_metadata_preserves_names_and_validates_mime() {
+        let fallback_name = t("messageItem.attachment.defaultName").to_owned();
         assert_eq!(
             web_file_metadata("capture.png", "image/png"),
             ("capture.png".into(), "image/png".into())
         );
         assert_eq!(
-            web_file_metadata("", "image/png"),
+            web_file_metadata("  spaced name.txt ", "text/plain"),
+            ("  spaced name.txt ".into(), "text/plain".into())
+        );
+        assert_eq!(
+            web_file_metadata("   ", "image/png"),
             ("clipboard.png".into(), "image/png".into())
         );
         assert_eq!(
-            web_file_metadata("", ""),
-            ("attachment".into(), "application/octet-stream".into())
+            web_file_metadata("\t ", ""),
+            (fallback_name.clone(), "application/octet-stream".into())
         );
         assert_eq!(
-            web_file_metadata("notes.txt", ""),
+            web_file_metadata("notes.txt", "text/plain;base64,evil"),
             ("notes.txt".into(), "application/octet-stream".into())
+        );
+        assert_eq!(
+            web_file_metadata("notes.txt", "image/png,evil"),
+            ("notes.txt".into(), "application/octet-stream".into())
+        );
+        assert_eq!(
+            web_file_metadata("diagram.svg", "image/svg+xml"),
+            ("diagram.svg".into(), "image/svg+xml".into())
+        );
+        assert_eq!(
+            web_file_metadata("", "   "),
+            (fallback_name, "application/octet-stream".into())
         );
     }
 
     #[test]
-    fn web_files_keep_text_only_for_a_single_pasted_png_with_text() {
-        assert!(web_files_keep_text(1, Some("image/png"), true, true));
-        assert!(!web_files_keep_text(1, Some("image/png"), true, false));
-        assert!(!web_files_keep_text(2, Some("image/png"), true, true));
-        assert!(!web_files_keep_text(1, Some("text/plain"), false, true));
-        assert!(!web_files_keep_text(1, Some(""), false, true));
+    fn web_files_keep_text_on_paste_and_suppress_synthesized_drop_text() {
+        assert!(web_files_keep_text(
+            Some(Origin::Paste),
+            1,
+            Some("image/png"),
+            true,
+            true
+        ));
+        assert!(web_files_keep_text(
+            Some(Origin::Paste),
+            1,
+            Some("image/png"),
+            false,
+            true
+        ));
+        assert!(!web_files_keep_text(
+            Some(Origin::Paste),
+            1,
+            Some("image/png"),
+            true,
+            false
+        ));
+        assert!(!web_files_keep_text(
+            Some(Origin::Drop),
+            1,
+            Some("text/plain"),
+            false,
+            true
+        ));
+        assert!(!web_files_keep_text(
+            Some(Origin::Drop),
+            1,
+            Some("image/png"),
+            true,
+            true
+        ));
+        assert!(web_files_keep_text(None, 1, Some("image/png"), false, true));
+        assert!(!web_files_keep_text(
+            None,
+            1,
+            Some("text/plain"),
+            false,
+            true
+        ));
     }
 }

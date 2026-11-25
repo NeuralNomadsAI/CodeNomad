@@ -85,16 +85,6 @@ pub(crate) fn enter_action<S: 'static>(
         true
     }
 }
-pub fn input(edit: &TextEdit) -> El {
-    base_editor(edit).fill(tokens(dark()).color("surface-field"))
-}
-fn base_editor(edit: &TextEdit) -> El {
-    // Rune's low-level editor retains the application's edit accessor and submit contract.
-    rune::text_input(edit, tokens(dark()).text(TextRole::Body))
-        .w_full()
-        .padding(tokens(dark()).space(Space::Sm).px())
-        .dir(rune::Direction::Auto)
-}
 pub fn field(edit: &TextEdit) -> rune_kit::TextInput {
     rune_kit::TextInput::new(edit).width(None)
 }
@@ -107,16 +97,94 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
 }
+fn composer_focus_inset(k: &rune_kit::Kit) -> f32 {
+    let field = k
+        .metrics
+        .field
+        .unwrap_or_else(|| rune_kit::FieldMetrics::kit(k));
+    (-field.focus_offset).max(0.0)
+}
 pub fn composer_textarea(edit: &TextEdit, placeholder: &str, compact: bool) -> rune_kit::TextArea {
+    let k = crate::field_kit(dark());
+    let metrics = k
+        .metrics
+        .text_area
+        .unwrap_or_else(|| rune_kit::TextAreaMetrics::kit(k));
+    let inset = composer_focus_inset(k);
+    let max_inner = (320.0 - 2.0 * (metrics.padding + inset)).max(metrics.style.line_px());
     rune_kit::TextArea::new(edit)
         .width(None)
         .placeholder(placeholder)
-        .auto_grow(if compact { 1 } else { 5 }, 20)
-        .max_height(320.0)
+        .auto_grow(if compact { 1 } else { 4 }, 20)
+        .max_height(max_inner)
 }
-pub fn build_composer(area: rune_kit::TextArea, compact: bool) -> El {
-    let field = area.build(crate::field_kit(dark()));
-    if compact { field } else { field.min_h(104.0) }
+pub fn build_composer(
+    area: rune_kit::TextArea,
+    trailing: El,
+    focused: bool,
+    disabled: bool,
+    compact: bool,
+) -> El {
+    // Deliberate shortcut: pinned rune_kit::TextArea::trailing shares its row direction with
+    // the inner editor and lacks TextArea::dir / dir_by_paragraph, so placing content_direction()
+    // outside TextArea flips Send with draft script. Upgrade to TextArea::trailing directly once
+    // Rune forwards per-paragraph direction to TextArea's inner text_input leaf.
+    let k = crate::field_kit(dark());
+    let field = k
+        .metrics
+        .field
+        .unwrap_or_else(|| rune_kit::FieldMetrics::kit(k));
+    let padding = k
+        .metrics
+        .text_area
+        .unwrap_or_else(|| rune_kit::TextAreaMetrics::kit(k))
+        .padding;
+    let inset = composer_focus_inset(k);
+    let editor = rune::col()
+        .content_direction()
+        .grow(1.0)
+        .shrink()
+        .min_w(0.0)
+        .child(
+            area.plain()
+                .disabled(disabled)
+                .build(k)
+                .fill(k.c.bg_base)
+                .key("composer"),
+        );
+    let trailing = rune::row()
+        .key("trailing")
+        .self_end()
+        .pr((padding - inset).max(0.0))
+        .pb((padding - inset).max(0.0))
+        .child(trailing);
+    let mut shell = rune::row()
+        .key("composer-box")
+        .w_full()
+        .padding(inset)
+        .fill(k.c.bg_base)
+        .radius(field.radius)
+        .child(editor)
+        .child(trailing);
+    if !compact {
+        shell = shell.min_h(104.0);
+    }
+    if disabled {
+        return k.elevate(shell, k.elevation.input());
+    }
+    if let Some(highlight) = k.forced {
+        let shell = shell.border(1.0, k.c.text_base);
+        return if focused {
+            shell.outline(2.0, 2.0, highlight)
+        } else {
+            shell
+        };
+    }
+    if focused {
+        shell.outline(field.focus_width, field.focus_offset, k.c.border_focus)
+    } else {
+        k.elevate(shell, k.elevation.input())
+    }
 }
 pub fn editor_menu<S: 'static>(
     tx: &mut rune::Tx,
@@ -468,7 +536,6 @@ mod tests {
                     .reading_surface()
                     .child(rune::text("Bare text").key("bare"))
                     .child(rune::text("Title").key("title").text_role(TextRole::Title))
-                    .child(input(edit).key("editor"))
                     .child(field(edit).build(crate::field_kit(dark())).key("field"))
                     .child(textarea(edit).build(crate::field_kit(dark())).key("area"))
             })
@@ -486,7 +553,7 @@ mod tests {
             for _ in 0..120 {
                 runtime.frame(1.0 / 60.0);
             }
-            for key in ["bare", "title", "editor"] {
+            for key in ["bare", "title"] {
                 let node = runtime
                     .elements()
                     .into_iter()
@@ -498,6 +565,16 @@ mod tests {
                     "inherited ink for {key}"
                 );
             }
+            let editor = runtime
+                .elements()
+                .into_iter()
+                .find(|node| node.path.ends_with("/area/scroll/input"))
+                .expect("textarea inner input");
+            assert_eq!(
+                editor.text_color,
+                Some(tokens(dark).color("text-primary")),
+                "inherited ink for textarea inner input"
+            );
             for key in ["field", "area"] {
                 let node = runtime
                     .elements()
@@ -507,6 +584,90 @@ mod tests {
                 assert_eq!(node.fill, tokens(dark).color("surface-field"));
             }
         }
+    }
+
+    #[test]
+    fn composer_geometry_respects_outer_cap_and_full_mode_minimum() {
+        struct ComposerCase {
+            edit: TextEdit,
+            compact: bool,
+        }
+        let measure = |text: &str, compact: bool| {
+            let mut rt = rune::Runtime::new(
+                ComposerCase {
+                    edit: TextEdit::new(text),
+                    compact,
+                },
+                |s, cx| {
+                    render(cx, |_| {
+                        let send = button("Send", false, |_: &mut ComposerCase| {}).key("send");
+                        let area = composer_textarea(&s.edit, "Prompt", s.compact)
+                            .on_edit(|s: &mut ComposerCase| &mut s.edit);
+                        rune::col().w_full().h_full().child(
+                            rune::col().w_full().key("slot").child(build_composer(
+                                area,
+                                send,
+                                s.edit.focused,
+                                false,
+                                s.compact,
+                            )),
+                        )
+                    })
+                },
+                (640.0, 600.0),
+                rune::Env::new(false, 1.0),
+            );
+            for _ in 0..120 {
+                rt.frame(1.0 / 60.0);
+            }
+            let outer = rt
+                .elements()
+                .into_iter()
+                .find(|node| node.key.as_deref() == Some("slot"))
+                .expect("outer composer slot")
+                .rect[3];
+            let box_h = rt
+                .elements()
+                .into_iter()
+                .find(|node| node.key.as_deref() == Some("composer-box"))
+                .expect("painted composer")
+                .rect[3];
+            (outer, box_h)
+        };
+        let overflow = (0..40)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (full_empty_outer, full_empty_box) = measure("", false);
+        assert!(
+            (full_empty_outer - 104.0).abs() <= 0.5,
+            "full mode outer min height expected 104, got {full_empty_outer}"
+        );
+        assert!(full_empty_box <= 104.5);
+        let (full_max_outer, full_max_box) = measure(&overflow, false);
+        assert!(
+            full_max_outer <= 320.5 && full_max_box <= 320.5,
+            "full mode outer cap must not exceed 320, got outer={full_max_outer} box={full_max_box}"
+        );
+        assert!(
+            full_max_box >= 316.0,
+            "expected grown box near 320, got {full_max_box}"
+        );
+
+        let (compact_empty_outer, compact_empty_box) = measure("", true);
+        assert!(
+            compact_empty_outer < 104.0 && compact_empty_box < 104.0,
+            "compact mode must stay below full-mode 104px minimum, got {compact_empty_outer}"
+        );
+        let (compact_max_outer, compact_max_box) = measure(&overflow, true);
+        assert!(
+            compact_max_outer <= 320.5 && compact_max_box <= 320.5,
+            "compact mode outer cap must not exceed 320, got outer={compact_max_outer} box={compact_max_box}"
+        );
+        assert!(
+            compact_max_box >= 316.0,
+            "expected grown compact box near 320, got {compact_max_box}"
+        );
     }
 }
 impl Layout for El {

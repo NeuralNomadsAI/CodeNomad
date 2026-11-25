@@ -19,7 +19,7 @@ fn consumed_by_editor(event: &KeyEvent, web: bool, windows: bool) -> bool {
     if web && !primary && matches!(event.key, Key::Function(_)) {
         return true;
     }
-    // Rune #1662: native paste is handled before a focused editor can see Ctrl+V.
+    // Reserve standard paste chords as product policy so shortcuts never shadow paste in editors.
     // The browser's editor bridge also leaves Ctrl/Cmd+V to the DOM paste path.
     let v = matches!(event.key, Key::Command(c) if c.eq_ignore_ascii_case(&'v'))
         || matches!(&event.key, Key::Text(text) if text.eq_ignore_ascii_case("v"));

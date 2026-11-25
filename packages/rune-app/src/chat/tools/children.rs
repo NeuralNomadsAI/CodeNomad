@@ -5,6 +5,8 @@ mod snapshot;
 mod watch;
 mod watcher;
 
+#[cfg(test)]
+pub(crate) use copy::clipboard_write_epoch;
 pub(crate) use copy::note_clipboard_write;
 
 use crate::{

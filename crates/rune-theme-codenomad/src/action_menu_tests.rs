@@ -177,6 +177,71 @@ fn selection_runs_after_actual_focus_return_and_captures_original_descriptor() {
     assert_eq!(focused(&rt).as_deref(), Some("actions:trigger"));
 }
 #[test]
+fn select_on_close_closes_first_and_keeps_explicit_focus_in_release_gesture() {
+    #[derive(Default)]
+    struct CloseFocus {
+        menu: State<CloseFocus>,
+        events: Vec<String>,
+    }
+    fn state(s: &mut CloseFocus) -> Option<&mut State<CloseFocus>> {
+        Some(&mut s.menu)
+    }
+    fn view_case(s: &CloseFocus, cx: &mut Cx<CloseFocus>) -> El {
+        layout::render(cx, |_| {
+            let mut item = Item::new("focus", "Focus", |s: &mut CloseFocus, tx| {
+                s.events.push("select".into());
+                tx.focus("target", false);
+            });
+            item.select_on_close = true;
+            let mut menu = Menu::new("actions", "Actions", vec![Rc::new(item)]);
+            menu.on_open_change = Some(Rc::new(|s, open, _| s.events.push(format!("open:{open}"))));
+            let trigger = Button::new("Actions")
+                .variant(ButtonVariant::Ghost)
+                .build(kit(layout::dark()));
+            let (trigger, surface) = view(&s.menu, state, Rc::new(menu), trigger, 500.0);
+            rune_kit::root(
+                rune::col().w_full().h_full().child(trigger).child(
+                    Button::new("Target")
+                        .build(kit(layout::dark()))
+                        .key("target"),
+                ),
+                surface,
+            )
+        })
+    }
+    let mut rt = Runtime::new(
+        CloseFocus::default(),
+        view_case,
+        (500.0, 400.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let (x, y) = rt.find("actions:trigger").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    let (x, y) = rt.find("actions:item:focus").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    let close_at = rt
+        .state
+        .events
+        .iter()
+        .position(|e| e == "open:false")
+        .unwrap();
+    let select_at = rt.state.events.iter().position(|e| e == "select").unwrap();
+    assert!(close_at < select_at);
+    assert!(!rt.state.menu.is_open("actions"));
+    let focused = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.focused)
+        .and_then(|e| e.key);
+    assert_eq!(focused.as_deref(), Some("target"));
+}
+
+#[test]
 fn immediate_action_keeps_gesture_and_precedes_close() {
     let mut rt = runtime();
     rt.state.gesture = true;

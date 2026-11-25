@@ -7,6 +7,11 @@ pub(crate) fn note_clipboard_write() {
     CLIPBOARD_EPOCH.fetch_add(1, Ordering::SeqCst);
 }
 
+#[cfg(test)]
+pub(crate) fn clipboard_write_epoch() -> u64 {
+    CLIPBOARD_EPOCH.load(Ordering::SeqCst)
+}
+
 fn next_clipboard_epoch() -> u64 {
     CLIPBOARD_EPOCH.fetch_add(1, Ordering::SeqCst) + 1
 }

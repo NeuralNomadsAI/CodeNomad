@@ -16,6 +16,7 @@ pub struct Item<S> {
     pub disabled: bool,
     pub checked: Option<bool>,
     pub select_before_close: bool,
+    pub select_on_close: bool,
     pub focus_after_select: Option<Focus<S>>,
     pub on_select: Action<S>,
     pub on_mouse_enter: Option<Action<S>>,
@@ -31,6 +32,7 @@ impl<S> Item<S> {
             disabled: false,
             checked: None,
             select_before_close: false,
+            select_on_close: false,
             focus_after_select: None,
             on_select: Rc::new(select),
             on_mouse_enter: None,
@@ -347,6 +349,9 @@ pub fn view<S: 'static>(
                 (item.on_select)(s, tx);
                 tx.return_focus(format!("{}:trigger", menu.key), false);
                 close(s, at, &menu, None, item.focus_after_select.clone(), tx);
+            } else if item.select_on_close {
+                close(s, at, &menu, None, item.focus_after_select.clone(), tx);
+                (item.on_select)(s, tx);
             } else {
                 close(s, at, &menu, Some(item.on_select.clone()), None, tx);
             }

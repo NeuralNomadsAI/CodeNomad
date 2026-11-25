@@ -84,7 +84,9 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
             .key("composer-stop"),
         );
     }
-    let editor_slot = col().content_direction().child(editor);
+    #[cfg(target_arch = "wasm32")]
+    platform::device_picker::sync_web_input_fence(s.web_composer_input_epoch);
+    let editor_slot = col().child(editor);
     #[cfg(target_arch = "wasm32")]
     let editor_slot = editor_slot.key(format!("composer-epoch-{}", s.web_composer_input_epoch));
     let mut body = col()
@@ -218,10 +220,9 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
 
 fn editor(s: &State, compact: bool, trailing: El) -> El {
     let area = layout::composer_textarea(&s.draft, t("promptInput.placeholder.default"), compact)
-        .label(t("rune.prompt"))
-        .trailing(trailing);
+        .label(t("rune.prompt"));
     if s.composer.editing_locked() {
-        return layout::build_composer(area.disabled(true), compact).key("composer");
+        return layout::build_composer(area, trailing, false, true, compact);
     }
     let scope = s.input_scope.clone();
     let key_scope = scope.clone();
@@ -261,7 +262,7 @@ fn editor(s: &State, compact: bool, trailing: El) -> El {
             }
         })
     };
-    let field = layout::build_composer(area, compact).key("composer");
+    let field = layout::build_composer(area, trailing, s.draft.focused, false, compact);
     #[cfg(not(target_arch = "wasm32"))]
     let field = field.on_drop_files(move |s: &mut State, paths, _| {
         if s.current_scope(&scope) {
