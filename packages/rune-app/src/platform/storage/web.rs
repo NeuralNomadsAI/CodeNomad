@@ -11,6 +11,8 @@ struct BrowserStage {
     storage: web_sys::Storage,
     payload: std::cell::RefCell<(Vec<u8>, Vec<(String, String)>)>,
     restore_enabled: std::cell::Cell<bool>,
+    snapshot_suppressed: std::cell::Cell<bool>,
+    frozen: std::cell::Cell<bool>,
     departing: std::cell::Cell<bool>,
     openings: std::cell::RefCell<Option<crate::workspace::opening::Openings>>,
 }
@@ -20,7 +22,10 @@ impl BrowserStage {
             return;
         }
         let current = self.payload.try_borrow();
-        let release_records = if self.restore_enabled.get() {
+        let release_records = if self.restore_enabled.get()
+            && !self.snapshot_suppressed.get()
+            && !self.frozen.get()
+        {
             current.as_ref().ok().is_some_and(|current| {
                 !current.0.is_empty()
                     && std::str::from_utf8(&current.0).is_ok_and(|text| {
@@ -97,6 +102,8 @@ impl Store {
             storage: storage.clone(),
             payload: Default::default(),
             restore_enabled: std::cell::Cell::new(restore_enabled),
+            snapshot_suppressed: std::cell::Cell::new(false),
+            frozen: std::cell::Cell::new(false),
             departing: Default::default(),
             openings: Default::default(),
         });
@@ -140,23 +147,41 @@ impl Store {
         self.staged.restore_enabled.set(enabled);
         Ok(enabled)
     }
-    pub async fn set_restore_enabled(&self, enabled: bool) -> Result<()> {
+    pub fn begin_startup_mutation(&self) {
+        self.staged.frozen.set(true);
+        self.staged.payload.borrow_mut().0.clear();
+    }
+    pub async fn set_restore_enabled(&self, enabled: bool) -> Result<bool> {
         if enabled {
-            self.storage
-                .remove_item(Self::RESTORE_DISABLED)
-                .map_err(|_| "state write failed")?;
+            if let Err(_) = self.storage.remove_item(Self::RESTORE_DISABLED) {
+                self.staged.frozen.set(false);
+                return Err("state write failed".into());
+            }
             self.staged.restore_enabled.set(true);
-            Ok(())
+            self.staged.snapshot_suppressed.set(false);
+            self.staged.frozen.set(false);
+            Ok(true)
         } else {
-            self.storage
-                .set_item(Self::RESTORE_DISABLED, "true")
-                .map_err(|_| "state write failed")?;
+            if let Err(_) = self.storage.set_item(Self::RESTORE_DISABLED, "true") {
+                self.staged.frozen.set(false);
+                return Err("state write failed".into());
+            }
             self.staged.restore_enabled.set(false);
-            self.clear_startup_state().await
+            self.staged.snapshot_suppressed.set(false);
+            self.staged.payload.borrow_mut().0.clear();
+            let cleanup_ok = self.remove_startup_keys().is_ok();
+            self.staged.frozen.set(false);
+            Ok(cleanup_ok)
         }
     }
     pub async fn clear_startup_state(&self) -> Result<()> {
         self.staged.payload.borrow_mut().0.clear();
+        self.staged.snapshot_suppressed.set(true);
+        let result = self.remove_startup_keys();
+        self.staged.frozen.set(false);
+        result
+    }
+    fn remove_startup_keys(&self) -> Result<()> {
         self.storage
             .remove_item(Self::KEY)
             .map_err(|_| "state write failed")?;
@@ -185,6 +210,9 @@ impl Store {
         Ok(raw.map(String::into_bytes))
     }
     pub fn save_file_drafts(&self, bytes: &[u8]) -> Result<()> {
+        if self.staged.frozen.get() || !self.staged.restore_enabled.get() {
+            return Ok(());
+        }
         if bytes.len() > FILE_DRAFT_BYTES {
             return Err("file draft store too large".into());
         }
@@ -202,6 +230,9 @@ impl Store {
             .map(String::into_bytes))
     }
     pub async fn save_outlines(&self, bytes: Vec<u8>) -> Result<()> {
+        if self.staged.frozen.get() || !self.staged.restore_enabled.get() {
+            return Ok(());
+        }
         if bytes.len() > OUTLINE_BYTES || self.staged.departing.get() {
             return Err("outline store unavailable".into());
         }
@@ -210,12 +241,18 @@ impl Store {
             .map_err(|_| "outline write failed".into())
     }
     pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
-        if self.staged.payload.borrow().0 != bytes {
+        if self.staged.frozen.get()
+            || !self.staged.restore_enabled.get()
+            || self.staged.payload.borrow().0 != bytes
+        {
             return Ok(());
         }
         self.save_now(&bytes)
     }
     fn save_now(&self, bytes: &[u8]) -> Result<()> {
+        if self.staged.frozen.get() || !self.staged.restore_enabled.get() {
+            return Ok(());
+        }
         if self.staged.departing.get() {
             return Err("window departing".into());
         }
@@ -231,7 +268,14 @@ impl Store {
             .map_err(|_| "state write failed".into())
     }
     pub fn stage(&self, bytes: &[u8], records: &[(String, String)]) {
-        *self.staged.payload.borrow_mut() = (bytes.to_vec(), records.to_vec());
+        let mut payload = self.staged.payload.borrow_mut();
+        payload.1 = records.to_vec();
+        if bytes.is_empty() {
+            payload.0.clear();
+        } else if !self.staged.frozen.get() && self.staged.restore_enabled.get() {
+            payload.0 = bytes.to_vec();
+            self.staged.snapshot_suppressed.set(false);
+        }
     }
     pub fn watch_openings(&self, openings: crate::workspace::opening::Openings) {
         *self.staged.openings.borrow_mut() = Some(openings);

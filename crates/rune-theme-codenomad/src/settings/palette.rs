@@ -310,9 +310,9 @@ pub fn confirm_dialog<S: 'static>(
 ) -> El {
     crate::document_reader::editor::confirmation(
         layout::dark(),
-        confirm_label,
-        cancel_label,
         message,
+        cancel_label,
+        confirm_label,
         decide,
     )
 }

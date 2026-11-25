@@ -36,7 +36,8 @@ fn builtin_override_save_resolves_custom_tokens_and_reset_restores_default() {
             "#FF3366"
         );
         assert!(req.body["activeColorSchemePresetId"].is_null());
-        let body = req.body.clone();
+        let mut body = req.body.clone();
+        body["appearancePreferences"]["mode"] = json!("system");
         req.reply(200, body).await;
 
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
@@ -97,7 +98,7 @@ fn named_preset_create_delete_and_limit_follow_solid_contract() {
             .unwrap();
 
         let id = prefs
-            .save_palette_preset("  Midnight Blue  ", true, colors.clone(), None)
+            .save_palette_preset("  Midnight Blue  ", true, colors.clone(), None, true)
             .expect("create preset");
         let create_req = poll_next_request(&mut prefs, &listener).await;
         assert_eq!(
@@ -129,6 +130,15 @@ fn named_preset_create_delete_and_limit_follow_solid_contract() {
         assert!(delete_req.body["colorSchemePresets"][&id].is_null());
         assert!(delete_req.body["activeColorSchemePresetId"].is_null());
         assert!(delete_req.body["appearancePreferences"]["dark"]["presetId"].is_null());
+        // Deleting an active preset preserves its resolved custom colors in the slot (Solid parity).
+        assert_eq!(
+            delete_req.body["appearancePreferences"]["dark"]["scheme"]["id"],
+            "custom"
+        );
+        assert_eq!(
+            delete_req.body["appearancePreferences"]["dark"]["scheme"]["colors"]["surfaceBase"],
+            "#101218"
+        );
         delete_req
             .reply(
                 200,
@@ -137,7 +147,10 @@ fn named_preset_create_delete_and_limit_follow_solid_contract() {
                     "activeColorSchemePresetId": null,
                     "appearancePreferences": {
                         "mode": "system",
-                        "dark": { "scheme": { "id": "mist", "appearance": "dark", "colors": null }, "presetId": null }
+                        "dark": {
+                            "scheme": { "id": "custom", "appearance": "dark", "colors": colors.to_json() },
+                            "presetId": null
+                        }
                     }
                 }),
             )
@@ -149,7 +162,13 @@ fn named_preset_create_delete_and_limit_follow_solid_contract() {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         assert_eq!(prefs.preset_count(), 0);
-        assert!(prefs.palette_slot(true).unwrap().preset_id.is_none());
+        let slot = prefs.palette_slot(true).unwrap();
+        assert!(slot.preset_id.is_none());
+        assert_eq!(slot.builtin_id, Some("custom"));
+        assert_eq!(
+            slot.colors.as_ref().unwrap().get(ColorField::SurfaceBase),
+            "#101218"
+        );
 
         // Reaching MAX_PRESETS refuses creating another preset.
         let mut full = serde_json::Map::new();
@@ -165,7 +184,7 @@ fn named_preset_create_delete_and_limit_follow_solid_contract() {
         }));
         assert!(
             prefs
-                .save_palette_preset("Overflow", true, colors, None)
+                .save_palette_preset("Overflow", true, colors, None, true)
                 .is_none()
         );
     });
@@ -202,5 +221,108 @@ fn palette_mutation_failure_surfaces_dedicated_error_without_generic_toast() {
         }
         assert!(prefs.palette_save_failed());
         assert!(!prefs.take_notification_failure());
+
+        // Retrying a failed palette mutation clears the previous failure immediately and marks saving.
+        let colors = ColorSchemeColors::default_custom();
+        let retry_id = prefs
+            .save_palette_preset(
+                "Retry Preset",
+                true,
+                colors.clone(),
+                Some("stable-id".into()),
+                true,
+            )
+            .expect("retry preset with stable id");
+        assert_eq!(retry_id, "stable-id");
+        assert!(prefs.palette_saving());
+        assert!(!prefs.palette_save_failed());
+        let retry_patch = poll_next_request(&mut prefs, &listener).await;
+        assert!(retry_patch.body["colorSchemePresets"]["stable-id"].is_object());
+        let body = retry_patch.body.clone();
+        retry_patch.reply(200, body).await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while prefs.palette_saving() {
+            prefs.poll();
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(!prefs.palette_save_failed());
+    });
+}
+
+#[test]
+fn legacy_auto_and_sibling_slot_are_preserved_when_saving_palette() {
+    platform::block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend = Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+            .await
+            .unwrap();
+        let mut prefs = Preferences {
+            backend: Some(backend),
+            ..Preferences::default()
+        };
+        prefs.config.snapshot = Some(json!({"settings": {"locale": "en"}}));
+        // Legacy Auto profile with no appearancePreferences.mode and legacy dark Slate.
+        prefs.state.snapshot = Some(json!({
+            "colorScheme": { "id": "slate", "appearance": "dark" },
+            "appearancePreferences": { "mode": "light" }
+        }));
+        let colors = ColorSchemeColors::default_custom();
+        assert!(
+            prefs
+                .save_palette_preset("Daylight", false, colors, None, true)
+                .is_some()
+        );
+        let req = poll_next_request(&mut prefs, &listener).await;
+        // Sibling dark slot materialized from legacy Slate so replacing colorScheme does not lose it.
+        assert_eq!(
+            req.body["appearancePreferences"]["dark"]["scheme"]["id"],
+            "slate"
+        );
+        let body = req.body.clone();
+        req.reply(200, body).await;
+
+        // Legacy Auto profile (no appearancePreferences.mode, colorScheme = "system") preserves mode "system".
+        prefs.state.snapshot = Some(json!({ "colorScheme": "system" }));
+        assert!(prefs.save_palette_override("mist", true, ColorSchemeColors::default_custom()));
+        let req = poll_next_request(&mut prefs, &listener).await;
+        assert_eq!(req.body["appearancePreferences"]["mode"], "system");
+        let body = req.body.clone();
+        req.reply(200, body).await;
+    });
+}
+
+#[test]
+fn failed_builtin_selection_does_not_override_rendered_slot() {
+    platform::block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend = Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+            .await
+            .unwrap();
+        let mut prefs = Preferences {
+            backend: Some(backend),
+            ..Preferences::default()
+        };
+        prefs.fixture();
+        let mist = built_in().iter().find(|p| p.id == "mist").unwrap();
+        prefs.set_palette(mist);
+        let patch = poll_next_request(&mut prefs, &listener).await;
+        patch.reply(500, json!({"error": "failed"})).await;
+        let get = poll_next_request(&mut prefs, &listener).await;
+        get.reply(
+            200,
+            json!({"appearancePreferences": {"mode": "system", "dark": {"scheme": {"id": "classic"}}}}),
+        )
+        .await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !prefs.state.choice_failed(Choice::Palette(true)) {
+            prefs.poll();
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(
+            prefs.palette_slot(true).unwrap().builtin_id,
+            Some("classic")
+        );
     });
 }

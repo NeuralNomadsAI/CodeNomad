@@ -172,8 +172,80 @@ fn startup_state_card_renders_and_controls_native_persistence() {
     assert!(!rt.state.workspace.as_ref().unwrap().restore_enabled());
     assert!(!crate::platform::block_on(store.restore_enabled()).unwrap());
 
+    // Normal quit after Clear (even if Restore is re-enabled then cleared) never rewrites state.json.
+    pref_rt.frame(0.02);
+    click_key(&mut pref_rt, "startup-restore-switch");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !rt.state.settings.shared.borrow().startup.restore_enabled()
+        || rt.state.settings.shared.borrow().startup.busy()
+    {
+        rt.frame(0.02);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Insert a live file draft before Clear, clear, then exit without further edits -> files stay absent.
+    rt.state.documents.insert_test_file_draft("a.rs", "draft");
+    pref_rt.frame(0.02);
+    click_key(&mut pref_rt, "startup-clear-button");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while rt.state.settings.shared.borrow().startup.busy() {
+        rt.frame(0.02);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!root.join("state.json").exists());
+    rt.update(|s, tx| crate::workspace::finish(s, tx));
+    assert!(
+        !root.join("state.json").exists(),
+        "normal quit after Clear must not rewrite cleared snapshot"
+    );
+
+    // Pre-Clear in-flight save cannot recreate deleted files once clear_startup_state bumps generation.
+    store.begin_startup_mutation();
+    crate::platform::block_on(store.save(b"{\"revision\":9,\"savedAt\":9,\"tabs\":[]}".to_vec()))
+        .unwrap();
+    crate::platform::block_on(store.save_outlines(b"{}".to_vec())).unwrap();
+    crate::platform::block_on(store.clear_startup_state()).unwrap();
+    assert!(!root.join("state.json").exists());
+    assert!(!root.join("outlines-v1.json").exists());
+
     drop(pref_rt);
     drop(rt);
     drop(store);
     std::fs::remove_dir_all(parent).unwrap();
+}
+
+#[test]
+fn delete_confirmation_dialog_labels_question_and_buttons_correctly() {
+    let state = Window::default();
+    {
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture();
+        let colors = rune_theme_codenomad::palettes::ColorSchemeColors::default_custom().to_json();
+        prefs.fixture_state(serde_json::json!({
+            "appearancePreferences": {
+                "mode": "dark",
+                "dark": {
+                    "scheme": { "id": "custom", "appearance": "dark", "colors": colors },
+                    "presetId": "p1"
+                }
+            },
+            "activeColorSchemePresetId": "p1",
+            "colorSchemePresets": {
+                "p1": { "name": "Midnight", "appearance": "dark", "colors": colors }
+            }
+        }));
+    }
+    let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(true, 1.0));
+    runtime.frame(0.0);
+    click_key(&mut runtime, "palette-delete");
+    let tree = runtime.accessibility_json();
+    let confirm = node(&tree, "file-decision-confirm").expect("confirm button");
+    let cancel = node(&tree, "file-decision-cancel").expect("cancel button");
+    assert_eq!(confirm["name"].as_str(), Some("Delete"));
+    assert_eq!(cancel["name"].as_str(), Some("Cancel"));
+    assert!(
+        tree.to_string().contains("Midnight"),
+        "dialog message must contain preset name: {tree}"
+    );
 }

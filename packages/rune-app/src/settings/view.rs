@@ -20,12 +20,19 @@ use std::{
     rc::Rc,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CloseConfirm {
+    ConfigFiles,
+    Palette,
+    Memory,
+}
+
 #[derive(Default)]
 pub(super) struct Window {
     shared: Rc<RefCell<Preferences>>,
     token: Option<Rc<Cell<bool>>>,
     close_request: Option<Rc<CloseRequest>>,
-    confirm_close: bool,
+    confirm_close: Option<CloseConfirm>,
     closing: bool,
     general: super::general::Controls,
     transcript_picker: Cell<Option<super::TranscriptRow>>,
@@ -97,7 +104,7 @@ impl Window {
     }
 
     fn start_opencode_install(&mut self) {
-        if self.section == Section::OpenCode && !self.confirm_close && !self.closing {
+        if self.section == Section::OpenCode && self.confirm_close.is_none() && !self.closing {
             let mut prefs = self.shared.borrow_mut();
             let wake = prefs.window_wake.clone();
             self.opencode.start(&mut prefs, wake);
@@ -120,7 +127,7 @@ impl Window {
         self.close_request = Some(request);
         if let Some(editor) = editor {
             self.memory_editor = editor;
-            self.confirm_close = true;
+            self.confirm_close = Some(CloseConfirm::Memory);
         }
         if let Some(editor) = self
             .close_request
@@ -129,7 +136,8 @@ impl Window {
         {
             self.config_files = editor;
             self.section = Section::ConfigFiles;
-            self.confirm_close = self.config_files.dirty() && !self.config_files.busy();
+            self.confirm_close = (self.config_files.dirty() && !self.config_files.busy())
+                .then_some(CloseConfirm::ConfigFiles);
         }
         if let Some(general) = self
             .close_request
@@ -138,7 +146,7 @@ impl Window {
         {
             self.general = general;
             self.section = Section::General;
-            self.confirm_close = self.general.dirty();
+            self.confirm_close = self.general.dirty().then_some(CloseConfirm::Palette);
         }
         self
     }
@@ -184,8 +192,12 @@ impl Window {
         }
         self.logging.close();
         self.remote.close();
-        if self.memory_editor.has_unsaved() || self.config_files.dirty() || self.general.dirty() {
-            self.confirm_close = true;
+        if self.config_files.dirty() {
+            self.confirm_close = Some(CloseConfirm::ConfigFiles);
+        } else if self.general.dirty() {
+            self.confirm_close = Some(CloseConfirm::Palette);
+        } else if self.memory_editor.has_unsaved() {
+            self.confirm_close = Some(CloseConfirm::Memory);
         } else {
             self.closing = true;
             tx.close_window();
@@ -394,7 +406,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     s.recording_shortcut,
                     &s.shortcut_capture,
                     |s| {
-                        (s.section == Section::Shortcuts && !s.closing && !s.confirm_close)
+                        (s.section == Section::Shortcuts && !s.closing && s.confirm_close.is_none())
                             .then_some((&mut s.recording_shortcut, &mut s.shortcut_capture))
                     },
                 ),
@@ -460,14 +472,14 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::Stats => (
                 "stats",
                 super::stats::view(cx, &s.stats, &mut layers, |s: &mut Window| {
-                    (s.section == Section::Stats && !s.closing && !s.confirm_close)
+                    (s.section == Section::Stats && !s.closing && s.confirm_close.is_none())
                         .then_some(&mut s.stats)
                 }),
             ),
             Section::Remote => (
                 "remote",
                 s.remote.view(&s.shared, |s: &mut Window| {
-                    (s.section == Section::Remote && !s.closing && !s.confirm_close)
+                    (s.section == Section::Remote && !s.closing && s.confirm_close.is_none())
                         .then_some(&mut s.remote)
                 }),
             ),
@@ -506,11 +518,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 s.info.view(
                     &s.shared,
                     |s: &mut Window| {
-                        (s.section == Section::Info && !s.confirm_close && !s.closing)
+                        (s.section == Section::Info && s.confirm_close.is_none() && !s.closing)
                             .then_some(&mut s.info)
                     },
                     Some(|s: &mut Window| {
-                        if s.section == Section::Info && !s.confirm_close && !s.closing {
+                        if s.section == Section::Info && s.confirm_close.is_none() && !s.closing {
                             s.info.close();
                             s.section = Section::Remote;
                         }
@@ -527,20 +539,30 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         ) {
             layers.push(editor);
         }
-        if s.confirm_close && s.config_files.dirty() {
+        let active_confirm_close = match s.confirm_close {
+            Some(CloseConfirm::ConfigFiles) if s.config_files.dirty() => {
+                Some(CloseConfirm::ConfigFiles)
+            }
+            Some(CloseConfirm::Palette) if s.general.dirty() => Some(CloseConfirm::Palette),
+            Some(CloseConfirm::Memory) if s.memory_editor.has_unsaved() => {
+                Some(CloseConfirm::Memory)
+            }
+            _ => None,
+        };
+        if active_confirm_close == Some(CloseConfirm::ConfigFiles) {
             layers.push(super::config_files::confirm_discard(
                 |s: &mut Window, accept, tx| {
-                    s.confirm_close = false;
+                    s.confirm_close = None;
                     if accept {
                         s.config_files = Default::default();
                         s.request_close(tx);
                     }
                 },
             ));
-        } else if s.confirm_close && s.general.dirty() {
+        } else if active_confirm_close == Some(CloseConfirm::Palette) {
             layers.push(super::config_files::confirm_discard(
                 |s: &mut Window, accept, tx| {
-                    s.confirm_close = false;
+                    s.confirm_close = None;
                     if accept {
                         let mut prefs = s.shared.borrow_mut();
                         s.general.discard_draft(&mut prefs);
@@ -549,14 +571,14 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     }
                 },
             ));
-        } else if s.confirm_close {
+        } else if active_confirm_close == Some(CloseConfirm::Memory) {
             layers.push(rune_theme_codenomad::document_reader::editor::confirmation(
                 layout::dark(),
                 t("settings.memory.discard"),
                 t("settings.memory.cancel"),
                 t("settings.memory.discardConfirm"),
                 |s: &mut Window, accept, tx| {
-                    s.confirm_close = false;
+                    s.confirm_close = None;
                     if accept {
                         s.memory_editor = Default::default();
                         s.request_close(tx);

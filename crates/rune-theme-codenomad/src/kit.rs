@@ -63,7 +63,31 @@ pub fn field_kit(dark: bool) -> KitRef {
 }
 pub(crate) fn build(dark: bool) -> Kit {
     let t = tokens(dark);
-    let c = |name| t.color(name);
+    let shadows = if crate::layout::source_palette() {
+        &document()["product"][t.mode()]["shadows"]
+    } else {
+        &document()["shadows"][t.mode()]
+    };
+    let active = crate::palettes::active(dark);
+    build_from(
+        dark,
+        |name| t.color(name),
+        |name| {
+            active.as_ref().map_or_else(
+                || shadows[name].as_str().expect("generated CSS shadow"),
+                |p| p.shadow(name),
+            )
+        },
+    )
+}
+
+pub(crate) fn build_from(
+    dark: bool,
+    color_of: impl Fn(&str) -> Color,
+    shadow_css: impl Fn(&str) -> &'static str,
+) -> Kit {
+    let t = tokens(dark);
+    let c = |name| color_of(name);
     let state = |bg, fg| StateColors {
         bg: c(bg),
         fg: c(fg),
@@ -141,20 +165,7 @@ pub(crate) fn build(dark: bool) -> Kit {
         std_icon_strong: c("text-primary"),
         std_text: c("text-primary"),
     };
-    let shadows = if crate::layout::source_palette() {
-        &document()["product"][t.mode()]["shadows"]
-    } else {
-        &document()["shadows"][t.mode()]
-    };
-    let shadow = |name| {
-        css::box_shadows(
-            crate::palettes::active(dark).map_or_else(
-                || shadows[name].as_str().expect("generated CSS shadow"),
-                |p| p.shadow(name),
-            ),
-            |color| color,
-        )
-    };
+    let shadow = |name| css::box_shadows(shadow_css(name), |color| color);
     let mut elevation = Elevation::default().with_input(Vec::new());
     elevation.raised = shadow("panel-shadow");
     elevation.floating = shadow("popover-shadow");

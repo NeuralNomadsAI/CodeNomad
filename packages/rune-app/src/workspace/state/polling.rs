@@ -25,6 +25,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     let became_ready = loading && !ui.persistence.loading;
     if ui.persistence.restore_enabled
+        && !ui.persistence.mutating
         && let Some(store) = &ui.persistence.store
     {
         s.saved_outlines.poll(store, s.wake.clone());

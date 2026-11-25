@@ -11,6 +11,13 @@ pub(super) const MAX_PRESET_NAME_LEN: usize = 80;
 pub(super) const MAX_PRESET_ID_LEN: usize = 128;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+pub(super) struct LegacyScheme {
+    pub dark: bool,
+    pub id: &'static str,
+    pub colors: Option<ColorSchemeColors>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct UserPreset {
     pub id: String,
     pub name: String,
@@ -66,10 +73,33 @@ impl SlotSelection {
             None => self.key.clone(),
         }
     }
+
+    pub(super) fn to_slot_json(&self) -> Value {
+        let mode = mode_str(self.dark);
+        let id = self.builtin_id.unwrap_or(if self.preset_id.is_some() {
+            "custom"
+        } else if self.dark {
+            "mist"
+        } else {
+            "porcelain"
+        });
+        let colors_json = self
+            .colors
+            .as_ref()
+            .map_or(Value::Null, ColorSchemeColors::to_json);
+        json!({
+            "scheme": {
+                "id": id,
+                "appearance": mode,
+                "colors": colors_json,
+            },
+            "presetId": self.preset_id,
+        })
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) enum PaletteMutation {
+pub(super) enum PaletteOp {
     SelectBuiltIn {
         id: &'static str,
         dark: bool,
@@ -112,7 +142,14 @@ pub(super) enum PaletteMutation {
     },
 }
 
-impl PaletteMutation {
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(super) struct PaletteMutation {
+    pub op: PaletteOp,
+    pub preserve_mode: Option<&'static str>,
+    pub preserve_sibling: Option<(bool, Value)>,
+}
+
+impl PaletteOp {
     pub(super) fn target_dark(&self) -> Option<bool> {
         match self {
             Self::SelectBuiltIn { dark, .. }
@@ -125,10 +162,22 @@ impl PaletteMutation {
             Self::DeletePreset { .. } => None,
         }
     }
+}
+
+impl PaletteMutation {
+    pub(super) fn target_dark(&self) -> Option<bool> {
+        self.op.target_dark()
+    }
 
     pub(super) fn put(&self, patch: &mut Value) {
-        match self {
-            Self::SelectBuiltIn { id, dark, colors } => {
+        if let Some(mode) = self.preserve_mode {
+            patch["appearancePreferences"]["mode"] = json!(mode);
+        }
+        if let Some((sibling_dark, slot)) = &self.preserve_sibling {
+            patch["appearancePreferences"][mode_str(*sibling_dark)] = slot.clone();
+        }
+        match &self.op {
+            PaletteOp::SelectBuiltIn { id, dark, colors } => {
                 let mode = mode_str(*dark);
                 let scheme_colors = colors
                     .as_ref()
@@ -145,7 +194,7 @@ impl PaletteMutation {
                     "presetId": Value::Null,
                 });
             }
-            Self::SelectCustom { dark, colors } | Self::SaveCustom { dark, colors } => {
+            PaletteOp::SelectCustom { dark, colors } | PaletteOp::SaveCustom { dark, colors } => {
                 let mode = mode_str(*dark);
                 let scheme = json!({
                     "id": "custom",
@@ -160,7 +209,7 @@ impl PaletteMutation {
                     "presetId": Value::Null,
                 });
             }
-            Self::SelectPreset {
+            PaletteOp::SelectPreset {
                 preset_id,
                 dark,
                 colors,
@@ -178,7 +227,7 @@ impl PaletteMutation {
                     "presetId": preset_id,
                 });
             }
-            Self::SaveOverride { id, dark, colors } => {
+            PaletteOp::SaveOverride { id, dark, colors } => {
                 let mode = mode_str(*dark);
                 let colors_json = colors.to_json();
                 let scheme = json!({
@@ -194,7 +243,7 @@ impl PaletteMutation {
                     "presetId": Value::Null,
                 });
             }
-            Self::ResetOverride {
+            PaletteOp::ResetOverride {
                 id,
                 dark,
                 default_colors,
@@ -216,7 +265,7 @@ impl PaletteMutation {
                     "presetId": Value::Null,
                 });
             }
-            Self::SavePreset {
+            PaletteOp::SavePreset {
                 preset_id,
                 name,
                 dark,
@@ -241,7 +290,7 @@ impl PaletteMutation {
                     "presetId": preset_id,
                 });
             }
-            Self::DeletePreset {
+            PaletteOp::DeletePreset {
                 preset_id,
                 fallback_light,
                 fallback_dark,
@@ -263,8 +312,18 @@ impl PaletteMutation {
 
     pub(super) fn confirmed(&self, snapshot: &Value) -> bool {
         let appearance = &snapshot["appearancePreferences"];
-        match self {
-            Self::SelectBuiltIn { id, dark, colors } => {
+        if let Some(mode) = self.preserve_mode
+            && appearance["mode"].as_str() != Some(mode)
+        {
+            return false;
+        }
+        if let Some((sibling_dark, expected_slot)) = &self.preserve_sibling
+            && !slot_matches(&appearance[mode_str(*sibling_dark)], expected_slot)
+        {
+            return false;
+        }
+        match &self.op {
+            PaletteOp::SelectBuiltIn { id, dark, colors } => {
                 let mode = mode_str(*dark);
                 let slot = &appearance[mode];
                 let colors_match = match colors {
@@ -278,8 +337,9 @@ impl PaletteMutation {
                     && slot["scheme"]["appearance"] == mode
                     && colors_match
                     && slot["presetId"].is_null()
+                    && snapshot["activeColorSchemePresetId"].is_null()
             }
-            Self::SelectCustom { dark, colors } | Self::SaveCustom { dark, colors } => {
+            PaletteOp::SelectCustom { dark, colors } | PaletteOp::SaveCustom { dark, colors } => {
                 let mode = mode_str(*dark);
                 let slot = &appearance[mode];
                 slot["scheme"]["id"] == "custom"
@@ -287,24 +347,29 @@ impl PaletteMutation {
                     && ColorSchemeColors::from_json(&slot["scheme"]["colors"]).as_ref()
                         == Some(colors)
                     && slot["presetId"].is_null()
+                    && snapshot["activeColorSchemePresetId"].is_null()
                     && ColorSchemeColors::from_json(&snapshot["customColorScheme"]["colors"])
                         .as_ref()
                         == Some(colors)
             }
-            Self::SelectPreset {
+            PaletteOp::SelectPreset {
                 preset_id,
                 dark,
                 colors,
             } => {
                 let mode = mode_str(*dark);
                 let slot = &appearance[mode];
-                slot["presetId"] == *preset_id
+                let preset = &snapshot["colorSchemePresets"][preset_id];
+                preset["appearance"] == mode
+                    && ColorSchemeColors::from_json(&preset["colors"]).as_ref() == Some(colors)
+                    && snapshot["activeColorSchemePresetId"] == *preset_id
+                    && slot["presetId"] == *preset_id
                     && slot["scheme"]["id"] == "custom"
                     && slot["scheme"]["appearance"] == mode
                     && ColorSchemeColors::from_json(&slot["scheme"]["colors"]).as_ref()
                         == Some(colors)
             }
-            Self::SaveOverride { id, dark, colors } => {
+            PaletteOp::SaveOverride { id, dark, colors } => {
                 let mode = mode_str(*dark);
                 let slot = &appearance[mode];
                 ColorSchemeColors::from_json(&snapshot["colorSchemeOverrides"][*id]).as_ref()
@@ -314,8 +379,9 @@ impl PaletteMutation {
                     && ColorSchemeColors::from_json(&slot["scheme"]["colors"]).as_ref()
                         == Some(colors)
                     && slot["presetId"].is_null()
+                    && snapshot["activeColorSchemePresetId"].is_null()
             }
-            Self::ResetOverride { id, dark, .. } => {
+            PaletteOp::ResetOverride { id, dark, .. } => {
                 let mode = mode_str(*dark);
                 let slot = &appearance[mode];
                 snapshot["colorSchemeOverrides"][*id].is_null()
@@ -323,40 +389,60 @@ impl PaletteMutation {
                     && slot["scheme"]["appearance"] == mode
                     && slot["scheme"]["colors"].is_null()
                     && slot["presetId"].is_null()
+                    && snapshot["activeColorSchemePresetId"].is_null()
             }
-            Self::SavePreset {
+            PaletteOp::SavePreset {
                 preset_id,
                 name,
                 dark,
                 colors,
             } => {
                 let mode = mode_str(*dark);
-                let saved = &snapshot["colorSchemePresets"][preset_id];
                 let slot = &appearance[mode];
-                saved["name"] == *name
-                    && saved["appearance"] == mode
-                    && ColorSchemeColors::from_json(&saved["colors"]).as_ref() == Some(colors)
+                let preset = &snapshot["colorSchemePresets"][preset_id];
+                preset["name"] == *name
+                    && preset["appearance"] == mode
+                    && ColorSchemeColors::from_json(&preset["colors"]).as_ref() == Some(colors)
+                    && snapshot["activeColorSchemePresetId"] == *preset_id
                     && slot["presetId"] == *preset_id
                     && slot["scheme"]["id"] == "custom"
                     && slot["scheme"]["appearance"] == mode
+                    && ColorSchemeColors::from_json(&slot["scheme"]["colors"]).as_ref()
+                        == Some(colors)
             }
-            Self::DeletePreset {
+            PaletteOp::DeletePreset {
                 preset_id,
                 fallback_light,
                 fallback_dark,
                 clear_active,
             } => {
                 let deleted = snapshot["colorSchemePresets"][preset_id].is_null();
-                let light_ok = fallback_light.is_none()
-                    || appearance["light"]["presetId"].as_str() != Some(preset_id.as_str());
-                let dark_ok = fallback_dark.is_none()
-                    || appearance["dark"]["presetId"].as_str() != Some(preset_id.as_str());
+                let light_ok = fallback_light
+                    .as_ref()
+                    .is_none_or(|expected| slot_matches(&appearance["light"], expected));
+                let dark_ok = fallback_dark
+                    .as_ref()
+                    .is_none_or(|expected| slot_matches(&appearance["dark"], expected));
                 let active_ok = !*clear_active
                     || snapshot["activeColorSchemePresetId"].as_str() != Some(preset_id.as_str());
                 deleted && light_ok && dark_ok && active_ok
             }
         }
     }
+}
+
+fn slot_matches(actual: &Value, expected: &Value) -> bool {
+    let id_ok = actual["scheme"]["id"] == expected["scheme"]["id"];
+    let appearance_ok = actual["scheme"]["appearance"] == expected["scheme"]["appearance"];
+    let preset_ok = actual["presetId"] == expected["presetId"];
+    let colors_ok = match ColorSchemeColors::from_json(&expected["scheme"]["colors"]) {
+        Some(expected_colors) => {
+            ColorSchemeColors::from_json(&actual["scheme"]["colors"]).as_ref()
+                == Some(&expected_colors)
+        }
+        None => actual["scheme"]["colors"].is_null(),
+    };
+    id_ok && appearance_ok && preset_ok && colors_ok
 }
 
 pub(super) fn mode_str(dark: bool) -> &'static str {
@@ -424,8 +510,12 @@ pub(super) fn normalize_overrides(state: &Value) -> BTreeMap<&'static str, Color
     overrides
 }
 
-pub(super) fn custom_scheme(state: &Value) -> (bool, ColorSchemeColors) {
-    let candidate = &state["customColorScheme"];
+pub(super) fn custom_scheme(state: &Value, config: &Value) -> (bool, ColorSchemeColors) {
+    let candidate = state
+        .get("customColorScheme")
+        .filter(|v| !v.is_null())
+        .or_else(|| config.get("customColorScheme"))
+        .unwrap_or(&Value::Null);
     let dark = candidate["appearance"].as_str() != Some("light");
     let colors = ColorSchemeColors::from_legacy_json(&candidate["colors"])
         .unwrap_or_else(ColorSchemeColors::default_custom);
@@ -434,7 +524,8 @@ pub(super) fn custom_scheme(state: &Value) -> (bool, ColorSchemeColors) {
 
 pub(super) fn resolve_slot(
     state: &Value,
-    legacy: Option<(&'static str, &'static str)>,
+    config: &Value,
+    legacy: Option<&LegacyScheme>,
     dark: bool,
 ) -> SlotSelection {
     let mode = mode_str(dark);
@@ -459,21 +550,25 @@ pub(super) fn resolve_slot(
         };
     }
 
-    let legacy_id = legacy
-        .filter(|(appearance, _)| *appearance == mode)
-        .map(|(_, id)| id);
-    let raw_id = slot["scheme"]["id"].as_str().or(legacy_id);
+    let matching_legacy = legacy.filter(|l| l.dark == dark);
+    let slot_id = slot["scheme"]["id"].as_str();
+    let raw_id = slot_id.or_else(|| matching_legacy.map(|l| l.id));
 
     if raw_id == Some("custom") {
+        let (custom_dark, custom_colors) = custom_scheme(state, config);
+        let legacy_colors = matching_legacy
+            .filter(|l| l.id == "custom")
+            .and_then(|l| l.colors.clone());
         let colors = ColorSchemeColors::from_legacy_json(&slot["scheme"]["colors"])
-            .or_else(|| ColorSchemeColors::from_legacy_json(&state["colorScheme"]["colors"]))
-            .or_else(|| Some(custom_scheme(state).1));
+            .or(legacy_colors)
+            .or_else(|| (custom_dark == dark).then_some(custom_colors))
+            .unwrap_or_else(ColorSchemeColors::default_custom);
         return SlotSelection {
             key: "builtin:custom".to_owned(),
             builtin_id: Some("custom"),
             preset_id: None,
             dark,
-            colors,
+            colors: Some(colors),
         };
     }
 
@@ -481,11 +576,23 @@ pub(super) fn resolve_slot(
         .and_then(|id| built_in().iter().find(|p| p.dark == dark && p.id == id))
         .or_else(|| default_built_in(dark));
     if let Some(palette) = builtin {
-        let override_colors = overrides.get(palette.id).cloned().or_else(|| {
-            (slot["scheme"]["id"].as_str() == Some(palette.id))
-                .then(|| ColorSchemeColors::from_legacy_json(&slot["scheme"]["colors"]))
-                .flatten()
-        });
+        let override_colors = overrides
+            .get(palette.id)
+            .cloned()
+            .or_else(|| {
+                (slot_id == Some(palette.id))
+                    .then(|| ColorSchemeColors::from_legacy_json(&slot["scheme"]["colors"]))
+                    .flatten()
+            })
+            .or_else(|| {
+                (slot_id.is_none())
+                    .then(|| {
+                        matching_legacy
+                            .filter(|l| l.id == palette.id)
+                            .and_then(|l| l.colors.clone())
+                    })
+                    .flatten()
+            });
         return SlotSelection {
             key: format!("builtin:{}", palette.id),
             builtin_id: Some(palette.id),
@@ -504,10 +611,15 @@ pub(super) fn resolve_slot(
     }
 }
 
-pub(super) fn options(state: &Value, active: &SlotSelection, dark: bool) -> Vec<PaletteOption> {
+pub(super) fn options(
+    state: &Value,
+    config: &Value,
+    active: &SlotSelection,
+    dark: bool,
+) -> Vec<PaletteOption> {
     let overrides = normalize_overrides(state);
     let presets = normalize_presets(state);
-    let (custom_dark, custom_colors) = custom_scheme(state);
+    let (custom_dark, custom_colors) = custom_scheme(state, config);
     let active_custom = active.builtin_id == Some("custom") && active.preset_id.is_none();
     let show_legacy_custom = !custom_colors.is_default_custom() || !custom_dark || active_custom;
 
@@ -599,9 +711,12 @@ fn split_numeric_suffix(source: &str) -> (&str, u32) {
     (source, 2)
 }
 
-pub(super) fn fallback_slot_patch(
+/// Matches Solid's `deleteColorSchemePreset`: preserves the slot's resolved colors as an unnamed
+/// custom scheme while clearing `presetId` and removing the named preset entry.
+pub(super) fn delete_slot_patch(
     state: &Value,
-    legacy: Option<(&'static str, &'static str)>,
+    config: &Value,
+    legacy: Option<&LegacyScheme>,
     dark: bool,
     deleting_preset_id: &str,
 ) -> Option<Value> {
@@ -609,33 +724,17 @@ pub(super) fn fallback_slot_patch(
     if state["appearancePreferences"][mode]["presetId"].as_str() != Some(deleting_preset_id) {
         return None;
     }
-    let mut without_preset = state.clone();
-    if let Some(presets) = without_preset["colorSchemePresets"].as_object_mut() {
-        presets.remove(deleting_preset_id);
-    }
-    if let Some(slot) = without_preset["appearancePreferences"][mode].as_object_mut() {
-        slot.insert("presetId".to_owned(), Value::Null);
-        if slot.get("scheme").and_then(|s| s["id"].as_str()) == Some("custom") {
-            let fallback_id = default_built_in(dark).map_or("mist", |p| p.id);
-            slot.insert(
-                "scheme".to_owned(),
-                json!({ "id": fallback_id, "appearance": mode, "colors": Value::Null }),
-            );
-        }
-    }
-    let fallback = resolve_slot(&without_preset, legacy, dark);
-    let id = fallback
-        .builtin_id
-        .unwrap_or(if dark { "mist" } else { "porcelain" });
-    let colors_json = fallback
-        .colors
-        .as_ref()
-        .map_or(Value::Null, ColorSchemeColors::to_json);
+    let current = resolve_slot(state, config, legacy, dark);
+    let colors = current.colors.unwrap_or_else(|| {
+        default_built_in(dark)
+            .map(Palette::colors)
+            .unwrap_or_else(ColorSchemeColors::default_custom)
+    });
     Some(json!({
         "scheme": {
-            "id": id,
+            "id": "custom",
             "appearance": mode,
-            "colors": colors_json,
+            "colors": colors.to_json(),
         },
         "presetId": Value::Null,
     }))

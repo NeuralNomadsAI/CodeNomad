@@ -307,6 +307,12 @@ impl Store {
     pub(crate) fn file_draft_revision(&self) -> u64 {
         lock(&self.0).revision
     }
+    pub(crate) fn mark_file_drafts_dirty_if_nonempty(&self) {
+        let mut store = lock(&self.0);
+        if !store.saved.is_empty() {
+            store.revision = store.revision.wrapping_add(1);
+        }
+    }
     pub(crate) fn file_draft_snapshot(&self, saved_revision: u64) -> Option<(u64, Vec<u8>)> {
         let store = lock(&self.0);
         (saved_revision != store.revision).then(|| (store.revision, Self::encode(&store.saved)))

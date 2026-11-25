@@ -100,7 +100,13 @@ impl CustomPalette {
     }
 
     pub(crate) fn kit(&self) -> &Kit {
-        self.kit.get_or_init(|| crate::kit::build(self.dark))
+        self.kit.get_or_init(|| {
+            crate::kit::build_from(
+                self.dark,
+                |name| self.theme.color(name),
+                |name| self.base.shadow(name),
+            )
+        })
     }
 
     pub(crate) fn field_kit(&self) -> &Kit {

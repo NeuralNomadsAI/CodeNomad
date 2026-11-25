@@ -230,7 +230,7 @@ impl Ui {
                 ))
             })
             .collect();
-        if !self.persistence.restore_enabled {
+        if self.persistence.suppresses_snapshot(self.revision) {
             store.stage(&[], &records);
             self.staged_revision = Some(self.revision);
             return;
@@ -263,13 +263,24 @@ impl Ui {
     pub(crate) fn restore_enabled(&self) -> bool {
         self.persistence.restore_enabled
     }
+    pub(crate) fn begin_startup_mutation(&mut self, outlines: &mut super::outlines::Cache) {
+        self.persistence.begin_startup_mutation(outlines);
+        self.staged_revision = None;
+        self.stage();
+    }
+    pub(crate) fn cancel_startup_mutation(&mut self) {
+        self.persistence.cancel_startup_mutation();
+        self.staged_revision = None;
+        self.stage();
+    }
     pub(crate) fn apply_restore_enabled(
         &mut self,
         enabled: bool,
         documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
     ) {
         self.persistence
-            .apply_restore_enabled(enabled, self.revision, documents);
+            .apply_restore_enabled(enabled, self.revision, documents, outlines);
         if enabled {
             self.changed();
         }
@@ -279,9 +290,12 @@ impl Ui {
     pub(crate) fn apply_startup_cleared(
         &mut self,
         documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
     ) {
-        self.persistence.apply_cleared(self.revision, documents);
-        self.staged_revision = Some(self.revision);
+        self.persistence
+            .apply_cleared(self.revision, documents, outlines);
+        self.staged_revision = None;
+        self.stage();
     }
 }
 fn same_project(a: &Workspace, b: &Workspace) -> bool {

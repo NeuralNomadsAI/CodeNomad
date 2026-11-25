@@ -88,6 +88,24 @@ impl Cache {
         }
     }
 
+    pub(crate) fn reset_persistence(&mut self) {
+        self.started = true;
+        self.loading = None;
+        self.saving = None;
+        self.dirty = false;
+        self.invalidated_while_loading.clear();
+    }
+
+    pub(crate) fn mark_dirty_if_nonempty(&mut self) {
+        self.started = true;
+        self.loading = None;
+        self.saving = None;
+        self.invalidated_while_loading.clear();
+        if !self.entries.is_empty() {
+            self.dirty = true;
+        }
+    }
+
     pub(crate) fn mutation(&mut self, backend: &Backend) -> Option<Rc<Cell<u64>>> {
         let key = session(backend)?;
         if let Some(clock) = self.mutations.get(&key).and_then(Weak::upgrade) {

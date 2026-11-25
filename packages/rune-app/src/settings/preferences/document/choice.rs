@@ -130,7 +130,6 @@ impl Choice {
             }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
             Self::Shortcut(_) | Self::ShortcutReset | Self::Environment | Self::PaletteMutation => {
-                ()
             }
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };

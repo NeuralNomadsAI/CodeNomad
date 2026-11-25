@@ -24,7 +24,7 @@ pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<St
     #[cfg(not(target_arch = "wasm32"))]
     let more = cx.system_increased_contrast();
     #[cfg(target_arch = "wasm32")]
-    let include_preview = s.settings.web.shown();
+    let include_preview = s.settings.web.shown() && !crate::platform::pairing::required(s);
     #[cfg(not(target_arch = "wasm32"))]
     let include_preview = false;
     render_with(cx, &prefs, more, include_preview, |cx| {

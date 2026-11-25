@@ -108,6 +108,9 @@ impl Panel {
             self.general.commit_palette(shared, system_dark);
         } else {
             self.general.discard_palette();
+            if !self.shown || !paired {
+                shared.borrow_mut().set_palette_preview(None);
+            }
         }
     }
 

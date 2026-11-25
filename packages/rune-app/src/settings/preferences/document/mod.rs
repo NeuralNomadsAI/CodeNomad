@@ -400,6 +400,7 @@ impl Document {
                 | Choice::NotificationsFocused
                 | Choice::Shortcut(_)
                 | Choice::ShortcutReset
+                | Choice::PaletteMutation
         ) {
             self.write.failed.remove(&choice);
         }

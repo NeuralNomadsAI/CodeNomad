@@ -8,7 +8,11 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             let mut prefs = s.shared.borrow_mut();
             prefs.window_wake = Some(wake);
             if std::mem::take(&mut prefs.open_providers) {
-                s.section = Section::Providers;
+                if s.general.dirty() && s.section != Section::Providers {
+                    s.pending_section = Some(Section::Providers);
+                } else {
+                    s.section = Section::Providers;
+                }
             }
             prefs.memory.show(s.section == Section::General);
             if prefs.backend.is_some() {
@@ -32,7 +36,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 }
                 let mut prefs = s.shared.borrow_mut();
                 let jump = std::mem::take(&mut prefs.open_providers);
-                if jump && !s.config_files.busy() && !s.confirm_close && !s.closing {
+                if jump && !s.config_files.busy() && s.confirm_close.is_none() && !s.closing {
                     if s.general.dirty() && s.section != Section::Providers {
                         s.pending_section = Some(Section::Providers);
                     } else {
@@ -64,6 +68,18 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 }
                 let updated =
                     prefs.revision != std::mem::replace(&mut s.seen_revision, prefs.revision);
+                if matches!(
+                    s.confirm_close,
+                    Some(super::CloseConfirm::Palette) if !s.general.dirty()
+                ) || matches!(
+                    s.confirm_close,
+                    Some(super::CloseConfirm::ConfigFiles) if !s.config_files.dirty()
+                ) || matches!(
+                    s.confirm_close,
+                    Some(super::CloseConfirm::Memory) if !s.memory_editor.has_unsaved()
+                ) {
+                    s.confirm_close = None;
+                }
                 if !prefs.transcript_ready() {
                     s.transcript_picker.set(None);
                 }
@@ -82,7 +98,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         &wake,
                         capable
                             && s.section == Section::ConfigFiles
-                            && !s.confirm_close
+                            && s.confirm_close.is_none()
                             && !s.closing,
                     );
                 }
@@ -93,20 +109,20 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     ));
                 }
                 let status_changed = s.section == Section::OpenCode
-                    && !s.confirm_close
+                    && s.confirm_close.is_none()
                     && !s.closing
                     && prefs.window_wake.clone().is_some_and(|wake| {
                         prefs.show_opencode() | s.opencode.step(&mut prefs, &wake)
                     });
                 let remote_changed = s.section == Section::Remote
-                    && !s.confirm_close
+                    && s.confirm_close.is_none()
                     && !s.closing
                     && prefs
                         .window_wake
                         .as_ref()
                         .is_some_and(|wake| s.remote.poll(&prefs, wake));
                 let info_changed = s.section == Section::Info
-                    && !s.confirm_close
+                    && s.confirm_close.is_none()
                     && !s.closing
                     && prefs
                         .window_wake
@@ -121,7 +137,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     }
                     s.stats.poll(
                         prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
-                        s.section == Section::Stats && !s.confirm_close && !s.closing,
+                        s.section == Section::Stats && s.confirm_close.is_none() && !s.closing,
                         &wake,
                         now,
                         tx,
@@ -151,8 +167,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             if event.key != rune::Key::Escape {
                 return false;
             }
-            if s.confirm_close {
-                s.confirm_close = false;
+            if s.confirm_close.take().is_some() {
             } else if s.pending_section.take().is_some() || s.general.dismiss_overlay() {
             } else if s.memory_editor.shown() {
                 s.memory_editor.dismiss();

@@ -22,6 +22,7 @@ const FILE_DRAFT_MAX_WAIT_SECS: f64 = 2.0;
 pub(super) struct Persistence {
     pub loading: bool,
     pub restore_enabled: bool,
+    pub mutating: bool,
     pub read_error: bool,
     pub write_error: bool,
     pub file_draft_error: bool,
@@ -34,6 +35,7 @@ pub(super) struct Persistence {
     #[cfg(not(target_arch = "wasm32"))]
     saving_file_drafts: Option<(u64, Receiver<(u64, bool)>)>,
     saved: u64,
+    cleared_revision: Option<u64>,
     saved_file_drafts: u64,
     attempted_file_drafts: u64,
     #[cfg(not(target_arch = "wasm32"))]
@@ -51,6 +53,7 @@ impl Persistence {
         Self {
             loading: false,
             restore_enabled: true,
+            mutating: false,
             read_error: false,
             write_error: false,
             file_draft_error: false,
@@ -63,6 +66,7 @@ impl Persistence {
             #[cfg(not(target_arch = "wasm32"))]
             saving_file_drafts: None,
             saved: 0,
+            cleared_revision: None,
             saved_file_drafts: 0,
             attempted_file_drafts: 0,
             #[cfg(not(target_arch = "wasm32"))]
@@ -164,12 +168,19 @@ impl Persistence {
             return;
         };
         if !self.restore_enabled
+            || self.mutating
             || self.read_error
             || self.write_error
             || self.saving.is_some()
             || self.saved >= snapshot.revision
         {
             return;
+        }
+        if self
+            .cleared_revision
+            .is_some_and(|cleared| snapshot.revision > cleared)
+        {
+            self.cleared_revision = None;
         }
         if now < self.due {
             tx.wake_at(self.due);
@@ -225,6 +236,10 @@ impl Persistence {
         &mut self,
         documents: &crate::files::document::store::Store,
     ) -> bool {
+        if !self.restore_enabled || self.mutating {
+            self.retrying_file_drafts = None;
+            return false;
+        }
         let Some(Ok(result)) = self.retrying_file_drafts.as_ref().map(Receiver::try_recv) else {
             return false;
         };
@@ -245,12 +260,31 @@ impl Persistence {
         }
         true
     }
+    pub fn begin_startup_mutation(&mut self, outlines: &mut super::outlines::Cache) {
+        self.mutating = true;
+        self.saving = None;
+        self.retrying_file_drafts = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.saving_file_drafts = None;
+            self.file_drafts_first_dirty = None;
+        }
+        if let Some(store) = &self.store {
+            store.begin_startup_mutation();
+        }
+        outlines.reset_persistence();
+    }
+    pub fn cancel_startup_mutation(&mut self) {
+        self.mutating = false;
+    }
     pub fn apply_restore_enabled(
         &mut self,
         enabled: bool,
         current_revision: u64,
         documents: &Documents,
+        outlines: &mut super::outlines::Cache,
     ) {
+        self.mutating = false;
         self.restore_enabled = enabled;
         self.read_error = false;
         self.write_error = false;
@@ -258,6 +292,7 @@ impl Persistence {
         self.file_draft_error = false;
         self.file_draft_read_error = false;
         self.saving = None;
+        self.retrying_file_drafts = None;
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.saving_file_drafts = None;
@@ -265,6 +300,9 @@ impl Persistence {
         }
         documents.block_file_draft_updates(false);
         if enabled {
+            self.cleared_revision = None;
+            documents.mark_file_drafts_dirty_if_nonempty();
+            outlines.mark_dirty_if_nonempty();
             self.saved = 0;
             self.saved_file_drafts = 0;
             self.attempted_file_drafts = 0;
@@ -276,8 +314,10 @@ impl Persistence {
                 self.file_draft_retry_requested = true;
             }
         } else {
+            outlines.reset_persistence();
             let drafts_rev = documents.file_draft_revision();
             self.saved = current_revision;
+            self.cleared_revision = Some(current_revision);
             self.saved_file_drafts = drafts_rev;
             self.attempted_file_drafts = drafts_rev;
             #[cfg(not(target_arch = "wasm32"))]
@@ -287,7 +327,14 @@ impl Persistence {
             }
         }
     }
-    pub fn apply_cleared(&mut self, current_revision: u64, documents: &Documents) {
+    pub fn apply_cleared(
+        &mut self,
+        current_revision: u64,
+        documents: &Documents,
+        outlines: &mut super::outlines::Cache,
+    ) {
+        self.mutating = false;
+        outlines.reset_persistence();
         let drafts_rev = documents.file_draft_revision();
         self.read_error = false;
         self.write_error = false;
@@ -295,7 +342,9 @@ impl Persistence {
         self.file_draft_error = false;
         self.file_draft_read_error = false;
         self.saving = None;
+        self.retrying_file_drafts = None;
         self.saved = current_revision;
+        self.cleared_revision = Some(current_revision);
         self.saved_file_drafts = drafts_rev;
         self.attempted_file_drafts = drafts_rev;
         #[cfg(not(target_arch = "wasm32"))]
@@ -307,8 +356,11 @@ impl Persistence {
         }
         documents.block_file_draft_updates(false);
     }
+    pub fn suppresses_snapshot(&self, current_revision: u64) -> bool {
+        !self.restore_enabled || self.mutating || self.cleared_revision == Some(current_revision)
+    }
     pub fn flush(&mut self, snapshot: &Snapshot) -> bool {
-        if !self.restore_enabled {
+        if self.suppresses_snapshot(snapshot.revision) {
             return true;
         }
         if self.read_error || self.loading {
@@ -351,7 +403,7 @@ impl Persistence {
         }
     }
     pub fn flush_file_drafts(&mut self, documents: &Documents) -> bool {
-        if !self.restore_enabled {
+        if !self.restore_enabled || self.mutating {
             return true;
         }
         #[cfg(target_arch = "wasm32")]
@@ -424,7 +476,7 @@ impl Persistence {
         tx: &mut rune::Tx,
         wake: rune::Waker,
     ) {
-        if !self.restore_enabled {
+        if !self.restore_enabled || self.mutating {
             #[cfg(not(target_arch = "wasm32"))]
             self.drain_file_draft_save();
             return;

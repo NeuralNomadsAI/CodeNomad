@@ -12,11 +12,16 @@ pub(super) enum Command {
     Clear,
 }
 
+enum CommandOutcome {
+    Restore { enabled: bool, cleanup_ok: bool },
+    Cleared,
+}
+
 pub(super) struct StartupState {
     is_primary: bool,
     restore_enabled: bool,
     pending: Option<Command>,
-    flight: Option<(Command, Receiver<Result<()>>)>,
+    flight: Option<(Command, Receiver<Result<CommandOutcome>>)>,
     notice: Option<(&'static str, bool)>,
 }
 
@@ -85,29 +90,46 @@ impl StartupState {
 
         if let Some((command, result)) = finished {
             match (command, result) {
-                (Command::SetRestore(enabled), Ok(())) => {
+                (
+                    Command::SetRestore(_),
+                    Ok(CommandOutcome::Restore {
+                        enabled,
+                        cleanup_ok,
+                    }),
+                ) => {
                     if let Some(ui) = s.workspace.as_mut() {
-                        ui.apply_restore_enabled(enabled, &s.documents);
+                        ui.apply_restore_enabled(enabled, &s.documents, &mut s.saved_outlines);
                     }
                     let mut prefs = s.settings.shared.borrow_mut();
                     prefs.startup.restore_enabled = enabled;
+                    if !cleanup_ok {
+                        prefs.startup.notice =
+                            Some(("settings.appearance.startup.clearError", true));
+                    }
                 }
                 (Command::SetRestore(_), Err(_)) => {
+                    if let Some(ui) = s.workspace.as_mut() {
+                        ui.cancel_startup_mutation();
+                    }
                     let mut prefs = s.settings.shared.borrow_mut();
                     prefs.startup.notice = Some(("settings.appearance.startup.updateError", true));
                 }
-                (Command::Clear, Ok(())) => {
+                (Command::Clear, Ok(CommandOutcome::Cleared)) => {
                     if let Some(ui) = s.workspace.as_mut() {
-                        ui.apply_startup_cleared(&s.documents);
+                        ui.apply_startup_cleared(&s.documents, &mut s.saved_outlines);
                     }
                     let mut prefs = s.settings.shared.borrow_mut();
                     prefs.startup.notice =
                         Some(("settings.appearance.startup.clearSuccess", false));
                 }
                 (Command::Clear, Err(_)) => {
+                    if let Some(ui) = s.workspace.as_mut() {
+                        ui.cancel_startup_mutation();
+                    }
                     let mut prefs = s.settings.shared.borrow_mut();
                     prefs.startup.notice = Some(("settings.appearance.startup.clearError", true));
                 }
+                _ => {}
             }
         }
 
@@ -140,13 +162,27 @@ impl StartupState {
         if let Some(command) = to_start {
             changed = true;
             if let Some(store) = store.filter(|_| primary) {
+                if matches!(command, Command::Clear | Command::SetRestore(false))
+                    && let Some(ui) = s.workspace.as_mut()
+                {
+                    ui.begin_startup_mutation(&mut s.saved_outlines);
+                }
                 let (tx, rx) = bounded(1);
                 let wake = s.wake.clone();
                 s.settings.shared.borrow_mut().startup.flight = Some((command, rx));
                 platform::spawn(async move {
                     let result = match command {
-                        Command::SetRestore(enabled) => store.set_restore_enabled(enabled).await,
-                        Command::Clear => store.clear_startup_state().await,
+                        Command::SetRestore(enabled) => store
+                            .set_restore_enabled(enabled)
+                            .await
+                            .map(|cleanup_ok| CommandOutcome::Restore {
+                                enabled,
+                                cleanup_ok,
+                            }),
+                        Command::Clear => store
+                            .clear_startup_state()
+                            .await
+                            .map(|()| CommandOutcome::Cleared),
                     };
                     let _ = tx.send(result).await;
                     wake();
@@ -182,7 +218,7 @@ pub(super) fn view<S: 'static>(
     let prefs = shared.borrow();
     let title = t("settings.appearance.startup.restore.title");
     let subtitle = t("settings.appearance.startup.restore.subtitle");
-    let restore = prefs.startup.restore_enabled();
+    let restore = prefs.startup.is_primary() && prefs.startup.restore_enabled();
     let disabled = !prefs.startup.is_primary() || prefs.startup.busy();
     let toggle_shared = shared.clone();
     let clear_shared = shared.clone();
