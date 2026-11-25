@@ -111,6 +111,13 @@ pub(crate) struct Timeline {
     search: search::Search,
 }
 
+#[cfg(test)]
+impl Timeline {
+    pub(crate) fn is_online(&self) -> bool {
+        self.online
+    }
+}
+
 fn owner(s: &mut State) -> &mut Timeline {
     &mut s.transcript_display.timeline
 }
@@ -207,6 +214,7 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
         Event::Connected(backend) => s.saved_outlines.mutation(backend),
         _ => None,
     };
+    let detached = s.history_detached;
     let t = owner(s);
     match event {
         Event::Connected(backend) => {
@@ -239,6 +247,10 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
             t.refresh = true;
             cancel_jump(s);
             search::invalidate(s);
+        }
+        Event::AgentHint(true) if detached => {
+            t.refresh |= !t.online;
+            t.online = true;
         }
         Event::ReaderSync { .. } | Event::Sync(_) => {
             t.refresh |= !t.online;

@@ -254,6 +254,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 if s.transcript_display.timeline.paging.is_none() {
                     s.paging = false;
                     s.history_error = false;
+                    s.transcript_display.timeline.page_retry = None;
                 }
                 // A newer activity event can run ahead of a snapshot in the content lane.
                 let running = if stale_activity {
@@ -325,6 +326,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             Event::HistoryInvalidated => {
                 s.transcript_display.messages.invalidate_boundary();
                 chat::reader::cancel_page(s);
+                s.history_error = false;
                 s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
                 s.transcript_display.tool_clock.reset();
