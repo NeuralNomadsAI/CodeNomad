@@ -166,16 +166,33 @@ export async function historySearch(page, messages, touch, {holdNextAnchor, hold
     await press(search,'Existing arguments only')
     await rejected()
     assert.equal(windows,0,'Arguments-only refusal must also stay local')
+    await alert.evaluate(el=>new Promise((resolve,reject)=>{
+      const until=performance.now()+3000
+      const step=now=>{
+        const r=el.getBoundingClientRect()
+        if(r.width>0&&r.height>0)return resolve()
+        if(now>=until)return reject(Error('Alert did not gain layout'))
+        requestAnimationFrame(step)
+      }
+      requestAnimationFrame(step)
+    }))
     const picker=search.getByRole('combobox',{name:scopeLabel,exact:true})
     await picker.waitFor()
     await picker.evaluate(el=>new Promise((resolve,reject)=>{
       const until=performance.now()+3000
-      let prev=el.getBoundingClientRect().top
+      let prev=null,stableSince=0,frames=0
       const step=now=>{
-        const y=el.getBoundingClientRect().top
-        if(Math.abs(y-prev)<0.5)return resolve()
+        const r=el.getBoundingClientRect()
+        const same=prev&&Math.abs(r.left-prev.left)<0.5&&Math.abs(r.top-prev.top)<0.5&&Math.abs(r.width-prev.width)<0.5&&Math.abs(r.height-prev.height)<0.5
+        if(r.width>0&&r.height>0&&same){
+          frames++
+          if(frames>=2&&now-stableSince>=120)return resolve()
+        }else{
+          prev={left:r.left,top:r.top,width:r.width,height:r.height}
+          stableSince=now
+          frames=0
+        }
         if(now>=until)return reject(Error('Select trigger did not settle'))
-        prev=y
         requestAnimationFrame(step)
       }
       requestAnimationFrame(step)

@@ -571,7 +571,23 @@ try {
               await marker.click({force:true})
               const content=page.getByRole('paragraph').filter({hasText:passage})
               await content.waitFor()
-              await page.waitForFunction(({text,top})=>[...document.querySelectorAll('p,[role="paragraph"]')].some(el=>el.textContent?.includes(text)&&Math.abs(el.getBoundingClientRect().top-top)<65),{text:passage,top:box.y})
+              await page.evaluate(({text,top})=>new Promise((resolve,reject)=>{
+                const until=performance.now()+5000
+                let prev=null,frames=0
+                const step=now=>{
+                  const el=[...document.querySelectorAll('p,[role="paragraph"]')].find(node=>node.textContent?.includes(text))
+                  const y=el?el.getBoundingClientRect().top:null
+                  if(y!==null&&Math.abs(y-top)<65&&prev!==null&&Math.abs(y-prev)<0.5){
+                    if(++frames>=2)return resolve()
+                  }else{
+                    frames=0
+                  }
+                  prev=y
+                  if(now>=until)return reject(Error(`Native context did not settle: ${text}`))
+                  requestAnimationFrame(step)
+                }
+                requestAnimationFrame(step)
+              }),{text:passage,top:box.y})
               assert(Math.abs((await content.boundingBox()).y-box.y)<65,'Native context must land at its dedicated block')
             }
             await press(messages['rune.latest'])

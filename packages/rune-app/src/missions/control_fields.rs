@@ -244,9 +244,7 @@ pub(super) fn view<S: 'static>(
                             let (source, id, revision) =
                                 (source.clone(), id.clone(), fields.revision);
                             if disabled && keep_focus {
-                                layout::button_tx(label, false, |_: &mut S, _| {})
-                                    .aria_disabled(true)
-                                    .key(key)
+                                layout::focusable_disabled_button(label).key(key)
                             } else {
                                 layout::button_tx(label, disabled, move |state: &mut S, tx| {
                                     act(
