@@ -1,6 +1,7 @@
 use super::{
     detail::{Detail, read_window},
     observation::Observation,
+    reader::Reader,
 };
 use crate::platform::{self, reads::Reads};
 use codenomad_client::{
@@ -65,6 +66,7 @@ pub(crate) struct Panel {
     pub(super) detail: Detail,
     pub(super) control_fields: super::control_fields::Fields,
     pub(super) observation: Observation,
+    pub(super) reader: Reader,
 }
 
 const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
@@ -100,7 +102,52 @@ impl Panel {
             detail: Detail::default(),
             control_fields: Default::default(),
             observation: Observation::default(),
+            reader: Reader::default(),
         }
+    }
+
+    pub(crate) fn has_reader(&self) -> bool {
+        self.reader.is_open()
+    }
+
+    pub(crate) fn close_reader(&mut self) {
+        self.reader.close();
+        if !self.visible {
+            self.detail.cancel();
+        }
+    }
+
+    pub(crate) fn suspend(&mut self) {
+        self.show(false);
+        self.detail.cancel();
+        self.reader.suspend();
+        self.cancel_probe();
+    }
+
+    pub(crate) fn take_reader_auth_expired(&mut self) -> Option<Backend> {
+        self.reader.take_auth_expired()
+    }
+
+    pub(crate) fn take_reader_copy(&mut self) -> Option<String> {
+        self.reader.take_ready_copy()
+    }
+
+    pub(super) fn toggle_overview(&mut self, id: &str) -> bool {
+        if self.selected.as_deref() != Some(id) {
+            self.select(id);
+        }
+        self.reader.toggle_overview(id.to_owned())
+    }
+
+    pub(super) fn toggle_task(&mut self, mission_id: &str, task_id: &str, task_key: &str) -> bool {
+        if self.selected.as_deref() != Some(mission_id) {
+            self.select(mission_id);
+        }
+        self.reader.toggle_task(
+            mission_id.to_owned(),
+            task_id.to_owned(),
+            task_key.to_owned(),
+        )
     }
 
     pub(crate) fn show(&mut self, show: bool) {
@@ -112,7 +159,9 @@ impl Panel {
             self.refresh();
         } else {
             self.refresh_due = None;
-            self.detail.cancel();
+            if !self.reader.is_open() {
+                self.detail.cancel();
+            }
             self.control_fields.cancel();
             self.observation.cancel();
             for lane in &mut self.lanes {
@@ -135,26 +184,33 @@ impl Panel {
                     self.start(kind, Read::Refresh);
                 }
             }
+        } else if self.reader.is_open() {
+            self.detail.refresh();
         }
     }
 
     pub(crate) fn invalidate(&mut self, change: Option<(&str, u64)>, now: f64) {
         if let Some((id, revision)) = change {
-            if self.selected.as_deref() == Some(id) {
+            if self.selected.as_deref() == Some(id)
+                || self.reader.target().is_some_and(|t| t.mission_id() == id)
+            {
                 self.detail.observe(id, revision);
+            }
+            if self.selected.as_deref() == Some(id) {
                 self.observation.observe(revision);
             }
         } else {
             // A reconnect retires publication authority while keeping the display.
             self.detail.cancel();
             self.observation.cancel();
+            self.reader.invalidate();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
                     cancel.close();
                 }
             }
         }
-        if self.visible && self.refresh_due.is_none() {
+        if (self.visible || self.reader.is_open()) && self.refresh_due.is_none() {
             self.refresh_due = Some(self.last_passive.map_or(now, |last| now.max(last + 1.5)));
             (self.wake)();
         }
@@ -399,10 +455,50 @@ impl Panel {
                     &self.wake,
                 );
             }
+        } else if self.reader.is_open()
+            && let Some(project) = self
+                .project
+                .as_deref()
+                .or_else(|| {
+                    self.detail
+                        .snapshot
+                        .as_ref()
+                        .map(|s| s.header.root.project_id())
+                })
+                .map(str::to_owned)
+            && let Some(target_id) = self.reader.target().map(|t| t.mission_id().to_owned())
+        {
+            let revision = self
+                .summaries
+                .iter()
+                .find(|row| row.id == target_id)
+                .map(|row| row.revision);
+            changed |= self.detail.poll(
+                &self.backend,
+                &project,
+                &target_id,
+                revision,
+                &self.reads,
+                &self.wake,
+            );
         } else if self.selected.is_none() {
             self.detail.clear();
             self.observation = Observation::default();
+            self.reader.follow_selection(None);
         }
+        let reader_project = self.project.as_deref().or_else(|| {
+            self.detail
+                .snapshot
+                .as_ref()
+                .map(|s| s.header.root.project_id())
+        });
+        changed |= self.reader.poll(
+            &self.backend,
+            reader_project,
+            self.detail.snapshot.as_ref(),
+            &self.reads,
+            &self.wake,
+        );
         changed | self.poll_control_fields()
     }
 
@@ -448,6 +544,7 @@ impl Panel {
                         .is_some_and(|id| !self.summaries.iter().any(|row| &row.id == id))
                 {
                     self.selected = None;
+                    self.reader.follow_selection(None);
                 }
             }
             (Kind::Cleanups, DirectoryRows::Cleanups(rows)) => {
@@ -478,6 +575,7 @@ impl Panel {
             self.detail.clear();
             self.observation = Observation::default();
             self.selected = Some(id.into());
+            self.reader.follow_selection(Some(id));
         }
     }
 
@@ -500,7 +598,7 @@ pub(super) fn title(row: &Summary) -> &str {
 
 impl Drop for Panel {
     fn drop(&mut self) {
-        self.show(false);
+        self.suspend();
     }
 }
 

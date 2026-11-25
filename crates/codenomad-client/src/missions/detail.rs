@@ -1,5 +1,5 @@
 use super::{
-    Attention, ControlReceipt, RunState, Status,
+    Attention, BodyDescriptor, ControlReceipt, RunState, Status,
     codec::{RevisionChanged, decode_row},
     directory::{DirectoryChanged, PageRead, Source, Verified, digest_id, panel_id},
 };
@@ -43,32 +43,48 @@ pub struct Task {
     late_report_count: Option<u64>,
     report: Option<Report>,
     #[serde(default)]
-    bodies: HashMap<String, Body>,
+    bodies: HashMap<String, BodyDescriptor>,
     #[serde(flatten)]
     extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct Report {
-    id: String,
-    task_key: String,
-    session_id: String,
-    outcome: Outcome,
-    created_at: u64,
+pub struct Report {
+    pub id: String,
+    pub task_key: String,
+    pub session_id: String,
+    pub outcome: ReportOutcome,
+    pub created_at: u64,
     #[serde(flatten)]
     extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
-enum Outcome {
+pub enum ReportOutcome {
     Completed,
     Blocked,
     Failed,
 }
 
 impl Report {
+    pub fn body(&self, field: &str) -> Option<BodyDescriptor> {
+        let value = self.extra.get("bodies")?.get(field)?;
+        serde_json::from_value(value.clone()).ok()
+    }
+
+    pub fn excerpt(&self) -> Option<&str> {
+        self.extra.get("excerpt").and_then(Value::as_str)
+    }
+
+    pub fn is_late(&self) -> bool {
+        self.extra
+            .get("late")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
     fn valid(&self) -> bool {
         panel_id(&self.id)
             && panel_id(&self.session_id)
@@ -79,7 +95,7 @@ impl Report {
                 .get("excerpt")
                 .is_none_or(|value| value.as_str().is_some_and(|text| units(text) <= 482))
             && self.extra.get("bodies").is_none_or(|value| {
-                serde_json::from_value::<HashMap<String, Body>>(value.clone())
+                serde_json::from_value::<HashMap<String, BodyDescriptor>>(value.clone())
                     .is_ok_and(|bodies| valid_bodies(&bodies))
             })
             && !["summary", "evidence", "next", "artifact"]
@@ -165,9 +181,19 @@ pub struct Header {
     updated_at: f64,
     #[serde(rename = "historyTruncated")]
     _history_truncated: bool,
-    bodies: HashMap<String, Body>,
+    bodies: HashMap<String, BodyDescriptor>,
     #[serde(flatten)]
     extra: HashMap<String, Value>,
+}
+
+impl Header {
+    pub fn project_id(&self) -> &str {
+        &self.project
+    }
+
+    pub fn body(&self, field: &str) -> Option<&BodyDescriptor> {
+        self.bodies.get(field)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,13 +204,6 @@ enum Template {
     Wayfinder,
     Delivery,
     Compare,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Body {
-    characters: u64,
-    digest: String,
 }
 
 #[derive(Deserialize)]
@@ -534,6 +553,34 @@ fn valid_tasks(
 }
 
 impl Task {
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+
+    pub fn body(&self, field: &str) -> Option<&BodyDescriptor> {
+        self.bodies.get(field)
+    }
+
+    pub fn report(&self) -> Option<&Report> {
+        self.report.as_ref()
+    }
+
+    pub fn late_reports(&self) -> &[Report] {
+        &self.late_reports
+    }
+
+    pub fn late_report_count(&self) -> u64 {
+        self.late_report_count.unwrap_or(0)
+    }
+
+    pub fn dependents(&self) -> u64 {
+        self.dependents
+    }
+
+    pub fn outstanding_execution(&self) -> bool {
+        self.outstanding_execution
+    }
+
     fn missing_report(&self) -> bool {
         let identity = |value: Option<&Value>| {
             value
@@ -561,7 +608,7 @@ fn units(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-fn valid_bodies(bodies: &HashMap<String, Body>) -> bool {
+fn valid_bodies(bodies: &HashMap<String, BodyDescriptor>) -> bool {
     bodies.len() <= 64
         && bodies.iter().all(|(key, body)| {
             (1..=64).contains(&units(key)) && body.characters <= SAFE && digest_id(&body.digest)

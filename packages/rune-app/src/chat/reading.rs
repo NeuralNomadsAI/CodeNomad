@@ -172,6 +172,7 @@ fn can_read(s: &State) -> bool {
     !s.screen.is_launcher()
         && !crate::git::has_preview(s)
         && !crate::files::has_preview(s)
+        && !crate::workspace::mission_has_reader(s)
         && matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming)
 }
 

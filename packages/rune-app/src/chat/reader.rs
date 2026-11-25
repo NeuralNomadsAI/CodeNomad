@@ -259,7 +259,9 @@ pub(crate) fn resume(s: &mut State, tx: &mut Tx) {
 pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
     cancel_page(s);
     crate::timeline::cancel_jump(s);
-    let covered = crate::files::has_preview(s) || crate::git::has_preview(s);
+    let covered = crate::files::has_preview(s)
+        || crate::git::has_preview(s)
+        || crate::workspace::mission_has_reader(s);
     if let Some(reader) = &mut s.reader
         && (reader.needs_latest() || s.history_error)
     {

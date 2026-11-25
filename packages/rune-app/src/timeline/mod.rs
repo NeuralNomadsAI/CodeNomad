@@ -238,6 +238,7 @@ pub(crate) fn demanded(s: &State) -> bool {
     !s.screen.is_launcher()
         && !crate::files::has_preview(s)
         && !crate::git::has_preview(s)
+        && !crate::workspace::mission_has_reader(s)
         && crate::settings::show_timeline(s)
         && rune_theme_codenomad::timeline::fits(t.width)
 }
