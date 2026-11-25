@@ -552,8 +552,10 @@ async fn read_page(
         ),
     )
     .await;
-    result
-        .filter(|_| reading.is_none_or(|reading| reading.demand.current().generation == generation))
+    result.filter(|_| {
+        !wire.is_placement_changed()
+            && reading.is_none_or(|reading| reading.demand.current().generation == generation)
+    })
 }
 
 pub(super) async fn reader_event(
@@ -694,14 +696,15 @@ mod diagnostic_tests {
             .unwrap();
         rt.block_on(async {
             let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
-            let wire = std::sync::Arc::new(stream::State::default());
-            let closer = wire.clone();
-            tokio::spawn(async move {
-                tokio::task::yield_now().await;
-                closer.close_stream();
-            });
-            let result = read_page(&backend, None, 0, &wire, std::future::pending()).await;
-            assert!(matches!(result, Some(Err(PageFailure::StreamClosed))));
+            let wire = stream::State::default();
+            let mut fut =
+                std::pin::pin!(read_page(&backend, None, 0, &wire, std::future::pending()));
+            assert!(futures_lite::future::poll_once(&mut fut).await.is_none());
+            wire.close_stream();
+            assert!(matches!(
+                futures_lite::future::poll_once(&mut fut).await,
+                Some(Some(Err(PageFailure::StreamClosed)))
+            ));
         });
     }
 }

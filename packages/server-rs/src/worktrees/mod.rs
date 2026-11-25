@@ -7,6 +7,10 @@ mod inventory;
 pub mod linked;
 pub mod ownership;
 
+pub(crate) fn inventory_revision(app: &App) -> u64 {
+    inventory::revision(app)
+}
+
 pub fn routes() -> axum::Router<Shared> {
     use axum::routing::{delete, get, post};
     axum::Router::new()
@@ -37,12 +41,27 @@ fn probe_error() -> Error {
     error(Status::SERVICE_UNAVAILABLE, "Git ownership could not be verified")
 }
 async fn git(workspace: &Workspace, args: &[&str]) -> Result<std::process::Output, std::io::Error> {
+    let _slot = crate::git::slot().await;
     let mut git = crate::git::command(&workspace.path, args);
     tokio::time::timeout(Duration::from_secs(3), git.output()).await?
 }
 
 pub async fn root_only(workspace: &Workspace) -> Result<Option<bool>, Error> {
-    if dunce::canonicalize(&workspace.path).ok().as_ref() != Some(&workspace.path) {
+    root_only_with_slot(workspace, None).await
+}
+
+pub(crate) async fn root_only_with_slot(
+    workspace: &Workspace,
+    slot: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
+) -> Result<Option<bool>, Error> {
+    let path = workspace.path.clone();
+    let canonical_ok = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        dunce::canonicalize(&path).ok().as_ref() == Some(&path)
+    })
+    .await
+    .unwrap_or(false);
+    if !canonical_ok {
         crate::bench::route_trace(format_args!("root-proof canonical path changed"));
         return Err(probe_error());
     }
@@ -59,6 +78,62 @@ pub async fn root_only(workspace: &Workspace) -> Result<Option<bool>, Error> {
             Err(probe_error())
         }
     }
+}
+
+/// Strict non-Git verification for `session-media` subfolder authorization (TS
+/// `checkout-identity.ts:3-77`, `worktree-directory.ts:248-262`): refuses to conclude non-Git when
+/// Git discovery is overridden by the environment or when any `.git`/`HEAD`/`commondir` marker
+/// exists on `workspace.path` or its ancestors up to a device boundary.
+pub(super) async fn strict_non_git_workspace(workspace: &Workspace) -> Result<bool, Error> {
+    const DISCOVERY_ENV: &[&str] = &[
+        "GIT_DIR",
+        "GIT_COMMON_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_OBJECT_DIRECTORY",
+    ];
+    if DISCOVERY_ENV.iter().any(|k| std::env::var_os(k).is_some()) {
+        return Err(probe_error());
+    }
+    let ws_path = workspace.path.clone();
+    let has_residual_git = tokio::task::spawn_blocking(move || {
+        #[cfg(unix)]
+        let root_dev = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&ws_path).ok().map(|m| m.dev())
+        };
+        let mut cur = ws_path.as_path();
+        loop {
+            if cur.file_name().is_some_and(|n| n.eq_ignore_ascii_case(".git")) {
+                return true;
+            }
+            for marker in [".git", "HEAD", "commondir"] {
+                match std::fs::symlink_metadata(cur.join(marker)) {
+                    Err(e) if e.kind() == ErrorKind::NotFound => {}
+                    _ => return true,
+                }
+            }
+            let Some(parent) = cur.parent() else { return false };
+            if parent == cur {
+                return false;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if let Some(dev) = root_dev
+                    && std::fs::metadata(parent).ok().map(|m| m.dev()) != Some(dev)
+                {
+                    return false;
+                }
+            }
+            cur = parent;
+        }
+    })
+    .await
+    .unwrap_or(true);
+    if has_residual_git { Err(probe_error()) } else { Ok(true) }
 }
 
 pub async fn exact_root_supported(app: &App, workspace: &Workspace) -> Result<bool, Error> {
@@ -83,12 +158,35 @@ pub async fn list(
     }
     let workspace = app.workspace(&id)?;
     let Some(git) = root_only(&workspace).await? else {
-        return Ok(Json(
-            crate::worktrees::linked::catalogue(&app, &workspace, input.fresh.as_deref() != Some("false"))
-                .await?
-                .response(),
-        )
-        .into_response());
+        let fresh = input.fresh.as_deref() != Some("false");
+        let endpoint = app
+            .native
+            .acquire(tokio::time::Instant::now() + Duration::from_secs(12))
+            .await
+            .map_err(|_| crate::opencode::upstream_error())?;
+        // Match TS `worktree-inventory.ts:61-85`: discard any scan invalidated by a concurrent
+        // `worktree.updated` event and retry until a current inventory settles.
+        for _ in 0..4 {
+            let revision = inventory::revision(&app);
+            let catalogue = std::sync::Arc::new(
+                inventory::catalogue_at(&app, &workspace, fresh, Some(&endpoint), Duration::from_secs(12)).await?,
+            );
+            if inventory::revision(&app) != revision {
+                continue;
+            }
+            // Store under `(workspace.id, fresh)` only so `fresh = true` scans never populate
+            // the separate non-refresh SSE routing cache `(workspace.id, false)` (TS `manager.ts:467-503`).
+            inventory::store_if_current(
+                &app,
+                workspace.id,
+                fresh,
+                &endpoint,
+                revision,
+                std::sync::Arc::clone(&catalogue),
+            );
+            return Ok(Json(catalogue.response()).into_response());
+        }
+        return Err(crate::opencode::upstream_error());
     };
     app.workspace(&id)?;
     let mut root = json!({"slug":"root","kind":"root","directory":workspace.path,"serviceDirectory":workspace.location["directory"]});
@@ -102,13 +200,24 @@ pub async fn list(
 }
 
 pub async fn owns_event(app: &Shared, w: &Workspace, directory: &str) -> bool {
-    if w.location["directory"] == directory {
-        return dunce::canonicalize(directory).ok().as_ref() == Some(&w.path);
-    }
-    if !crate::files::paths::canonical(&app.scope, directory).is_some_and(|p| p.starts_with(&app.scope)) {
+    let scope = app.scope.clone();
+    let dir = directory.to_owned();
+    let Some((path, _anchor)) =
+        tokio::task::spawn_blocking(move || ownership::resolve_media_path(&scope, &dir)).await.ok().flatten()
+    else {
         return false;
+    };
+    if path == w.path {
+        return true;
     }
-    crate::worktrees::linked::event_catalogue(app, w).await.is_some_and(|c| c.by_directory(directory).is_some())
+    let external = !path.starts_with(&w.path);
+    if !external && matches!(root_only(w).await, Ok(Some(true))) {
+        return true;
+    }
+    let Some(catalogue) = crate::worktrees::linked::event_catalogue(app, w).await else {
+        return false;
+    };
+    ownership::catalogue_owns_event(catalogue, path, external).await
 }
 
 /// Owned session location with its list slug (TS `resolveLocationPlacement`).
@@ -124,13 +233,22 @@ pub async fn placement(app: &App, w: &Workspace, location: &serde_json::Value) -
     if !crate::files::paths::local_absolute(directory) {
         return Err(false);
     }
-    let Ok(path) = dunce::canonicalize(directory) else { return Err(false) };
+    let dir_owned = directory.to_owned();
+    let Ok(path) = tokio::task::spawn_blocking(move || dunce::canonicalize(&dir_owned)).await.map_err(|_| false)?
+    else {
+        return Err(false);
+    };
     if w.location["directory"] == directory && path == w.path {
         return Ok("root".into());
     }
     let owned = if path.starts_with(&app.scope) {
         match crate::worktrees::linked::catalogue(app, w, false).await {
-            Ok(c) => c.by_directory(directory).map(|t| t.slug.clone()),
+            Ok(c) => {
+                let dir_owned = directory.to_owned();
+                tokio::task::spawn_blocking(move || c.by_directory(&dir_owned).map(|t| t.slug.clone()))
+                    .await
+                    .unwrap_or(None)
+            }
             // Without a Git catalogue only the opened folder is authority, and
             // the reference's strict read reaches no verdict elsewhere.
             Err(_) => return Err(false),

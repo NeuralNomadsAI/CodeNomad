@@ -83,35 +83,78 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
     let Some(limit) = input["limit"].as_u64() else { return Ok(blocked()) };
     input["limit"] = json!(40);
     let mut capped = selected.len() < directories.len();
-    let mut fences = Vec::with_capacity(selected.len());
-    for directory in selected {
-        let owned = scope.own(directory).await;
-        if !scope.current() {
-            return Ok(blocked());
+    // Capture deletion-fence display watches for BOTH the submitted raw path and the resolved
+    // anchor of ALL selected worktrees BEFORE the first RPC (TS `session-history-ranked.ts:62-70`,
+    // `worktree-display-identity.ts:9-17`) so deleting a symlinked checkout invalidates the page
+    // even if its target remains intact or the target is skipped by a continuation.
+    let selected_fences: Vec<Arc<AtomicBool>> = tokio::task::spawn_blocking({
+        let app_scope = scope.app.scope.clone();
+        let dirs: Vec<String> = selected.to_vec();
+        move || {
+            let mut watched = Vec::with_capacity(dirs.len() * 2);
+            for dir in dirs {
+                let raw_path = PathBuf::from(&dir);
+                watched.push(display(&raw_path));
+                if let Some((_, anchor)) = worktrees::ownership::resolve_media_path(&app_scope, &dir)
+                    && anchor != raw_path
+                {
+                    watched.push(display(&anchor));
+                }
+            }
+            watched
         }
-        fences.push(owned.ok_or_else(location_denied)?);
+    })
+    .await
+    .unwrap_or_default();
+    if selected_fences.len() < selected.len() || selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.current() {
+        return Ok(blocked());
     }
+    let mut fences = Vec::with_capacity(selected.len());
     let mut exclusions = Vec::new();
     let mut pages = Vec::new();
     let mut sessions = Vec::new();
     let mut hits = Vec::new();
     let mut seen = HashSet::new();
-    for (index, owned) in fences.iter().enumerate() {
+    let mut initial_contrib_fences: std::collections::HashMap<String, Vec<Arc<AtomicBool>>> =
+        std::collections::HashMap::new();
+    for (index, directory) in selected.iter().enumerate() {
         let mut request = input.clone();
         if token.is_some() {
             let Some(page) = prior.pages.iter().find(|page| page.index == index) else { continue };
             request["cursor"] = json!(page.page);
         }
-        let output = match scope.call(owned, "historyRanked", &request, None).await {
+        if selected_fences.iter().any(|f| !f.load(Relaxed)) {
+            return Ok(blocked());
+        }
+        let owned = scope.own(directory).await;
+        if !scope.current() {
+            return Ok(blocked());
+        }
+        let owned = owned.ok_or_else(location_denied)?;
+        match scope.verify_native_location(&owned.directory).await {
+            Ok(()) => {}
+            Err(Some(err)) => return Err(err),
+            Err(None) => return Ok(blocked()),
+        }
+        let output = match scope.call(&owned, "historyRanked", &request, None, &selected_fences).await {
             Some(Call::Result(output)) => output,
-            Some(Call::Unsupported) if token.is_some() => return Ok(status("restart_required")),
             Some(Call::Unsupported) => {
+                if selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.owned_current(&root).await {
+                    return Ok(blocked());
+                }
+                if token.is_some() {
+                    return Ok(status("restart_required"));
+                }
                 connection(&scope.endpoint, true);
                 return Ok(status("unsupported"));
             }
             None => return Ok(blocked()),
         };
+        fences.push(owned);
         if output["status"] != "ranked" {
+            if selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.owned_current(&root).await {
+                return Ok(blocked());
+            }
             return Ok(Json(output).into_response());
         }
         let owners = list(&output["sessions"]);
@@ -125,11 +168,20 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
             }
             pages.push(Page { index, page: page.into() });
         }
-        let Some(approved) = scope.filter(owners, None).await else { return Ok(blocked()) };
+        let Some((approved, contrib_fences)) = scope.filter(owners, None).await else { return Ok(blocked()) };
         if owners.len() != approved.len() {
             add_exclusion(&mut exclusions, "foreign_directory");
         }
         let ids: HashSet<_> = approved.iter().filter_map(|owner| owner["sessionID"].as_str()).collect();
+        // Retain the initial deletion fence flags captured for each approved contributor's
+        // directory (TS `session-history-ranked.ts:107-109, 127-139`) so a delete+recreate
+        // between first and final filtering is still caught for surviving contributors without
+        // letting a contributor dropped by `worktree.updated` block the page.
+        for owned in contrib_fences {
+            for sid in &ids {
+                initial_contrib_fences.entry((*sid).to_owned()).or_default().extend(owned.fences.iter().cloned());
+            }
+        }
         for (rank, hit) in found.iter().enumerate() {
             if hit["sessionID"].as_str().is_some_and(|id| ids.contains(id)) {
                 hits.push((rank, index, hit.clone()));
@@ -146,11 +198,40 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
         }
         capped |= output["capped"] == true;
     }
-    let Some(approved) = scope.filter(&sessions, None).await else { return Ok(blocked()) };
+    // Match TS `session-history-ranked.ts:127-139`: revalidate only surviving approved
+    // contributors (`final_fences`) plus their initial deletion fence flags so a contributor
+    // dropped by `worktree.updated` adds `foreign_directory` instead of blocking the page while
+    // a deleted-and-recreated surviving contributor still blocks publication.
+    let Some((approved, final_fences)) = scope.filter(&sessions, None).await else { return Ok(blocked()) };
+    let surviving_ids: HashSet<_> = approved.iter().filter_map(|owner| owner["sessionID"].as_str()).collect();
+    let initial_surviving_fences: Vec<Arc<AtomicBool>> = surviving_ids
+        .iter()
+        .filter_map(|sid| initial_contrib_fences.get(*sid))
+        .flat_map(|flags| flags.iter().cloned())
+        .collect();
+    fences = final_fences;
     if approved.len() != sessions.len() {
         add_exclusion(&mut exclusions, "foreign_directory");
     }
-    if !root.current(scope) || fences.iter().any(|fence| !fence.current(scope)) {
+    if selected_fences.iter().any(|f| !f.load(Relaxed))
+        || initial_surviving_fences.iter().any(|f| !f.load(Relaxed))
+        || !scope.owned_current(&root).await
+    {
+        return Ok(blocked());
+    }
+    for fence in &fences {
+        if !scope.owned_current(fence).await {
+            return Ok(blocked());
+        }
+    }
+    // Re-check ALL selected, initial surviving, and final contributor deletion fences
+    // synchronously AFTER the final async revalidation (TS `session-history-ranked.ts:127-139`)
+    // so a deletion during a later check cannot slip past publication.
+    if selected_fences.iter().any(|f| !f.load(Relaxed))
+        || initial_surviving_fences.iter().any(|f| !f.load(Relaxed))
+        || fences.iter().any(|owned| owned.fences.iter().any(|f| !f.load(Relaxed)))
+        || !scope.current()
+    {
         return Ok(blocked());
     }
     let ids: HashSet<_> = approved.iter().filter_map(|owner| owner["sessionID"].as_str()).collect();

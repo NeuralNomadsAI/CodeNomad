@@ -20,11 +20,11 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{sync::OnceCell, time::Instant};
+use tokio::{sync::Mutex, time::Instant};
 
 use super::{contracts, history};
 use crate::{
-    App, Error, Shared, Workspace,
+    Error, Shared, Workspace,
     auth::Principal,
     error,
     opencode::Endpoint,
@@ -45,22 +45,34 @@ pub(super) async fn handle(
     let delta = if ranked { 65_536 } else { 16_384 };
     let invalid =
         || error(Status::BAD_REQUEST, if ranked { "Invalid ranked history query" } else { "Invalid history query" });
-    let mime = req
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|header| header.to_str().ok())
-        .and_then(|value| value.split(';').next())
-        .map(str::trim);
-    if mime.is_some_and(|mime| mime.eq_ignore_ascii_case("text/plain")) {
-        return Err(invalid());
+    let (parts, body) = req.into_parts();
+    if let Some(kind) = parts.headers.get(header::CONTENT_TYPE) {
+        let essence = kind.to_str().unwrap_or("").split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        if !matches!(essence.as_str(), "application/json" | "text/plain") {
+            return Err(crate::shared::fastify::error(
+                Status::UNSUPPORTED_MEDIA_TYPE,
+                "FST_ERR_CTP_INVALID_MEDIA_TYPE",
+                "Unsupported Media Type",
+            ));
+        }
     }
-    if !mime.is_some_and(|mime| mime.eq_ignore_ascii_case("application/json")) {
-        return Err(error(Status::UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type"));
-    }
-    let bytes = to_bytes(req.into_body(), delta)
-        .await
-        .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request body is too large"))?;
-    let mut input: Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    let bytes = tokio::select! {
+        biased;
+        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+        res = tokio::time::timeout(Duration::from_secs(15), to_bytes(body, delta)) => match res {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(_)) => return Err(crate::shared::fastify::error(
+                Status::PAYLOAD_TOO_LARGE,
+                "FST_ERR_CTP_BODY_TOO_LARGE",
+                "Request body is too large",
+            )),
+            Err(_) => return Err(error(Status::REQUEST_TIMEOUT, "Request body timed out")),
+        },
+    };
+    let mut input: Value = match crate::shared::fastify::body(&parts.headers, &bytes)? {
+        Some(crate::shared::fastify::Body::Json(value)) => value,
+        Some(crate::shared::fastify::Body::Text(_)) | None => return Err(invalid()),
+    };
     if ranked {
         for key in ["version", "limit"] {
             if let Some(value) = input.get_mut(key)
@@ -95,11 +107,20 @@ pub(super) async fn handle(
     let root = display(&workspace.path);
     let run = async {
         let Ok(endpoint) = app.native.acquire(deadline).await else { return Ok(blocked()) };
-        let scope = Scope { app: &app, workspace, endpoint, root, deadline, inventory: OnceCell::new() };
-        let result = if ranked {
-            ranked::run(&scope, input, token.as_deref()).await
-        } else {
-            query(&scope, input, token.as_deref()).await
+        let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(&app, &endpoint)).await;
+        let endpoint_retire = endpoint.clone();
+        let scope = Scope { app: &app, workspace, endpoint, root, deadline, inventory: Mutex::new(None) };
+        let work = async {
+            if ranked {
+                ranked::run(&scope, input, token.as_deref()).await
+            } else {
+                query(&scope, input, token.as_deref()).await
+            }
+        };
+        let result = tokio::select! {
+            biased;
+            _ = app.native.wait_retired(&endpoint_retire) => Ok(blocked()),
+            result = work => result,
         };
         principal.live()?;
         result
@@ -121,27 +142,43 @@ fn display(path: &Path) -> Arc<AtomicBool> {
 }
 
 struct Scope<'a> {
-    app: &'a App,
+    app: &'a Shared,
     workspace: Workspace,
     endpoint: Arc<Endpoint>,
     root: Arc<AtomicBool>,
     deadline: Instant,
-    inventory: OnceCell<Option<HistoryInventory>>,
+    inventory: Mutex<Option<(u64, Arc<HistoryInventory>)>>,
 }
 struct Owned {
     directory: String,
     path: PathBuf,
-    identity: same_file::Handle,
+    anchor: PathBuf,
+    identity: String,
     proof: DirectoryProof,
-    fence: Arc<AtomicBool>,
+    fences: Vec<Arc<AtomicBool>>,
+    inventory_rev: u64,
 }
 impl Owned {
-    fn current(&self, scope: &Scope<'_>) -> bool {
-        self.fence.load(Relaxed)
-            && scope.current()
-            && crate::files::paths::canonical(&scope.app.scope, &self.directory).as_ref() == Some(&self.path)
-            && same_file::Handle::from_path(&self.path).is_ok_and(|identity| identity == self.identity)
-            && self.proof.history_live(&scope.workspace.path, &self.path)
+    async fn current_local(&self, scope: &Scope<'_>) -> bool {
+        if self.fences.iter().any(|f| !f.load(Relaxed)) || !scope.current() {
+            return false;
+        }
+        let app_scope = scope.app.scope.clone();
+        let workspace_path = scope.workspace.path.clone();
+        let directory = self.directory.clone();
+        let expected_path = self.path.clone();
+        let expected_anchor = self.anchor.clone();
+        let expected_id = self.identity.clone();
+        let proof = self.proof.clone();
+        let ok = tokio::task::spawn_blocking(move || {
+            worktrees::ownership::resolve_media_path(&app_scope, &directory)
+                .is_some_and(|(path, anchor)| path == expected_path && anchor == expected_anchor)
+                && crate::files::directory_identity(&expected_anchor).ok().as_deref() == Some(expected_id.as_str())
+                && proof.history_live(&workspace_path, &expected_path)
+        })
+        .await
+        .unwrap_or(false);
+        ok && self.fences.iter().all(|f| f.load(Relaxed)) && scope.current()
     }
 }
 impl Scope<'_> {
@@ -150,21 +187,164 @@ impl Scope<'_> {
             && self.app.native.current(&self.endpoint)
             && super::permission_mode::workspace_current(self.app, &self.workspace)
     }
-    async fn own(&self, directory: &str) -> Option<Owned> {
-        let path = crate::files::paths::canonical(&self.app.scope, directory)?;
-        let identity = same_file::Handle::from_path(&path).ok()?;
-        let fence = display(&path);
-        let proof = self.inventory().await?.prove(&self.workspace.path, &path)?;
-        let owned = Owned { directory: directory.into(), path, identity, proof, fence };
-        owned.current(self).then_some(owned)
+    fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
     }
-    async fn inventory(&self) -> Option<&HistoryInventory> {
-        self.inventory.get_or_init(|| HistoryInventory::load(self.app, &self.workspace)).await.as_ref()
+    async fn owned_current(&self, owned: &Owned) -> bool {
+        if !owned.current_local(self).await {
+            return false;
+        }
+        if worktrees::inventory_revision(self.app) == owned.inventory_rev {
+            return true;
+        }
+        self.own(&owned.directory).await.is_some()
+    }
+    async fn own(&self, directory: &str) -> Option<Owned> {
+        loop {
+            if self.remaining().is_zero() || !self.current() {
+                return None;
+            }
+            let app_scope = self.app.scope.clone();
+            let dir_owned = directory.to_owned();
+            let (path, anchor, identity) = tokio::task::spawn_blocking(move || {
+                let (path, anchor) = worktrees::ownership::resolve_media_path(&app_scope, &dir_owned)?;
+                let identity = crate::files::directory_identity(&anchor).ok()?;
+                Some((path, anchor, identity))
+            })
+            .await
+            .ok()??;
+            // Watch both submitted raw path and resolved anchor (TS `worktree-display-identity.ts:9-17`).
+            let raw_path = Path::new(directory);
+            let mut fences = vec![display(raw_path)];
+            if anchor != raw_path {
+                fences.push(display(&anchor));
+            }
+            // Exact opened root directory is authorized directly without requiring full worktree
+            // enumeration (TS `manager.ts:388-399`, `session-history.ts:45-52`), so a transient
+            // `worktree.list` failure never reports `403` for the root workspace.
+            if path == self.workspace.path {
+                let inventory_rev = worktrees::inventory_revision(self.app);
+                let owned = Owned {
+                    directory: directory.into(),
+                    path,
+                    anchor,
+                    identity,
+                    proof: DirectoryProof::root_direct(),
+                    fences,
+                    inventory_rev,
+                };
+                return owned.current_local(self).await.then_some(owned);
+            }
+            let (inventory_rev, inventory) = self.inventory().await?;
+            let ws_path = self.workspace.path.clone();
+            let path_for_prove = path.clone();
+            let proof = tokio::task::spawn_blocking(move || inventory.prove(&ws_path, &path_for_prove)).await.ok()?;
+            let Some(proof) = proof else {
+                if worktrees::inventory_revision(self.app) != inventory_rev {
+                    continue;
+                }
+                return None;
+            };
+            let owned = Owned { directory: directory.into(), path, anchor, identity, proof, fences, inventory_rev };
+            if !owned.current_local(self).await {
+                if worktrees::inventory_revision(self.app) != inventory_rev {
+                    continue;
+                }
+                return None;
+            }
+            // Re-verify no `worktree.updated` arrived during proof/local checks (TS `worktree-inventory.ts:61-85`).
+            if worktrees::inventory_revision(self.app) == inventory_rev {
+                return Some(owned);
+            }
+        }
+    }
+    async fn inventory(&self) -> Option<(u64, Arc<HistoryInventory>)> {
+        let mut guard = self.inventory.lock().await;
+        while !self.remaining().is_zero() && self.current() {
+            let before = worktrees::inventory_revision(self.app);
+            if let Some((cached_rev, inv)) = guard.as_ref()
+                && *cached_rev == before
+            {
+                return Some((*cached_rev, inv.clone()));
+            }
+            let Some(loaded) = HistoryInventory::load(self.app, &self.workspace, &self.endpoint).await else {
+                *guard = None;
+                if worktrees::inventory_revision(self.app) != before {
+                    continue;
+                }
+                return None;
+            };
+            let loaded = Arc::new(loaded);
+            // Only cache the snapshot if no `worktree.updated` invalidation arrived during load;
+            // stamping a post-scan revision onto pre-scan data would hide a concurrent removal.
+            if worktrees::inventory_revision(self.app) == before {
+                *guard = Some((before, loaded.clone()));
+                return Some((before, loaded));
+            }
+            *guard = None;
+        }
+        None
+    }
+    /// Matches TS `session-history.ts:67-72` & `session-history-ranked.ts:73-75`: for any non-root
+    /// worktree target, resolve native `GET /api/location` and confirm it echoes the exact owned
+    /// directory with no `workspaceID` before preparing plugins or calling the history RPC.
+    async fn verify_native_location(&self, directory: &str) -> Result<(), Option<Error>> {
+        if self.workspace.location["directory"].as_str() == Some(directory) {
+            return Ok(());
+        }
+        let left = self.remaining();
+        if left.is_zero() || !self.current() {
+            return Err(None);
+        }
+        let response = self
+            .app
+            .native
+            .client
+            .get(self.endpoint.url.join("/api/location").map_err(|_| None)?)
+            .basic_auth("opencode", Some(&self.endpoint.password))
+            .query(&[("location[directory]", directory)])
+            .timeout(left)
+            .send()
+            .await
+            .map_err(|_| None)?;
+        if !self.current() || !response.status().is_success() {
+            return Err(None);
+        }
+        let raw = crate::opencode::read_json(response, 128 * 1024).await.map_err(|_| None)?;
+        let loc = raw.get("data").unwrap_or(&raw);
+        if !self.current() {
+            return Err(None);
+        }
+        let Some(loc_dir) = loc.get("directory").and_then(Value::as_str).filter(|d| !d.trim().is_empty()) else {
+            // Invalid native `/api/location` payload shape -> `blocked/unavailable` (TS `session-history.ts:65-72, 109`).
+            return Err(None);
+        };
+        if let Some(ws) = loc.get("workspaceID") {
+            // Non-string or blank `workspaceID` is a malformed native location payload
+            // -> `blocked/unavailable` (TS `location.ts:5-11`, `session-history.ts:67-72, 109`);
+            // a non-empty string `workspaceID` is a foreign workspace -> `403`.
+            return if ws.as_str().is_some_and(|s| !s.trim().is_empty()) {
+                Err(Some(location_denied()))
+            } else {
+                Err(None)
+            };
+        }
+        if loc_dir != directory {
+            return Err(Some(location_denied()));
+        }
+        let rechecked = self.own(directory).await;
+        if !self.current() {
+            return Err(None);
+        }
+        if rechecked.is_none() {
+            return Err(Some(location_denied()));
+        }
+        Ok(())
     }
     async fn directories(&self) -> Option<Vec<String>> {
         let root = self.workspace.location["directory"].as_str()?.to_owned();
         let mut all = vec![root.clone()];
-        all.extend(self.inventory().await?.directories().map(str::to_owned));
+        all.extend(self.inventory().await?.1.directories().map(str::to_owned));
         all.sort();
         all.dedup();
         let normalized = |directory: &str| {
@@ -184,16 +364,31 @@ impl Scope<'_> {
             .collect();
         self.current().then_some(dirs)
     }
-    async fn call(&self, owned: &Owned, method: &str, input: &Value, source: Option<(&str, &Value)>) -> Option<Call> {
+    async fn call(
+        &self,
+        owned: &Owned,
+        method: &str,
+        input: &Value,
+        source: Option<(&str, &Value)>,
+        extra_fences: &[Arc<AtomicBool>],
+    ) -> Option<Call> {
         let ready = self.deadline.min(Instant::now() + Duration::from_secs(5));
-        history::prepare(self.app, &owned.directory, ready).await?;
-        if !self.session_current(source).await || !owned.current(self) {
+        let still_valid = || {
+            self.current()
+                && owned.fences.iter().all(|f| f.load(Relaxed))
+                && extra_fences.iter().all(|f| f.load(Relaxed))
+        };
+        history::prepare(self.app, &self.endpoint, &owned.directory, ready, still_valid).await?;
+        if extra_fences.iter().any(|f| !f.load(Relaxed))
+            || !self.session_current(source).await
+            || !self.owned_current(owned).await
+        {
             return None;
         }
-        let left = self.deadline.saturating_duration_since(Instant::now());
+        let left = self.remaining();
         let (status, bytes) =
             history::rpc_with_timeout(self.app, &self.endpoint, &owned.directory, method, input, left).await.ok()?;
-        if !self.session_current(source).await || !owned.current(self) {
+        if extra_fences.iter().any(|f| !f.load(Relaxed)) || !self.current() || !self.session_current(source).await {
             return None;
         }
         let value: Value = serde_json::from_slice(&bytes).ok()?;
@@ -222,19 +417,43 @@ impl Scope<'_> {
                 owner.as_object_mut()?.entry("prefilterBypassed").or_insert(json!(0));
             }
         }
-        contracts::valid(contracts::get(action, true), &output).then_some(Call::Result(output))
+        if !contracts::valid(contracts::get(action, true), &output) {
+            return None;
+        }
+        // Match TS `session-history-ranked.ts:81-96`: return valid non-ranked statuses (such as
+        // `restart_required` or `blocked`) immediately while the connection and deletion fences
+        // hold, even if `worktree.updated` removed the queried location from inventory mid-RPC.
+        if (action == "ranked" && output["status"] != "ranked") || self.owned_current(owned).await {
+            Some(Call::Result(output))
+        } else {
+            None
+        }
     }
     async fn session_current(&self, source: Option<(&str, &Value)>) -> bool {
         match source {
             None => true,
             Some((session, before)) => {
-                crate::opencode::session_record_at(self.app, &self.endpoint, session).await.is_ok_and(|current| {
-                    current["location"] == before["location"] && current["projectID"] == before["projectID"]
+                let left = self.remaining();
+                if left.is_zero() {
+                    return false;
+                }
+                crate::opencode::session_record_opaque_at(
+                    self.app,
+                    &self.endpoint,
+                    session,
+                    left,
+                    true,
+                    16 * 1024 * 1024,
+                )
+                .await
+                .is_ok_and(|current| {
+                    current["location"]["directory"] == before["location"]["directory"]
+                        && current["location"].get("workspaceID") == before["location"].get("workspaceID")
                 })
             }
         }
     }
-    async fn filter<'s>(&self, sessions: &'s [Value], session: Option<&str>) -> Option<Vec<&'s Value>> {
+    async fn filter<'s>(&self, sessions: &'s [Value], session: Option<&str>) -> Option<(Vec<&'s Value>, Vec<Owned>)> {
         let mut owners = BTreeMap::<&str, Option<Owned>>::new();
         for owner in sessions {
             if session.is_some_and(|id| owner["sessionID"] != id) {
@@ -251,18 +470,21 @@ impl Scope<'_> {
         if !self.current() {
             return None;
         }
-        Some(
-            sessions
-                .iter()
-                .filter(|owner| {
-                    owner.get("workspaceID").is_none()
-                        && owner["directory"]
-                            .as_str()
-                            .and_then(|dir| owners[dir].as_ref())
-                            .is_some_and(|owned| owned.current(self))
-                })
-                .collect(),
-        )
+        let mut out = Vec::with_capacity(sessions.len());
+        let mut kept_dirs = HashSet::new();
+        for owner in sessions {
+            if owner.get("workspaceID").is_none()
+                && let Some(dir) = owner["directory"].as_str()
+                && let Some(owned) = owners.get(dir).and_then(Option::as_ref)
+                && self.owned_current(owned).await
+            {
+                out.push(owner);
+                kept_dirs.insert(dir);
+            }
+        }
+        let kept_fences =
+            owners.into_iter().filter_map(|(dir, owned)| kept_dirs.contains(dir).then_some(owned).flatten()).collect();
+        Some((out, kept_fences))
     }
 }
 enum Call {
@@ -282,7 +504,20 @@ struct QueryCursor {
 async fn query(scope: &Scope<'_>, mut input: Value, token: Option<&str>) -> Result<Response, Error> {
     let session = input["sessionID"].as_str().map(str::to_owned);
     let source = if let Some(session) = &session {
-        let Ok(record) = crate::opencode::session_record_at(scope.app, &scope.endpoint, session).await else {
+        let left = scope.remaining();
+        if left.is_zero() {
+            return Ok(blocked());
+        }
+        let Ok(record) = crate::opencode::session_record_opaque_at(
+            scope.app,
+            &scope.endpoint,
+            session,
+            left,
+            true,
+            16 * 1024 * 1024,
+        )
+        .await
+        else {
             return Ok(blocked());
         };
         if record["location"].get("workspaceID").is_some() {
@@ -330,11 +565,18 @@ async fn query(scope: &Scope<'_>, mut input: Value, token: Option<&str>) -> Resu
         return Ok(blocked());
     }
     let owned = owned.ok_or_else(location_denied)?;
+    if source.is_none() {
+        match scope.verify_native_location(directory).await {
+            Ok(()) => {}
+            Err(Some(err)) => return Err(err),
+            Err(None) => return Ok(blocked()),
+        }
+    }
     if let Some(page) = page {
         input["cursor"] = json!(page);
     }
     let Some(Call::Result(mut output)) =
-        scope.call(&owned, "history", &input, session.as_deref().zip(source.as_ref())).await
+        scope.call(&owned, "history", &input, session.as_deref().zip(source.as_ref()), &[]).await
     else {
         return Ok(blocked());
     };
@@ -342,9 +584,16 @@ async fn query(scope: &Scope<'_>, mut input: Value, token: Option<&str>) -> Resu
         return Ok(Json(output).into_response());
     }
     let owners = output.as_object_mut().and_then(|out| out.remove("sessions")).unwrap_or_default();
-    let Some(approved) = scope.filter(list(&owners), session.as_deref()).await else { return Ok(blocked()) };
-    if !owned.current(scope) {
+    let Some((approved, contributor_fences)) = scope.filter(list(&owners), session.as_deref()).await else {
         return Ok(blocked());
+    };
+    if !scope.owned_current(&owned).await {
+        return Ok(blocked());
+    }
+    for fence in &contributor_fences {
+        if !scope.owned_current(fence).await {
+            return Ok(blocked());
+        }
     }
     let ids: HashSet<_> = approved.iter().filter_map(|owner| owner["sessionID"].as_str()).collect();
     let next = output["cursor"]

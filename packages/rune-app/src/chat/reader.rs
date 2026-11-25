@@ -469,11 +469,17 @@ pub(crate) fn renderer_ready(s: &mut State, tx: &mut Tx) -> bool {
 
 pub(crate) fn reconnecting(s: &mut State) {
     let history_bounds = s.tool_diff_preferences.history_bounds.get();
+    let preserve_historical_page =
+        s.history_detached && s.transcript_display.timeline.paging.is_some();
     if let Some(reader) = &mut s.reader {
-        reader.reconnecting(s.transcript_display.reading_mut(), s.paging, history_bounds);
+        reader.reconnecting(
+            s.transcript_display.reading_mut(),
+            s.paging && !preserve_historical_page,
+            history_bounds,
+        );
     }
 
-    cancel_page(s);
+    pages::fail_pending_page(s);
     s.paging = false;
 }
 
@@ -490,6 +496,8 @@ pub(crate) fn invalidate(s: &mut State) {
 }
 
 pub(super) fn refresh_after_message_action(s: &mut State) {
+    cancel_page(s);
+    s.history_error = false;
     if let Some(reader) = &mut s.reader {
         reader.resume(Bookmark::Latest);
         s.paging = false;
@@ -651,6 +659,7 @@ pub(crate) fn suspend(s: &mut State) {
     let width = s.tool_diff_preferences.history_width();
     let history_bounds = s.tool_diff_preferences.history_bounds.get();
     cancel_page(s);
+    s.history_error = false;
     crate::timeline::suspend(s);
     crate::settings::transcript_filters::close(s);
     if let Some(reader) = &mut s.reader {
@@ -770,6 +779,7 @@ pub(crate) fn retry(s: &mut State, tx: &mut Tx) {
             reader.width_grew_while_deferred = false;
             reader.resume_watching(reader.bookmark.clone(), s.transcript_display.reading());
         }
+        cancel_page(s);
         s.history_error = false;
         s.paging = false;
         tx.instant();

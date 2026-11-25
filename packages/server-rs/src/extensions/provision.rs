@@ -192,6 +192,33 @@ pub fn legacy_automation(source: &str) -> bool {
 }
 
 /// `lease` is the backend's current lease content (empty when it requests nothing).
+fn read_regular_shim(path: &Path) -> io::Result<Option<String>> {
+    use std::io::Read;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other(format!("Plugin entry is not a regular file: {}", path.display())));
+    }
+    let mut content = String::new();
+    const MAX_SHIM: u64 = 256 * 1024;
+    file.take(MAX_SHIM + 1).read_to_string(&mut content)?;
+    if content.len() as u64 > MAX_SHIM {
+        return Err(io::Error::other(format!("Existing plugin entry exceeds size limit: {}", path.display())));
+    }
+    Ok(Some(content))
+}
+
+#[cfg(test)]
 pub fn install(
     feature: &'static str,
     bundle: &[u8],
@@ -199,18 +226,29 @@ pub fn install(
     paths: &Paths,
     lease_content: &str,
 ) -> io::Result<Installed> {
+    install_checked(feature, bundle, provider, paths, lease_content, || true, &mut Vec::new())
+}
+
+pub fn install_checked(
+    feature: &'static str,
+    bundle: &[u8],
+    provider: Option<&[u8]>,
+    paths: &Paths,
+    lease_content: &str,
+    still_current: impl Fn() -> bool,
+    stranded: &mut Vec<Installed>,
+) -> io::Result<Installed> {
     let fail = |m: String| io::Error::other(m);
+    if !still_current() {
+        return Err(fail("OpenCode connection replaced before plugin installation".into()));
+    }
     if provider.is_some() && feature != "missions" {
         return Err(fail("Local carrier provider requires Missions".into()));
     }
     let marker = marker(feature);
     let hash = artifact::sha256_hex(bundle);
     let entry = paths.config.join("plugins").join(format!("codenomad-{feature}.ts"));
-    let existing = match fs::read_to_string(&entry) {
-        Ok(s) => Some(s),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e),
-    };
+    let existing = read_regular_shim(&entry)?;
     if existing.as_ref().is_some_and(|s| !s.starts_with(&marker) && !(feature == "automation" && legacy_automation(s)))
     {
         return Err(fail(format!("Existing plugin entry is not managed by CodeNomad: {}", entry.display())));
@@ -260,17 +298,27 @@ pub fn install(
         Ok(())
     };
     assert_payloads(&mut runtime_id, &mut provider_id)?;
+    if !still_current() {
+        return Err(fail("OpenCode connection replaced before writing plugin lease".into()));
+    }
     let lease = leases.join(format!("{}.lease", uuid::Uuid::new_v4()));
     artifact::write_replacing(&lease, lease_content.as_bytes())?;
     let published = (|| {
         if existing.as_deref() != Some(&source) {
+            if !still_current() {
+                return Err(fail("OpenCode connection replaced before writing plugin entry".into()));
+            }
             assert_payloads(&mut runtime_id, &mut provider_id)?;
             artifact::write_replacing(&entry, source.as_bytes())?;
         }
         Ok(())
     })();
     if let Err(e) = published {
-        let _ = fs::remove_file(&lease);
+        if let Err(rem) = fs::remove_file(&lease)
+            && rem.kind() != io::ErrorKind::NotFound
+        {
+            stranded.push(Installed { feature, sha256: hash, provider: provider_hash, entry, lease });
+        }
         return Err(e);
     }
     Ok(Installed { feature, sha256: hash, provider: provider_hash, entry, lease })
@@ -283,11 +331,29 @@ pub fn ready_marker(lease: &Path) -> PathBuf {
 }
 
 /// Lease release: the payloads stay for native carrier recovery and older copies.
-pub fn dispose(installed: &[Installed]) {
+/// Propagates any removal error other than `NotFound` so shutdown reports incomplete cleanup
+/// (TS `desktop-plugin-installation.ts:165-174`).
+pub fn dispose_checked(installed: &[Installed]) -> io::Result<()> {
+    let mut first_err = None;
     for i in installed {
-        let _ = fs::remove_file(&i.lease);
-        let _ = fs::remove_file(ready_marker(&i.lease));
+        for path in [&i.lease, &ready_marker(&i.lease)] {
+            if let Err(e) = fs::remove_file(path)
+                && e.kind() != io::ErrorKind::NotFound
+                && first_err.is_none()
+            {
+                first_err = Some(e);
+            }
+        }
     }
+    match first_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+pub fn dispose(installed: &[Installed]) {
+    let _ = dispose_checked(installed);
 }
 
 /// `lease-request.ts`: `{"version":1,"<field>":true}` while requested, else empty.
@@ -342,11 +408,22 @@ pub fn payloads(feature: &str) -> io::Result<(Vec<u8>, Option<Vec<u8>>)> {
 
 /// `resolveDesktopPluginPaths` on the current connection: `config.get` only.
 pub async fn discovery(app: &Shared) -> Result<Paths, String> {
+    let endpoint = app.native.endpoint().ok_or_else(|| {
+        "Cannot provision bundled plugins without the connected daemon's discovery directory (unreachable)".to_owned()
+    })?;
+    discovery_at(app, &endpoint).await
+}
+
+/// `resolveDesktopPluginPaths` against a specific captured endpoint.
+pub async fn discovery_at(app: &Shared, endpoint: &crate::opencode::Endpoint) -> Result<Paths, String> {
     let failed =
         |e: &str| format!("Cannot provision bundled plugins without the connected daemon's discovery directory ({e})");
+    let url = endpoint.url.join("/api/config").map_err(|_| failed("unreachable"))?;
     let response = app
         .native
-        .get("/api/config")
+        .client
+        .get(url)
+        .basic_auth("opencode", Some(&endpoint.password))
         .timeout(Duration::from_secs(15))
         .send()
         .await

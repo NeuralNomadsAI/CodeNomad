@@ -356,6 +356,66 @@ async fn desktop_dev_launch_proxies_the_ui() {
     server.stop(b"").await;
 }
 
+/// Tauri's "all interfaces" listening mode (`--host 0.0.0.0`): HTTPS binds the wildcard while native
+/// desktop HTTP stays on 127.0.0.1, matching `packages/server/src/index.ts`.
+#[tokio::test]
+async fn desktop_launch_accepts_wildcard_host_and_keeps_http_on_loopback() {
+    let args = [
+        "serve",
+        "--host",
+        "0.0.0.0",
+        "--auth-cookie-name",
+        COOKIE,
+        "--generate-token",
+        "--unrestricted-root",
+        "--https",
+        "true",
+        "--http",
+        "true",
+        "--http-port",
+        "0",
+        "--https-port",
+        "0",
+    ];
+    let mut server = Server::start(scratch("wildcard"), Path::new(env!("CARGO_BIN_EXE_codenomad-rs")), &args);
+    let (token, url, remote) = server.ready().await;
+    assert!(url.starts_with("http://127.0.0.1:"), "{url}");
+    let remote_url = remote.strip_prefix("Remote Connection URL : ").expect(&remote);
+    assert!(remote_url.starts_with("https://") && !remote_url.contains("0.0.0.0"), "{remote}");
+    for file in ["ca-cert.pem", "server-cert.pem", "server-key.pem"] {
+        assert!(server.config.join("tls").join(file).is_file(), "{file}");
+    }
+    let client = client();
+    let set = client.post(format!("{url}/api/auth/token")).json(&serde_json::json!({ "token": token })).send().await;
+    let cookie = set.unwrap().headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_owned();
+    let meta: serde_json::Value =
+        client.get(format!("{url}/api/meta")).header("cookie", &cookie).send().await.unwrap().json().await.unwrap();
+    assert_eq!(meta["host"], "0.0.0.0");
+    assert_eq!(meta["listeningMode"], "all");
+    assert_eq!(meta["remoteUrl"], remote_url);
+    let remote_port = meta["remotePort"].as_u64().expect("remotePort");
+    assert!(remote_port > 0, "{meta}");
+    assert!(meta["addresses"].as_array().is_some_and(|a| !a.is_empty()), "{meta}");
+
+    // Verify the wildcard HTTPS listener answers real TLS requests on 127.0.0.1 and rejects rogue Host headers.
+    let ca_pem = fs::read(server.config.join("tls").join("ca-cert.pem")).unwrap();
+    let ca = reqwest::Certificate::from_pem(&ca_pem).unwrap();
+    let https = reqwest::Client::builder().no_proxy().add_root_certificate(ca).build().unwrap();
+    let tls_status = https.get(format!("https://127.0.0.1:{remote_port}/api/auth/status")).send().await.unwrap();
+    assert_eq!(tls_status.status(), 200);
+    let tls_body: serde_json::Value = tls_status.json().await.unwrap();
+    assert_eq!(tls_body["authenticated"], false);
+    let misdirected = https
+        .get(format!("https://127.0.0.1:{remote_port}/api/auth/status"))
+        .header("host", format!("rogue.invalid:{remote_port}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(misdirected.status(), 421);
+
+    server.stop(b"").await;
+}
+
 #[tokio::test]
 async fn shutdown_cancels_pending_plugin_snapshot() {
     let root = scratch("pending-stop");

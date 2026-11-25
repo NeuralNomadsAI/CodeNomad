@@ -188,6 +188,24 @@ pub fn host_identity(path: &Path) -> io::Result<String> {
     Ok(format!("{:x}", h.finish()))
 }
 
+/// Identifies a live directory without opening POSIX FIFOs or symlinks (`lstat` dev/ino on Unix;
+/// `symlink_metadata().is_dir()` before `same_file::Handle` on Windows).
+pub(crate) fn directory_identity(path: &Path) -> io::Result<String> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if !meta.is_dir() {
+        return Err(io::Error::new(io::ErrorKind::NotFound, "not a directory"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(format!("{:x}:{:x}", meta.dev(), meta.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        host_identity(path)
+    }
+}
+
 #[derive(Deserialize)]
 pub struct Input {
     path: Option<String>,

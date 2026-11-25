@@ -95,6 +95,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         s.pairing.focus = FocusCheck::new(s.wake.clone());
     } else {
         s.pairing.focus = None;
+        crate::chat::reader::cancel_page(s);
         s.history_error = false;
         crate::retry_connection(s, tx);
     }

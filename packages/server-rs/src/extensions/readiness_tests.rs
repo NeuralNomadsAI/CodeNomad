@@ -66,7 +66,7 @@ async fn a_registered_follower_answers_the_exact_challenge() {
     for entry in fs::read_dir(&folder).unwrap().flatten() {
         fs::remove_file(entry.path()).unwrap();
     }
-    owner.close().await;
+    owner.close().await.unwrap();
     assert!(!folder.exists());
     assert!(owner.prepare(LOCATION, tokio::time::Instant::now() + WAIT).await.is_err());
     fs::remove_dir_all(dir.parent().unwrap()).unwrap();
