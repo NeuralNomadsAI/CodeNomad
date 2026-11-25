@@ -58,6 +58,9 @@ impl App {
     pub fn emit(&self, event: Value) {
         self.events.publish(event);
     }
+    pub fn emit_serialized(&self, event: Value, text: String) {
+        self.events.publish_serialized(event, text);
+    }
     pub fn emit_status(&self, id: Uuid, status: &str, generation: u64, reason: Option<&str>) {
         let mut event = json!({"type":"instance.eventStatus","instanceId":id,"status":status,"generation":generation});
         if let Some(reason) = reason {

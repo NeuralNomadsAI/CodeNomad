@@ -3,7 +3,10 @@ use crate::settings::notification_routing::{self, Category, Destination};
 
 impl Preferences {
     pub(in crate::settings) fn notification_ready(&self) -> bool {
-        self.can_retry() && self.saved(Owner::Config).is_some() && !self.config.read_failed()
+        self.can_retry()
+            && self.saved(Owner::Config).is_some()
+            && !self.config.read_failed()
+            && !self.transport_lost
     }
 
     pub(in crate::settings) fn notification_route(
