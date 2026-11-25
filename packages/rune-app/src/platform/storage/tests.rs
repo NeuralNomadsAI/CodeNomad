@@ -100,3 +100,134 @@ fn relative_directory_and_file_in_place_of_directory_are_rejected() {
     assert!(Files::open(root.0.join("rune")).is_err());
     assert_eq!(fs::read(root.0.join("rune")).unwrap(), b"foreign");
 }
+
+#[test]
+fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
+    let root = Root::new();
+    let path = root.0.join("rune");
+    // Unpolled background write admitted before an exit flush cannot outrank or overwrite it.
+    let store = crate::platform::block_on(super::Store::open(path.clone())).unwrap();
+    let unpolled_stale = store.start_file_drafts_save(b"stale-before-exit".to_vec());
+    store.save_file_drafts_exit(b"exit-fresh".to_vec()).unwrap();
+    crate::platform::block_on(async {
+        assert!(!unpolled_stale.await.unwrap());
+        assert_eq!(
+            store.load_file_drafts().await.unwrap().unwrap(),
+            b"exit-fresh"
+        );
+        // Contended file-draft lock: older write waiting on the mutex skips once superseded,
+        // while independent state/preferences operations do not block on file-draft I/O.
+        let guard = store.lock_file_drafts();
+        #[cfg(target_os = "windows")]
+        {
+            let pref_store = store.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(pref_store.save_preferences_frame(b"{}").is_ok());
+            });
+            assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(2)), Ok(true));
+        }
+        let older = store.start_file_drafts_save(b"older".to_vec());
+        let older_task = tokio::spawn(older);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !store.file_draft_worker_running() || store.file_draft_pending() {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        // Submitting multiple writes while the single worker is blocked replaces the pending slot
+        // without spawning extra blocking tasks; the displaced middle write resolves immediately.
+        let middle = store.start_file_drafts_save(b"middle".to_vec());
+        let newer = store.start_file_drafts_save(b"newer".to_vec());
+        assert!(!middle.await.unwrap());
+        let newer_task = tokio::spawn(newer);
+        drop(guard);
+        assert!(!older_task.await.unwrap().unwrap());
+        assert!(newer_task.await.unwrap().unwrap());
+        assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"newer");
+        // A timed-out write already dequeued by the worker cancels its state and skips
+        // disk I/O once the lock frees.
+        let guard = store.lock_file_drafts();
+        let timed_out = tokio::spawn(store.start_file_drafts_save_with_timeout(
+            b"timed-out".to_vec(),
+            std::time::Duration::from_millis(500),
+        ));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !store.file_draft_worker_running() || store.file_draft_pending() {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        assert!(timed_out.await.unwrap().is_err());
+        drop(guard);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while store.file_draft_worker_running() || store.files_refcount() > 1 {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"newer");
+        // An already-expired deadline is rejected directly by the worker without publishing.
+        let expired = store.start_file_drafts_save_with_deadlines(
+            b"already-expired".to_vec(),
+            std::time::Instant::now() - std::time::Duration::from_millis(1),
+            std::time::Duration::from_secs(3),
+        );
+        assert!(matches!(expired.await, Ok(false)));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while store.file_draft_worker_running() || store.files_refcount() > 1 {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"newer");
+    });
+    drop(store);
+    crate::platform::block_on(async {
+        let reopened = super::Store::open(path).await.unwrap();
+        assert_eq!(
+            reopened.load_file_drafts().await.unwrap().unwrap(),
+            b"newer"
+        );
+    });
+}
+
+#[test]
+fn pre_rename_staleness_cancels_publication_and_removes_temp_file() {
+    let root = Root::new();
+    let files = root.open();
+    assert!(
+        files
+            .save_file_with(
+                "workspace-file-drafts.json",
+                super::FILE_DRAFT_BYTES,
+                b"kept",
+                || true,
+                |tmp, dst| {
+                    fs::rename(tmp, dst)?;
+                    Ok(true)
+                },
+            )
+            .unwrap()
+    );
+    let checks = std::cell::Cell::new(0usize);
+    let published = files
+        .save_file_with(
+            "workspace-file-drafts.json",
+            super::FILE_DRAFT_BYTES,
+            b"stale-after-sync",
+            || {
+                checks.set(checks.get() + 1);
+                true
+            },
+            |_, _| {
+                checks.set(checks.get() + 1);
+                Ok(false)
+            },
+        )
+        .unwrap();
+    assert!(!published);
+    assert_eq!(checks.get(), 2);
+    assert_eq!(
+        fs::read(root.0.join("rune/workspace-file-drafts.json")).unwrap(),
+        b"kept"
+    );
+    // Only state.lock and workspace-file-drafts.json remain; the temporary file is removed.
+    assert_eq!(fs::read_dir(root.0.join("rune")).unwrap().count(), 2);
+}

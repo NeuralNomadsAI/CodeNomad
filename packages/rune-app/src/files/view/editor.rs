@@ -45,13 +45,15 @@ pub(super) fn source(
             s.rejected_edit = TextEdit::new("");
             &mut s.rejected_edit
         })
-        .on_change(document_action_tx(s, |ui, _| {
-            ui.document.changed(ui.document.scope())
+        .on_change(document_action_tx(s, |ui, tx| {
+            ui.document.changed(ui.document.scope());
+            tx.wake_after(std::time::Duration::ZERO);
         }))
-        .on_submit(document_action_tx(s, |ui, _| {
+        .on_submit(document_action_tx(s, |ui, tx| {
             let scope = ui.document.scope();
             ui.document.input(scope).insert("\n");
             ui.document.changed(scope);
+            tx.wake_after(std::time::Duration::ZERO);
         }))
         .on_key({
             let save = document_action_tx(s, save);
@@ -119,12 +121,13 @@ pub(super) fn decision(s: &State, ui: &Ui) -> Option<El> {
         t(message),
         t(cancel),
         t(confirm),
-        move |s: &mut State, accept, _| {
+        move |s: &mut State, accept, tx| {
             if s.current_scope(&scope)
                 && let Some(ui) = &mut s.files
                 && ui.document.scope() == document
             {
                 ui.confirm_document(prompt.id, accept);
+                tx.wake_after(std::time::Duration::ZERO);
             }
         },
     ))
