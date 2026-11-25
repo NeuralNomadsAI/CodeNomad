@@ -34,6 +34,14 @@ pub use boot::LocalHost;
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug)]
 pub struct LocalHost;
+#[cfg(target_arch = "wasm32")]
+impl LocalHost {
+    pub fn renew_managed_session(
+        &self,
+    ) -> Option<codenomad_client::Receiver<Option<crate::backend::Backend>>> {
+        None
+    }
+}
 pub fn local_server_available() -> bool {
     cfg!(not(target_arch = "wasm32"))
 }

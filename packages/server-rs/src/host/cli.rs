@@ -165,6 +165,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         file: Some(yaml.parent().unwrap_or(&base).join("auth.json")),
         cookie: auth::cookie_name(value("auth-cookie-name").as_deref()),
         token: flag("generate-token")?,
+        managed_local: super::native_parent::available(),
         skip,
         idle: timeout("CODENOMAD_SESSION_IDLE_SECONDS", 86400)?,
         absolute: timeout("CODENOMAD_SESSION_ABSOLUTE_SECONDS", 7 * 86400)?,

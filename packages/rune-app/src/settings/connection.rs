@@ -39,11 +39,14 @@ pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::B
             return false;
         }
         prefs.require_authentication();
-        if let Some(launcher) = s.screen.launcher_mut() {
+        let renewing = s.screen.launcher_mut().is_some_and(|launcher| {
             launcher.authentication_required = true;
-        }
+            launcher.start_managed_renewal(expired)
+        });
         drop(prefs);
-        s.show_launcher();
+        if !renewing {
+            s.show_launcher();
+        }
         crate::workspace::suspend_missions(s);
     }
     true

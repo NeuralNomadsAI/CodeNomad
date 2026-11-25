@@ -169,8 +169,12 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         .is_some_and(|launcher| shared.bind(launcher.connection.clone()));
     let expired = shared.observe_authentication();
     if expired {
+        let expired_backend = shared.backend.clone();
         if let Some(launcher) = s.screen.launcher_mut() {
             launcher.authentication_required = true;
+            if let Some(expired_backend) = &expired_backend {
+                launcher.start_managed_renewal(expired_backend);
+            }
         }
         s.phase = crate::Phase::Failed;
     }

@@ -67,6 +67,41 @@ fn native_capability_denial_correlates_without_reflecting_params() {
 }
 
 #[test]
+fn managed_session_reply_classification_validates_id_and_token() {
+    let id = "9d754f99-0b08-44d0-a99c-0d6c95229647";
+    let token = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE";
+    assert_eq!(token.len(), 43);
+    assert!(matches!(
+        protocol::classify(&format!("CODENOMAD_MANAGED_SESSION:{id} {token}")),
+        protocol::Line::ManagedSession { id: ref parsed_id, session: Some(ref parsed) }
+            if parsed_id == id && parsed == token
+    ));
+    assert!(matches!(
+        protocol::classify(&format!("CODENOMAD_MANAGED_SESSION:{id} -")),
+        protocol::Line::ManagedSession { id: ref parsed_id, session: None } if parsed_id == id
+    ));
+    for bad in [
+        format!("CODENOMAD_MANAGED_SESSION:{id} short"),
+        format!("CODENOMAD_MANAGED_SESSION:{id} {token}extra"),
+        format!("CODENOMAD_MANAGED_SESSION:bad-id {token}"),
+        format!(
+            "CODENOMAD_MANAGED_SESSION:{} {token}",
+            id.to_ascii_uppercase()
+        ),
+        format!("CODENOMAD_MANAGED_SESSION:{id} {token} trailing"),
+    ] {
+        assert!(
+            matches!(protocol::classify(&bad), protocol::Line::Diagnostic),
+            "{bad:?}"
+        );
+    }
+    assert_eq!(
+        protocol::renew_command(id),
+        format!("codenomad:renew-session {id}\n")
+    );
+}
+
+#[test]
 fn trial_launch_has_explicit_isolated_profile_and_no_parent_secrets() {
     let root = fresh_root("config");
     let config =

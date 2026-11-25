@@ -158,7 +158,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     service::stop_on_terminate(shutdown.clone());
     // One stdin reader serves the stop command and native responses (also under a bench host).
     if launch.serve || host::native_parent::available() {
-        host::read_stdin(shutdown.clone());
+        host::read_stdin(shutdown.clone(), state.clone());
     } else {
         bench::stop_on_stdin(shutdown.clone());
     }

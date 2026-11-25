@@ -6,9 +6,14 @@ use std::{
 };
 pub(super) const MAX_LINE: usize = 1024 * 1024;
 pub(super) const SHUTDOWN: &[u8] = b"codenomad:shutdown\n";
+pub(super) const RENEW_PREFIX: &str = "CODENOMAD_MANAGED_SESSION:";
 pub(super) enum Line {
     Token(String),
     Ready(String),
+    ManagedSession {
+        id: String,
+        session: Option<String>,
+    },
     Native {
         response: String,
         expires: Instant,
@@ -17,9 +22,43 @@ pub(super) enum Line {
     Shutdown(bool),
     Diagnostic,
 }
+pub(super) fn renew_command(id: &str) -> String {
+    format!("codenomad:renew-session {id}\n")
+}
+fn valid_request_id(id: &str) -> bool {
+    id.len() == 36
+        && id
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'-'))
+}
+fn valid_session_token(value: &str) -> bool {
+    value.len() == 43
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
 pub(super) fn classify(line: &str) -> Line {
     if let Some(token) = line.strip_prefix("CODENOMAD_BOOTSTRAP_TOKEN:") {
         return Line::Token(token.trim().into());
+    }
+    if let Some(raw) = line.strip_prefix(RENEW_PREFIX) {
+        if let Some((id, value)) = raw.split_once(' ')
+            && valid_request_id(id)
+        {
+            if value == "-" {
+                return Line::ManagedSession {
+                    id: id.to_owned(),
+                    session: None,
+                };
+            }
+            if valid_session_token(value) {
+                return Line::ManagedSession {
+                    id: id.to_owned(),
+                    session: Some(value.to_owned()),
+                };
+            }
+        }
+        return Line::Diagnostic;
     }
     if let Some(raw) = line.strip_prefix("CODENOMAD_NATIVE_REQUEST:") {
         let Ok(request) = serde_json::from_str::<Value>(raw) else {
