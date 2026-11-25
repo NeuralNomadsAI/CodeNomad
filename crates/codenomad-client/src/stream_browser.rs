@@ -252,6 +252,10 @@ pub(super) async fn read(
                 .await
             }
         };
+        // Re-check after awaiting rx so a frame queued before sleep cannot mask staleness.
+        if watchdog.is_stale() {
+            return Err("browser event stream stale".into());
+        }
         match frame {
             Some(Frame::Open) => {
                 let _pause = watchdog.pause();
@@ -260,10 +264,11 @@ pub(super) async fn read(
             }
             Some(Frame::Data(kind, data)) if kind == "codenomad.client.ping" => {
                 queued_bytes.set(queued_bytes.get() - data.len());
-                // Pong POST is a network wait: keep staleness active so a dead link cuts it.
+                // Pong POST is an independent network wait: keep staleness active so a dead link cuts it.
+                let pong_watchdog = watchdog.fork();
                 match futures_lite::future::or(
                     async {
-                        watchdog
+                        pong_watchdog
                             .wait_until_stale(&global_probe, Some(&wake_rx))
                             .await;
                         Next::Stale

@@ -383,8 +383,22 @@ impl HangingServer {
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         let handle = std::thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
                 let mut buf = [0u8; 256];
-                let _ = stream.read(&mut buf);
+                loop {
+                    if release_rx.try_recv().is_ok() {
+                        return;
+                    }
+                    match stream.read(&mut buf) {
+                        Ok(_) => break,
+                        Err(err)
+                            if matches!(
+                                err.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(_) => break,
+                    }
+                }
                 let _ = accepted_tx.try_send(());
                 let _ = release_rx.recv();
             }
@@ -804,6 +818,11 @@ fn hanging_pong_past_45s_closes_stream_as_stale() {
             send.send(b"event: codenomad.client.ping\ndata: {\"ts\":1}\n\n".to_vec())
                 .await
                 .unwrap();
+            // Queue two frames behind the ping so `read` blocks on the bounded internal channel
+            // and holds `read_watchdog.pause()`; only the pong's own forked watchdog can expire.
+            let trailing = format!("data: {}\n\n", json!({"type": "memory.changed"})).into_bytes();
+            send.send(trailing.clone()).await.unwrap();
+            send.send(trailing).await.unwrap();
             let wait_pong = async {
                 assert!(matches!(recovery.recv().await.unwrap(), Input::Opened(1)));
                 server.accepted.recv().await.unwrap();
@@ -864,7 +883,7 @@ fn probe_registry_unregisters_closed_and_cancelled_streams() {
             let state = State::default();
 
             // 1. Stream closed by EOF unregisters from the process-local probe registry.
-            let before = staleness::global_probe_ids();
+            let (eof_ids, eof_source) = staleness::ProbeSource::global_capturing();
             let (send_eof, chunks_eof) = crate::bounded::<Vec<u8>>(2);
             let mut wire_eof = std::pin::pin!(native::read_frames_with(
                 &backend,
@@ -874,13 +893,11 @@ fn probe_registry_unregisters_closed_and_cancelled_streams() {
                 "stream-eof",
                 chunks_eof.map(Ok),
                 Arc::new(staleness::Watchdog::new(staleness::STALE_THRESHOLD)),
-                staleness::ProbeSource::global(),
+                eof_source,
             ));
             assert!(poll_once(&mut wire_eof).await.is_none());
-            let eof_id = *staleness::global_probe_ids()
-                .iter()
-                .find(|id| !before.contains(id))
-                .expect("open stream must register with probe_stale()");
+            let eof_id = eof_ids.lock().unwrap()[0];
+            assert!(staleness::has_probe_id(eof_id));
             drop(send_eof);
             let _ = recovery.recv().await;
             let result = tokio::time::timeout(Duration::from_secs(2), wire_eof)
@@ -892,10 +909,31 @@ fn probe_registry_unregisters_closed_and_cancelled_streams() {
                 "closed stream must unregister from probe_stale()"
             );
 
-            // 2. Cancelled/dropped stream unregisters while another open stream still wakes on probe_stale().
-            let before_drop = staleness::global_probe_ids();
+            // 2. Cancelling/dropping one open stream removes only its own entry while an already
+            //    registered sibling stream remains active and wakes on probe_stale().
             let clock = FakeClock::new(30_000_000);
+            let (drop_ids, drop_source) = staleness::ProbeSource::global_capturing();
+            let (live_ids, live_source) = staleness::ProbeSource::global_capturing();
             let (_send_drop, chunks_drop) = crate::bounded::<Vec<u8>>(2);
+            let (_send_live, chunks_live) = crate::bounded::<Vec<u8>>(2);
+            let mut wire_live = std::pin::pin!(native::read_frames_with(
+                &backend,
+                3,
+                &out,
+                &state,
+                "stream-live",
+                chunks_live.map(Ok),
+                Arc::new(staleness::Watchdog::with_clock(
+                    clock.clone(),
+                    staleness::STALE_THRESHOLD,
+                    staleness::CHECK_INTERVAL,
+                )),
+                live_source,
+            ));
+            assert!(poll_once(&mut wire_live).await.is_none());
+            let live_id = live_ids.lock().unwrap()[0];
+            assert!(staleness::has_probe_id(live_id));
+
             let drop_id;
             {
                 let mut wire_drop = std::pin::pin!(native::read_frames_with(
@@ -910,41 +948,23 @@ fn probe_registry_unregisters_closed_and_cancelled_streams() {
                         staleness::STALE_THRESHOLD,
                         staleness::CHECK_INTERVAL,
                     )),
-                    staleness::ProbeSource::global(),
+                    drop_source,
                 ));
                 assert!(poll_once(&mut wire_drop).await.is_none());
-                drop_id = *staleness::global_probe_ids()
-                    .iter()
-                    .find(|id| !before_drop.contains(id))
-                    .expect("dropped stream must register while active");
+                drop_id = drop_ids.lock().unwrap()[0];
+                assert!(staleness::has_probe_id(drop_id));
+                assert!(staleness::has_probe_id(live_id));
             }
             assert!(
                 !staleness::has_probe_id(drop_id),
                 "dropped/cancelled stream must unregister from probe_stale()"
             );
+            assert!(
+                staleness::has_probe_id(live_id),
+                "sibling open stream must remain registered after another stream drops"
+            );
 
-            let before_live = staleness::global_probe_ids();
-            let (_send_live, chunks_live) = crate::bounded::<Vec<u8>>(2);
-            let mut wire_live = std::pin::pin!(native::read_frames_with(
-                &backend,
-                3,
-                &out,
-                &state,
-                "stream-live",
-                chunks_live.map(Ok),
-                Arc::new(staleness::Watchdog::with_clock(
-                    clock.clone(),
-                    staleness::STALE_THRESHOLD,
-                    staleness::CHECK_INTERVAL,
-                )),
-                staleness::ProbeSource::global(),
-            ));
-            assert!(poll_once(&mut wire_live).await.is_none());
-            let live_id = *staleness::global_probe_ids()
-                .iter()
-                .find(|id| !before_live.contains(id))
-                .expect("live stream must register with probe_stale()");
-            let _ = recovery.try_recv();
+            while recovery.try_recv().is_ok() {}
             clock.advance_wall_ms(45_000);
             probe_stale();
             let result = tokio::time::timeout(Duration::from_secs(2), wire_live)

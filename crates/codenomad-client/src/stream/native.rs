@@ -40,7 +40,7 @@ pub(super) async fn read_native(
     .await
 }
 
-pub(super) async fn read_native_with<C: Clock>(
+pub(super) async fn read_native_with<C: Clock + Clone>(
     b: &Backend,
     epoch: u64,
     out: &Sender<Input>,
@@ -117,7 +117,7 @@ pub(super) async fn read_frames<B: AsRef<[u8]>>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn read_frames_with<B: AsRef<[u8]>, C: Clock>(
+pub(super) async fn read_frames_with<B: AsRef<[u8]>, C: Clock + Clone>(
     b: &Backend,
     epoch: u64,
     out: &Sender<Input>,
@@ -132,12 +132,14 @@ pub(super) async fn read_frames_with<B: AsRef<[u8]>, C: Clock>(
     if let Some(quota) = &quota {
         quota.transport(true);
     }
-    let _quota_guard = QuotaGuard(quota.clone());
     // One bounded frame of read-ahead keeps SSE authority ahead of transcript dispatch.
     let (send, receive) = crate::bounded(1);
     let read_watchdog = watchdog.clone();
     let read_probe = probes.subscribe();
     let read = async move {
+        // Owned by the reader so transport authority drops immediately on EOF/error before
+        // route drains, and also on cancellation if route aborts on a stale pong.
+        let _quota_guard = QuotaGuard(quota.clone());
         let mut chunks = std::pin::pin!(chunks);
         let mut parser = Parser::default();
         loop {
@@ -182,11 +184,13 @@ pub(super) async fn read_frames_with<B: AsRef<[u8]>, C: Clock>(
         while let Ok(frame) = receive.recv().await {
             match frame {
                 Parsed::Data(kind, data) if kind == "codenomad.client.ping" => {
-                    // Pong POST is a network wait: keep staleness active so a dead link cuts it.
+                    // Pong POST is an independent network wait: a forked watchdog ensures frames
+                    // queued behind the ping in `read` cannot pause the pong deadline.
+                    let pong_watchdog = watchdog.fork();
                     let pong_probe = probes.subscribe();
                     match futures_lite::future::or(
                         async {
-                            watchdog.wait_until_stale(&pong_probe, None).await;
+                            pong_watchdog.wait_until_stale(&pong_probe, None).await;
                             Next::Stale
                         },
                         async {

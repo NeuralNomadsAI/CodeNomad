@@ -85,6 +85,14 @@ impl Watchdog<SystemClock> {
     }
 }
 
+impl<C: Clock + Clone> Watchdog<C> {
+    /// Creates an independent silence timer sharing the same clock and thresholds, unaffected
+    /// by local queue backpressure pauses on the parent stream reader.
+    pub(crate) fn fork(&self) -> Self {
+        Self::with_clock(self.clock.clone(), self.threshold, self.check_interval)
+    }
+}
+
 impl<C: Clock> Watchdog<C> {
     pub(crate) fn with_clock(clock: C, threshold: Duration, check_interval: Duration) -> Self {
         let last = clock.now();
@@ -178,6 +186,8 @@ fn probes() -> &'static Mutex<ProbeRegistry> {
 pub(crate) struct ProbeSource {
     #[cfg(test)]
     local: Option<Arc<Mutex<ProbeRegistry>>>,
+    #[cfg(test)]
+    captured: Option<Arc<Mutex<Vec<u64>>>>,
 }
 
 impl ProbeSource {
@@ -185,7 +195,21 @@ impl ProbeSource {
         Self {
             #[cfg(test)]
             local: None,
+            #[cfg(test)]
+            captured: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn global_capturing() -> (Arc<Mutex<Vec<u64>>>, Self) {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        (
+            captured.clone(),
+            Self {
+                local: None,
+                captured: Some(captured),
+            },
+        )
     }
 
     #[cfg(test)]
@@ -195,6 +219,7 @@ impl ProbeSource {
             LocalProbe(registry.clone()),
             Self {
                 local: Some(registry),
+                captured: None,
             },
         )
     }
@@ -217,6 +242,10 @@ impl ProbeSource {
         registry.next = registry.next.wrapping_add(1);
         let id = registry.next;
         registry.waiters.push((id, tx));
+        #[cfg(test)]
+        if let Some(captured) = &self.captured {
+            captured.lock().unwrap().push(id);
+        }
         ProbeSubscription {
             id,
             rx,
@@ -268,17 +297,6 @@ impl Drop for ProbeSubscription {
             .waiters
             .retain(|(k, _)| *k != self.id);
     }
-}
-
-#[cfg(test)]
-pub(crate) fn global_probe_ids() -> Vec<u64> {
-    probes()
-        .lock()
-        .unwrap()
-        .waiters
-        .iter()
-        .map(|(entry, _)| *entry)
-        .collect()
 }
 
 #[cfg(test)]
