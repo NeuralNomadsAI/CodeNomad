@@ -84,6 +84,7 @@ pub struct Launcher {
     connection_generation: u64,
     pending_connection_generation: u64,
     selection_ticket: Option<u64>,
+    close_mission_reader_on_bind: bool,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
     managed_renewal: Option<connection::ManagedRenewal>,
@@ -217,6 +218,7 @@ impl Launcher {
             connection_generation: 0,
             pending_connection_generation: 0,
             selection_ticket: None,
+            close_mission_reader_on_bind: false,
             boot,
             host: None,
             managed_renewal: None,
@@ -610,6 +612,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let pending_stream_generation = l.pending_stream_generation;
     let stopped_during_pending = std::mem::take(&mut l.stopped_during_pending);
     let stopped_during_pending_overflow = std::mem::take(&mut l.stopped_during_pending_overflow);
+    let close_mission_reader = std::mem::take(&mut l.close_mission_reader_on_bind);
     if l.selection_ticket
         .take()
         .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
@@ -868,10 +871,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.show_title = false;
                 if stale_connection {
                     dismiss_origin_panel(s, dismiss, tx);
-                    choose_destination(s, b.session, None, tx);
+                    if close_mission_reader {
+                        choose_mission_conversation(s, b.session, tx);
+                    } else {
+                        choose_destination(s, b.session, None, tx);
+                    }
                 } else {
                     dismiss_origin_panel(s, dismiss, tx);
-                    if allow_streaming {
+                    if close_mission_reader {
                         crate::workspace::close_mission_reader(s);
                     }
                     bind(s, b, title, visit, &slug, tx);

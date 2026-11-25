@@ -169,6 +169,19 @@ impl Panel {
             .or_else(|| self.detail.take_auth_expired())
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_ready_with_reader_auth_expired(
+        &mut self,
+        header: codenomad_client::missions::MapHeader,
+        expired: Backend,
+    ) {
+        self.supported = Some(true);
+        self.probe_attempted = true;
+        self.selected = Some(header.root.id.clone());
+        self.detail
+            .fixture_snapshot_and_auth_expired(header, expired);
+    }
+
     pub(crate) fn take_reader_copy(&mut self) -> Option<String> {
         self.reader.take_ready_copy()
     }

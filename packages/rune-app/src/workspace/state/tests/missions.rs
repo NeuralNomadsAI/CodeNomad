@@ -468,3 +468,104 @@ fn reconnect_event_abandons_preparing_briefing_without_posting() {
         );
     });
 }
+
+#[test]
+fn reader_auth_expired_in_same_poll_abandons_admitted_briefing_without_posting() {
+    crate::platform::block_on(async {
+        let http = test_http::Http::new().await;
+        let backend = http.backend.clone();
+        let identity = tokio::spawn(async move { backend.attest_server().await });
+        let meta = http.accept().await;
+        meta.reply(200, json!({"apiContract":1,"serverId":"fixture-server"}))
+            .await;
+        assert_eq!(
+            test_http::wait(identity).await.unwrap().unwrap(),
+            "fixture-server"
+        );
+        let mut s = init();
+        crate::gallery::shell::fixture(&mut s);
+        let mut ui = Ui::new();
+        ui.ready = true;
+        s.workspace = Some(ui);
+        let launcher = s.screen.launcher_mut().unwrap();
+        launcher.connection = Some(http.backend.clone());
+        launcher.server_id = Some("fixture-server".into());
+        let project = launcher.project.clone().unwrap();
+        let workspace_id = project.id.clone();
+        opened(&mut s, &project);
+        let mut proj_backend = http.backend.clone();
+        proj_backend.workspace.clone_from(&workspace_id);
+        let header: codenomad_client::missions::MapHeader = serde_json::from_str(HEADER).unwrap();
+        let header_for_panel: codenomad_client::missions::MapHeader =
+            serde_json::from_str(HEADER).unwrap();
+        let key = crate::missions::BriefingKey::new(&proj_backend, &header).unwrap();
+        let mut panel = crate::missions::Panel::new(
+            proj_backend.clone(),
+            None,
+            s.reads.clone(),
+            s.wake.clone(),
+        );
+        panel.fixture_ready_with_reader_auth_expired(header_for_panel, proj_backend.clone());
+        let tab_key = s.workspace.as_ref().unwrap().entries[0].key.clone();
+        let (out, cancelled) = {
+            let ui = s.workspace.as_mut().unwrap();
+            if let Tab::Workspace(saved) = &mut ui.entries[0].saved {
+                saved.view.right_panel = RightPanelTab::Missions;
+                saved.view.selected_mission = Some(header.root.id.clone());
+            }
+            ui.entries[0].missions = Some(panel);
+            ui.mission_briefing.fixture_preparing(
+                &key,
+                "req-401-race",
+                &tab_key,
+                proj_backend.clone(),
+                &header,
+            )
+        };
+        out.try_send(codenomad_client::missions::BriefingAdmissionOutcome::Admitted)
+            .unwrap();
+        let mut rt =
+            rune::Runtime::new(s, crate::view, (1400.0, 880.0), rune::Env::new(false, 1.0));
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(rt.state.shell.visible(1), "right panel laid out");
+        let mut expired = Vec::new();
+        rt.update(|s, tx| {
+            let mut ui = s.workspace.take().unwrap();
+            let (_, auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
+            s.workspace = Some(ui);
+            expired = auth_expired;
+            for backend in &expired {
+                crate::settings::authentication_required(s, backend);
+            }
+            tx.instant();
+        });
+        assert_eq!(
+            expired.len(),
+            1,
+            "poll_missions must surface the reader 401"
+        );
+        assert!(
+            cancelled.is_closed(),
+            "reader 401 in the same poll must cancel Preparing before reconcile can POST"
+        );
+        assert_eq!(
+            rt.state
+                .workspace
+                .as_ref()
+                .unwrap()
+                .mission_briefing
+                .visible_phase(&key, &header),
+            Some(&crate::missions::BriefingPhase::Error)
+        );
+        assert!(
+            rt.state
+                .screen
+                .launcher()
+                .is_some_and(|l| l.authentication_required),
+            "reader 401 must transition the launcher to authentication_required"
+        );
+        http.quiet().await;
+    });
+}

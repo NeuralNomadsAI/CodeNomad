@@ -467,9 +467,11 @@ pub(super) fn poll_missions(
             if panel.take_reader_focus_close() && panel.has_reader() {
                 tx.focus("mission-reader-close", tx.focus_visible());
             }
-            panel.show(panel.supported() && visible);
-            if panel.supported() && visible {
-                panel.settle_controls(&entry.key, &mut ui.mission_lifecycle, &finished);
+            if !reader_auth_expired {
+                panel.show(panel.supported() && visible);
+                if panel.supported() && visible {
+                    panel.settle_controls(&entry.key, &mut ui.mission_lifecycle, &finished);
+                }
             }
             if saved.view.selected_mission != panel.selected {
                 saved.view.selected_mission.clone_from(&panel.selected);
@@ -478,7 +480,8 @@ pub(super) fn poll_missions(
         }
     }
     let active_entry = &ui.entries[ui.active];
-    let active_briefing = (mounted
+    let active_briefing = (auth_expired.is_empty()
+        && mounted
         && matches!(&active_entry.saved, Tab::Workspace(saved)
             if saved.view.right_panel == RightPanelTab::Missions))
     .then(|| {

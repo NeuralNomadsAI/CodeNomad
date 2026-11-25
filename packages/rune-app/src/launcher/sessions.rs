@@ -310,6 +310,7 @@ pub(crate) fn choose_child_ticket(s: &mut State, id: String, ticket: Option<u64>
             s.shell.floating_sessions(),
             ticket,
             true,
+            false,
         );
     }
 }
@@ -324,7 +325,14 @@ pub(crate) fn choose_mission_conversation(s: &mut State, id: String, tx: &mut Tx
             s.shell.close_floating(tx);
         }
     } else {
-        choose_from_inner(s, vec![(id, None)], s.shell.floating_panel(), None, true);
+        choose_from_inner(
+            s,
+            vec![(id, None)],
+            s.shell.floating_panel(),
+            None,
+            true,
+            true,
+        );
     }
 }
 
@@ -346,7 +354,7 @@ fn choose_from(
     dismiss: Option<u64>,
     ticket: Option<u64>,
 ) {
-    choose_from_inner(s, candidates, dismiss, ticket, false);
+    choose_from_inner(s, candidates, dismiss, ticket, false, false);
 }
 fn choose_from_inner(
     s: &mut State,
@@ -354,6 +362,7 @@ fn choose_from_inner(
     dismiss: Option<u64>,
     ticket: Option<u64>,
     allow_streaming: bool,
+    close_mission_reader: bool,
 ) {
     let recovery = candidates
         .first()
@@ -380,6 +389,7 @@ fn choose_from_inner(
         return;
     };
     l.selection_ticket = ticket;
+    l.close_mission_reader_on_bind = close_mission_reader;
     l.job("sessionList.reload.error", async move {
         let mut missing = Vec::new();
         for (id, step) in candidates {

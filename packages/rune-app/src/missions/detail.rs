@@ -186,6 +186,18 @@ impl Detail {
     pub fn take_auth_expired(&mut self) -> Option<Backend> {
         self.auth_expired.take()
     }
+    #[cfg(test)]
+    pub fn fixture_snapshot_and_auth_expired(&mut self, header: MapHeader, expired: Backend) {
+        self.id.clone_from(&header.root.id);
+        self.snapshot = Some(Snapshot {
+            header,
+            tasks: Rc::new(TaskRows::new(Vec::new())),
+            reports: HashMap::new(),
+            end: 0,
+            attention_end: 0,
+        });
+        self.auth_expired = Some(expired);
+    }
     pub fn more(&mut self) {
         if !self.busy()
             && self
