@@ -16,6 +16,7 @@ const CLOSE_KEY: &str = "command-palette-close";
 #[derive(Default)]
 pub(crate) struct Palette {
     open: bool,
+    scope: Option<std::rc::Rc<()>>,
     query: TextEdit,
     selected_id: Option<&'static str>,
     return_focus: Option<String>,
@@ -23,19 +24,34 @@ pub(crate) struct Palette {
     close_control: WindowCloseState,
 }
 
+impl Palette {
+    pub(crate) fn dismiss(&mut self) {
+        self.open = false;
+        self.scope = None;
+        self.query = TextEdit::new("");
+        self.selected_id = None;
+        self.return_focus = None;
+        self.close_control = WindowCloseState::default();
+    }
+}
+
 pub(crate) fn is_open(s: &State) -> bool {
     s.command_palette.open
+        && s.command_palette
+            .scope
+            .as_ref()
+            .is_some_and(|scope| s.current_scope(scope))
 }
 
 pub(crate) fn is_composing(s: &State) -> bool {
-    s.command_palette.open && s.command_palette.query.is_composing()
+    is_open(s) && s.command_palette.query.is_composing()
 }
 
 pub(crate) fn measure(s: &mut State, [_, _, width, height]: [f32; 4], tx: &mut Tx) -> bool {
     let viewport = &mut s.command_palette.viewport;
     if *viewport != (width, height) {
         *viewport = (width, height);
-        if s.command_palette.open {
+        if is_open(s) {
             tx.instant();
         }
         true
@@ -44,24 +60,54 @@ pub(crate) fn measure(s: &mut State, [_, _, width, height]: [f32; 4], tx: &mut T
     }
 }
 
+pub(super) fn blocked_by_higher_modal(s: &State) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    if crate::platform::pairing::required(s) {
+        return true;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if crate::chat::authentication::open(s) {
+        return true;
+    }
+    super::shortcuts::authentication_required(s)
+}
+
+fn blocked_for_open(s: &State) -> bool {
+    blocked_by_higher_modal(s) || super::shortcuts::modal_open(s)
+}
+
 pub(crate) fn open(s: &mut State, tx: &mut Tx) {
-    if s.command_palette.open {
+    if is_open(s) || blocked_for_open(s) {
         return;
     }
-    super::Panels::dismiss_outside(s, tx);
     let prior = tx.focused().map(str::to_owned);
+    let floating_fallback = if s.shell.floating_sessions().is_some() {
+        Some("sessions-panel-toggle".to_owned())
+    } else if s.shell.has_floating() {
+        Some("right-panel-toggle".to_owned())
+    } else {
+        None
+    };
+    let return_focus = match (prior.as_deref(), floating_fallback) {
+        (Some(theme::TRIGGER), _) => prior,
+        (_, Some(toggle_key)) => Some(toggle_key),
+        _ => prior,
+    };
+    super::Panels::dismiss_outside(s, tx);
+    let scope = s.input_scope.clone();
     let palette = &mut s.command_palette;
     palette.open = true;
+    palette.scope = Some(scope);
     palette.query = TextEdit::new("");
     palette.query.focused = true;
     palette.selected_id = None;
-    palette.return_focus = prior;
+    palette.return_focus = return_focus;
     tx.focus_when_shown(FOCUS, true);
     tx.instant();
 }
 
 pub(crate) fn close(s: &mut State, tx: &mut Tx) {
-    if !s.command_palette.open {
+    if !is_open(s) {
         return;
     }
     let target = take_closed_state(s);
@@ -78,12 +124,9 @@ pub(crate) fn toggle(s: &mut State, tx: &mut Tx) {
 }
 
 fn take_closed_state(s: &mut State) -> Option<String> {
-    let palette = &mut s.command_palette;
-    palette.open = false;
-    palette.query = TextEdit::new("");
-    palette.selected_id = None;
-    palette.close_control = WindowCloseState::default();
-    palette.return_focus.take()
+    let target = s.command_palette.return_focus.take();
+    s.command_palette.dismiss();
+    target
 }
 
 fn restore_focus(target: Option<String>, tx: &mut Tx) {
@@ -172,34 +215,11 @@ fn is_plain_text_key(event: &KeyEvent) -> bool {
         && !event.mods.logo
 }
 
-fn blocked_by_higher_modal(s: &State) -> bool {
-    #[cfg(target_arch = "wasm32")]
-    if crate::platform::pairing::required(s) {
-        return true;
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    if crate::chat::authentication::open(s) {
-        return true;
-    }
-    false
-}
-
 pub(crate) fn handle_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if !is_open(s) || is_composing(s) || blocked_by_higher_modal(s) {
         return false;
     }
     if event.key == Key::Escape && event.mods == Mods::default() {
-        if !tx.key_repeat() {
-            close(s, tx);
-        }
-        return true;
-    }
-    if !is_plain_text_key(event)
-        && settings::match_shortcut(s, event, tx, |matches| {
-            matches("open-command-palette").then_some(())
-        })
-        .is_some()
-    {
         if !tx.key_repeat() {
             close(s, tx);
         }
@@ -231,6 +251,17 @@ pub(crate) fn handle_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             }
             _ => {}
         }
+    }
+    if !is_plain_text_key(event)
+        && settings::match_shortcut(s, event, tx, |matches| {
+            matches("open-command-palette").then_some(())
+        })
+        .is_some()
+    {
+        if !tx.key_repeat() {
+            close(s, tx);
+        }
+        return true;
     }
     false
 }

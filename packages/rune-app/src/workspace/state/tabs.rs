@@ -232,6 +232,18 @@ pub fn new_tab(s: &mut State, tx: &mut Tx) {
     super::history_budget::enforce(s);
     capture(s);
 }
+pub fn can_close_active(s: &State) -> bool {
+    s.workspace
+        .as_ref()
+        .is_some_and(|ui| !busy(s) && !close_blocked(s, ui.active))
+}
+
+pub fn can_switch_tabs(s: &State) -> bool {
+    s.workspace
+        .as_ref()
+        .is_some_and(|ui| ui.entries.len() > 1 && !busy(s))
+}
+
 pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     crate::shell::Panels::dismiss_outside(s, tx);
     if busy(s) {

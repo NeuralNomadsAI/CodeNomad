@@ -83,6 +83,7 @@ impl State {
     pub fn renew_scope(&mut self) {
         self.input_scope = Rc::new(());
         self.composer.menu = Default::default();
+        self.command_palette.dismiss();
         #[cfg(target_arch = "wasm32")]
         self.rotate_composer_input();
     }

@@ -25,11 +25,11 @@ fn can_queue(s: &State) -> bool {
         && can_send(s)
 }
 
-fn can_clear(s: &State) -> bool {
+pub(crate) fn can_clear(s: &State) -> bool {
     !s.draft.text.is_empty() && !s.composer.editing_locked() && !s.composer.device.busy()
 }
 
-pub(super) fn clear(s: &mut State, tx: &mut Tx) {
+pub(crate) fn clear(s: &mut State, tx: &mut Tx) {
     if !can_clear(s) {
         return;
     }

@@ -86,7 +86,7 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
         items.push(CommandItem {
             id: "new-instance",
             label: t("commands.newInstance.label"),
-            description: Some(t("commands.newInstance.description")),
+            description: None,
             keywords: t("commands.newInstance.keywords"),
             category: Category::Instance,
             shortcut_id: Some("new-instance"),
@@ -99,9 +99,10 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
             keywords: t("commands.closeInstance.keywords"),
             category: Category::Instance,
             shortcut_id: Some("close-instance"),
-            disabled: !workspace_ready,
+            disabled: !workspace::can_close_active(s),
         });
         if tab_count > 1 {
+            let can_switch = workspace::can_switch_tabs(s);
             items.push(CommandItem {
                 id: "next-instance",
                 label: t("commands.nextInstance.label"),
@@ -109,7 +110,7 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
                 keywords: t("commands.nextInstance.keywords"),
                 category: Category::Instance,
                 shortcut_id: Some("instance-next"),
-                disabled: !workspace_ready,
+                disabled: !can_switch,
             });
             items.push(CommandItem {
                 id: "previous-instance",
@@ -118,7 +119,7 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
                 keywords: t("commands.previousInstance.keywords"),
                 category: Category::Instance,
                 shortcut_id: Some("instance-prev"),
-                disabled: !workspace_ready,
+                disabled: !can_switch,
             });
         }
     }
@@ -141,6 +142,11 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
 
     // Session commands
     if project_open {
+        let can_create_session = session_nav_allowed
+            && !crate::git::placement_unconfirmed(s)
+            && s.screen.launcher().is_some_and(|l| {
+                !l.creation_uncertain && l.connection.is_some() && l.project.is_some()
+            });
         items.push(CommandItem {
             id: "new-session",
             label: t("commands.newSession.label"),
@@ -148,9 +154,27 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
             keywords: t("commands.newSession.keywords"),
             category: Category::Session,
             shortcut_id: Some("session-new"),
-            disabled: !session_nav_allowed,
+            disabled: !can_create_session,
         });
         if session_open {
+            let tab_key = s.workspace.as_ref().map(|ui| ui.active_key()).or_else(|| {
+                s.screen
+                    .launcher()
+                    .and_then(|l| l.project.as_ref())
+                    .map(|p| p.id.as_str())
+            });
+            let can_close_session = session_nav_allowed
+                && !s.composer.device.busy()
+                && !tab_key.is_some_and(|key| s.documents.has_tab_edits(key))
+                && !s
+                    .files
+                    .as_ref()
+                    .is_some_and(|ui| ui.document.pending() || ui.document.dirty())
+                && (s.workspace.is_some()
+                    || (s.draft.text.is_empty()
+                        && s.composer.draft.attachments.is_empty()
+                        && s.composer.unconfirmed_id().is_none()
+                        && s.composer.command_unconfirmed.is_none()));
             items.push(CommandItem {
                 id: "close-session",
                 label: t("commands.closeSession.label"),
@@ -158,7 +182,7 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
                 keywords: t("commands.closeSession.keywords"),
                 category: Category::Session,
                 shortcut_id: Some("close-session"),
-                disabled: !session_nav_allowed,
+                disabled: !can_close_session,
             });
         }
         if s.screen
@@ -199,9 +223,6 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
 
     // Input & Focus commands
     if session_open {
-        let empty = s.draft.text.is_empty()
-            && s.composer.draft.attachments.is_empty()
-            && s.composer.draft.literal_spans.is_empty();
         items.push(CommandItem {
             id: "clear-input",
             label: t("commands.clearInput.label"),
@@ -209,7 +230,7 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
             keywords: t("commands.clearInput.keywords"),
             category: Category::InputFocus,
             shortcut_id: None,
-            disabled: empty || s.composer.pending() || s.composer.editing_locked(),
+            disabled: !crate::composer::menu::can_clear(s),
         });
     }
 
@@ -320,16 +341,7 @@ pub(super) fn execute(s: &mut State, id: &str, tx: &mut Tx) {
         "next-session" => shortcuts::select_relative_session(s, true, tx),
         "previous-session" => shortcuts::select_relative_session(s, false, tx),
         "session-search" => crate::timeline::search::open(s, tx),
-        "clear-input" => {
-            if !s.composer.pending() && !s.composer.editing_locked() {
-                s.draft.clear();
-                s.composer.draft = Default::default();
-                s.composer.picker.reset();
-                s.composer.recall = None;
-                s.composer.mark_edited();
-                workspace::draft_changed(s, tx);
-            }
-        }
+        "clear-input" => crate::composer::menu::clear(s, tx),
         "toggle-left-panel" => crate::shell::toggle_panel(s, 0, tx),
         "toggle-right-panel" => crate::shell::toggle_panel(s, 1, tx),
         "open-notifications" => notifications::open_history(s, tx),

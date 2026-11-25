@@ -1,6 +1,9 @@
 mod tabs;
 use tabs::{activate, close_blocked};
-pub use tabs::{can_new, close, new_tab, select, select_index, select_relative};
+pub use tabs::{
+    can_close_active, can_new, can_switch_tabs, close, new_tab, select, select_index,
+    select_relative,
+};
 
 mod drafts;
 mod notification;

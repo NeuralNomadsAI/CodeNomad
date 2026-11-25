@@ -231,8 +231,9 @@ fn filtering_grouping_shortcut_badges_and_empty_state_match_solid() {
             vec!["next-instance"]
         );
 
-        let by_description = commands::filter("FOLDER PICKER", all.clone());
-        assert!(by_description.iter().any(|c| c.id == "new-instance"));
+        let by_description = commands::filter("PARENT SESSION", all.clone());
+        assert!(by_description.iter().any(|c| c.id == "new-session"));
+        assert!(by_description.iter().any(|c| c.id == "close-session"));
 
         let by_keyword = commands::filter("RESET", all.clone());
         assert_eq!(
@@ -420,4 +421,111 @@ fn non_english_locale_filters_and_executes_localized_commands() {
     send_key(&mut rt, Key::Enter, Mods::default());
     assert!(!is_open(&rt.state));
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+}
+
+#[test]
+fn scope_renewal_auth_trigger_attachments_floating_focus_and_rebound_nav_are_safe() {
+    let mut rt = runtime(workspace_state(2));
+    rt.state.draft = TextEdit::new("tab-0 draft");
+    rt.state
+        .composer
+        .draft
+        .attachments
+        .push(crate::composer::draft::Attachment::Path("README.md".into()));
+
+    // 1. Background tab switch / scope renewal dismisses open palette so Enter cannot wipe new tab's draft.
+    send_key(&mut rt, Key::Command('p'), primary_mods(true));
+    assert!(is_open(&rt.state));
+    rt.paste("clear input");
+    settle(&mut rt);
+    rt.update(|s, tx| workspace::select(s, "tab-1", tx));
+    settle(&mut rt);
+    assert!(!is_open(&rt.state));
+    rt.state.draft = TextEdit::new("tab-1 protected draft");
+    send_key(&mut rt, Key::Enter, Mods::default());
+    assert_eq!(rt.state.draft.text, "tab-1 protected draft");
+
+    // Return to tab 0: Clear Input clears text via undoable edit while preserving attachments.
+    rt.update(|s, tx| workspace::select(s, "tab-0", tx));
+    settle(&mut rt);
+    assert_eq!(rt.state.draft.text, "tab-0 draft");
+    assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+    send_key(&mut rt, Key::Command('p'), primary_mods(true));
+    rt.paste("clear input");
+    settle(&mut rt);
+    send_key(&mut rt, Key::Enter, Mods::default());
+    assert!(!is_open(&rt.state));
+    assert!(rt.state.draft.text.is_empty());
+    assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+    // Attachment-only draft keeps Clear Input disabled.
+    strings::with_locale("en", || {
+        let items = visible_commands(&rt.state);
+        assert!(
+            items
+                .iter()
+                .find(|c| c.id == "clear-input")
+                .unwrap()
+                .disabled
+        );
+    });
+
+    // 2. Trigger action (toggle/open) refuses to open when authentication_required is set.
+    if let Screen::Chat { launcher: Some(l) } = &mut rt.state.screen {
+        l.authentication_required = true;
+    }
+    rt.update(|s, tx| toggle(s, tx));
+    settle(&mut rt);
+    assert!(!is_open(&rt.state));
+    if let Screen::Chat { launcher: Some(l) } = &mut rt.state.screen {
+        l.authentication_required = false;
+    }
+
+    // 3. creation_uncertain disables new-session in the palette.
+    if let Screen::Chat { launcher: Some(l) } = &mut rt.state.screen {
+        l.creation_uncertain = true;
+    }
+    strings::with_locale("en", || {
+        let items = visible_commands(&rt.state);
+        assert!(
+            items
+                .iter()
+                .find(|c| c.id == "new-session")
+                .unwrap()
+                .disabled
+        );
+    });
+    if let Screen::Chat { launcher: Some(l) } = &mut rt.state.screen {
+        l.creation_uncertain = false;
+    }
+
+    // 4. Rebinding open-command-palette to ArrowDown still lets ArrowDown navigate inside the open palette.
+    settings::fixture_shortcuts(
+        &rt.state,
+        json!({
+            "open-command-palette": [{"key": "ArrowDown"}]
+        }),
+    );
+    send_key(&mut rt, Key::Down, Mods::default());
+    assert!(is_open(&rt.state));
+    let before = rt.state.command_palette.selected_id;
+    send_key(&mut rt, Key::Down, Mods::default());
+    assert!(is_open(&rt.state));
+    assert_ne!(rt.state.command_palette.selected_id, before);
+    send_key(&mut rt, Key::Escape, Mods::default());
+    assert!(!is_open(&rt.state));
+
+    // 5. Opening from a floating drawer restores focus to the drawer toggle instead of an unmounted row.
+    settings::fixture_shortcuts(&rt.state, json!({}));
+    rt.set_viewport((390.0, 900.0), 1.0);
+    settle(&mut rt);
+    click(&mut rt, "sessions-panel-toggle");
+    assert!(rt.state.shell.floating_sessions().is_some());
+    rt.update(|_, tx| tx.focus("session-session", true));
+    settle(&mut rt);
+    send_key(&mut rt, Key::Command('p'), primary_mods(true));
+    assert!(is_open(&rt.state));
+    assert!(rt.state.shell.floating_sessions().is_none());
+    send_key(&mut rt, Key::Escape, Mods::default());
+    assert!(!is_open(&rt.state));
+    assert_eq!(focused_key(&rt).as_deref(), Some("sessions-panel-toggle"));
 }

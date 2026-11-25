@@ -97,7 +97,7 @@ pub(super) fn field_key_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
     no_command_mod && (is_field_nav || is_context_menu) && focused_text_field(s, tx)
 }
 
-fn authentication_required(s: &State) -> bool {
+pub(super) fn authentication_required(s: &State) -> bool {
     s.screen
         .launcher()
         .is_some_and(|l| l.authentication_required)

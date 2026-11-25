@@ -40,7 +40,7 @@ pub fn modal<S: 'static>(
     let inset = t.space(Space::Md).px();
     let vw = if viewport.0 > 0.0 { viewport.0 } else { 1400.0 };
     let vh = if viewport.1 > 0.0 { viewport.1 } else { 900.0 };
-    let width = (vw - inset * 2.0).clamp(240.0, 600.0);
+    let width = (vw - inset * 2.0).clamp(0.0, 600.0);
     let left = ((vw - width) / 2.0).max(inset);
     let top = (vh * 0.12).clamp(inset, 96.0);
     let toolbar = row()
@@ -72,17 +72,22 @@ pub fn modal<S: 'static>(
 }
 
 pub fn list(title: &str, viewport_height: f32, rows: impl IntoIterator<Item = El>) -> El {
+    let t = tokens(layout::dark());
+    let inset = t.space(Space::Md).px();
     let vh = if viewport_height > 0.0 {
         viewport_height
     } else {
         900.0
     };
+    let top = (vh * 0.12).clamp(inset, 96.0);
+    let available = (vh - top - 88.0).max(0.0);
+    let max_height = available.min((vh * 0.6).min(420.0));
     col()
         .key("command-palette-list")
         .role("listbox")
         .label(title)
         .full_width()
-        .max_h((vh * 0.6).clamp(160.0, 420.0))
+        .max_h(max_height)
         .pad(Space::Xs)
         .separate(Space::Xs)
         .scroll(ScrollSpec {

@@ -1,6 +1,6 @@
 use super::{
-    CLOSE_KEY, FIELD, close, commands::Category, execute_by_id, handle_key, is_open,
-    resolved_selection, toggle, visible_commands,
+    CLOSE_KEY, FIELD, blocked_by_higher_modal, close, commands::Category, execute_by_id,
+    handle_key, is_open, resolved_selection, toggle, visible_commands,
 };
 use crate::{
     State,
@@ -24,11 +24,14 @@ pub(crate) fn trigger(s: &State, touch: bool) -> El {
 }
 
 pub(crate) fn overlay(s: &State) -> Option<El> {
-    if !is_open(s) {
+    if !is_open(s) || blocked_by_higher_modal(s) {
         return None;
     }
     let palette = &s.command_palette;
-    let scope = s.input_scope.clone();
+    let scope = palette
+        .scope
+        .clone()
+        .unwrap_or_else(|| s.input_scope.clone());
     let render_locale = locale();
     let title = t("commandPalette.title");
     let search_field = layout::hinted_field(&palette.query, t("commandPalette.searchPlaceholder"))
