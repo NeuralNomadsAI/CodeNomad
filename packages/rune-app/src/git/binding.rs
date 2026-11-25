@@ -111,6 +111,37 @@ pub(crate) fn fixture_open_picker(s: &mut State) {
 }
 
 #[cfg(test)]
+pub(crate) fn fixture_worktrees(s: &mut State) {
+    if let Some(ui) = s.git.owner.as_mut() {
+        ui.online = true;
+        ui.shown = true;
+        ui.inventory = Some(codenomad_client::git::Worktrees {
+            repository: codenomad_client::git::Repository::Git,
+            trees: vec![
+                codenomad_client::git::Worktree {
+                    slug: "root".into(),
+                    label: None,
+                    directory: "D:/repo".into(),
+                    service_directory: None,
+                    branch: Some("main".into()),
+                    head: None,
+                    missing: false,
+                },
+                codenomad_client::git::Worktree {
+                    slug: "review".into(),
+                    label: None,
+                    directory: "D:/repo-review".into(),
+                    service_directory: None,
+                    branch: Some("feature".into()),
+                    head: None,
+                    missing: false,
+                },
+            ],
+        });
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn fixture_online(s: &State) -> Option<bool> {
     s.git.owner.as_ref().map(|ui| ui.online)
 }

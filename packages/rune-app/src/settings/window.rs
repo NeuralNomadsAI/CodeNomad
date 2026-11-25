@@ -31,6 +31,7 @@ pub(crate) fn direct_entry(s: &State, touch: bool) -> El {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn open(s: &mut State) {
+    s.shell.leave_project();
     open_window(s, false);
 }
 

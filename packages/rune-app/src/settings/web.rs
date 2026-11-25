@@ -251,6 +251,7 @@ pub(super) fn entry(touch: bool) -> El {
 }
 
 fn open(s: &mut State) {
+    s.shell.leave_project();
     let target = Target::capture(s);
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.provider_target = target;

@@ -22,6 +22,7 @@ pub(crate) use binding::{
 #[cfg(test)]
 pub(crate) use binding::{
     fixture_commit_draft, fixture_commit_preedit, fixture_online, fixture_open_picker,
+    fixture_worktrees,
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};

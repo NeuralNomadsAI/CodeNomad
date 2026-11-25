@@ -17,16 +17,29 @@ use rune_theme_codenomad::{
 
 pub(crate) use panels::{Panels, toggle as toggle_panel};
 
+fn touch_controls(s: &State, cx: &Cx<State>) -> bool {
+    let _ = s;
+    #[cfg(test)]
+    if s.shell.touch_override {
+        return true;
+    }
+    cx.touch_controls()
+}
+
 pub fn view(
     s: &State,
     cx: &mut Cx<State>,
     conversation: impl FnOnce(&State, &mut Cx<State>) -> El,
 ) -> El {
+    let touch = touch_controls(s, cx);
     let mut root = col()
         .key("application-shell")
         .full_width()
         .full_height()
-        .reading_surface();
+        .reading_surface()
+        .on_layout_tx(move |s: &mut State, [_, _, width, height], tx| {
+            s.shell.measure(width, height, touch, tx)
+        });
     if crate::platform::titlebar::available() {
         root = root.child(crate::platform::titlebar::view(s, cx));
     }
@@ -55,8 +68,10 @@ pub fn view(
     } else {
         root.child(
             rune::row()
-                .child(crate::settings::direct_entry(s, cx.touch_controls()))
-                .child(notifications::history_entry(s, cx.touch_controls())),
+                .full_width()
+                .on_background_press_tx(Panels::dismiss_outside)
+                .child(crate::settings::direct_entry(s, touch))
+                .child(notifications::history_entry(s, touch)),
         )
         .child(body(s, cx, conversation).remaining())
     }
@@ -78,7 +93,7 @@ fn body(
         }
         Screen::Chat { .. } => conversation(s, cx),
     };
-    panels::view(s, cx.touch_controls(), has_project, body)
+    panels::view(s, touch_controls(s, cx), has_project, body)
 }
 
 pub(crate) fn launcher_replaces_project(s: &State) -> bool {
@@ -126,7 +141,7 @@ fn connection(s: &State) -> &'static str {
 
 pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     use rune::{Key, Mods};
-    if shortcuts::modal_open(s) {
+    if shortcuts::modal_open(s) || crate::git::overlay_open(s) {
         return false;
     }
     if crate::timeline::search::close_key(s, event, tx) {
@@ -136,7 +151,7 @@ pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> 
         return true;
     }
     if event.key == Key::Tab && !event.mods.ctrl && !event.mods.cmd && !event.mods.alt {
-        return s.shell.wrap_floating_focus(event.mods.shift, tx);
+        return panels::wrap_floating_focus(s, event.mods.shift, tx);
     }
     if event.key == Key::Function(6) && s.shell.has_floating() {
         return !event.mods.ctrl && !event.mods.cmd && !event.mods.alt;
@@ -187,6 +202,8 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     false
 }
 
+#[cfg(test)]
+mod mobile_drawer_tests;
 #[cfg(test)]
 mod shortcuts_tests;
 #[cfg(test)]

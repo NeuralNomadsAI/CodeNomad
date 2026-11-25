@@ -194,7 +194,7 @@ pub(super) fn select_destination(s: &mut State, id: &str, tx: &mut Tx) {
         return;
     };
     if s.workspace.as_ref().is_some_and(|ui| ui.active == index) {
-        s.shell.leave_project();
+        crate::shell::Panels::dismiss_outside(s, tx);
         return;
     }
     if busy(s) {

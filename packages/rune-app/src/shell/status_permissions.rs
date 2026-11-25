@@ -328,6 +328,14 @@ fn retry(s: &State) -> El {
     )
 }
 
+pub(super) fn has_section(s: &State) -> bool {
+    s.status_permissions.backend.is_some()
+}
+
+pub(super) fn expanded(s: &State) -> bool {
+    s.status_permissions.expanded
+}
+
 pub(super) fn view(s: &State) -> Option<El> {
     let owner = &s.status_permissions;
     owner.backend.as_ref()?;

@@ -203,6 +203,7 @@ pub(crate) fn entry(s: &State, touch: bool) -> El {
         inbox.opened.is_some(),
         touch,
         |s: &mut State, tx| {
+            crate::shell::Panels::dismiss_outside(s, tx);
             if s.notifications.in_app.opened.is_some() {
                 close(s, tx);
             } else {

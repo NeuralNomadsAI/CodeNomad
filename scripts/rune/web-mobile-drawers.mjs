@@ -1,0 +1,318 @@
+import assert from 'node:assert/strict'
+import {writeFile} from 'node:fs/promises'
+import path from 'node:path'
+import {chromium} from 'playwright'
+import {bundleAssetPaths, fulfillWorkspaceCreation, workspacePolicy} from './web-workspace-policy.mjs'
+
+function samePath(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false
+  return process.platform === 'win32'
+    ? a.replaceAll('\\', '/').toLowerCase() === b.replaceAll('\\', '/').toLowerCase()
+    : a === b
+}
+
+export async function mobileDrawersBrowser({values, m, out, storage, url, root}) {
+  const assets = await bundleAssetPaths(path.resolve(root, process.env.RUNE_WEB_DIR ?? 'target/rune-web-connected'))
+  const linked = path.join(path.dirname(values.project), 'linked')
+  const ownedDirectory = dir => samePath(dir, values.project) || samePath(dir, linked)
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: values.executable,
+    args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader'],
+  })
+  const proof = {
+    runner: 'web-mobile-drawers',
+    emulation: 'Chromium Playwright (isMobile+hasTouch), not Android ADB/Gboard',
+    origin: url.origin,
+    phone: {},
+    tablet: {},
+    refused: [],
+    errors: [],
+  }
+
+  const mirror = page => page.locator('[data-rune-a11y]')
+  const button = (page, name) => mirror(page).getByRole('button', {name, exact: true})
+  const paint = page => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))
+  const flush = async page => {
+    await page.waitForTimeout(180)
+    await paint(page)
+  }
+  const resize = async (page, size) => {
+    await page.setViewportSize(size)
+    await page.waitForFunction(({width, height}) => {
+      const canvas = document.querySelector('canvas')?.getBoundingClientRect()
+      return canvas && Math.abs(canvas.width - width) < 1 && Math.abs(canvas.height - height) < 1
+    }, size)
+    await flush(page)
+  }
+  const press = async locator => {
+    await locator.waitFor({state: 'attached'})
+    for (const deadline = Date.now() + 20000; await locator.evaluate(el => el.disabled || el.getAttribute('aria-disabled') === 'true');) {
+      assert(Date.now() < deadline, 'Control remained disabled')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    await locator.click({force: true})
+  }
+  const waitExpanded = async (locator, expected) => {
+    await locator.waitFor({state: 'attached'})
+    for (const deadline = Date.now() + 10000; (await locator.getAttribute('aria-expanded')) !== String(expected);) {
+      assert(Date.now() < deadline, `Expected aria-expanded=${expected}, got ${await locator.getAttribute('aria-expanded')}`)
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
+  }
+
+  const createPage = async ({width, height, colorScheme}) => {
+    const policy = workspacePolicy({origin: url.origin, project: values.project, assets})
+    const context = await browser.newContext({
+      viewport: {width, height},
+      deviceScaleFactor: 1,
+      colorScheme,
+      isMobile: true,
+      hasTouch: true,
+      storageState: storage,
+    })
+    await context.route('**/*', async route => {
+      const req = route.request(), u = new URL(req.url()), p = u.pathname
+      let allowed = await policy.request(req)
+      if (!allowed && u.origin === url.origin && (await req.allHeaders()).cookie) {
+        const [, id, tail] = p.match(/^\/api\/workspaces\/([^/]+)\/(files|worktrees\/[^/]+\/git-status)$/) ?? []
+        const [, nativeId, nativeTail] = p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(location|worktree(?:\/refresh)?)$/) ?? []
+        if (req.method() === 'GET' && policy.workspaces.has(id)) {
+          if (tail === 'files') {
+            allowed = ownedDirectory(u.searchParams.get('directory')) && ['.', ''].includes(u.searchParams.get('path') ?? '')
+          } else {
+            allowed = true
+          }
+        } else if (policy.workspaces.has(nativeId)) {
+          if (req.method() === 'GET' && nativeTail === 'location') {
+            allowed = ownedDirectory(u.searchParams.get('location[directory]') ?? values.project)
+          } else if (nativeTail === 'worktree' && req.method() === 'GET') {
+            allowed = true
+          } else if (nativeTail === 'worktree/refresh' && req.method() === 'POST') {
+            allowed = true
+          }
+        }
+      }
+      if (!allowed) {
+        proof.refused.push(`${req.method()} ${p}${u.search}`)
+        return route.abort('blockedbyclient')
+      }
+      if (req.method() === 'POST' && p === '/api/workspaces') return fulfillWorkspaceCreation(route, policy)
+      return route.continue()
+    })
+    const page = await context.newPage()
+    page.setDefaultTimeout(20000)
+    page.on('pageerror', error => proof.errors.push(error.message))
+    await page.goto(url.href, {waitUntil: 'domcontentloaded', timeout: 60000})
+    await page.waitForFunction(() => globalThis.__codenomadRuneBoot?.state === 'ready', undefined, {timeout: 60000})
+    await (await page.waitForFunction(() => ['web.handover.done', 'web.gpu.failed', 'web.handover.failed']
+      .some(name => performance.getEntriesByName(name).length))).dispose()
+    await press(button(page, m['folderSelection.servers.dialog.connect']))
+    for (const deadline = Date.now() + 20000;;) {
+      const input = page.locator('textarea:focus')
+      if (await input.count() && await input.getAttribute('aria-label') === m['instanceInfo.labels.folder']) {
+        await input.fill(values.project)
+        await page.keyboard.press('Enter')
+        break
+      }
+      assert(Date.now() < deadline, 'Project path textarea must be focusable')
+      await page.keyboard.press('Tab')
+      await page.waitForTimeout(20)
+    }
+    await mirror(page).getByRole('tab', {name: values.project, exact: true}).waitFor()
+    await button(page, m['window.menu.leftPanel']).waitFor()
+    await flush(page)
+    return {context, page}
+  }
+
+  let phoneCtx, tabletCtx
+  try {
+    // 1. Phone portrait start (390x844): floating drawers, IME shrink, rotation, full-width Files, Escape layering, outside tap.
+    const phone = await createPage({width: 390, height: 844, colorScheme: 'dark'})
+    phoneCtx = phone.context
+    const page = phone.page
+    const left = button(page, m['window.menu.leftPanel'])
+    const right = button(page, m['window.menu.rightPanel'])
+    await waitExpanded(left, false)
+    await waitExpanded(right, false)
+
+    // Open left floating drawer, reveal & focus session search, shrink height (simulated IME).
+    await press(left)
+    await waitExpanded(left, true)
+    const leftRegion = mirror(page).getByRole('region', {name: m['window.menu.leftPanel'], exact: true})
+    await leftRegion.waitFor({state: 'attached'})
+    const leftBox = await leftRegion.boundingBox()
+    assert(leftBox && leftBox.width >= 388, `Floating sessions drawer must fill 390px viewport, got ${JSON.stringify(leftBox)}`)
+
+    await press(button(page, m['sessionList.filter.ariaLabel']))
+    await flush(page)
+    const searchGroup = mirror(page).getByRole('group', {name: m['sessionList.filter.ariaLabel'], exact: true})
+    await searchGroup.waitFor({state: 'attached'})
+    const searchBox = await searchGroup.boundingBox()
+    assert(searchBox && searchBox.width > 100, `Search field missing bounds: ${JSON.stringify(searchBox)}`)
+    await page.mouse.click(searchBox.x + searchBox.width / 2, searchBox.y + searchBox.height / 2)
+    await flush(page)
+    const searchInput = page.locator(`textarea:focus[aria-label="${m['sessionList.filter.ariaLabel']}"]`)
+    await searchInput.waitFor({state: 'attached'})
+    await page.keyboard.type('Existing')
+    await flush(page)
+    assert.equal(await searchInput.inputValue(), 'Existing')
+
+    // Simulated virtual keyboard shrink (same width 390, height 844 -> 350): drawer & search focus must survive.
+    await resize(page, {width: 390, height: 350})
+    await waitExpanded(left, true)
+    await leftRegion.waitFor({state: 'attached'})
+    assert.equal(await searchInput.count(), 1, 'Search input must keep focus during virtual keyboard shrink')
+    await page.keyboard.type(' history')
+    await flush(page)
+    assert.equal(await searchInput.inputValue(), 'Existing history', 'Search input must remain editable during IME shrink')
+    proof.phone.imeShrinkPreserved = true
+
+    // Rotate to landscape (even with keyboard height 844x240, then 844x390): floating drawer closes, no uninvited docked panels.
+    await resize(page, {width: 844, height: 240})
+    await waitExpanded(left, false)
+    await waitExpanded(right, false)
+    await leftRegion.waitFor({state: 'detached'})
+    await resize(page, {width: 844, height: 390})
+    await waitExpanded(left, false)
+    await waitExpanded(right, false)
+    proof.phone.landscapeStaysClosed = true
+
+    // Return to portrait: select a session and wait for authoritative history sync so workspace/Git is online.
+    await resize(page, {width: 390, height: 844})
+    await press(left)
+    await waitExpanded(left, true)
+    await press(leftRegion.getByRole('listitem', {name: 'Existing history', exact: true}))
+    await mirror(page).getByRole('heading', {name: 'Existing history', exact: true}).waitFor()
+    await page.waitForFunction(() => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes('Existing project history'))
+    await flush(page)
+    if ((await left.getAttribute('aria-expanded')) !== 'true') {
+      await press(left)
+      await waitExpanded(left, true)
+    }
+    await press(right)
+    await waitExpanded(left, false)
+    await waitExpanded(right, true)
+    await mirror(page).getByText(m['instanceShell.connection.connected'], {exact: true}).waitFor()
+
+    const rightRegion = mirror(page).getByRole('region', {name: m['window.menu.rightPanel'], exact: true})
+    await rightRegion.waitFor({state: 'attached'})
+    const rightBox = await rightRegion.boundingBox()
+    assert(rightBox && rightBox.width >= 388, `Floating right drawer must fill 390px viewport, got ${JSON.stringify(rightBox)}`)
+
+    // Tab from right toggle must enter the floating right panel tabs instead of trapping on the toggle.
+    await page.keyboard.press('Tab')
+    await flush(page)
+    const tabFocused = await page.evaluate(() => {
+      const active = document.activeElement
+      const id = active?.getAttribute('aria-activedescendant')
+      const el = (id && document.getElementById(id)) || active
+      return {role: el?.getAttribute('role'), label: el?.getAttribute('aria-label') || el?.textContent?.trim()}
+    })
+    assert.equal(tabFocused.role, 'tab', `Tab from floating right toggle must focus a right-panel tab, got ${JSON.stringify(tabFocused)}`)
+    proof.phone.rightTabFocused = tabFocused
+
+    // ArrowRight from the focused Status tab selects Files, confirming real keyboard focus inside the floating panel.
+    await page.keyboard.press('ArrowRight')
+    await flush(page)
+    const filesTab = mirror(page).getByRole('tab', {name: m['instanceShell.rightPanel.tabs.files'], exact: true})
+    assert.equal(await filesTab.getAttribute('aria-selected'), 'true', 'ArrowRight from focused right-panel tab must select Files')
+    const worktreeTrigger = mirror(page).getByRole('combobox', {name: m['gitPanel.worktree'], exact: true})
+      .or(button(page, m['gitPanel.worktree']))
+    await worktreeTrigger.waitFor({state: 'attached'})
+    for (const deadline = Date.now() + 15000; await worktreeTrigger.evaluate(el => el.disabled || el.getAttribute('aria-disabled') === 'true');) {
+      assert(Date.now() < deadline, 'Worktree picker remained disabled')
+      await page.waitForTimeout(30)
+    }
+    await flush(page)
+    const worktreeBox = await worktreeTrigger.boundingBox()
+    assert(worktreeBox && worktreeBox.width >= 340, `Floating worktree picker must fill 390px drawer (>=340px), got ${JSON.stringify(worktreeBox)}`)
+    proof.phone.rightPanelWidth = Math.round(rightBox.width)
+    proof.phone.worktreePickerWidth = Math.round(worktreeBox.width)
+
+    // Open worktree picker via real canvas pointer click -> first Escape closes picker only, second Escape closes floating right panel.
+    await page.mouse.click(worktreeBox.x + worktreeBox.width / 2, worktreeBox.y + worktreeBox.height / 2)
+    await flush(page)
+    const listbox = mirror(page).getByRole('listbox')
+    await listbox.waitFor({state: 'attached'})
+    assert((await listbox.getByRole('option').count()) >= 2, 'Worktree picker must list both synthetic and linked worktrees')
+    await page.keyboard.press('Escape')
+    await flush(page)
+    await listbox.waitFor({state: 'detached'})
+    await waitExpanded(right, true)
+    await page.keyboard.press('Escape')
+    await flush(page)
+    await waitExpanded(right, false)
+    await rightRegion.waitFor({state: 'detached'})
+    proof.phone.escapeLayered = true
+
+    // Enter right after Escape reopens the right drawer, proving focus returned to its toggle.
+    await page.keyboard.press('Enter')
+    await flush(page)
+    await waitExpanded(right, true)
+    await page.keyboard.press('Escape')
+    await flush(page)
+    await waitExpanded(right, false)
+    proof.phone.escapeReturnedFocusToToggle = true
+
+    // Outside top-bar action (Notifications bell) dismisses floating left drawer without stealing focus.
+    await press(left)
+    await waitExpanded(left, true)
+    await press(button(page, m['toastHistory.title']))
+    await flush(page)
+    const notifDialog = mirror(page).getByRole('dialog', {name: m['toastHistory.title'], exact: true})
+    await notifDialog.waitFor({state: 'attached'})
+    await page.keyboard.press('Escape')
+    await flush(page)
+    await notifDialog.waitFor({state: 'detached'})
+    await waitExpanded(left, false)
+    await leftRegion.waitFor({state: 'detached'})
+    proof.phone.outsideTopBarDismissed = true
+
+    // 2. Landscape tablet start (1366x1024): both panels docked, hide on portrait, independent per-orientation memory.
+    const tablet = await createPage({width: 1366, height: 1024, colorScheme: 'light'})
+    tabletCtx = tablet.context
+    const tPage = tablet.page
+    const tLeft = button(tPage, m['window.menu.leftPanel'])
+    const tRight = button(tPage, m['window.menu.rightPanel'])
+    await waitExpanded(tLeft, true)
+    await waitExpanded(tRight, true)
+
+    await resize(tPage, {width: 1024, height: 1366})
+    await waitExpanded(tLeft, false)
+    await waitExpanded(tRight, false)
+
+    await press(tLeft)
+    await waitExpanded(tLeft, true)
+    await waitExpanded(tRight, false)
+
+    await resize(tPage, {width: 1366, height: 1024})
+    await waitExpanded(tLeft, true)
+    await waitExpanded(tRight, true)
+
+    await resize(tPage, {width: 1024, height: 1366})
+    await waitExpanded(tLeft, true)
+    await waitExpanded(tRight, false)
+    proof.tablet.perOrientationMemory = true
+
+    assert.deepEqual(proof.refused, [], `Forbidden requests: ${JSON.stringify(proof.refused)}`)
+    assert.deepEqual(proof.errors, [], `Page errors: ${JSON.stringify(proof.errors)}`)
+    proof.result = 'pass'
+    console.log(JSON.stringify({runner: 'web-mobile-drawers', result: proof.result, out}))
+  } catch (error) {
+    proof.result = 'fail'
+    proof.failure = error.message
+    await Promise.all([phoneCtx, tabletCtx].flatMap(ctx => ctx?.pages() ?? []).map(async (p, i) => {
+      await writeFile(path.join(out, `mobile-drawers-fail-${i}.aria.yml`), await p.locator('body').ariaSnapshot({timeout: 2000}))
+    })).catch(() => {})
+    throw error
+  } finally {
+    try {
+      await phoneCtx?.close()
+      await tabletCtx?.close()
+    } finally {
+      await browser.close()
+      await writeFile(path.join(out, 'mobile-drawers-proof.json'), JSON.stringify(proof, null, 2))
+    }
+  }
+}
