@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { assertNativeSchedulePreflight, nativeSchedulePreflight } from "./native-mission-schedule-preflight"
+import { NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS } from "./native-schedule-transport"
 
 test("the read-only fan-in cutoff is bound to one actual wake and incarnation, not caller time", () => {
   const wake = { missionID: "owned", generation: 1, scheduleID: "sch_owned", sessionID: "ses_owned", run: 1, messageID: "msg_sch_owned_1" }
@@ -10,6 +11,6 @@ test("the read-only fan-in cutoff is bound to one actual wake and incarnation, n
     assert.throws(() => assertNativeSchedulePreflight(value, wake, "service-one", 1001))
   assert.throws(() => assertNativeSchedulePreflight(receipt, { ...wake, run: 2, messageID: "msg_sch_owned_2" }, "service-one", 1001))
   assert.throws(() => assertNativeSchedulePreflight(receipt, wake, "service-two", 1001))
-  assert.throws(() => assertNativeSchedulePreflight(receipt, wake, "service-one", 9000))
+  assert.throws(() => assertNativeSchedulePreflight(receipt, wake, "service-one", 1000 + NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS))
   assert.throws(() => assertNativeSchedulePreflight(undefined, wake, "service-one", 1001))
 })

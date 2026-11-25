@@ -4,7 +4,7 @@ import { assertNativeScheduleIncarnation } from "./native-schedule-transport-ide
 import type { NativeScheduleIncarnation } from "./native-schedule-transport-identity"
 import { assertNativeScheduleWake, nativeScheduleWakeKey } from "./native-schedule-transport-contract"
 import type { NativeScheduleWake, NativeSchedulePreflight } from "./native-schedule-transport-contract"
-import type { createNativeScheduleTransport, NativeScheduleTransportResult } from "./native-schedule-transport"
+import { NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS, type createNativeScheduleTransport, type NativeScheduleTransportResult } from "./native-schedule-transport"
 
 export type NativeMissionScheduleClaim = { version: 1; key: string; wake: NativeScheduleWake; incarnation: NativeScheduleIncarnation;
   settled?: { revision: number; highWater: number } }
@@ -44,7 +44,7 @@ export async function dispatchNativeMissionScheduleWake(input: { wake: NativeSch
   ports: { transport: Pick<ReturnType<typeof createNativeScheduleTransport>, "status" | "wake">; current(): true; held(): Promise<boolean>;
     claim(incarnation: NativeScheduleIncarnation, preflight: NativeSchedulePreflight, retry: boolean): Promise<boolean> }): Promise<NativeScheduleTransportResult> {
   const abort = new AbortController(), signal = input.signal ? AbortSignal.any([input.signal, abort.signal]) : abort.signal
-  const timer = setTimeout(() => abort.abort(), 8000)
+  const timer = setTimeout(() => abort.abort(), NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS)
   const request = { ...input, signal }
   let attempted = false
   try {
