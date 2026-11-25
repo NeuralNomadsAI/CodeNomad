@@ -65,16 +65,22 @@ pub(super) struct Groups {
 
 impl Groups {
     pub(super) fn project(s: &State) -> Self {
-        Self::project_with_steps(s, s.transcript_display.messages.visible(&s.messages), None)
+        Self::project_with_steps(
+            s,
+            s.transcript_display.messages.visible(&s.messages),
+            !s.history_detached,
+            None,
+        )
     }
 
     pub(super) fn project_with_steps(
         s: &State,
         rows: &[Row],
+        at_tail: bool,
         override_steps: Option<(usize, usize)>,
     ) -> Self {
         let mut index = Self {
-            waiting: waiting(s, rows),
+            waiting: waiting(s, if at_tail { rows } else { &[] }),
             ..Self::default()
         };
         let group_tools = transcript_mode(s, TranscriptRow::Groups) != "hidden";
@@ -503,7 +509,7 @@ fn a_pending_tool_stays_out_of_both_collapsed_group_kinds() {
             )
             .unwrap()
             .into();
-            let groups = Groups::project_with_steps(&s, std::slice::from_ref(&row), None);
+            let groups = Groups::project_with_steps(&s, std::slice::from_ref(&row), true, None);
             assert_eq!(
                 groups
                     .collapsed_target(&s, 0, 0)
@@ -551,7 +557,7 @@ fn a_hidden_message_with_parts_gap_splits_adjacent_groups() {
     .map(|value| crate::history::decode_message(&value).unwrap().into())
     .collect();
 
-    let groups = Groups::project_with_steps(&s, &rows, None);
+    let groups = Groups::project_with_steps(&s, &rows, true, None);
     assert!(
         groups.collapsed_target(&s, 0, 0).is_none(),
         "visible parts-gap in m1 must break grouping between m0 and m2"
@@ -559,5 +565,16 @@ fn a_hidden_message_with_parts_gap_splits_adjacent_groups() {
     assert!(
         groups.collapsed_target(&s, 2, 0).is_none(),
         "visible parts-gap in m1 must prevent m2 from continuing m0's group"
+    );
+
+    // Positive control: once all hidden parts in m1 are revealed (head >= tail), the gap disappears
+    // and the hidden-only message becomes transparent so m0 and m2 group together.
+    let revealed = Groups::project_with_steps(&s, &rows, true, Some((1, 1)));
+    assert_eq!(
+        revealed
+            .collapsed_target(&s, 2, 0)
+            .as_ref()
+            .map(|(m, k)| (m.as_str(), k.as_str())),
+        Some(("m0", "group-tool-m0:2:r0"))
     );
 }

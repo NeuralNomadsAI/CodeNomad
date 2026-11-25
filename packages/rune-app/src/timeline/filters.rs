@@ -19,8 +19,9 @@ pub(super) fn pending(s: &State) -> BTreeSet<ToolSource> {
         .chain(agent.forms.iter().filter_map(|r| r.tool.as_ref()))
         .cloned()
         .collect();
-    if let Some((message, call)) =
-        crate::chat::tools::inferred_websearch(s, crate::chat::anchors::visible_rows(s))
+    if !s.history_detached
+        && let Some((message, call)) =
+            crate::chat::tools::inferred_websearch(s, crate::chat::anchors::visible_rows(s))
     {
         pending.insert(ToolSource {
             message: message.into(),

@@ -195,11 +195,12 @@ pub(crate) fn visible_slice<'a>(s: &State, rows: &'a [Row]) -> &'a [Row] {
 pub(crate) fn collapsed_group_target(
     s: &State,
     rows: &[Row],
+    at_tail: bool,
     row_index: usize,
     shown_steps: usize,
     part: usize,
 ) -> Option<(String, String)> {
-    super::tool_groups::Groups::project_with_steps(s, rows, Some((row_index, shown_steps)))
+    super::tool_groups::Groups::project_with_steps(s, rows, at_tail, Some((row_index, shown_steps)))
         .collapsed_target(s, row_index, part)
 }
 

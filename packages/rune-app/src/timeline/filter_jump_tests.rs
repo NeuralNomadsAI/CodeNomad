@@ -213,12 +213,29 @@ fn inferred_websearch_prompt_admits_hidden_websearch_in_timeline_and_search() {
             s.transcript_display.search_highlight = Some(highlight("web", Kind::Tool, 1));
             navigation::seek_message(s, "web", tx);
             assert!(!owner(s).jump.filtered);
+            assert!(owner(s).jump.retry.is_none());
             assert!(s.transcript_display.search_highlight.is_some());
+        });
+        rt.frame(0.016);
+        assert!(rt.find("history-search-match").is_some());
 
+        rt.update(|s, tx| {
             s.transcript_display.search_highlight = Some(highlight("web", Kind::Tool, 0));
             navigation::seek_message(s, "web", tx);
             assert!(owner(s).jump.filtered);
             assert!(s.transcript_display.search_highlight.is_none());
+        });
+
+        // Cross-session destination checks (&[]) must never infer against the source session's form.
+        rt.update(|s, _| {
+            use crate::chat::search_hit::Landing;
+            let other = row(json!({"id":"other","type":"assistant","time":{"completed":1},"content":[
+                {"type":"tool","id":"ws_other","name":"websearch","state":{"status":"completed","content":[{"type":"text","text":"Needle"}]}}
+            ]}));
+            assert!(matches!(
+                highlight("other", Kind::Tool, 0).landing(s, &[], &other, 0),
+                Landing::Filtered
+            ));
         });
 
         // Timeline rail retains and admits the inferred websearch marker, while hiding the older one.
@@ -228,6 +245,47 @@ fn inferred_websearch_prompt_admits_hidden_websearch_in_timeline_and_search() {
             assert!(!ids.contains(&"web:Tool:0:false"));
             navigation::select(s, "web:Tool:1:false", tx);
             assert!(!owner(s).jump.filtered);
+            assert!(owner(s).jump.retry.is_none());
+            assert_eq!(
+                owner(s).jump.requested_active.as_deref(),
+                Some("web:Tool:1:false")
+            );
+        });
+
+        // A historical remote window (newer: Some) must not infer the active session's form onto an
+        // older hidden websearch call.
+        let (send, requests) = bounded(1);
+        rt.state.commands = Some(send);
+        let past = row(
+            json!({"id":"past","type":"assistant","time":{"completed":1},"content":[
+                {"type":"tool","id":"ws_past","name":"websearch","state":{"status":"completed","content":[{"type":"text","text":"Needle past"}]}}
+            ]}),
+        );
+        rt.update(|s, tx| {
+            owner(s).online = true;
+            owner(s).markers.push(super::Marker::from(
+                crate::chat::anchors::blocks(&past, 0, false)[0].marker,
+            ));
+            navigation::select(s, "past:Tool:0:false", tx);
+        });
+        let crate::transport::Command::Anchor(jump) = requests.try_recv().unwrap() else {
+            panic!("expected anchor")
+        };
+        rt.update(|s, _| {
+            navigation::admit_window(
+                s,
+                jump.ticket,
+                Page {
+                    rows: vec![past],
+                    older: None,
+                    newer: Some("newer-cursor".into()),
+                    running: false,
+                    user_file_references: false,
+                },
+                || panic!("historical hidden websearch must not be admitted"),
+            );
+            assert!(owner(s).jump.filtered);
+            assert_eq!(s.messages[0].id, "web");
         });
     });
 }
