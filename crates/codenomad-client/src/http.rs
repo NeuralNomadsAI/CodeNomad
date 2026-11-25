@@ -84,6 +84,7 @@ pub struct Http(
     Arc<[AtomicU64; 3]>,
     DropTable,
     Arc<CapabilityState>,
+    Arc<crate::stream::Hub>,
 );
 struct Identity {
     server: String,
@@ -116,10 +117,14 @@ impl Http {
                 stream_drop_epoch: AtomicU64::new(0),
                 attested_drop_epoch: AtomicU64::new(0),
             }),
+            Arc::default(),
         ))
     }
     pub fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.1, &other.1)
+    }
+    pub(crate) fn sse_hub(&self) -> &Arc<crate::stream::Hub> {
+        &self.7
     }
     pub(crate) fn preferences_notices(&self) -> Arc<[AtomicU64; 3]> {
         self.4.clone()
@@ -431,10 +436,11 @@ pub async fn pairing_required() -> Result<Option<bool>> {
 
 pub fn authentication_expired(error: &crate::history::Error) -> bool {
     cfg!(not(target_arch = "wasm32"))
-        && error
-            .downcast_ref::<reqwest::Error>()
-            .and_then(reqwest::Error::status)
-            == Some(reqwest::StatusCode::UNAUTHORIZED)
+        && (error.is::<crate::stream::hub::AuthenticationExpired>()
+            || error
+                .downcast_ref::<reqwest::Error>()
+                .and_then(reqwest::Error::status)
+                == Some(reqwest::StatusCode::UNAUTHORIZED))
 }
 
 pub fn endpoint(address: &str) -> Result<String> {

@@ -12,6 +12,7 @@ mod catalogue;
 mod children;
 #[cfg(any(not(target_arch = "wasm32"), test))]
 mod frames;
+pub(crate) mod hub;
 mod limits;
 mod mission_events;
 #[cfg(not(target_arch = "wasm32"))]
@@ -22,6 +23,7 @@ mod sessions;
 pub use catalogue::{AttentionHint, CatalogueChanges, CatalogueWatch};
 pub use children::ChildSettlement;
 pub(crate) use children::Children;
+pub(crate) use hub::Hub;
 use notifications::session_attention;
 use routing::dispatch;
 #[cfg(target_arch = "wasm32")]
@@ -251,22 +253,7 @@ pub(crate) async fn read(
     }
     let notices = backend.client.preferences_notices();
     let _ = state.preferences_notices.set(notices.clone());
-    let result = {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            futures_lite::future::race(native::read_native(backend, epoch, out, state), async {
-                while !state.cancelled.load(SeqCst) && !out.is_closed() {
-                    runtime::sleep(Duration::from_millis(25)).await;
-                }
-                Ok(())
-            })
-            .await
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            browser::read(backend, epoch, out, state).await
-        }
-    };
+    let result = hub::read_shared(backend, epoch, out, state).await;
     let was_open = stream_guard.release_open();
     if !state.cancelled.load(SeqCst) && !out.is_closed() {
         backend

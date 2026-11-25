@@ -245,9 +245,17 @@ impl Ingress {
     }
 
     pub fn transport(&self, online: bool) {
-        if self.watch.transport(online) {
-            (self.wake)();
+        if self.transport_quiet(online) {
+            self.wake();
         }
+    }
+
+    pub(crate) fn transport_quiet(&self, online: bool) -> bool {
+        self.watch.transport(online)
+    }
+
+    pub(crate) fn wake(&self) {
+        (self.wake)();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -257,12 +265,18 @@ impl Ingress {
     }
 
     pub fn frame(&self, data: &str) {
+        if self.frame_quiet(data) {
+            self.wake();
+        }
+    }
+
+    pub(crate) fn frame_quiet(&self, data: &str) -> bool {
         // Ignore native payloads in the authority observer; the router decodes them separately.
         let Ok(frame) = serde_json::from_str::<Envelope<'_>>(data) else {
-            return;
+            return false;
         };
         if frame.workspace != Some(self.workspace.as_str()) {
-            return;
+            return false;
         }
         let change = match frame.kind {
             "instance.eventStatus" => frame.generation.map(|generation| Hint::Upstream {
@@ -284,16 +298,17 @@ impl Ingress {
             }),
             _ => None,
         };
-        if let Some(change) = change
-            && self.watch.observe(change)
-        {
-            (self.wake)();
-        }
+        change.is_some_and(|change| self.watch.observe(change))
     }
 
     pub fn skipped(&self) {
-        self.watch.observe(Hint::Revoke);
-        (self.wake)();
+        if self.skipped_quiet() {
+            self.wake();
+        }
+    }
+
+    pub(crate) fn skipped_quiet(&self) -> bool {
+        self.watch.observe(Hint::Revoke)
     }
 }
 
