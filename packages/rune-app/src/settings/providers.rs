@@ -6,8 +6,14 @@ use codenomad_client::{
     settings::{Provider, providers},
     stream::CatalogueChanges,
 };
-use rune::{El, col, text};
+use rune::{El, TextEdit, col, text};
 use rune_theme_codenomad::{Space, TextRole, layout::Layout, settings as chrome};
+use std::{cell::RefCell, rc::Rc};
+
+mod images;
+#[cfg(test)]
+mod tests;
+mod websearch;
 
 pub(super) struct Target {
     backend: Backend,
@@ -15,6 +21,7 @@ pub(super) struct Target {
     session: Option<String>,
     owned_tab: bool,
     revision: u64,
+    location_epoch: u64,
     observed: Option<u64>,
     authority: u64,
     online: bool,
@@ -45,6 +52,7 @@ impl Target {
             session,
             owned_tab,
             revision: 0,
+            location_epoch: 0,
             observed: None,
             authority: 0,
             online: true,
@@ -140,7 +148,11 @@ impl Target {
         self.authority.wrapping_add(self.revision)
     }
 
-    fn matches(&self, changes: &CatalogueChanges) -> bool {
+    pub fn location_epoch(&self) -> u64 {
+        self.location_epoch
+    }
+
+    pub(super) fn matches(&self, changes: &CatalogueChanges) -> bool {
         match changes {
             CatalogueChanges::None => false,
             CatalogueChanges::All => true,
@@ -160,6 +172,19 @@ impl Target {
         true
     }
 
+    pub fn hint_location(&mut self, workspace: &str) -> bool {
+        if !self.is_workspace(workspace) {
+            return false;
+        }
+        self.invalidate_location();
+        true
+    }
+
+    pub(super) fn invalidate_location(&mut self) {
+        self.location_epoch = self.location_epoch.wrapping_add(1);
+        self.invalidate();
+    }
+
     fn invalidate(&mut self) {
         self.revision = self.revision.wrapping_add(1);
     }
@@ -175,6 +200,10 @@ pub(super) struct Catalog {
     flight: Option<Flight>,
     rows: Option<Vec<Provider>>,
     failed: bool,
+    websearch: Rc<RefCell<websearch::WebSearch>>,
+    images: Rc<RefCell<images::Images>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    websearch_key: TextEdit,
 }
 
 impl Default for Catalog {
@@ -187,24 +216,41 @@ impl Default for Catalog {
             flight: None,
             rows: None,
             failed: false,
+            websearch: Rc::new(RefCell::new(websearch::WebSearch::default())),
+            images: Rc::new(RefCell::new(images::Images::default())),
+            #[cfg(not(target_arch = "wasm32"))]
+            websearch_key: TextEdit::new(""),
         }
     }
 }
 
 impl Catalog {
+    fn clear_models(&mut self) -> bool {
+        let changed =
+            self.seen.is_some() || self.flight.is_some() || self.rows.is_some() || self.failed;
+        self.scope = None;
+        self.authority = 0;
+        self.seen = None;
+        self.flight = None;
+        self.rows = None;
+        self.failed = false;
+        changed
+    }
+
     pub fn poll(&mut self, target: Option<&Target>, wake: Option<&rune::Waker>) -> bool {
+        let mut changed = self.websearch.borrow_mut().poll(target, wake);
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.websearch.borrow_mut().take_wipe_key() {
+            self.websearch_key = TextEdit::new("");
+        }
+        changed |= self.images.borrow_mut().poll(target, wake);
+
         let Some((target, wake)) = target
             .zip(wake)
             .filter(|(target, _)| self.expanded && target.online)
         else {
-            let changed = self.seen.is_some();
-            *self = Self {
-                expanded: self.expanded,
-                ..Self::default()
-            };
-            return changed;
+            return self.clear_models() | changed;
         };
-        let mut changed = false;
         if self
             .scope
             .as_ref()
@@ -215,16 +261,13 @@ impl Catalog {
             })
             || self.authority != target.authority
         {
-            *self = Self {
-                expanded: true,
-                scope: Some((
-                    target.backend.client_id.clone(),
-                    target.workspace.clone(),
-                    target.session.clone(),
-                )),
-                authority: target.authority,
-                ..Self::default()
-            };
+            self.clear_models();
+            self.scope = Some((
+                target.backend.client_id.clone(),
+                target.workspace.clone(),
+                target.session.clone(),
+            ));
+            self.authority = target.authority;
             changed = true;
         }
         if let Some(result) = self
@@ -272,24 +315,29 @@ impl Catalog {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn view(s: &Window, available: bool) -> El {
-    content(&s.providers, available, |s: &mut Window| {
-        s.providers.toggle()
-    })
+    render_groups(
+        &s.providers,
+        available,
+        |s: &mut Window| s.providers.toggle(),
+        Some(&s.providers.websearch_key),
+        Some(|s: &mut Window| &mut s.providers.websearch_key),
+    )
 }
 
 impl Catalog {
     pub fn toggle(&mut self) {
-        *self = Self {
-            expanded: !self.expanded,
-            ..Self::default()
-        };
+        self.expanded = !self.expanded;
+        self.clear_models();
     }
 
     pub fn suspend(&mut self) {
-        *self = Self {
-            expanded: self.expanded,
-            ..Self::default()
-        };
+        self.clear_models();
+        self.websearch.borrow_mut().suspend();
+        self.images.borrow_mut().suspend();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.websearch_key = TextEdit::new("");
+        }
     }
 }
 
@@ -297,6 +345,16 @@ pub(super) fn content<S: 'static>(
     catalog: &Catalog,
     available: bool,
     toggle: impl Fn(&mut S) + Clone + 'static,
+) -> El {
+    render_groups(catalog, available, toggle, None, None)
+}
+
+fn render_groups<S: 'static>(
+    catalog: &Catalog,
+    available: bool,
+    toggle: impl Fn(&mut S) + Clone + 'static,
+    external_key: Option<&TextEdit>,
+    edit_key: Option<fn(&mut S) -> &mut TextEdit>,
 ) -> El {
     let mut body = col().full_width().separate(Space::Sm);
     if catalog.expanded {
@@ -342,10 +400,256 @@ pub(super) fn content<S: 'static>(
             }
         }
     }
-    chrome::card(chrome::disclosure(
-        t("settings.providers.models.title"),
-        catalog.expanded,
-        body,
-        toggle,
-    ))
+    col()
+        .full_width()
+        .separate(Space::Md)
+        .child(chrome::card(chrome::disclosure(
+            t("settings.providers.models.title"),
+            catalog.expanded,
+            body,
+            toggle,
+        )))
+        .child(websearch::view::<S>(
+            &catalog.websearch,
+            available,
+            external_key,
+            edit_key,
+        ))
+        .child(images::view::<S>(&catalog.images, available))
+}
+
+pub(super) fn attach_picker_keys<S: 'static>(
+    list: El,
+    trigger_key: String,
+    option_keys: Vec<String>,
+    close: impl Fn(&mut S) + 'static,
+) -> El {
+    list.focus_group().on_key(move |s: &mut S, event, tx| {
+        if event.key == rune::Key::Tab && !event.mods.ctrl && !event.mods.alt && !event.mods.cmd {
+            close(s);
+            return false;
+        }
+        if event.mods != rune::Mods::default() || option_keys.is_empty() {
+            return false;
+        }
+        let current = tx
+            .focused()
+            .and_then(|focused| option_keys.iter().position(|key| key == focused));
+        let next = match event.key {
+            rune::Key::Down => Some(current.map_or(0, |index| (index + 1) % option_keys.len())),
+            rune::Key::Up => Some(current.map_or(option_keys.len() - 1, |index| {
+                (index + option_keys.len() - 1) % option_keys.len()
+            })),
+            rune::Key::Home => Some(0),
+            rune::Key::End => Some(option_keys.len() - 1),
+            rune::Key::Escape => {
+                close(s);
+                tx.focus(trigger_key.clone(), true);
+                return true;
+            }
+            _ => None,
+        };
+        if let Some(index) = next {
+            tx.focus(option_keys[index].clone(), true);
+            return true;
+        }
+        false
+    })
+}
+
+pub(super) mod write_barrier {
+    use rune::Waker;
+    use std::{
+        collections::{HashMap, HashSet, VecDeque},
+        sync::{
+            Mutex, OnceLock,
+            atomic::{AtomicU64, Ordering},
+        },
+    };
+
+    const MAX_RESULTS: usize = 32;
+
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    pub(in crate::settings::providers) enum Domain {
+        WebSearch,
+        Images,
+    }
+
+    struct InFlight {
+        id: u64,
+        workspace: String,
+        waiters: HashMap<u64, Waker>,
+    }
+
+    #[derive(Default)]
+    struct Entry {
+        in_flight: Option<InFlight>,
+        settled_id: u64,
+        results: VecDeque<(u64, bool)>,
+        unseen_errors: HashSet<String>,
+    }
+
+    pub(in crate::settings::providers) struct Observation {
+        pub active: bool,
+        pub settled_id: u64,
+        pub unseen_error: bool,
+    }
+
+    pub(in crate::settings::providers) struct Guard {
+        domain: Domain,
+        base: String,
+        id: u64,
+        settled: bool,
+    }
+
+    impl Guard {
+        pub fn id(&self) -> u64 {
+            self.id
+        }
+
+        pub fn finish(mut self, ok: bool) {
+            self.settled = true;
+            complete(self.domain, &self.base, self.id, ok);
+        }
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            if !self.settled {
+                complete(self.domain, &self.base, self.id, false);
+            }
+        }
+    }
+
+    fn registry() -> &'static Mutex<HashMap<(Domain, String), Entry>> {
+        static REGISTRY: OnceLock<Mutex<HashMap<(Domain, String), Entry>>> = OnceLock::new();
+        REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    fn next_id() -> u64 {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub(in crate::settings::providers) fn next_observer() -> u64 {
+        next_id()
+    }
+
+    pub(in crate::settings::providers) fn try_begin(
+        domain: Domain,
+        base: &str,
+        workspace: &str,
+        observer: u64,
+        wake: Waker,
+    ) -> Option<Guard> {
+        let mut map = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let entry = map.entry((domain, base.to_owned())).or_default();
+        if entry.in_flight.is_some() {
+            return None;
+        }
+        let id = next_id();
+        entry.unseen_errors.remove(workspace);
+        let mut waiters = HashMap::new();
+        waiters.insert(observer, wake);
+        entry.in_flight = Some(InFlight {
+            id,
+            workspace: workspace.to_owned(),
+            waiters,
+        });
+        Some(Guard {
+            domain,
+            base: base.to_owned(),
+            id,
+            settled: false,
+        })
+    }
+
+    pub(in crate::settings::providers) fn observe(
+        domain: Domain,
+        base: &str,
+        workspace: &str,
+        observer: u64,
+        expanded: bool,
+        wake: &Waker,
+    ) -> Observation {
+        let mut map = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let Some(entry) = map.get_mut(&(domain, base.to_owned())) else {
+            return Observation {
+                active: false,
+                settled_id: 0,
+                unseen_error: false,
+            };
+        };
+        if let Some(active) = &mut entry.in_flight {
+            active.waiters.insert(observer, wake.clone());
+        }
+        let unseen_error =
+            expanded && entry.in_flight.is_none() && entry.unseen_errors.remove(workspace);
+        Observation {
+            active: entry.in_flight.is_some(),
+            settled_id: entry.settled_id,
+            unseen_error,
+        }
+    }
+
+    pub(in crate::settings::providers) fn settled_status(
+        domain: Domain,
+        base: &str,
+        id: u64,
+    ) -> Option<bool> {
+        let map = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let entry = map.get(&(domain, base.to_owned()))?;
+        if entry
+            .in_flight
+            .as_ref()
+            .is_some_and(|active| active.id == id)
+        {
+            return None;
+        }
+        if let Some((_, ok)) = entry.results.iter().find(|(entry_id, _)| *entry_id == id) {
+            return Some(*ok);
+        }
+        (entry.settled_id >= id).then_some(false)
+    }
+
+    pub(in crate::settings::providers) fn clear_unseen_error(
+        domain: Domain,
+        base: &str,
+        workspace: &str,
+    ) {
+        let mut map = registry().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = map.get_mut(&(domain, base.to_owned())) {
+            entry.unseen_errors.remove(workspace);
+        }
+    }
+
+    fn complete(domain: Domain, base: &str, id: u64, ok: bool) {
+        let waiters: Vec<Waker> = {
+            let mut map = registry().lock().unwrap_or_else(|e| e.into_inner());
+            let Some(entry) = map.get_mut(&(domain, base.to_owned())) else {
+                return;
+            };
+            let Some(active) = entry.in_flight.as_ref() else {
+                return;
+            };
+            if active.id != id {
+                return;
+            }
+            let active = entry.in_flight.take().unwrap();
+            entry.settled_id = id;
+            if entry.results.len() >= MAX_RESULTS {
+                entry.results.pop_front();
+            }
+            entry.results.push_back((id, ok));
+            if ok {
+                entry.unseen_errors.remove(&active.workspace);
+            } else {
+                entry.unseen_errors.insert(active.workspace);
+            }
+            active.waiters.into_values().collect()
+        };
+        for wake in waiters {
+            wake();
+        }
+    }
 }

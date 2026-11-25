@@ -89,6 +89,8 @@ pub(super) async fn dispatch(
         return Ok(());
     }
     if value["type"] == "instance.event"
+        && !(value["event"]["type"] == "session.moved"
+            && value["event"]["data"]["sessionID"] == b.session)
         && let Some(id) = crate::settings::provider_change(&value)
         && id == b.workspace
     {

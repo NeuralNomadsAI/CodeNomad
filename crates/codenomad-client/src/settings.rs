@@ -1,11 +1,13 @@
 //! Host-owned configuration and appearance, independent of any project location.
 pub mod config_files;
+pub mod images;
 pub mod info;
 pub mod memory;
 mod opencode_actions;
 mod providers;
 pub mod remote;
 pub mod stats;
+pub mod websearch;
 use crate::{
     Wake,
     backend::{Backend, read_json},

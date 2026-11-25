@@ -16,7 +16,11 @@ pub(crate) fn provider_change(frame: &Value) -> Option<&str> {
                     | "credential.switched"
                     | "model.updated"
                     | "provider.updated"
+                    | "plugin.updated"
+                    | "models-dev.refreshed"
                     | "config.updated"
+                    | "websearch.updated"
+                    | "session.moved"
                     | "server.connected"
             ) =>
         {
@@ -25,6 +29,89 @@ pub(crate) fn provider_change(frame: &Value) -> Option<&str> {
         _ => return None,
     };
     valid_id(id).then_some(id)
+}
+
+pub(crate) async fn route_unavailable(
+    response: reqwest::Response,
+) -> Result<Option<reqwest::Response>> {
+    match response.status() {
+        reqwest::StatusCode::NOT_IMPLEMENTED => Ok(None),
+        reqwest::StatusCode::NOT_FOUND => {
+            let text = read_bounded_utf8(response, 8 * 1024).await?;
+            if is_route_not_found_body(&text) {
+                return Ok(None);
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(&text)
+                && let Some(message) = value["error"]
+                    .as_str()
+                    .or_else(|| value["message"].as_str())
+                    .filter(|msg| !msg.is_empty())
+            {
+                return Err(message.into());
+            }
+            Err("Resource not found".into())
+        }
+        _ => Ok(Some(response.error_for_status()?)),
+    }
+}
+
+async fn read_bounded_utf8(response: reqwest::Response, limit: usize) -> Result<String> {
+    use futures_lite::StreamExt;
+    let mut bytes = Vec::new();
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk?;
+        if chunk.len() > limit.saturating_sub(bytes.len()) {
+            return Err("Response body too large".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    String::from_utf8(bytes).map_err(|_| "Invalid UTF-8 response".into())
+}
+
+pub(crate) fn is_route_not_found_body(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("404 not found") {
+        return true;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+        return false;
+    };
+    if let Some(object) = value.as_object()
+        && object.len() == 1
+        && object
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|msg| msg.eq_ignore_ascii_case("Not Found"))
+    {
+        return true;
+    }
+    value["statusCode"].as_u64() == Some(404)
+        && value["error"]
+            .as_str()
+            .is_some_and(|err| err.eq_ignore_ascii_case("Not Found"))
+        && value["message"]
+            .as_str()
+            .is_some_and(|msg| msg.starts_with("Route "))
+}
+
+pub(crate) fn encode_location_header(directory: &str) -> String {
+    let json = serde_json::json!({ "directory": directory }).to_string();
+    let mut out = String::with_capacity(json.len() * 2);
+    for byte in json.bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            )
+        {
+            out.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
 }
 
 pub struct Provider {
@@ -164,7 +251,32 @@ fn email(value: &Value) -> Option<String> {
     .then(|| email.to_owned())
 }
 
-fn label(value: &Value) -> Option<String> {
+pub(crate) async fn workspace_directory(
+    backend: &Backend,
+    workspace: &str,
+    session: Option<&str>,
+) -> Result<String> {
+    if !valid_id(workspace) || session.is_some_and(|id| !valid_id(id)) {
+        return Err("Invalid provider Location".into());
+    }
+    if let Some(session) = session {
+        return super::session_directory(backend, workspace, session).await;
+    }
+    let request = backend.client.get(format!(
+        "{}workspaces/{workspace}/instance/api/provider",
+        backend.base
+    ));
+    #[cfg(target_arch = "wasm32")]
+    let request = request.fetch_cache_no_store();
+    let value = read_json(request.send().await?.error_for_status()?).await?;
+    value["location"]["directory"]
+        .as_str()
+        .filter(|path| crate::absolute_server_path(path))
+        .map(str::to_owned)
+        .ok_or_else(|| "Invalid provider Location".into())
+}
+
+pub(crate) fn label(value: &Value) -> Option<String> {
     value
         .as_str()
         .filter(|s| {

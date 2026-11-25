@@ -81,6 +81,7 @@ fn workspace_event_bytes(event: &WorkspaceEvent) -> usize {
 pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
+    provider_locations: Mutex<CatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
@@ -103,7 +104,11 @@ struct StatsChanges {
 impl Signals {
     pub(super) fn invalidate_all(&self) {
         let workspace = !self.workspace_overflow.swap(true, SeqCst);
-        if self.mark(&self.pending, None) | self.mark(&self.providers, None) | workspace {
+        if self.mark(&self.pending, None)
+            | self.mark(&self.providers, None)
+            | self.mark(&self.provider_locations, None)
+            | workspace
+        {
             (self.wake)();
         }
     }
@@ -111,6 +116,7 @@ impl Signals {
     pub(super) fn reconnected(&self) {
         self.mark(&self.pending, None);
         self.mark(&self.providers, None);
+        self.mark(&self.provider_locations, None);
         self.generation.fetch_add(1, SeqCst);
         let _ = self
             .workspace_generation
@@ -199,8 +205,13 @@ impl Signals {
                 }
                 true
             });
-        let provider_changed = crate::settings::provider_change(frame)
-            .is_some_and(|id| self.mark(&self.providers, Some(id)));
+        let provider_changed = crate::settings::provider_change(frame).is_some_and(|id| {
+            let mut marked = self.mark(&self.providers, Some(id));
+            if frame["type"] == "instance.event" && frame["event"]["type"] == "session.moved" {
+                marked |= self.mark(&self.provider_locations, Some(id));
+            }
+            marked
+        });
         let kind = frame["type"].as_str();
         let workspace = match kind {
             Some("workspace.worktreesChanged" | "workspace.stopped" | "workspace.filesChanged") => {
@@ -326,6 +337,7 @@ impl CatalogueWatch {
         let signals = Arc::new(Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -428,6 +440,10 @@ impl CatalogueWatch {
             std::mem::take(&mut *self.signals.stopped.lock().unwrap()),
             self.signals.generation.load(SeqCst),
         )
+    }
+
+    pub fn take_provider_location_changes(&self) -> CatalogueChanges {
+        std::mem::take(&mut *self.signals.provider_locations.lock().unwrap())
     }
     pub fn take_stats_changes(
         &self,
@@ -602,6 +618,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -677,6 +694,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -699,6 +717,16 @@ mod tests {
         assert!(
             matches!(&*signals.providers.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
         );
+        assert!(matches!(
+            *signals.provider_locations.lock().unwrap(),
+            CatalogueChanges::None
+        ));
+        signals.observe(
+            &json!({"type":"instance.event","instanceId":"first","event":{"type":"session.moved"}}),
+        );
+        assert!(
+            matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
+        );
         assert!(
             matches!(&*signals.stopped.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["second".into()]))
         );
@@ -709,6 +737,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -748,6 +777,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),

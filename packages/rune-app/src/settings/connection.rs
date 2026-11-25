@@ -104,6 +104,24 @@ pub(super) fn provider_changed(s: &State, workspace: &str) {
     }
 }
 
+pub(super) fn provider_location_changed(s: &State, workspace: &str) {
+    if s.screen
+        .launcher()
+        .is_some_and(|l| l.catalogue_watch.is_some())
+    {
+        return;
+    }
+    let mut prefs = s.settings.shared.borrow_mut();
+    if prefs
+        .provider_target
+        .as_mut()
+        .is_some_and(|target| target.hint_location(workspace))
+        && let Some(wake) = &prefs.window_wake
+    {
+        wake();
+    }
+}
+
 pub(crate) fn connection_event(
     s: &State,
     event: &crate::transport::Event,
@@ -134,6 +152,9 @@ pub(crate) fn connection_event(
         }
         Event::Workspace(WorkspaceEvent::ProvidersChanged { workspace_id }) => {
             provider_changed(s, workspace_id)
+        }
+        Event::Workspace(WorkspaceEvent::SessionMoved { workspace_id, .. }) => {
+            provider_location_changed(s, workspace_id)
         }
         Event::Workspace(WorkspaceEvent::Stopped { workspace_id }) => {
             provider_stopped(s, workspace_id)
