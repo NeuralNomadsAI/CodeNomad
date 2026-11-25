@@ -35,7 +35,26 @@ fn command(dir: &Path, args: &[&str]) -> Command {
     command
 }
 
-async fn execute(mut command: Command) -> Result<Output, Error> {
+pub(super) fn literal_command(dir: &Path, args: &[&str]) -> Command {
+    let mut command = command(dir, args);
+    // Preserve the pre-existing literal-pathspec guard on stage/unstage so validated
+    // filenames with `[` / `*` / `:` never expand as Git pathspec globs or magic,
+    // clearing conflicting ambient pathspec flags so Git never rejects the combination.
+    for (key, _) in std::env::vars_os() {
+        let upper = key.to_string_lossy().to_ascii_uppercase();
+        if matches!(upper.as_str(), "GIT_GLOB_PATHSPECS" | "GIT_NOGLOB_PATHSPECS" | "GIT_ICASE_PATHSPECS") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .env_remove("GIT_GLOB_PATHSPECS")
+        .env_remove("GIT_NOGLOB_PATHSPECS")
+        .env_remove("GIT_ICASE_PATHSPECS")
+        .env("GIT_LITERAL_PATHSPECS", "1");
+    command
+}
+
+pub(super) async fn execute(mut command: Command) -> Result<Output, Error> {
     let mut child = command.spawn().map_err(|err| {
         if err.kind() == io::ErrorKind::NotFound { missing_git() } else { conflict("Git could not start") }
     })?;
@@ -70,10 +89,14 @@ mod tests {
     use std::process::Command as StdCommand;
 
     fn git(dir: &Path, args: &[&str]) -> Vec<u8> {
-        let out = StdCommand::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(args)
+        let mut cmd = StdCommand::new("git");
+        cmd.arg("-C").arg(dir).args(args);
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().to_ascii_uppercase().starts_with("GIT_") {
+                cmd.env_remove(key);
+            }
+        }
+        let out = cmd
             .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()
@@ -89,13 +112,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stage_honors_global_lfs_clean_filter_and_fails_when_required_filter_errors() {
+    async fn stage_and_unstage_honor_global_lfs_filter_and_literal_pathspecs() {
         let repo = init_repo("lfs");
         let fake_home = repo.join("home");
         std::fs::create_dir_all(&fake_home).unwrap();
         std::fs::write(repo.join(".gitattributes"), "*.bin filter=testlfs -text\n").unwrap();
         let raw = b"\x00\x01RAW-BINARY-PAYLOAD\xff";
         std::fs::write(repo.join("asset.bin"), raw).unwrap();
+        std::fs::write(repo.join("a[1].txt"), "bracket\n").unwrap();
+        std::fs::write(repo.join("a1.txt"), "plain\n").unwrap();
 
         let pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:0000\nsize 21\n";
         std::fs::write(
@@ -104,37 +129,58 @@ mod tests {
         )
         .unwrap();
 
-        let mut cmd = command(&repo, &["add", "--", "asset.bin"]);
-        // Lock B3 regression: `user_command::command` must never disable global/system config.
-        let envs: Vec<String> = cmd.as_std().get_envs().map(|(k, _)| k.to_string_lossy().into_owned()).collect();
-        for forbidden_override in ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_ATTR_NOSYSTEM"] {
+        let configure_home = |cmd: &mut Command| {
+            // Lock B3 regression: stage/unstage must never override global/system config vars
+            // and must strip conflicting pathspec env vars while setting GIT_LITERAL_PATHSPECS=1.
+            let envs: Vec<(String, Option<String>)> = cmd
+                .as_std()
+                .get_envs()
+                .map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|s| s.to_string_lossy().into_owned())))
+                .collect();
+            for forbidden_override in ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_ATTR_NOSYSTEM"] {
+                assert!(
+                    !envs.iter().any(|(k, _)| k.eq_ignore_ascii_case(forbidden_override)),
+                    "stage/unstage command must not set or strip {forbidden_override}"
+                );
+            }
+            for stripped in ["GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"] {
+                assert!(
+                    envs.iter().any(|(k, v)| k.eq_ignore_ascii_case(stripped) && v.is_none()),
+                    "stage/unstage command must remove {stripped}"
+                );
+            }
             assert!(
-                !envs.iter().any(|k| k.eq_ignore_ascii_case(forbidden_override)),
-                "user_command must not set or strip {forbidden_override}"
+                envs.iter().any(|(k, v)| k.eq_ignore_ascii_case("GIT_LITERAL_PATHSPECS") && v.as_deref() == Some("1")),
+                "stage/unstage command must set GIT_LITERAL_PATHSPECS=1"
             );
-        }
+            cmd.env_remove("GIT_CONFIG_GLOBAL")
+                .env("HOME", &fake_home)
+                .env("USERPROFILE", &fake_home)
+                .env("XDG_CONFIG_HOME", fake_home.join("xdg"));
+        };
 
-        // Discover global config naturally from `$HOME/.gitconfig` without overriding `GIT_CONFIG_GLOBAL`.
-        cmd.env_remove("GIT_CONFIG_GLOBAL")
-            .env("HOME", &fake_home)
-            .env("USERPROFILE", &fake_home)
-            .env("XDG_CONFIG_HOME", fake_home.join("xdg"));
-        execute(cmd).await.unwrap().mutation().unwrap();
+        // Exercise the exact `git::apply_paths_with` path used by `git-stage` / `git-unstage`.
+        super::super::apply_paths_with(&repo, true, &["asset.bin".to_owned(), "a[1].txt".to_owned()], &configure_home)
+            .await
+            .unwrap();
 
         let staged = git(&repo, &["cat-file", "-p", ":asset.bin"]);
         assert_eq!(staged, pointer.as_bytes(), "staged blob must be the LFS pointer, not raw binary bytes");
+        let cached = String::from_utf8(git(&repo, &["ls-files", "--cached"])).unwrap();
+        let names: Vec<&str> = cached.lines().collect();
+        assert_eq!(names, vec!["a[1].txt", "asset.bin"], "literal pathspec must not glob a1.txt");
+
+        // Unstage without HEAD (`rm --cached`) and verify only the requested path is removed.
+        super::super::apply_paths_with(&repo, false, &["a[1].txt".to_owned()], &configure_home).await.unwrap();
+        let cached = String::from_utf8(git(&repo, &["ls-files", "--cached"])).unwrap();
+        assert_eq!(cached.trim(), "asset.bin");
 
         // When the required global filter fails, staging must fail with 409 and leave the path unindexed.
         std::fs::write(repo.join("broken.bin"), raw).unwrap();
         std::fs::write(fake_home.join(".gitconfig"), "[filter \"testlfs\"]\n\tclean = false\n\trequired = true\n")
             .unwrap();
-        let mut failing = command(&repo, &["add", "--", "broken.bin"]);
-        failing
-            .env_remove("GIT_CONFIG_GLOBAL")
-            .env("HOME", &fake_home)
-            .env("USERPROFILE", &fake_home)
-            .env("XDG_CONFIG_HOME", fake_home.join("xdg"));
-        let err = execute(failing).await.unwrap().mutation().unwrap_err();
+        let err =
+            super::super::apply_paths_with(&repo, true, &["broken.bin".to_owned()], &configure_home).await.unwrap_err();
         assert_eq!(err.0, axum::http::StatusCode::CONFLICT);
         let listed = git(&repo, &["ls-files", "--stage", "--", "broken.bin"]);
         assert!(listed.is_empty(), "failing required filter must never index raw bytes");

@@ -220,6 +220,29 @@ pub async fn unstage(
 ) -> Result<Json<Value>, Error> {
     paths(app, id, slug, body.paths, false).await
 }
+async fn apply_paths_with(
+    dir: &Path,
+    stage: bool,
+    validated: &[String],
+    configure: impl Fn(&mut Command),
+) -> Result<(), Error> {
+    let mut args = if stage {
+        vec!["add", "--"]
+    } else {
+        let mut head_cmd = user_command::literal_command(dir, &["rev-parse", "--verify", "HEAD"]);
+        configure(&mut head_cmd);
+        if user_command::execute(head_cmd).await?.code == 0 {
+            vec!["restore", "--staged", "--"]
+        } else {
+            vec!["rm", "--cached", "--quiet", "--"]
+        }
+    };
+    args.extend(validated.iter().map(String::as_str));
+    let mut cmd = user_command::literal_command(dir, &args);
+    configure(&mut cmd);
+    user_command::execute(cmd).await?.mutation()
+}
+
 async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage: bool) -> Result<Json<Value>, Error> {
     if items.is_empty() || items.len() > 256 {
         return Err(bad("Invalid path count"));
@@ -254,18 +277,7 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
         {
             return Err(conflict("Worktree changed"));
         }
-        let mut args = if stage {
-            vec!["add", "--"]
-        } else if user_command::run(&w.path, &["rev-parse", "--verify", "HEAD"]).await?.code == 0 {
-            vec!["restore", "--staged", "--"]
-        } else {
-            vec!["rm", "--cached", "--quiet", "--"]
-        };
-        if !tree.contains_live(&w.path) || app.workspace(&id).is_err() {
-            return Err(conflict("Worktree changed"));
-        }
-        args.extend(validated.iter().map(String::as_str));
-        user_command::run(&w.path, &args).await?.mutation()?;
+        apply_paths_with(&w.path, stage, &validated, |_| {}).await?;
         notify(&app, &w);
         Ok(Json(json!({"ok":true})))
     })
