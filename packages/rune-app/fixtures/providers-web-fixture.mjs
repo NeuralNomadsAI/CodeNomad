@@ -620,9 +620,10 @@ try {
     await mirrorTextbox('Variable name').waitFor({state:'attached',timeout:15000})
     // Rune uses one private password input for secure editors, also when revealed.
     await page.locator('input[type=password]:focus').waitFor({state:'attached'})
+    const valueMirror = mirrorTextbox('Variable value')
+    await valueMirror.waitFor({state:'detached',timeout:15000})
     await page.keyboard.insertText('fixture')
     await page.keyboard.press('Tab')
-    const valueMirror = mirrorTextbox('Variable value')
     await valueMirror.waitFor({state:'attached',timeout:15000})
     assert.equal(await valueMirror.evaluate(el => el.textContent?.includes('fixture') || [...el.attributes].some(attr => attr.value.includes('fixture'))),false,'Blurred password mirror must not expose secret value')
     assert(!(await page.locator('[data-rune-a11y]').innerText()).includes('fixture'),'Mirror must never expose secret value')
