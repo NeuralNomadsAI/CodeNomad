@@ -5,6 +5,7 @@ import fs from "fs"
 import { isIP, type Socket } from "net"
 import path from "path"
 import { AsyncLocalStorage } from "node:async_hooks"
+import { Readable } from "node:stream"
 import { finished } from "node:stream/promises"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
@@ -1018,11 +1019,14 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
       })
     }
 
-    instance.addHook("preParsing", (request, reply, payload, done) => {
+    instance.addHook("preParsing", (request, _reply, payload, done) => {
       if (request.method === "POST") {
         const pathOnly = routedPath(request.raw.url ?? "") ?? (request.raw.url ?? "").split(/[?;]/, 1)[0] ?? ""
         if (/^\/workspaces\/[^/]+\/instance\/api\/session\/[^/]+\/(?:prompt|command)\/\/+$/.test(pathOnly)) {
-          void reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
+          // Skip JSON parsing and body-limit rejection for disallowed double-slash variants so
+          // authentication (401), workspace lookup (404), and route allowlist (403) run in order.
+          delete request.headers["content-length"]
+          done(null, Readable.from([]))
           return
         }
       }

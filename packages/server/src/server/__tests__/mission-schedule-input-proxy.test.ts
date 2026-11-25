@@ -93,7 +93,7 @@ function fixture() {
   }
   const workspace = { id: "w", path: "/repo" }
   const manager: InstanceProxyWorkspaceManager = {
-    get: () => workspace as never,
+    get: (id: string) => (id === "w" ? workspace : undefined) as never,
     getSharedServiceConnection: async () => { if (state.connectionError) throw state.connectionError; return connection },
     getSharedServiceEndpoint: async () => { throw new Error("must keep the acquired endpoint") },
     getSharedServiceClient: async () => { throw new Error("must keep the acquired client") },
@@ -515,6 +515,34 @@ test("pre-handler 400/413/426 keep Fastify error envelopes and carry x-codenomad
     })
     assert.equal(refusedMalformed.statusCode, 403, refusedMalformed.body)
   }
+
+  // Disallowed double-slash routes must not short-circuit workspace lookup (404) or preHandler auth (401).
+  const missingWorkspaceDoubleSlash = await f.app.inject({
+    method: "POST",
+    url: "/workspaces/missing/instance/api/session/ses_trailing/prompt//",
+    headers: { "content-type": "application/json" },
+    payload: "{invalid",
+  })
+  assert.equal(missingWorkspaceDoubleSlash.statusCode, 404, missingWorkspaceDoubleSlash.body)
+
+  const gatedApp = Fastify({ routerOptions: ROUTER_OPTIONS })
+  apps.push(gatedApp)
+  gatedApp.addHook("preHandler", (_request, reply, done) => {
+    void reply.code(401).send({ error: "Unauthorized" })
+    done()
+  })
+  registerInstanceProxyRoutes(gatedApp, {
+    workspaceManager: f.manager,
+    worktreeDeletionFence: f.fence,
+    logger: { debug() {}, error() {}, isLevelEnabled: () => false } as never,
+  })
+  const unauthDoubleSlash = await gatedApp.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_trailing/prompt//`,
+    headers: { "content-type": "application/json" },
+    payload: "{invalid",
+  })
+  assert.equal(unauthDoubleSlash.statusCode, 401, unauthDoubleSlash.body)
 
   f.state.profileError = new UnsupportedOpenCodeError("2.0.0")
   const upgrade = await f.app.inject({

@@ -825,9 +825,19 @@ fn watched_streams_cannot_evict_and_stale_capability_generation_is_discarded() {
     assert!(guard_b.release_open());
     assert!(http.supports_atomic_settings_patches());
     assert!(!http.needs_capability_recheck());
+    // Start a probe with an admissible sequence (>= seq_re) right before the last stream drops.
+    let (gen_before_drop, seq_before_drop, _) = http.begin_meta_probe();
     assert!(guard_a.release_open());
+    let gen_after_drop = http.drop_generation();
+    assert_ne!(gen_after_drop, gen_before_drop);
     assert!(!http.supports_atomic_settings_patches());
     assert!(http.needs_capability_recheck());
+    // A probe started before the generation bump must be rejected by both CAS gates solely on
+    // generation mismatch without mutating drop_generation or setting server_identity_mismatch.
+    assert!(!http.revoke_server_attestation_at(gen_before_drop, seq_before_drop));
+    assert!(!http.record_server_identity_mismatch(gen_before_drop, seq_before_drop));
+    assert_eq!(http.drop_generation(), gen_after_drop);
+    assert!(!http.server_identity_mismatch());
     http.record_transport_drop("stream-a", false);
     assert_eq!(http.transport_drops("stream-a"), 1);
     // Repeated failed SSE reconnect attempts (was_open=false while already in outage) must not

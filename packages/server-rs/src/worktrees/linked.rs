@@ -596,9 +596,11 @@ async fn move_members(
         }
         let current = sessions(app, &cat.project).await?;
         let anchor = requested_session.unwrap_or(row_id(&active_members[0])?);
-        let (_, now) = family(&current, anchor)?;
-        if now.len() != active_members.len()
-            || !active_members.iter().all(|member| now.iter().any(|row| row["id"] == member["id"]))
+        let (now_root, now) = family(&current, anchor)?;
+        let now_ids: HashSet<&str> = now.iter().filter_map(|row| row["id"].as_str()).collect();
+        if now_root != verified_root
+            || now.len() != active_members.len()
+            || !active_members.iter().all(|member| member["id"].as_str().is_some_and(|id| now_ids.contains(id)))
             || now.iter().any(|r| directory(r).ok() != Some(target.service.as_str()))
         {
             return Err(conflict("Session family changed during the move"));
