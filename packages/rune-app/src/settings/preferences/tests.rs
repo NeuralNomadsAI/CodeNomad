@@ -715,10 +715,11 @@ fn settings_passive_reads_never_retry_unconfirmed_writes_but_the_retry_action_do
 }
 
 #[test]
-fn settings_window_close_waits_and_warns_only_if_the_choice_is_unconfirmed() {
+fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfirmed() {
     use std::{
         cell::{Cell, RefCell},
         rc::Rc,
+        time::Instant,
     };
     for saved in [false, true] {
         let (listener, mut prefs) = platform::block_on(fixture());
@@ -730,7 +731,7 @@ fn settings_window_close_waits_and_warns_only_if_the_choice_is_unconfirmed() {
         platform::spawn(async move {
             let write = request(&listener).await;
             assert_eq!(write.body, json!({"settings":{"locale":"he"}}));
-            platform::sleep(Duration::from_millis(60)).await;
+            platform::sleep(Duration::from_millis(80)).await;
             if saved {
                 write.reply(200, json!({"settings":{"locale":"he"}})).await;
             } else {
@@ -741,11 +742,30 @@ fn settings_window_close_waits_and_warns_only_if_the_choice_is_unconfirmed() {
             }
             done.send(()).await.unwrap();
         });
+        let started = Instant::now();
         let mut warned = None;
         window.close(|locale| warned = Some(locale));
         assert!(
+            started.elapsed() < Duration::from_millis(50),
+            "closing Preferences must never block the UI thread"
+        );
+        assert!(
+            shared.try_borrow_mut().is_ok(),
+            "closing Preferences must release the shared RefCell immediately"
+        );
+        assert!(shared.borrow().has_close_drain());
+        assert_eq!(warned, None);
+        platform::block_on(wait_until(|| {
+            let mut prefs = shared.borrow_mut();
+            prefs.poll();
+            if let Some(locale) = prefs.take_save_warning() {
+                warned = Some(locale);
+            }
+            !prefs.has_close_drain()
+        }));
+        assert!(
             receipt.try_recv().is_ok(),
-            "closing must wait for settlement"
+            "background close drain must wait for settlement before clearing"
         );
         assert_eq!(warned, (!saved).then_some("en"));
         assert_eq!(
@@ -754,6 +774,86 @@ fn settings_window_close_waits_and_warns_only_if_the_choice_is_unconfirmed() {
         );
         assert_eq!(shared.borrow().locale_display(), Some("he"));
     }
+
+    // With a completely silent server, closing returns immediately without blocking or holding
+    // RefCell, wakes once the drain budget expires, and emits the save-failed warning.
+    let (silent_listener, mut silent_prefs) = platform::block_on(fixture());
+    let (wake_tx, wake_rx) = bounded(4);
+    silent_prefs.main_wake = Some(std::sync::Arc::new(move || {
+        let _ = wake_tx.try_send(());
+    }));
+    silent_prefs.set_drain_budgets(Duration::from_millis(60), Duration::from_millis(120));
+    silent_prefs.set_locale("he");
+    let shared_silent = Rc::new(RefCell::new(silent_prefs));
+    let mut silent_window =
+        crate::settings::view::Window::new(shared_silent.clone(), Rc::new(Cell::new(false)));
+    let started = Instant::now();
+    let mut immediate_warn = None;
+    silent_window.close(|locale| immediate_warn = Some(locale));
+    assert!(started.elapsed() < Duration::from_millis(50));
+    assert_eq!(immediate_warn, None);
+    assert!(shared_silent.try_borrow_mut().is_ok());
+    assert!(shared_silent.borrow().has_close_drain());
+    platform::block_on(async {
+        let _held_patch = request(&silent_listener).await;
+        let mut warning = None;
+        timeout(Duration::from_secs(2), async {
+            while shared_silent.borrow().has_close_drain() {
+                let _ = timeout(Duration::from_millis(40), wake_rx.recv()).await;
+                let mut prefs = shared_silent.borrow_mut();
+                prefs.poll();
+                if let Some(locale) = prefs.take_save_warning() {
+                    warning = Some(locale);
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(warning, Some("en"));
+    });
+
+    // Reopening Preferences cancels any active close drain without firing a stale warning.
+    let (_reopen_listener, mut reopen_prefs) = platform::block_on(fixture());
+    reopen_prefs.set_drain_budgets(Duration::from_millis(60), Duration::from_millis(120));
+    reopen_prefs.set_locale("he");
+    let shared_reopen = Rc::new(RefCell::new(reopen_prefs));
+    let mut reopen_window =
+        crate::settings::view::Window::new(shared_reopen.clone(), Rc::new(Cell::new(false)));
+    reopen_window.close(|_| panic!("should not warn immediately while draining"));
+    assert!(shared_reopen.borrow().has_close_drain());
+    shared_reopen.borrow_mut().cancel_close_drain();
+    assert!(!shared_reopen.borrow().has_close_drain());
+    assert_eq!(shared_reopen.borrow_mut().take_save_warning(), None);
+
+    // An HTTP PATCH already in flight before a CloseDrainWindow attaches its own waker still
+    // wakes the new drain waker immediately upon completion instead of waiting for stall_budget.
+    let (handoff_listener, mut handoff_prefs) = platform::block_on(fixture());
+    handoff_prefs.set_drain_budgets(Duration::from_secs(10), Duration::from_secs(20));
+    handoff_prefs.set_locale("he");
+    handoff_prefs.poll();
+    assert_eq!(
+        handoff_prefs.begin_close_drain(),
+        crate::settings::preferences::CloseOutcome::Draining
+    );
+    let (drain_wake_tx, drain_wake_rx) = bounded(8);
+    handoff_prefs.attach_close_drain_wake(std::sync::Arc::new(move || {
+        let _ = drain_wake_tx.try_send(());
+    }));
+    // Consume the initial attach wake so the next wake must come from the in-flight PATCH.
+    assert!(drain_wake_rx.try_recv().is_ok());
+    platform::block_on(async {
+        let write = request(&handoff_listener).await;
+        assert_eq!(write.body, json!({"settings":{"locale":"he"}}));
+        write.reply(200, json!({"settings":{"locale":"he"}})).await;
+        timeout(Duration::from_millis(500), drain_wake_rx.recv())
+            .await
+            .expect("in-flight PATCH must wake the newly attached close-drain waker")
+            .unwrap();
+        handoff_prefs.poll();
+        assert!(!handoff_prefs.has_close_drain());
+        assert_eq!(handoff_prefs.take_save_warning(), None);
+        assert_eq!(handoff_prefs.locale(), Some("he"));
+    });
 }
 
 async fn request(listener: &TcpListener) -> Request {

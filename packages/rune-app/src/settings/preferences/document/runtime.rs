@@ -252,6 +252,7 @@ impl Document {
         prefs_transport_lost: bool,
         main: &Option<rune::Waker>,
         window: &Option<rune::Waker>,
+        #[cfg(not(target_arch = "wasm32"))] drain_wake: &Arc<std::sync::Mutex<Option<rune::Waker>>>,
     ) -> (bool, bool) {
         let mut changed = false;
         let mut settled = false;
@@ -514,6 +515,8 @@ impl Document {
             _drop_watch: drop_watch,
         });
         let (backend, main, window) = (backend.clone(), main.clone(), window.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        let drain_wake = Arc::clone(drain_wake);
         let active_client_ids = active_client_ids.to_vec();
         #[cfg(test)]
         let pre_patch_gate = if patch.is_some() {
@@ -628,6 +631,10 @@ impl Document {
                 ))
                 .await;
             for wake in [main, window].into_iter().flatten() {
+                wake();
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(wake) = drain_wake.lock().unwrap_or_else(|e| e.into_inner()).clone() {
                 wake();
             }
         });

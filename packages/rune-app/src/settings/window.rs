@@ -1,7 +1,9 @@
 #[cfg(target_arch = "wasm32")]
 use super::web;
 #[cfg(not(target_arch = "wasm32"))]
-use super::{Preferences, memory, notification_settings, providers, view};
+use super::{
+    Preferences, memory, notification_settings, preferences::CloseOutcome, providers, view,
+};
 use crate::State;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::strings;
@@ -77,6 +79,7 @@ fn open_window(s: &mut State, providers: bool) {
     let target = providers::Target::capture(s);
     {
         let mut prefs = host.shared.borrow_mut();
+        prefs.cancel_close_drain();
         prefs.provider_target = target;
         prefs.open_providers = providers;
         prefs
@@ -110,10 +113,8 @@ pub(super) fn launch_preferences(
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn settle_close(shared: &RefCell<Preferences>, warn: impl FnOnce(&'static str)) {
-    let mut prefs = shared.borrow_mut();
-    if !prefs.flush() {
-        let locale = prefs.locale().unwrap_or_else(strings::locale);
-        drop(prefs);
+    let outcome = shared.borrow_mut().begin_close_drain();
+    if let CloseOutcome::Failed(locale) = outcome {
         warn(locale);
     }
 }
@@ -130,10 +131,28 @@ pub(crate) fn close(s: &mut State) {
         crate::platform::preferences_placement::closed();
         s.notifications.preferences_focused.set(false);
         s.settings.shared.borrow_mut().hide_opencode();
-        settle_close(&s.settings.shared, warn_save_failed);
         if let Some((window, token, _)) = s.settings.window.take() {
             token.set(true);
             window.close();
+        }
+        let outcome = s.settings.shared.borrow_mut().begin_close_drain();
+        match outcome {
+            CloseOutcome::Confirmed => {}
+            CloseOutcome::Failed(locale) => warn_save_failed(locale),
+            CloseOutcome::Draining => {
+                let locale = s
+                    .settings
+                    .shared
+                    .borrow()
+                    .locale()
+                    .unwrap_or_else(strings::locale);
+                crate::platform::preferences_close_drain(
+                    locale,
+                    view::CloseDrainWindow::new(s.settings.shared.clone()),
+                    view::close_drain_spec,
+                    view::close_drain_closed,
+                );
+            }
         }
     }
     #[cfg(target_arch = "wasm32")]

@@ -1,6 +1,8 @@
 mod general;
 mod lifecycle;
-pub(super) use lifecycle::{closed, focus, save_warning, spec};
+pub(super) use lifecycle::{
+    CloseDrainWindow, close_drain_closed, close_drain_spec, closed, focus, save_warning, spec,
+};
 #[cfg(test)]
 mod tests;
 

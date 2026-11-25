@@ -1,10 +1,14 @@
 pub(super) mod behavior;
+#[cfg(not(target_arch = "wasm32"))]
+mod close_drain;
 mod document;
 mod notifications;
 pub(super) mod server;
 
 use super::transcript_preset::{self, Row};
 use crate::{backend::Backend, platform};
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) use close_drain::CloseOutcome;
 pub(super) use codenomad_client::settings::Owner;
 use codenomad_client::settings::PreferencesWatch;
 pub(super) use document::env_var_is_masked;
@@ -41,6 +45,14 @@ pub(super) struct Preferences {
     seen_drops: Vec<(String, u64)>,
     seen_drop_generation: u64,
     observed_drop_watch: Option<codenomad_client::http::ClientDropWatch>,
+    #[cfg(not(target_arch = "wasm32"))]
+    close_drain: Option<close_drain::CloseDrain>,
+    #[cfg(not(target_arch = "wasm32"))]
+    drain_wake: std::sync::Arc<std::sync::Mutex<Option<rune::Waker>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pending_save_warning: Option<&'static str>,
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    drain_budgets: Option<(std::time::Duration, std::time::Duration)>,
 }
 
 impl Preferences {
@@ -525,60 +537,6 @@ impl Preferences {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn flush(&mut self) -> bool {
-        use std::time::{Duration, Instant};
-        if self.backend.is_some() && !self.authentication_required {
-            self.observe_transport_drops();
-            self.take_invalidations();
-            let mut last_revs = self.preferences_revisions();
-            self.prepare_all_drains(true, true);
-            // Coalesced queues hold at most 1 in-flight + 2 unsent transcript batches (Preset + Rows);
-            // bound both per-flight inactivity and overall wall-clock close wait.
-            if self.documents_draining() {
-                let started = Instant::now();
-                let stall_budget =
-                    codenomad_client::http::REQUEST_TIMEOUT * 3 + Duration::from_millis(100);
-                let total_budget =
-                    codenomad_client::http::REQUEST_TIMEOUT * 6 + Duration::from_millis(100);
-                platform::block_on(async {
-                    let mut last_progress = Instant::now();
-                    let mut settled_ops = 0u32;
-                    while self.documents_draining()
-                        && started.elapsed() < total_budget
-                        && last_progress.elapsed() < stall_budget
-                        && settled_ops < 16
-                    {
-                        let transport_or_watch =
-                            self.observe_transport_drops() | self.take_invalidations();
-                        let revs = self.preferences_revisions();
-                        let rev_changed = revs != last_revs;
-                        last_revs = revs;
-                        if transport_or_watch || rev_changed {
-                            self.prepare_all_drains(rev_changed, false);
-                        }
-                        let (_, dropped_mid_poll, settled) = self.poll_documents_inner(false);
-                        if settled {
-                            settled_ops += 1;
-                            if !rev_changed && !dropped_mid_poll {
-                                last_progress = Instant::now();
-                            }
-                        }
-                        if dropped_mid_poll || settled {
-                            self.prepare_all_drains(false, false);
-                        }
-                        if self.documents_draining() {
-                            platform::sleep(Duration::from_millis(10)).await;
-                        }
-                    }
-                });
-            }
-        }
-        !self.config.has_unconfirmed()
-            && !self.state.has_unconfirmed()
-            && !self.server.has_unconfirmed()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     fn documents_draining(&self) -> bool {
         self.config.draining() || self.state.draining() || self.server.draining()
     }
@@ -597,6 +555,14 @@ impl Preferences {
             });
         self.unwatch();
         if !same_address {
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.close_drain.take().is_some() {
+                self.clear_drain_wake();
+                if self.has_unconfirmed() {
+                    self.pending_save_warning =
+                        Some(self.locale().unwrap_or_else(crate::strings::locale));
+                }
+            }
             self.seen_drops.clear();
             self.closing_stream_client_id = None;
         }
@@ -887,6 +853,17 @@ impl Preferences {
 
     pub fn poll(&mut self) -> bool {
         let disconnected = self.observe_transport_drops() | self.take_invalidations();
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(last_revs) = self.close_drain.as_ref().map(|drain| drain.last_revs) {
+            let rev_changed = self.preferences_revisions() != last_revs;
+            if disconnected || rev_changed {
+                self.prepare_all_drains(rev_changed, false);
+            }
+            let (changed, dropped_mid_poll, settled) = self.poll_documents_inner(false);
+            let drain_changed =
+                self.step_close_drain(disconnected, rev_changed, dropped_mid_poll, settled);
+            return disconnected | changed | dropped_mid_poll | drain_changed;
+        }
         let polled = self.poll_documents();
         disconnected | polled
     }
@@ -966,6 +943,8 @@ impl Preferences {
                 self.transport_lost,
                 &main,
                 &window,
+                #[cfg(not(target_arch = "wasm32"))]
+                &self.drain_wake,
             )
         } else {
             (false, false)
@@ -988,6 +967,8 @@ impl Preferences {
                 self.transport_lost,
                 &main,
                 &window,
+                #[cfg(not(target_arch = "wasm32"))]
+                &self.drain_wake,
             )
         } else {
             (false, false)
@@ -1001,6 +982,8 @@ impl Preferences {
                 self.transport_lost,
                 &main,
                 &window,
+                #[cfg(not(target_arch = "wasm32"))]
+                &self.drain_wake,
             )
         } else {
             (false, false)

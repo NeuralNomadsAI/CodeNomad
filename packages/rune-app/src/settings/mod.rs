@@ -295,7 +295,13 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let locale = shared.locale().unwrap_or_else(strings::locale);
     let notify_failure = shared.take_notification_failure();
     let update = shared.notification_update.take();
+    #[cfg(not(target_arch = "wasm32"))]
+    let save_warning = shared.take_save_warning();
     drop(shared);
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(warning_locale) = save_warning {
+        warn_save_failed(warning_locale);
+    }
     strings::with_locale(locale, || {
         use crate::shell::notifications::{Category, emit, emit_outcome};
         if notify_failure {

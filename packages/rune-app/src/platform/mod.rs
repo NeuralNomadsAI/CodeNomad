@@ -275,6 +275,20 @@ pub fn preferences_save_warning(
     // A normal close can open an acknowledgement after Rune hides the originating window.
     rune::open_window(rune::WindowSpec::new("settings-save-warning", spec).state(locale));
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn preferences_close_drain<S: 'static>(
+    locale: &'static str,
+    state: S,
+    spec: fn(&'static str) -> rune::AppSpec<S>,
+    close: fn(&mut S, &mut rune::Tx),
+) {
+    rune::open_window(
+        rune::WindowSpec::new("settings-save-warning", spec(locale))
+            .state(state)
+            .on_close(close),
+    );
+}
 #[cfg(feature = "test-support")]
 pub fn synthetic_scene() -> bool {
     scene_is("synthetic") || scene_is("synthetic-paste")

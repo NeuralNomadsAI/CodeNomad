@@ -1010,3 +1010,39 @@ fn conversation_preferences_render_presets_headers_and_all_21_rows_in_solid_orde
         "narrow Chat container (<672px) must fold presets into a 2×2 grid: {b0_narrow:?} vs {b2_narrow:?}"
     );
 }
+
+#[test]
+fn close_drain_window_shows_status_then_transitions_to_save_failed_alert() {
+    let shared = Rc::new(RefCell::new(Preferences::default()));
+    shared.borrow_mut().fixture_locale("en");
+    let spec = close_drain_spec("en");
+    let mut rt = Runtime::new(
+        CloseDrainWindow::new(shared.clone()),
+        spec.view,
+        spec.size,
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let draining_tree = rt.accessibility_json().to_string();
+    assert!(
+        draining_tree.contains("\"role\":\"status\""),
+        "draining window must render a status label: {draining_tree}"
+    );
+    assert!(
+        !draining_tree.contains("\"role\":\"alert\""),
+        "draining window must not render an alert before failure: {draining_tree}"
+    );
+
+    shared.borrow_mut().fixture_save_warning("en");
+    rt.update(|s, tx| {
+        assert!(spec.poll.unwrap()(s, 0.0, tx));
+    });
+    rt.frame(0.02);
+    let failed_tree = rt.accessibility_json().to_string();
+    assert!(
+        failed_tree.contains("\"role\":\"alert\"")
+            && failed_tree.contains("Could not save the preference.")
+            && failed_tree.contains("\"name\":\"OK\",\"role\":\"button\""),
+        "failed drain must render the save-failed alert and OK button: {failed_tree}"
+    );
+}

@@ -216,3 +216,85 @@ pub(in crate::settings) fn save_warning(locale: &&'static str, cx: &mut Cx<&'sta
         .locale_direction(locale)
     })
 }
+
+#[derive(Default)]
+pub(in crate::settings) struct CloseDrainWindow {
+    shared: std::rc::Rc<std::cell::RefCell<super::Preferences>>,
+    failed_locale: Option<&'static str>,
+}
+
+impl CloseDrainWindow {
+    pub(in crate::settings) fn new(
+        shared: std::rc::Rc<std::cell::RefCell<super::Preferences>>,
+    ) -> Self {
+        Self {
+            shared,
+            failed_locale: None,
+        }
+    }
+}
+
+pub(in crate::settings) fn close_drain_spec(locale: &'static str) -> AppSpec<CloseDrainWindow> {
+    let title = crate::strings::with_locale(locale, || t("settings.title"));
+    AppSpec {
+        setup: Some(|s, wake| {
+            s.shared.borrow_mut().attach_close_drain_wake(wake);
+        }),
+        poll: Some(|s, _, tx| {
+            if s.failed_locale.is_some() {
+                return false;
+            }
+            let (warning, still_draining) = {
+                let mut prefs = s.shared.borrow_mut();
+                prefs.poll();
+                (prefs.take_save_warning(), prefs.has_close_drain())
+            };
+            if let Some(failed_locale) = warning {
+                s.failed_locale = Some(failed_locale);
+                return true;
+            }
+            if !still_draining {
+                tx.close_window();
+            }
+            false
+        }),
+        ..chrome::save_warning_spec(title, CloseDrainWindow::default, close_drain_view)
+    }
+}
+
+pub(in crate::settings) fn close_drain_closed(s: &mut CloseDrainWindow, _: &mut rune::Tx) {
+    s.shared.borrow_mut().cancel_close_drain();
+}
+
+fn close_drain_view(s: &CloseDrainWindow, cx: &mut Cx<CloseDrainWindow>) -> El {
+    use rune_theme_codenomad::Space;
+    let locale = s.failed_locale.unwrap_or_else(|| {
+        s.shared
+            .borrow()
+            .locale()
+            .unwrap_or_else(crate::strings::locale)
+    });
+    crate::strings::with_locale(locale, || {
+        layout::render(cx, |_| {
+            let body = col()
+                .full_width()
+                .full_height()
+                .reading_surface()
+                .pad(Space::Lg)
+                .separate(Space::Md);
+            if s.failed_locale.is_some() {
+                body.child(text(t("settings.preferenceSaveFailed")).role("alert"))
+                    .child(layout::button_tx(
+                        t("alertDialog.actions.ok"),
+                        false,
+                        |_: &mut CloseDrainWindow, tx| {
+                            tx.close_window();
+                        },
+                    ))
+            } else {
+                body.child(text(t("rune.loading")).role("status"))
+            }
+        })
+        .locale_direction(locale)
+    })
+}
