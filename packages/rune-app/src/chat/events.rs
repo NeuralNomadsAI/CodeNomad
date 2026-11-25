@@ -66,6 +66,8 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    #[cfg(target_arch = "wasm32")]
+                    platform::pairing::observe_authenticated(s);
                     s.conversation_stream_connected = true;
                     s.transcript_display.messages.refresh();
                     s.status_permissions.online(true);
@@ -85,6 +87,17 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                         a.online = true;
                     }
                     a.refresh(catalog)
+                }
+            }
+            Event::AgentControl(lane) => {
+                if let Some(a) = s.agent.as_mut() {
+                    match lane {
+                        codenomad_client::transport::AgentLane::Session => a.refresh_session(false),
+                        codenomad_client::transport::AgentLane::Permissions => {
+                            a.refresh_permissions()
+                        }
+                        codenomad_client::transport::AgentLane::Forms => a.refresh_forms(),
+                    }
                 }
             }
             Event::SessionUsage(usage) => {
@@ -139,10 +152,29 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 form,
                 id,
             }) => {
-                if !uses_workspace_attention(s)
-                    && let Some(agent) = &mut s.agent
-                {
-                    agent.notice_request(form, id);
+                let local_attention = !uses_workspace_attention(s);
+                if let Some(agent) = &mut s.agent {
+                    if local_attention {
+                        agent.notice_request(form, id);
+                    } else if form {
+                        agent.refresh_forms();
+                    } else {
+                        agent.refresh_permissions();
+                    }
+                }
+            }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::SessionRequestResolved { form, id },
+            ) => {
+                let local_attention = !uses_workspace_attention(s);
+                if let Some(agent) = &mut s.agent {
+                    if local_attention {
+                        agent.resolve_request(form, &id);
+                    } else if form {
+                        agent.refresh_forms();
+                    } else {
+                        agent.refresh_permissions();
+                    }
                 }
             }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionExecution {
@@ -154,7 +186,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     let verify = notice.is_some();
                     agent.attention.execution(notice);
                     if verify {
-                        agent.refresh(false);
+                        agent.refresh_session(false);
                     }
                 }
             }
@@ -165,7 +197,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     && let Some(agent) = &mut s.agent
                 {
                     agent.attention.compacted(id);
-                    agent.refresh(false);
+                    agent.refresh_session(false);
                 }
             }
             Event::Workspace(
@@ -215,6 +247,8 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 settings::invalidate(s, owner);
             }
             Event::Sync(page) | Event::ReaderSync { page, .. } => {
+                #[cfg(target_arch = "wasm32")]
+                platform::pairing::observe_authenticated(s);
                 s.conversation_stream_connected = true;
                 if s.reader.is_none() {
                     // Direct startup also uses Reconnecting to stage a fresh transcript read.

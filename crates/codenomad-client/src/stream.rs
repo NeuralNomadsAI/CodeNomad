@@ -22,7 +22,7 @@ mod sessions;
 pub use catalogue::{AttentionHint, CatalogueChanges, CatalogueWatch};
 pub use children::ChildSettlement;
 pub(crate) use children::Children;
-use notifications::session_attention;
+pub(crate) use notifications::session_attention;
 use routing::dispatch;
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]

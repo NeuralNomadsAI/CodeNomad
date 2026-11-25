@@ -421,7 +421,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             relayed |= crate::workspace::deliver_detached_events(s, &stopped);
         }
         #[cfg(target_arch = "wasm32")]
-        if disconnected {
+        if disconnected && !crate::platform::pairing::required(s) {
             crate::platform::pairing::observe(s);
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -437,6 +437,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 relayed |= crate::workspace::set_detached_online(s, false);
             } else if generation % 2 == 1 {
+                #[cfg(target_arch = "wasm32")]
+                crate::platform::pairing::observe_authenticated(s);
                 relayed |= crate::workspace::set_detached_online(s, false);
                 if crate::workspace::has_detached_panels(s) {
                     start_reconcile = Some(generation);
@@ -1020,7 +1022,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     if key == "rune.restore_error" && !s.screen.is_launcher() {
                         s.phase = Phase::RestoreFailed;
                     }
-                    crate::platform::pairing::observe(s);
+                    if !crate::platform::pairing::required(s) {
+                        crate::platform::pairing::observe(s);
+                    }
                 }
             }
         }

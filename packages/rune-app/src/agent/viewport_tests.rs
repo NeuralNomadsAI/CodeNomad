@@ -11,15 +11,10 @@ fn state() -> State {
     let (jobs, _) = bounded(1);
     let (stop, _) = bounded(1);
     let (_, results) = bounded(1);
-    let mut ui = Ui::new(Handle {
-        connection: None,
-        jobs,
-        stop,
-        results,
-    });
+    let mut ui = Ui::new(Handle::test(jobs, stop, results));
     ui.reading = false;
     ui.known = true;
-    ui.pending_known = true;
+    ui.mark_pending_known();
     ui.online = true;
     let mut state = init();
     state.phase = Phase::Ready;

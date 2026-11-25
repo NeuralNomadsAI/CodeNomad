@@ -16,7 +16,7 @@ pub(crate) fn retry_connection(s: &mut State, tx: &mut Tx) {
     #[cfg(target_arch = "wasm32")]
     {
         if platform::pairing::required(s) {
-            platform::pairing::observe(s);
+            platform::pairing::recheck(s);
             return;
         }
         if matches!(s.phase, Phase::WorkspaceMissing | Phase::RestoreFailed) {

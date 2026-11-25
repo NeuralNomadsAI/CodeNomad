@@ -93,7 +93,7 @@ $env:RUNE_SERVER_EXE = '<chemin-absolu-vers-codenomad-rs.exe>'
 node scripts/rune/web-fixture.mjs
 ```
 
-`bundle-manifest.json` recense les empreintes SHA-256 des fichiers et du module d'entrée, les versions des outils et les tailles brutes, gzip niveau 9 et Brotli qualité 5. Les totaux portent sur les fichiers empaquetés, hors manifeste. Les tailles compressées sont mesurées ; leur service avec négociation HTTP dépend de l'hôte. Le profil du fichier WASM d'entrée détermine les optimisations présentes dans le bundle.
+`bundle-manifest.json` recense les empreintes SHA-256 des fichiers publics et du module d'entrée, les versions des outils et les tailles brutes, gzip niveau 9 et Brotli qualité 5. Les totaux portent sur les fichiers publics empaquetés, hors manifeste. Un fichier compagnon `.br` est écrit à côté de chaque ressource plus petite en Brotli et répertorié séparément sous `compressed` / `compressedTotals` (avec son empreinte SHA-256 et sa taille) afin que l'hôte puisse le servir en `Content-Encoding: br` sans exposer le chemin `.br` dans la liste publique. Le profil du fichier WASM d'entrée détermine les optimisations présentes dans le bundle.
 
 ```text
 node scripts/rune/web-smoke.mjs --url http://127.0.0.1:<port-fixture>/
