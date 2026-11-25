@@ -105,6 +105,13 @@ impl BrowserController {
                     Ok(())
                 },
             )?;
+            // A fragment-only open keeps the document: restarting at dispatch drops old-page events fired before it.
+            #[cfg(windows)]
+            if dispatch_request_id.is_some() {
+                controller
+                    .diagnostics
+                    .restart(&expected.registration_id, expected.generation, None);
+            }
             *receipt = Some(sequence);
             Ok(sequence)
         };

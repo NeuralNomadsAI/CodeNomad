@@ -592,6 +592,8 @@ export class BrowserController {
             return await this.enqueue(guest, async () => {
               checkRegistration()
               claim.dispatched = true
+              // A fragment-only open keeps the document: restarting here drops old-page events fired before dispatch.
+              this.diagnostics.get(guest)?.restart()
               const committed = await loadNavigation(guest, url, deadline, checkRegistration).catch(error => {
                 if (error instanceof MainNavigationSuperseded) this.releaseOpen(owner, requestID, undefined, true, error.successorUrl)
                 throw error
