@@ -40,10 +40,14 @@ pub fn scoped_close_button<S: 'static>(
                 state.hovered = hovered;
             }
         })
-        // HTML buttons activate on Enter. Rune's native button routing reserves
-        // Return for a default action, so this shared control preserves Solid's contract.
+        // Preserve HTML's Shift+Enter and held-Enter activation before Rune's focus routing.
         .on_key(move |s: &mut S, event, tx| {
-            if event.key != rune::Key::Enter {
+            if event.key != rune::Key::Enter
+                || event.mods.cmd
+                || event.mods.ctrl
+                || event.mods.alt
+                || event.mods.logo
+            {
                 return false;
             }
             on_enter(s, tx);
