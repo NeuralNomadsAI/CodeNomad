@@ -94,8 +94,78 @@ pub(crate) fn mission_panel(s: &State) -> El {
             panel,
             mission_edit,
             missions::controls(panel, &ui.mission_lifecycle, &entry.key, control),
+            on_mission_reader_open,
         )
     })
+}
+
+pub(crate) fn mission_has_reader(s: &State) -> bool {
+    !crate::shell::launcher_replaces_project(s)
+        && mission_owner(s).is_some_and(missions::Panel::has_reader)
+}
+
+pub(crate) fn close_mission_reader(s: &mut State) -> Option<String> {
+    if let Some(ui) = &mut s.workspace
+        && let Some(panel) = &mut ui.entries[ui.active].missions
+    {
+        return panel.close_reader();
+    }
+    None
+}
+
+pub(crate) fn restore_mission_reader_focus(s: &State, back: Option<String>, tx: &mut rune::Tx) {
+    let visible =
+        crate::shell::right_panel_visible(s) && right_panel_tab(s) == RightPanelTab::Missions;
+    let mounted = visible
+        && back
+            .as_deref()
+            .is_some_and(|key| mission_owner(s).is_some_and(|panel| panel.has_eye_trigger(key)));
+    let target = if mounted {
+        back.unwrap_or_else(|| "right-panel-toggle".into())
+    } else {
+        "right-panel-toggle".into()
+    };
+    if let Some(task_id) = target.strip_prefix("mission-task-eye-") {
+        tx.scroll_into_view(format!("mission-task-{task_id}"));
+        tx.focus_when_shown(target, tx.focus_visible());
+    } else {
+        tx.focus(target, tx.focus_visible());
+    }
+}
+
+pub(crate) fn mission_reader(s: &State) -> El {
+    if !mission_has_reader(s) {
+        return rune::el();
+    }
+    let Some(panel) = mission_owner(s) else {
+        return rune::el();
+    };
+    missions::reader_view(panel, mission_reader_owner, |s: &mut State, tx| {
+        let back = close_mission_reader(s);
+        if s.screen.is_launcher() {
+            tx.instant();
+        } else {
+            crate::chat::reading::restore_position(s, tx);
+        }
+        restore_mission_reader_focus(s, back, tx);
+    })
+}
+
+fn mission_reader_owner(s: &mut State) -> Option<&mut missions::Panel> {
+    if crate::shell::launcher_replaces_project(s) {
+        return None;
+    }
+    let ui = s.workspace.as_mut()?;
+    ui.entries[ui.active].missions.as_mut()
+}
+
+fn on_mission_reader_open(s: &mut State, tx: &mut rune::Tx) {
+    s.notifications.supersede_navigation();
+    let _ = s.shell.close_floating(tx);
+    crate::git::close_preview(s);
+    if let Some(files) = &mut s.files {
+        files.close_reader();
+    }
 }
 
 pub(crate) fn mission_confirmation(s: &State) -> Option<El> {
@@ -145,11 +215,17 @@ fn mission_edit(s: &mut State) -> (Option<&mut missions::Panel>, &mut TextEdit) 
     (panel, &mut s.rejected_edit)
 }
 
-pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
+pub(super) fn poll_missions(
+    ui: &mut Ui,
+    s: &State,
+    tx: &mut rune::Tx,
+) -> (bool, Option<crate::backend::Backend>) {
     let finished = ui.mission_lifecycle.poll();
     let mut changed = !finished.is_empty();
+    let mut auth_expired = None;
     let mut selection_changed = false;
     let mounted = crate::shell::right_panel_visible(s);
+    let replaced = crate::shell::launcher_replaces_project(s);
     let current = &ui.entries[ui.active];
     let current_source = (mounted
         && matches!(&current.saved, Tab::Workspace(saved)
@@ -176,8 +252,7 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if index != ui.active {
             if let Some(panel) = &mut entry.missions {
-                panel.show(false);
-                panel.cancel_probe();
+                panel.suspend();
             }
             continue;
         }
@@ -207,12 +282,25 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
         {
             ui.mission_lifecycle.retain_checks_for(None);
             ui.mission_lifecycle.confirmation = None;
-            let mut panel = missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone());
-            panel.selected.clone_from(&saved.view.selected_mission);
-            entry.missions = Some(panel);
+            if let Some(existing) = entry
+                .missions
+                .as_mut()
+                .filter(|panel| panel.same_workspace(&backend))
+            {
+                existing.rebind(backend);
+            } else {
+                let mut panel =
+                    missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone());
+                panel.selected.clone_from(&saved.view.selected_mission);
+                entry.missions = Some(panel);
+            }
             changed = true;
         }
         if let Some(panel) = &mut entry.missions {
+            if replaced {
+                panel.suspend();
+                continue;
+            }
             let visible = mounted && saved.view.right_panel == RightPanelTab::Missions;
             if !visible {
                 panel.show(false);
@@ -222,10 +310,22 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
             } else {
                 panel.cancel_probe();
             }
-            if visible {
+            if visible || panel.has_reader() {
                 panel.refresh_when_due(ui.clock, tx);
             }
             changed |= panel.poll();
+            if let Some(expired) = panel.take_reader_auth_expired() {
+                auth_expired = Some(expired);
+            }
+            if let Some(text) = panel.take_reader_copy()
+                && auth_expired.is_none()
+                && panel.has_reader()
+            {
+                tx.copy(text);
+            }
+            if panel.take_reader_focus_close() && panel.has_reader() {
+                tx.focus("mission-reader-close", tx.focus_visible());
+            }
             panel.show(panel.supported() && visible);
             if panel.supported() && visible {
                 panel.settle_controls(&entry.key, &mut ui.mission_lifecycle, &finished);
@@ -239,7 +339,7 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
     if selection_changed {
         ui.changed();
     }
-    changed
+    (changed, auth_expired)
 }
 
 pub(crate) fn suspend_missions(s: &mut State) {
@@ -247,15 +347,16 @@ pub(crate) fn suspend_missions(s: &mut State) {
         ui.mission_lifecycle.confirmation = None;
         ui.mission_lifecycle.retain_checks_for(None);
         if let Some(panel) = &mut ui.entries[ui.active].missions {
-            panel.show(false);
-            panel.cancel_probe();
+            panel.suspend();
         }
     }
 }
 
 pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
     // No observer may grant demand; the real mounted occurrence owns it.
-    if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
+    if !(crate::shell::right_panel_visible(s) && right_panel_tab(s) == RightPanelTab::Missions)
+        && !mission_has_reader(s)
+    {
         return;
     }
     let Some(ui) = &mut s.workspace else { return };
@@ -529,8 +630,8 @@ pub(crate) fn set_detached_online(s: &mut State, online: bool) -> bool {
 pub(crate) fn mission_observation_project(s: &State) -> Option<&str> {
     // Cached streams belong to other occurrences. Only the current conversation
     // can carry this occurrence's events in place of the project observer.
-    if !crate::shell::right_panel_visible(s)
-        || right_panel_tab(s) != RightPanelTab::Missions
+    if !((crate::shell::right_panel_visible(s) && right_panel_tab(s) == RightPanelTab::Missions)
+        || mission_has_reader(s))
         || s.incoming
             .as_ref()
             .is_some_and(|stream| !stream.is_closed())

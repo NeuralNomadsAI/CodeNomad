@@ -195,6 +195,7 @@ impl Receipts {
             && s.screen.launcher().is_none()
             && !crate::git::has_preview(s)
             && !crate::files::has_preview(s)
+            && !crate::workspace::mission_has_reader(s)
             && matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming);
         let receipts = &mut s.transcript_display.receipts;
         if !visible {
