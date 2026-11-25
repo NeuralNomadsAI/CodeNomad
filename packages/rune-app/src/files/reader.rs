@@ -56,6 +56,9 @@ impl Reader {
             due: 0.0,
         }
     }
+    pub fn rebind_session(&mut self, backend: &Backend) {
+        self.backend = backend.clone();
+    }
     pub fn target(&self) -> Option<&Target> {
         self.target.as_ref()
     }
@@ -192,7 +195,7 @@ impl Drop for Reader {
     }
 }
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 impl Reader {
     pub fn scene(&mut self, preview: Result<Preview>) {
         self.cancel();

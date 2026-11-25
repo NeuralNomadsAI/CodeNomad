@@ -159,6 +159,11 @@ impl Preferences {
         }
     }
 
+    pub(super) fn queues_follow_ups(&self) -> bool {
+        self.saved(Owner::Config)
+            .is_some_and(|data| data["settings"]["followUpBehavior"] == "queue")
+    }
+
     #[cfg(test)]
     pub(super) fn fixture_shortcuts(&mut self, overrides: Value) {
         self.config.snapshot = Some(json!({"settings": {"hotkeyOverrides": overrides}}));

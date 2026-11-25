@@ -1,6 +1,6 @@
 mod tabs;
 use tabs::{activate, close_blocked};
-pub use tabs::{can_new, close, new_tab, select};
+pub use tabs::{can_new, close, new_tab, select, select_index, select_relative};
 
 mod drafts;
 mod notification;
@@ -9,21 +9,27 @@ mod panel_state;
 mod polling;
 mod strip;
 
-pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
+pub use drafts::{
+    attachment_draft_admissible, bound, capture, draft_changed, unconfirmed_drafts_full,
+};
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
     observes_notification, open_notification, owns_notification, workspace_notification,
 };
 #[cfg(target_arch = "wasm32")]
 pub(crate) use observation::poll_cached_notifications;
+pub(super) use panel_state::event_workspace_id;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use panel_state::set_files_tab;
 pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
 };
 pub(crate) use panel_state::{
-    mission_confirmation, mission_event, mission_observation_project, mission_panel,
-    mission_supported, right_panel_tab, set_right_panel_tab, suspend_missions,
+    deliver_detached_events, detached_workspace_ids, has_detached_panels,
+    has_unopened_detached_panels, mission_confirmation, mission_event, mission_observation_project,
+    mission_panel, mission_supported, missions_composing, reconcile_detached_online,
+    right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
+    suspend_missions,
 };
 pub use polling::{poll, status};
 pub use strip::strip;
@@ -48,6 +54,8 @@ pub(super) struct Entry {
     sessions: Vec<Session>,
     listed_sessions: HashSet<String>,
     creation_uncertain: bool,
+    creation_uncertain_linked: Option<String>,
+    rebind_after_send: Option<String>,
     next: Option<String>,
     linked: crate::launcher::linked::Linked,
     consumed_cursors: HashSet<u64>,
@@ -100,6 +108,22 @@ pub struct Ui {
 impl Ui {
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_ready(&mut self) {
+        self.ready = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_hydrate(&mut self, saved: Snapshot) {
+        self.hydrate(saved);
+    }
+    #[cfg(test)]
+    pub(crate) fn active_index(&self) -> usize {
+        self.active
+    }
+    #[cfg(test)]
+    pub(crate) fn tab_count(&self) -> usize {
+        self.entries.len()
     }
     pub fn new() -> Self {
         Self {
@@ -242,6 +266,8 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         sessions: Vec::new(),
         listed_sessions: HashSet::new(),
         creation_uncertain: false,
+        creation_uncertain_linked: None,
+        rebind_after_send: None,
         next: None,
         linked: Default::default(),
         consumed_cursors: HashSet::new(),
@@ -258,6 +284,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
 }
 fn busy(s: &State) -> bool {
     s.status_permissions.settling()
+        || s.transcript_display.messages.pending()
         || s.screen.launcher().is_some_and(|l| l.pending)
         || s.workspace.as_ref().is_some_and(|ui| !ui.ready)
 }
@@ -348,7 +375,7 @@ pub(crate) fn renew_connection(s: &mut State) {
         return;
     };
     if let Some(ui) = &mut s.workspace {
-        for item in &mut ui.entries {
+        for (index, item) in ui.entries.iter_mut().enumerate() {
             if let Some(backend) = &mut item.binding
                 && backend.base == current.base
                 && backend.client.server_identity().is_some()
@@ -356,6 +383,13 @@ pub(crate) fn renew_connection(s: &mut State) {
             {
                 backend.client = current.client.clone();
                 backend.client_id.clone_from(&current.client_id);
+                if index != ui.active
+                    && item.cache.is_some()
+                    && let Tab::Workspace(w) = &item.saved
+                    && let Some(id) = &w.active_session_id
+                {
+                    item.rebind_after_send = Some(id.clone());
+                }
             }
         }
     }
@@ -473,10 +507,23 @@ pub fn opened(s: &mut State, project: &Project) {
 }
 
 pub fn schedule_catalogue(s: &mut State) {
-    if cfg!(target_os = "windows")
-        && let Some(ui) = &mut s.workspace
-    {
+    let allow = cfg!(target_os = "windows")
+        || cfg!(not(target_arch = "wasm32"))
+            && s.screen
+                .launcher()
+                .is_some_and(|l| l.creation_uncertain_linked.is_some());
+    if allow && let Some(ui) = &mut s.workspace {
         ui.entries[ui.active].catalogue.schedule(ui.clock);
+    }
+}
+
+pub fn schedule_catalogue_refresh(s: &mut State) {
+    if let Some(ui) = &mut s.workspace {
+        ui.entries[ui.active].catalogue.schedule_urgent(ui.clock);
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(l) = s.screen.launcher_mut() {
+        l.linked.mark_reload();
     }
 }
 pub fn has_conversation_stream(s: &State) -> bool {

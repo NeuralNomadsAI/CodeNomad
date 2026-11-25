@@ -42,11 +42,41 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         .chain(std::iter::once(crate::shell::notifications::history_entry(
             s, touch,
         )));
-    rune_theme_codenomad::tabs::strip(
+    let search_visible = crate::timeline::search::available(s);
+    let (new_shadowed, close_shadowed): (&[&str], &[&str]) =
+        if !crate::shell::launcher_replaces_project(s)
+            && s.screen.launcher().is_some_and(|l| l.project.is_some())
+        {
+            if search_visible {
+                (
+                    &["session-search", "session-new"],
+                    &["session-search", "session-new", "new-instance"],
+                )
+            } else {
+                (&["session-new"], &["session-new", "new-instance"])
+            }
+        } else {
+            (&[], &["new-instance"])
+        };
+    let new_help = crate::settings::with_shortcut_label_excluding(
+        s,
+        strings::t("instanceTabs.new.title"),
+        "new-instance",
+        new_shadowed,
+    );
+    let active_close_help = crate::settings::with_shortcut_label_excluding(
+        s,
+        strings::t("instanceTab.actions.close.ariaLabel"),
+        "close-instance",
+        close_shadowed,
+    );
+    rune_theme_codenomad::tabs::strip_with_help(
         touch,
         strings::locale(),
         &tabs,
         ui.entries.get(ui.active).map(|e| e.key.as_str()),
+        &new_help,
+        &active_close_help,
         select,
         close,
         new_tab,

@@ -45,7 +45,7 @@ function hidesFixtureThinking(body){
       /^(bash|read|write|edit|patch|webfetch|websearch|glob|grep|task|execute|skill|question|invalid|other)$/.test(key)&&visibility(mode))
 }
 
-export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,missions=false,mobilePreferences=false,markerFilters=false,allowOwned}){
+export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,menuPrompt,missions=false,mobilePreferences=false,markerFilters=false,allowOwned}){
   const workspaces=new Set(),claims=new Map(),owners=new Map()
   const historyKeys=new Set(project?[project,path.join(path.dirname(project),'linked')]:[])
   const claim=body=>typeof body?.requestId==='string'&&body.requestId.length>0&&body.requestId.length<=128&&body.requestId.trim()===body.requestId
@@ -63,13 +63,18 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if((method==='GET'||method==='HEAD')&&assets.has(p))return true
       if(method==='GET'&&['/api/workspaces','/api/meta','/api/events','/api/auth/status'].includes(p))return true
       if(method==='GET'&&(p==='/api/storage/config/ui'||p==='/api/storage/state/ui'))return true
-      const history=p.match(/^\/api\/storage\/instances\/([^/]+)$/)
-      if(method==='GET'&&history&&workspaces.size){
-        try{return historyKeys.has(decodeURIComponent(history[1]))||workspaces.has(history[1])}catch{return false}
-      }
       if(mobilePreferences&&method==='GET'&&p==='/api/memory/settings')return true
       if(markerFilters&&method==='PATCH'&&p==='/api/storage/config/ui')
         return !!hidesFixtureThinking(body)
+      const history=p.match(/^\/api\/storage\/instances\/([^/]+)$/)
+      if(history&&workspaces.size){
+        let key
+        try{key=decodeURIComponent(history[1])}catch{return false}
+        if(method==='GET')return historyKeys.has(key)||workspaces.has(history[1])
+        if(method==='PUT'&&typeof menuPrompt==='string')return key===project&&
+          body?.messageHistory?.[0]===menuPrompt&&Array.isArray(body.messageHistory)&&
+          Object.keys(body).every(key=>['messageHistory','agentModelSelections'].includes(key))
+      }
       if(method==='POST'&&p==='/api/client-connections/pong')return true
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)
@@ -77,8 +82,11 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if(scoped&&workspaces.has(scoped[1])&&allowOwned)
         return allowOwned({method,path:scoped[2],body,query,native:true})
       if(scoped&&workspaces.has(scoped[1])&&method==='GET'&&/^session\/ses_another\/message\/message-0000[01]$/.test(scoped[2]))return true
-      if(scoped&&workspaces.has(scoped[1])&&method==='POST'&&scoped[2]==='session/ses_existing/prompt')
+      if(scoped&&workspaces.has(scoped[1])&&method==='POST'&&scoped[2]==='session/ses_existing/prompt'){
+        if(typeof menuPrompt==='string')return body?.text===menuPrompt&&body.delivery==='queue'&&body.resume===false&&
+          body.files?.length===1&&body.files[0].name==='mobile-menu.txt'&&body.files[0].uri==='data:text/plain;base64,bWVudSBmaWxl'
         return typeof androidPrompt==='string'&&body?.text===androidPrompt&&Object.keys(body).length===1
+      }
       if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(command|model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another|ses_linked|ses_linked_next)(?:\/(permission|form))?$/.test(scoped[2])
        const owned=p.match(/^\/api\/workspaces\/([^/]+)(?:\/(.*))?$/)
        if(!owned||!workspaces.has(owned[1]))return false
@@ -86,6 +94,7 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
        if(method==='DELETE'&&!owned[2])return !forbidRelease
        if(allowOwned)return allowOwned({method,path:owned[2]??'',body,query,native:false})
       if(method==='GET'&&owned[2]==='worktrees')return true
+      if(method==='GET'&&/^sessions\/(ses_existing|ses_another|ses_linked|ses_linked_next)\/permission-mode$/.test(owned[2]))return true
       if(method==='POST'&&['session-history/window','session-history/outline'].includes(owned[2]))return ['ses_existing','ses_another','ses_linked','ses_linked_next'].includes(body?.sessionID)
       if(method==='POST'&&owned[2]==='session-history/outlinePreview')return body?.sessionID==='ses_existing'
         &&Array.isArray(body.messageIDs)&&body.messageIDs.length>0&&body.messageIDs.length<=12

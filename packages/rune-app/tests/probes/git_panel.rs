@@ -47,6 +47,11 @@ pub(super) fn run() {
     setup(&mut state, std::sync::Arc::new(|| {}));
     let mut rt = Runtime::new(state, view, (1450.0, 920.0), Env::new(true, 1.0));
     rt.poll = Some(poll);
+    rt.on_key = Some(|s, event, tx| {
+        crate::strings::with_locale(crate::settings::app_locale(s), || {
+            crate::shell::keys(s, event, tx)
+        })
+    });
     rt.frame(0.0);
     tap(&mut rt, "connect");
     wait(&mut rt, "backend connected", |rt| {

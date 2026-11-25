@@ -218,12 +218,27 @@ pub(super) fn replace_edit(s: &mut State, mut edit: TextEdit) {
     s.draft = edit;
 }
 
-pub(super) fn available(s: &State) -> bool {
+pub(crate) fn available(s: &State) -> bool {
     scope(s).is_some_and(|(project, tab, session)| {
         s.prompt_history
             .entries
             .iter()
             .any(|e| e.visible_in(&project, &tab, &session))
+    })
+}
+
+pub(super) fn can_browse(s: &State, older: bool) -> bool {
+    if s.composer.editing_locked() || s.composer.device.busy() {
+        return false;
+    }
+    if !older {
+        return s.composer.recall.is_some();
+    }
+    scope(s).is_some_and(|(project, tab, session)| {
+        s.prompt_history.entries.iter().any(|entry| {
+            s.composer.recall.as_ref().is_none_or(|r| entry.id < r.id)
+                && entry.visible_in(&project, &tab, &session)
+        })
     })
 }
 

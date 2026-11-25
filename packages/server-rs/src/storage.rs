@@ -93,7 +93,8 @@ async fn instance_file(app: &crate::App, id: &str) -> Result<PathBuf, Error> {
             let mut owned = workspaces.iter().any(|w| w.path.to_str() == Some(id));
             if !owned && let Some(directory) = crate::files::paths::canonical(&app.scope, id) {
                 for w in &workspaces {
-                    if crate::worktrees::ownership::capture_directory(app, w, &directory).await
+                    if crate::worktrees::ownership::capture_directory(app, w, &directory)
+                        .await
                         .is_some_and(|proof| proof.history_live(&w.path, &directory))
                         && crate::files::paths::canonical(&app.scope, id).as_ref() == Some(&directory)
                         && app.workspace(&w.id.to_string()).is_ok()

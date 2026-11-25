@@ -20,14 +20,78 @@ pub enum CatalogueChanges {
     All,
 }
 
+const MAX_WORKSPACE_EVENTS: usize = 256;
+const MAX_WORKSPACE_EVENT_BYTES: usize = 512 * 1024;
+
+#[derive(Default)]
+struct WorkspaceEventQueue {
+    events: VecDeque<(WorkspaceEvent, usize)>,
+    bytes: usize,
+}
+
+impl WorkspaceEventQueue {
+    fn clear(&mut self) {
+        self.events.clear();
+        self.bytes = 0;
+    }
+
+    fn push(&mut self, event: WorkspaceEvent) -> bool {
+        let size = workspace_event_bytes(&event);
+        if size > MAX_WORKSPACE_EVENT_BYTES {
+            return true;
+        }
+        let mut overflow = false;
+        while self.events.len() >= MAX_WORKSPACE_EVENTS
+            || self.bytes.saturating_add(size) > MAX_WORKSPACE_EVENT_BYTES
+        {
+            let Some((_, dropped)) = self.events.pop_front() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(dropped);
+            overflow = true;
+        }
+        self.bytes = self.bytes.saturating_add(size);
+        self.events.push_back((event, size));
+        overflow
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = WorkspaceEvent> + '_ {
+        self.bytes = 0;
+        self.events.drain(..).map(|(event, _)| event)
+    }
+}
+
+fn workspace_event_bytes(event: &WorkspaceEvent) -> usize {
+    match event {
+        WorkspaceEvent::FilesChanged {
+            workspace_id,
+            changes,
+        } => changes.iter().fold(workspace_id.len() + 64, |acc, change| {
+            acc.saturating_add(change.directory.len())
+                .saturating_add(change.path.len())
+                .saturating_add(64)
+        }),
+        WorkspaceEvent::NativeFilesystemChanged { workspace_id }
+        | WorkspaceEvent::WorktreesChanged { workspace_id }
+        | WorkspaceEvent::Stopped { workspace_id } => workspace_id.len() + 64,
+        _ => 64,
+    }
+}
+
 pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
+    workspace_events: Mutex<WorkspaceEventQueue>,
+    workspace_stopped: Mutex<HashSet<String>>,
+    workspace_overflow: std::sync::atomic::AtomicBool,
+    disconnect_notice: std::sync::atomic::AtomicBool,
+    authentication_required: std::sync::atomic::AtomicBool,
     wake: Wake,
     generation: std::sync::atomic::AtomicU64,
+    workspace_generation: std::sync::atomic::AtomicU64,
 }
 
 #[derive(Default)]
@@ -38,7 +102,8 @@ struct StatsChanges {
 
 impl Signals {
     pub(super) fn invalidate_all(&self) {
-        if self.mark(&self.pending, None) | self.mark(&self.providers, None) {
+        let workspace = !self.workspace_overflow.swap(true, SeqCst);
+        if self.mark(&self.pending, None) | self.mark(&self.providers, None) | workspace {
             (self.wake)();
         }
     }
@@ -47,14 +112,42 @@ impl Signals {
         self.mark(&self.pending, None);
         self.mark(&self.providers, None);
         self.generation.fetch_add(1, SeqCst);
+        let _ = self
+            .workspace_generation
+            .try_update(SeqCst, SeqCst, |generation| {
+                Some(if generation % 2 == 0 {
+                    generation + 1
+                } else {
+                    generation + 2
+                })
+            });
         (self.wake)();
     }
 
     fn disconnected(&self) {
         self.attention.lock().unwrap().clear();
+        self.workspace_events.lock().unwrap().clear();
         *self.stats.lock().unwrap() = StatsChanges::default();
-        if self.generation.load(SeqCst) % 2 == 1 {
-            self.generation.fetch_add(1, SeqCst);
+        let gen_changed = self
+            .generation
+            .try_update(SeqCst, SeqCst, |generation| {
+                (generation % 2 == 1).then_some(generation + 1)
+            })
+            .is_ok();
+        let ws_changed = self
+            .workspace_generation
+            .try_update(SeqCst, SeqCst, |generation| {
+                if generation == 0 {
+                    Some(2)
+                } else if generation % 2 == 1 {
+                    Some(generation + 1)
+                } else {
+                    None
+                }
+            })
+            .is_ok();
+        let disconnect_notified = !self.disconnect_notice.swap(true, SeqCst);
+        if gen_changed || ws_changed || disconnect_notified {
             (self.wake)();
         }
     }
@@ -87,14 +180,38 @@ fn mark_changes(pending: &mut CatalogueChanges, workspace: Option<&str>) -> bool
 
 impl Signals {
     pub(super) fn observe(&self, frame: &Value) {
+        let workspace_event =
+            super::routing::parse_detached_workspace_event(frame).is_some_and(|event| {
+                match event {
+                    WorkspaceEvent::Stopped { workspace_id } => {
+                        let mut stopped = self.workspace_stopped.lock().unwrap();
+                        if stopped.len() < 128 {
+                            stopped.insert(workspace_id);
+                        } else if !stopped.contains(&workspace_id) {
+                            self.workspace_overflow.store(true, SeqCst);
+                        }
+                    }
+                    other => {
+                        if self.workspace_events.lock().unwrap().push(other) {
+                            self.workspace_overflow.store(true, SeqCst);
+                        }
+                    }
+                }
+                true
+            });
         let provider_changed = crate::settings::provider_change(frame)
             .is_some_and(|id| self.mark(&self.providers, Some(id)));
         let kind = frame["type"].as_str();
         let workspace = match kind {
-            Some("workspace.worktreesChanged" | "workspace.stopped") => &frame["workspaceId"],
+            Some("workspace.worktreesChanged" | "workspace.stopped" | "workspace.filesChanged") => {
+                &frame["workspaceId"]
+            }
             _ => &frame["instanceId"],
         };
         let Some(id) = workspace.as_str().filter(|id| valid_id(id)) else {
+            if workspace_event || provider_changed {
+                (self.wake)();
+            }
             return;
         };
         let stopped = kind == Some("workspace.stopped") && self.mark(&self.stopped, Some(id));
@@ -142,6 +259,7 @@ impl Signals {
         };
         if (invalidates && self.mark(&self.pending, Some(id)))
             | provider_changed
+            | workspace_event
             | stopped
             | attention
             | stats
@@ -211,7 +329,13 @@ impl CatalogueWatch {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
+            workspace_generation: Default::default(),
             wake,
         });
         let (stop, cancelled) = bounded(1);
@@ -248,6 +372,8 @@ impl CatalogueWatch {
                 state.cancelled.store(true, SeqCst);
                 observer.disconnected();
                 if expired {
+                    observer.authentication_required.store(true, SeqCst);
+                    (observer.wake)();
                     break 'watch;
                 }
                 futures_lite::future::race(runtime::sleep(Duration::from_millis(delay)), async {
@@ -266,8 +392,27 @@ impl CatalogueWatch {
         )
     }
 
+    pub fn take_authentication_required(&self) -> bool {
+        self.signals.authentication_required.swap(false, SeqCst)
+    }
+
+    pub fn take_disconnect(&self) -> bool {
+        self.signals.disconnect_notice.swap(false, SeqCst)
+    }
+
     pub fn take(&self) -> CatalogueChanges {
         std::mem::take(&mut *self.signals.pending.lock().unwrap())
+    }
+
+    pub fn take_workspace_events(&self) -> (u64, bool, VecDeque<WorkspaceEvent>) {
+        let generation = self.signals.workspace_generation.load(SeqCst);
+        let overflow = self.signals.workspace_overflow.swap(false, SeqCst);
+        let mut events = VecDeque::new();
+        for workspace_id in self.signals.workspace_stopped.lock().unwrap().drain() {
+            events.push_back(WorkspaceEvent::Stopped { workspace_id });
+        }
+        events.extend(self.signals.workspace_events.lock().unwrap().drain());
+        (generation, overflow, events)
     }
 
     pub fn take_attention(&self) -> (u64, VecDeque<AttentionHint>) {
@@ -333,6 +478,124 @@ mod tests {
     }
 
     #[test]
+    fn workspace_observer_forwards_files_changed_events() {
+        let (watch, _task) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
+            Arc::new(|| {}),
+        );
+        watch.signals.observe(&json!({
+            "type": "workspace.filesChanged",
+            "workspaceId": "proj-1",
+            "changes": [{"directory": "/repo", "path": "new.txt"}]
+        }));
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "proj-1",
+            "event": {"type": "vcs.branch.updated"}
+        }));
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "proj-1",
+            "event": {"type": "filesystem.changed"}
+        }));
+        watch.signals.observe(&json!({
+            "type": "storage.configChanged",
+            "owner": "ui"
+        }));
+        let (generation, overflow, events) = watch.take_workspace_events();
+        assert_eq!(generation, 0);
+        assert!(!overflow);
+        assert_eq!(events.len(), 4);
+        assert!(matches!(
+            &events[0],
+            WorkspaceEvent::FilesChanged { workspace_id, changes }
+                if workspace_id == "proj-1"
+                    && changes.len() == 1
+                    && changes[0].directory == "/repo"
+                    && changes[0].path == "new.txt"
+        ));
+        assert!(matches!(
+            &events[1],
+            WorkspaceEvent::WorktreesChanged { workspace_id } if workspace_id == "proj-1"
+        ));
+        assert!(matches!(
+            &events[2],
+            WorkspaceEvent::NativeFilesystemChanged { workspace_id } if workspace_id == "proj-1"
+        ));
+        assert!(matches!(&events[3], WorkspaceEvent::UiPreferencesChanged));
+        watch.signals.reconnected();
+        assert_eq!(watch.take_workspace_events().0, 1);
+        watch.signals.observe(&json!({
+            "type": "workspace.stopped",
+            "workspaceId": "proj-1"
+        }));
+        watch.signals.disconnected();
+        let (generation, _, events) = watch.take_workspace_events();
+        assert_eq!(generation, 2);
+        assert!(matches!(
+            events.front(),
+            Some(WorkspaceEvent::Stopped { workspace_id }) if workspace_id == "proj-1"
+        ));
+        for _ in 0..260 {
+            watch.signals.observe(&json!({
+                "type": "instance.event",
+                "instanceId": "proj-1",
+                "event": {"type": "filesystem.changed"}
+            }));
+        }
+        let (_, overflow, events) = watch.take_workspace_events();
+        assert!(overflow);
+        assert_eq!(events.len(), 256);
+        watch.signals.reconnected();
+        assert_eq!(watch.take_workspace_events().0, 3);
+        watch.signals.observe(&json!({
+            "type": "instance.eventStatus",
+            "instanceId": "proj-1",
+            "status": "disconnected"
+        }));
+        assert!(watch.take_workspace_events().2.is_empty());
+        watch.signals.observe(&json!({
+            "type": "instance.eventStatus",
+            "instanceId": "proj-1",
+            "status": "connected"
+        }));
+        let (_, _, events) = watch.take_workspace_events();
+        assert!(matches!(
+            events.front(),
+            Some(WorkspaceEvent::WorktreesChanged { workspace_id }) if workspace_id == "proj-1"
+        ));
+
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "proj-1",
+            "event": {"type": "worktree.updated"}
+        }));
+        let (_, _, events) = watch.take_workspace_events();
+        assert!(matches!(
+            events.front(),
+            Some(WorkspaceEvent::WorktreesChanged { workspace_id }) if workspace_id == "proj-1"
+        ));
+
+        let (failed_watch, _) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:9/").unwrap(),
+            Arc::new(|| {}),
+        );
+        failed_watch.signals.disconnected();
+        assert!(failed_watch.take_disconnect());
+        assert_eq!(failed_watch.take_workspace_events().0, 2);
+        assert_eq!(failed_watch.take_attention().0, 0);
+        assert_eq!(failed_watch.take_provider_changes().2, 0);
+        // Subsequent disconnects while still offline still raise disconnect_notice for Web pairing checks.
+        failed_watch.signals.disconnected();
+        assert!(failed_watch.take_disconnect());
+        assert_eq!(failed_watch.take_workspace_events().0, 2);
+        failed_watch.signals.reconnected();
+        assert_eq!(failed_watch.take_workspace_events().0, 3);
+        assert_eq!(failed_watch.take_attention().0, 1);
+        assert_eq!(failed_watch.take_provider_changes().2, 1);
+    }
+
+    #[test]
     fn dropped_frame_invalidates_both_catalogues_without_changing_connection() {
         let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let wakes = count.clone();
@@ -342,7 +605,13 @@ mod tests {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: 3.into(),
+            workspace_generation: 3.into(),
             wake: Arc::new(move || {
                 wakes.fetch_add(1, SeqCst);
             }),
@@ -361,8 +630,46 @@ mod tests {
             *signals.stopped.lock().unwrap(),
             CatalogueChanges::None
         ));
+        assert!(signals.workspace_overflow.load(SeqCst));
         assert_eq!(signals.generation.load(SeqCst), 3);
         assert_eq!(count.load(SeqCst), 1);
+    }
+
+    #[test]
+    fn workspace_event_queue_bounds_bytes_and_flags_overflow() {
+        let (watch, _task) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
+            Arc::new(|| {}),
+        );
+        let batch: Vec<_> = (0..2500)
+            .map(|i| json!({"directory": "/repo", "path": format!("src/module/file_{i:04}.rs")}))
+            .collect();
+        for index in 0..4 {
+            watch.signals.observe(&json!({
+                "type": "workspace.filesChanged",
+                "workspaceId": format!("ws-{index}"),
+                "changes": batch,
+            }));
+        }
+        let (_, overflow, events) = watch.take_workspace_events();
+        assert!(overflow);
+        assert!(!events.is_empty() && events.len() < 4);
+        assert!(
+            watch.signals.workspace_events.lock().unwrap().bytes == 0,
+            "draining must reset tracked queue bytes"
+        );
+        // A single valid event larger than the queue byte budget is dropped and flags overflow.
+        let huge_batch: Vec<_> = (0..7000)
+            .map(|i| json!({"directory": "/repo", "path": format!("src/module/file_{i:04}.rs")}))
+            .collect();
+        watch.signals.observe(&json!({
+            "type": "workspace.filesChanged",
+            "workspaceId": "ws-huge",
+            "changes": huge_batch,
+        }));
+        let (_, overflow, events) = watch.take_workspace_events();
+        assert!(overflow);
+        assert!(events.is_empty());
     }
 
     #[test]
@@ -373,7 +680,13 @@ mod tests {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
+            workspace_generation: Default::default(),
             wake: Arc::new(|| {}),
         };
         for frame in [
@@ -399,7 +712,13 @@ mod tests {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
+            workspace_generation: Default::default(),
             wake: Arc::new(|| {}),
         };
         for (id, kind) in [
@@ -422,5 +741,32 @@ mod tests {
             *signals.pending.lock().unwrap(),
             CatalogueChanges::All
         ));
+    }
+
+    #[test]
+    fn workspace_stopped_overflow_flags_reconciliation() {
+        let signals = Signals {
+            pending: Mutex::default(),
+            providers: Mutex::default(),
+            stopped: Mutex::default(),
+            stats: Mutex::default(),
+            attention: Mutex::default(),
+            workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
+            generation: Default::default(),
+            workspace_generation: Default::default(),
+            wake: Arc::new(|| {}),
+        };
+        for i in 0..128 {
+            signals.observe(&json!({"type":"workspace.stopped","workspaceId":format!("w-{i}")}));
+        }
+        assert!(!signals.workspace_overflow.load(SeqCst));
+        signals.observe(&json!({"type":"workspace.stopped","workspaceId":"w-0"}));
+        assert!(!signals.workspace_overflow.load(SeqCst));
+        signals.observe(&json!({"type":"workspace.stopped","workspaceId":"w-128"}));
+        assert!(signals.workspace_overflow.load(SeqCst));
     }
 }

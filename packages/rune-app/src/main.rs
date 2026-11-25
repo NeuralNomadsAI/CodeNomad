@@ -256,6 +256,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= launcher::poll(s, tx);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
     changed |= composer::recall::poll(s);
+    changed |= composer::menu::poll(s, tx);
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);
     changed |= chat::message_actions::poll(s, tx);

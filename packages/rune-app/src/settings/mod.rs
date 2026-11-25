@@ -42,15 +42,15 @@ use appearance::effective_contrast;
 use appearance::render_with;
 pub(crate) use appearance::{app_locale, render};
 pub(crate) use connection::{
-    bound_backend, connected, connection_event, conversation_authentication, invalidate,
-    stop_before_conversation,
+    authentication_required, bound_backend, connected, connection_event,
+    conversation_authentication, invalidate, stop_before_conversation,
 };
 #[cfg(test)]
 use connection::{provider_changed, provider_stopped};
 pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_notification};
 #[cfg(test)]
 pub(crate) use delivery::{notification_fixture, notification_test_config};
-pub(crate) use shortcuts::matches_shortcut;
+pub(crate) use shortcuts::{with_shortcut_label, with_shortcut_label_excluding};
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
 pub(crate) use window::{close, direct_entry, entries, open_providers};
@@ -75,6 +75,7 @@ pub(crate) struct Host {
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
     last_display: Option<([&'static str; 5], bool)>,
+    last_revision: u64,
     last_transcript: Option<[&'static str; transcript_preset::ROW_COUNT]>,
     transcript_filters: transcript_filters::Filters,
     memory_cleanup: Option<memory::cleanup::Run>,
@@ -82,6 +83,28 @@ pub(crate) struct Host {
 
 pub(crate) fn message_usage_visibility(s: &State) -> &'static str {
     s.settings.shared.borrow().usage_visibility(false)
+}
+
+pub(crate) fn match_shortcut<T>(
+    s: &State,
+    event: &rune::KeyEvent,
+    tx: &rune::Tx,
+    find: impl FnOnce(&dyn Fn(&str) -> bool) -> Option<T>,
+) -> Option<T> {
+    let preferences = s.settings.shared.borrow();
+    let matches = |id: &str| shortcuts::matches_shortcut_in(&preferences, id, event, tx);
+    find(&matches)
+}
+
+pub(crate) fn blocks_shell_shortcuts(s: &State) -> bool {
+    let awaiting = awaiting_appearance(s, &s.settings.shared.borrow());
+    let filters = s.settings.transcript_filters.is_open(&s.input_scope);
+    #[cfg(target_arch = "wasm32")]
+    return awaiting || filters || s.settings.web.shown();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        awaiting || filters
+    }
 }
 
 pub(crate) fn transcript_mode(s: &State, row: TranscriptRow) -> &'static str {
@@ -260,6 +283,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
+    let revision_changed =
+        shared.revision != std::mem::replace(&mut s.settings.last_revision, shared.revision);
     let (reconnected, missions) = shared.mission_changes();
     let locale = shared.locale().unwrap_or_else(strings::locale);
     let notify_failure = shared.take_notification_failure();
@@ -301,11 +326,25 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     }
     let filters_changed =
         preferences_changed && s.settings.transcript_filters.is_open(&s.input_scope);
-    changed
+    preferences_changed
+        | revision_changed
+        | changed
         | expired
         | filters_changed
         | transcript_changed
         | (display != std::mem::replace(&mut s.settings.last_display, display))
+}
+
+pub(crate) fn queues_follow_ups(s: &State) -> bool {
+    s.settings.shared.borrow().queues_follow_ups()
+}
+
+pub(crate) fn with_shortcut<T>(
+    s: &State,
+    action: &str,
+    read: impl FnOnce(Option<&[serde_json::Value]>) -> T,
+) -> T {
+    read(s.settings.shared.borrow().shortcut(action))
 }
 
 pub(crate) fn show_provider_usage_credit_balance(s: &State) -> bool {

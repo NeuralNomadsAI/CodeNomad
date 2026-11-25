@@ -5,6 +5,7 @@ import path from 'node:path'
 import {createAttestedFetch} from '../native-fixture-http.mjs'
 import {launchOwnedChromium} from './web-chromium.mjs'
 import {bundleAssetPaths} from './web-workspace-policy.mjs'
+import {isExpectedWaitError, now, withBudget} from './web-budget.mjs'
 import {navigatePair} from './web-live.mjs'
 
 const profile = JSON.parse(await readFile(new URL('../../packages/ui/src/lib/native/browser-emulation.json', import.meta.url)))
@@ -184,14 +185,28 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
   const editor = page.locator('textarea:focus')
   const pad=theme['space-md'],gap=theme['space-sm']
   const line=2*gap+Math.ceil(theme['font-size-base']*theme['line-height-normal'])
+  async function tryFieldRect(deadline){
+    const run=ms=>composer.evaluate(el=>{
+      const r=el.getBoundingClientRect()
+      const actions=Math.min(...[...el.querySelectorAll('button,[role="button"]')].map(button=>button.getBoundingClientRect().top))
+      return {x:r.x,y:r.y,width:r.width,height:r.height,actions}
+    },undefined,ms!==undefined?{timeout:Math.max(1,ms)}:undefined)
+    let box
+    try{
+      box=deadline!==undefined?await withBudget(deadline,'composer rect',run):await run()
+    }catch(err){
+      if(isExpectedWaitError(err))return null
+      throw err
+    }
+    if(!box||!Number.isFinite(box.actions)||box.width<=0||box.height<=0||(deadline!==undefined&&now()>=deadline))return null
+    const x=Math.ceil(box.x+pad),y=Math.ceil(box.y+pad)
+    const width=Math.floor(box.x+box.width-pad)-x,height=Math.floor(box.actions-gap)-y
+    return width>0&&height>0?{x,y,width,height}:null
+  }
   async function fieldRect(){
-    const group=await composer.boundingBox()
-    const actions=await composer.getByRole('button').evaluateAll(buttons=>Math.min(...buttons.map(button=>button.getBoundingClientRect().top)))
-    assert(group&&Number.isFinite(actions))
-    const x=Math.ceil(group.x+pad),y=Math.ceil(group.y+pad)
-    const width=Math.floor(group.x+group.width-pad)-x,height=Math.floor(actions-gap)-y
-    assert(width>0&&height>0)
-    return {x,y,width,height}
+    const rect=await tryFieldRect()
+    assert(rect,'Composer field must expose non-empty bounds')
+    return rect
   }
   const inkClip=field=>({...field,height:Math.min(line,field.height)})
   const capture=async clip=>`data:image/png;base64,${(await page.screenshot({clip,scale:'css'})).toString('base64')}`
@@ -245,20 +260,39 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
     .filter(n => n.textContent.startsWith('Mobile history row '))
     .map(n => [n.textContent,Math.round(n.getBoundingClientRect().top)])
     .filter(([,y]) => y >= 64 && y < innerHeight-130))
+  const hasMovedUp = (prev, rows) => {
+    if (!rows.length) return false
+    const prevByLabel = new Map(prev)
+    let shared = false
+    for (const [label, top] of rows) {
+      const oldTop = prevByLabel.get(label)
+      if (oldTop !== undefined) {
+        shared = true
+        if (top - oldTop >= 20) return true
+      }
+    }
+    if (shared) return false
+    const rowIndex = label => {
+      const match = /^Mobile history row (\d+)$/.exec(label)
+      return match ? Number(match[1]) : null
+    }
+    const beforeTop = rowIndex(prev[0][0]), afterTop = rowIndex(rows[0][0])
+    return beforeTop !== null && afterTop !== null && afterTop < beforeTop
+  }
   const waitValue = value => page.waitForFunction(value =>
     document.activeElement?.tagName === 'TEXTAREA' && document.activeElement.value === value, value, {timeout:2500})
   const text = 'été 日本語 🦀'
   let blank,paintedDraft
   try {
     await probe('touchScroll', async () => {
-      const before = await rowSample()
+      const before = await withBudget(now() + 5000, 'touchScroll before', () => rowSample())
       assert(before.length, 'No visible fixture history rows')
       const y = Math.min(Math.max(before.at(-1)[1], 170), 350)
       // Let Chromium pace the touch sequence; a host round trip after touchStart can turn it into a hold.
-      await cdp.send('Input.synthesizeScrollGesture', {
+      await withBudget(now() + 10000, 'touchScroll gesture', () => cdp.send('Input.synthesizeScrollGesture', {
         x:175,y,yDistance:240,speed:1000,gestureSourceType:'touch',preventFling:true,
-      })
-      const frames = await page.evaluate(() => new Promise(resolve => {
+      }))
+      const frames = await withBudget(now() + 20000, 'touchScroll frames', () => page.evaluate(() => new Promise(resolve => {
         const all = []
         let last = performance.now()
         function frame(at) {
@@ -268,11 +302,27 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
           else requestAnimationFrame(frame)
         }
         requestAnimationFrame(frame)
-      }))
-      const after = await rowSample()
-      const latest = await center(role('button', labels.latest))
-      await page.touchscreen.tap(latest.x, latest.y)
-      return {moved:JSON.stringify(before)!==JSON.stringify(after),before,after,frameP95Ms:frames[Math.floor(frames.length*0.95)]}
+      })))
+      // Post-scroll accessibility mirror updates defer for SCROLL_SETTLE + IDLE_TIMEOUT (#1670).
+      let after = [], moved = false
+      const settleDeadline = now() + 1500
+      while (now() < settleDeadline) {
+        const sample = await withBudget(Math.min(settleDeadline, now() + 250), 'touchScroll mirror', () => rowSample())
+          .catch(err => { if (isExpectedWaitError(err)) return null; throw err })
+        if (sample) {
+          after = sample
+          if (hasMovedUp(before, sample)) {
+            moved = true
+            break
+          }
+        }
+        const wait = Math.min(25, settleDeadline - now())
+        if (wait <= 0) break
+        await page.waitForTimeout(wait)
+      }
+      const latest = await withBudget(now() + 5000, 'touchScroll latest', () => center(role('button', labels.latest)))
+      await withBudget(now() + 5000, 'touchScroll tap latest', () => page.touchscreen.tap(latest.x, latest.y))
+      return {moved,before,after,frameP95Ms:frames[Math.floor(frames.length*0.95)]}
     })
     await probe('touchEditor', async () => {
       const focus = await center(composer)
@@ -344,14 +394,49 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
         const canvas = document.querySelector('canvas'), height = visualViewport.height
         return Math.abs(canvas.getBoundingClientRect().height-height)<1 && Math.abs(canvas.height-height*devicePixelRatio)<=1
       })
-      const field = await fieldRect(), button = await send.boundingBox()
       const shown = await canvas.boundingBox()
       const viewportBounds = await page.evaluate(() => ({top:visualViewport.offsetTop,bottom:visualViewport.offsetTop+visualViewport.height,
         left:visualViewport.offsetLeft,right:visualViewport.offsetLeft+visualViewport.width}))
       const {top,bottom,left,right}=viewportBounds
+      let settled = null, lastField = null, lastButton = null
+      // Mirror updates defer off rAF after resize/scroll settle (#1670).
+      for(const until=now()+2000;;){
+        const remaining=until-now()
+        if(remaining<=0) break
+        const measured = await withBudget(Math.min(until,now()+250),'composer and send',ms=>composer.evaluate((el,sendLabel)=>{
+          const r=el.getBoundingClientRect()
+          const buttons=[...el.querySelectorAll('button,[role="button"]')]
+          const actions=Math.min(...buttons.map(b=>b.getBoundingClientRect().top))
+          const matchSend=buttons.filter(b=>(b.getAttribute('aria-label')??b.textContent??'').trim()===sendLabel)
+          if(matchSend.length>1)throw new Error(`Ambiguous send button (${matchSend.length}): ${sendLabel}`)
+          const sb=matchSend[0]?matchSend[0].getBoundingClientRect():null
+          return {
+            group:{x:r.x,y:r.y,width:r.width,height:r.height,actions},
+            button:sb?{x:sb.x,y:sb.y,width:sb.width,height:sb.height}:null,
+          }
+        },labels.send,{timeout:Math.max(1,ms)})).catch(err=>{if(isExpectedWaitError(err))return null;throw err})
+        const g = measured?.group
+        let candidateField = null
+        if(g&&Number.isFinite(g.actions)&&g.width>0&&g.height>0){
+          const x=Math.ceil(g.x+pad),y=Math.ceil(g.y+pad)
+          const width=Math.floor(g.x+g.width-pad)-x,height=Math.floor(g.actions-gap)-y
+          if(width>0&&height>0)candidateField={x,y,width,height}
+        }
+        const candidateButton = measured?.button ?? null
+        lastField = candidateField; lastButton = candidateButton
+        if(now()<until&&candidateField&&candidateField.width>0&&candidateField.height>0&&candidateField.y>=top-1&&candidateField.y+candidateField.height<=bottom+1&&candidateField.x>=left-1&&candidateField.x+candidateField.width<=right+1
+          &&candidateButton&&candidateButton.width>0&&candidateButton.height>0&&candidateButton.x>=left-1&&candidateButton.x+candidateButton.width<=right+1&&candidateButton.y>=top&&candidateButton.y+candidateButton.height<=bottom+1){
+          settled = {field:candidateField, button:candidateButton}
+          break
+        }
+        const wait=Math.min(25,until-now())
+        if(wait<=0) break
+        await page.waitForTimeout(wait)
+      }
       await waitValue(value)
-      assert(field&&field.height>0&&field.y>=top-1&&field.y+field.height<=bottom+1&&field.x>=left-1&&field.x+field.width<=right+1,
-        'The composer field must stay visible in the smaller viewport')
+      assert(settled,
+        `Composer field and Send button did not settle within 2s in the smaller viewport: ${JSON.stringify({field:lastField,button:lastButton,viewportBounds})}`)
+      const {field, button} = settled
       const clip=inkClip(field)
       let draftInk,resizedDraft
       for(const until=Date.now()+2500;;){
@@ -363,7 +448,6 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       }
       const canvasNegative=await glyphMatch(blank,paintedDraft,{png:resizedDraft,flat:colors['surface-canvas']},0,2,true)
       assert(!looksLikeGlyphs(canvasNegative),'A painted surface-canvas without draft text must fail')
-      assert(button?.y>=top && button?.y+button?.height<=bottom+1,'Send must stay within the smaller viewport')
       await page.setViewportSize(viewport)
       return {resized:true,canvas:shown,field,button,viewportBounds,draftInk,canvasNegative,retainedDraft:true,fieldVisible:true,sendReachable:true}
     })

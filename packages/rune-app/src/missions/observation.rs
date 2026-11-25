@@ -133,6 +133,7 @@ impl Observation {
         advanced
     }
 
+    #[allow(clippy::misnamed_getters)]
     pub fn revision(&self) -> Option<u64> {
         self.seen_revision
     }

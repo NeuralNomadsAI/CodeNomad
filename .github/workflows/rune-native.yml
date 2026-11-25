@@ -19,14 +19,14 @@ on:
       - '.github/workflows/rune-native.yml'
       - 'package*.json'
   push:
-    branches: [feat/rust-server, 'codex/rune-*']
+    branches: [feat/rust-server, 'rune/*']
 
 permissions:
   contents: read
 
 concurrency:
   group: rune-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/feat/rust-server' }}
 
 jobs:
   headless:
@@ -57,7 +57,7 @@ jobs:
         with:
           toolchain: '1.99.1'
           targets: wasm32-unknown-unknown
-          components: rustfmt
+          components: rustfmt, clippy
       - name: Linux offscreen graphics dependencies
         if: runner.os == 'Linux'
         run: |
@@ -95,8 +95,10 @@ jobs:
           node --test scripts/perf/*.test.mjs
       - name: Build application and run native runtime tests
         run: |
-          cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -- --check
+          cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -p codenomad-windows-notifications -- --check
           cargo fmt --manifest-path packages/server-rs/Cargo.toml -- --check
+          cargo clippy --locked -p codenomad-client -p codenomad-rune-app -- -D clippy::correctness -D clippy::suspicious
+          cargo clippy --locked --manifest-path packages/server-rs/Cargo.toml -- -D clippy::correctness -D clippy::suspicious
           cargo test --locked --workspace
           cargo run --locked -p rune-style-policy -- packages/rune-app/src
           cargo build --locked -p codenomad-rune-app --bin codenomad-rune

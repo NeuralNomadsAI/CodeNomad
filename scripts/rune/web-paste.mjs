@@ -1,7 +1,74 @@
 import assert from 'node:assert/strict'
 import {installPngReader} from './png-pixels.mjs'
+import {command} from './web-live.mjs'
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aN0AAAAASUVORK5CYII='
+export const menuPrompt = 'Mobile menu queued prompt'
+
+export async function mobileMoreActions(page, messages, press) {
+  const name = messages['messageItem.actions.more']
+  const composer = page.getByRole('group', {name:messages['rune.prompt'],exact:true})
+  const trigger = composer.getByRole('button', {name,exact:true})
+  const editor = page.locator('textarea:focus')
+  const draft = 'Brouillon mobile'
+  const focus = async () => {
+    const field = await composer.boundingBox()
+    assert(field)
+    await page.touchscreen.tap(field.x+field.width/2,field.y+20)
+    await editor.waitFor({state:'attached'})
+  }
+  await focus()
+  await editor.fill(draft)
+  const value = text => page.waitForFunction(text => document.activeElement?.value === text,text)
+  await value(draft)
+  const toggle = async () => {
+    const box = await trigger.boundingBox()
+    assert(box)
+    await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
+  }
+  await toggle()
+  const queueName = messages['promptInput.send.queueAriaLabel']
+  const queue = page.getByText(queueName,{exact:true})
+  await queue.waitFor({state:'attached'})
+  const a11y = {menu:await page.getByRole('menu',{name,exact:true}).count(),
+    disabledRow:await page.getByRole('menuitem',{name:queueName,exact:true,disabled:true}).count()}
+  const focusState = async (text, caret) => {
+    await queue.waitFor({state:'detached'})
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+    return page.evaluate(({text,caret})=>{
+      const field=[...document.querySelectorAll('textarea')].find(el=>el.value===text)
+      return {focused:field!==undefined&&field===document.activeElement,
+        caret:field!==undefined&&field.selectionStart===caret&&field.selectionEnd===caret}
+    },{text,caret})
+  }
+  await press(messages['promptInput.history.previousAriaLabel'],'menuitem')
+  const recallFocus=await focusState(menuPrompt,menuPrompt.length)
+  await toggle()
+  await press(messages['promptInput.clear.title'],'menuitem')
+  const clearFocus=await focusState('',0)
+  assert.deepEqual(recallFocus,{focused:true,caret:true},'Recall must focus the real textarea and place its caret at the end')
+  assert.deepEqual(clearFocus,{focused:true,caret:true},'Clear must focus the real textarea without a second touch')
+  await value('')
+  await page.keyboard.press('Control+z')
+  await value(menuPrompt)
+  await toggle()
+  const chooser = page.waitForEvent('filechooser',{timeout:15000})
+  void chooser.catch(()=>{})
+  const attach = messages['promptInput.attachFiles.title'].replace(/[.…]+$/u,'')
+  await press(new RegExp(`^${RegExp.escape(attach)}[.…]*$`,'u'),'menuitem')
+  await (await chooser).setFiles({name:'mobile-menu.txt',mimeType:'text/plain',buffer:Buffer.from('menu file')})
+  await queue.waitFor({state:'detached'})
+  await page.getByText('mobile-menu.txt',{exact:true}).waitFor({state:'attached'})
+  await command('menu-live')
+  await page.getByText('Mobile menu live reply',{exact:true}).waitFor({state:'attached'})
+  await toggle()
+  const sent=page.waitForResponse(res=>res.ok()&&res.url().endsWith('/session/ses_existing/prompt')&&
+    res.request().postDataJSON()?.delivery==='queue')
+  void sent.catch(()=>{})
+  await press(queueName,'menuitem')
+  await sent
+  return {a11y,recallFocus,clearFocus,clearUndo:true,devicePicker:true,activeQueue:true}
+}
 
 export async function longPaste(page, messages) {
   const field = page.locator('textarea:focus')
@@ -41,11 +108,19 @@ export async function longPaste(page, messages) {
   await refused.waitFor()
   await sent.waitFor({state:'detached'})
   await expectDraft('nouveau brouillon')
-  const recall = name => page.getByRole('button', {name: messages[`promptInput.history.${name}AriaLabel`], exact:true})
-  const press = async name => {
+  const composer = page.getByRole('group', {name: messages['rune.prompt'], exact:true})
+  const more = composer.getByRole('button', {name: messages['messageItem.actions.more'], exact:true})
+  const click = async locator => {
     await present()
-    const {x, y, width, height} = await recall(name).boundingBox()
+    const {x, y, width, height} = await locator.boundingBox()
     await page.mouse.click(x + width / 2, y + height / 2)
+  }
+  const press = async name => {
+    await click(more)
+    const item = page.getByRole('menuitem', {name: messages[`promptInput.history.${name}AriaLabel`], exact:true})
+    await item.waitFor({state:'attached'})
+    await click(item)
+    await item.waitFor({state:'detached'})
   }
   const expectRecalled = value => page.waitForFunction(text => document.querySelector('textarea')?.value === text, value)
   await press('previous')
@@ -57,13 +132,13 @@ export async function longPaste(page, messages) {
   await press('previous')
   await expectRecalled(token)
   assert.equal(await sent.count(), 0, 'Browsing history must not send a prompt')
-  await page.keyboard.press('Enter')
+  await click(page.getByRole('button', {name: messages['promptInput.overlay.send'], exact:true}))
   await sent.waitFor({state:'attached'})
   assert.equal(await sent.count(), 1)
   await chip.waitFor({state: 'detached'})
   await refused.waitFor({state: 'detached'})
   await present()
-  const group = await page.getByRole('group', {name: messages['rune.prompt'], exact:true}).boundingBox()
+  const group = await composer.boundingBox()
   await page.mouse.click(group.x + group.width / 2, group.y + 24)
   await expectDraft('nouveau brouillon')
   return {insertedAtSelection: true, undo: true, retainedPng: true, recalledAfterRefusal: true,

@@ -17,6 +17,10 @@ pub(crate) use in_app::{
     tick as poll_app_notices,
 };
 pub(crate) use messages::{emit, emit_from, emit_outcome};
+pub(crate) fn history_open(s: &State) -> bool {
+    s.notifications.in_app.is_open()
+}
+
 pub(crate) fn relay_notice(s: &mut State, event: codenomad_client::transport::WorkspaceEvent) {
     if let Some((target, _)) = crate::workspace::notification_target(s)
         && let Some(source) = crate::settings::bound_backend(s)
