@@ -118,7 +118,7 @@ Les entrées quotidiennes existantes conservent leurs contrôles et leur fuseau.
 
 ## Suivre l’arbre et lire les résultats {#tracking}
 
-Les Missions ponctuelles et programmées partagent une seule liste triée par activité la plus récente. Le chevron déplie ou replie les tâches d’une Mission ou les détails et le passage en cours d’un programme sans changer la sélection. Cliquer une ligne sélectionne la Mission, le programme ou la tâche ; les actions de cette sélection restent dans l’en-tête. Une Mission sans tâche n’a pas de chevron. **Filtrer les missions** filtre le répertoire chargé.
+Les Missions ponctuelles et programmées partagent une seule liste triée par activité la plus récente. Le chevron déplie ou replie les tâches d’une Mission ou les détails et le passage en cours d’un programme sans changer la sélection. Cliquer une ligne sélectionne la Mission, le programme ou la tâche ; les actions de cette sélection restent dans l’en-tête. Une Mission ponctuelle sans tâche n’a pas de chevron. **Filtrer les missions** filtre le répertoire chargé.
 
 L’œil active **Résumé** dans le lecteur central et suit la sélection tant qu’il est enfoncé. **Ouvrir la conversation** mène au coordinateur ou à la tâche sélectionnée. **Plus d’actions** (⋯) contient les commandes applicables de point d’avancement, interruption, enregistrement de configuration et modification.
 

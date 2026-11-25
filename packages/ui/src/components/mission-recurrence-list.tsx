@@ -221,10 +221,8 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
 export function createMissionRecurrenceList(props: { instanceId: string; projectID?: string; scope: string; active: () => boolean; refresh: number;
   selectedSchedule?: string; expanded?: boolean; onRead?: (restoreChat?: boolean) => void; detailId: string
   tracking?: JSX.Element
-  livePassageUpdatedAt?: (id: string) => number | undefined
-  pendingSessionUpdatedAt?: (sessionId: string) => number | undefined
   previewTracking?: (id: string) => JSX.Element
-  onOpenPendingConversation?: (scheduleId: string, sessionId: string) => void
+  onOpenPendingConversation?: (scheduleId: string, passageID: string, sessionId: string) => void
   /** The admitted passage, when one is tracked: its overview reader and coordinator conversation. */
   passage?: { reading: boolean; onToggle: () => void; onOpenConversation: () => void }
   registerRetry?: (retry: MissionControlRetry) => () => void
@@ -292,13 +290,19 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       || scheduleSuccessSeen(seenScope(), "daily", schedule.id, schedule.latestResult.passageID), !error() && !held)
     const stateKey = missionMarkStateKey(mark)
     return { key: `schedule:${schedule.id}`, title: schedule.title, mark,
-      activityAt: recurrenceScheduleActivityAt(schedule, props.livePassageUpdatedAt?.(schedule.id),
-        schedule.pending?.conversationID ? props.pendingSessionUpdatedAt?.(schedule.pending.conversationID) : undefined),
+      activityAt: recurrenceScheduleActivityAt(schedule),
       status: [t("missionsPanel.dailyBadge"), mark === "unconfirmed" && (schedule.state === "paused" || schedule.state === "stopped") ? state : "",
         stateKey ? t(stateKey) : state, mark === "permission" ? t("missionsPanel.task.input") : "", next, text.every(schedule)]
         .filter(Boolean).join(" · ") }
   }))
   const selectedId = () => snapshot()?.schedules.some(schedule => schedule.id === props.selectedSchedule) ? props.selectedSchedule : undefined
+  const body = (schedule: () => RecurrenceSchedule, tracking?: () => JSX.Element) => <>
+    <Show when={notice(schedule())}>{key => <p class="mission-schedule-notice" role="status">{t(key())}</p>}</Show>
+    <Show when={schedule().lastError}>{failure => <p class="mission-control-stale" role="status">
+      {t("missions.recurrence.lastError", { time: date(schedule(), failure().at) })}</p>}</Show>
+    {tracking?.()}
+    {pastRuns(schedule())}
+  </>
   /** Inventory-wide notice, independent of the selection. */
   const listView = () => <Show when={error()}><p role="status">{t(snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
   const view = () => <>
@@ -314,7 +318,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       onCleanup(() => unregister?.())
       const openConversation = () => props.passage?.onOpenConversation
         ?? (schedule().pending?.conversationID && props.onOpenPendingConversation
-          ? () => props.onOpenPendingConversation!(schedule().id, schedule().pending!.conversationID!) : undefined)
+          ? () => props.onOpenPendingConversation!(schedule().id, schedule().pending!.passageID, schedule().pending!.conversationID!) : undefined)
       return <section id={props.detailId} class="mission-detail mission-schedule-detail" aria-label={schedule().title}>
         {/* A running passage's summary opens what is happening now; otherwise the schedule reader. */}
         <MissionActionBar label={t("missionsPanel.picker.actions")}
@@ -322,27 +326,17 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
           onToggleReader={() => props.passage ? props.passage.onToggle() : read(schedule().id)}
           primary={controls.primary()} stop={controls.stop()} onOpenConversation={openConversation()}
           runNow={controls.runNow()} feedback={controls.feedback} secondary={controls.secondary()} />
-        <Show when={props.expanded !== false}>
-          <Show when={notice(schedule())}>{key => <p class="mission-schedule-notice" role="status">{t(key())}</p>}</Show>
-          <Show when={schedule().lastError}>{failure => <p class="mission-control-stale" role="status">
-            {t("missions.recurrence.lastError", { time: date(schedule(), failure().at) })}</p>}</Show>
-          {props.tracking}
-          {pastRuns(schedule())}
-        </Show>
+        <Show when={props.expanded !== false}>{body(schedule, () => props.tracking)}</Show>
       </section>
     }}</Show>
   </>
   const preview = (id: string) => <Show when={snapshot()?.schedules.find(item => item.id === id)}>{schedule =>
     <section class="mission-detail mission-schedule-detail mission-schedule-preview" aria-label={schedule().title}>
-      <Show when={notice(schedule())}>{key => <p class="mission-schedule-notice" role="status">{t(key())}</p>}</Show>
-      <Show when={schedule().lastError}>{failure => <p class="mission-control-stale" role="status">
-        {t("missions.recurrence.lastError", { time: date(schedule(), failure().at) })}</p>}</Show>
-      <Show when={schedule().pending}>{props.previewTracking?.(id)}</Show>
-      {pastRuns(schedule())}
+      {body(schedule, () => <Show when={schedule().pending}>{props.previewTracking?.(id)}</Show>)}
     </section>
   }</Show>
-  const ownsPendingSession = (scheduleId: string, sessionId: string) =>
-    Boolean(snapshot()?.schedules.some(item => item.id === scheduleId && item.pending?.conversationID === sessionId))
+  const ownsPendingSession = (scheduleId: string, passageID: string, sessionId: string) =>
+    Boolean(snapshot()?.schedules.some(item => item.id === scheduleId && item.pending?.passageID === passageID && item.pending?.conversationID === sessionId))
   const markRead = (key: string) => {
     const schedule = snapshot()?.schedules.find(item => key === `schedule:${item.id}`), result = schedule?.latestResult
     const scope = seenScope()

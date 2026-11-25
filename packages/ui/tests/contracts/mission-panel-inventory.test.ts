@@ -669,3 +669,59 @@ test("header-only want skips task and activity reads until upgraded to detail, a
     store.clear("fixture")
   }
 })
+
+test("collapsing to header-only revokes an in-flight task read and starts no activity read or task publication", async () => {
+  const f = seeded(120, 2)
+  let activityReads = 0, taskStarted!: () => void, releaseTasks!: () => void
+  const taskReached = new Promise<void>(resolve => { taskStarted = resolve })
+  const taskGate = new Promise<void>(resolve => { releaseTasks = resolve })
+  let abortedObserved = false
+  const store = createMissionPanelInventory({
+    scope: () => "collapse-revokes-detail",
+    tasks: async (_instance, id, request, scope) => {
+      taskStarted()
+      scope.signal.addEventListener("abort", () => { abortedObserved = true }, { once: true })
+      await taskGate
+      // Deliberately return a real response even after abort to verify response fencing too.
+      return readMissionTaskPage(id, request, { ...scope, signal: new AbortController().signal, current: () => true, exchange: f.exchange })
+    },
+    read: async (_instance, selector, scope) => {
+      if (selector.source === "marks") return Promise.reject(new Error("Native unknown"))
+      if (selector.source === "activity") { activityReads++; return Promise.reject(new Error("Native unknown")) }
+      return readMissionPanelWindow(selector, { ...scope, runTransfer: read => read(), exchange: f.exchange })
+    },
+  })
+  const settled = async (predicate: () => boolean) => {
+    for (const deadline = Date.now() + 5_000; !predicate() && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, 10))
+    assert.ok(predicate())
+  }
+  try {
+    store.setDemand("fixture", true)
+    await store.ensure("fixture")
+    store.want("fixture", "selection", "msn_119", false, undefined, false)
+    await settled(() => store.state("fixture").missions.some(m => m.id === "msn_119"))
+    assert.equal(store.state("fixture").missions[0].tasks.length, 0)
+    assert.equal(store.tasksLoaded("fixture", "msn_119"), false)
+
+    // Expand to detail=true: task read starts and holds on taskGate.
+    store.want("fixture", "selection", "msn_119", false, undefined, true)
+    await taskReached
+
+    // Collapse back to header-only while task read is in flight.
+    store.want("fixture", "selection", "msn_119", false, undefined, false)
+    assert.equal(abortedObserved, true, "collapsing aborts the in-flight task signal")
+
+    // Release the late task response and let microtasks settle.
+    releaseTasks()
+    await settled(() => !store.reading("fixture"))
+    await new Promise(resolve => setTimeout(resolve, 30))
+
+    assert.equal(store.state("fixture").status, "ready", "revoked detail read does not mark the header failed")
+    assert.equal(activityReads, 0, "late task response after collapse starts zero activity reads")
+    assert.equal(store.tasksLoaded("fixture", "msn_119"), false, "late task response does not mark tasks loaded")
+    assert.equal(store.state("fixture").missions.find(m => m.id === "msn_119")?.tasks.length, 0, "late task response publishes zero tasks")
+  } finally {
+    releaseTasks?.()
+    store.clear("fixture")
+  }
+})

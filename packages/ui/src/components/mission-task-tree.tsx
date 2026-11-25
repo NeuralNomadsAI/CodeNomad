@@ -172,9 +172,9 @@ export function MissionTaskTree(props: {
           const unseen = () => state() === "done" && viewScope !== undefined && missionTaskUnseen(viewScope(), props.mission.id, task())
            const markSeen = () => { if (viewScope && state() === "done") markMissionTasksSeen(viewScope(), props.mission.id, [task()]) }
           const select = () => {
+            const asked = question()
             props.onSelect(task())
             markSeen()
-            const asked = question()
             if (asked) props.onAnswer?.(asked.sessionId, asked.request)
           }
           const icon = () => <Dynamic component={ICONS[state()]} class="h-4 w-4" aria-hidden="true" />

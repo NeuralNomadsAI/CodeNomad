@@ -13,17 +13,17 @@ import { missionBriefingRequest, setMissionBriefingRequest } from "../stores/mis
 /** The explicit "Request an update" briefing request. Its state is keyed by the
  * exact Mission identity, so the row menu and the card share one request. */
 export function createMissionBriefingRequest(props: {
-  instanceId: string; mission: MissionPanelMap; active: boolean; disabled?: boolean; readOnly?: boolean
+  instanceId: string; mission?: MissionPanelMap; active: boolean; disabled?: boolean; readOnly?: boolean
 }) {
   const { t, locale } = useI18n()
-  const identity = () => JSON.stringify([props.instanceId, instances().get(props.instanceId)?.folder,
-    instances().get(props.instanceId)?.metadata?.project?.id, props.mission.projectID, props.mission.id, props.mission.coordinatorSessionId])
-  const request = () => missionBriefingRequest(identity())
+  const identity = () => props.mission ? JSON.stringify([props.instanceId, instances().get(props.instanceId)?.folder,
+    instances().get(props.instanceId)?.metadata?.project?.id, props.mission.projectID, props.mission.id, props.mission.coordinatorSessionId]) : ""
+  const request = () => identity() ? missionBriefingRequest(identity()) : undefined
   // Only an accepted briefing carrying this exact request ID answers it, even when
   // a later (e.g. automatic) briefing superseded it before this view read it.
   const response = () => {
-    const original = request(), latest = props.mission.briefing
-    if (!original) return undefined
+    const original = request(), latest = props.mission?.briefing
+    if (!original || !props.mission) return undefined
     if (latest?.requestID === original.requestID) return latest.id
     return props.mission.briefingResponses?.find(item => item.requestID === original.requestID)?.briefingID
   }
@@ -34,15 +34,16 @@ export function createMissionBriefingRequest(props: {
   })
   const waiting = () => !answered() && Boolean(request()) && ["preparing", "sending", "admitted", "uncertain"].includes(request()!.state)
   const capture = createMissionViewFence(identity, () => props.active && !props.disabled)
-  const available = () => !props.readOnly && props.mission.status === "active" && missionAcceptsMessage(props.mission)
+  const available = () => !props.readOnly && Boolean(props.mission) && props.mission!.status === "active" && missionAcceptsMessage(props.mission!)
   const ask = async () => {
-    if (!available() || waiting() || props.disabled || !props.active) return
-    const key = identity(), instanceId = props.instanceId, mission = props.mission
+    const mission = props.mission
+    if (!mission || !available() || waiting() || props.disabled || !props.active) return
+    const key = identity(), instanceId = props.instanceId
     const operation = captureBackendOperation(instanceId)
     if (!operation.current()) return
     const original = { requestID: generateUUID(), state: "preparing" as const }
     const owner = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId), viewCurrent = capture()
-    const current = () => operation.current() && viewCurrent() && !props.disabled && missionAcceptsMessage(props.mission)
+    const current = () => operation.current() && viewCurrent() && !props.disabled && Boolean(props.mission) && missionAcceptsMessage(props.mission!)
       && missionBriefingRequest(key)?.requestID === original.requestID
       && instances().get(instanceId)?.client === owner && getOpenCodeInstanceGeneration(instanceId) === generation
     setMissionBriefingRequest(key, original)

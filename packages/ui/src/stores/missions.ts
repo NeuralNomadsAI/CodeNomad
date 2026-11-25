@@ -6,7 +6,9 @@ import { createMissionPanelInventory } from "./mission-panel-inventory"
 import { instances } from "./instances"
 import { projectScope, parseInstanceKey } from "../lib/backend-identity"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
-import { isUnrelatedSessionEvent, knownSessionsForInstance, type SessionParentInfo } from "./mission-activity-filter"
+import { sessions } from "./session-state"
+import { isUnrelatedSessionEvent, type SessionParentInfo } from "./mission-activity-filter"
+import type { PanelObservation } from "../lib/mission-panel-schema"
 import { createRoot, createComputed, untrack } from "solid-js"
 
 export const missionStore = createMissionPanelInventory({
@@ -75,7 +77,7 @@ export function isMissionActivityEvent(event: { type: string }): boolean {
 export function shouldRefreshMissionActivity(
   instanceId: string,
   event: { type: string; data?: unknown },
-  sessionsMap: ReadonlyMap<string, SessionParentInfo> | undefined = knownSessionsForInstance(instanceId),
+  sessionsMap: ReadonlyMap<string, SessionParentInfo> | undefined = sessions().get(instanceId),
 ): boolean {
   const state = missionStore.state(instanceId)
   const activeSummaries = state.summaries.filter(row => row.status === "active")
@@ -87,20 +89,23 @@ export function shouldRefreshMissionActivity(
   for (const id of activeIds) {
     const summary = activeSummaries.find(row => row.id === id)
     const map = activeMaps.find(item => item.id === id)
+    const expectedRevision = Math.max(summary?.revision ?? 0, map?.revision ?? 0)
     if (summary?.coordinatorSessionId) relatedRoots.add(summary.coordinatorSessionId)
     if (map?.coordinatorSessionId) relatedRoots.add(map.coordinatorSessionId)
     for (const actor of map?.actors ?? []) relatedRoots.add(actor.sessionId)
     for (const actor of missionStore.observedActors(instanceId, id)) relatedRoots.add(actor.sessionId)
     const marks = missionStore.markObservations(instanceId, id)
-    for (const page of marks) {
+    const activity = missionStore.observations(instanceId, id)
+    for (const page of [...marks, ...activity]) {
       for (const actor of page.context.actors) relatedRoots.add(actor.sessionId)
       for (const member of page.activity.family.members) relatedRoots.add(member.sessionId)
     }
-    const marksCovered = marks.length > 0 && marks.every(page => page.coverage === "observed" && page.context.actorPage.end >= page.context.actorPage.total)
+    const coversRevision = (pages: readonly PanelObservation[]) => pages.length > 0
+      && pages.every(page => page.coverage === "observed" && page.context.revision >= expectedRevision && page.context.actorPage.end >= page.context.actorPage.total)
     const declaredActors = summary && "actorCount" in summary && typeof summary.actorCount === "number"
-      ? summary.actorCount : summary?.actorSessionIds.length ?? 0
-    const nativeMapCovered = Boolean(map && map.taskMode === "native" && map.actors.length >= declaredActors)
-    if (!marksCovered && !nativeMapCovered) allCovered = false
+      ? summary.actorCount : map?.panelCollections?.actors?.total ?? summary?.actorSessionIds.length ?? 0
+    const nativeMapCovered = Boolean(map && map.taskMode === "native" && map.revision >= expectedRevision && map.actors.length >= declaredActors)
+    if (!coversRevision(marks) && !coversRevision(activity) && !nativeMapCovered) allCovered = false
   }
   if (allCovered && isUnrelatedSessionEvent(event, relatedRoots, sessionsMap)) return false
   return true

@@ -98,34 +98,40 @@ test("unified activity timestamps ignore future nextDueAt and sort all mission k
     pendingPassage: { id: "psg_1", missionID: "msn_1", coordinatorSessionID: "ses_1", admittedAt: 800, createdAt: 750, dueAt: 700 },
   } as unknown as UnifiedMissionSchedule
   assert.equal(unifiedScheduleActivityAt(activeUnified), 800)
-  assert.equal(unifiedScheduleActivityAt(activeUnified, 950), 950, "live passage updatedAt promotes active work")
 
   const idleDaily = {
-    id: "rec_1", revision: 1, title: "Daily", clock: { time: "09:00", zone: "UTC" }, state: "running",
+    id: "rec_1", revision: 1, title: "Daily", createdAt: 150, clock: { time: "09:00", zone: "UTC" }, state: "running",
     nextDueAt: future, pending: null, latestResult: { passageID: "p1", dueAt: 350, settledAt: 400, outcome: "completed" },
     history: [], actions: [], controls: [],
   } as RecurrenceSchedule
   assert.equal(recurrenceScheduleActivityAt(idleDaily), 400, "future nextDueAt is never used for daily schedules")
+
+  const freshDaily: RecurrenceSchedule = {
+    ...idleDaily, id: "rec_new", createdAt: 600, pending: null, latestResult: null, history: [],
+  }
+  assert.equal(recurrenceScheduleActivityAt(freshDaily), 600, "new daily schedule sorts by persisted creation time, not epoch 0")
+  const legacyDaily: RecurrenceSchedule = { ...freshDaily, id: "rec_legacy", createdAt: undefined }
+  assert.equal(recurrenceScheduleActivityAt(legacyDaily), 0, "older daily snapshots without createdAt stay valid")
 
   const activeDaily: RecurrenceSchedule = {
     ...idleDaily,
     pending: { passageID: "p2", status: "running", createdAt: 850, dueAt: 820, conversationID: "ses_daily" },
   }
   assert.equal(recurrenceScheduleActivityAt(activeDaily), 850)
-  assert.equal(recurrenceScheduleActivityAt(activeDaily, 920), 920)
-  assert.equal(recurrenceScheduleActivityAt({ ...idleDaily, pending: { passageID: "p3", status: "running", conversationID: "ses_old" } }, undefined, 880), 880)
 
   const sorted = sortMissionPickerEntries([
     { ...entry("mission:old"), activityAt: 500 },
     { ...entry("scheduled:idle"), activityAt: unifiedScheduleActivityAt(idleUnified) },
+    { ...entry("schedule:fresh"), activityAt: recurrenceScheduleActivityAt(freshDaily) },
     { ...entry("schedule:active"), activityAt: recurrenceScheduleActivityAt(activeDaily) },
-    { ...entry("scheduled:active"), activityAt: unifiedScheduleActivityAt(activeUnified, 950) },
+    { ...entry("scheduled:active"), activityAt: unifiedScheduleActivityAt(activeUnified) },
     { ...entry("mission:tie-b"), activityAt: 500 },
     { ...entry("mission:tie-a"), activityAt: 500 },
   ])
   assert.deepEqual(sorted.map(item => item.key), [
-    "scheduled:active",
     "schedule:active",
+    "scheduled:active",
+    "schedule:fresh",
     "mission:old",
     "mission:tie-a",
     "mission:tie-b",

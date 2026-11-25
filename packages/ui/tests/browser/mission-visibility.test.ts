@@ -6,6 +6,7 @@ import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import { panelMissions } from "./mission-content-fixture"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
+import { ACTIVITY_REFRESH_INTERVAL_MS } from "../../src/lib/event-refresh-scheduler"
 
 const activeMission = (): MissionMap => ({ version: 1, id: "visibility", projectID: "fixture", projectCanonical: "/fixture",
   objective: "Visibility mission", template: "custom", coordinatorSessionId: "visibility-actor", status: "active", runState: "running",
@@ -126,11 +127,22 @@ test("a visible Missions tab waits for session-list restoration, then revalidate
 
 test("continuous native activity of a large family is revalidated at a bounded rate", async () => {
   const page = await browser.newPage({ locale: "en-US" })
-  let requests = 0
+  let requests = 0, releaseHeld!: () => void, heldStarted!: () => void, holdNext = false
+  const heldGate = new Promise<void>(resolve => { releaseHeld = resolve })
+  const heldReached = new Promise<void>(resolve => { heldStarted = resolve })
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
-    // The server projection is slow while the family is busy.
-    await missionsRoute(page, () => ++requests, 150, [activeMission()])
+    await page.route("**/api/workspaces/mission-visibility/missions", async route => {
+      const summaries = new URL(route.request().url()).searchParams.get("panelSource") === "summaries"
+      const count = summaries ? ++requests : requests
+      if (summaries && holdNext) {
+        holdNext = false
+        heldStarted()
+        await heldGate
+      }
+      return route.fulfill({ json: { available: true, version: 1, projectID: "fixture", missions: panelMissions([activeMission()]),
+        generatedAt: count, discardedEvents: 0, activity: { generatedAt: count, missions: [] } } })
+    })
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).missionVisibility))
     await call(page, "restoration", false)
@@ -138,21 +150,38 @@ test("continuous native activity of a large family is revalidated at a bounded r
     await call(page, "activate", true)
     await shown
     await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready")
+    assert.equal(requests, 1)
 
-    // A busy family: status events keep arriving, spaced beyond the debounce.
+    // Hold the first activity-driven read, emit a burst during it, then release it
+    // and verify the trailing read waits the full cooldown before firing once.
+    holdNext = true
     const first = waitForMissionPanelRefresh(page)
-    for (let index = 0; index < 16; index++) {
+    await call(page, "event", "session.execution.started")
+    await heldReached
+    assert.equal(requests, 2)
+    for (let index = 0; index < 8; index++) {
       await call(page, "event", "session.execution.started")
-      await page.waitForTimeout(100)
+      await page.waitForTimeout(50)
     }
+    assert.equal(requests, 2, "events during an in-flight read never start a concurrent read")
+    const releasedAt = Date.now()
+    releaseHeld()
     await first
-    await page.waitForTimeout(400)
-    assert.equal(requests, 2, "the storm coalesces into one read, never one per event or a back-to-back loop")
+    const trailing = waitForMissionPanelRefresh(page)
+    // Emit more events right after settlement; cooldown must still hold until ACTIVITY_REFRESH_INTERVAL_MS.
+    await page.waitForTimeout(250)
+    await call(page, "event", "session.execution.started")
+    await page.waitForTimeout(1_500)
+    assert.equal(requests, 2, "trailing activity read respects the full cooldown after settlement")
+    await trailing
+    const elapsed = Date.now() - releasedAt
+    assert.ok(elapsed >= ACTIVITY_REFRESH_INTERVAL_MS - 300, `trailing read waited the full cooldown (${elapsed}ms)`)
+    assert.equal(requests, 3, "the burst coalesced into exactly one trailing read across the full cooldown")
 
     // Journal changes stay prompt even while activity is throttled.
     const changed = waitForMissionPanelRefresh(page)
     await call(page, "event", "rpc.codenomad.missions.changed")
     await changed
-    assert.equal(requests, 3)
-  } finally { await page.close() }
+    assert.equal(requests, 4)
+  } finally { releaseHeld?.(); await page.close() }
 })

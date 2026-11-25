@@ -33,6 +33,7 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
     "./instances": "export const instances = () => new Map([['instance', { client: globalThis.__missionSchedulesTest.client() }]]);",
     "./opencode-data": "export const getOpenCodeInstanceGeneration = () => globalThis.__missionSchedulesTest.generation();",
     "./session-list-restoration": "export const sessionListRestored = () => true;",
+    "./session-state": "export const sessions = () => globalThis.__missionSchedulesTest.sessions?.() ?? new Map();",
     "./missions": "export const isMissionActivityEvent = event => globalThis.__missionSchedulesTest.activityEvent?.(event) ?? false;",
   }
    if ((context.parentURL?.endsWith("/mission-schedules.ts") || context.parentURL?.endsWith("/mission-schedule-controls.ts")) && specifier === "../lib/backend-client")
@@ -625,13 +626,12 @@ test("activity events do not refresh schedules when idle or belonging to an unre
     if (type === "instance.event") listeners.add(listener)
     return () => { listeners.delete(listener) }
   }) as typeof fixture.backendEvents.on
-  const { registerSessionParentLookup } = await import("./mission-activity-filter")
   const sessionMap = new Map([
     ["ses_chat", { parentID: null }],
     ["ses_passage", { parentID: null }],
     ["ses_passage_child", { parentID: "ses_passage" }],
   ])
-  registerSessionParentLookup(id => id === "instance" ? sessionMap : undefined)
+  ;(fixture as any).sessions = () => new Map([["instance", sessionMap]])
   let listCalls = 0
   let activePassage = false
   // listCalls is not reactive: poll it instead of waiting on a Solid effect.
@@ -651,8 +651,12 @@ test("activity events do not refresh schedules when idle or belonging to an unre
     h.store.refresh()
     await settled(() => listCalls >= 1 && !h.store.loading())
     const idleCount = listCalls
-    // Idle schedule (no pendingPassage): activity event triggers zero reads.
-    for (const emit of listeners) emit({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: { sessionID: "ses_chat" } } })
+    // Idle schedule (no pendingPassage): unknown and sessionless events trigger zero reads
+    // (must distinguish the idle guard from unrelated-root filtering).
+    for (const emit of listeners) {
+      emit({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: { sessionID: "ses_unknown_idle" } } })
+      emit({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: {} } })
+    }
     await new Promise(resolve => setTimeout(resolve, ACTIVITY_REFRESH_INTERVAL_MS + 500))
     assert.equal(listCalls, idleCount, "no activity refresh when no schedule has pendingPassage")
 
@@ -671,7 +675,7 @@ test("activity events do not refresh schedules when idle or belonging to an unre
     assert.ok(listCalls > activeCount, "descendant of pendingPassage coordinator refreshes schedule")
   } finally {
     h.dispose()
-    registerSessionParentLookup(undefined)
+    delete (fixture as any).sessions
     delete (fixture as any).activityEvent
     fixture.backendEvents.on = originalOn
   }

@@ -11,9 +11,15 @@ import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-s
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
 import { missionDocumentChanges as changes } from "../../../server/src/missions/mission-document-state"
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
-import type { MissionJsonValue } from "../../../server/src/missions/model"
+import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
+import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
+import { readMissionContent } from "../../../server/src/missions/mission-content"
+import { contentDigest } from "../../../server/src/missions/content-digest"
+import { activityActorWindow, missionActivityContext } from "../../../server/src/missions/mission-activity-context"
+import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
+import type { MissionJsonValue, MissionMap } from "../../../server/src/missions/model"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
-import { inlineMissionEntry, missionRow, missionRows, missionToolbarAction } from "./mission-actions"
+import { inlineMissionEntry, missionRow, missionRows, missionToolbar, missionToolbarAction } from "./mission-actions"
 import { ACTIVITY_REFRESH_INTERVAL_MS } from "../../src/lib/event-refresh-scheduler"
 
 let browser: Browser, url: string
@@ -30,17 +36,26 @@ const profiles = {
   roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } },
 }
 
-async function openPanel(options: { includeActiveMission?: boolean } = {}) {
+async function openPanel(options: {
+  includeActiveMission?: boolean
+  emptyOneTime?: boolean
+  withPassages?: boolean
+  initialMissionView?: Record<string, unknown>
+  holdSummaries?: () => Promise<void>
+  holdHeader?: () => Promise<void>
+} = {}) {
   const f = missionPluginFixture(), journal = new MissionJournal(f.storage, FIXTURE_PROJECT.id, FIXTURE_PROJECT.canonical), location = FIXTURE_PROJECT.location
   const seed = (missionID: string, value: Record<string, unknown>) => {
     const event = parseMissionEvent({ version: 1, projectID: FIXTURE_PROJECT.id, missionID, ...value }); assert.ok(event)
     f.values.set(`codenomad-missions/v2/${journal.projectToken}/${missionID}/${event.id}`, event as never)
   }
-  // Completed older one-time mission with a task (updatedAt = 2_000).
-  seed("msn_done", { id: "evt_create", type: "mission.created", projectCanonical: "/repo", objective: "Old completed mission", title: "Old completed mission",
-    template: "custom", coordinator: { sessionID: "ses_done", title: "Coordinator", location }, createdAt: 1_000 })
-  seed("msn_done", { id: "evt_task", type: "task.created", task: { id: "tsk_done", key: "done-task", title: "Done task", brief: "Brief", role: "specialist", blockedBy: [], executionMode: { kind: "native", parentTaskKey: null } }, createdAt: 1_500 })
-  seed("msn_done", { id: "evt_finish", type: "mission.finished", outcome: "completed", summary: "Finished", createdAt: 2_000 })
+  if (!options.emptyOneTime) {
+    // Completed older one-time mission with a task (updatedAt = 2_000).
+    seed("msn_done", { id: "evt_create", type: "mission.created", projectCanonical: "/repo", objective: "Old completed mission", title: "Old completed mission",
+      template: "custom", coordinator: { sessionID: "ses_done", title: "Coordinator", location }, createdAt: 1_000 })
+    seed("msn_done", { id: "evt_task", type: "task.created", task: { id: "tsk_done", key: "done-task", title: "Done task", brief: "Brief", role: "specialist", blockedBy: [], executionMode: { kind: "native", parentTaskKey: null } }, createdAt: 1_500 })
+    seed("msn_done", { id: "evt_finish", type: "mission.finished", outcome: "completed", summary: "Finished", createdAt: 2_000 })
+  }
 
   if (options.includeActiveMission) {
     seed("msn_active", { id: "evt_create", type: "mission.created", projectCanonical: "/repo", objective: "Active one-time mission", title: "Active one-time mission",
@@ -68,18 +83,67 @@ async function openPanel(options: { includeActiveMission?: boolean } = {}) {
     changes.admitted(doc, doc.pending!.id, 5_000)
   })
   const future = Date.now() + 86_400_000
+  const runningView = missionScheduleView(runningDoc, false, { state: "known", nativeStatus: "active", nextDueAt: future, wakeCount: 1, timeGeneration: runningDoc.timeGeneration, kind: "launch" }).document!
+  if (options.withPassages) {
+    runningView.history = [{
+      id: "psg_missing_hist", missionID: "msn_missing_hist", coordinatorSessionID: "ses_missing_run",
+      messageID: "msg_hist", configurationGeneration: 1, timeGeneration: 1,
+      createdAt: 1_200, dueAt: 1_200, origin: { kind: "manual" }, admittedAt: 1_200,
+      configurationDigest: "a".repeat(64), settledAt: 1_300, outcome: "completed",
+    } as any]
+  }
   const unifiedSchedules = [
     missionScheduleView(idleDoc, false, { state: "known", nativeStatus: "active", nextDueAt: future, wakeCount: 0, timeGeneration: idleDoc.timeGeneration, kind: "launch" }).document!,
-    missionScheduleView(runningDoc, false, { state: "known", nativeStatus: "active", nextDueAt: future, wakeCount: 1, timeGeneration: runningDoc.timeGeneration, kind: "launch" }).document!,
+    runningView,
   ]
 
   // Legacy daily schedule with recent result (activityAt = 4_000) and far-future nextDueAt.
   const dailySchedules: RecurrenceSchedule[] = [{
-    id: "rec_recent", title: "Recent daily schedule", revision: 2, state: "running", clock: { time: "08:00", zone: "UTC" },
-    nextDueAt: future, pending: null, controls: [], actions: ["pause", "stop", "run-now"],
+    id: "rec_recent", title: "Recent daily schedule", revision: 2, createdAt: 900, state: "running", clock: { time: "08:00", zone: "UTC" },
+    nextDueAt: future,
+    pending: options.withPassages
+      ? { passageID: "psg_daily_live", status: "running", trigger: "daily", missionID: "msn_daily_live", conversationID: "ses_daily_coord", createdAt: 4_000, dueAt: 3_950 }
+      : null,
+    controls: [], actions: ["pause", "stop", "run-now"],
     latestResult: { passageID: "psg_d1", dueAt: 3_900, settledAt: 4_000, outcome: "completed" },
     history: [{ passageID: "psg_d1", dueAt: 3_900, settledAt: 4_000, outcome: "completed" }],
   }]
+
+  const schedCoord = runningDoc.pending!.coordinatorSessionID
+  const passageMaps: Record<string, { passageID: string; owner: "daily" | "scheduled"; map: MissionMap; withForm?: boolean }> = options.withPassages ? {
+    rec_recent: {
+      passageID: "psg_daily_live", owner: "daily",
+      map: {
+        version: 1, id: "msn_daily_live", projectID: FIXTURE_PROJECT.id, projectCanonical: FIXTURE_PROJECT.canonical,
+        objective: "Daily passage objective", title: "Daily passage", template: "custom", taskMode: "native",
+        status: "active", runState: "running", coordinatorSessionId: "ses_daily_coord",
+        revision: 2, createdAt: 4_000, updatedAt: 9_999, history: [], historyTruncated: false, frontier: [], claims: [], reports: [],
+        actors: [{ sessionId: "ses_daily_coord", kind: "coordinator", managed: false, title: "Daily coordinator", roles: ["coordinator"], location, joinedAt: 4_000 }],
+        tasks: [{ id: "tsk_daily_task", key: "daily-task", title: "Daily preview task", brief: "Daily passage brief", role: "specialist",
+          status: "dispatching", outstandingExecution: false, blockedBy: [], actorSessionId: "ses_daily_actor", executionMode: { kind: "native", parentTaskKey: null }, createdAt: 4_000, updatedAt: 9_999 }],
+      },
+    },
+    msn_sched_active: {
+      passageID: runningDoc.pending!.id, owner: "scheduled", withForm: true,
+      map: {
+        version: 1, id: runningDoc.pending!.missionID, projectID: FIXTURE_PROJECT.id, projectCanonical: FIXTURE_PROJECT.canonical,
+        objective: "Unified passage objective", title: "Unified passage", template: "custom", taskMode: "native",
+        status: "active", runState: "running", coordinatorSessionId: schedCoord,
+        revision: 2, createdAt: 4_900, updatedAt: 9_500, history: [], historyTruncated: false, frontier: [], claims: [], reports: [],
+        actors: [
+          { sessionId: schedCoord, kind: "coordinator", managed: false, title: "Unified coordinator", roles: ["coordinator"], location, joinedAt: 4_900 },
+          { sessionId: "ses_sched_actor", kind: "specialist", managed: false, title: "Unified specialist", roles: ["specialist"], location, joinedAt: 4_900 },
+          { sessionId: "ses_sched_plain", kind: "specialist", managed: false, title: "Unified plain specialist", roles: ["specialist"], location, joinedAt: 4_900 },
+        ],
+        tasks: [
+          { id: "tsk_sched_plain", key: "sched-plain-task", title: "Unified plain task", brief: "Unified passage brief", role: "specialist",
+            status: "dispatching", outstandingExecution: false, blockedBy: [], actorSessionId: "ses_sched_plain", executionMode: { kind: "native", parentTaskKey: null }, createdAt: 4_900, updatedAt: 9_500 },
+          { id: "tsk_sched_task", key: "sched-task", title: "Unified preview task", brief: "Unified form task brief", role: "specialist",
+            status: "dispatching", outstandingExecution: false, blockedBy: [], actorSessionId: "ses_sched_actor", executionMode: { kind: "native", parentTaskKey: null }, createdAt: 4_900, updatedAt: 9_500 },
+        ],
+      },
+    },
+  } : {}
 
   const panelRequests: any[] = [], scheduleListCalls: number[] = [], currentPassageCalls: string[] = [], errors: string[] = []
   const control = f.control()
@@ -114,7 +178,12 @@ async function openPanel(options: { includeActiveMission?: boolean } = {}) {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 900 } })
   page.setDefaultTimeout(15_000)
   page.on("pageerror", error => errors.push(error.message))
-  await page.addInitScript("Object.assign(window,{__name:f=>f,__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})")
+  const savedSnapshot = options.initialMissionView ? {
+    version: 1,
+    activeProject: "fixture",
+    tabs: { fixture: { missions: options.initialMissionView } },
+  } : null
+  await page.addInitScript(`Object.assign(window,{__name:f=>f,__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:${JSON.stringify(savedSnapshot)}}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", async route => {
     const request = route.request(), link = new URL(request.url()), path = link.pathname
     // A held stream: a closed one reconnects continuously, and each reconnection refreshes the panel.
@@ -123,7 +192,14 @@ async function openPanel(options: { includeActiveMission?: boolean } = {}) {
     if (path.endsWith("/missions/panel-page")) {
       const input = request.postDataJSON()
       panelRequests.push(input)
+      if (input.source === "summaries" && options.holdSummaries) await options.holdSummaries()
+      if (input.source === "mission" && input.header && options.holdHeader) await options.holdHeader()
       const response = await app.inject({ method: "POST", url: "/api/workspaces/fixture/missions/panel-page", payload: input })
+      return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
+    }
+    if (path.includes("/missions/") && path.endsWith("/content")) {
+      const missionID = path.split("/missions/")[1].split("/")[0]
+      const response = await app.inject({ method: "GET", url: `/api/workspaces/fixture/missions/${missionID}/content${link.search}` })
       return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
     }
     if (path.endsWith("/missions/scheduled/capabilities")) {
@@ -133,10 +209,50 @@ async function openPanel(options: { includeActiveMission?: boolean } = {}) {
       scheduleListCalls.push(Date.now())
       return route.fulfill({ json: { version: 1, projectID: FIXTURE_PROJECT.id, schedules: unifiedSchedules } })
     }
-    if (/\/missions\/recurrence\/[^/]+\/current$/.test(path)) {
-      currentPassageCalls.push(request.url())
-      const scheduleID = path.match(/\/missions\/recurrence\/([^/]+)\/current$/)![1]
-      return route.fulfill({ json: { version: 1, ownerRevision: 1, projectID: FIXTURE_PROJECT.id, scheduleID, passageID: null } })
+    const passageMatch = path.match(/\/missions\/recurrence\/([^/]+)\/current(?:\/[^/]+\/page)?$/)
+    if (passageMatch) {
+      const scheduleID = passageMatch[1], isPage = path.endsWith("/page")
+      const entry = passageMaps[scheduleID]
+      if (!isPage) {
+        currentPassageCalls.push(request.url())
+        if (!entry) return route.fulfill({ json: { version: 1, ownerRevision: 1, projectID: FIXTURE_PROJECT.id, scheduleID, passageID: null } })
+        return route.fulfill({ json: {
+          version: 1, ownerRevision: 2, projectID: FIXTURE_PROJECT.id, scheduleID, passageID: entry.passageID,
+          source: {
+            owner: entry.owner, projectID: FIXTURE_PROJECT.id, scheduleID, passageID: entry.passageID,
+            missionID: entry.map.id, digest: "a".repeat(43),
+            ...(entry.owner === "scheduled" ? { configurationGeneration: runningDoc.configurationGeneration, timeGeneration: runningDoc.timeGeneration } : {}),
+          },
+        } })
+      }
+      if (entry) {
+        const input = recurrenceCurrentPageInput.parse(request.postDataJSON())
+        const damage = { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }
+        if (input.body) {
+          return route.fulfill({ json: missionPanelPage({ source: "mission", field: "body", missionID: entry.map.id, projectID: FIXTURE_PROJECT.id, revision: entry.map.revision,
+            ...damage, passage: input.source, window: { offset: 0, end: 1, total: 1, order: contentDigest(JSON.stringify(input.body)) } },
+          [{ available: true, ...readMissionContent(FIXTURE_PROJECT.id, input.body, entry.map) }], input.selector.cursor) })
+        }
+        if (input.selector.source === "activity") {
+          const members = entry.withForm ? [
+            { sessionId: "ses_sched_child", parentSessionId: "ses_sched_actor", actorSessionId: "ses_sched_actor", kind: "ordinary" as const },
+          ] : []
+          const items = entry.withForm ? [{
+            kind: "form" as const, actorSessionId: "ses_sched_actor",
+            request: { id: "form_sched_child", sessionID: "ses_sched_child", title: "Approve preview step", fields: [{ id: "ok", type: "text", label: "Ok" }] },
+          }] : []
+          const actors = entry.withForm
+            ? [{ sessionId: entry.map.coordinatorSessionId, state: "running" as const }, { sessionId: "ses_sched_actor", state: "form" as const }, { sessionId: "ses_sched_plain", state: "running" as const }]
+            : [{ sessionId: entry.map.coordinatorSessionId, state: "running" as const }]
+          return route.fulfill({ json: missionPanelPage({ source: "activity", missionID: entry.map.id, projectID: FIXTURE_PROJECT.id, revision: entry.map.revision,
+            ...damage, passage: input.source, phase: "observed", observedAt: 10 }, [{
+            context: activityActorWindow(missionActivityContext(entry.map, damage), 0, 160), coverage: "observed",
+            requests: { state: "observed", items },
+            activity: { actors, family: { state: "observed", members } },
+          }], input.selector.cursor) })
+        }
+        return route.fulfill({ json: projectMissionPanel(entry.map, input.selector, damage, { passage: input.source }) })
+      }
     }
     if (path.endsWith("/missions/recurrence")) {
       return route.fulfill({ json: { version: 1, projectID: FIXTURE_PROJECT.id, schedules: dailySchedules } })
@@ -144,19 +260,31 @@ async function openPanel(options: { includeActiveMission?: boolean } = {}) {
     return route.fulfill({ json: {} })
   })
   await page.goto(url)
-  await page.evaluate(() => (window as any).missionFixture.connectCatalog())
-  await page.waitForFunction(() => (window as any).missionFixture?.snapshot().status === "ready")
-  await page.evaluate(async () => {
+  await page.evaluate(async ([initialView, sc, projId]) => {
+    ;(window as any).missionFixture.connectCatalog()
+    const { updateInstance } = await import("/src/stores/instances.ts")
+    updateInstance("fixture", { metadata: { project: { id: projId } } as any })
     ;(window as any).inventoryStore = (await import("/src/stores/missions.ts")).missionStore
     const { setSessions } = await import("/src/stores/session-state.ts")
     setSessions(new Map([["fixture", new Map([
       ["ses_chat", { id: "ses_chat", parentID: null, title: "Ordinary chat", time: { created: 1, updated: 1 } } as any],
       ["ses_done", { id: "ses_done", parentID: null, title: "Done coord", time: { created: 1, updated: 1 } } as any],
       ["ses_active", { id: "ses_active", parentID: null, title: "Active coord", time: { created: 1, updated: 1 } } as any],
+      ["ses_daily_coord", { id: "ses_daily_coord", parentID: null, title: "Daily coord", time: { created: 1, updated: 1 } } as any],
+      ["ses_daily_actor", { id: "ses_daily_actor", parentID: "ses_daily_coord", title: "Daily actor", time: { created: 1, updated: 1 } } as any],
+      [sc, { id: sc, parentID: null, title: "Sched coord", time: { created: 1, updated: 1 } } as any],
+      ["ses_sched_actor", { id: "ses_sched_actor", parentID: sc, title: "Sched actor", time: { created: 1, updated: 1 } } as any],
+      ["ses_sched_plain", { id: "ses_sched_plain", parentID: sc, title: "Sched plain", time: { created: 1, updated: 1 } } as any],
+      ["ses_sched_child", { id: "ses_sched_child", parentID: "ses_sched_actor", title: "Sched child", time: { created: 1, updated: 1 } } as any],
     ])]]))
-  })
-  await page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
-  return { page, panelRequests, scheduleListCalls, currentPassageCalls, errors, close: async () => { await page.context().close(); await app.close(); await plugin.dispose() } }
+    if (initialView) {
+      const { updateMissionProjectView } = await import("/src/stores/mission-view-state.ts")
+      updateMissionProjectView("fixture", initialView as any)
+    }
+  }, [options.initialMissionView ?? null, schedCoord, FIXTURE_PROJECT.id] as const)
+  await page.waitForFunction(() => (window as any).missionFixture?.snapshot().status === "ready")
+  if (!options.holdHeader) await page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
+  return { page, panelRequests, scheduleListCalls, currentPassageCalls, errors, schedCoord, close: async () => { await page.context().close(); await app.close(); await plugin.dispose() } }
 }
 
 test("unified sorting orders all mission kinds by real recent activity descending, ignoring future nextDueAt", async () => {
@@ -245,4 +373,182 @@ test("unrelated non-mission activity events do not trigger idle refreshes or spi
     assert.equal(await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').count(), 0)
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
+})
+
+test("schedule previews preserve reader passage identity, open Form requests, keep task toolbar on collapse, surface missing conversation errors, and keep stable row order", async () => {
+  const f = await openPanel({ includeActiveMission: true, withPassages: true })
+  try {
+    await (await inlineMissionEntry(f.page, "Active unified schedule")).waitFor()
+    await (await inlineMissionEntry(f.page, "Recent daily schedule")).waitFor()
+    const order = () => missionRows(f.page).locator(".mission-row").evaluateAll(nodes => nodes.map(node => node.getAttribute("data-mission-key")))
+    const initialOrder = await order()
+
+    // Open the reader on a one-time mission so the reader is ALREADY open.
+    await (await inlineMissionEntry(f.page, "Old completed mission")).click()
+    await missionToolbarAction(f.page, "Summary").click()
+    await f.page.locator(".mission-reader").waitFor()
+
+    // 1a. Expand unselected daily preview and select its task with the reader open.
+    await missionRow(f.page, "Recent daily schedule").locator(".session-item-expander").click()
+    const dailyTask = f.page.locator('.mission-tree .mission-tree-node[data-task-key="daily-task"] .mission-tree-task')
+    await dailyTask.waitFor()
+    await dailyTask.click()
+    await f.page.locator(".mission-reader .window-title").getByText("Daily preview task", { exact: true }).waitFor()
+    const dailyTarget = await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).missionProjectView("fixture").reader)
+    assert.equal(dailyTarget?.recurrence?.scheduleID, "rec_recent")
+    assert.equal(dailyTarget?.recurrence?.passageID, "psg_daily_live")
+    assert.equal(dailyTarget?.recurrence?.owner, undefined)
+    assert.deepEqual(await order(), initialOrder, "selecting/expanding daily schedule with newer live passage updatedAt does not reorder rows")
+
+    // 1b. Expand unselected unified preview and select its ordinary task while the reader is STILL open.
+    await missionRow(f.page, "Active unified schedule").locator(".session-item-expander").click()
+    const schedTask = f.page.locator('.mission-tree .mission-tree-node[data-task-key="sched-plain-task"] .mission-tree-task')
+    await schedTask.waitFor()
+    await schedTask.click()
+    await f.page.locator(".mission-reader .window-title").getByText("Unified plain task", { exact: true }).waitFor()
+    const schedTarget = await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).missionProjectView("fixture").reader)
+    assert.equal(schedTarget?.recurrence?.scheduleID, "msn_sched_active")
+    assert.equal(schedTarget?.recurrence?.owner, "scheduled")
+    assert.deepEqual(await order(), initialOrder, "selecting/expanding unified schedule does not reorder rows")
+
+    // 3. Collapsing the schedule while one of its tasks is selected keeps the task toolbar consistent.
+    await missionToolbar(f.page).getByRole("button", { name: "Open the task's conversation", exact: true }).and(f.page.locator(":enabled")).waitFor()
+    await missionRow(f.page, "Active unified schedule").locator(".session-item-expander").click()
+    await schedTask.waitFor({ state: "detached" })
+    const openTaskBtn = missionToolbar(f.page).getByRole("button", { name: "Open the task's conversation", exact: true })
+    assert.equal(await openTaskBtn.count(), 1, "collapsing a schedule with a selected task keeps the task toolbar mounted")
+    assert.equal(await openTaskBtn.isEnabled(), true, "task conversation button remains enabled after collapse")
+
+    // 2a. Clicking a red task awaiting a Form in an UNSELECTED schedule preview opens the asking child.
+    await (await inlineMissionEntry(f.page, "Old completed mission")).click()
+    await missionRow(f.page, "Active unified schedule").locator(".session-item-expander").click()
+    const previewTask = f.page.locator('.mission-schedule-preview .mission-tree .mission-tree-node[data-task-key="sched-task"] .mission-tree-task')
+    await previewTask.waitFor()
+    await f.page.locator('.mission-schedule-preview .mission-tree .mission-tree-node[data-task-key="sched-task"][data-state="input"]').waitFor()
+    await previewTask.click()
+    await f.page.waitForFunction(() => (window as any).missionFixture.selectedSession() === "ses_sched_child")
+    assert.equal(await f.page.locator(".mission-control-stale[role='alert']").count(), 0)
+
+    // 2b. Missing hydrated session from a unified schedule's past run (in preview) surfaces navigation error, not silent no-op.
+    await (await inlineMissionEntry(f.page, "Old completed mission")).click()
+    const pastRunOpen = f.page.locator(".mission-schedule-preview .mission-past-runs button").first()
+    await pastRunOpen.waitFor()
+    await pastRunOpen.click()
+    await f.page.locator(".mission-control-stale[role='alert']").waitFor()
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("expanded native schedule passage skips /current re-read on unrelated activity and refreshes on passage descendant activity", async () => {
+  const f = await openPanel({ includeActiveMission: false, withPassages: true })
+  try {
+    await (await inlineMissionEntry(f.page, "Active unified schedule")).waitFor()
+    f.currentPassageCalls.length = 0
+    await missionRow(f.page, "Active unified schedule").locator(".session-item-expander").click()
+    await f.page.locator('.mission-tree .mission-tree-node[data-task-key="sched-task"]').waitFor()
+    await f.page.waitForTimeout(150)
+    const before = f.currentPassageCalls.length
+    assert.equal(before, 1, "expanding unified schedule reads /current once")
+
+    // Emit unrelated root session activity: expanded native passage must NOT re-read /current.
+    await f.page.evaluate(async () => {
+      const { serverEvents } = await import("/src/lib/server-events.ts")
+      serverEvents.dispatchBatch([
+        { type: "instance.event", instanceId: "fixture", event: { type: "session.execution.started", data: { sessionID: "ses_chat" } } } as any,
+      ])
+    })
+    await f.page.waitForTimeout(ACTIVITY_REFRESH_INTERVAL_MS + 1_000)
+    assert.equal(f.currentPassageCalls.length, before, "expanded native passage skips /current re-read for unrelated root activity")
+
+    // Emit descendant activity of the passage coordinator: MUST refresh /current.
+    await f.page.evaluate(async () => {
+      const { serverEvents } = await import("/src/lib/server-events.ts")
+      serverEvents.dispatchBatch([
+        { type: "instance.event", instanceId: "fixture", event: { type: "session.execution.started", data: { sessionID: "ses_sched_child" } } } as any,
+      ])
+    })
+    for (const deadline = Date.now() + ACTIVITY_REFRESH_INTERVAL_MS + 2_000; f.currentPassageCalls.length <= before && Date.now() < deadline;) {
+      await f.page.waitForTimeout(50)
+    }
+    assert.ok(f.currentPassageCalls.length > before, "passage descendant activity refreshes /current")
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("schedule-only project keeps refresh button unspun and enabled during passive refreshes, spinning only on manual click", async () => {
+  let holdNext = false, started!: () => void, release!: () => void
+  const arm = () => {
+    holdNext = true
+    const reached = new Promise<void>(resolve => { started = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    return { reached, release: () => { holdNext = false; release() }, gate }
+  }
+  let activeGate: Promise<void> | undefined
+  const f = await openPanel({
+    emptyOneTime: true,
+    holdSummaries: async () => {
+      if (!holdNext) return
+      holdNext = false
+      started()
+      await activeGate
+    },
+  })
+  try {
+    await (await inlineMissionEntry(f.page, "Active unified schedule")).waitFor()
+    const refreshBtn = f.page.locator('.mission-control-header button[aria-label="Refresh mission map"]')
+    assert.equal(await refreshBtn.isDisabled(), false)
+    assert.equal(await refreshBtn.locator(".animate-spin").count(), 0)
+
+    // Trigger a passive journal refresh on the schedule-only project (rows().length === 0).
+    const passive = arm()
+    activeGate = passive.gate
+    await f.page.evaluate(() => (window as any).missionFixture.refresh())
+    await passive.reached
+    await f.page.waitForTimeout(100)
+    assert.equal(await refreshBtn.locator(".animate-spin").count(), 0, "passive refresh on schedule-only project does not spin")
+    assert.equal(await refreshBtn.isDisabled(), false, "refresh button stays enabled during passive refresh")
+    passive.release()
+    await f.page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "ready")
+
+    // Clicking refresh manually DOES spin and disable until settled.
+    const manual = arm()
+    activeGate = manual.gate
+    await refreshBtn.click()
+    await manual.reached
+    assert.equal(await refreshBtn.locator(".animate-spin").count(), 1, "manual refresh spins the button")
+    assert.equal(await refreshBtn.isDisabled(), true, "manual refresh disables the button while running")
+    manual.release()
+    await f.page.waitForFunction(() => !(document.querySelector('.mission-control-header button[aria-label="Refresh mission map"]') as HTMLButtonElement)?.disabled)
+    assert.equal(await refreshBtn.locator(".animate-spin").count(), 0)
+    assert.deepEqual(f.errors, [])
+  } finally {
+    release?.()
+    await f.close()
+  }
+})
+
+test("restored selectedTask on a collapsed completed mission waits for the real header instead of clearing", async () => {
+  let headerStarted!: () => void, releaseHeader!: () => void
+  const headerReached = new Promise<void>(resolve => { headerStarted = resolve })
+  const headerGate = new Promise<void>(resolve => { releaseHeader = resolve })
+  const f = await openPanel({
+    initialMissionView: { selected: "msn_done", selectedTask: { missionId: "msn_done", taskId: "tsk_done" } },
+    holdHeader: async () => { headerStarted(); await headerGate },
+  })
+  try {
+    await headerReached
+    await f.page.waitForTimeout(100)
+    const duringLoad = await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).missionProjectView("fixture").selectedTask)
+    assert.deepEqual(duringLoad, { missionId: "msn_done", taskId: "tsk_done" }, "restored selectedTask on collapsed completed mission is not cleared before real header loads")
+    releaseHeader()
+    await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
+    await f.page.waitForTimeout(100)
+    const afterLoad = await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).missionProjectView("fixture").selectedTask)
+    assert.deepEqual(afterLoad, { missionId: "msn_done", taskId: "tsk_done" }, "restored selectedTask survives real header reconciliation")
+    assert.equal(await missionToolbar(f.page).locator(".mission-overview-toggle").isEnabled(), true)
+    assert.deepEqual(f.errors, [])
+  } finally {
+    releaseHeader?.()
+    await f.close()
+  }
 })

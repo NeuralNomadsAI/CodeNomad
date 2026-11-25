@@ -71,14 +71,14 @@ export function MissionEditor(props: {
   const ids = { objective: createUniqueId(), objectiveError: createUniqueId(), profilesError: createUniqueId(), followedError: createUniqueId() }
   const config = useConfig(() => props.instanceId)
   // The revision and draft belong to this editor, not to live snapshot refreshes.
-  const action = props.action, original = action.mission, kind = action.kind
+  const action = props.action, original = action.mission, deleteTarget = action.deleteTarget ?? original, kind = action.kind
   // The UI's physical folder fences the view; it must not replace the server's
   // existing native default location (notably on WSL) in the creation request.
   const identity = () => JSON.stringify([props.instanceId, props.viewDirectory ?? props.directory, props.projectID])
   const captureEditorView = createMissionViewFence(identity, () => props.active?.() ?? true)
   const captureView = () => captureBackendOperation(props.instanceId, undefined, captureEditorView()).current
   const isActive = () => props.active?.() ?? true
-  const scheduleScope = () => JSON.stringify([identity(), kind === "create" ? "create" : action.scheduleID ?? original?.id])
+  const scheduleScope = () => JSON.stringify([identity(), kind === "create" ? "create" : action.scheduleID ?? deleteTarget?.id])
   const scheduleHold = missionScheduleEditorHold(scheduleScope())
   const held = kind === "create" ? uncertainMissionCreation(identity()) : undefined
   const recurrenceHold = kind === "create" ? uncertainRecurrence(identity()) : undefined
@@ -427,23 +427,23 @@ export function MissionEditor(props: {
     setPending(true)
     setError("")
     try {
-      if (kind === "delete" && original) {
+      if (kind === "delete" && deleteTarget) {
         // A failed acknowledgement may follow a committed tombstone. Keep its
         // immutable request available for retry even after the list refreshes.
         if (deleteAttempted()) {
-          const snapshot = await backendOf(instanceId).api.fetchMission(instanceId, original.id)
+          const snapshot = await backendOf(instanceId).api.fetchMission(instanceId, deleteTarget.id)
           if (!current()) return
           if (!snapshot.available || snapshot.cleanupUnavailable) throw new MissionDeletionError(503)
-          const intent = snapshot.cleanups.find(item => item.missionID === original.id && item.requestID === requestId
-            && item.expectedRevision === original.revision && item.deleteManagedSessions === deleteManagedSessions())
+          const intent = snapshot.cleanups.find(item => item.missionID === deleteTarget.id && item.requestID === requestId
+            && item.expectedRevision === deleteTarget.revision && item.deleteManagedSessions === deleteManagedSessions())
           if (intent && !missionCleanupPending(intent)) { props.onSaved(); return }
           const live = snapshot.mission
-          if (!intent && live && live.revision !== original.revision) throw new MissionDeletionError(409, "revision-conflict")
+          if (!intent && live && live.revision !== deleteTarget.revision) throw new MissionDeletionError(409, "revision-conflict")
           // Neither the map nor its cleanup: capacity may have purged a committed
           // deletion's history. Its durable record answers this exact original request.
         }
         setDeleteAttempted(true)
-        await backendOf(instanceId).api.deleteMission(instanceId, original.id, { expectedRevision: original.revision, requestId, deleteManagedSessions: deleteManagedSessions() })
+        await backendOf(instanceId).api.deleteMission(instanceId, deleteTarget.id, { expectedRevision: deleteTarget.revision, requestId, deleteManagedSessions: deleteManagedSessions() })
         if (current()) props.onSaved()
       } else {
         const result = await backendOf(instanceId).api.createMission(instanceId, { ...fields, directory, requestId })
@@ -462,15 +462,15 @@ export function MissionEditor(props: {
         }
       }
       if (!current()) return
-      if (kind === "delete" && original) {
+      if (kind === "delete" && deleteTarget) {
         // Reads can settle a lost HTTP acknowledgement, but never replay a write.
         // Unknown intent keeps the original option/request fenced until verified.
         let key = deletionErrorKey(error)
         try {
-          const snapshot = await backendOf(instanceId).api.fetchMission(instanceId, original.id)
+          const snapshot = await backendOf(instanceId).api.fetchMission(instanceId, deleteTarget.id)
           if (!current()) return
-          const intent = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.missionID === original.id && item.requestID === requestId
-            && item.expectedRevision === original.revision && item.deleteManagedSessions === deleteManagedSessions())
+          const intent = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.missionID === deleteTarget.id && item.requestID === requestId
+            && item.expectedRevision === deleteTarget.revision && item.deleteManagedSessions === deleteManagedSessions())
           if (intent && !missionCleanupPending(intent)) { props.onSaved(); return }
           if (intent && !(error instanceof MissionDeletionError && error.status === 409))
             key = intent.documentPending ? "missions.cleanup.documentPending" : "missions.cleanup.error.pending"

@@ -63,7 +63,7 @@ export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurr
     const settlementUnknown = lastError?.code === "settlement-failed"
     const pendingStatus = doc.pending?.admission && observed && !settlementUnknown ? "running" as const
       : !doc.pending?.admission && observed && !blocked ? "starting" as const : "uncertain" as const
-    results.push({ id: doc.id, title: displayMissionText(doc.config.title), revision: doc.revision, state, clock: doc.config.clock,
+    results.push({ id: doc.id, title: displayMissionText(doc.config.title), revision: doc.revision, createdAt: doc.createdAt, state, clock: doc.config.clock,
       nextDueAt: state === "running" ? recurrenceNextDueAt(doc, Date.now()) : null,
       ...(state === "interrupted" ? { interruptionReason: jobStatus === "error" ? "error" as const : doc.interruptionReason ?? "service-restart" } : {}),
       ...(lastError ? { lastError } : {}),

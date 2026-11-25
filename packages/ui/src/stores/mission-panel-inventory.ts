@@ -26,6 +26,7 @@ interface Entry {
   controller: AbortController; epoch: number; owners: Map<string, { id: string; reader: boolean; detail: boolean }>; panel: boolean
   maps: Map<string, { header: PanelHeader; map: MissionPanelMap; epoch: number; tasksLoaded: boolean }>; lanes: Map<string, Lane>; projectID?: string; baseline?: number; seeded?: boolean
   missionOwners: Map<string, AbortController>
+  detailOwners: Map<string, AbortController>
   refreshDeadline?: number
   headerReads: Map<string, { owner: AbortController; promise: Promise<void>; trailing: boolean; current(): boolean }>
   headerErrors: Map<string, { revision: number; reason: "changed" | "failed"; unavailableReason?: MissionUnavailableReason }>; missing: Set<string>
@@ -53,12 +54,14 @@ export function createMissionPanelInventory(input: {
     const previous = own.controller
     own.epoch++; own.controller = new AbortController(); own.refreshDeadline = undefined
     own.headerErrors.clear(); own.missing.clear(); own.headerReads.clear()
+    for (const controller of own.detailOwners.values()) controller.abort()
+    own.detailOwners.clear()
     for (const lane of own.lanes.values()) { lane.pending = undefined; lane.pendingCurrent = undefined; lane.pendingSelector = undefined; lane.loading = false }
     previous.abort()
   }
   const entry = (id: string): Entry => {
     let own = entries.get(id)
-    if (!own) entries.set(id, own = { controller: new AbortController(), epoch: 0, owners: new Map(), panel: false, maps: new Map(), lanes: new Map(), missionOwners: new Map(), headerReads: new Map(), headerErrors: new Map(), missing: new Set() })
+    if (!own) entries.set(id, own = { controller: new AbortController(), epoch: 0, owners: new Map(), panel: false, maps: new Map(), lanes: new Map(), missionOwners: new Map(), detailOwners: new Map(), headerReads: new Map(), headerErrors: new Map(), missing: new Set() })
     const attachment = input.signal?.(id)
     const project = input.projectID?.(id), differentProject = Boolean(own.projectID && project && own.projectID !== project)
     if (own.attachment !== attachment || differentProject || own.originCurrent && !own.originCurrent()) {
@@ -350,6 +353,17 @@ export function createMissionPanelInventory(input: {
     const header = panelHeaderSchema.parse(answer.values[0])
     if (header.root.id !== id || header.root.projectID !== own.projectID || header.root.revision !== answer.envelope.revision) throw new MissionTaskPageReadError("invalid")
     const previous = own.maps.get(id), full = [...own.owners.values()].some(owner => owner.id === id && owner.detail)
+    let detailOwner: AbortController | undefined
+    if (full) {
+      detailOwner = own.detailOwners.get(id)
+      if (!detailOwner) own.detailOwners.set(id, detailOwner = new AbortController())
+    }
+    const detailLife = detailOwner ? {
+      ...life,
+      signal: AbortSignal.any([life.signal!, detailOwner.signal]),
+      current: () => life.current() && !detailOwner!.signal.aborted && own.detailOwners.get(id) === detailOwner
+        && [...own.owners.values()].some(owner => owner.id === id && owner.detail),
+    } : undefined
     let map: MissionPanelMap = { ...header.root, actors: header.coordinator ? [header.coordinator] : [], tasks: [], reports: [], history: [], panelControl: header.control,
       ...(input.passage ? { panelPassage: input.passage } : {}),
       panelCollections: header.collections } as MissionPanelMap
@@ -357,23 +371,38 @@ export function createMissionPanelInventory(input: {
     if (previous?.tasksLoaded && previous.header.tasks.version === header.tasks.version && JSON.stringify(previous.header.tasks.pins) === JSON.stringify(header.tasks.pins)) {
       map = { ...map, tasks: previous.map.tasks, reports: previous.map.reports, taskPage: header.tasks.page }
       tasksLoaded = true
-    } else if (full && (header.tasks.page.total || header.tasks.reportPins.length)) {
-      const tasks = await input.tasks(instanceId, id, { offset: 0 }, { ...life, projectID: own.projectID!, signal: life.signal!, deadline: life.deadline! })
-      if (!life.current()) throw new DOMException("Obsolete task owner", "AbortError")
-      if (!tasks.available || !("tasks" in tasks)) throw new MissionTaskPageReadError("unavailable")
-      if (tasks.revision !== header.root.revision) return
-      map = { ...map, tasks: tasks.tasks, reports: tasks.reports, taskPage: header.tasks.page }
-      if (header.tasks.pins.length || header.tasks.reportPins.length) {
-        const pins = await input.tasks(instanceId, id, { ids: header.tasks.pins, reportIds: header.tasks.reportPins }, { ...life, projectID: own.projectID!, signal: life.signal!, deadline: life.deadline! })
-        if (!life.current()) throw new DOMException("Obsolete task owner", "AbortError")
-        if (!pins.available || !("tasks" in pins)) throw new MissionTaskPageReadError("unavailable")
-        if (pins.revision !== header.root.revision) return
-        map = { ...map, tasks: [...map.tasks, ...pins.tasks], reports: [...new Map([...map.reports, ...pins.reports].map(report => [report.id, report])).values()] }
+    } else if (detailLife && (header.tasks.page.total || header.tasks.reportPins.length)) {
+      try {
+        const tasks = await raceTaskRead(input.tasks(instanceId, id, { offset: 0 }, { ...detailLife, projectID: own.projectID!, signal: detailLife.signal, deadline: detailLife.deadline! }), detailLife.signal)
+        if (!detailLife.current()) {
+          if (!life.current()) throw new DOMException("Obsolete task owner", "AbortError")
+        } else {
+          if (!tasks.available || !("tasks" in tasks)) throw new MissionTaskPageReadError("unavailable")
+          if (tasks.revision !== header.root.revision) return
+          let loadedTasks = tasks.tasks, loadedReports = tasks.reports
+          if (header.tasks.pins.length || header.tasks.reportPins.length) {
+            const pins = await raceTaskRead(input.tasks(instanceId, id, { ids: header.tasks.pins, reportIds: header.tasks.reportPins }, { ...detailLife, projectID: own.projectID!, signal: detailLife.signal, deadline: detailLife.deadline! }), detailLife.signal)
+            if (!detailLife.current()) {
+              if (!life.current()) throw new DOMException("Obsolete task owner", "AbortError")
+            } else {
+              if (!pins.available || !("tasks" in pins)) throw new MissionTaskPageReadError("unavailable")
+              if (pins.revision !== header.root.revision) return
+              loadedTasks = [...loadedTasks, ...pins.tasks]
+              loadedReports = [...new Map([...loadedReports, ...pins.reports].map(report => [report.id, report])).values()]
+            }
+          }
+          if (detailLife.current()) {
+            map = { ...map, tasks: loadedTasks, reports: loadedReports, taskPage: header.tasks.page }
+            tasksLoaded = true
+          }
+        }
+      } catch (error) {
+        if (detailLife.current() || !life.current()) throw error
       }
-      tasksLoaded = true
+      if (!tasksLoaded) map.taskPage = header.tasks.page
     } else {
       map.taskPage = header.tasks.page
-      tasksLoaded = full
+      tasksLoaded = Boolean(detailLife?.current())
     }
     assertTaskReadLive(life.signal, life.deadline)
     if (!life.current()) throw new DOMException("Obsolete mission owner", "AbortError")
@@ -388,7 +417,7 @@ export function createMissionPanelInventory(input: {
     recordMissionTaskSource(map, header.tasks.version)
     own.maps.set(id, { header, map, epoch: own.epoch, tasksLoaded })
     own.projection = undefined
-    if (full) void readLane(instanceId, `activity:${id}`, { source: "activity", missionID: id }, life, false, true).catch(() => {})
+    if (detailLife?.current()) void readLane(instanceId, `activity:${id}`, { source: "activity", missionID: id }, detailLife, false, true).catch(() => {})
     return map
   }
   const base = createMissionStore(async (instanceId, request, signal): Promise<MissionDisplayResponse> => {
@@ -590,9 +619,11 @@ export function createMissionPanelInventory(input: {
       if (id) own.owners.set(owner, { id, reader, detail }); else own.owners.delete(owner)
       if (old && old !== id && ![...own.owners.values()].some(item => item.id === old)) {
         own.missionOwners.get(old)?.abort(); own.missionOwners.delete(old)
+        own.detailOwners.get(old)?.abort(); own.detailOwners.delete(old)
         own.headerErrors.delete(old); own.missing.delete(old)
         for (const key of own.lanes.keys()) if (key === `activity:${old}` || key.startsWith(`field:${old}:`) || key.startsWith(`text:${old}:`)) own.lanes.delete(key)
       } else if (old && oldHadDetail && ![...own.owners.values()].some(item => item.id === old && item.detail)) {
+        own.detailOwners.get(old)?.abort(); own.detailOwners.delete(old)
         own.lanes.delete(`activity:${old}`)
       }
       base.want(instanceId, owner, id, reader); stop(own)

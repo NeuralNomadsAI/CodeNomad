@@ -108,7 +108,7 @@ Kendi kontrollerini ve saat dilimini korurlar. Hizmet yeniden başlayınca kesin
 
 ## Ağaç ve sonuçlar {#tracking}
 
-Tek seferlik ve zamanlanmış Görevler en son etkinliğe göre sıralanan tek bir listeyi paylaşır. Şevron, seçimi değiştirmeden bir Görevin işlerini veya bir programın ayrıntıları ile mevcut çalıştırmasını açıp kapatır; satıra tıklamak Görevi, programı veya işi seçer. Eylemler başlıkta kalır. İşi olmayan Görevde şevron yoktur. Filtre yüklenen kayıtları daraltır.
+Tek seferlik ve zamanlanmış Görevler en son etkinliğe göre sıralanan tek bir listeyi paylaşır. Şevron, seçimi değiştirmeden bir Görevin işlerini veya bir programın ayrıntıları ile mevcut çalıştırmasını açıp kapatır; satıra tıklamak Görevi, programı veya işi seçer. Eylemler başlıkta kalır. İşi olmayan tek seferlik Görevde şevron yoktur. Filtre yüklenen kayıtları daraltır.
 
 Göz, merkezi özeti açar ve seçimi izler. Konuşmayı aç, ilgili koordinatöre veya işe gider. ⋯ menüsü uygun güncelleme, kesinti, yapılandırma ve düzenleme işlemlerini içerir.
 

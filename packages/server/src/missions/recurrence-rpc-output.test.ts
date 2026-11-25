@@ -23,6 +23,8 @@ test("strict simple snapshot omits epochs, grants, budgets and signed retry tupl
     nextDueAt: null, pending: null, latestResult: null, history: [], controls: [], actions: ["play", "run-now", "stop"] }
   const snapshot = { version: 1, projectID: "project", projectCanonical: "/project", location: { directory: "/project" }, schedules: [schedule] }
   assert.equal(validate(snapshot), true, JSON.stringify(validate.errors)); recurrenceSnapshotSchema.parse(snapshot)
+  const withCreatedAt = { ...snapshot, schedules: [{ ...schedule, createdAt: 1_700_000_000_000 }] }
+  assert.equal(validate(withCreatedAt), true, JSON.stringify(validate.errors)); recurrenceSnapshotSchema.parse(withCreatedAt)
   for (const extra of [{ epoch: 1 }, { budgets: {} }, { grant: {} }, { controlRetry: {} }, { prompt: "private" }]) {
     assert.equal(validate({ ...snapshot, schedules: [{ ...schedule, ...extra }] }), false)
   }

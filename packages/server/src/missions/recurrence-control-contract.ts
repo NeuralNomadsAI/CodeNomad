@@ -61,6 +61,7 @@ const reference = z.object({ passageID: recurrenceIDSchema, dueAt: timestamp, se
 export const recurrenceSnapshotSchema = z.object({ version: z.literal(1), projectID: z.string().min(1).max(240),
   projectCanonical: z.string().min(1).max(4096), location: z.object({ directory: z.string().min(1).max(4096), workspaceID: z.string().optional() }).strict(),
   schedules: z.array(z.object({ id: recurrenceIDSchema, title: z.string().min(1).max(120), revision: timestamp,
+    createdAt: timestamp.optional(),
     state: z.enum(["paused", "running", "interrupted", "stopped"]), clock: dailyClockSchema, nextDueAt: timestamp.nullable(),
     interruptionReason: z.enum(["service-restart", "error"]).optional(),
     lastError: z.object({ code: z.enum(["wake-failed", "admission-failed", "settlement-failed"]), at: timestamp }).strict().optional(),
@@ -97,6 +98,7 @@ export const recurrenceSnapshotOutput = { type: "object", properties: { version:
     directory: { type: "string" }, workspaceID: { type: "string" } }, required: ["directory"], additionalProperties: false },
   schedules: { type: "array", maxItems: 64, items: { type: "object", properties: {
     id: { type: "string" }, title: { type: "string", minLength: 1, maxLength: 120 }, revision: numberWire,
+    createdAt: numberWire,
     state: { type: "string", enum: ["paused", "running", "interrupted", "stopped"] },
     clock: { type: "object", properties: { time: { type: "string" }, zone: { type: "string" } }, required: ["time", "zone"], additionalProperties: false },
     nextDueAt: { type: ["integer", "null"], minimum: 0 }, interruptionReason: { type: "string", enum: ["service-restart", "error"] },

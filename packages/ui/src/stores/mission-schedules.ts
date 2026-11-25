@@ -11,7 +11,8 @@ import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { sessionListRestored } from "./session-list-restoration"
 import { isMissionActivityEvent } from "./missions"
-import { isUnrelatedSessionEvent, knownSessionsForInstance } from "./mission-activity-filter"
+import { sessions } from "./session-state"
+import { isUnrelatedSessionEvent } from "./mission-activity-filter"
 
 export type UnifiedMissionSchedule = NonNullable<MissionScheduleRead["document"]>
 export type UnifiedScheduleAction = Parameters<ServerApi["controlMissionSchedule"]>[2]["action"]
@@ -144,7 +145,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
       if (active.length === 0) return
       if (active.every(doc => doc.configuration.taskMode === "native")) {
         const roots = new Set(active.map(doc => doc.pendingPassage!.coordinatorSessionID))
-        if (isUnrelatedSessionEvent(value.event, roots, knownSessionsForInstance(props.instanceId()))) return
+        if (isUnrelatedSessionEvent(value.event, roots, sessions().get(props.instanceId()))) return
       }
       schedule("activity")
     }

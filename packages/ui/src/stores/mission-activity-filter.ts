@@ -3,17 +3,6 @@ export interface SessionParentInfo {
   parentId?: string | null
 }
 
-type SessionParentLookup = (instanceId: string) => ReadonlyMap<string, SessionParentInfo> | undefined
-let sessionParentLookup: SessionParentLookup | undefined
-
-export function registerSessionParentLookup(lookup: SessionParentLookup | undefined): void {
-  sessionParentLookup = lookup
-}
-
-export function knownSessionsForInstance(instanceId: string): ReadonlyMap<string, SessionParentInfo> | undefined {
-  return sessionParentLookup?.(instanceId)
-}
-
 /** Extract session and optional parent session identifiers from a native event payload. */
 export function eventSessionRefs(event: unknown): { sessionID?: string; parentID?: string } {
   if (!event || typeof event !== "object") return {}

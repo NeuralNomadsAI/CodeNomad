@@ -108,7 +108,7 @@ Conservan controles y zona. Tras reiniciar el servicio requieren **Reanudar** de
 
 ## Árbol y resultados {#tracking}
 
-Las Misiones puntuales y programadas comparten una sola lista ordenada por actividad más reciente. El chevrón despliega o pliega las tareas de una Misión o los detalles y la ejecución actual de una programación sin cambiar la selección; hacer clic selecciona Misión, programación o tarea. Sus acciones quedan en la cabecera. Sin tareas no hay chevrón. El filtro busca en las entradas cargadas.
+Las Misiones puntuales y programadas comparten una sola lista ordenada por actividad más reciente. El chevrón despliega o pliega las tareas de una Misión o los detalles y la ejecución actual de una programación sin cambiar la selección; hacer clic selecciona Misión, programación o tarea. Sus acciones quedan en la cabecera. Una Misión puntual sin tareas no tiene chevrón. El filtro busca en las entradas cargadas.
 
 El ojo alterna el resumen central y sigue la selección. **Abrir conversación** lleva al coordinador o tarea. El menú ⋯ contiene las acciones disponibles de actualización, interrupción, configuración y edición.
 

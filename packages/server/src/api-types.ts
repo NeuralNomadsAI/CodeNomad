@@ -63,6 +63,7 @@ export interface MissionRecurrenceSnapshot {
     id: string
     revision: number
     title: string
+    createdAt?: number
     state: "running" | "paused" | "interrupted" | "stopped"
     clock: { time: string; zone: string }
     nextDueAt: number | null

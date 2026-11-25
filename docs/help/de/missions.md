@@ -110,7 +110,7 @@ Diese Einträge behalten ihre Kontrollen und Zeitzone. Nach Dienstneustart benö
 
 ## Baum und Ergebnisse {#tracking}
 
-Einmalige und geplante Missionen teilen eine Liste, sortiert nach der neuesten Aktivität. Der Chevron klappt Aufgaben einer Mission oder Details und laufenden Durchlauf eines Zeitplans auf und zu, ohne die Auswahl zu ändern; ein Zeilenklick wählt Mission, Zeitplan oder Aufgabe. Die Aktionen bleiben im Kopf. Missionen ohne Aufgaben haben keinen Chevron. Der Filter durchsucht geladene Einträge.
+Einmalige und geplante Missionen teilen eine Liste, sortiert nach der neuesten Aktivität. Der Chevron klappt Aufgaben einer Mission oder Details und laufenden Durchlauf eines Zeitplans auf und zu, ohne die Auswahl zu ändern; ein Zeilenklick wählt Mission, Zeitplan oder Aufgabe. Die Aktionen bleiben im Kopf. Einmalige Missionen ohne Aufgaben haben keinen Chevron. Der Filter durchsucht geladene Einträge.
 
 Das Auge schaltet die zentrale Zusammenfassung um und folgt der Auswahl. **Unterhaltung öffnen** führt zum jeweiligen Koordinator oder zur Aufgabe. Das ⋯-Menü enthält anwendbare Aktualisierungs-, Unterbrechungs-, Konfigurations- und Bearbeitungsaktionen.
 

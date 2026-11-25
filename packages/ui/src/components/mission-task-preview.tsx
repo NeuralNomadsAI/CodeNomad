@@ -7,7 +7,7 @@ import { MissionPanelScope } from "./mission-panel-scope"
 import { MissionTracking } from "./mission-tracking"
 import { MissionTaskTree } from "./mission-task-tree"
 import { missionTaskConversation } from "./mission-task-navigation"
-import { missionQuestions } from "./mission-questions"
+import { missionQuestions, type MissionQuestionStore } from "./mission-questions"
 import type { MissionQuestion } from "./mission-question-owners"
 
 /** An unselected, expanded one-time Mission's tasks: its full map is wanted only
@@ -45,15 +45,37 @@ export function MissionTaskPreview(props: {
   </Show>
 }
 
+export interface MissionPassageIdentity {
+  projectID: string
+  scheduleID: string
+  passageID: string
+  owner?: "daily" | "scheduled"
+}
+
+export interface MissionPassageActorClick {
+  scheduleID: string
+  passageID: string
+  missionId: string
+  sessionId: string
+  request?: MissionQuestion["request"]
+  live: () => {
+    mission: MissionPanelMap
+    store: MissionQuestionStore
+    family?: MissionActivityProjection["missions"][number]["family"]
+  } | undefined
+}
+
 /** An unselected, expanded schedule's live passage tasks: demands current passage
  * only while expanded and `active`, releasing cleanly on collapse. */
 export function MissionPassagePreview(props: {
   instanceId: string; projectID?: string; directory: string
   scheduleId: string; owner: "daily" | "scheduled"; active: boolean; refresh: number
   selected: (mission: MissionPanelMap, task: MissionPanelTask) => boolean
-  onSelect: (mission: MissionPanelMap, task: MissionPanelTask) => void
-  onOpenActor: (mission: MissionPanelMap, sessionId: string, request?: MissionQuestion["request"]) => Promise<void>
+  onSelect: (mission: MissionPanelMap, task: MissionPanelTask, passage: MissionPassageIdentity) => void
+  onOpenActor: (click: MissionPassageActorClick) => Promise<void>
 }) {
+  let alive = true
+  onCleanup(() => { alive = false })
   const passage = useMissionCurrentPassage({
     instanceId: () => props.instanceId,
     projectID: () => props.projectID,
@@ -64,12 +86,48 @@ export function MissionPassagePreview(props: {
     refresh: () => props.refresh,
   })
   const store = () => passage.inventory() ?? missionStore
-  const map = () => passage.snapshot()?.scheduleID === props.scheduleId ? passage.snapshot()?.mission : undefined
+  const current = () => {
+    const snapshot = passage.snapshot()
+    return snapshot?.scheduleID === props.scheduleId && snapshot.passageID && snapshot.mission ? snapshot : undefined
+  }
+  const map = () => current()?.mission
   return <MissionPanelScope value={store}>
     <Show when={map()}>{value =>
-      <MissionTracking instanceId={props.instanceId} mission={value()} activity={passage.snapshot()?.activity}
-        active={props.active} selected={task => props.selected(value(), task)} onSelect={task => props.onSelect(value(), task)}
-        onOpenActor={(sessionId, request) => props.onOpenActor(value(), sessionId, request)} />
+      <MissionTracking instanceId={props.instanceId} mission={value()} activity={current()?.activity}
+        active={props.active} selected={task => props.selected(value(), task)}
+        onSelect={task => {
+          const snapshot = current()
+          if (!snapshot?.passageID) return
+          const owner = snapshot.source?.owner ?? props.owner
+          props.onSelect(value(), task, {
+            projectID: snapshot.projectID,
+            scheduleID: snapshot.scheduleID,
+            passageID: snapshot.passageID,
+            ...(owner === "scheduled" ? { owner: "scheduled" as const } : {}),
+          })
+        }}
+        onOpenActor={(sessionId, request) => {
+          const clicked = current()
+          const clickedPassageID = clicked?.passageID, clickedMissionID = clicked?.mission?.id
+          if (!clickedPassageID || !clickedMissionID) return Promise.resolve()
+          return props.onOpenActor({
+            scheduleID: props.scheduleId,
+            passageID: clickedPassageID,
+            missionId: clickedMissionID,
+            sessionId,
+            request,
+            live: () => {
+              if (!alive) return undefined
+              const now = current()
+              if (!now || now.passageID !== clickedPassageID || !now.mission || now.mission.id !== clickedMissionID) return undefined
+              return {
+                mission: now.mission,
+                store: store(),
+                family: now.activity?.missions.find(item => item.missionId === now.mission!.id)?.family,
+              }
+            },
+          })
+        }} />
     }</Show>
   </MissionPanelScope>
 }

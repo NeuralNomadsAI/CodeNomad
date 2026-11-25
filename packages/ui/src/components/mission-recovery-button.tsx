@@ -10,7 +10,7 @@ import { missionStore } from "../stores/missions"
 
 export type MissionRecoveryButtonProps = {
   instanceId: string
-  mission: MissionPanelMap
+  mission?: MissionPanelMap
   activity?: MissionActorActivity["state"]
   disabled?: boolean
   /** Refresh display state only; admission is not proof of consumption or completion. */
@@ -49,12 +49,13 @@ export function createMissionRecoveryAction(props: MissionRecoveryButtonProps) {
   const [error, setError] = createSignal<{ key: string; kind: ReturnType<typeof classify> }>()
   let disposed = false
   onCleanup(() => { disposed = true })
-  const key = () => JSON.stringify([props.instanceId, props.mission.id, props.mission.revision, props.target, props.taskKey ?? ""])
-  const state = () => attempts().get(key())
+  const key = () => props.mission ? JSON.stringify([props.instanceId, props.mission.id, props.mission.revision, props.target, props.taskKey ?? ""]) : ""
+  const state = () => key() ? attempts().get(key()) : undefined
   const label = () => t(`missions.recovery.${props.target}`)
   const currentError = () => error()?.key === key() ? error() : undefined
   const eligible = () => {
     const mission = props.mission
+    if (!mission) return false
     // Coordinator recovery also resumes a failed mission: the backend reopens it first.
     const resuming = props.target === "coordinator" && mission.status === "failed"
     if (mission.status !== "active" && !resuming || (mission.runState ?? "running") !== "running" || (mission.panelControl?.pending ?? mission.control?.pending.length)) return false
@@ -75,11 +76,11 @@ export function createMissionRecoveryAction(props: MissionRecoveryButtonProps) {
   }
   async function recover() {
     const operation = captureBackendOperation(props.instanceId)
-    if (!operation.current()) return
+    const mission = props.mission
+    if (!operation.current() || !mission) return
     if (!eligible() || props.disabled || state()) return
     const requestKey = key()
     const instanceId = props.instanceId
-    const mission = props.mission
     const input = { expectedRevision: mission.revision, target: props.target,
       ...(props.target === "report" ? { taskKey: props.taskKey } : {}) }
     markAttempt(requestKey, "pending")

@@ -96,14 +96,13 @@ export function missionMarkStateKey(mark: MissionMark): string | undefined {
     : mark === "interrupted" ? "missionsPanel.state.interrupted" : undefined
 }
 
-export function unifiedScheduleActivityAt(doc: UnifiedMissionSchedule, livePassageUpdatedAt?: number): number {
+export function unifiedScheduleActivityAt(doc: UnifiedMissionSchedule): number {
   const pending = doc.pendingPassage
   return Math.max(
     0,
     pending?.admittedAt ?? 0,
     pending?.dueAt ?? 0,
     pending?.createdAt ?? 0,
-    livePassageUpdatedAt ?? 0,
     doc.latestResult?.settledAt ?? 0,
     doc.latestResult?.dueAt ?? 0,
     doc.checks?.since ?? 0,
@@ -112,21 +111,16 @@ export function unifiedScheduleActivityAt(doc: UnifiedMissionSchedule, livePassa
   )
 }
 
-export function recurrenceScheduleActivityAt(
-  schedule: RecurrenceSchedule,
-  livePassageUpdatedAt?: number,
-  pendingSessionUpdatedAt?: number,
-): number {
+export function recurrenceScheduleActivityAt(schedule: RecurrenceSchedule): number {
   const pending = schedule.pending
   return Math.max(
     0,
     pending?.createdAt ?? 0,
     pending?.dueAt ?? 0,
-    livePassageUpdatedAt ?? 0,
-    pendingSessionUpdatedAt ?? 0,
     schedule.latestResult?.settledAt ?? 0,
     schedule.latestResult?.dueAt ?? 0,
     schedule.lastError?.at ?? 0,
+    schedule.createdAt ?? 0,
   )
 }
 

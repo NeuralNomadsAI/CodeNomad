@@ -21,7 +21,7 @@ export interface MissionEditorDraft {
   deleteAutoSubmitted?: boolean; deleteError?: string
 }
 
-export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionPanelMap; scheduleID?: string; draft?: Readonly<MissionEditorDraft> }
+export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionPanelMap; deleteTarget?: { id: string; revision: number; title?: string }; scheduleID?: string; draft?: Readonly<MissionEditorDraft> }
 
 // Window memory only, keyed by panel scope: the open editor outlives the panel
 // (another right-panel tab) and a hidden project, never a restart, and never

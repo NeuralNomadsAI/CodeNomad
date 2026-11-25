@@ -13,7 +13,8 @@ import { parseInstanceKey } from "../lib/backend-identity"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { isMissionActivityEvent, isMissionChangedEvent } from "./missions"
-import { isUnrelatedSessionEvent, knownSessionsForInstance } from "./mission-activity-filter"
+import { sessions } from "./session-state"
+import { isUnrelatedSessionEvent } from "./mission-activity-filter"
 import { copyMissionProfiles } from "./mission-creation-drafts"
 import { sessionListRestored } from "./session-list-restoration"
 import { eventRefreshDue, type RefreshUrgency } from "../lib/event-refresh-scheduler"
@@ -43,6 +44,7 @@ interface RecurrenceEntry {
   currentSnapshot?: MissionRecurrenceCurrent
   error: boolean
   demand: number
+  demanded: boolean
   stopped: boolean
   controller?: AbortController
   timer?: ReturnType<typeof setTimeout>
@@ -69,6 +71,7 @@ const current = (entry: RecurrenceEntry) => !entry.attachment.aborted && placed(
 function cancel(entry: RecurrenceEntry): void {
   if (entry.timer) clearTimeout(entry.timer)
   entry.timer = undefined
+  entry.demanded = false
   entry.trailing = false
   entry.activityTrailing = false
   entry.controller?.abort()
@@ -87,7 +90,7 @@ function read(entry: RecurrenceEntry, attachment = entry.attachment): void {
   const signal = AbortSignal.any([controller.signal, attachment])
   entry.controller = controller
   changed()
-  const admitted = () => !signal.aborted && entry.controller === controller && entry.demand > 0 && current(entry)
+  const admitted = () => !signal.aborted && entry.controller === controller && entry.demanded && current(entry)
   const request = Promise.resolve().then<MissionRecurrenceCurrent | MissionRecurrenceSnapshot>(() => {
     if (!admitted()) throw new DOMException("Obsolete recurrence owner", "AbortError")
     const api = backendOf(entry.instanceId).api, workspaceId = parseInstanceKey(entry.instanceId).workspaceId
@@ -110,7 +113,7 @@ function read(entry: RecurrenceEntry, attachment = entry.attachment): void {
           entry.inventorySource = JSON.stringify(source)
           entry.inventory = createMissionPanelInventory({ passage: source, scope: () => entry.directory, projectID: () => entry.projectID,
             signal: () => entry.attachment,
-            capture: () => () => current(entry) && entry.demand > 0 && JSON.stringify(entry.currentSnapshot?.source) === JSON.stringify(source),
+            capture: () => () => current(entry) && entry.demanded && JSON.stringify(entry.currentSnapshot?.source) === JSON.stringify(source),
             read: (id, selector, scope) => backendOf(id).api.fetchMissionCurrentPanel(parseInstanceKey(id).workspaceId, source, selector, scope),
             tasks: (id, _mission, task, scope) => backendOf(id).api.fetchMissionCurrentTasks(parseInstanceKey(id).workspaceId, source, task, scope) })
         }
@@ -168,6 +171,13 @@ interface ReadDemand {
   scheduleID?: () => string | undefined
   owner?: () => "daily" | "scheduled"
 }
+const liveCurrentSnapshot = (entry: RecurrenceEntry | undefined): MissionRecurrenceCurrent | undefined => {
+  const snapshot = entry?.currentSnapshot, inventory = entry?.inventory
+  if (!snapshot || !inventory) return snapshot
+  const shown = inventory.state(entry.instanceId)
+  return { ...snapshot, mission: shown.missions.find(map => map.id === snapshot.source?.missionID), activity: shown.activity }
+}
+
 function useRecurrenceRead(props: ReadDemand) {
   const binding = createMemo(() => {
     const instanceId = props.instanceId()
@@ -198,14 +208,17 @@ function useRecurrenceRead(props: ReadDemand) {
         }
         value = { key, instanceId: identity.instanceId, projectID: identity.projectID, directory: identity.directory, scheduleID: identity.scheduleID, owner: identity.owner, client: identity.client,
           attachment: identity.attachment,
-          generation: identity.generation, error: stoppedInstances.has(identity.instanceId), demand: 0,
+          generation: identity.generation, error: stoppedInstances.has(identity.instanceId), demand: 0, demanded: false,
           stopped: stoppedInstances.has(identity.instanceId), trailing: false }
         cache.set(key, value)
       }
-      if (value.demand++ === 0) read(value)
+      value.demand++
+      if (!value.demanded) { value.demanded = true; read(value) }
       return value
     })
-    onCleanup(() => { if (--entry.demand === 0) cancel(entry) })
+    onCleanup(() => {
+      if (--entry.demand === 0) queueMicrotask(() => { if (entry.demand === 0) cancel(entry) })
+    })
   })
   const state = () => {
     cacheVersion()
@@ -227,12 +240,7 @@ function useRecurrenceRead(props: ReadDemand) {
   })
   return {
     snapshot: () => state()?.snapshot,
-    currentSnapshot: () => {
-      const entry = state(), snapshot = entry?.currentSnapshot, inventory = entry?.inventory
-      if (!snapshot || !inventory) return snapshot
-      const shown = inventory.state(entry.instanceId)
-      return { ...snapshot, mission: shown.missions.find(map => map.id === snapshot.source?.missionID), activity: shown.activity }
-    },
+    currentSnapshot: () => liveCurrentSnapshot(state()),
     inventory: () => state()?.inventory,
     error: () => state()?.error ?? false,
     stale: () => Boolean(state()?.snapshot && state()?.error),
@@ -257,10 +265,20 @@ serverEvents.on("instance.event", event => {
     if (plugin || schedule && (!entry.scheduleID || entry.scheduleID === schedule.scheduleID) || changedJournal && entry.scheduleID) scheduleRefresh(entry)
     else if (passage && entry.scheduleID) {
       if (entry.currentSnapshot && !entry.currentSnapshot.passageID && !entry.error) continue
-      const mission = entry.currentSnapshot?.mission
-      if (mission && mission.taskMode === "native") {
+      const live = liveCurrentSnapshot(entry), mission = live?.mission, inventory = entry.inventory
+      if (mission && inventory && !entry.error && inventory.state(entry.instanceId).status === "ready") {
+        const observations = inventory.observations(entry.instanceId, mission.id)
         const roots = new Set([mission.coordinatorSessionId, ...mission.actors.map(actor => actor.sessionId)])
-        if (isUnrelatedSessionEvent(event.event, roots, knownSessionsForInstance(event.instanceId))) continue
+        for (const actor of inventory.observedActors(entry.instanceId, mission.id)) roots.add(actor.sessionId)
+        for (const page of observations) {
+          for (const actor of page.context.actors) roots.add(actor.sessionId)
+          for (const member of page.activity.family.members) roots.add(member.sessionId)
+        }
+        const activityCovered = observations.length > 0 && observations.every(page =>
+          page.coverage === "observed" && page.context.revision >= mission.revision && page.context.actorPage.end >= page.context.actorPage.total)
+        const declaredActors = mission.panelCollections?.actors?.total ?? mission.actors.length
+        const nativeHeaderCovered = mission.taskMode === "native" && mission.actors.length >= declaredActors
+        if ((activityCovered || nativeHeaderCovered) && isUnrelatedSessionEvent(event.event, roots, sessions().get(event.instanceId))) continue
       }
       scheduleRefresh(entry, "activity")
     }
