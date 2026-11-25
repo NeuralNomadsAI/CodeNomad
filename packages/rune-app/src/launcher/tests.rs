@@ -754,328 +754,668 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
     assert!(launcher.linked.rows.is_empty());
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+struct CatalogueFixture {
+    base_url: String,
+    sse_opened: codenomad_client::Receiver<()>,
+    sse_dropped: codenomad_client::Receiver<()>,
+    workspaces_requests: codenomad_client::Receiver<codenomad_client::Receiver<()>>,
+    _shutdown: codenomad_client::Receiver<()>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for CatalogueFixture {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn spawn_catalogue_sse_fixture(
+    drop_first_sse: bool,
+    second_sse_gate: Option<codenomad_client::Receiver<()>>,
+) -> CatalogueFixture {
+    use codenomad_client::runtime::until_closed;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (opened_tx, sse_opened) = bounded(8);
+    let (dropped_tx, sse_dropped) = bounded(8);
+    let (workspaces_tx, workspaces_requests) = bounded(8);
+    let (shutdown_tx, shutdown_rx) = bounded::<()>(1);
+    let sse_attempts = Arc::new(AtomicUsize::new(0));
+    let task = tokio::spawn(async move {
+        while let Some(Ok((mut socket, _))) = until_closed(&shutdown_tx, listener.accept()).await {
+            let opened_tx = opened_tx.clone();
+            let dropped_tx = dropped_tx.clone();
+            let workspaces_tx = workspaces_tx.clone();
+            let shutdown_tx = shutdown_tx.clone();
+            let second_sse_gate = second_sse_gate.clone();
+            let sse_attempts = sse_attempts.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let mut n = 0usize;
+                let header_read = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                    while n < buf.len() {
+                        match socket.read(&mut buf[n..]).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(read) => {
+                                n += read;
+                                if buf[..n].windows(4).any(|w| w == b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                })
+                .await;
+                if header_read.is_err() || n == 0 {
+                    return;
+                }
+                let head = String::from_utf8_lossy(&buf[..n]);
+                let first = head.lines().next().unwrap_or_default();
+                if first.starts_with("GET /api/events") {
+                    let attempt = sse_attempts.fetch_add(1, SeqCst) + 1;
+                    if drop_first_sse && attempt == 1 {
+                        drop(socket);
+                        let _ = dropped_tx.try_send(());
+                        return;
+                    }
+                    if drop_first_sse
+                        && attempt == 2
+                        && let Some(gate) = second_sse_gate
+                        && until_closed(&shutdown_tx, gate.recv()).await.is_none()
+                    {
+                        return;
+                    }
+                    let wrote = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                        socket
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n",
+                            )
+                            .await?;
+                        socket.flush().await
+                    })
+                    .await;
+                    if matches!(wrote, Ok(Ok(()))) {
+                        let _ = opened_tx.try_send(());
+                        let mut drain = [0u8; 64];
+                        let _ = until_closed(&shutdown_tx, async {
+                            while matches!(socket.read(&mut drain).await, Ok(k) if k > 0) {}
+                        })
+                        .await;
+                    }
+                } else if first.starts_with("GET /api/workspaces") {
+                    let (_closed_tx, closed_rx) = bounded::<()>(1);
+                    let _ = workspaces_tx.try_send(closed_rx);
+                    let mut drain = [0u8; 64];
+                    let _ = until_closed(&shutdown_tx, async {
+                        while matches!(socket.read(&mut drain).await, Ok(k) if k > 0) {}
+                    })
+                    .await;
+                } else {
+                    drop(socket);
+                }
+            });
+        }
+    });
+    CatalogueFixture {
+        base_url: format!("http://{addr}/"),
+        sse_opened,
+        sse_dropped,
+        workspaces_requests,
+        _shutdown: shutdown_rx,
+        task,
+    }
+}
+
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write_rebind() {
-    let mut s = crate::init();
-    crate::gallery::shell::fixture(&mut s);
-    let mut ui = crate::workspace::Ui::new();
-    ui.fixture_ready();
-    s.workspace = Some(ui);
-    let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
-    let project_a = Project {
-        id: "proj-a".into(),
-        path: "/repo-a".into(),
-    };
-    let project_b = Project {
-        id: "proj-b".into(),
-        path: "/repo-b".into(),
-    };
-    let bound_a = Backend {
-        workspace: project_a.id.clone(),
-        session: String::new(),
-        ..backend.clone()
-    };
-    let bound_b = Backend {
-        workspace: project_b.id.clone(),
-        session: "ses-b".into(),
-        ..backend.clone()
-    };
-    {
-        let l = s.screen.launcher_mut().unwrap();
-        l.connection = Some(backend.clone());
-        l.project = Some(project_a.clone());
-    }
-    crate::workspace::opened(&mut s, &project_a);
-    s.show_launcher();
-    s.files = Some(crate::files::Ui::new(
-        bound_a.clone(),
-        project_a.path.clone(),
-        s.reads.clone(),
-        s.wake.clone(),
-    ));
-    crate::git::connected(&mut s, &bound_a);
+    crate::platform::block_on(async {
+        let fixture = spawn_catalogue_sse_fixture(false, None).await;
+        let mut s = crate::init();
+        crate::gallery::shell::fixture(&mut s);
+        let mut ui = crate::workspace::Ui::new();
+        ui.fixture_ready();
+        s.workspace = Some(ui);
+        let backend = Backend::unauthenticated(&fixture.base_url).unwrap();
+        let project_a = Project {
+            id: "proj-a".into(),
+            path: "/repo-a".into(),
+        };
+        let project_b = Project {
+            id: "proj-b".into(),
+            path: "/repo-b".into(),
+        };
+        let bound_a = Backend {
+            workspace: project_a.id.clone(),
+            session: String::new(),
+            ..backend.clone()
+        };
+        let bound_b = Backend {
+            workspace: project_b.id.clone(),
+            session: "ses-b".into(),
+            ..backend.clone()
+        };
+        {
+            let l = s.screen.launcher_mut().unwrap();
+            l.connection = Some(backend.clone());
+            l.project = Some(project_a.clone());
+        }
+        crate::workspace::opened(&mut s, &project_a);
+        s.show_launcher();
+        s.files = Some(crate::files::Ui::new(
+            bound_a.clone(),
+            project_a.path.clone(),
+            s.reads.clone(),
+            s.wake.clone(),
+        ));
+        crate::git::connected(&mut s, &bound_a);
 
-    let mut rt = rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
-    rt.update(|s, tx| {
-        crate::workspace::new_tab(s, tx);
-        let l = s.screen.launcher_mut().unwrap();
-        l.connection = Some(backend.clone());
-        l.project = Some(project_b.clone());
-        crate::workspace::opened(s, &project_b);
-        crate::workspace::bound(s, &bound_b);
-        s.show_chat();
-    });
+        let mut rt =
+            rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+        rt.update(|s, tx| {
+            crate::workspace::new_tab(s, tx);
+            let l = s.screen.launcher_mut().unwrap();
+            l.connection = Some(backend.clone());
+            l.project = Some(project_b.clone());
+            crate::workspace::opened(s, &project_b);
+            crate::workspace::bound(s, &bound_b);
+            s.show_chat();
+        });
 
-    // While tab B has an in-flight permission write and auth expired, reauthentication
-    // stops detached tab A (not in fresh projects list) and defers tab B's rebind.
-    rt.state.status_permissions.fixture_writing(true);
-    let (out, input) = bounded(1);
-    {
-        let l = rt.state.screen.launcher_mut().unwrap();
-        l.authentication_required = true;
-        l.result = Some(input);
-        l.pending = true;
-    }
-    assert!(
-        out.try_send(Ok(Reply::Connected(
-            backend.clone(),
-            vec![project_b.clone()],
-            "srv-1".into(),
-        )))
-        .is_ok()
-    );
-    rt.update(|s, tx| {
-        assert!(poll(s, tx));
-    });
-    assert!(!rt.state.screen.is_launcher());
-    assert_eq!(
-        rt.state
-            .screen
-            .launcher()
-            .unwrap()
-            .rebind_after_send
-            .as_deref(),
-        Some("ses-b")
-    );
-    // Settling the permission write triggers the deferred rebind automatically.
-    rt.state.status_permissions.fixture_writing(false);
-    rt.update(|s, tx| {
-        assert!(poll(s, tx));
-    });
-    assert!(
-        rt.state
-            .screen
-            .launcher()
-            .unwrap()
-            .rebind_after_send
-            .is_none()
-    );
-    assert!(rt.state.screen.launcher().unwrap().pending);
-
-    // Refused tab switch and refused named create while pending do not invalidate navigation tickets.
-    let ticket = rt.state.notifications.navigation_ticket();
-    let (created_out, created_in) = bounded(1);
-    {
-        let l = rt.state.screen.launcher_mut().unwrap();
-        l.title = TextEdit::new("Blocked title");
-        l.result = Some(created_in);
-        l.pending = true;
-    }
-    rt.update(|s, tx| {
-        crate::workspace::select_index(s, 0, tx);
-        create(s, tx);
-    });
-    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
-    assert_eq!(rt.state.notifications.navigation_ticket(), ticket);
-    let created_backend = Backend {
-        workspace: project_b.id.clone(),
-        session: "ses-created".into(),
-        ..backend
-    };
-    assert!(
-        created_out
-            .try_send(Ok(Reply::Created(
-                created_backend,
-                "Created".into(),
-                "root".into(),
-                String::new(),
-                None,
-                Some(ticket),
+        // While tab B has an in-flight permission write and auth expired, reauthentication
+        // stops detached tab A (not in fresh projects list) and defers tab B's rebind.
+        rt.state.status_permissions.fixture_writing(true);
+        let (out, input) = bounded(1);
+        {
+            let l = rt.state.screen.launcher_mut().unwrap();
+            l.authentication_required = true;
+            l.result = Some(input);
+            l.pending = true;
+        }
+        assert!(
+            out.try_send(Ok(Reply::Connected(
+                backend.clone(),
+                vec![project_b.clone()],
+                "srv-1".into(),
             )))
             .is_ok()
-    );
-    rt.update(|s, tx| {
-        assert!(poll(s, tx));
-    });
-    assert_eq!(
-        crate::workspace::active_session(&rt.state),
-        Some("ses-created")
-    );
-
-    // Switching back to cached tab A shows its detached Files panel stayed stopped after reauth.
-    rt.update(|s, tx| {
-        crate::workspace::select_index(s, 0, tx);
-    });
-    assert!(rt.state.files.as_ref().unwrap().stopped);
-
-    // Clicking cached tab B while authentication_required stays on Screen::Launcher (never empty view).
-    rt.state
-        .screen
-        .launcher_mut()
-        .unwrap()
-        .authentication_required = true;
-    rt.update(|s, tx| {
-        crate::workspace::select_index(s, 1, tx);
-    });
-    assert!(rt.state.screen.is_launcher());
-    assert!(rt.state.screen.launcher().unwrap().authentication_required);
-
-    // A workspace.stopped observed while Reply::Opened is in flight stops the opened project
-    // instead of inserting it into opened_after.
-    let (opened_out, opened_in) = bounded(1);
-    let (_reconcile_tx, reconcile_rx) = bounded(1);
-    let project_c = Project {
-        id: "proj-c".into(),
-        path: "/repo-c".into(),
-    };
-    let opening_c = rt
-        .state
-        .screen
-        .launcher()
-        .unwrap()
-        .openings
-        .begin(
+        );
+        rt.update(|s, tx| {
+            assert!(poll(s, tx));
+        });
+        assert!(!rt.state.screen.is_launcher());
+        assert_eq!(
             rt.state
                 .screen
                 .launcher()
                 .unwrap()
-                .connection
-                .clone()
-                .unwrap(),
-            "tab-c",
-        )
-        .unwrap()
-        .fixture_opening(project_c.clone());
-    {
-        let l = rt.state.screen.launcher_mut().unwrap();
-        l.authentication_required = false;
-        l.detached_reconcile = Some((1, HashSet::new(), reconcile_rx));
-        l.pending_stream_generation = 1;
-        l.stopped_during_pending.insert(project_c.id.clone());
-        l.result = Some(opened_in);
-        l.pending = true;
-    }
-    assert!(
-        opened_out
-            .try_send(Ok(Reply::Opened(
-                opening_c,
-                Sessions {
-                    rows: vec![],
-                    next: None
-                },
-                Restored::Empty,
-            )))
-            .is_ok()
-    );
-    rt.update(|s, tx| {
-        assert!(poll(s, tx));
+                .rebind_after_send
+                .as_deref(),
+            Some("ses-b")
+        );
+        // Wait for the reauthenticated CatalogueWatch SSE stream to open cleanly so later
+        // poll() calls never race with an ECONNREFUSED disconnect transition on Unix.
+        tokio::time::timeout(std::time::Duration::from_secs(4), fixture.sse_opened.recv())
+            .await
+            .expect("catalogue watch must open SSE")
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+        while rt
+            .state
+            .screen
+            .launcher()
+            .unwrap()
+            .workspace_stream_generation
+            != 1
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "launcher must observe live catalogue stream generation 1"
+            );
+            rt.update(|s, tx| {
+                let _ = poll(s, tx);
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        // Settling the permission write triggers the deferred rebind automatically.
+        rt.state.status_permissions.fixture_writing(false);
+        rt.update(|s, tx| {
+            assert!(poll(s, tx));
+        });
+        assert!(
+            rt.state
+                .screen
+                .launcher()
+                .unwrap()
+                .rebind_after_send
+                .is_none()
+        );
+        assert!(rt.state.screen.launcher().unwrap().pending);
+
+        // Refused tab switch and refused named create while pending do not invalidate navigation tickets.
+        let ticket = rt.state.notifications.navigation_ticket();
+        let (created_out, created_in) = bounded(1);
+        {
+            let l = rt.state.screen.launcher_mut().unwrap();
+            l.title = TextEdit::new("Blocked title");
+            l.result = Some(created_in);
+            l.pending = true;
+        }
+        rt.update(|s, tx| {
+            crate::workspace::select_index(s, 0, tx);
+            create(s, tx);
+        });
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+        assert_eq!(rt.state.notifications.navigation_ticket(), ticket);
+        let created_backend = Backend {
+            workspace: project_b.id.clone(),
+            session: "ses-created".into(),
+            ..backend
+        };
+        assert!(
+            created_out
+                .try_send(Ok(Reply::Created(
+                    created_backend,
+                    "Created".into(),
+                    "root".into(),
+                    String::new(),
+                    None,
+                    Some(ticket),
+                )))
+                .is_ok()
+        );
+        rt.update(|s, tx| {
+            assert!(poll(s, tx));
+        });
+        assert_eq!(
+            crate::workspace::active_session(&rt.state),
+            Some("ses-created")
+        );
+
+        // Switching back to cached tab A shows its detached Files panel stayed stopped after reauth.
+        rt.update(|s, tx| {
+            crate::workspace::select_index(s, 0, tx);
+        });
+        assert!(rt.state.files.as_ref().unwrap().stopped);
+
+        // Clicking cached tab B while authentication_required stays on Screen::Launcher (never empty view).
+        rt.state
+            .screen
+            .launcher_mut()
+            .unwrap()
+            .authentication_required = true;
+        rt.update(|s, tx| {
+            crate::workspace::select_index(s, 1, tx);
+        });
+        assert!(rt.state.screen.is_launcher());
+        assert!(rt.state.screen.launcher().unwrap().authentication_required);
+
+        // A workspace.stopped observed while Reply::Opened is in flight stops the opened project
+        // instead of inserting it into opened_after.
+        let (opened_out, opened_in) = bounded(1);
+        let (_reconcile_tx, reconcile_rx) = bounded(1);
+        let project_c = Project {
+            id: "proj-c".into(),
+            path: "/repo-c".into(),
+        };
+        let opening_c = rt
+            .state
+            .screen
+            .launcher()
+            .unwrap()
+            .openings
+            .begin(
+                rt.state
+                    .screen
+                    .launcher()
+                    .unwrap()
+                    .connection
+                    .clone()
+                    .unwrap(),
+                "tab-c",
+            )
+            .unwrap()
+            .fixture_opening(project_c.clone());
+        {
+            let l = rt.state.screen.launcher_mut().unwrap();
+            l.authentication_required = false;
+            l.detached_reconcile = Some((1, HashSet::new(), reconcile_rx));
+            l.pending_stream_generation = 1;
+            l.stopped_during_pending.insert(project_c.id.clone());
+            l.result = Some(opened_in);
+            l.pending = true;
+        }
+        assert!(
+            opened_out
+                .try_send(Ok(Reply::Opened(
+                    opening_c,
+                    Sessions {
+                        rows: vec![],
+                        next: None
+                    },
+                    Restored::Empty,
+                )))
+                .is_ok()
+        );
+        rt.update(|s, tx| {
+            assert!(poll(s, tx));
+        });
+        assert!(
+            !rt.state
+                .screen
+                .launcher()
+                .unwrap()
+                .detached_reconcile
+                .as_ref()
+                .unwrap()
+                .1
+                .contains("proj-c")
+        );
+        assert!(rt.state.files.as_ref().unwrap().stopped);
+
+        // Reply::Opened started before an SSE disconnect/reconnect (generation 1 vs reconcile 3)
+        // is not inserted into opened_after and replaces the stale pre-open reconcile read so a
+        // stale GET /api/workspaces snapshot cannot stop the freshly opened project.
+        let (opened_out_d, opened_in_d) = bounded(1);
+        let (reconcile_tx_d, reconcile_rx_d) = bounded(1);
+        let project_d = Project {
+            id: "proj-d".into(),
+            path: "/repo-d".into(),
+        };
+        let opening_d = rt
+            .state
+            .screen
+            .launcher()
+            .unwrap()
+            .openings
+            .begin(
+                rt.state
+                    .screen
+                    .launcher()
+                    .unwrap()
+                    .connection
+                    .clone()
+                    .unwrap(),
+                "tab-d",
+            )
+            .unwrap()
+            .fixture_opening(project_d.clone());
+        {
+            let l = rt.state.screen.launcher_mut().unwrap();
+            l.detached_reconcile = Some((3, HashSet::new(), reconcile_rx_d));
+            l.pending_stream_generation = 1;
+            l.result = Some(opened_in_d);
+            l.pending = true;
+        }
+        assert!(
+            opened_out_d
+                .try_send(Ok(Reply::Opened(
+                    opening_d,
+                    Sessions {
+                        rows: vec![],
+                        next: None
+                    },
+                    Restored::Empty,
+                )))
+                .is_ok()
+        );
+        rt.update(|s, tx| {
+            assert!(poll(s, tx));
+        });
+        assert!(
+            reconcile_tx_d.try_send(Some(vec![])).is_err(),
+            "stale pre-open reconcile channel must be dropped so it cannot stop proj-d"
+        );
+        assert!(
+            !rt.state
+                .screen
+                .launcher()
+                .unwrap()
+                .detached_reconcile
+                .as_ref()
+                .unwrap()
+                .1
+                .contains("proj-d")
+        );
+
+        // Reply::Created whose workspace stopped while creation was in flight must not bind or list it.
+        let (created_out, created_in) = bounded(1);
+        let mut created_backend = Backend::unauthenticated(&fixture.base_url).unwrap();
+        created_backend.workspace = "proj-stopped".into();
+        created_backend.session = "ses-stopped".into();
+        {
+            let l = rt.state.screen.launcher_mut().unwrap();
+            l.sessions.clear();
+            l.stopped_during_pending.insert("proj-stopped".into());
+            l.result = Some(created_in);
+            l.pending = true;
+        }
+        assert!(
+            created_out
+                .try_send(Ok(Reply::Created(
+                    created_backend,
+                    "New".into(),
+                    "root".into(),
+                    String::new(),
+                    None,
+                    None,
+                )))
+                .is_ok()
+        );
+        rt.update(|s, tx| {
+            assert!(poll(s, tx));
+        });
+        assert!(rt.state.screen.is_launcher());
+        assert!(
+            rt.state
+                .screen
+                .launcher()
+                .unwrap()
+                .sessions
+                .iter()
+                .all(|row| row.id != "ses-stopped"),
+            "Reply::Created for a project stopped in flight must not list or bind the session"
+        );
     });
-    assert!(
-        !rt.state
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn catalogue_disconnect_cancels_reconcile_and_reconnect_replaces_stale_pre_open_reconcile() {
+    crate::platform::block_on(async {
+        let (allow_second_sse_tx, allow_second_sse_rx) = bounded(1);
+        let fixture = spawn_catalogue_sse_fixture(true, Some(allow_second_sse_rx)).await;
+        let mut s = crate::init();
+        crate::gallery::shell::fixture(&mut s);
+        let mut ui = crate::workspace::Ui::new();
+        ui.fixture_ready();
+        s.workspace = Some(ui);
+        let backend = Backend::unauthenticated(&fixture.base_url).unwrap();
+        let project_a = Project {
+            id: "proj-a".into(),
+            path: "/repo-a".into(),
+        };
+        let bound_a = Backend {
+            workspace: project_a.id.clone(),
+            session: String::new(),
+            ..backend.clone()
+        };
+        {
+            let l = s.screen.launcher_mut().unwrap();
+            l.connection = Some(backend.clone());
+            l.project = Some(project_a.clone());
+        }
+        crate::workspace::opened(&mut s, &project_a);
+        s.show_launcher();
+        s.files = Some(crate::files::Ui::new(
+            bound_a.clone(),
+            project_a.path.clone(),
+            s.reads.clone(),
+            s.wake.clone(),
+        ));
+
+        let mut rt =
+            rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+        let (conn_out, conn_in) = bounded(1);
+        {
+            let l = rt.state.screen.launcher_mut().unwrap();
+            l.authentication_required = true;
+            l.result = Some(conn_in);
+            l.pending = true;
+        }
+        assert!(
+            conn_out
+                .try_send(Ok(Reply::Connected(
+                    backend.clone(),
+                    vec![project_a.clone()],
+                    "srv-1".into(),
+                )))
+                .is_ok()
+        );
+        rt.update(|s, tx| {
+            assert!(poll(s, tx));
+        });
+
+        // 1. First SSE attempt drops immediately while the 2nd SSE attempt is gated behind
+        // allow_second_sse_tx so poll() deterministically observes generation 2 (never skipping
+        // straight to 3 under CI scheduling delays) and cancels the active detached_reconcile.
+        let (reconcile_tx, reconcile_rx) = bounded(1);
+        rt.state.screen.launcher_mut().unwrap().detached_reconcile =
+            Some((1, HashSet::new(), reconcile_rx));
+        tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            fixture.sse_dropped.recv(),
+        )
+        .await
+        .expect("first SSE attempt must drop immediately")
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+        while rt
+            .state
+            .screen
+            .launcher()
+            .unwrap()
+            .workspace_stream_generation
+            != 2
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "launcher must observe disconnected catalogue generation 2"
+            );
+            rt.update(|s, tx| {
+                let _ = poll(s, tx);
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert!(
+            rt.state
+                .screen
+                .launcher()
+                .unwrap()
+                .detached_reconcile
+                .is_none()
+        );
+        assert!(reconcile_tx.try_send(Some(vec![])).is_err());
+
+        // 2. Stage an in-flight Reply::Opened from generation 1 before releasing reconnect (gen 3):
+        // observing gen 3 spawns a real GET /api/workspaces reconcile, and settling Reply::Opened
+        // cancels that stale pre-open GET and issues a fresh gen-3 GET without adding proj-d.
+        let (opened_out_d, opened_in_d) = bounded(1);
+        let project_d = Project {
+            id: "proj-d".into(),
+            path: "/repo-d".into(),
+        };
+        let opening_d = rt
+            .state
+            .screen
+            .launcher()
+            .unwrap()
+            .openings
+            .begin(backend, "tab-d")
+            .unwrap()
+            .fixture_opening(project_d);
+        {
+            let l = rt.state.screen.launcher_mut().unwrap();
+            l.pending_stream_generation = 1;
+            l.result = Some(opened_in_d);
+            l.pending = true;
+        }
+        let _ = allow_second_sse_tx.try_send(());
+        tokio::time::timeout(std::time::Duration::from_secs(4), fixture.sse_opened.recv())
+            .await
+            .expect("second SSE attempt must open after gate release")
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+        while rt
+            .state
+            .screen
+            .launcher()
+            .unwrap()
+            .workspace_stream_generation
+            != 3
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "launcher must observe reconnected catalogue generation 3"
+            );
+            rt.update(|s, tx| {
+                let _ = poll(s, tx);
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let stale_get_closed = tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            fixture.workspaces_requests.recv(),
+        )
+        .await
+        .expect("reconnecting at generation 3 must start a real GET /api/workspaces reconcile")
+        .unwrap();
+
+        assert!(
+            opened_out_d
+                .try_send(Ok(Reply::Opened(
+                    opening_d,
+                    Sessions {
+                        rows: vec![],
+                        next: None
+                    },
+                    Restored::Empty,
+                )))
+                .is_ok()
+        );
+        rt.update(|s, tx| {
+            assert!(poll(s, tx));
+        });
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(4), stale_get_closed.recv())
+            .await
+            .expect("Reply::Opened must cancel the stale pre-open GET /api/workspaces socket");
+        let _fresh_get_closed = tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            fixture.workspaces_requests.recv(),
+        )
+        .await
+        .expect("Reply::Opened must issue a fresh generation-3 GET /api/workspaces reconcile")
+        .unwrap();
+        let (generation, opened_after, _) = rt
+            .state
             .screen
             .launcher()
             .unwrap()
             .detached_reconcile
             .as_ref()
-            .unwrap()
-            .1
-            .contains("proj-c")
-    );
-    assert!(rt.state.files.as_ref().unwrap().stopped);
-
-    // Reply::Opened started before an SSE disconnect/reconnect (generation 1 vs reconcile 3)
-    // is not inserted into opened_after and replaces the stale pre-open reconcile read so a
-    // stale GET /api/workspaces snapshot cannot stop the freshly opened project.
-    let (opened_out_d, opened_in_d) = bounded(1);
-    let (reconcile_tx_d, reconcile_rx_d) = bounded(1);
-    let project_d = Project {
-        id: "proj-d".into(),
-        path: "/repo-d".into(),
-    };
-    let opening_d = rt
-        .state
-        .screen
-        .launcher()
-        .unwrap()
-        .openings
-        .begin(
-            rt.state
-                .screen
-                .launcher()
-                .unwrap()
-                .connection
-                .clone()
-                .unwrap(),
-            "tab-d",
-        )
-        .unwrap()
-        .fixture_opening(project_d.clone());
-    {
-        let l = rt.state.screen.launcher_mut().unwrap();
-        l.detached_reconcile = Some((3, HashSet::new(), reconcile_rx_d));
-        l.pending_stream_generation = 1;
-        l.result = Some(opened_in_d);
-        l.pending = true;
-    }
-    assert!(
-        opened_out_d
-            .try_send(Ok(Reply::Opened(
-                opening_d,
-                Sessions {
-                    rows: vec![],
-                    next: None
-                },
-                Restored::Empty,
-            )))
-            .is_ok()
-    );
-    rt.update(|s, tx| {
-        assert!(poll(s, tx));
+            .unwrap();
+        assert_eq!(*generation, 3);
+        assert!(!opened_after.contains("proj-d"));
     });
-    assert!(
-        reconcile_tx_d.try_send(Some(vec![])).is_err(),
-        "stale pre-open reconcile channel must be dropped so it cannot stop proj-d"
-    );
-    assert!(
-        !rt.state
-            .screen
-            .launcher()
-            .unwrap()
-            .detached_reconcile
-            .as_ref()
-            .unwrap()
-            .1
-            .contains("proj-d")
-    );
-
-    // Reply::Created whose workspace stopped while creation was in flight must not bind or list it.
-    let (created_out, created_in) = bounded(1);
-    let mut created_backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
-    created_backend.workspace = "proj-stopped".into();
-    created_backend.session = "ses-stopped".into();
-    {
-        let l = rt.state.screen.launcher_mut().unwrap();
-        l.sessions.clear();
-        l.stopped_during_pending.insert("proj-stopped".into());
-        l.result = Some(created_in);
-        l.pending = true;
-    }
-    assert!(
-        created_out
-            .try_send(Ok(Reply::Created(
-                created_backend,
-                "New".into(),
-                "root".into(),
-                String::new(),
-                None,
-                None,
-            )))
-            .is_ok()
-    );
-    rt.update(|s, tx| {
-        assert!(poll(s, tx));
-    });
-    assert!(rt.state.screen.is_launcher());
-    assert!(
-        rt.state
-            .screen
-            .launcher()
-            .unwrap()
-            .sessions
-            .iter()
-            .all(|row| row.id != "ses-stopped"),
-        "Reply::Created for a project stopped in flight must not list or bind the session"
-    );
 }
 
 #[test]
