@@ -25,7 +25,7 @@ pub use control_fields::{ControlPage, ControlPart, ControlRow, ReceiptContent};
 pub use detail::{
     DetailRead, Header, MapHeader, Report, ReportOutcome, Task, TaskPage, TaskStatus, TaskWindow,
 };
-pub use directory::{DirectoryChanged, DirectoryRead};
+pub use directory::{DirectoryChanged, DirectoryRead, is_auth_expired};
 pub use lifecycle::{
     ControlReceipt, LifecycleAction, LifecycleOutcome, LifecycleRequest, LifecycleTarget,
     request_id,

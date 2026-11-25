@@ -336,6 +336,10 @@ pub(crate) fn choose_mission_conversation(s: &mut State, id: String, tx: &mut Tx
     }
 }
 
+pub(super) fn retry_mission_conversation(s: &mut State, id: String) {
+    choose_from_inner(s, vec![(id, None)], None, None, true, true);
+}
+
 pub(crate) fn choose_destination(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())

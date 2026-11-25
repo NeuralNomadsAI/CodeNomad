@@ -31,7 +31,7 @@ use rune::{Tx, edit::TextEdit};
 use sessions::attach;
 #[cfg(feature = "test-support")]
 pub use sessions::back;
-use sessions::{bind, dismiss_origin_panel, retire_session};
+use sessions::{bind, dismiss_origin_panel, retire_session, retry_mission_conversation};
 pub(crate) use sessions::{
     bind_search, can_rebind_session, choose_child_ticket, choose_destination,
     choose_mission_conversation,
@@ -872,7 +872,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 if stale_connection {
                     dismiss_origin_panel(s, dismiss, tx);
                     if close_mission_reader {
-                        choose_mission_conversation(s, b.session, tx);
+                        retry_mission_conversation(s, b.session);
                     } else {
                         choose_destination(s, b.session, None, tx);
                     }
