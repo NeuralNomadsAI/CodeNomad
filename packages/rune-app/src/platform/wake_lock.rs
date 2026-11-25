@@ -262,6 +262,14 @@ mod tests {
         s.agent = Some(agent_ui(true, false, false));
         sync(&mut s);
         assert!(s.wake_lock.desired());
+
+        // Offline agent with stale Phase::Streaming does not hold wake lock.
+        let mut offline = agent_ui(true, false, false);
+        offline.online = false;
+        s.phase = Phase::Streaming;
+        s.agent = Some(offline);
+        sync(&mut s);
+        assert!(!s.wake_lock.desired());
     }
 
     #[test]

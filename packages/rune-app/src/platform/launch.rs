@@ -45,12 +45,14 @@ fn fnv1a_128(fields: &[(&str, &str)]) -> u128 {
 #[cfg(any(target_os = "windows", test))]
 fn normalize_lexical_path(raw: &str) -> String {
     let trimmed = raw.trim().replace('\\', "/");
-    let stripped = trimmed.strip_prefix("//?/").unwrap_or(trimmed.as_str());
-    let unc = stripped.starts_with("//");
-    let body = if unc {
-        stripped.trim_start_matches('/')
+    let (unc, body) = if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("//?/unc/") {
+        (true, trimmed[8..].trim_start_matches('/'))
+    } else if let Some(stripped) = trimmed.strip_prefix("//?/") {
+        (false, stripped)
+    } else if trimmed.starts_with("//") {
+        (true, trimmed.trim_start_matches('/'))
     } else {
-        stripped
+        (false, trimmed.as_str())
     };
     let mut parts: Vec<&str> = Vec::new();
     let rooted = !unc && body.starts_with('/');
@@ -206,6 +208,9 @@ pub(crate) fn should_focus_existing(s: &State) -> bool {
 pub(crate) fn enter() -> bool {
     #[cfg(target_os = "windows")]
     {
+        if cfg!(any(test, feature = "test-support")) {
+            return true;
+        }
         let Some(scope_id) = current_scope_id(false) else {
             return true;
         };
@@ -302,6 +307,19 @@ mod tests {
         })
         .unwrap();
         assert_eq!(root_a, root_a_extended);
+
+        // Extended UNC prefix \\?\UNC\server\share matches \\server\share.
+        let unc_plain = resolve_scope_id(ScopeInputs {
+            host_root: Some(r"\\Server\Share\Profile"),
+            ..Default::default()
+        })
+        .unwrap();
+        let unc_extended = resolve_scope_id(ScopeInputs {
+            host_root: Some(r"\\?\UNC\server\share\sub\..\profile\"),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(unc_plain, unc_extended);
 
         // Distinct roots and distinct RUNE_BACKEND targets produce distinct scopes.
         let root_b = resolve_scope_id(ScopeInputs {

@@ -1,19 +1,25 @@
 //! Profile-scoped Windows second-launch coordinator.
 //!
 //! Each live desktop window registers a background takeover worker on a per-session,
-//! per-user, per-scope named mutex. The current mutex owner serves a named pipe:
-//! - When `focus_existing` is `false`, the owner replies `OPEN\n` and the new launch
-//!   continues opening its own window with its own arguments and environment.
-//! - When `focus_existing` is `true`, the owner replies `FOCUS <pid>\n`; the new launch
-//!   grants foreground permission (`AllowSetForegroundWindow(pid)`), replies `OK\n` and
-//!   exits while the owner brings its window to the front.
-//! - When the owning window closes or crashes, any surviving window for the same scope
-//!   acquires the mutex (`WAIT_OBJECT_0` / `WAIT_ABANDONED_0`) and takes over serving.
+//! per-user, per-scope named mutex secured to the current user's SID. The current mutex
+//! owner serves a user-only named pipe (`FILE_FLAG_FIRST_PIPE_INSTANCE | FILE_FLAG_OVERLAPPED`):
+//! - Both sides mutually verify the peer's kernel-attested PID, user SID and Windows session ID
+//!   (`GetNamedPipeServerProcessId` / `GetNamedPipeClientProcessId`), and clients connect with
+//!   `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION` so a server cannot impersonate them.
+//! - When `focus_existing` is `false`, the owner replies `OPEN\n` and the new launch continues
+//!   opening its own window with its own arguments and environment.
+//! - When `focus_existing` is `true`, the owner replies `FOCUS <pid>\n`; the new launch verifies
+//!   `<pid>` matches the pipe server PID, calls `AllowSetForegroundWindow(pid)`, writes `OK\n`,
+//!   and exits only after the owner invokes `on_focus()` and replies `DONE\n`.
+//! - When the owning window closes or crashes, any surviving window for the same scope acquires
+//!   the mutex (`WAIT_OBJECT_0` / `WAIT_ABANDONED_0`) and takes over serving.
 use std::sync::{Arc, atomic::AtomicBool};
 
 #[cfg(windows)]
 mod win {
     use std::{
+        cell::UnsafeCell,
+        mem::{size_of, size_of_val, zeroed},
         sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
@@ -24,26 +30,32 @@ mod win {
     use windows_sys::Win32::{
         Foundation::{
             CloseHandle, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING,
-            ERROR_MORE_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, GENERIC_READ, GENERIC_WRITE,
-            GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_ABANDONED_0, WAIT_OBJECT_0,
-            WAIT_TIMEOUT,
+            ERROR_MORE_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, GENERIC_ALL, GENERIC_READ,
+            GENERIC_WRITE, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_ABANDONED_0,
+            WAIT_OBJECT_0, WAIT_TIMEOUT,
         },
-        Security::{GetLengthSid, GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser},
+        Security::{
+            ACL, ACL_REVISION, AddAccessAllowedAce, GetLengthSid, GetTokenInformation,
+            InitializeAcl, InitializeSecurityDescriptor, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+            SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
+        },
         Storage::FileSystem::{
             CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
-            PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
+            PIPE_ACCESS_DUPLEX, ReadFile, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
+            WriteFile,
         },
         System::{
             IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED},
             Pipes::{
-                ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
+                ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe,
+                GetNamedPipeClientProcessId, GetNamedPipeServerProcessId, PIPE_READMODE_BYTE,
                 PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT, WaitNamedPipeW,
             },
             RemoteDesktop::ProcessIdToSessionId,
             Threading::{
                 CreateEventW, CreateMutexW, GetCurrentProcess, GetCurrentProcessId, INFINITE,
-                OpenProcessToken, ReleaseMutex, SetEvent, WaitForMultipleObjects,
-                WaitForSingleObject,
+                OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION, ReleaseMutex,
+                SetEvent, WaitForMultipleObjects, WaitForSingleObject,
             },
         },
         UI::WindowsAndMessaging::AllowSetForegroundWindow,
@@ -53,18 +65,21 @@ mod win {
     const IO_TIMEOUT: Duration = Duration::from_millis(500);
     const PIPE_RETRY_LIMIT: usize = 50;
     const PIPE_RETRY_DELAY_MS: u32 = 10;
+    const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
 
     struct OwnedHandle(HANDLE);
 
-    // SAFETY: Win32 kernel handles (pipes, events, mutexes) are process-wide references
-    // safely closed once on drop; mutex ownership stays strictly on the worker thread.
+    // SAFETY: Win32 kernel handles (pipes, events, mutexes, processes, tokens) are process-wide
+    // references safely closed once on drop; mutex ownership stays strictly on the worker thread.
     unsafe impl Send for OwnedHandle {}
     // SAFETY: Event signalling and waiting APIs are thread-safe on Win32 handles.
     unsafe impl Sync for OwnedHandle {}
 
     impl OwnedHandle {
         fn new(handle: HANDLE) -> Option<Self> {
-            (!handle.is_null() && handle != INVALID_HANDLE_VALUE).then_some(Self(handle))
+            // Lazy closure avoids constructing and dropping Self(INVALID_HANDLE_VALUE),
+            // which would call CloseHandle on an invalid handle and overwrite GetLastError.
+            (!handle.is_null() && handle != INVALID_HANDLE_VALUE).then(|| Self(handle))
         }
 
         fn raw(&self) -> HANDLE {
@@ -93,6 +108,42 @@ mod win {
         }
     }
 
+    /// Runs `f` with an explicit `SECURITY_ATTRIBUTES` granting `GENERIC_ALL` only to the
+    /// current user's SID. All backing buffers stay pinned on this stack frame until `f` returns.
+    fn with_user_security<R>(f: impl FnOnce(&SECURITY_ATTRIBUTES) -> R) -> Option<R> {
+        let sid = current_user_sid()?;
+        if sid.is_empty() {
+            return None;
+        }
+        let mut acl = [0u64; 32];
+        // SAFETY: Zero-initialized SECURITY_DESCRIPTOR populated below and never moved.
+        let mut sd: SECURITY_DESCRIPTOR = unsafe { zeroed() };
+        let acl_ptr = acl.as_mut_ptr().cast::<ACL>();
+        let acl_len = size_of_val(&acl) as u32;
+        let sd_ptr = (&mut sd as *mut SECURITY_DESCRIPTOR).cast();
+        // SAFETY: `acl`, `sd` and `sid` stay alive and unmoved across `f(&sa)`.
+        unsafe {
+            if InitializeSecurityDescriptor(sd_ptr, SECURITY_DESCRIPTOR_REVISION) == 0
+                || InitializeAcl(acl_ptr, acl_len, ACL_REVISION) == 0
+                || AddAccessAllowedAce(
+                    acl_ptr,
+                    ACL_REVISION,
+                    GENERIC_ALL,
+                    sid.as_ptr().cast_mut().cast(),
+                ) == 0
+                || SetSecurityDescriptorDacl(sd_ptr, 1, acl_ptr, 0) == 0
+            {
+                return None;
+            }
+        }
+        let sa = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd_ptr,
+            bInheritHandle: 0,
+        };
+        Some(f(&sa))
+    }
+
     fn create_event(manual_reset: bool) -> Option<OwnedHandle> {
         // SAFETY: Unnamed Win32 event with default security; closed via OwnedHandle.
         let handle = unsafe {
@@ -110,40 +161,80 @@ mod win {
         value.encode_utf16().chain(Some(0)).collect()
     }
 
-    fn user_sid_hex() -> String {
-        let mut token = std::ptr::null_mut();
+    fn token_sid_bytes(token: HANDLE) -> Option<Vec<u8>> {
         let mut buf = [0u64; 64];
         let mut len = 0u32;
-        // SAFETY: Queries the current process token into an 8-byte aligned stack buffer
-        // and copies only the SID's reported byte length before closing the token.
+        // SAFETY: Queries TokenUser into an 8-byte aligned stack buffer and copies only
+        // the SID's reported byte length before returning.
         unsafe {
-            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
-                return String::new();
-            }
-            let ok = GetTokenInformation(
+            if GetTokenInformation(
                 token,
                 TokenUser,
                 buf.as_mut_ptr().cast(),
-                std::mem::size_of_val(&buf) as u32,
+                size_of_val(&buf) as u32,
                 &mut len,
-            ) != 0;
-            CloseHandle(token);
-            if !ok {
-                return String::new();
+            ) == 0
+            {
+                return None;
             }
             let sid = (*(buf.as_ptr() as *const TOKEN_USER)).User.Sid;
-            let bytes = std::slice::from_raw_parts(sid as *const u8, GetLengthSid(sid) as usize);
-            bytes.iter().map(|b| format!("{b:02x}")).collect()
+            if sid.is_null() {
+                return None;
+            }
+            let sid_len = GetLengthSid(sid) as usize;
+            if sid_len == 0 || sid_len > size_of_val(&buf) {
+                return None;
+            }
+            Some(std::slice::from_raw_parts(sid as *const u8, sid_len).to_vec())
         }
     }
 
-    fn session_id() -> u32 {
-        let mut session = 0u32;
-        // SAFETY: Writes the current process's session ID into `session`.
-        unsafe {
-            ProcessIdToSessionId(GetCurrentProcessId(), &mut session);
+    fn current_user_sid() -> Option<Vec<u8>> {
+        let mut token = std::ptr::null_mut();
+        // SAFETY: Opens current process token for query and wraps it in OwnedHandle.
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return None;
         }
-        session
+        let token = OwnedHandle::new(token)?;
+        token_sid_bytes(token.raw())
+    }
+
+    fn process_user_sid(pid: u32) -> Option<Vec<u8>> {
+        // SAFETY: Opens peer process with minimal query rights; closed via OwnedHandle.
+        let proc_handle =
+            OwnedHandle::new(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) })?;
+        let mut token = std::ptr::null_mut();
+        // SAFETY: Opens peer token for SID query; closed via OwnedHandle.
+        if unsafe { OpenProcessToken(proc_handle.raw(), TOKEN_QUERY, &mut token) } == 0 {
+            return None;
+        }
+        let token = OwnedHandle::new(token)?;
+        token_sid_bytes(token.raw())
+    }
+
+    fn session_id_of(pid: u32) -> Option<u32> {
+        let mut session = 0u32;
+        // SAFETY: Writes the process's Terminal Services session ID into `session`.
+        let ok = unsafe { ProcessIdToSessionId(pid, &mut session) != 0 };
+        ok.then_some(session)
+    }
+
+    fn peer_matches_current_user(pid: u32) -> bool {
+        if pid == 0 {
+            return false;
+        }
+        // SAFETY: Reads the current process ID.
+        let my_pid = unsafe { GetCurrentProcessId() };
+        let Some(my_session) = session_id_of(my_pid) else {
+            return false;
+        };
+        if session_id_of(pid) != Some(my_session) {
+            return false;
+        }
+        let Some(my_sid) = current_user_sid() else {
+            return false;
+        };
+        process_user_sid(pid).is_some_and(|peer_sid| !my_sid.is_empty() && peer_sid == my_sid)
     }
 
     fn sanitize(value: &str) -> String {
@@ -160,29 +251,41 @@ mod win {
             .collect()
     }
 
-    fn object_names(scope_id: &str) -> (Vec<u16>, Vec<u16>) {
-        let tag = format!("{}-{}-{}", session_id(), user_sid_hex(), sanitize(scope_id));
+    fn object_names(scope_id: &str) -> Option<(Vec<u16>, Vec<u16>)> {
+        // SAFETY: Reads the current process ID.
+        let session = session_id_of(unsafe { GetCurrentProcessId() })?;
+        let sid_hex: String = current_user_sid()?
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let tag = format!("{session}-{sid_hex}-{}", sanitize(scope_id));
         let mutex = format!(r"Local\codenomad-rune-owner-{tag}");
         let pipe = format!(r"\\.\pipe\codenomad-rune-launch-{tag}");
-        (
+        Some((
             wide(&mutex.chars().take(240).collect::<String>()),
             wide(&pipe.chars().take(240).collect::<String>()),
-        )
+        ))
     }
 
-    fn wait_overlapped(
+    /// Waits for an in-flight overlapped operation using the exact raw `*mut OVERLAPPED` pointer
+    /// passed to Win32, without forming any Rust reference until `GetOverlappedResult` completes.
+    ///
+    /// # Safety
+    /// `overlapped` must point to a valid, pinned `UnsafeCell<OVERLAPPED>` that stays alive until
+    /// this function returns, and `pipe` / `io_event` / `stop_event` must remain valid handles.
+    unsafe fn wait_overlapped(
         pipe: HANDLE,
-        overlapped: &mut OVERLAPPED,
+        overlapped: *mut OVERLAPPED,
         io_event: HANDLE,
         stop_event: Option<HANDLE>,
         timeout_ms: u32,
     ) -> Option<u32> {
         let waited = if let Some(stop) = stop_event {
             let handles = [stop, io_event];
-            // SAFETY: Both handles stay valid across the wait.
+            // SAFETY: Caller guarantees both handles remain valid across the wait.
             unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, timeout_ms) }
         } else {
-            // SAFETY: `io_event` stays valid across the wait.
+            // SAFETY: Caller guarantees `io_event` remains valid across the wait.
             unsafe { WaitForSingleObject(io_event, timeout_ms) }
         };
         let completed = if stop_event.is_some() {
@@ -192,12 +295,12 @@ mod win {
         };
         let mut transferred = 0u32;
         if completed {
-            // SAFETY: I/O completed; `overlapped` is valid for the duration of this call.
+            // SAFETY: Event signalled completion; `overlapped` is valid for this call.
             let ok = unsafe { GetOverlappedResult(pipe, overlapped, &mut transferred, 0) != 0 };
             return ok.then_some(transferred);
         }
-        // Cancel pending I/O and block until the kernel releases `overlapped` and its buffer.
-        // SAFETY: `pipe` and `overlapped` remain live until GetOverlappedResult returns.
+        // Cancel pending I/O and block until the kernel releases `overlapped` and its I/O buffer.
+        // SAFETY: `pipe` and `overlapped` stay live until GetOverlappedResult returns.
         unsafe {
             CancelIoEx(pipe, overlapped);
             let _ = GetOverlappedResult(pipe, overlapped, &mut transferred, 1);
@@ -212,22 +315,22 @@ mod win {
         timeout: Duration,
     ) -> Option<usize> {
         let io_event = create_event(true)?;
-        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
-        overlapped.hEvent = io_event.raw();
+        // SAFETY: Zeroed OVERLAPPED is valid; UnsafeCell preserves raw pointer provenance.
+        let overlapped = UnsafeCell::new(unsafe { zeroed::<OVERLAPPED>() });
+        let ov_ptr = overlapped.get();
+        // SAFETY: No I/O has started yet; set hEvent via raw pointer.
+        unsafe {
+            (*ov_ptr).hEvent = io_event.raw();
+        }
         let mut read = 0u32;
-        // SAFETY: `buf` and `overlapped` remain live until I/O completes or CancelIoEx drains.
-        let ok = unsafe {
-            ReadFile(
-                pipe,
-                buf.as_mut_ptr(),
-                buf.len() as u32,
-                &mut read,
-                &mut overlapped,
-            )
-        };
+        let buf_ptr = buf.as_mut_ptr();
+        let buf_len = buf.len() as u32;
+        // SAFETY: `buf_ptr` and `ov_ptr` stay valid and unaliased until I/O finishes or drains.
+        let ok = unsafe { ReadFile(pipe, buf_ptr, buf_len, &mut read, ov_ptr) };
         if ok != 0 {
             return Some(read as usize);
         }
+        // SAFETY: Reads last Win32 error immediately after ReadFile failed.
         let err = unsafe { GetLastError() };
         if err == ERROR_MORE_DATA {
             return Some(read as usize);
@@ -235,14 +338,10 @@ mod win {
         if err != ERROR_IO_PENDING {
             return None;
         }
-        wait_overlapped(
-            pipe,
-            &mut overlapped,
-            io_event.raw(),
-            stop_event,
-            timeout.as_millis().min(u128::from(u32::MAX - 1)) as u32,
-        )
-        .map(|n| n as usize)
+        let timeout_ms = timeout.as_millis().min(u128::from(u32::MAX - 1)) as u32;
+        // SAFETY: `overlapped` and `buf` outlive `wait_overlapped`, which drains any cancel.
+        unsafe { wait_overlapped(pipe, ov_ptr, io_event.raw(), stop_event, timeout_ms) }
+            .map(|n| n as usize)
     }
 
     fn write_overlapped(
@@ -254,45 +353,45 @@ mod win {
         let Some(io_event) = create_event(true) else {
             return false;
         };
-        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
-        overlapped.hEvent = io_event.raw();
+        // SAFETY: Zeroed OVERLAPPED is valid; UnsafeCell preserves raw pointer provenance.
+        let overlapped = UnsafeCell::new(unsafe { zeroed::<OVERLAPPED>() });
+        let ov_ptr = overlapped.get();
+        // SAFETY: No I/O has started yet; set hEvent via raw pointer.
+        unsafe {
+            (*ov_ptr).hEvent = io_event.raw();
+        }
         let mut written = 0u32;
-        // SAFETY: `data` and `overlapped` remain live until I/O completes or CancelIoEx drains.
-        let ok = unsafe {
-            WriteFile(
-                pipe,
-                data.as_ptr(),
-                data.len() as u32,
-                &mut written,
-                &mut overlapped,
-            )
-        };
+        // SAFETY: `data` and `ov_ptr` stay valid until I/O finishes or drains.
+        let ok = unsafe { WriteFile(pipe, data.as_ptr(), data.len() as u32, &mut written, ov_ptr) };
         if ok != 0 {
             return written as usize == data.len();
         }
+        // SAFETY: Reads last Win32 error immediately after WriteFile failed.
         let err = unsafe { GetLastError() };
         if err != ERROR_IO_PENDING {
             return false;
         }
-        wait_overlapped(
-            pipe,
-            &mut overlapped,
-            io_event.raw(),
-            stop_event,
-            timeout.as_millis().min(u128::from(u32::MAX - 1)) as u32,
-        )
-        .is_some_and(|n| n as usize == data.len())
+        let timeout_ms = timeout.as_millis().min(u128::from(u32::MAX - 1)) as u32;
+        // SAFETY: `overlapped` and `data` outlive `wait_overlapped`, which drains any cancel.
+        unsafe { wait_overlapped(pipe, ov_ptr, io_event.raw(), stop_event, timeout_ms) }
+            .is_some_and(|n| n as usize == data.len())
     }
 
     fn connect_client(pipe: HANDLE, stop_event: HANDLE) -> Option<bool> {
         let io_event = create_event(true)?;
-        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
-        overlapped.hEvent = io_event.raw();
-        // SAFETY: `pipe` and `overlapped` stay valid until completion or cancellation drain.
-        let ok = unsafe { ConnectNamedPipe(pipe, &mut overlapped) };
+        // SAFETY: Zeroed OVERLAPPED is valid; UnsafeCell preserves raw pointer provenance.
+        let overlapped = UnsafeCell::new(unsafe { zeroed::<OVERLAPPED>() });
+        let ov_ptr = overlapped.get();
+        // SAFETY: No I/O has started yet; set hEvent via raw pointer.
+        unsafe {
+            (*ov_ptr).hEvent = io_event.raw();
+        }
+        // SAFETY: `pipe` and `ov_ptr` stay valid until completion or cancellation drain.
+        let ok = unsafe { ConnectNamedPipe(pipe, ov_ptr) };
         if ok != 0 {
             return Some(true);
         }
+        // SAFETY: Reads last Win32 error immediately after ConnectNamedPipe failed.
         let err = unsafe { GetLastError() };
         if err == ERROR_PIPE_CONNECTED {
             return Some(true);
@@ -303,50 +402,56 @@ mod win {
         let handles = [stop_event, io_event.raw()];
         // SAFETY: Both handles remain valid across the wait.
         let waited = unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, INFINITE) };
+        let mut transferred = 0u32;
         if waited == WAIT_OBJECT_0 {
-            let mut transferred = 0u32;
-            // SAFETY: Cancel and drain before `overlapped` leaves scope.
+            // SAFETY: Cancel and drain via raw `ov_ptr` before `overlapped` leaves scope.
             unsafe {
-                CancelIoEx(pipe, &overlapped);
-                let _ = GetOverlappedResult(pipe, &overlapped, &mut transferred, 1);
+                CancelIoEx(pipe, ov_ptr);
+                let _ = GetOverlappedResult(pipe, ov_ptr, &mut transferred, 1);
             }
             return None;
         }
-        let mut transferred = 0u32;
-        // SAFETY: `io_event` signalled completion of ConnectNamedPipe.
-        let connected = unsafe { GetOverlappedResult(pipe, &overlapped, &mut transferred, 0) != 0 };
+        // SAFETY: `io_event` signalled completion; check result via the same raw `ov_ptr`.
+        let connected = unsafe { GetOverlappedResult(pipe, ov_ptr, &mut transferred, 0) != 0 };
         Some(connected)
     }
 
     fn create_pipe(pipe_name: &[u16], stop_event: HANDLE) -> Option<OwnedHandle> {
-        for _ in 0..PIPE_RETRY_LIMIT {
-            // SAFETY: `pipe_name` is NUL-terminated; default ACL restricts access to this user.
-            let raw = unsafe {
-                CreateNamedPipeW(
-                    pipe_name.as_ptr(),
-                    PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE | FILE_FLAG_OVERLAPPED,
-                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                    1,
-                    64,
-                    64,
-                    IO_TIMEOUT.as_millis() as u32,
-                    std::ptr::null(),
-                )
-            };
-            if let Some(handle) = OwnedHandle::new(raw) {
-                return Some(handle);
+        with_user_security(|sa| {
+            for _ in 0..PIPE_RETRY_LIMIT {
+                // SAFETY: `pipe_name` is NUL-terminated and `sa` stays valid on caller's stack.
+                let raw = unsafe {
+                    CreateNamedPipeW(
+                        pipe_name.as_ptr(),
+                        PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE | FILE_FLAG_OVERLAPPED,
+                        PIPE_TYPE_BYTE
+                            | PIPE_READMODE_BYTE
+                            | PIPE_WAIT
+                            | PIPE_REJECT_REMOTE_CLIENTS,
+                        1,
+                        64,
+                        64,
+                        IO_TIMEOUT.as_millis() as u32,
+                        sa,
+                    )
+                };
+                if let Some(handle) = OwnedHandle::new(raw) {
+                    return Some(handle);
+                }
+                // SAFETY: Reads last Win32 error; OwnedHandle::new did not clobber it.
+                let err = unsafe { GetLastError() };
+                if err != ERROR_ACCESS_DENIED {
+                    return None;
+                }
+                // Wait briefly for a departing owner's pipe handle to finish closing.
+                // SAFETY: `stop_event` stays valid across the wait.
+                if unsafe { WaitForSingleObject(stop_event, PIPE_RETRY_DELAY_MS) } != WAIT_TIMEOUT {
+                    return None;
+                }
             }
-            let err = unsafe { GetLastError() };
-            if err != ERROR_ACCESS_DENIED {
-                return None;
-            }
-            // Wait briefly for a departing owner's pipe handle to finish closing.
-            // SAFETY: `stop_event` stays valid across the wait.
-            if unsafe { WaitForSingleObject(stop_event, PIPE_RETRY_DELAY_MS) } != WAIT_TIMEOUT {
-                return None;
-            }
-        }
-        None
+            None
+        })
+        .flatten()
     }
 
     fn serve_client(
@@ -355,6 +460,13 @@ mod win {
         focus_existing: &AtomicBool,
         on_focus: &dyn Fn(),
     ) {
+        let mut client_pid = 0u32;
+        // SAFETY: Queries the kernel-attested PID of the connected local pipe client.
+        if unsafe { GetNamedPipeClientProcessId(pipe, &mut client_pid) } == 0
+            || !peer_matches_current_user(client_pid)
+        {
+            return;
+        }
         let mut req = [0u8; 16];
         let Some(n) = read_overlapped(pipe, &mut req, Some(stop_event), IO_TIMEOUT) else {
             return;
@@ -376,17 +488,29 @@ mod win {
         if !write_overlapped(pipe, reply.as_bytes(), Some(stop_event), IO_TIMEOUT) {
             return;
         }
-        // Wait briefly for the client's ACK after it calls AllowSetForegroundWindow(pid).
+        // Focus only after the client confirms AllowSetForegroundWindow via OK\n,
+        // then send DONE\n so the client never exits if this owner closed mid-handshake.
         let mut ack = [0u8; 8];
-        let _ = read_overlapped(pipe, &mut ack, Some(stop_event), IO_TIMEOUT);
+        let Some(ack_len) = read_overlapped(pipe, &mut ack, Some(stop_event), IO_TIMEOUT) else {
+            return;
+        };
+        if !ack[..ack_len].starts_with(b"OK\n") {
+            return;
+        }
         on_focus();
+        if write_overlapped(pipe, b"DONE\n", Some(stop_event), IO_TIMEOUT) {
+            let mut eof = [0u8; 4];
+            let _ = read_overlapped(pipe, &mut eof, Some(stop_event), IO_TIMEOUT);
+        }
     }
 
     pub fn try_focus_existing(scope_id: &str) -> bool {
-        let (_, pipe_name) = object_names(scope_id);
+        let Some((_, pipe_name)) = object_names(scope_id) else {
+            return false;
+        };
         let deadline = Instant::now() + CONNECT_DEADLINE;
         let pipe = loop {
-            // SAFETY: `pipe_name` is NUL-terminated.
+            // SAFETY: `pipe_name` is NUL-terminated; SQOS_IDENTIFICATION prevents impersonation.
             let raw = unsafe {
                 CreateFileW(
                     pipe_name.as_ptr(),
@@ -394,18 +518,16 @@ mod win {
                     0,
                     std::ptr::null(),
                     OPEN_EXISTING,
-                    FILE_FLAG_OVERLAPPED,
+                    FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
                     std::ptr::null_mut(),
                 )
             };
             if let Some(handle) = OwnedHandle::new(raw) {
                 break handle;
             }
+            // SAFETY: Reads last Win32 error; OwnedHandle::new did not clobber it.
             let err = unsafe { GetLastError() };
-            if err == ERROR_FILE_NOT_FOUND {
-                return false;
-            }
-            if err != ERROR_PIPE_BUSY {
+            if err == ERROR_FILE_NOT_FOUND || err != ERROR_PIPE_BUSY {
                 return false;
             }
             let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
@@ -417,6 +539,13 @@ mod win {
                 WaitNamedPipeW(pipe_name.as_ptr(), wait_ms);
             }
         };
+        let mut server_pid = 0u32;
+        // SAFETY: Queries the kernel-attested PID of the pipe server before sending anything.
+        if unsafe { GetNamedPipeServerProcessId(pipe.raw(), &mut server_pid) } == 0
+            || !peer_matches_current_user(server_pid)
+        {
+            return false;
+        }
         if !write_overlapped(pipe.raw(), b"ASK\n", None, IO_TIMEOUT) {
             return false;
         }
@@ -433,20 +562,31 @@ mod win {
         let Some(pid_text) = rest.lines().next() else {
             return false;
         };
-        let Ok(pid) = pid_text.trim().parse::<u32>() else {
+        let Ok(announced_pid) = pid_text.trim().parse::<u32>() else {
             return false;
         };
-        // SAFETY: Grants foreground activation rights to the confirmed existing owner process.
-        unsafe {
-            let _ = AllowSetForegroundWindow(pid);
+        if announced_pid != server_pid {
+            return false;
         }
-        let _ = write_overlapped(pipe.raw(), b"OK\n", None, IO_TIMEOUT);
-        true
+        // SAFETY: Grants foreground rights strictly to the kernel-verified pipe server PID.
+        unsafe {
+            let _ = AllowSetForegroundWindow(server_pid);
+        }
+        if !write_overlapped(pipe.raw(), b"OK\n", None, IO_TIMEOUT) {
+            return false;
+        }
+        let mut done = [0u8; 16];
+        let Some(done_len) = read_overlapped(pipe.raw(), &mut done, None, IO_TIMEOUT) else {
+            return false;
+        };
+        done[..done_len].starts_with(b"DONE\n")
     }
 
     #[cfg(test)]
     pub(super) fn pipe_ready(scope_id: &str) -> bool {
-        let (_, pipe_name) = object_names(scope_id);
+        let Some((_, pipe_name)) = object_names(scope_id) else {
+            return false;
+        };
         // SAFETY: `pipe_name` is NUL-terminated; WaitNamedPipeW with 0 checks pipe existence.
         if unsafe { WaitNamedPipeW(pipe_name.as_ptr(), 0) } != 0 {
             return true;
@@ -468,15 +608,15 @@ mod win {
         ) -> Option<Self> {
             let stop = Arc::new(create_event(true)?);
             let worker_stop = Arc::clone(&stop);
-            let (mutex_name, pipe_name) = object_names(scope_id);
+            let (mutex_name, pipe_name) = object_names(scope_id)?;
             let thread = thread::Builder::new()
                 .name("codenomad-launch-owner".into())
                 .spawn(move || {
-                    // SAFETY: `mutex_name` is NUL-terminated; initial ownership is false so
-                    // acquisition is synchronized with `stop` via WaitForMultipleObjects.
-                    let Some(mutex) = OwnedHandle::new(unsafe {
-                        CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr())
-                    }) else {
+                    let Some(mutex) = with_user_security(|sa| {
+                        // SAFETY: `mutex_name` is NUL-terminated and `sa` stays valid for the call.
+                        OwnedHandle::new(unsafe { CreateMutexW(sa, 0, mutex_name.as_ptr()) })
+                    })
+                    .flatten() else {
                         return;
                     };
                     let handles = [worker_stop.raw(), mutex.raw()];
@@ -616,7 +756,6 @@ mod tests {
         })
         .expect("primary coordinator must start");
 
-        // Wait until owner A has opened the pipe by flipping briefly or polling.
         wait_for_pipe(&scope);
 
         // Default false: second launch receives OPEN and does not focus A.
@@ -625,20 +764,10 @@ mod tests {
 
         // Enable focusExistingWindowOnSecondLaunch on A: second launch focuses A.
         focus_a.store(true, Ordering::Release);
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let mut focused = false;
-        while Instant::now() < deadline {
-            if LaunchCoordinator::try_focus_existing(&scope) {
-                focused = true;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert!(focused, "second launch must focus A once enabled");
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while hits_a.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        assert!(
+            LaunchCoordinator::try_focus_existing(&scope),
+            "second launch must focus A once enabled"
+        );
         assert_eq!(hits_a.load(Ordering::SeqCst), 1);
 
         // Start surviving secondary window B on the same scope.
@@ -665,10 +794,6 @@ mod tests {
             focused_b,
             "surviving window B must take over after A closes"
         );
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while hits_b.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
         assert_eq!(hits_b.load(Ordering::SeqCst), 1);
         assert_eq!(hits_a.load(Ordering::SeqCst), 1);
 

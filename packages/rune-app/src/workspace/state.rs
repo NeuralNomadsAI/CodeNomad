@@ -91,12 +91,8 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
 }
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn has_wake_lock_eligible_work(s: &State) -> bool {
-    use rune_theme_codenomad::tabs::Status;
     if !s.screen.is_launcher()
-        && matches!(
-            super::cache::status(&s.phase, s.agent.as_ref()),
-            Some(Status::Working)
-        )
+        && super::cache::has_wake_lock_eligible_work(&s.phase, s.agent.as_ref())
     {
         return true;
     }
@@ -105,7 +101,7 @@ pub(crate) fn has_wake_lock_eligible_work(s: &State) -> bool {
             entry
                 .cache
                 .as_ref()
-                .is_some_and(|cache| matches!(cache.status(), Some(Status::Working)))
+                .is_some_and(Cache::has_wake_lock_eligible_work)
         })
     })
 }
