@@ -192,9 +192,10 @@ export class PreviewTab {
     }
     const act = async (step: BrowserPageAction) => {
       // Input that moved the page on (a followed link, a submitted form) succeeded: the tab reports where it went.
+      const tab = this.id
       if ((await page(step)).pageChanged) {
         await this.refresh(deadline, signal)
-        if (!this.target) return failure("operation_failed", "This tab is no longer shown. Call browser.tabs.list({}).")
+        if (!this.target || this.id !== tab) return failure("operation_failed", "This tab is no longer shown. Call browser.tabs.list({}).")
       }
       return this.success(this.tab())
     }

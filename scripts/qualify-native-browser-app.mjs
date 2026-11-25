@@ -280,8 +280,8 @@ return { content: (await tools.browser.snapshot({ tabID })).content }`)
   const followed = await step("below the fold and a followed link", `const tabID = ${tabID};
 await tools.browser.click({ tabID, ref: ${below("Below the fold")} });
 const clicked = (await tools.browser.wait({ tabID, text: "Below clicked", timeout: 5000 })).met;
-const tab = await tools.browser.click({ tabID, ref: ${below("Follow link")} });
-return { clicked, generation: tab.generation, arrived: (await tools.browser.wait({ tabID, text: "Link followed", timeout: 5000 })).met }`)
+await tools.browser.click({ tabID, ref: ${below("Follow link")} });
+return { clicked, arrived: (await tools.browser.wait({ tabID, text: "Link followed", timeout: 5000 })).met }`)
   assert.equal(followed.clicked, true, "a click on an element the page had to scroll to")
   assert.equal(followed.arrived, true, "a click that follows a link succeeds")
   const shot = await step("screenshot", `const shot = await tools.browser.screenshot({ tabID: ${tabID} }); return { files: shot.files }`)
