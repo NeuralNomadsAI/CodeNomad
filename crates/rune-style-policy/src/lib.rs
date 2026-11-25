@@ -37,6 +37,8 @@ fn forbidden(name: &str) -> bool {
             "window_backdrop",
             "set_window_backdrop",
             "set_window_backdrop_supported",
+            "set_window_manager_state",
+            "set_renderer_kind",
             "set_safe_area",
         ]
         .contains(&name)
@@ -430,7 +432,10 @@ mod tests {
             "use rune::PathBind;",
             "fn v(spec: rune::WindowSpec) { spec.window_backdrop(backdrop); }",
             "fn v(tx: &mut rune::Tx) { tx.set_window_backdrop(backdrop); }",
-            "fn v(rt: &mut rune::Runtime) { rt.set_safe_area([1., 2., 3., 4.]); }",
+            "fn v(rt: &mut rune::Runtime<()>) { rt.set_window_backdrop_supported(Default::default(), true); }",
+            "fn v(rt: &mut rune::Runtime<()>) { rt.set_window_manager_state(Default::default()); }",
+            "fn v(rt: &mut rune::Runtime<()>) { rt.set_renderer_kind(Default::default()); }",
+            "fn v(rt: &mut rune::Runtime<()>) { rt.set_safe_area([1., 2., 3., 4.]); }",
             "fn v(){ el.on_edge_drag(edge, 24., handler); }",
         ] {
             assert!(!check(source).unwrap().is_empty(), "accepted {source}");
