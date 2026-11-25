@@ -83,21 +83,36 @@ fn file_name(key: &str) -> String {
     name.strip_suffix('_').unwrap_or(name).to_lowercase()
 }
 
-/// The storage key is an open workspace's folder, found by ID or by folder.
-fn instance_file(app: &crate::App, id: &str) -> Result<PathBuf, Error> {
-    let workspace = app.workspace(id).or_else(|_| {
-        app.inner
-            .lock()
-            .unwrap()
-            .workspaces
-            .iter()
-            .find(|w| w.path.to_str() == Some(id))
-            .cloned()
-            .ok_or_else(crate::not_found)
-    })?;
+/// A workspace ID maps to its root folder. A directory key retains the supplied
+/// spelling, including when it belongs to an open project's linked checkout.
+async fn instance_file(app: &crate::App, id: &str) -> Result<PathBuf, Error> {
+    let key = match app.workspace(id) {
+        Ok(workspace) => workspace.path.to_string_lossy().into_owned(),
+        Err(error) => {
+            let workspaces = app.inner.lock().unwrap().workspaces.clone();
+            let mut owned = workspaces.iter().any(|w| w.path.to_str() == Some(id));
+            if !owned && let Some(directory) = crate::files::paths::canonical(&app.scope, id) {
+                for w in &workspaces {
+                    if crate::worktrees::ownership::capture_directory(app, w, &directory)
+                        .await
+                        .is_some_and(|proof| proof.history_live(&w.path, &directory))
+                        && crate::files::paths::canonical(&app.scope, id).as_ref() == Some(&directory)
+                        && app.workspace(&w.id.to_string()).is_ok()
+                    {
+                        owned = true;
+                        break;
+                    }
+                }
+            }
+            if !owned {
+                return Err(error);
+            }
+            id.to_owned()
+        }
+    };
     let instances = &app.settings.location.instances;
     fs::create_dir_all(instances).map_err(|_| failed())?;
-    Ok(instances.join(format!("{}.json", file_name(&workspace.path.to_string_lossy()))))
+    Ok(instances.join(format!("{}.json", file_name(&key))))
 }
 
 pub async fn instance(
@@ -105,10 +120,10 @@ pub async fn instance(
     Param(id): Param<String>,
     request: Request,
 ) -> Result<Response, Error> {
-    let file = instance_file(&app, &id)?;
     let empty = || json!(Instance::default());
     let value = match *request.method() {
         Method::GET => {
+            let file = instance_file(&app, &id).await?;
             // `{ ...DEFAULT_INSTANCE_DATA, ...parsed }`
             let mut data = empty();
             if let Value::Object(stored) = read(&file, json!({}))? {
@@ -120,12 +135,13 @@ pub async fn instance(
             let Json(data) = Json::<Instance>::from_request(request, &app).await.map_err(
                 |_: axum::extract::rejection::JsonRejection| error(Status::BAD_REQUEST, "Invalid instance data"),
             )?;
-            instance_file(&app, &id)?;
+            let file = instance_file(&app, &id).await?;
             let value = json!(data);
             write(&file, &value)?;
             value
         }
         Method::DELETE => {
+            let file = instance_file(&app, &id).await?;
             match fs::remove_file(file) {
                 Ok(()) => {}
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}

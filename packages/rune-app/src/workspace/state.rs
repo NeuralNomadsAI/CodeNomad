@@ -70,10 +70,9 @@ pub(super) struct Entry {
     pending_drafts: HashSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
 }
-#[cfg(target_arch = "wasm32")]
 pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
     let ui = s.workspace.as_ref()?;
-    let entry = &ui.entries[ui.active];
+    let entry = ui.entries.get(ui.active)?;
     let Tab::Workspace(saved) = &entry.saved else {
         return None;
     };
@@ -540,6 +539,29 @@ pub fn has_conversation_stream(s: &State) -> bool {
                     .is_some_and(Cache::has_conversation_stream)
             })
         })
+}
+
+pub fn conversation_stream_clients(s: &State) -> Vec<(String, bool)> {
+    let mut clients = Vec::new();
+    if s.incoming
+        .as_ref()
+        .is_some_and(|incoming| !incoming.is_closed())
+        && let Some(id) = &s.conversation_client_id
+    {
+        clients.push((id.clone(), s.conversation_stream_connected));
+    }
+    if let Some(ui) = &s.workspace {
+        for entry in &ui.entries {
+            if let Some(cache) = &entry.cache
+                && cache.has_conversation_stream()
+                && let Some(id) = cache.conversation_client_id()
+                && !clients.iter().any(|(existing, _)| existing == id)
+            {
+                clients.push((id.to_owned(), cache.has_healthy_conversation_stream()));
+            }
+        }
+    }
+    clients
 }
 
 #[cfg(test)]

@@ -16,6 +16,8 @@ pub(super) struct Cache {
     draft: TextEdit,
     composer: crate::composer::Owner,
     incoming: Option<Receiver<Event>>,
+    conversation_client_id: Option<String>,
+    conversation_stream_connected: bool,
     reader: Option<crate::chat::reader::Reader>,
     commands: Option<Sender<Command>>,
     phase: Phase,
@@ -40,6 +42,14 @@ impl Cache {
         self.incoming
             .as_ref()
             .is_some_and(|incoming| !incoming.is_closed())
+    }
+
+    pub(super) fn has_healthy_conversation_stream(&self) -> bool {
+        self.has_conversation_stream() && self.conversation_stream_connected
+    }
+
+    pub(super) fn conversation_client_id(&self) -> Option<&str> {
+        self.conversation_client_id.as_deref()
     }
 
     fn is_detached(&self) -> bool {
@@ -247,6 +257,8 @@ impl Cache {
             draft: std::mem::replace(&mut s.draft, TextEdit::new("")),
             composer: std::mem::take(&mut s.composer),
             incoming: s.incoming.take(),
+            conversation_client_id: s.conversation_client_id.take(),
+            conversation_stream_connected: std::mem::take(&mut s.conversation_stream_connected),
             reader: s.reader.take(),
             commands: s.commands.take(),
             phase: std::mem::replace(&mut s.phase, Phase::Ready),
@@ -273,6 +285,8 @@ impl Cache {
         s.draft = self.draft;
         s.composer = self.composer;
         s.incoming = self.incoming;
+        s.conversation_client_id = self.conversation_client_id;
+        s.conversation_stream_connected = self.conversation_stream_connected;
         s.reader = self.reader;
         s.commands = self.commands;
         s.phase = self.phase;

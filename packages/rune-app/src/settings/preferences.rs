@@ -7,6 +7,7 @@ use super::transcript_preset::{self, Row};
 use crate::{backend::Backend, platform};
 pub(super) use codenomad_client::settings::Owner;
 use codenomad_client::settings::PreferencesWatch;
+pub(super) use document::env_var_is_masked;
 use document::{Choice, Document};
 use rune_theme_codenomad::palettes::{Palette, built_in};
 use serde_json::Value;
@@ -33,7 +34,13 @@ pub(super) struct Preferences {
     pub(super) revision: u64,
     stream: Option<PreferencesWatch>,
     closing_stream: Option<codenomad_client::Receiver<()>>,
+    closing_stream_client_id: Option<String>,
     authentication_required: bool,
+    transport_lost: bool,
+    observed_clients: Vec<(String, bool)>,
+    seen_drops: Vec<(String, u64)>,
+    seen_drop_generation: u64,
+    observed_drop_watch: Option<codenomad_client::http::ClientDropWatch>,
 }
 
 impl Preferences {
@@ -60,22 +67,8 @@ impl Preferences {
     }
 
     pub(super) fn transcript_mode(&self, row: Row, pending: bool) -> &'static str {
-        let choice = Choice::TranscriptRow(row);
-        if pending {
-            if let Some(mode) = self
-                .config
-                .requested(choice)
-                .filter(|_| !self.config.choice_failed(choice))
-            {
-                return mode;
-            }
-            if let Some(preset) = self
-                .config
-                .requested(Choice::TranscriptPreset)
-                .filter(|_| !self.config.choice_failed(Choice::TranscriptPreset))
-            {
-                return row.mode(&transcript_preset::patch(preset));
-            }
+        if pending && let Some(mode) = self.config.pending_transcript_mode(row) {
+            return mode;
         }
         row.mode(self.transcript_settings())
     }
@@ -84,20 +77,356 @@ impl Preferences {
         transcript_preset::selected(self.transcript_settings())
     }
 
+    pub(super) fn transcript_preset_display(&self) -> &'static str {
+        let Some((pending, base_preset, pending_usage_exp)) = self
+            .config
+            .pending_transcript_preset(transcript_preset::saved_preset(self.transcript_settings()))
+        else {
+            return self.transcript_preset();
+        };
+        if pending != "custom" {
+            return pending;
+        }
+        if base_preset == "custom" {
+            return "custom";
+        }
+        let usage_expansion = pending_usage_exp
+            .unwrap_or_else(|| transcript_preset::usage_expansion(self.transcript_settings()));
+        if transcript_preset::matches_named_details(
+            base_preset,
+            |row| self.transcript_mode(row, true),
+            usage_expansion,
+        ) {
+            base_preset
+        } else {
+            "custom"
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn fixture_transcript(&mut self, settings: Value) {
         self.config.snapshot = Some(json!({ "settings": settings }));
     }
 
-    pub(super) fn set_transcript(&mut self, row: Option<Row>, mode: &'static str) {
-        if self.saved(Owner::Config).is_some()
-            && self.can_retry()
-            && row.is_none_or(|row| self.transcript_mode(row, true) != mode)
+    fn seen_drop(&self, client_id: &str) -> u64 {
+        self.seen_drops
+            .iter()
+            .find(|(seen_id, _)| seen_id == client_id)
+            .map_or(0, |(_, count)| *count)
+    }
+
+    fn active_client_ids(&self, backend: &Backend) -> Vec<String> {
+        let mut ids = Vec::new();
+        let healthy_observed: Vec<_> = self
+            .observed_clients
+            .iter()
+            .filter(|(id, healthy)| {
+                *healthy && backend.client.transport_drops(id) == self.seen_drop(id)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        if !healthy_observed.is_empty() {
+            ids.extend(healthy_observed);
+        } else {
+            ids.extend(self.observed_clients.iter().map(|(id, _)| id.clone()));
+        }
+        if let Some(stream) = &self.stream {
+            let id = stream.client_id();
+            if !ids.iter().any(|existing| existing == id) {
+                ids.push(id.to_owned());
+            }
+        }
+        if let Some(id) = &self.closing_stream_client_id
+            && !ids.iter().any(|existing| existing == id)
         {
-            self.config.stage(
+            ids.push(id.clone());
+        }
+        if ids.is_empty() {
+            ids.push(backend.client_id.clone());
+        }
+        ids
+    }
+
+    fn seen_drops_sum(&self, client_ids: &[String]) -> u64 {
+        client_ids.iter().map(|id| self.seen_drop(id)).sum()
+    }
+
+    fn sync_drop_watch(&mut self) {
+        let Some(backend) = &self.backend else {
+            self.observed_drop_watch = None;
+            return;
+        };
+        let mut ids = Vec::new();
+        for (id, _) in &self.observed_clients {
+            ids.push(id.clone());
+        }
+        if let Some(stream) = &self.stream {
+            ids.push(stream.client_id().to_owned());
+        }
+        if let Some(id) = &self.closing_stream_client_id {
+            ids.push(id.clone());
+        }
+        if ids.is_empty() {
+            ids.push(backend.client_id.clone());
+        }
+        self.observed_drop_watch = Some(backend.client.watch_drops(&ids));
+    }
+
+    fn is_tracked_client(&self, client_id: &str) -> bool {
+        self.observed_clients.iter().any(|(id, _)| id == client_id)
+            || self
+                .stream
+                .as_ref()
+                .is_some_and(|stream| stream.client_id() == client_id)
+            || self.closing_stream_client_id.as_deref() == Some(client_id)
+    }
+
+    fn record_seen_drop(&mut self, client_id: &str, count: u64) -> bool {
+        if let Some((_, seen)) = self.seen_drops.iter_mut().find(|(id, _)| id == client_id) {
+            let dropped = count > *seen;
+            *seen = count;
+            dropped
+        } else {
+            if count == 0 {
+                return false;
+            }
+            while self.seen_drops.len() >= 64 {
+                if let Some(index) = self
+                    .seen_drops
+                    .iter()
+                    .position(|(id, _)| !self.is_tracked_client(id))
+                {
+                    self.seen_drops.remove(index);
+                } else {
+                    break;
+                }
+            }
+            self.seen_drops.push((client_id.to_owned(), count));
+            true
+        }
+    }
+
+    pub(super) fn has_healthy_watch_stream(&self) -> bool {
+        let Some(backend) = &self.backend else {
+            return false;
+        };
+        self.stream.as_ref().is_some_and(|stream| {
+            stream.is_connected() && !backend.client.is_in_outage(stream.client_id())
+        })
+    }
+
+    pub(super) fn observe_conversation_clients(&mut self, clients: &[(String, bool)]) {
+        if self.observed_clients != clients {
+            let previous = self.observed_clients.clone();
+            let old_dropped = self.observe_transport_drops();
+            let revalidated = self.config.transport_revalidated()
+                || self.state.transport_revalidated()
+                || self.server.transport_revalidated();
+            let watch_healthy = self.has_healthy_watch_stream();
+            let newly_unhealthy = revalidated
+                && !watch_healthy
+                && !clients.is_empty()
+                && clients.iter().all(|(_, healthy)| !*healthy);
+            self.observed_clients = clients.to_vec();
+            self.sync_drop_watch();
+            // A stream that dropped while hidden and has since reconnected (re-attesting /api/meta
+            // and finishing its sync while another tab kept Preferences healthy) baselines its old
+            // drop counter so closing the original tab later does not look like a new outage.
+            if !self.transport_lost
+                && let Some(backend) = self.backend.clone()
+            {
+                let still_healthy = watch_healthy
+                    || clients.iter().any(|(id, healthy)| {
+                        *healthy && backend.client.transport_drops(id) == self.seen_drop(id)
+                    });
+                if still_healthy {
+                    for (id, healthy) in clients {
+                        if *healthy
+                            && previous
+                                .iter()
+                                .any(|(prev_id, prev_healthy)| prev_id == id && !*prev_healthy)
+                        {
+                            let drops = backend.client.transport_drops(id);
+                            let _ = self.record_seen_drop(id, drops);
+                        }
+                    }
+                }
+            }
+            let new_dropped = self.observe_transport_drops();
+            if !old_dropped && !new_dropped && newly_unhealthy {
+                self.mark_transport_lost();
+            }
+            if (old_dropped || new_dropped)
+                && (self.has_healthy_watch_stream() || clients.iter().any(|(_, healthy)| *healthy))
+            {
+                self.revalidate_transport();
+            }
+        }
+    }
+
+    pub(super) fn revalidate_transport(&mut self) {
+        self.config.retry_revalidation(self.transport_lost);
+        self.state.retry_revalidation(self.transport_lost);
+        if self.show_server || self.show_environment || self.server.unsettled() {
+            self.server.retry_revalidation(self.transport_lost);
+        }
+    }
+
+    pub(super) fn is_transport_lost(&self) -> bool {
+        self.transport_lost
+    }
+
+    pub(super) fn is_repeated_outage(&self, client_id: &str) -> bool {
+        let Some(backend) = self.backend.as_ref() else {
+            return false;
+        };
+        let seen = self.seen_drop(client_id);
+        seen > 0
+            && backend.client.is_in_outage(client_id)
+            && backend.client.transport_drops(client_id) == seen
+    }
+
+    pub(super) fn note_client_outage(&mut self, client_id: &str) {
+        if let Some(backend) = self.backend.clone() {
+            let drops = backend.client.transport_drops(client_id);
+            let _ = self.record_seen_drop(client_id, drops);
+        }
+    }
+
+    pub(super) fn mark_transport_lost(&mut self) {
+        if let Some(backend) = self.backend.clone() {
+            self.seen_drop_generation = backend.client.drop_generation();
+            let mut ids = self.active_client_ids(&backend);
+            for (id, _) in &self.observed_clients {
+                if !ids.iter().any(|existing| existing == id) {
+                    ids.push(id.clone());
+                }
+            }
+            for id in ids {
+                let drops = backend.client.transport_drops(&id);
+                let _ = self.record_seen_drop(&id, drops);
+            }
+        }
+        self.config.mark_transport_lost();
+        self.state.mark_transport_lost();
+        self.server.mark_transport_lost();
+        if !self.transport_lost {
+            self.transport_lost = true;
+            self.revision += 1;
+            for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
+                wake();
+            }
+        }
+    }
+
+    fn observe_transport_drops(&mut self) -> bool {
+        let Some(backend) = self.backend.clone() else {
+            return false;
+        };
+        let mut dropped = false;
+        let stream_id = self.stream.as_ref().map(|s| s.client_id().to_owned());
+        let closing_id = self.closing_stream_client_id.clone();
+        let mut watch_dropped = false;
+        for id in stream_id.iter().chain(closing_id.iter()) {
+            let drops = backend.client.transport_drops(id);
+            if self.record_seen_drop(id, drops) {
+                dropped = true;
+                if stream_id.as_deref() == Some(id.as_str()) {
+                    watch_dropped = true;
+                }
+            }
+        }
+        let watch_continuously_healthy = !watch_dropped && self.has_healthy_watch_stream();
+        let any_continuously_healthy = watch_continuously_healthy
+            || (!self.observed_clients.is_empty()
+                && self.observed_clients.iter().any(|(id, healthy)| {
+                    *healthy && backend.client.transport_drops(id) == self.seen_drop(id)
+                }));
+        if self.observed_clients.is_empty() && stream_id.is_none() && closing_id.is_none() {
+            let drops = backend.client.transport_drops(&backend.client_id);
+            if self.record_seen_drop(&backend.client_id, drops) {
+                dropped = true;
+            }
+        } else if !self.observed_clients.is_empty() && !any_continuously_healthy {
+            let clients = self.observed_clients.clone();
+            for (id, _) in &clients {
+                let drops = backend.client.transport_drops(id);
+                if self.record_seen_drop(id, drops) {
+                    dropped = true;
+                }
+            }
+        }
+        if self
+            .closing_stream
+            .as_ref()
+            .is_none_or(codenomad_client::Receiver::is_closed)
+        {
+            self.closing_stream = None;
+            if self.closing_stream_client_id.take().is_some() {
+                self.sync_drop_watch();
+            }
+        }
+        let current_drop_gen = backend.client.drop_generation();
+        let drop_gen_changed = current_drop_gen != self.seen_drop_generation;
+        self.seen_drop_generation = current_drop_gen;
+        if ((!any_continuously_healthy && drop_gen_changed) || backend.client.attestation_revoked())
+            && (self.config.transport_revalidated()
+                || self.state.transport_revalidated()
+                || self.server.transport_revalidated())
+        {
+            dropped = true;
+        }
+        if !dropped {
+            return false;
+        }
+        self.config.mark_transport_lost();
+        self.state.mark_transport_lost();
+        self.server.mark_transport_lost();
+        if !self.transport_lost {
+            self.transport_lost = true;
+            self.revision += 1;
+            for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
+                wake();
+            }
+        }
+        if watch_continuously_healthy || self.observed_clients.iter().any(|(_, healthy)| *healthy) {
+            self.revalidate_transport();
+        }
+        true
+    }
+
+    pub(super) fn transcript_ready(&self) -> bool {
+        self.saved(Owner::Config).is_some()
+            && self.can_retry()
+            && !self.config.read_failed()
+            && !self.transport_lost
+    }
+
+    pub(super) fn set_transcript(&mut self, row: Option<Row>, mode: &'static str) {
+        if self.transcript_ready()
+            && row.is_none_or(|row| self.transcript_mode(row, true) != mode)
+            && self.config.stage_transcript_batch([(
                 row.map_or(Choice::TranscriptPreset, Choice::TranscriptRow),
                 mode,
-            );
+            )])
+        {
+            self.revision += 1;
+        }
+    }
+
+    pub(super) fn set_transcript_batch(
+        &mut self,
+        rows: impl IntoIterator<Item = (Row, &'static str)>,
+    ) {
+        if !self.transcript_ready() {
+            return;
+        }
+        let batch: Vec<_> = rows
+            .into_iter()
+            .filter(|&(row, mode)| self.transcript_mode(row, true) != mode)
+            .map(|(row, mode)| (Choice::TranscriptRow(row), mode))
+            .collect();
+        if !batch.is_empty() && self.config.stage_transcript_batch(batch) {
             self.revision += 1;
         }
     }
@@ -159,34 +488,88 @@ impl Preferences {
         }
     }
 
+    pub(super) fn queues_follow_ups(&self) -> bool {
+        self.saved(Owner::Config)
+            .is_some_and(|data| data["settings"]["followUpBehavior"] == "queue")
+    }
+
     #[cfg(test)]
     pub(super) fn fixture_shortcuts(&mut self, overrides: Value) {
         self.config.snapshot = Some(json!({"settings": {"hotkeyOverrides": overrides}}));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn prepare_all_drains(&mut self, check_revisions: bool, retry_failed: bool) {
+        let Some(backend) = &self.backend else {
+            return;
+        };
+        let config_rev =
+            check_revisions.then(|| backend.client.preferences_revision(Owner::Config));
+        let state_rev = check_revisions.then(|| backend.client.preferences_revision(Owner::State));
+        let server_rev =
+            check_revisions.then(|| backend.client.preferences_revision(Owner::Server));
+        let atomic = backend.client.supports_atomic_settings_patches();
+        self.config.prepare_drain(config_rev, retry_failed, atomic);
+        self.state.prepare_drain(state_rev, retry_failed, atomic);
+        self.server.prepare_drain(server_rev, retry_failed, atomic);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn preferences_revisions(&self) -> Option<(u64, u64, u64)> {
+        let backend = self.backend.as_ref()?;
+        Some((
+            backend.client.preferences_revision(Owner::Config),
+            backend.client.preferences_revision(Owner::State),
+            backend.client.preferences_revision(Owner::Server),
+        ))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn flush(&mut self) -> bool {
-        use std::time::Duration;
+        use std::time::{Duration, Instant};
         if self.backend.is_some() && !self.authentication_required {
+            self.observe_transport_drops();
             self.take_invalidations();
-            self.config.prepare_drain();
-            self.state.prepare_drain();
-            self.server.prepare_drain();
-            // Each lane can finish a PATCH/readback, a retry preflight, and one trailing PATCH/readback.
+            let mut last_revs = self.preferences_revisions();
+            self.prepare_all_drains(true, true);
+            // Coalesced queues hold at most 1 in-flight + 2 unsent transcript batches (Preset + Rows);
+            // bound both per-flight inactivity and overall wall-clock close wait.
             if self.documents_draining() {
+                let started = Instant::now();
+                let stall_budget =
+                    codenomad_client::http::REQUEST_TIMEOUT * 3 + Duration::from_millis(100);
+                let total_budget =
+                    codenomad_client::http::REQUEST_TIMEOUT * 6 + Duration::from_millis(100);
                 platform::block_on(async {
-                    let _ = tokio::time::timeout(
-                        codenomad_client::http::REQUEST_TIMEOUT * 5 + Duration::from_millis(100),
-                        async {
-                            while self.documents_draining() {
-                                self.poll_documents();
-                                if self.config.draining() || self.state.draining() {
-                                    platform::sleep(Duration::from_millis(10)).await;
-                                }
+                    let mut last_progress = Instant::now();
+                    let mut settled_ops = 0u32;
+                    while self.documents_draining()
+                        && started.elapsed() < total_budget
+                        && last_progress.elapsed() < stall_budget
+                        && settled_ops < 16
+                    {
+                        let transport_or_watch =
+                            self.observe_transport_drops() | self.take_invalidations();
+                        let revs = self.preferences_revisions();
+                        let rev_changed = revs != last_revs;
+                        last_revs = revs;
+                        if transport_or_watch || rev_changed {
+                            self.prepare_all_drains(rev_changed, false);
+                        }
+                        let (_, dropped_mid_poll, settled) = self.poll_documents_inner(false);
+                        if settled {
+                            settled_ops += 1;
+                            if !rev_changed && !dropped_mid_poll {
+                                last_progress = Instant::now();
                             }
-                        },
-                    )
-                    .await;
+                        }
+                        if dropped_mid_poll || settled {
+                            self.prepare_all_drains(false, false);
+                        }
+                        if self.documents_draining() {
+                            platform::sleep(Duration::from_millis(10)).await;
+                        }
+                    }
                 });
             }
         }
@@ -212,14 +595,25 @@ impl Preferences {
                     && old.client.server_identity().is_some()
                     && old.client.server_identity() == new.client.server_identity()
             });
+        self.unwatch();
+        if !same_address {
+            self.seen_drops.clear();
+            self.closing_stream_client_id = None;
+        }
         self.config.rebind(same_address);
         self.state.rebind(same_address);
         self.server.rebind(same_address);
         self.memory.bind(same_address);
         self.opencode_install.cancel_check();
         self.backend = owner;
+        self.seen_drop_generation = self
+            .backend
+            .as_ref()
+            .map_or(0, |b| b.client.drop_generation());
         self.authentication_required = false;
-        self.unwatch();
+        self.transport_lost = same_address;
+        self.observed_clients.clear();
+        self.sync_drop_watch();
         self.refresh();
         self.revision += 1;
         true
@@ -233,10 +627,14 @@ impl Preferences {
     pub(super) fn retry_general(&mut self) {
         self.config.retry(general_config);
         self.state.retry(general_state);
+        if self.transport_lost {
+            self.config.retry_revalidation(true);
+            self.state.retry_revalidation(true);
+        }
     }
 
     pub(super) fn transcript_error(&self) -> Option<&'static str> {
-        if self.authentication_required || self.config.read_failed() {
+        if self.authentication_required || self.config.read_failed() || self.transport_lost {
             Some("rune.connect_error")
         } else if self.config.any_failure(is_transcript) {
             Some("settings.preferenceSaveFailed")
@@ -247,26 +645,53 @@ impl Preferences {
 
     pub(super) fn retry_transcript(&mut self) {
         self.config.retry(is_transcript);
+        if self.transport_lost {
+            self.config.retry_revalidation(true);
+            self.state.retry_revalidation(true);
+            if self.show_server || self.show_environment || self.server.unsettled() {
+                self.server.retry_revalidation(true);
+            }
+        }
     }
 
     pub(super) fn retry_advanced(&mut self) {
         self.config.retry(is_advanced);
+        if self.transport_lost {
+            self.config.retry_revalidation(true);
+        }
     }
 
     pub(super) fn advanced_failed(&self) -> bool {
         self.config.any_failure(is_advanced)
     }
 
+    pub(super) fn notifications_error(&self) -> Option<&'static str> {
+        if self.authentication_required || self.config.read_failed() || self.transport_lost {
+            Some("rune.connect_error")
+        } else if self.config.any_failure(is_notification) {
+            Some("settings.preferenceSaveFailed")
+        } else {
+            None
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn notifications_failed(&self) -> bool {
-        self.config.any_failure(is_notification)
+        self.notifications_error().is_some()
     }
 
     pub(super) fn retry_notifications(&mut self) {
         self.config.retry(is_notification);
+        if self.transport_lost {
+            self.config.retry_revalidation(true);
+        }
     }
 
     pub(super) fn retry_shortcuts(&mut self) {
         self.config.retry(is_shortcut);
+        if self.transport_lost {
+            self.config.retry_revalidation(true);
+        }
     }
 
     pub(super) fn shortcuts_failed(&self) -> bool {
@@ -274,7 +699,11 @@ impl Preferences {
     }
 
     pub(super) fn general_error(&self) -> Option<&'static str> {
-        if self.authentication_required || self.config.read_failed() || self.state.read_failed() {
+        if self.authentication_required
+            || self.config.read_failed()
+            || self.state.read_failed()
+            || self.transport_lost
+        {
             Some("rune.connect_error")
         } else if self.contrast_failed() {
             Some("settings.appearance.contrast.saveError")
@@ -316,19 +745,28 @@ impl Preferences {
         {
             return;
         }
+        self.observe_transport_drops();
         self.closing_stream = None;
+        self.closing_stream_client_id = None;
         if self.stream.is_none()
             && let Some(backend) = &self.backend
         {
             let (watch, task) = PreferencesWatch::task(backend.clone(), project, wake.clone());
             self.stream = Some(watch);
+            self.sync_drop_watch();
             platform::spawn(task);
         }
     }
 
     pub fn unwatch(&mut self) {
+        if self.stream.is_some() {
+            self.observe_transport_drops();
+            self.take_invalidations();
+        }
         if let Some(watch) = self.stream.take() {
+            self.closing_stream_client_id = Some(watch.client_id().to_owned());
             self.closing_stream = Some(watch.stop());
+            self.sync_drop_watch();
         }
     }
 
@@ -373,12 +811,24 @@ impl Preferences {
             .map_or_else(Default::default, PreferencesWatch::take_missions)
     }
 
+    #[cfg(test)]
     pub fn invalidate(&mut self, owner: Owner) {
-        if owner != Owner::Server || self.show_server {
+        let server_active = self.show_server || self.show_environment || self.server.unsettled();
+        if owner != Owner::Server || server_active {
             self.doc_mut(owner).invalidate();
         }
-        if owner == Owner::Config && self.show_server {
+        if owner == Owner::Config && server_active {
             self.server.invalidate();
+        }
+    }
+
+    pub fn invalidate_from_sse(&mut self, owner: Owner) {
+        let server_active = self.show_server || self.show_environment || self.server.unsettled();
+        if owner != Owner::Server || server_active {
+            self.doc_mut(owner).invalidate_from_sse();
+        }
+        if owner == Owner::Config && server_active {
+            self.server.invalidate_from_sse();
         }
     }
 
@@ -436,52 +886,139 @@ impl Preferences {
     }
 
     pub fn poll(&mut self) -> bool {
-        self.take_invalidations();
-        self.poll_documents()
+        let disconnected = self.observe_transport_drops() | self.take_invalidations();
+        let polled = self.poll_documents();
+        disconnected | polled
     }
 
-    fn take_invalidations(&mut self) {
+    fn take_invalidations(&mut self) -> bool {
+        let mut disconnected = false;
         if let Some(stream) = &self.stream {
+            if stream.take_disconnected() {
+                self.config.mark_transport_lost();
+                self.state.mark_transport_lost();
+                self.server.mark_transport_lost();
+                disconnected = true;
+                if !self.transport_lost {
+                    self.transport_lost = true;
+                    self.revision += 1;
+                }
+            }
             let (config, state) = stream.take();
             if config {
-                self.config.invalidate();
+                self.config.invalidate_from_sse();
             }
             if (config | stream.take_server_changed())
-                && (self.show_server || self.show_environment)
+                && (self.show_server || self.show_environment || self.server.unsettled())
             {
-                self.server.invalidate();
+                self.server.invalidate_from_sse();
             }
             if state {
-                self.state.invalidate();
+                self.state.invalidate_from_sse();
             }
             if stream.take_memory_changed() {
                 self.memory.invalidate();
             }
         }
+        if disconnected {
+            for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
+                wake();
+            }
+        }
+        disconnected
     }
 
     fn poll_documents(&mut self) -> bool {
+        let (changed, dropped, _) = self.poll_documents_inner(true);
+        changed | dropped
+    }
+
+    fn poll_documents_inner(&mut self, revalidate_idle: bool) -> (bool, bool, bool) {
         let install = self.opencode_install.poll();
         if self.authentication_required {
-            return install;
+            return (install, false, false);
         }
-        let Some(backend) = &self.backend else {
-            return install;
+        let Some(backend) = self.backend.clone() else {
+            return (install, false, false);
         };
+        let active_client_ids = self.active_client_ids(&backend);
+        let seen_drops = self.seen_drops_sum(&active_client_ids);
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
-        let changed = self.config.poll(backend, Owner::Config, &main, &window)
-            | self.state.poll(backend, Owner::State, &main, &window)
-            | ((self.show_server || self.show_environment || self.server.unsettled())
-                && self.server.poll(backend, Owner::Server, &main, &window))
-            | self.memory.poll(backend, &main, &window)
+        #[cfg(not(target_arch = "wasm32"))]
+        let (poll_config, poll_state, poll_server) = (
+            revalidate_idle || self.config.has_unconfirmed(),
+            revalidate_idle || self.state.has_unconfirmed(),
+            (self.show_server || self.show_environment || self.server.unsettled())
+                && (revalidate_idle || self.server.has_unconfirmed()),
+        );
+        #[cfg(target_arch = "wasm32")]
+        let (poll_config, poll_state, poll_server) = (
+            true,
+            true,
+            self.show_server || self.show_environment || self.server.unsettled(),
+        );
+        let (config_changed, config_settled) = if poll_config {
+            self.config.poll(
+                &backend,
+                Owner::Config,
+                &active_client_ids,
+                seen_drops,
+                self.transport_lost,
+                &main,
+                &window,
+            )
+        } else {
+            (false, false)
+        };
+        if self.transport_lost && self.config.transport_revalidated() {
+            self.transport_lost = false;
+            if revalidate_idle {
+                self.state.retry_revalidation(false);
+                if self.show_server || self.show_environment || self.server.unsettled() {
+                    self.server.retry_revalidation(false);
+                }
+            }
+        }
+        let (state_changed, state_settled) = if poll_state {
+            self.state.poll(
+                &backend,
+                Owner::State,
+                &active_client_ids,
+                seen_drops,
+                self.transport_lost,
+                &main,
+                &window,
+            )
+        } else {
+            (false, false)
+        };
+        let (server_changed, server_settled) = if poll_server {
+            self.server.poll(
+                &backend,
+                Owner::Server,
+                &active_client_ids,
+                seen_drops,
+                self.transport_lost,
+                &main,
+                &window,
+            )
+        } else {
+            (false, false)
+        };
+        let changed = config_changed
+            | state_changed
+            | server_changed
+            | self.memory.poll(&backend, &main, &window)
             | self
                 .memory
-                .poll_review(backend, self.provider_target.as_ref(), &main, &window)
+                .poll_review(&backend, self.provider_target.as_ref(), &main, &window)
             | install;
+        let settled = config_settled | state_settled | server_settled;
+        let dropped_mid_poll = self.observe_transport_drops();
         if changed {
             self.revision += 1;
         }
-        changed
+        (changed, dropped_mid_poll, settled)
     }
 
     pub fn locale(&self) -> Option<&'static str> {
@@ -696,6 +1233,12 @@ impl Preferences {
             state["appearancePreferences"]["mode"] = json!(mode);
             self.revision += 1;
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_config_read_failed(&mut self, failed: bool) {
+        self.config.set_read_failed(failed);
+        self.revision += 1;
     }
 
     #[cfg(test)]

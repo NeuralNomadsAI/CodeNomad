@@ -36,6 +36,9 @@ pub struct State {
     pub upstream: AtomicBool,
     pub(crate) history_revision: AtomicU64,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
+    preferences_notices: std::sync::OnceLock<Arc<[AtomicU64; 3]>>,
+    open_stream: std::sync::OnceLock<(Arc<std::sync::atomic::AtomicUsize>, Arc<AtomicBool>)>,
+    stream_owner: std::sync::OnceLock<(crate::http::Http, String)>,
     catalogue: Option<Arc<catalogue::Signals>>,
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
     closed: (Sender<()>, crate::Receiver<()>),
@@ -52,6 +55,9 @@ impl Default for State {
             upstream: AtomicBool::new(false),
             history_revision: AtomicU64::new(0),
             preferences: None,
+            preferences_notices: std::sync::OnceLock::new(),
+            open_stream: std::sync::OnceLock::new(),
+            stream_owner: std::sync::OnceLock::new(),
             catalogue: None,
             placement: None,
             closed: crate::bounded(1),
@@ -106,6 +112,12 @@ impl State {
         owner: crate::settings::Owner,
         out: &Sender<Input>,
     ) -> Result<()> {
+        if let Some(notices) = self.preferences_notices.get() {
+            notices[owner.index()].fetch_add(1, SeqCst);
+            if owner == crate::settings::Owner::Config {
+                notices[crate::settings::Owner::Server.index()].fetch_add(1, SeqCst);
+            }
+        }
         if let Some((events, wake)) = &self.preferences {
             crate::transport::publish(events, wake, crate::transport::Event::Preferences(owner))
                 .await;
@@ -150,7 +162,40 @@ impl State {
 pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>) {
     state.running.store(true, SeqCst);
     runtime::spawn(async move {
-        let result = read(&backend, epoch, &out, &state).await;
+        let result = if backend.client.tracks_server_attestation() {
+            if epoch > 1 {
+                backend.client.note_reconnect_attempt(&backend.client_id);
+            }
+            match futures_lite::future::race(
+                async {
+                    backend.attest_server().await?;
+                    Ok(())
+                },
+                async {
+                    while !state.cancelled.load(SeqCst) && !out.is_closed() {
+                        runtime::sleep(Duration::from_millis(25)).await;
+                    }
+                    Ok(())
+                },
+            )
+            .await
+            {
+                Ok(()) if !state.cancelled.load(SeqCst) && !out.is_closed() => {
+                    read(&backend, epoch, &out, &state).await
+                }
+                Err(err) => {
+                    if !state.cancelled.load(SeqCst) && !out.is_closed() {
+                        backend
+                            .client
+                            .record_transport_drop(&backend.client_id, false);
+                    }
+                    Err(err)
+                }
+                other => other,
+            }
+        } else {
+            read(&backend, epoch, &out, &state).await
+        };
         state.alive.store(false, SeqCst);
         state.closed.0.close();
         state.running.store(false, SeqCst);
@@ -184,19 +229,51 @@ pub(crate) async fn read(
     out: &Sender<Input>,
     state: &State,
 ) -> Result<()> {
-    #[cfg(not(target_arch = "wasm32"))]
-    return futures_lite::future::race(native::read_native(backend, epoch, out, state), async {
-        while !state.cancelled.load(SeqCst) && !out.is_closed() {
-            runtime::sleep(Duration::from_millis(25)).await;
+    let (stream_guard, open_flag) = backend.client.track_stream(&backend.client_id);
+    let _ = state
+        .stream_owner
+        .set((backend.client.clone(), backend.client_id.clone()));
+    if state.catalogue.is_none() {
+        let _ = state
+            .open_stream
+            .set((backend.client.open_streams_counter(), open_flag));
+    }
+    let notices = backend.client.preferences_notices();
+    let _ = state.preferences_notices.set(notices.clone());
+    let result = {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            futures_lite::future::race(native::read_native(backend, epoch, out, state), async {
+                while !state.cancelled.load(SeqCst) && !out.is_closed() {
+                    runtime::sleep(Duration::from_millis(25)).await;
+                }
+                Ok(())
+            })
+            .await
         }
-        Ok(())
-    })
-    .await;
-    #[cfg(target_arch = "wasm32")]
-    browser::read(backend, epoch, out, state).await
+        #[cfg(target_arch = "wasm32")]
+        {
+            browser::read(backend, epoch, out, state).await
+        }
+    };
+    let was_open = stream_guard.release_open();
+    if !state.cancelled.load(SeqCst) && !out.is_closed() {
+        backend
+            .client
+            .record_transport_drop(&backend.client_id, was_open);
+    }
+    result
 }
 
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
+    if let Some((client, client_id)) = state.stream_owner.get() {
+        client.mark_stream_opened(client_id);
+    }
+    if let Some((counter, flag)) = state.open_stream.get()
+        && !flag.swap(true, SeqCst)
+    {
+        counter.fetch_add(1, SeqCst);
+    }
     if let Some(signals) = &state.catalogue {
         signals.reconnected();
     }
@@ -210,6 +287,16 @@ pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Re
         state
             .notify_preferences(crate::settings::Owner::State, out)
             .await?;
+    } else if state.catalogue.is_none()
+        && let Some(notices) = state.preferences_notices.get()
+    {
+        for owner in [
+            crate::settings::Owner::Config,
+            crate::settings::Owner::State,
+            crate::settings::Owner::Server,
+        ] {
+            notices[owner.index()].fetch_add(1, SeqCst);
+        }
     }
     Ok(())
 }

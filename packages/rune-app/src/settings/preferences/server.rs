@@ -62,6 +62,9 @@ impl Preferences {
             && self.log_level() != Some(index)
             && let Some(&(value, _)) = LEVELS.get(index)
         {
+            if !self.server.transport_revalidated() && !self.server.refreshing() {
+                self.server.invalidate();
+            }
             self.server.stage(Choice::LogLevel, value);
         }
     }
@@ -88,11 +91,16 @@ impl Preferences {
     }
 
     pub(in crate::settings) fn environment_failed(&self) -> bool {
-        self.server.read_failed() || self.server.choice_failed(Choice::Environment)
+        self.server.read_failed()
+            || self.server.choice_failed(Choice::Environment)
+            || (self.server.snapshot.is_some() && !self.server.transport_revalidated())
     }
 
     pub(in crate::settings) fn environment_ready(&self) -> bool {
-        self.can_retry() && self.server.confirmed().is_some() && !self.environment_pending()
+        self.can_retry()
+            && self.server.transport_revalidated()
+            && self.server.confirmed().is_some()
+            && !self.environment_pending()
     }
 
     pub(in crate::settings) fn refresh_environment(&mut self) {
@@ -103,42 +111,30 @@ impl Preferences {
         &mut self,
         name: String,
         value: Option<String>,
-        secret: bool,
+        secret: Option<bool>,
     ) -> bool {
-        use serde_json::Value;
-        let Some(document) = self
-            .server
-            .confirmed()
-            .filter(|_| self.can_retry() && !self.environment_pending())
-        else {
-            if self.server.read_failed() {
+        if !self.environment_ready() {
+            if self.server.read_failed() || !self.server.transport_revalidated() {
                 self.server.invalidate();
             }
             return false;
-        };
-        let mut masked: Vec<_> = document["secureEnvVars"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect();
-        let was_masked = masked.iter().any(|key| key.eq_ignore_ascii_case(&name));
-        let secure = (was_masked != (secret && value.is_some())).then(|| {
-            masked.retain(|key| !key.eq_ignore_ascii_case(&name));
-            if secret && value.is_some() {
-                masked.push(name.clone());
-            }
-            masked
-        });
-        self.server.stage_environment(name, value, secure);
+        }
+        self.server.stage_environment(name, value, secret);
         self.revision += 1;
         true
     }
 
+    pub(in crate::settings) fn supports_atomic_settings_patches(&self) -> bool {
+        self.backend
+            .as_ref()
+            .is_some_and(|backend| backend.client.supports_atomic_settings_patches())
+    }
+
     pub(in crate::settings) fn stage_update_feed(&mut self, feed: &'static str) {
         if self.can_retry() && !self.update_feed_pending() && matches!(feed, "stable" | "preview") {
-            if self.server.read_failed() {
+            if self.server.read_failed()
+                || (!self.server.transport_revalidated() && !self.server.refreshing())
+            {
                 self.server.invalidate();
             }
             self.server.stage(Choice::UpdateFeed, feed);

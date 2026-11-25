@@ -93,7 +93,15 @@ export function compactRemoteProjectHistory(doc: SettingsDoc, beforeMerge?: Sett
 }
 
 export function recentProjectName(value: unknown): string | undefined {
-  return typeof value === "string" ? value.trim().slice(0, 256) || undefined : undefined
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  let end = Math.min(trimmed.length, 256)
+  if (end < trimmed.length && trimmed.charCodeAt(end - 1) >= 0xd800 && trimmed.charCodeAt(end - 1) <= 0xdbff) {
+    end -= 1
+  }
+  const bounded = trimmed.slice(0, end)
+  const wellFormed = bounded.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g, match => match.length === 2 ? match : "\uFFFD")
+  return wellFormed || undefined
 }
 
 export function normalizeRemoteProjectRecent(value: unknown): RemoteProjectRecentData | undefined {
