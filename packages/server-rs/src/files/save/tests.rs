@@ -367,7 +367,7 @@ fn keeps_mode_and_replaces_a_symlinks_target() {
     fs::write(&path, b"old").unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
     symlink("note.txt", &alias).unwrap();
-    let target = super::super::super::links::write_target(alias.clone()).unwrap();
+    let target = super::super::links::write_target(alias.clone(), true).unwrap();
     replace(&target, None, || Ok(()), |file| file.write_all(b"new")).unwrap();
     assert_eq!(fs::read_link(&alias).unwrap(), Path::new("note.txt"));
     assert_eq!(fs::read(&alias).unwrap(), b"new");
