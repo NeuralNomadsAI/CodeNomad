@@ -233,6 +233,8 @@ of the visible transcript.
 Before selection is known, root pages also share the secondary budget. Pending
 root/ancestry reads observe active selection and leave that queue immediately
 when selected, without restarting already dispatched requests (`lib/prioritized-read.ts`).
+Pending question and permission recovery does the same for the shown project;
+other projects' recovery shares the secondary budget.
 Catalogue refreshes recheck client, location and request ownership before dispatch.
 The first native connection can supersede an initial HTTP read without passing
 through the reconnect recovery gate; session lists and catalogues replace those
