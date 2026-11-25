@@ -58,8 +58,6 @@ export function MissionEditor(props: {
   onShowPlaybook?: (template: MissionPanelMap["template"], taskMode: MissionTaskMode) => void
   onRecurrenceSaved?: () => void
   onRecurrenceRefresh?: () => void
-  /** Whether a passive scheduling read is pending, for the panel's update indicator. */
-  onReading?: (reading: boolean) => void
   /** On unmount: the idle draft to reopen, null to reopen as opened (an edit still reading
    * its fields), or undefined while a request is in flight or held. */
   onDispose?: (draft?: MissionEditorDraft | null) => void
@@ -123,7 +121,6 @@ export function MissionEditor(props: {
   const [customProfiles, setCustomProfiles] = createSignal(Boolean(held || recurrenceHold || draft?.customProfiles))
   const [profilesOpen, setProfilesOpen] = createSignal(draft?.profileDetailsOpen ?? false)
   let profilesFold: HTMLDetailsElement | undefined
-  const [profilesReading, setProfilesReading] = createSignal(false)
   const [taskMode, setTaskMode] = createSignal<MissionTaskMode | undefined>(draft ? draft.taskMode : recurrenceHold?.taskMode ?? held?.taskMode ?? original?.taskMode ?? "native")
   const [customTaskMode, setCustomTaskMode] = createSignal(Boolean(held || recurrenceHold || draft?.customTaskMode))
   const [defaults, setDefaults] = createSignal<MissionProfileDefault[]>(draft?.defaults ?? [])
@@ -224,8 +221,6 @@ export function MissionEditor(props: {
       setCoordinatorSessionID(config.coordinatorSessionID)
       setCustomProfiles(true); setCustomTaskMode(true)
     }, captureDraft: () => captureDraft(), onSaved: (mission, scheduleID) => props.onSaved(mission, scheduleID) })
-  createEffect(() => props.onReading?.(schedule.revalidating() || profilesReading() || sourceChoices.loading()))
-  onCleanup(() => props.onReading?.(false))
   const policy = createMemo(() => { try { return missionSchedulingPolicy(schedule.scheduling(), schedule.directory()) } catch { return undefined } })
   const mode = () => policy() && !requiresMissionCalendar(policy()!) ? "once" : "recurring"
   const captureStart = createMissionCreationStart({ instanceId: props.instanceId, get projectID() { return props.projectID },
@@ -546,7 +541,6 @@ export function MissionEditor(props: {
             <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()}
               taskMode={taskMode()}
               disabled={structuralLocked()} active={() => isActive() && profilesOpen()}
-              onReading={setProfilesReading}
               onChange={value => { setCustomProfiles(true); setProfiles(value) }} />
         </details>
         <Show when={compareError()} fallback={inlineError("profiles", ids.profilesError)}>{error =>
