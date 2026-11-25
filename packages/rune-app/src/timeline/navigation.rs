@@ -257,7 +257,7 @@ fn locate(s: &State, rows: &[crate::history::Row], row_index: usize, m: &Marker)
             .filter(|hit| hit.message == row.id)
             .map_or_else(
                 || Landing::Visible(row.id.clone(), 0),
-                |hit| hit.landing(s, row, steps),
+                |hit| hit.landing(s, rows, row, steps),
             ) {
             Landing::Visible(key, reveal) => JumpLanding::Visible(row.id.clone(), key, reveal),
             Landing::Filtered => JumpLanding::Filtered,
@@ -273,7 +273,7 @@ fn locate(s: &State, rows: &[crate::history::Row], row_index: usize, m: &Marker)
     };
     if block
         .part
-        .is_some_and(|i| !anchors::part_visible(s, row, i))
+        .is_some_and(|i| !anchors::part_visible(s, rows, row, i))
     {
         return JumpLanding::Filtered;
     }
@@ -407,7 +407,7 @@ pub(crate) fn restore_search(s: &mut State) {
     let landing = {
         let visible = anchors::visible_rows(s);
         if let Some(row) = visible.iter().find(|row| row.id == hit.message) {
-            hit.landing(s, row, anchors::steps(s, &row.id))
+            hit.landing(s, visible, row, anchors::steps(s, &row.id))
         } else if s.messages.iter().any(|row| row.id == hit.message) {
             Landing::Filtered
         } else {

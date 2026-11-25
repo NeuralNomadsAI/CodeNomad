@@ -12,13 +12,22 @@ pub(super) fn pending(s: &State) -> BTreeSet<ToolSource> {
     let Some(agent) = &s.agent else {
         return BTreeSet::new();
     };
-    agent
+    let mut pending: BTreeSet<ToolSource> = agent
         .permissions
         .iter()
         .filter_map(|r| r.tool.as_ref())
         .chain(agent.forms.iter().filter_map(|r| r.tool.as_ref()))
         .cloned()
-        .collect()
+        .collect();
+    if let Some((message, call)) =
+        crate::chat::tools::inferred_websearch(s, crate::chat::anchors::visible_rows(s))
+    {
+        pending.insert(ToolSource {
+            message: message.into(),
+            call: call.into(),
+        });
+    }
+    pending
 }
 
 pub(super) fn project(

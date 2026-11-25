@@ -86,25 +86,13 @@ impl Groups {
             {
                 continue;
             }
-            if message.role == "assistant"
-                && !message.parts.is_empty()
-                && !message.parts.iter().any(|part| match part {
-                    Part::Text(text) => !text.text.trim().is_empty(),
-                    Part::Reasoning(fragment) => show_thinking && fragment.visible(),
-                    Part::Tool(tool) => {
-                        index.awaiting(&message.id, &tool.id)
-                            || tools::visible(s, &message.id, tool)
-                    }
-                    Part::SubagentReport(_) => false,
-                    _ => true,
-                })
-            {
-                continue;
-            }
             if message.role != "assistant"
                 || message.parts.is_empty() && !message.body.trim().is_empty()
             {
                 index.finish(run.take(), true);
+                continue;
+            }
+            if message.parts.is_empty() {
                 continue;
             }
             let steps = override_steps
@@ -117,6 +105,20 @@ impl Groups {
                     |(_, steps)| steps,
                 );
             let (head, tail) = super::transcript::part_window(message.parts.len(), steps);
+            if !message.parts.iter().any(|part| match part {
+                Part::Text(text) => !text.text.trim().is_empty(),
+                Part::Reasoning(fragment) => show_thinking && fragment.visible(),
+                Part::Tool(tool) => {
+                    index.awaiting(&message.id, &tool.id) || tools::visible(s, &message.id, tool)
+                }
+                Part::SubagentReport(_) => false,
+                _ => true,
+            }) {
+                if head < tail {
+                    index.finish(run.take(), true);
+                }
+                continue;
+            }
             for (part, content) in message.parts.iter().enumerate() {
                 if part >= head && part < tail {
                     index.finish(run.take(), true);
@@ -312,18 +314,11 @@ fn waiting(s: &State, rows: &[Row]) -> HashMap<String, HashSet<String>> {
             .or_default()
             .insert(target.call.clone());
     }
-    if agent.forms.iter().any(|form| form.infer_websearch)
-        && let Some((message, call)) = rows.iter().rev().find_map(|message| {
-            message.parts.iter().rev().find_map(|part| match part {
-                Part::Tool(tool) if tool.name == "websearch" => Some((&message.id, &tool.id)),
-                _ => None,
-            })
-        })
-    {
+    if let Some((message, call)) = tools::inferred_websearch(s, rows) {
         waiting
-            .entry(message.clone())
+            .entry(message.into())
             .or_default()
-            .insert(call.clone());
+            .insert(call.into());
     }
     waiting
 }
@@ -401,9 +396,6 @@ impl Chunk {
                 screen::action(&s.input_scope, move |s| {
                     if let Some(id) = search_id {
                         Display::set_group_search_collapsed(s, id, &toggle, expanded);
-                        if !expanded {
-                            Display::set_group_expanded(s, &toggle, true);
-                        }
                     } else {
                         Display::set_group_expanded(s, &toggle, !expanded);
                     }
@@ -529,4 +521,43 @@ fn a_pending_tool_stays_out_of_both_collapsed_group_kinds() {
             );
         }
     });
+}
+
+#[cfg(test)]
+#[test]
+fn a_hidden_message_with_parts_gap_splits_adjacent_groups() {
+    use serde_json::json;
+    let mut s = crate::init();
+    crate::settings::fixture_transcript(
+        &mut s,
+        json!({
+            "toolGroupVisibility": "collapsed",
+            "toolCallExpansionDefaults": {"tools": {"grep": "hidden"}}
+        }),
+    );
+    let hidden_parts: Vec<_> = (0..(super::transcript::PART_LIMIT + 10))
+        .map(|i| json!({"type":"tool","id":format!("g{i}"),"name":"grep","state":{"status":"completed","input":{}}}))
+        .collect();
+    let rows: Vec<Row> = [
+        json!({"id":"m0","type":"assistant","content":[
+            {"type":"tool","id":"r0","name":"read","state":{"status":"completed","input":{}}}
+        ]}),
+        json!({"id":"m1","type":"assistant","content":hidden_parts}),
+        json!({"id":"m2","type":"assistant","content":[
+            {"type":"tool","id":"r1","name":"read","state":{"status":"completed","input":{}}}
+        ]}),
+    ]
+    .into_iter()
+    .map(|value| crate::history::decode_message(&value).unwrap().into())
+    .collect();
+
+    let groups = Groups::project_with_steps(&s, &rows, None);
+    assert!(
+        groups.collapsed_target(&s, 0, 0).is_none(),
+        "visible parts-gap in m1 must break grouping between m0 and m2"
+    );
+    assert!(
+        groups.collapsed_target(&s, 2, 0).is_none(),
+        "visible parts-gap in m1 must prevent m2 from continuing m0's group"
+    );
 }

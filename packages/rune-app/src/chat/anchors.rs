@@ -28,9 +28,9 @@ pub(crate) fn reasoning_visible(s: &State) -> bool {
     settings::transcript_mode(s, TranscriptRow::Thinking) != "hidden"
 }
 
-pub(crate) fn part_visible(s: &State, row: &Row, index: usize) -> bool {
+pub(crate) fn part_visible(s: &State, rows: &[Row], row: &Row, index: usize) -> bool {
     match &row.parts[index] {
-        Part::Tool(tool) => super::tools::visible(s, &row.id, tool),
+        Part::Tool(tool) => super::tools::visible_in_rows(s, rows, &row.id, tool),
         Part::Reasoning(_) => reasoning_visible(s),
         _ => true,
     }
