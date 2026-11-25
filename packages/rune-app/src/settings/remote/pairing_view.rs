@@ -26,6 +26,7 @@ impl Copy {
     }
 
     fn write(&mut self, url: &str, _prefs: &Preferences, _tx: &mut rune::Tx) {
+        crate::chat::tools::children::note_clipboard_write();
         #[cfg(not(target_arch = "wasm32"))]
         _tx.copy(url.to_owned());
         #[cfg(target_arch = "wasm32")]

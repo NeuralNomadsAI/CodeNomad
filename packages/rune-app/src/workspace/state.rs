@@ -14,7 +14,8 @@ pub use drafts::{
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
-    observes_notification, open_notification, owns_notification, workspace_notification,
+    observes_notification, open_notification, open_session_tab_target, owns_notification,
+    switch_tab_for_child, workspace_notification,
 };
 #[cfg(target_arch = "wasm32")]
 pub(crate) use observation::poll_cached_notifications;

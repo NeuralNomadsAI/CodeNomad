@@ -282,6 +282,14 @@ fn settle(s: &mut State, m: &Marker, (key, steps): (String, usize)) {
     if steps > 0 {
         anchors::reveal_parts(s, &m.message, steps);
     }
+    if m.id.is_empty()
+        && s.transcript_display
+            .search_highlight
+            .as_ref()
+            .is_some_and(|hit| hit.message == m.message)
+    {
+        s.transcript_display.mark_search_revealed(&key);
+    }
     let t = owner(s);
     t.changed = true;
     t.jump.align = Some((m.message.clone(), key));
@@ -383,6 +391,7 @@ pub(crate) fn restore_search(s: &mut State) {
         }) {
         Landing::Visible(key, steps) => {
             anchors::reveal_parts(s, &hit.message, steps);
+            s.transcript_display.mark_search_revealed(&key);
             owner(s).jump.align = Some((hit.message, key));
         }
         Landing::Filtered => refuse_filtered(s),
