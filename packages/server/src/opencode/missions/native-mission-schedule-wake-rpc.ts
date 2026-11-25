@@ -106,7 +106,8 @@ async function receive(mode: "wake" | "status", input: Input, entry: Entry,
   const isApplied = !!(fresh && !("deletedAt" in fresh) && ([...fresh.calendars, ...fresh.synchronization?.retiredCalendars ?? []]
     .some(item => item.scheduleID === wake.scheduleID && item.highWater >= wake.run)
     || settled?.key === key && settled.settled && settled.settled.revision <= fresh.revision))
-  if (isApplied && fresh && !("deletedAt" in fresh) && fresh.deletion) await ports.compact?.()
+  // Best effort: the run is applied either way, and a manual Check reports why a deletion stays.
+  if (isApplied && fresh && !("deletedAt" in fresh) && fresh.deletion) await ports.compact?.().catch(() => undefined)
   return reply(isApplied ? "applied" : "pending")
 }
 

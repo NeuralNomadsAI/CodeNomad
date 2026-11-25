@@ -3,10 +3,12 @@ import type { MissionPanelMap } from "../../../server/src/api-types"
 import { parseMissionChildTaskKey, parseMissionTaskSessions } from "../../../server/src/missions/task-sessions"
 import type { OpenCodeClient } from "./opencode-client"
 
-// Scan coordinator messages newest-first in bounded pages and stop as soon as
-// every task without a recorded actor is linked (never dumping 3,000 full messages).
+// Coordinator messages are scanned newest-first in pages, stopping as soon as every
+// task without a recorded actor is linked. The scan keeps its place: a wider task
+// window resumes it, and a later revision reads only the messages added since.
+// Long real coordinators exceed 1,000 messages; older delegations stay unlinked.
 const COORDINATOR_PAGE_SIZE = 100
-const COORDINATOR_MESSAGE_BOUND = 400
+const COORDINATOR_MESSAGE_BOUND = 3_000
 // A running subagent call records its child only on completion: while a live task
 // is unlinked, the coordinator's direct children are listed (bounded) and each
 // unseen child's first message is read in bounded parallel batches.
@@ -28,9 +30,13 @@ export interface MissionTaskSessionDeps {
   warn(message: string, details: Record<string, unknown>): void
 }
 
+/** Where the coordinator scan stands: the newest message it read, the cursor of the
+ * older messages it has not read (absent once none remain) and how many it read. */
+interface Scan { newest?: string; older?: string; read: number }
 interface Entry {
   signal?: AbortSignal
   generation: number; revision: number; connection: unknown; pulse: number; sessions: Map<string, string[]>
+  scan: Scan
   tasks: ReadonlyMap<string, MissionTaskSessionContext["tasks"][number]>
   /** Direct children whose admitted first message was already examined. */
   examined: ReadonlySet<string>
@@ -94,7 +100,10 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
     if (!connection || (sameTasks && entry.pulse === pulse)) return Promise.resolve()
     // Preserve startup's no-work fast path after extracting the read logic:
     // activity invalidations must not fan out reads without a task to observe.
-    if (known && !unlinked(observedMission, entry.sessions) && entry.sessions.size === 0) {
+    // A wider task window with an unlinked task resumes the coordinator scan where it stopped.
+    const resumes = known && Boolean(entry.scan.older) && entry.scan.read < COORDINATOR_MESSAGE_BOUND
+      && observedMission.tasks.some(task => !task.actorSessionId && !entry.sessions.has(task.key))
+    if (known && !resumes && !unlinked(observedMission, entry.sessions) && entry.sessions.size === 0) {
       setEntries(previous => new Map(previous).set(key, { ...entry, pulse, tasks }))
       return Promise.resolve()
     }
@@ -116,37 +125,69 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
     const current = () => !signal?.aborted && inFlight.get(key) === flight && deps.connection(instanceId) === connection
       && deps.generation(instanceId) === generation && Boolean(owners.get(key)?.size)
     flight.done = (async () => {
-      let sessions = known ? new Map(entry.sessions) : undefined
-      if (!sessions) {
-        sessions = new Map<string, string[]>()
-        const missing = (map: Map<string, string[]>) => observedMission.tasks.some(task => !task.actorSessionId && !map.has(task.key))
-        const seenCursors = new Set<string>()
-        let cursor: string | undefined
-        for (let scanned = 0; scanned < COORDINATOR_MESSAGE_BOUND; ) {
-          const remaining = Math.min(COORDINATOR_PAGE_SIZE, COORDINATOR_MESSAGE_BOUND - scanned)
-          const response = await root.message.list(cursor
-            ? { sessionID: mission.coordinatorSessionId, limit: remaining, cursor }
-            : { sessionID: mission.coordinatorSessionId, limit: remaining, order: "desc" }, { signal })
-          if (!current()) return
-          const batch = response.data ?? []
-          // Process oldest-to-newest within this page, keeping newer pages ahead of older ones.
-          const found = parseMissionTaskSessions(mission.id, mission.coordinatorSessionId, [...batch].reverse())
-          for (const [taskKey, ids] of found) {
-            const newer = sessions.get(taskKey) ?? []
-            sessions.set(taskKey, [...ids.filter(id => !newer.includes(id)), ...newer])
-          }
-          scanned += batch.length
-          const nextCursor = response.cursor?.next ?? undefined
-          if (!nextCursor || seenCursors.has(nextCursor) || !missing(sessions)) break
-          seenCursors.add(nextCursor)
-          cursor = nextCursor
+      // An earlier revision's links stay true: only the messages added since are read.
+      const seed = sameOwner ? entry : undefined
+      const sessions = new Map(seed?.sessions)
+      let scan: Scan = seed ? seed.scan : { read: 0 }
+      const page = async (cursor?: string) => {
+        const response = await root.message.list(cursor
+          ? { sessionID: mission.coordinatorSessionId, limit: COORDINATOR_PAGE_SIZE, cursor }
+          : { sessionID: mission.coordinatorSessionId, limit: COORDINATOR_PAGE_SIZE, order: "desc" }, { signal })
+        const batch = response.data ?? [], older = response.cursor?.next ?? undefined
+        // An empty page or a cursor that does not advance ends the transcript.
+        return { batch, older: batch.length && older !== cursor ? older : undefined }
+      }
+      // A newest-first page's children per task, oldest first.
+      const links = (batch: readonly unknown[]) => parseMissionTaskSessions(mission.id, mission.coordinatorSessionId, [...batch].reverse())
+      // Places found children before or after those already kept for their task.
+      const keep = (target: Map<string, string[]>, found: Map<string, string[]>, position: "older" | "newer") => {
+        for (const [taskKey, ids] of found) {
+          const kept = target.get(taskKey) ?? []
+          target.set(taskKey, position === "older" ? [...ids.filter(id => !kept.includes(id)), ...kept] : [...kept.filter(id => !ids.includes(id)), ...ids])
         }
+      }
+      const messageID = (message: unknown) => (message as { id?: string } | undefined)?.id
+      // Both readers answer whether the read is still current.
+      // From the newest message down to `boundary`, the newest one an earlier revision read
+      // (one page without it). That page is read whole, so a call still running then is seen completed.
+      const head = async (boundary: string | undefined) => {
+        const found = new Map<string, string[]>()
+        let cursor: string | undefined, newest: string | undefined, read = 0, reached = false
+        do {
+          const next = await page(cursor)
+          if (!current()) return false
+          newest ??= messageID(next.batch[0])
+          keep(found, links(next.batch), "older")
+          read += next.batch.length
+          reached = boundary !== undefined && next.batch.some(message => messageID(message) === boundary)
+          cursor = next.older
+        } while (boundary !== undefined && !reached && cursor && read < COORDINATOR_MESSAGE_BOUND)
+        keep(sessions, found, "newer")
+        scan = reached ? { newest: newest ?? boundary, older: scan.older, read: scan.read + read } : { newest, older: cursor, read }
+        return true
+      }
+      // Older messages not read yet: continue while a task of this window is unlinked.
+      const rest = async () => {
+        while (scan.older && scan.read < COORDINATOR_MESSAGE_BOUND
+          && observedMission.tasks.some(task => !task.actorSessionId && !sessions.has(task.key))) {
+          const next = await page(scan.older)
+          if (!current()) return false
+          keep(sessions, links(next.batch), "older")
+          scan = { newest: scan.newest, older: next.older, read: scan.read + next.batch.length }
+        }
+        return true
+      }
+      if (!known && !await head(seed?.scan.newest)) return
+      try { if (!await rest()) return } catch (error) {
+        // A cursor kept from an earlier read may no longer read: scan again from the newest message.
+        if (!current() || !seed?.scan.older || scan.older !== seed.scan.older) throw error
+        if (!await head(undefined) || !await rest()) return
       }
       const examined = new Set(known ? entry.examined : [])
       if (unlinked(observedMission, sessions)) {
         const children = await root.session.list({ parentID: mission.coordinatorSessionId, project: mission.projectID, limit: CHILD_BOUND }, { signal })
         if (!current()) return
-        const pending = (children.data ?? []).filter(child => !examined.has(child.id) && ![...sessions!.values()].some(ids => ids.includes(child.id)))
+        const pending = (children.data ?? []).filter(child => !examined.has(child.id) && ![...sessions.values()].some(ids => ids.includes(child.id)))
         let index = 0
         await Promise.all(Array.from({ length: Math.min(CHILD_CONCURRENCY, pending.length) }, async () => {
           while (index < pending.length) {
@@ -159,7 +200,7 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
             if (!message) continue
             examined.add(child.id)
             const task = parseMissionChildTaskKey(mission.id, message)
-            if (task) link(sessions!, task, child.id)
+            if (task) link(sessions, task, child.id)
           }
         }))
       }
@@ -167,7 +208,7 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
       const active = linked.size ? await root.session.active({ signal }) : {}
       if (!current()) return
       const live = new Set(Object.keys(active ?? {}).filter(id => linked.has(id)))
-      setEntries(previous => new Map(previous).set(key, { generation, revision: mission.revision, connection, signal, pulse, tasks, sessions: sessions!, examined, active: live }))
+      setEntries(previous => new Map(previous).set(key, { generation, revision: mission.revision, connection, signal, pulse, tasks, sessions, scan, examined, active: live }))
     })()
       .catch(error => { if (current()) deps.warn("Mission task conversations unavailable", { instanceId, missionId: mission.id, error }) })
       .finally(() => {
