@@ -100,6 +100,11 @@ fn tool_query<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<Query<'a>>
     )
 }
 
+pub(super) fn nested_card_expanded(s: &State, owner: &str, tool: &Tool, key: &str) -> bool {
+    tool_query(s, owner, tool).is_some_and(|q| q.active)
+        || s.transcript_display.expanded(key, false)
+}
+
 fn has_tool_input(tool: &Tool) -> bool {
     match &tool.input {
         serde_json::Value::Null => false,

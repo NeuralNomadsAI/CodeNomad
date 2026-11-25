@@ -16,7 +16,7 @@ mod mermaid;
 pub(super) const PROSE_LIMIT: usize = 50_000;
 pub(super) const TOOL_LIMIT: usize = 10_000;
 pub(super) const HIGHLIGHT_LIMIT: usize = 100_000;
-const STEP: usize = 250_000;
+pub(super) const STEP: usize = 250_000;
 
 pub(super) fn search_limit(
     query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,

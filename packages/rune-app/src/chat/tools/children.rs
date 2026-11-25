@@ -395,16 +395,17 @@ impl Children {
 
     pub(super) fn release(s: &mut State, key: &str) {
         let prefix = format!("{key}-");
+        let nested_pane = format!("{key}-task-steps-");
+        let owns_card =
+            |card: &str| card == key || card.starts_with(&prefix) || card.contains(&nested_pane);
         let children = &mut s.transcript_display.children;
         children.entries.retain(|_, entry| {
-            entry.cards.retain(|card, lease| {
-                lease.strong_count() > 0 && card != key && !card.starts_with(&prefix)
-            });
+            entry
+                .cards
+                .retain(|card, lease| lease.strong_count() > 0 && !owns_card(card));
             !entry.cards.is_empty()
         });
-        children
-            .waiting
-            .retain(|(_, card, _)| card != key && !card.starts_with(&prefix));
+        children.waiting.retain(|(_, card, _)| !owns_card(card));
         let matches_card = |ui_key: &str| {
             ui_key
                 .strip_prefix("copy-")
@@ -414,7 +415,7 @@ impl Children {
                         .or_else(|| rest.strip_suffix("-error"))
                         .or_else(|| rest.strip_suffix("-steps"))
                 })
-                .is_some_and(|card| card == key || card.starts_with(&prefix))
+                .is_some_and(owns_card)
         };
         let clear_copy = match &children.report_copy {
             ReportCopy::Loading { key: current, .. }

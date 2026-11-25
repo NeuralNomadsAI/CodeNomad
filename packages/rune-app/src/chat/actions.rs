@@ -62,6 +62,7 @@ struct SessionDisplay {
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
     task_revealed: HashMap<String, usize>,
+    task_mount_gen: HashMap<String, u64>,
     task_anchors: VecDeque<(String, TaskStepsState)>,
     search_revealed: VecDeque<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
@@ -254,6 +255,10 @@ impl Display {
         self.active.task_revealed.get(key).copied().unwrap_or(0)
     }
 
+    pub(super) fn task_mount_gen(&self, key: &str) -> u64 {
+        self.active.task_mount_gen.get(key).copied().unwrap_or(0)
+    }
+
     pub(super) fn set_task_visible(&mut self, key: &str, visible: Vec<String>) {
         let state = self.task_steps_entry(key);
         state.visible = visible;
@@ -296,7 +301,13 @@ impl Display {
             }
         } else {
             if self.active.task_anchors.len() >= TASK_ANCHOR_LIMIT {
-                self.active.task_anchors.pop_front();
+                let evict = self
+                    .active
+                    .task_anchors
+                    .iter()
+                    .position(|(_, state)| state.selected.is_empty())
+                    .unwrap_or(0);
+                self.active.task_anchors.remove(evict);
             }
             self.active
                 .task_anchors
@@ -314,16 +325,14 @@ impl Display {
         let nested = format!("{prefix}-");
         let pane = format!("{prefix}-task-steps");
         let pane_nested = format!("{pane}-");
-        for (key, state) in &mut self.active.task_anchors {
-            if key == prefix
-                || key.starts_with(&nested)
-                || key == &pane
-                || key.contains(&pane_nested)
-            {
-                state.visible.clear();
-                state.selected.clear();
-            }
-        }
+        self.active.task_anchors.retain(|(key, _)| {
+            key != prefix
+                && !key.starts_with(&nested)
+                && key != &pane
+                && !key.contains(&pane_nested)
+        });
+        let mount_gen = self.active.task_mount_gen.entry(pane.clone()).or_default();
+        *mount_gen = mount_gen.wrapping_add(1);
         if self
             .focused_key
             .as_deref()

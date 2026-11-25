@@ -304,16 +304,12 @@ fn reveal_virtual_rows_focus_and_real_selection_protection() {
         mounted_step_rows < 80,
         "virtual_rows must only mount visible window out of 200 steps, got {mounted_step_rows}"
     );
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
     let step0_key = super::super::tool_key(&format!("{step_key}-child:child:child_msg"), "step_0");
     assert!(
         rt.elements()
             .into_iter()
             .any(|e| !e.exiting && e.key.as_deref() == Some(step0_key.as_str())),
-        "first click must actually mount step_0"
+        "final reveal click must immediately bring step_0 into view without manual scrolling"
     );
     assert!(
         rt.find(&format!("reveal-{step_key}")).is_none(),
@@ -612,7 +608,24 @@ fn reveal_virtual_rows_focus_and_real_selection_protection() {
     assert_eq!(rt.state.transcript_display.task_revealed(&step_key), 100);
     assert!(rt.find(&format!("reveal-{step_key}")).is_none());
 
-    // 6. Disambiguated legacy step identities stay stable when an earlier duplicate slides past 200.
+    // 6. Unique legacy IDs stay index-independent across prepends, while duplicates sliding past 200 stay distinct.
+    let base_ids = super::legacy_identities(
+        &[
+            json!({"id": "alpha", "tool": "read"}),
+            json!({"id": "beta", "tool": "read"}),
+        ],
+        0,
+    );
+    let prefixed_ids = super::legacy_identities(
+        &[
+            json!({"id": "prefix", "tool": "read"}),
+            json!({"id": "alpha", "tool": "read"}),
+            json!({"id": "beta", "tool": "read"}),
+        ],
+        0,
+    );
+    assert_eq!(base_ids[0], prefixed_ids[1]);
+    assert_eq!(base_ids[1], prefixed_ids[2]);
     let mut legacy = vec![json!({"id": "dup", "tool": "read"})];
     for _ in 0..199 {
         legacy.push(json!({"tool": "read"}));
@@ -1021,7 +1034,9 @@ fn reveal_step_persists_across_collapse_and_survives_full_anchor_eviction() {
         !rt.state
             .transcript_display
             .task_anchors(&step_key)
-            .is_empty()
+            .is_empty(),
+        "expected detached anchor after scrolling to top: scroll_at_bottom={:?}",
+        rt.scroll_at_bottom(&scroll_key)
     );
     rt.update(|s, _| {
         lease = Some(
@@ -1047,4 +1062,184 @@ fn reveal_step_persists_across_collapse_and_survives_full_anchor_eviction() {
         "full anchor eviction while detached must pin oldest retained step (index 0)"
     );
     let _ = lease;
+}
+
+#[test]
+fn expanded_nested_card_keeps_full_budget_outer_release_prunes_nested_and_selection_survives_lru() {
+    let parent = history::decode_message(&json!({
+        "id": "parent", "type": "assistant", "time": {"completed": 1}, "content": [{
+            "type": "tool", "id": "outer", "name": "subagent", "state": {
+                "status": "completed",
+                "metadata": {"sessionID": "child_a", "status": "running"}
+            }
+        }]
+    }))
+    .unwrap();
+    let mut siblings = Vec::new();
+    for i in 0..30 {
+        siblings.push(json!({
+            "type": "tool",
+            "id": format!("sub_{i}"),
+            "name": "subagent",
+            "state": {
+                "status": "completed",
+                "input": {"description": format!("Sibling {i}")},
+                "metadata": {"sessionID": format!("grand_{i}"), "status": "running"}
+            }
+        }));
+    }
+    let outer_page = history::decode(json!({
+        "status": "window", "latest": true,
+        "messages": [{"id": "a_msg", "type": "assistant", "time": {"completed": 1}, "content": siblings}]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    crate::settings::fixture_transcript(
+        &mut state,
+        json!({"toolCallExpansionDefaults": {"tools": {"task": "expanded", "read": "collapsed"}}}),
+    );
+    state.messages.push(parent.into());
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| with_locale("en", || crate::view(s, cx)),
+        (1160.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    let outer_key = super::super::tool_key("parent", "outer");
+    let step_key = format!("{outer_key}-task-steps");
+    let scroll_key = format!("{step_key}-scroll");
+    let sub0_key = super::super::tool_key(&format!("{step_key}-child:child_a:a_msg"), "sub_0");
+    let sub0_steps = format!("{sub0_key}-task-steps");
+    let sub0_scroll = format!("{sub0_steps}-scroll");
+    let mut outer_lease = None;
+    let mut sub0_lease = None;
+    rt.update(|s, _| {
+        outer_lease = Some(s.transcript_display.children.install("child_a", outer_page));
+        sub0_lease = Some(s.transcript_display.children.install_under(
+            Some("child_a"),
+            "grand_0",
+            child_steps_page(35, false, "ok"),
+        ));
+        assert!(crate::chat::events::poll_chat(s, 1));
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let (nx, ny) = rt
+        .find(&format!("toggle-{sub0_key}"))
+        .expect("sub_0 toggle");
+    rt.pointer_down(nx, ny);
+    rt.pointer_up(nx, ny);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|_, tx| tx.scroll_to_instant(sub0_scroll.clone(), 0.0, 0.0));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.accessibility_json().to_string().contains("Show 5 more"),
+        "29 collapsed sibling subagent cards must not shrink the open nested card's budget"
+    );
+    assert!(
+        rt.state.transcript_display.children.has_visible_card(
+            Some("child_a"),
+            "grand_0",
+            &sub0_key
+        ),
+        "expanded nested subagent must hold an active child card demand"
+    );
+
+    // Collapsing the outer card must also release the nested descendant card's child demand.
+    outer_lease = None;
+    sub0_lease = None;
+    let (ox, oy) = rt
+        .find(&format!("toggle-{outer_key}"))
+        .expect("outer toggle");
+    rt.pointer_down(ox, oy);
+    rt.pointer_up(ox, oy);
+    for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        !rt.state.transcript_display.children.has_visible_card(
+            Some("child_a"),
+            "grand_0",
+            &sub0_key
+        ),
+        "collapsing outer task card must release nested descendant child watches immediately"
+    );
+
+    // Active selection survives >64 visibility reports on other step panes (LRU eviction protection).
+    rt.update(|s, _| {
+        s.transcript_display
+            .set_task_selected("selected-pane", vec!["row-0".into()]);
+        for i in 0..80 {
+            s.transcript_display
+                .set_task_visible(&format!("other-pane-{i}"), vec!["m:s".into()]);
+        }
+        assert_eq!(
+            s.transcript_display.task_selected("selected-pane"),
+            &["row-0".to_string()]
+        );
+    });
+
+    // Oversized legacy entry (>2 MiB) must not hide earlier legacy titles or its own title,
+    // and a Markdown link beyond 20 KiB inside an expanded skill step still protects the row.
+    let huge = "x".repeat(2_200_000);
+    let legacy_parent = history::decode_message(&json!({
+        "id": "legacy_p", "type": "assistant", "time": {"completed": 1}, "content": [{
+            "type": "tool", "id": "leg", "name": "task", "state": {
+                "status": "completed",
+                "metadata": {
+                    "summary": [
+                        {"id": "older", "tool": "read", "title": "Read earlier.rs", "status": "completed"},
+                        {"id": "giant", "tool": "read", "title": "Read giant.rs", "status": "completed", "input": {"blob": huge}}
+                    ]
+                }
+            }
+        }]
+    }))
+    .unwrap();
+    let skill_padding = "a".repeat(25_000);
+    let long_skill_msg = history::decode_message(&json!({
+        "id": "sk_m", "type": "assistant", "time": {"completed": 1}, "content": [{
+            "type": "tool", "id": "sk_0", "name": "skill", "state": {
+                "status": "completed",
+                "input": {"id": "long"},
+                "content": [{"type": "text", "text": format!("{skill_padding} [late](https://example.com/late-skill-link)")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let crate::content::Part::Tool(long_skill) = &long_skill_msg.parts[0] else {
+        panic!("expected skill tool");
+    };
+    rt.update(|s, _| {
+        s.messages = vec![legacy_parent.into()];
+        s.revision += 1;
+        assert!(super::step_contains_link(
+            s,
+            "child:c:sk_m",
+            long_skill,
+            "row-sk",
+            &[],
+            "https://example.com/late-skill-link",
+            0,
+        ));
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let legacy_tree = rt.accessibility_json().to_string();
+    assert!(
+        legacy_tree.contains("Read earlier.rs") && legacy_tree.contains("Read giant.rs"),
+        "oversized legacy entry must not hide earlier legacy titles or its own title"
+    );
+    let _ = (outer_lease, sub0_lease);
 }

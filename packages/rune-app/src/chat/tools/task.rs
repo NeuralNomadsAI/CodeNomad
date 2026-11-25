@@ -1,6 +1,6 @@
 use super::{
     Display, Tool,
-    children::{Children, CopyKey, ReportCopyKey, STEP_BYTES, STEP_LIMIT},
+    children::{Children, CopyKey, ReportCopyKey, STEP_LIMIT},
     input_json, string, window,
 };
 use crate::{
@@ -344,20 +344,7 @@ pub(super) fn body(
         .as_array()
         .map_or(&[][..], Vec::as_slice);
     let legacy_count_truncated = legacy_all.len() > STEP_LIMIT;
-    let mut legacy_remaining = STEP_BYTES;
-    let mut legacy_keep = 0usize;
-    let mut legacy_byte_truncated = false;
-    if child_steps.is_empty() {
-        for entry in legacy_all.iter().rev().take(STEP_LIMIT) {
-            let Some(left) = legacy_remaining.checked_sub(json_bytes(entry)) else {
-                legacy_byte_truncated = true;
-                break;
-            };
-            legacy_remaining = left;
-            legacy_keep += 1;
-        }
-    }
-    let legacy_base = legacy_all.len().saturating_sub(legacy_keep);
+    let legacy_base = legacy_all.len().saturating_sub(STEP_LIMIT);
     let legacy = if child_steps.is_empty() {
         &legacy_all[legacy_base..]
     } else {
@@ -372,7 +359,6 @@ pub(super) fn body(
         && step_count == 0
         && !live_truncated
         && !live_incomplete
-        && !legacy_byte_truncated
         && !child_load_error
         && !child_waiting
         && output.trim().is_empty()
@@ -515,7 +501,7 @@ pub(super) fn body(
             .child(text(t("toolCall.task.sections.steps")).text_role(TextRole::Label))
             .child(text(t("toolCall.status.running")).role("status"));
     }
-    if step_count > 0 || live_truncated || live_incomplete || legacy_byte_truncated {
+    if step_count > 0 || live_truncated || live_incomplete {
         let step_key = format!("{key}-task-steps");
         let pane_clip = s.transcript_display.tool_clock.clip_rect(&step_key);
         let use_child = !visible_live.is_empty();
@@ -616,11 +602,9 @@ pub(super) fn body(
             *budget = budget.saturating_sub(rendered_steps);
             0
         };
-        let legacy_truncated =
-            child_steps.is_empty() && (legacy_count_truncated || legacy_byte_truncated);
+        let legacy_truncated = child_steps.is_empty() && legacy_count_truncated;
         if live_truncated || legacy_truncated || budget_truncated {
-            let notice = if (child_steps.is_empty()
-                && (live_truncated || legacy_byte_truncated && legacy.is_empty()))
+            let notice = if (child_steps.is_empty() && live_truncated)
                 || (budget_truncated && rendered_steps == 0)
             {
                 text(t("toolCall.output.tooLarge")).role("status")
@@ -702,6 +686,7 @@ pub(super) fn body(
             let has_reveal = start > 0 && !budget_truncated;
             let offset = usize::from(has_reveal);
             let reveal_count = start.min(REVEAL);
+            let reveal_clears_gap = start <= reveal_count;
             let hidden_total = start;
             let min_extra = step_count
                 .saturating_sub(start.saturating_sub(reveal_count))
@@ -726,8 +711,20 @@ pub(super) fn body(
                 next_anc.extend(ancestors.iter().map(|&a| a.to_owned()));
                 next_anc.push(cid.to_owned());
                 let steps: Vec<_> = visible_live.into_iter().skip(start).collect();
-                let nested_tasks = steps.iter().filter(|(_, step)| is_task(step)).count();
-                let per_nested_budget = child_budget / nested_tasks.max(1);
+                let expanded_nested = steps
+                    .iter()
+                    .enumerate()
+                    .filter(|(idx, (msg, step))| {
+                        is_task(step)
+                            && super::render::nested_card_expanded(
+                                s,
+                                &format!("child:{cid}:{msg}"),
+                                step,
+                                &virtual_keys[offset + idx],
+                            )
+                    })
+                    .count();
+                let per_nested_budget = child_budget / expanded_nested.max(1);
                 StepItems::Child {
                     child_id: cid.to_owned(),
                     ancestors: next_anc,
@@ -759,147 +756,178 @@ pub(super) fn body(
             let scope = s.input_scope.clone();
             let bottom_scope = scope.clone();
             let sel_scope = scope.clone();
-            result = result.child(super::duration::observe_clip(
-                s,
-                markdown::steps_pane(
-                    format!("{step_key}-scroll"),
-                    t("toolCall.task.sections.steps"),
-                    row_count,
-                    version,
-                    move |_: &State, index| Cow::Owned(key_source[index].clone()),
-                    move |s: &State, index| {
-                        #[cfg(test)]
-                        s.transcript_display
-                            .task_row_builds
-                            .set(s.transcript_display.task_row_builds.get() + 1);
-                        crate::strings::with_locale(active_locale, || {
-                            if has_reveal && index == 0 {
-                                let toggle = build_step_key.clone();
-                                let hidden_label = catalogue::format(
-                                    active_locale,
-                                    if hidden_total == 1 {
-                                        "messageBlock.hiddenParts.one"
-                                    } else {
-                                        "messageBlock.hiddenParts.other"
-                                    },
-                                    &[("count", &hidden_total.to_string())],
-                                );
-                                let label = catalogue::format(
-                                    active_locale,
-                                    "messageBlock.hiddenParts.show",
-                                    &[("count", &reveal_count.to_string())],
-                                );
-                                return col().key(build_keys[0].clone()).role("listitem").child(
-                                    layout::action_row()
-                                        .child(text(hidden_label).text_role(TextRole::Label))
-                                        .child(
-                                            layout::button(
-                                                &label,
-                                                false,
-                                                screen::action(&s.input_scope, move |s| {
-                                                    Display::reveal_task_at_least(
-                                                        s, &toggle, next_extra,
-                                                    );
-                                                }),
+            let mount_gen = s.transcript_display.task_mount_gen(&step_key);
+            result = result.child(
+                col()
+                    .full_width()
+                    .key(format!("{step_key}-mount-{mount_gen}"))
+                    .child(super::duration::observe_clip(
+                        s,
+                        markdown::steps_pane(
+                            format!("{step_key}-scroll"),
+                            t("toolCall.task.sections.steps"),
+                            row_count,
+                            version,
+                            move |_: &State, index| Cow::Owned(key_source[index].clone()),
+                            move |s: &State, index| {
+                                #[cfg(test)]
+                                s.transcript_display
+                                    .task_row_builds
+                                    .set(s.transcript_display.task_row_builds.get() + 1);
+                                crate::strings::with_locale(active_locale, || {
+                                    if has_reveal && index == 0 {
+                                        let toggle = build_step_key.clone();
+                                        let hidden_label = catalogue::format(
+                                            active_locale,
+                                            if hidden_total == 1 {
+                                                "messageBlock.hiddenParts.one"
+                                            } else {
+                                                "messageBlock.hiddenParts.other"
+                                            },
+                                            &[("count", &hidden_total.to_string())],
+                                        );
+                                        let label = catalogue::format(
+                                            active_locale,
+                                            "messageBlock.hiddenParts.show",
+                                            &[("count", &reveal_count.to_string())],
+                                        );
+                                        return col()
+                                            .key(build_keys[0].clone())
+                                            .role("listitem")
+                                            .child(
+                                                layout::action_row()
+                                                    .child(
+                                                        text(hidden_label)
+                                                            .text_role(TextRole::Label),
+                                                    )
+                                                    .child(
+                                                        layout::button_tx(
+                                                            &label,
+                                                            false,
+                                                            screen::action_tx(
+                                                                &s.input_scope,
+                                                                move |s, tx| {
+                                                                    Display::reveal_task_at_least(
+                                                                        s, &toggle, next_extra,
+                                                                    );
+                                                                    if reveal_clears_gap {
+                                                                        tx.scroll_to_instant(
+                                                                            format!(
+                                                                                "{toggle}-scroll"
+                                                                            ),
+                                                                            0.0,
+                                                                            0.0,
+                                                                        );
+                                                                    }
+                                                                },
+                                                            ),
+                                                        )
+                                                        .key(format!("reveal-{build_step_key}")),
+                                                    ),
+                                            );
+                                    }
+                                    let item_index = index - offset;
+                                    let row_key = &build_keys[index];
+                                    match items.as_ref() {
+                                        StepItems::Child {
+                                            child_id,
+                                            ancestors,
+                                            steps,
+                                            per_nested_budget,
+                                        } => {
+                                            let (msg, step) = &steps[item_index];
+                                            let owner = format!("child:{child_id}:{msg}");
+                                            let anc_refs: Vec<&str> =
+                                                ancestors.iter().map(String::as_str).collect();
+                                            let mut row_budget = *per_nested_budget;
+                                            s.transcript_display.tool_clock.with_active_clip(
+                                                &build_clip,
+                                                || {
+                                                    col()
+                                                        .key(row_key.clone())
+                                                        .role("listitem")
+                                                        .child(super::render::render_nested(
+                                                            s,
+                                                            &owner,
+                                                            step,
+                                                            row_key,
+                                                            &anc_refs,
+                                                            &mut row_budget,
+                                                        ))
+                                                },
                                             )
-                                            .key(format!("reveal-{build_step_key}")),
-                                        ),
-                                );
-                            }
-                            let item_index = index - offset;
-                            let row_key = &build_keys[index];
-                            match items.as_ref() {
-                                StepItems::Child {
-                                    child_id,
-                                    ancestors,
-                                    steps,
-                                    per_nested_budget,
-                                } => {
-                                    let (msg, step) = &steps[item_index];
-                                    let owner = format!("child:{child_id}:{msg}");
-                                    let anc_refs: Vec<&str> =
-                                        ancestors.iter().map(String::as_str).collect();
-                                    let mut row_budget = *per_nested_budget;
-                                    s.transcript_display.tool_clock.with_active_clip(
-                                        &build_clip,
-                                        || {
-                                            col().key(row_key.clone()).role("listitem").child(
-                                                super::render::render_nested(
-                                                    s,
-                                                    &owner,
-                                                    step,
-                                                    row_key,
-                                                    &anc_refs,
-                                                    &mut row_budget,
-                                                ),
-                                            )
-                                        },
-                                    )
-                                }
-                                StepItems::Legacy { tool, base } => tool.metadata["summary"]
-                                    .as_array()
-                                    .and_then(|arr| arr.get(base + item_index))
-                                    .map_or_else(
-                                        || col().key(row_key.clone()).role("listitem"),
-                                        |step| render_legacy_row(s, step, row_key),
-                                    ),
-                            }
-                        })
-                    },
-                    move |s: &mut State, range| {
-                        if s.current_scope(&scope) {
-                            let vis_start = range.start.saturating_sub(offset);
-                            let vis_end = range.end.saturating_sub(offset).min(mounted_ids.len());
-                            if vis_start < vis_end {
-                                s.transcript_display.set_task_visible(
-                                    &anchor_key,
-                                    mounted_ids[vis_start..vis_end]
-                                        .iter()
-                                        .take(32)
-                                        .cloned()
-                                        .collect(),
-                                );
-                            }
-                        }
-                        false
-                    },
-                    move |s: &mut State, at_bottom| {
-                        if s.current_scope(&bottom_scope)
-                            && s.transcript_display
-                                .set_task_at_bottom(&bottom_key, at_bottom)
-                        {
-                            s.revision += 1;
-                            return true;
-                        }
-                        false
-                    },
-                    move |s: &mut State, change, tx| {
-                        if s.current_scope(&sel_scope) {
-                            let mut selected = Vec::new();
-                            if let Some(sel) = change.selection() {
-                                for seg in sel.texts() {
-                                    if let Some((_, rest)) = seg.path().split_once(&list_segment)
-                                        && let Some(row_key) = rest.split('/').next()
-                                        && !row_key.is_empty()
-                                        && !selected.iter().any(|existing| existing == row_key)
-                                    {
-                                        selected.push(row_key.to_owned());
-                                        if selected.len() >= 8 {
-                                            break;
+                                        }
+                                        StepItems::Legacy { tool, base } => {
+                                            tool.metadata["summary"]
+                                                .as_array()
+                                                .and_then(|arr| arr.get(base + item_index))
+                                                .map_or_else(
+                                                    || col().key(row_key.clone()).role("listitem"),
+                                                    |step| render_legacy_row(s, step, row_key),
+                                                )
                                         }
                                     }
+                                })
+                            },
+                            move |s: &mut State, range| {
+                                if s.current_scope(&scope) {
+                                    let vis_start = range.start.saturating_sub(offset);
+                                    let vis_end =
+                                        range.end.saturating_sub(offset).min(mounted_ids.len());
+                                    if vis_start < vis_end {
+                                        s.transcript_display.set_task_visible(
+                                            &anchor_key,
+                                            mounted_ids[vis_start..vis_end]
+                                                .iter()
+                                                .take(32)
+                                                .cloned()
+                                                .collect(),
+                                        );
+                                    }
                                 }
-                            }
-                            if s.transcript_display.set_task_selected(&sel_key, selected) {
-                                s.revision += 1;
-                                return;
-                            }
-                        }
-                        tx.live_only();
-                    },
-                )
-                .drawn_rect_into(&pane_clip),
-            ));
+                                false
+                            },
+                            move |s: &mut State, at_bottom| {
+                                if s.current_scope(&bottom_scope)
+                                    && s.transcript_display
+                                        .set_task_at_bottom(&bottom_key, at_bottom)
+                                {
+                                    s.revision += 1;
+                                    return true;
+                                }
+                                false
+                            },
+                            move |s: &mut State, change, tx| {
+                                if s.current_scope(&sel_scope) {
+                                    let mut selected = Vec::new();
+                                    if let Some(sel) = change.selection() {
+                                        for seg in sel.texts() {
+                                            if let Some((_, rest)) =
+                                                seg.path().split_once(&list_segment)
+                                                && let Some(row_key) = rest.split('/').next()
+                                                && !row_key.is_empty()
+                                                && !selected
+                                                    .iter()
+                                                    .any(|existing| existing == row_key)
+                                            {
+                                                selected.push(row_key.to_owned());
+                                                if selected.len() >= 8 {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if s.transcript_display.set_task_selected(&sel_key, selected) {
+                                        s.revision += 1;
+                                        return;
+                                    }
+                                }
+                                tx.live_only();
+                            },
+                        )
+                        .drawn_rect_into(&pane_clip),
+                    )),
+            );
         }
     }
     Some(result)
@@ -914,22 +942,15 @@ fn fnv64(text: &str) -> u64 {
     hash
 }
 
-fn json_bytes(value: &serde_json::Value) -> usize {
-    let base = std::mem::size_of::<serde_json::Value>();
-    match value {
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => base,
-        serde_json::Value::String(s) => base + s.len(),
-        serde_json::Value::Array(items) => base + items.iter().map(json_bytes).sum::<usize>(),
-        serde_json::Value::Object(map) => {
-            base + map
-                .iter()
-                .map(|(k, v)| k.len() + base + json_bytes(v))
-                .sum::<usize>()
+fn legacy_identities(legacy_all: &[serde_json::Value], legacy_base: usize) -> Vec<String> {
+    let mut counts: HashMap<u64, usize> = HashMap::new();
+    let lookback = legacy_base.saturating_sub(STEP_LIMIT);
+    for step in &legacy_all[lookback..legacy_base] {
+        let id = string(step, &["id", "callID"]);
+        if !id.is_empty() {
+            *counts.entry(fnv64(id)).or_default() += 1;
         }
     }
-}
-
-fn legacy_identities(legacy_all: &[serde_json::Value], legacy_base: usize) -> Vec<String> {
     legacy_all
         .iter()
         .enumerate()
@@ -939,7 +960,15 @@ fn legacy_identities(legacy_all: &[serde_json::Value], legacy_base: usize) -> Ve
             if id.is_empty() {
                 format!("idx:{index}")
             } else {
-                format!("id:{:016x}:{index}", fnv64(id))
+                let hash = fnv64(id);
+                let occ = counts.entry(hash).or_default();
+                let current = *occ;
+                *occ += 1;
+                if current == 0 {
+                    format!("id:{hash:016x}")
+                } else {
+                    format!("id:{hash:016x}:{current}")
+                }
             }
         })
         .collect()
@@ -961,6 +990,34 @@ fn key_matches_row(focused: &str, row_key: &str) -> bool {
     false
 }
 
+fn within_displayed(
+    s: &State,
+    text: &str,
+    base_limit: usize,
+    section_key: &str,
+    target: &str,
+) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+    let limit = base_limit.saturating_add(
+        s.transcript_display
+            .steps(section_key)
+            .saturating_mul(super::super::document::STEP),
+    );
+    let mut units = 0usize;
+    let mut end = text.len();
+    for (idx, ch) in text.char_indices() {
+        let next = units + ch.len_utf16();
+        if next > limit {
+            end = idx;
+            break;
+        }
+        units = next;
+    }
+    text[..end].contains(target)
+}
+
 fn step_contains_link(
     s: &State,
     owner: &str,
@@ -970,14 +1027,24 @@ fn step_contains_link(
     target: &str,
     depth: usize,
 ) -> bool {
-    let within = |text: &str| {
-        if text.is_empty() {
-            return false;
-        }
-        let end = text.floor_char_boundary(text.len().min(PANE_LIMIT));
-        text[..end].contains(target)
+    let output_limit = if step.name == "skill" {
+        super::super::document::PROSE_LIMIT
+    } else {
+        super::super::document::TOOL_LIMIT
     };
-    if within(&step.output) || within(string(&step.input, &["prompt"])) {
+    if within_displayed(
+        s,
+        &step.output,
+        output_limit,
+        &format!("{row_key}-tool_output"),
+        target,
+    ) || within_displayed(
+        s,
+        string(&step.input, &["prompt"]),
+        PANE_LIMIT,
+        &format!("{row_key}-task-prompt"),
+        target,
+    ) {
         return true;
     }
     if !is_task(step) {
@@ -985,7 +1052,15 @@ fn step_contains_link(
     }
     if delivery(s, owner, step, ancestors)
         .and_then(|d| d.report)
-        .is_some_and(|r| within(&r.body))
+        .is_some_and(|r| {
+            within_displayed(
+                s,
+                &r.body,
+                PANE_LIMIT,
+                &format!("{row_key}-task-output"),
+                target,
+            )
+        })
     {
         return true;
     }
