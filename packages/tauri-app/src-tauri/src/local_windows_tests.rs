@@ -36,7 +36,7 @@ fn scheduled_new_window_cannot_register_between_shutdown_snapshot_and_admission(
     let shutdown = ShutdownCoordinator::default();
     let queue = |id| queued_window(&windows, &shutdown, vec![id]);
     let admitted = queue(id(1))
-        .construct(&windows, &shutdown, true, |record, new_record| {
+        .construct(&windows, &shutdown, true, |record, new_record, _| {
             assert!(!new_record);
             Ok(record)
         })
@@ -67,7 +67,7 @@ fn scheduled_new_window_cannot_register_between_shutdown_snapshot_and_admission(
         scope.spawn(move || {
             dispatch_tx.send(()).unwrap();
             result_tx
-                .send(pending.construct(windows_ref, shutdown_ref, true, |_, _| {
+                .send(pending.construct(windows_ref, shutdown_ref, true, |_, _, _| {
                     panic!("constructing a window after shutdown won admission")
                 }))
                 .unwrap();
@@ -129,11 +129,13 @@ fn shutdown_waits_for_admitted_new_window_to_enqueue_publication() {
         let (published_tx, published_rx) = channel();
         let (windows_ref, shutdown_ref, queue_ref) = (&windows, &shutdown, &queue);
         let construction = scope.spawn(move || {
-            pending.construct(windows_ref, shutdown_ref, true, |record, new_record| {
+            pending.construct(windows_ref, shutdown_ref, true, |record, new_record, building| {
                 assert!(new_record);
                 entered_tx.send(()).unwrap();
                 resume_rx.recv().unwrap();
-                queue_ref.enqueue(Box::new(move || published_tx.send(()).unwrap()))?;
+                building
+                    .finish(|| queue_ref.enqueue(Box::new(move || published_tx.send(()).unwrap())))
+                    .ok_or_else(|| SHUTDOWN_IN_PROGRESS.to_string())??;
                 Ok(record)
             })
         });
@@ -150,6 +152,73 @@ fn shutdown_waits_for_admitted_new_window_to_enqueue_publication() {
         construction.join().unwrap().unwrap();
         cleanup.join().unwrap();
         published_rx.try_recv().unwrap();
+    });
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_session_end_abandons_unfinished_window_build_instead_of_waiting() {
+    use std::sync::mpsc::channel;
+    use std::time::{Duration, Instant};
+
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    let existing = state.active_window_id().unwrap();
+    let windows = LocalWindows::default();
+    let shutdown = ShutdownCoordinator::default();
+    let pending = queued_window(&windows, &shutdown, vec![]);
+    let new_id = pending.id.clone();
+    let label = local_window_label(&new_id).unwrap();
+    let timeout = Duration::from_secs(2);
+
+    std::thread::scope(|scope| {
+        let (entered_tx, entered_rx) = channel();
+        let (resume_tx, resume_rx) = channel();
+        let (windows_ref, shutdown_ref, state_ref) = (&windows, &shutdown, &state);
+        let construction = scope.spawn(move || {
+            pending.construct(windows_ref, shutdown_ref, true, |record, new_record, building| {
+                assert!(new_record);
+                state_ref.admit_new_window_capture(record.id.clone());
+                assert!(state_ref.capture_active_window(record.id.clone()));
+                entered_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+                assert!(building.is_abandoned());
+                if building
+                    .finish(|| panic!("abandoned build must not enqueue publication"))
+                    .is_none()
+                {
+                    return Err(SHUTDOWN_IN_PROGRESS.into());
+                }
+                Ok(record)
+            })
+        });
+        entered_rx.recv_timeout(timeout).unwrap();
+        assert!(windows.record(&label).is_some());
+
+        let started = Instant::now();
+        let waiter = scope.spawn(move || shutdown_ref.wait_for_local_window_builds(timeout));
+        std::thread::sleep(Duration::from_millis(20));
+
+        let (_, start, abandoned) = shutdown.confirm_windows_session_end();
+        assert!(start);
+        assert_eq!(abandoned.len(), 1);
+        assert_eq!(abandoned[0].label, label);
+        assert_eq!(abandoned[0].window_id, new_id);
+        assert!(!waiter.join().unwrap());
+        assert!(started.elapsed() < Duration::from_millis(300));
+
+        crate::shutdown::abandon_unfinished_local_window_builds_in(
+            Some(&windows),
+            Some(&state),
+            abandoned,
+        );
+        assert!(windows.record(&label).is_none());
+        state.prepare_ownership_release().unwrap();
+        assert_eq!(state.active_window_id().unwrap(), existing);
+        assert!(!state.window_ids().contains(&new_id));
+
+        resume_tx.send(()).unwrap();
+        assert_eq!(construction.join().unwrap().unwrap_err(), SHUTDOWN_IN_PROGRESS);
     });
 }
 

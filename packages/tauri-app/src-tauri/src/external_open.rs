@@ -2,11 +2,93 @@
 //! intercepted navigations and the links the renderer hands over. On Linux the
 //! handler, often a browser that outlives an AppImage's mount, starts with the
 //! host's environment (`appimage_environment`); elsewhere the opener plugin
-//! launches it.
+//! launches it. Handoffs always run off the native event loop on a dedicated
+//! FIFO worker thread.
 
+use std::sync::{mpsc, OnceLock};
 use tauri::{AppHandle, Runtime};
 
-pub(crate) fn open_url<R: Runtime>(app: &AppHandle<R>, url: &str) -> Result<(), String> {
+type OpenJob = Box<dyn FnOnce() + Send>;
+
+pub(crate) struct ExternalOpenQueue {
+    sender: mpsc::Sender<OpenJob>,
+}
+
+impl ExternalOpenQueue {
+    fn new() -> Self {
+        let (sender, receiver) = mpsc::channel::<OpenJob>();
+        std::thread::Builder::new()
+            .name("external-open".into())
+            .spawn(move || receiver.into_iter().for_each(|job| job()))
+            .expect("start external opener worker");
+        Self { sender }
+    }
+
+    fn enqueue(&self, job: OpenJob) -> Result<(), String> {
+        self.sender
+            .send(job)
+            .map_err(|_| "External URL opener worker stopped".to_string())
+    }
+
+    fn enqueue_url(
+        &self,
+        url: String,
+        open: impl FnOnce(&str) -> Result<(), String> + Send + 'static,
+        on_error: impl FnOnce(String) + Send + 'static,
+    ) {
+        if let Err(error) = self.enqueue(Box::new(move || {
+            if let Err(error) = open(&url) {
+                on_error(error);
+            }
+        })) {
+            eprintln!("[tauri] failed to enqueue external URL handoff: {error}");
+        }
+    }
+
+    async fn open_url_async(
+        &self,
+        url: String,
+        open: impl FnOnce(&str) -> Result<(), String> + Send + 'static,
+    ) -> Result<(), String> {
+        let (done, reply) = tokio::sync::oneshot::channel();
+        self.enqueue(Box::new(move || {
+            let _ = done.send(open(&url));
+        }))?;
+        reply
+            .await
+            .map_err(|_| "External URL opener dropped before replying".to_string())?
+    }
+}
+
+fn queue() -> &'static ExternalOpenQueue {
+    static QUEUE: OnceLock<ExternalOpenQueue> = OnceLock::new();
+    QUEUE.get_or_init(ExternalOpenQueue::new)
+}
+
+pub(crate) fn enqueue_open_url<R: Runtime>(
+    app: &AppHandle<R>,
+    url: String,
+    on_error: impl FnOnce(AppHandle<R>, String) + Send + 'static,
+) {
+    let worker_app = app.clone();
+    let error_app = app.clone();
+    queue().enqueue_url(
+        url,
+        move |url| open_url_blocking(&worker_app, url),
+        move |error| on_error(error_app, error),
+    );
+}
+
+pub(crate) async fn open_url_async<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<(), String> {
+    queue()
+        .open_url_async(url, move |url| open_url_blocking(&app, url))
+        .await
+}
+
+fn open_url_blocking<R: Runtime>(app: &AppHandle<R>, url: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         let _ = app;
@@ -56,4 +138,126 @@ fn open_with_host_environment(url: &str) -> Result<(), String> {
         }
     }
     Err(last_error.map_or_else(|| "no URL launcher".to_string(), |error| error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        future::{poll_fn, Future},
+        pin::{pin, Pin},
+        sync::{Arc, Mutex},
+        task::Poll,
+        time::Duration,
+    };
+
+    async fn assert_pending(mut future: Pin<&mut impl Future>) {
+        poll_fn(|cx| {
+            assert!(future.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+    }
+
+    #[test]
+    fn enqueue_returns_before_opener_completes_and_runs_off_dispatch_thread() {
+        let queue = ExternalOpenQueue::new();
+        let dispatch_thread = std::thread::current().id();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (error_tx, error_rx) = mpsc::channel();
+
+        queue.enqueue_url(
+            "https://example.com/help".into(),
+            move |url| {
+                started_tx
+                    .send((std::thread::current().id(), url.to_string()))
+                    .unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                Err("launcher unavailable".into())
+            },
+            move |error| {
+                error_tx.send(error).unwrap();
+            },
+        );
+
+        let (worker_thread, url) = started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_ne!(worker_thread, dispatch_thread);
+        assert_eq!(url, "https://example.com/help");
+        assert!(error_rx.try_recv().is_err());
+
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            error_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "launcher unavailable"
+        );
+    }
+
+    #[test]
+    fn open_url_async_awaits_oneshot_without_blocking_executor() {
+        let queue = ExternalOpenQueue::new();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+
+        tauri::async_runtime::block_on(async {
+            let mut opening = pin!(queue.open_url_async(
+                "https://example.com/docs".into(),
+                move |url| {
+                    started_tx.send(url.to_string()).unwrap();
+                    release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                    Ok(())
+                }
+            ));
+            assert_pending(opening.as_mut()).await;
+            assert_eq!(
+                started_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+                "https://example.com/docs"
+            );
+            assert_pending(opening.as_mut()).await;
+            release_tx.send(()).unwrap();
+            opening.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn fifo_handoff_preserves_order_and_continues_after_error() {
+        let queue = ExternalOpenQueue::new();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let (done_tx, done_rx) = mpsc::channel();
+
+        let first_seen = Arc::clone(&seen);
+        let (err_tx, err_rx) = mpsc::channel();
+        queue.enqueue_url(
+            "https://example.com/first".into(),
+            move |url| {
+                first_seen.lock().unwrap().push(url.to_string());
+                Err("first failed".into())
+            },
+            move |error| err_tx.send(error).unwrap(),
+        );
+
+        let second_seen = Arc::clone(&seen);
+        queue.enqueue_url(
+            "https://example.com/second".into(),
+            move |url| {
+                second_seen.lock().unwrap().push(url.to_string());
+                done_tx.send(()).unwrap();
+                Ok(())
+            },
+            |error| panic!("unexpected error: {error}"),
+        );
+
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            err_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "first failed"
+        );
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                "https://example.com/first".to_string(),
+                "https://example.com/second".to_string(),
+            ]
+        );
+    }
 }

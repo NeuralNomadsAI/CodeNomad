@@ -30,7 +30,7 @@ impl ClientState {
         }
     }
 
-    fn capture_active_window(&self, id: String) -> bool {
+    pub(crate) fn capture_active_window(&self, id: String) -> bool {
         if let Ok(mut pending) = self.pending_windows.lock() {
             if pending.stopped {
                 return false;

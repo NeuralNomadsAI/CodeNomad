@@ -113,12 +113,11 @@ fn selection_target(
 pub(crate) async fn preferences_select_server(
     webview: tauri::Webview,
     app: AppHandle,
-    app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
     intent: ServerSelection,
     action: Option<String>,
 ) -> Result<(), String> {
-    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    crate::require_preferences_or_local_app_webview_async(&webview).await?;
     if webview.label() != LABEL {
         return Err("Server selection requires Preferences".into());
     }
@@ -141,7 +140,7 @@ pub(crate) async fn preferences_select_server(
     let target = app
         .get_webview(&label)
         .ok_or("Server selection opener unavailable")?;
-    let url = crate::require_local_app_webview(&target, &app_state)?;
+    let url = crate::require_local_app_webview_async(&target).await?;
     let origin =
         serde_json::to_string(&url.origin().ascii_serialization()).map_err(|e| e.to_string())?;
     let value = serde_json::to_string(&intent).map_err(|e| e.to_string())?;

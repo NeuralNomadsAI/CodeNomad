@@ -51,7 +51,9 @@ renderer flush at session-end query and drains admitted work at confirmed
 session end. Preferences captures native inputs before joining that same
 queue and completes a close once its clear is published, with directory sync
 retried before ownership release. New windows register under the Quit snapshot
-fence, then join the FIFO after native construction. Their initial focus and
+fence, then join the FIFO after native construction; confirmed Windows session
+end abandons unfinished window builds explicitly instead of waiting on
+construction. Their initial focus and
 latest geometry are folded into the first publication. A renderer without a
 claim relies on the queue drain during quit. Electron serializes
 renderer loads and publication on its write queue. Both hosts bind

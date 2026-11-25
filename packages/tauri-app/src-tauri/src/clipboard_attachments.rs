@@ -12,9 +12,8 @@ pub(crate) struct ClipboardFile {
 pub(crate) async fn read_clipboard_attachments(
     app: tauri::AppHandle,
     webview: tauri::Webview,
-    state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<ClipboardFile>, String> {
-    crate::require_local_app_webview(&webview, &state)?;
+    crate::require_local_app_webview_async(&webview).await?;
     #[cfg(target_os = "linux")]
     {
         linux::read(&app).await

@@ -304,6 +304,58 @@ pub(crate) fn require_local_app_webview(
     }
 }
 
+pub(crate) async fn run_on_dispatch<T, E, D, F>(dispatch: D, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    E: std::fmt::Display,
+    D: FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), E>,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    dispatch(Box::new(move || {
+        let _ = sender.send(task());
+    }))
+    .map_err(|error| error.to_string())?;
+    receiver
+        .await
+        .map_err(|_| "Native main-thread dispatch dropped before replying".to_string())?
+}
+
+pub(crate) async fn run_on_main_thread_async<R: Runtime, T: Send + 'static>(
+    app: &AppHandle<R>,
+    task: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    run_on_dispatch(|job| app.run_on_main_thread(job), task).await
+}
+
+pub(crate) async fn require_local_app_webview_async(
+    webview: &tauri::Webview,
+) -> Result<Url, String> {
+    identity::local_window_id(webview.label())?;
+    let app = webview.app_handle().clone();
+    let webview = webview.clone();
+    run_on_main_thread_async(&app, move || {
+        let state = webview.app_handle().state::<AppState>();
+        require_local_app_webview(&webview, &state)
+    })
+    .await
+}
+
+pub(crate) async fn require_preferences_or_local_app_webview_async(
+    webview: &tauri::Webview,
+) -> Result<Url, String> {
+    if webview.label() != preferences_window::LABEL {
+        return require_local_app_webview_async(webview).await;
+    }
+    let app = webview.app_handle().clone();
+    let webview = webview.clone();
+    run_on_main_thread_async(&app, move || {
+        let state = webview.app_handle().state::<AppState>();
+        require_preferences_or_local_app_webview(&webview, &state)
+    })
+    .await
+}
+
 pub(crate) fn handle_native_request(
     app: &AppHandle,
     method: &str,
@@ -417,36 +469,62 @@ fn claim_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) -> bool
     claim_unowned_remote_proxy_session(&profiles, &mut claims, session_id)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowControlAction {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+impl WindowControlAction {
+    fn parse(action: &str) -> Result<Self, String> {
+        match action {
+            "minimize" => Ok(Self::Minimize),
+            "maximize" => Ok(Self::Maximize),
+            "close" => Ok(Self::Close),
+            _ => Err("Invalid window control action".to_string()),
+        }
+    }
+}
+
 #[tauri::command]
 async fn window_control(
     webview: tauri::Webview,
     app: AppHandle,
-    state: tauri::State<'_, AppState>,
     action: String,
 ) -> Result<(), String> {
-    require_preferences_or_local_app_webview(&webview, &state)?;
-    let window = webview.window();
-    match action.as_str() {
-        "minimize" => {
-            state.browser_controller.revoke_window_visibility(window.label());
-            window.minimize()
+    let action = WindowControlAction::parse(&action)?;
+    if action == WindowControlAction::Close && webview.label() == preferences_window::LABEL {
+        require_preferences_or_local_app_webview_async(&webview).await?;
+        if !preferences_window::approve_close(&app).await? {
+            return Ok(());
         }
-        "maximize" => {
-            if window.is_maximized().unwrap_or(false) {
-                window.unmaximize()
-            } else {
-                window.maximize()
-            }
-        }
-        "close" => {
-            if webview.label() == preferences_window::LABEL && !preferences_window::approve_close(&app).await? {
-                return Ok(());
-            }
-            window.close()
-        }
-        _ => return Err("Invalid window control action".to_string()),
+        return run_on_main_thread_async(&app, move || {
+            webview.window().close().map_err(|error| error.to_string())
+        })
+        .await;
     }
-    .map_err(|error| error.to_string())
+    run_on_main_thread_async(&app, move || {
+        let state = webview.app_handle().state::<AppState>();
+        require_preferences_or_local_app_webview(&webview, &state)?;
+        let window = webview.window();
+        match action {
+            WindowControlAction::Minimize => {
+                state.browser_controller.revoke_window_visibility(window.label());
+                window.minimize()
+            }
+            WindowControlAction::Maximize => {
+                if window.is_maximized().unwrap_or(false) {
+                    window.unmaximize()
+                } else {
+                    window.maximize()
+                }
+            }
+            WindowControlAction::Close => window.close(),
+        }
+        .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -478,6 +556,31 @@ impl Drop for NativeMenuAdmission {
     }
 }
 
+async fn run_popup_titlebar_menu_with<E, D, F>(
+    pending: &Arc<AtomicBool>,
+    dispatch: D,
+    run_on_main: F,
+) -> Result<(), String>
+where
+    E: std::fmt::Display,
+    D: FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), E>,
+    F: FnOnce() -> Result<(), String> + Send + 'static,
+{
+    // Reserve before posting to native dispatch so concurrent calls fail fast
+    // instead of piling up behind an open popup. Dropping the closure on
+    // scheduling failure also releases admission.
+    pending
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .map_err(|_| "A native titlebar menu is already open".to_string())?;
+    let admission = NativeMenuAdmission(Arc::clone(pending));
+    run_on_dispatch(dispatch, move || {
+        let result = run_on_main();
+        drop(admission);
+        result
+    })
+    .await
+}
+
 #[tauri::command]
 async fn popup_titlebar_menu(
     webview: tauri::Webview,
@@ -487,58 +590,42 @@ async fn popup_titlebar_menu(
     y: f64,
 ) -> Result<(), String> {
     identity::local_window_id(webview.label())?;
-    // Reserve before any URL/native getter can wait behind an existing popup.
-    // Admission spans queued work as well as tracking; dropping the closure on
-    // scheduling failure also releases it. Tracking remains a separate flag so
-    // the admitted request can apply its pre-popup refresh.
-    state
-        .native_menu_popup_pending
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .map_err(|_| "A native titlebar menu is already open".to_string())?;
-    let admission = NativeMenuAdmission(Arc::clone(&state.native_menu_popup_pending));
-    require_local_app_webview(&webview, &state)?;
     if !x.is_finite() || !y.is_finite() {
         return Err("Invalid titlebar menu position".into());
     }
     let id = titlebar_menu_id(&menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
     let app = webview.app_handle().clone();
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    app.clone()
-        .run_on_main_thread(move || {
-            let admission = admission;
-            let result = (|| {
-                let state = app.state::<AppState>();
-                require_local_app_webview(&webview, &state)?;
-                if state.native_menu_popup_active.load(Ordering::Relaxed) {
-                    return Err("A native titlebar menu is already open".to_string());
-                }
-                update_workspace_menu_state_on_main(&app);
-                let app_menu = app
-                    .menu()
-                    .ok_or_else(|| "Application menu is unavailable".to_string())?;
-                let item = app_menu
-                    .get(id)
-                    .ok_or_else(|| "Titlebar menu is unavailable".to_string())?;
-                let submenu = item
-                    .as_submenu()
-                    .ok_or_else(|| "Titlebar menu is invalid".to_string())?;
-                state.native_menu_popup_active.store(true, Ordering::Relaxed);
-                let result = webview
-                    .window()
-                    .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
-                    .map_err(|error| error.to_string());
-                state.native_menu_popup_active.store(false, Ordering::Relaxed);
-                update_workspace_menu_state_on_main(&app);
-                result
-            })();
-            drop(admission);
-            let _ = sender.send(result);
-        })
-        .map_err(|error| error.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || receiver.recv())
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?
+    let dispatch_app = app.clone();
+    run_popup_titlebar_menu_with(
+        &state.native_menu_popup_pending,
+        |job| dispatch_app.run_on_main_thread(job),
+        move || {
+            let state = app.state::<AppState>();
+            require_local_app_webview(&webview, &state)?;
+            if state.native_menu_popup_active.load(Ordering::Relaxed) {
+                return Err("A native titlebar menu is already open".to_string());
+            }
+            update_workspace_menu_state_on_main(&app);
+            let app_menu = app
+                .menu()
+                .ok_or_else(|| "Application menu is unavailable".to_string())?;
+            let item = app_menu
+                .get(id)
+                .ok_or_else(|| "Titlebar menu is unavailable".to_string())?;
+            let submenu = item
+                .as_submenu()
+                .ok_or_else(|| "Titlebar menu is invalid".to_string())?;
+            state.native_menu_popup_active.store(true, Ordering::Relaxed);
+            let result = webview
+                .window()
+                .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
+                .map_err(|error| error.to_string());
+            state.native_menu_popup_active.store(false, Ordering::Relaxed);
+            update_workspace_menu_state_on_main(&app);
+            result
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -547,7 +634,7 @@ async fn browser_target_register(
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetRegistration,
 ) -> Result<(), String> {
-    require_local_app_webview(&webview, &state)?;
+    require_local_app_webview_async(&webview).await?;
     let window = webview.window();
     let controller = state.browser_controller.clone();
     tauri::async_runtime::spawn_blocking(move || controller.register(&window, payload))
@@ -563,7 +650,7 @@ async fn browser_target_update(
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetUpdate,
 ) -> Result<(), String> {
-    require_local_app_webview(&webview, &state)?;
+    require_local_app_webview_async(&webview).await?;
     let controller = state.browser_controller.clone();
     let owner = webview.label().to_string();
     tauri::async_runtime::spawn_blocking(move || controller.update(&app, &owner, payload))
@@ -579,7 +666,7 @@ async fn browser_target_action(
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetAction,
 ) -> Result<serde_json::Value, String> {
-    require_local_app_webview(&webview, &state)?;
+    require_local_app_webview_async(&webview).await?;
     let controller = state.browser_controller.clone();
     let owner = webview.label().to_string();
     tauri::async_runtime::spawn_blocking(move || controller.action(&app, &owner, payload))
@@ -588,17 +675,19 @@ async fn browser_target_action(
         .map_err(|error| embedded_view::diagnostics::preview_error("target action", error))
 }
 
-#[tauri::command(async)]
-fn browser_target_unregister(
+#[tauri::command]
+async fn browser_target_unregister(
     webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     registration_id: String,
 ) -> Result<(), String> {
-    require_local_app_webview(&webview, &state)?;
-    state
-        .browser_controller
-        .unregister(&app, webview.label(), &registration_id)
+    require_local_app_webview_async(&webview).await?;
+    let controller = state.browser_controller.clone();
+    let owner = webview.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || controller.unregister(&app, &owner, &registration_id))
+        .await
+        .map_err(|error| embedded_view::diagnostics::preview_error("dispatch unregister", error))?
         .map_err(|error| embedded_view::diagnostics::preview_error("unregister target", error))
 }
 
@@ -747,12 +836,12 @@ const DEFAULT_WAKE_LOCK_CONFIG: WakeLockConfig = WakeLockConfig {
     sleep: false,
 };
 
-#[tauri::command(async)]
-fn cli_get_status(
+#[tauri::command]
+async fn cli_get_status(
     webview: tauri::Webview,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<CliStatus, String> {
-    require_preferences_or_local_app_webview(&webview, &state)?;
+    require_preferences_or_local_app_webview_async(&webview).await?;
     Ok(state.manager.status())
 }
 
@@ -761,9 +850,8 @@ async fn cli_renew_managed_session(
     webview: tauri::Webview,
     app: AppHandle,
 ) -> Result<bool, String> {
-    let state = app.state::<AppState>();
-    require_preferences_or_local_app_webview(&webview, &state)?;
-    let manager = state.manager.clone();
+    require_preferences_or_local_app_webview_async(&webview).await?;
+    let manager = app.state::<AppState>().manager.clone();
     tauri::async_runtime::spawn_blocking(move || manager.renew_managed_session(&app))
         .await
         .map_err(|_| "Session renewal unavailable".to_string())?
@@ -776,7 +864,7 @@ async fn cli_restart(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<CliStatus, String> {
-    require_preferences_or_local_app_webview(&webview, &state)?;
+    require_preferences_or_local_app_webview_async(&webview).await?;
     let manager = state.manager.clone();
     tauri::async_runtime::spawn_blocking(move || {
         // Admit before stopping, without holding the coordinator across the
@@ -812,10 +900,9 @@ fn wake_lock_start(
 #[tauri::command]
 async fn wake_lock_start(
     webview: tauri::Webview,
-    state: tauri::State<'_, AppState>,
     config: Option<WakeLockConfig>,
 ) -> Result<(), String> {
-    require_local_app_webview(&webview, &state)?;
+    require_local_app_webview_async(&webview).await?;
     change_wake_lock(webview.app_handle(), webview.label(), Some(config.unwrap_or(DEFAULT_WAKE_LOCK_CONFIG))).await
 }
 
@@ -845,8 +932,8 @@ fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<AppState>) -> Res
 
 #[cfg(not(windows))]
 #[tauri::command]
-async fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    require_local_app_webview(&webview, &state)?;
+async fn wake_lock_stop(webview: tauri::Webview) -> Result<(), String> {
+    require_local_app_webview_async(&webview).await?;
     change_wake_lock(webview.app_handle(), webview.label(), None).await
 }
 
@@ -934,13 +1021,21 @@ fn should_open_external_url(url: &Url) -> bool {
 }
 
 /// The renderer's system opener (application and Preferences windows).
-#[tauri::command(async)]
-fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+#[tauri::command]
+async fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
     let url = Url::parse(&url).map_err(|error| error.to_string())?;
     if !should_open_external_url(&url) {
         return Err(format!("{} links do not open externally", url.scheme()));
     }
-    external_open::open_url(&app, url.as_str())
+    external_open::open_url_async(app, url.into()).await
+}
+
+fn show_external_open_error(app: &AppHandle, title: &str, message: &str) {
+    tauri_plugin_dialog::DialogExt::dialog(app)
+        .message(message)
+        .title(title)
+        .kind(tauri_plugin_dialog::MessageDialogKind::Error)
+        .show(|_| {});
 }
 
 // Remote documents have no opener IPC capability. Only this owned policy may
@@ -980,9 +1075,11 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     }
 
     let open = |url: &Url| {
-        if let Err(err) = external_open::open_url(webview.app_handle(), url.as_str()) {
-            eprintln!("[tauri] failed to open external link {}: {}", url, err);
-        }
+        let target = url.to_string();
+        let failed_url = target.clone();
+        external_open::enqueue_open_url(webview.app_handle(), target, move |_, err| {
+            eprintln!("[tauri] failed to open external link {}: {}", failed_url, err);
+        });
     };
     if window_label.starts_with("remote-") {
         open_remote_external_url(url, open);
@@ -1202,13 +1299,14 @@ fn open_remote_window_locked(
             .and_then(|entries| entries.get(&external_label).map(|entry| entry.window_generation));
         if current == Some(window_generation) {
             open_remote_external_url(&url, |url| {
-                if let Err(error) = external_open::open_url(&external_app, url.as_str()) {
+                external_open::enqueue_open_url(&external_app, url.to_string(), |app, error| {
                     eprintln!("[tauri] failed to open help: {error}");
-                    tauri_plugin_dialog::DialogExt::dialog(&external_app)
-                        .message("Could not open help in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/ manually.")
-                        .title("CodeNomad Help")
-                        .show(|_| {});
-                }
+                    show_external_open_error(
+                        &app,
+                        "CodeNomad Help",
+                        "Could not open help in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/ manually.",
+                    );
+                });
             });
         }
         NewWindowResponse::Deny
@@ -1494,20 +1592,31 @@ fn clear_remote_window_metadata(
     true
 }
 
-#[tauri::command(async)]
-fn needs_local_certificate_install(
-    webview: tauri::Webview,
-    state: tauri::State<AppState>,
+#[cfg(any(not(target_os = "linux"), test))]
+async fn run_blocking_certificate_check(
+    check: impl FnOnce() -> Result<bool, String> + Send + 'static,
 ) -> Result<bool, String> {
-    require_preferences_or_local_app_webview(&webview, &state)?;
+    tauri::async_runtime::spawn_blocking(check)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn needs_local_certificate_install(webview: tauri::Webview) -> Result<bool, String> {
+    require_preferences_or_local_app_webview_async(&webview).await?;
     #[cfg(not(target_os = "linux"))]
     {
-        let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
-            format!("Failed to load the local HTTPS certificate for the remote proxy window: {err}")
-        })?;
-        return cert_manager::needs_trust_in_store(&local_cert.ca_cert_der).map_err(|err| {
-            format!("Failed to inspect the local CodeNomad certificate trust state: {err}")
-        });
+        run_blocking_certificate_check(|| {
+            let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
+                format!(
+                    "Failed to load the local HTTPS certificate for the remote proxy window: {err}"
+                )
+            })?;
+            cert_manager::needs_trust_in_store(&local_cert.ca_cert_der).map_err(|err| {
+                format!("Failed to inspect the local CodeNomad certificate trust state: {err}")
+            })
+        })
+        .await
     }
 
     #[cfg(target_os = "linux")]
@@ -1520,10 +1629,9 @@ fn needs_local_certificate_install(
 async fn open_remote_window(
     webview: tauri::Webview,
     app: AppHandle,
-    state: tauri::State<'_, AppState>,
     payload: RemoteWindowPayload,
 ) -> Result<(), String> {
-    require_preferences_or_local_app_webview(&webview, &state)?;
+    require_preferences_or_local_app_webview_async(&webview).await?;
     #[cfg(not(target_os = "linux"))]
     {
         let entry_url = payload
@@ -2398,26 +2506,38 @@ fn main() {
 
                 "open-help" => {
                     if !emit_menu_action(app_handle, "open-help") {
-                        if let Err(err) = external_open::open_url(app_handle, HELP_URL) {
-                            eprintln!("[tauri] failed to open CodeNomad help: {err}");
-                            rfd::MessageDialog::new()
-                                .set_title("CodeNomad Help")
-                                .set_description("Could not open help in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/ manually.")
-                                .set_level(rfd::MessageLevel::Error)
-                                .show();
-                        }
+                        external_open::enqueue_open_url(
+                            app_handle,
+                            HELP_URL.to_string(),
+                            |app, err| {
+                                eprintln!("[tauri] failed to open CodeNomad help: {err}");
+                                show_external_open_error(
+                                    &app,
+                                    "CodeNomad Help",
+                                    "Could not open help in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/ manually.",
+                                );
+                            },
+                        );
                     }
                 }
                 "open-sponsor" => {
                     if !emit_menu_action(app_handle, "open-sponsor") {
-                        if let Err(err) = external_open::open_url(app_handle, SPONSOR_URL) {
-                            eprintln!("[tauri] failed to open the Support CodeNomad page: {err}");
-                            rfd::MessageDialog::new()
-                                .set_title("Support CodeNomad")
-                                .set_description(format!("Could not open the Support CodeNomad page in your browser. Visit {SPONSOR_URL} manually."))
-                                .set_level(rfd::MessageLevel::Error)
-                                .show();
-                        }
+                        external_open::enqueue_open_url(
+                            app_handle,
+                            SPONSOR_URL.to_string(),
+                            |app, err| {
+                                eprintln!(
+                                    "[tauri] failed to open the Support CodeNomad page: {err}"
+                                );
+                                show_external_open_error(
+                                    &app,
+                                    "Support CodeNomad",
+                                    &format!(
+                                        "Could not open the Support CodeNomad page in your browser. Visit {SPONSOR_URL} manually."
+                                    ),
+                                );
+                            },
+                        );
                     }
                 }
                 "open-about" | "help_open_about" => {
@@ -2922,9 +3042,9 @@ fn releases_page(version: &str) -> &'static str {
 
 fn open_releases_page(app_handle: &AppHandle) {
     let page = releases_page(&app_handle.package_info().version.to_string());
-    if let Err(err) = external_open::open_url(app_handle, page) {
+    external_open::enqueue_open_url(app_handle, page.to_string(), |_, err| {
         eprintln!("[tauri] failed to open the CodeNomad releases page: {err}");
-    }
+    });
 }
 
 /// Text of the native fallback when no application window can open Settings → Info.
@@ -3420,5 +3540,170 @@ mod menu_tests {
             &Url::parse("https://remote.example/workspace").unwrap(),
             Some(managed),
         ));
+    }
+
+    #[test]
+    fn run_on_dispatch_awaits_oneshot_without_blocking_async_executor() {
+        use std::{
+            future::{poll_fn, Future},
+            pin::{pin, Pin},
+            sync::mpsc,
+            task::Poll,
+            time::Duration,
+        };
+
+        async fn assert_pending(mut future: Pin<&mut impl Future>) {
+            poll_fn(|cx| {
+                assert!(future.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+        }
+
+        let (dispatch_tx, dispatch_rx) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let (ran_on_tx, ran_on_rx) = mpsc::channel();
+        tauri::async_runtime::block_on(async {
+            let mut dispatched = pin!(super::run_on_dispatch(
+                move |job| dispatch_tx.send(job),
+                move || {
+                    ran_on_tx.send(std::thread::current().id()).unwrap();
+                    Ok::<_, String>("captured".to_string())
+                },
+            ));
+            assert_pending(dispatched.as_mut()).await;
+            assert!(ran_on_rx.try_recv().is_err());
+
+            let job = dispatch_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            let native = std::thread::spawn(move || {
+                let id = std::thread::current().id();
+                job();
+                id
+            });
+            let native_id = native.join().unwrap();
+            assert_eq!(ran_on_rx.recv_timeout(Duration::from_secs(1)).unwrap(), native_id);
+            assert_eq!(dispatched.await.unwrap(), "captured");
+        });
+
+        // A dropped dispatch closure surfaces an error rather than hanging forever.
+        tauri::async_runtime::block_on(async {
+            let result = super::run_on_dispatch(
+                |_job| Ok::<(), &str>(()),
+                || Ok::<_, String>(()),
+            )
+            .await;
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn titlebar_popup_awaits_oneshot_and_releases_admission_before_reply() {
+        use std::{
+            future::{poll_fn, Future},
+            pin::{pin, Pin},
+            sync::{
+                atomic::{AtomicBool, Ordering},
+                mpsc, Arc,
+            },
+            task::Poll,
+            time::Duration,
+        };
+
+        async fn assert_pending(mut future: Pin<&mut impl Future>) {
+            poll_fn(|cx| {
+                assert!(future.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+        }
+
+        let pending = Arc::new(AtomicBool::new(false));
+        let (dispatch_tx, dispatch_rx) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        tauri::async_runtime::block_on(async {
+            let mut first = pin!(super::run_popup_titlebar_menu_with(
+                &pending,
+                move |job| dispatch_tx.send(job),
+                || Ok(()),
+            ));
+            assert_pending(first.as_mut()).await;
+            assert!(pending.load(Ordering::Acquire));
+
+            // A concurrent request fails immediately without touching dispatch.
+            let second = super::run_popup_titlebar_menu_with(
+                &pending,
+                |_| -> Result<(), &'static str> { panic!("concurrent popup must not dispatch") },
+                || Ok(()),
+            )
+            .await;
+            assert_eq!(second.unwrap_err(), "A native titlebar menu is already open");
+
+            // Completing on dispatch releases admission before the oneshot resolves.
+            let job = dispatch_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            std::thread::spawn(job).join().unwrap();
+            first.await.unwrap();
+            assert!(!pending.load(Ordering::Acquire));
+
+            // Dropping the queued closure without executing it also releases admission.
+            let dropped = super::run_popup_titlebar_menu_with(
+                &pending,
+                |_job| Ok::<(), &str>(()),
+                || Ok(()),
+            )
+            .await;
+            assert!(dropped.is_err());
+            assert!(!pending.load(Ordering::Acquire));
+        });
+    }
+
+    #[test]
+    fn certificate_trust_check_runs_on_blocking_worker_off_async_executor() {
+        use std::{
+            future::{poll_fn, Future},
+            pin::{pin, Pin},
+            sync::mpsc,
+            task::Poll,
+            time::Duration,
+        };
+
+        async fn assert_pending(mut future: Pin<&mut impl Future>) {
+            poll_fn(|cx| {
+                assert!(future.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+        }
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        tauri::async_runtime::block_on(async {
+            let executor_thread = std::thread::current().id();
+            let mut check = pin!(super::run_blocking_certificate_check(move || {
+                started_tx.send(std::thread::current().id()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(true)
+            }));
+            assert_pending(check.as_mut()).await;
+            let worker_thread = started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_ne!(worker_thread, executor_thread);
+            assert_pending(check.as_mut()).await;
+            release_tx.send(()).unwrap();
+            assert!(check.await.unwrap());
+        });
+    }
+
+    #[test]
+    fn window_control_action_rejects_unknown_actions_before_dispatch() {
+        assert_eq!(
+            super::WindowControlAction::parse("minimize").unwrap(),
+            super::WindowControlAction::Minimize
+        );
+        assert_eq!(
+            super::WindowControlAction::parse("maximize").unwrap(),
+            super::WindowControlAction::Maximize
+        );
+        assert_eq!(
+            super::WindowControlAction::parse("close").unwrap(),
+            super::WindowControlAction::Close
+        );
+        assert!(super::WindowControlAction::parse("drag").is_err());
     }
 }

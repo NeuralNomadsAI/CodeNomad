@@ -523,9 +523,10 @@ fn confirmed_session_end_takes_over_quit_already_in_native_preflight() {
     coordinator.begin_shutdown(std::iter::empty()).unwrap();
     assert!(coordinator.begin_cleanup());
     assert!(coordinator.begin_windows_session_end(["local-a".to_string()]).is_none());
-    let (deadline, start) = coordinator.confirm_windows_session_end();
+    let (deadline, start, abandoned) = coordinator.confirm_windows_session_end();
     assert!(start);
-    assert_eq!(coordinator.confirm_windows_session_end(), (deadline, false));
+    assert!(abandoned.is_empty());
+    assert_eq!(coordinator.confirm_windows_session_end(), (deadline, false, Vec::new()));
     assert!(coordinator.cleanup_failed(|| panic!("must not reopen admission")).is_empty());
     assert!(!coordinator.wait_for_windows_cleanup(Instant::now()));
     coordinator.complete_cleanup();
@@ -541,9 +542,10 @@ fn windows_session_end_keeps_normal_quit_from_claiming_cleanup() {
     assert!(!coordinator.begin_cleanup());
     assert!(coordinator.acknowledge_global(&requests[0].0, requests[0].1));
     assert!(!coordinator.begin_cleanup());
-    let (deadline, start) = coordinator.confirm_windows_session_end();
+    let (deadline, start, abandoned) = coordinator.confirm_windows_session_end();
     assert!(start);
-    assert_eq!(coordinator.confirm_windows_session_end(), (deadline, false));
+    assert!(abandoned.is_empty());
+    assert_eq!(coordinator.confirm_windows_session_end(), (deadline, false, Vec::new()));
 }
 
 #[cfg(windows)]
@@ -575,9 +577,10 @@ fn multi_window_session_end_only_prepares_once() {
 fn confirmed_session_end_needs_no_query_or_renderer_acknowledgement() {
     let coordinator = ShutdownCoordinator::default();
     let requests = coordinator.begin_shutdown(["local-a".into()]).unwrap();
-    let (deadline, first) = coordinator.confirm_windows_session_end();
+    let (deadline, first, abandoned) = coordinator.confirm_windows_session_end();
     assert!(first);
-    assert_eq!(coordinator.confirm_windows_session_end(), (deadline, false));
+    assert!(abandoned.is_empty());
+    assert_eq!(coordinator.confirm_windows_session_end(), (deadline, false, Vec::new()));
     assert!(!coordinator.acknowledge_global(&requests[0].0, requests[0].1));
 }
 
@@ -599,4 +602,39 @@ fn session_end_stops_backend_after_failed_or_blocked_persistence() {
         assert!(Instant::now() < until);
         unblock.send(()).unwrap();
     }));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_session_end_unblocks_waiting_shutdown_during_window_construction() {
+    let coordinator = ShutdownCoordinator::default();
+    let (_, building) = coordinator
+        .admit_local_window_build("local-a".into(), "window-a".into(), || Ok(()))
+        .unwrap()
+        .unwrap();
+    let started = Instant::now();
+    std::thread::scope(|scope| {
+        let coordinator_ref = &coordinator;
+        let waiter = scope
+            .spawn(move || coordinator_ref.wait_for_local_window_builds(Duration::from_secs(2)));
+        std::thread::sleep(Duration::from_millis(20));
+        let (_, start, abandoned) = coordinator.confirm_windows_session_end();
+        assert!(start);
+        assert_eq!(
+            abandoned,
+            vec![AbandonedLocalWindowBuild {
+                label: "local-a".into(),
+                window_id: "window-a".into(),
+            }]
+        );
+        assert!(!waiter.join().unwrap());
+    });
+    assert!(
+        started.elapsed() < Duration::from_millis(300),
+        "wait_for_local_window_builds must wake immediately on confirmed Windows session end"
+    );
+    assert!(building.is_abandoned());
+    assert!(building
+        .finish(|| panic!("abandoned build must not commit"))
+        .is_none());
 }

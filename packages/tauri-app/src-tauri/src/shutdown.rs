@@ -52,7 +52,7 @@ struct ShutdownState {
     approved_local_closes: HashSet<String>,
     global_pending: HashMap<String, u64>,
     global_requests: HashMap<String, u64>,
-    building_local_windows: usize,
+    building_local_windows: HashMap<u64, AbandonedLocalWindowBuild>,
     shutdown_started: bool,
     cleanup_started: bool,
     exit_allowed: bool,
@@ -84,19 +84,66 @@ pub(crate) struct ShutdownCoordinator {
     release_acknowledged: Condvar,
 }
 
-pub(crate) struct LocalWindowBuild<'a>(&'a ShutdownCoordinator);
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AbandonedLocalWindowBuild {
+    pub(crate) label: String,
+    pub(crate) window_id: String,
+}
+
+pub(crate) struct LocalWindowBuild<'a> {
+    coordinator: &'a ShutdownCoordinator,
+    token: u64,
+    finished: bool,
+}
+
+impl LocalWindowBuild<'_> {
+    pub(crate) fn is_abandoned(&self) -> bool {
+        let state = self
+            .coordinator
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        !state.building_local_windows.contains_key(&self.token)
+    }
+
+    pub(crate) fn finish<T>(mut self, on_active: impl FnOnce() -> T) -> Option<T> {
+        let mut state = self
+            .coordinator
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        self.finished = true;
+        if state.building_local_windows.remove(&self.token).is_none() {
+            return None;
+        }
+        let result = on_active();
+        self.coordinator.release_acknowledged.notify_all();
+        Some(result)
+    }
+}
 
 impl Drop for LocalWindowBuild<'_> {
     fn drop(&mut self) {
-        let mut state = self.0.state.lock().unwrap_or_else(|error| error.into_inner());
-        state.building_local_windows -= 1;
-        self.0.release_acknowledged.notify_all();
+        if self.finished {
+            return;
+        }
+        let mut state = self
+            .coordinator
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if state.building_local_windows.remove(&self.token).is_some() {
+            self.coordinator.release_acknowledged.notify_all();
+        }
     }
 }
 
 impl ShutdownCoordinator {
     pub(crate) fn admit_local_window_build<T>(
         &self,
+        label: String,
+        window_id: String,
         register: impl FnOnce() -> Result<T, String>,
     ) -> Option<Result<(T, LocalWindowBuild<'_>), String>> {
         let mut state = self.state.lock().ok()?;
@@ -104,17 +151,40 @@ impl ShutdownCoordinator {
             return None;
         }
         Some(register().map(|record| {
-            state.building_local_windows += 1;
-            (record, LocalWindowBuild(self))
+            state.next_generation += 1;
+            let token = state.next_generation;
+            state.building_local_windows.insert(
+                token,
+                AbandonedLocalWindowBuild { label, window_id },
+            );
+            (
+                record,
+                LocalWindowBuild {
+                    coordinator: self,
+                    token,
+                    finished: false,
+                },
+            )
         }))
     }
 
     pub(crate) fn wait_for_local_window_builds(&self, timeout: Duration) -> bool {
         let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        let (state, _) = self.release_acknowledged
-            .wait_timeout_while(state, timeout, |state| state.building_local_windows != 0)
+        let (state, _) = self
+            .release_acknowledged
+            .wait_timeout_while(state, timeout, |state| {
+                #[cfg(windows)]
+                if state.windows_session_end_deadline.is_some() {
+                    return false;
+                }
+                !state.building_local_windows.is_empty()
+            })
             .unwrap_or_else(|error| error.into_inner());
-        state.building_local_windows == 0
+        #[cfg(windows)]
+        if state.windows_session_end_deadline.is_some() {
+            return false;
+        }
+        state.building_local_windows.is_empty()
     }
 
     fn begin_local_close(
@@ -564,15 +634,22 @@ impl ShutdownCoordinator {
     }
 
     #[cfg(windows)]
-    fn confirm_windows_session_end(&self) -> (Instant, bool) {
+    pub(crate) fn confirm_windows_session_end(
+        &self,
+    ) -> (Instant, bool, Vec<AbandonedLocalWindowBuild>) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if let Some(deadline) = state.windows_session_end_deadline {
-            return (deadline, false);
+            return (deadline, false, Vec::new());
         }
         let deadline = Instant::now() + WINDOWS_SESSION_END_TIMEOUT;
         state.windows_session_end_deadline = Some(deadline);
+        let abandoned: Vec<_> = state
+            .building_local_windows
+            .drain()
+            .map(|(_, build)| build)
+            .collect();
         if state.exit_allowed {
-            return (deadline, false);
+            return (deadline, false, abandoned);
         }
         state.shutdown_started = true;
         state.cleanup_started = true;
@@ -582,7 +659,7 @@ impl ShutdownCoordinator {
         state.automation_restart.take();
         state.global_pending.clear();
         self.release_acknowledged.notify_all();
-        (deadline, true)
+        (deadline, true, abandoned)
     }
 
     #[cfg(windows)]
@@ -868,6 +945,10 @@ fn start_cleanup(app: AppHandle) {
         // An admitted renderer can be in the shutdown snapshot before its native
         // window exists. Let it enqueue publication before capture and sealing.
         if !coordinator.wait_for_local_window_builds(IPC_DRAIN_TIMEOUT) {
+            #[cfg(windows)]
+            if coordinator.windows_session_end_confirmed() {
+                return;
+            }
             eprintln!("[tauri] shutdown canceled: local window construction did not settle");
             let cancellations = coordinator.cleanup_failed(|| {});
             emit_flush_cancellations(&app, cancellations);
@@ -1116,9 +1197,30 @@ fn cancel_windows_session_end(app: &AppHandle) {
 }
 
 #[cfg(windows)]
+pub(crate) fn abandon_unfinished_local_window_builds_in(
+    windows: Option<&LocalWindows>,
+    client_state: Option<&client_state::ClientState>,
+    abandoned: Vec<AbandonedLocalWindowBuild>,
+) {
+    for build in abandoned {
+        if let Some(windows) = windows {
+            windows.remove_runtime(&build.label);
+        }
+        if let Some(client_state) = client_state {
+            client_state.unregister_window(&build.window_id);
+        }
+    }
+}
+
+#[cfg(windows)]
 pub(crate) fn request_windows_session_end(app: AppHandle) {
     let coordinator = app.state::<ShutdownCoordinator>();
-    let (deadline, start) = coordinator.confirm_windows_session_end();
+    let (deadline, start, abandoned_builds) = coordinator.confirm_windows_session_end();
+    abandon_unfinished_local_window_builds_in(
+        app.try_state::<LocalWindows>().as_deref(),
+        app.try_state::<client_state::ClientState>().as_deref(),
+        abandoned_builds,
+    );
     if start {
         let cleanup_app = app.clone();
         std::thread::spawn(move || {

@@ -94,10 +94,9 @@ fn configured(app: &AppHandle) -> bool {
 #[tauri::command]
 pub(crate) async fn check_desktop_update(
     webview: tauri::Webview,
-    state: tauri::State<'_, crate::AppState>,
     feed: Option<UpdateFeed>,
 ) -> Result<CheckResult, String> {
-    crate::require_preferences_or_local_app_webview(&webview, &state)?;
+    crate::require_preferences_or_local_app_webview_async(&webview).await?;
     let app = webview.app_handle();
     if !configured(app) { return Ok(CheckResult::Unsupported); }
     let Ok(_lease) = UpdateLease::acquire() else { return Ok(CheckResult::Busy) };
@@ -142,10 +141,9 @@ pub(crate) async fn check_desktop_update(
 #[tauri::command]
 pub(crate) async fn install_desktop_update(
     webview: tauri::Webview,
-    state: tauri::State<'_, crate::AppState>,
     version: String,
 ) -> Result<(), String> {
-    crate::require_preferences_or_local_app_webview(&webview, &state)?;
+    crate::require_preferences_or_local_app_webview_async(&webview).await?;
     let lease = UpdateLease::acquire()?;
     let app = webview.app_handle().clone();
     if !configured(&app) { return Err("This installation does not support in-place updates".into()); }

@@ -408,12 +408,11 @@ pub(crate) fn is_trusted_renderer_origin(webview: &tauri::Webview, url: &Url) ->
 pub(crate) async fn open_preferences_window(
     webview: tauri::Webview,
     app: AppHandle,
-    app_state: tauri::State<'_, AppState>,
     request: PreferencesRequest,
     toggle: Option<bool>,
     resume: Option<bool>,
 ) -> Result<(), String> {
-    crate::require_local_app_webview(&webview, &app_state)?;
+    crate::require_local_app_webview_async(&webview).await?;
     let mut request = validate_request(request)?;
     let opener = webview.label().to_owned();
     tauri::async_runtime::spawn_blocking(move || {
@@ -731,12 +730,11 @@ fn opener_or_recent(
 pub(crate) async fn preferences_opener_startup_state(
     webview: tauri::Webview,
     app: AppHandle,
-    app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
     command: String,
     epoch: Option<u64>,
 ) -> Result<OpenerStartupStateResult, String> {
-    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    crate::require_preferences_or_local_app_webview_async(&webview).await?;
     if webview.label() != LABEL {
         return Err("Opener startup state requires the Preferences window".to_string());
     }
@@ -849,13 +847,35 @@ pub(crate) fn suspend_guard(app: &AppHandle) {
 }
 
 pub(crate) async fn approve_close(app: &AppHandle) -> Result<bool, String> {
-    let incarnation = app.state::<PreferencesWindow>().incarnation();
-    let (done, reply) = tokio::sync::oneshot::channel();
-    if !enqueue_close(app, incarnation, move |result| {
-        let _ = done.send(result);
-    })? {
+    let dispatch = app.clone();
+    approve_close_with(
+        |job| app.run_on_main_thread(job),
+        move || {
+            let incarnation = dispatch.state::<PreferencesWindow>().incarnation();
+            let (done, reply) = tokio::sync::oneshot::channel();
+            if !enqueue_close(&dispatch, incarnation, move |result| {
+                let _ = done.send(result);
+            })? {
+                return Ok(None);
+            }
+            Ok(Some(reply))
+        },
+    )
+    .await
+}
+
+async fn approve_close_with<E>(
+    dispatch: impl FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), E>,
+    capture_and_enqueue: impl FnOnce() -> Result<Option<tokio::sync::oneshot::Receiver<Result<bool, String>>>, String>
+        + Send
+        + 'static,
+) -> Result<bool, String>
+where
+    E: std::fmt::Display,
+{
+    let Some(reply) = crate::run_on_dispatch(dispatch, capture_and_enqueue).await? else {
         return Ok(false);
-    }
+    };
     reply.await.map_err(|error| error.to_string())?
 }
 
@@ -1307,5 +1327,79 @@ mod tests {
         assert_eq!(LABEL, "preferences");
         assert!(!LABEL.starts_with("local-"));
         assert!(CONTEXT_SCRIPT.contains("__CODENOMAD_WINDOW_CONTEXT__ = 'preferences'"));
+    }
+
+    #[test]
+    fn approve_close_captures_native_geometry_on_dispatch_before_awaiting_worker() {
+        use std::{
+            future::{poll_fn, Future},
+            pin::{pin, Pin},
+            sync::{
+                atomic::{AtomicBool, Ordering},
+                mpsc, Arc,
+            },
+            task::Poll,
+            time::Duration,
+        };
+
+        async fn assert_pending(mut future: Pin<&mut impl Future>) {
+            poll_fn(|cx| {
+                assert!(future.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+        }
+
+        let captured = Arc::new(AtomicBool::new(false));
+        let (dispatch_tx, dispatch_rx) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let (worker_done, worker_reply) = tokio::sync::oneshot::channel::<Result<bool, String>>();
+        let (capture_thread_tx, capture_thread_rx) = mpsc::channel();
+        let captured_on_dispatch = Arc::clone(&captured);
+
+        tauri::async_runtime::block_on(async {
+            let mut approving = pin!(approve_close_with(
+                move |job| dispatch_tx.send(job),
+                move || {
+                    captured_on_dispatch.store(true, Ordering::SeqCst);
+                    capture_thread_tx.send(std::thread::current().id()).unwrap();
+                    Ok(Some(worker_reply))
+                },
+            ));
+            assert_pending(approving.as_mut()).await;
+            assert!(
+                !captured.load(Ordering::SeqCst),
+                "native geometry capture must run on native dispatch, not on the async executor"
+            );
+
+            let job = dispatch_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            let native = std::thread::spawn(move || {
+                let native_id = std::thread::current().id();
+                job();
+                native_id
+            });
+            let native_id = native.join().unwrap();
+            assert_eq!(
+                capture_thread_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+                native_id
+            );
+
+            assert_pending(approving.as_mut()).await;
+            worker_done.send(Ok(true)).unwrap();
+            assert!(approving.await.unwrap());
+        });
+
+        // A close not admitted on dispatch resolves immediately to Ok(false).
+        tauri::async_runtime::block_on(async {
+            let approved = approve_close_with(
+                |job| {
+                    job();
+                    Ok::<(), &str>(())
+                },
+                || Ok(None),
+            )
+            .await
+            .unwrap();
+            assert!(!approved);
+        });
     }
 }

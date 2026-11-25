@@ -93,11 +93,10 @@ struct CleanupEvent {
 pub(crate) async fn preferences_memory_cleanup(
     webview: tauri::Webview,
     app: AppHandle,
-    app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
     request: CleanupRequest,
 ) -> Result<(), String> {
-    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    crate::require_preferences_or_local_app_webview_async(&webview).await?;
     if webview.label() != LABEL {
         return Err("Cleanup requires Preferences".into());
     }
@@ -117,11 +116,10 @@ pub(crate) async fn preferences_memory_cleanup(
     let target = app
         .get_webview_window(&label)
         .ok_or("Cleanup opener unavailable")?;
-    crate::require_local_app_webview(
-        &app.get_webview(&label)
-            .ok_or("Cleanup opener unavailable")?,
-        &app_state,
-    )?;
+    let target_webview = app
+        .get_webview(&label)
+        .ok_or("Cleanup opener unavailable")?;
+    crate::require_local_app_webview_async(&target_webview).await?;
     let (sender, receiver) = mpsc::channel();
     {
         let mut pending = preferences

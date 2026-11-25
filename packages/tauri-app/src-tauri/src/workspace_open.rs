@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
-use tauri::State;
+use tauri::{Manager, State};
 
 #[derive(Clone)]
 struct LaunchCandidate {
@@ -573,18 +573,24 @@ fn open_workspace_target_impl(
     }
 }
 
-fn require_local_window(webview: &tauri::Webview, state: &AppState) -> Result<(), String> {
+async fn require_local_window(webview: &tauri::Webview) -> Result<(), String> {
     crate::identity::local_window_id(webview.label())?;
-    let config = state
-        .manager
-        .local_cli_access()
-        .ok_or("Local CodeNomad server is unavailable")?;
-    let expected = url::Url::parse(&config.base_url).map_err(|error| error.to_string())?;
-    let current = webview.url().map_err(|error| error.to_string())?;
-    if current.origin() != expected.origin() {
-        return Err("Workspace open requests require the local CodeNomad origin".into());
-    }
-    Ok(())
+    let app = webview.app_handle().clone();
+    let webview = webview.clone();
+    crate::run_on_main_thread_async(&app, move || {
+        let state = webview.app_handle().state::<AppState>();
+        let config = state
+            .manager
+            .local_cli_access()
+            .ok_or("Local CodeNomad server is unavailable")?;
+        let expected = url::Url::parse(&config.base_url).map_err(|error| error.to_string())?;
+        let current = webview.url().map_err(|error| error.to_string())?;
+        if current.origin() != expected.origin() {
+            return Err("Workspace open requests require the local CodeNomad origin".into());
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -597,7 +603,7 @@ pub async fn open_workspace_target(
     path: Option<String>,
     editor: Option<String>,
 ) -> Result<(), String> {
-    require_local_window(&webview, &state)?;
+    require_local_window(&webview).await?;
     let manager = state.manager.clone();
     tauri::async_runtime::spawn_blocking(move || {
         open_workspace_target_impl(&manager, target, instance_id, worktree_slug, path, editor)
@@ -616,11 +622,10 @@ pub async fn open_workspace_target(
 #[tauri::command]
 pub async fn open_local_path(
     webview: tauri::Webview,
-    state: State<'_, AppState>,
     path: String,
     keep: String,
 ) -> Result<&'static str, String> {
-    require_local_window(&webview, &state)?;
+    require_local_window(&webview).await?;
     tauri::async_runtime::spawn_blocking(move || open_local_path_impl(&path, &keep))
         .await
         .map_err(|error| error.to_string())?

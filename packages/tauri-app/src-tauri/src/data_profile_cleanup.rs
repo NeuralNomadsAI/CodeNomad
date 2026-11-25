@@ -1060,10 +1060,9 @@ fn run<T: Send + 'static>(
 #[tauri::command]
 pub(crate) async fn data_profiles_list_others(
     webview: tauri::Webview,
-    app_state: tauri::State<'_, crate::AppState>,
     context: tauri::State<'_, CleanupContext>,
 ) -> Result<OtherProfilesListing, String> {
-    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    crate::require_preferences_or_local_app_webview_async(&webview).await?;
     run(&context, |roots, current| {
         list_other_profiles(roots, current, &SYSTEM)
     })
@@ -1073,11 +1072,10 @@ pub(crate) async fn data_profiles_list_others(
 #[tauri::command]
 pub(crate) async fn data_profiles_delete_others(
     webview: tauri::Webview,
-    app_state: tauri::State<'_, crate::AppState>,
     context: tauri::State<'_, CleanupContext>,
     ids: Vec<String>,
 ) -> Result<DeleteOtherProfilesResult, String> {
-    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    crate::require_preferences_or_local_app_webview_async(&webview).await?;
     let ids = require_profile_ids(ids)?;
     run(&context, move |roots, current| {
         delete_other_profiles(roots, current, &ids, &SYSTEM)
@@ -1088,11 +1086,10 @@ pub(crate) async fn data_profiles_delete_others(
 #[tauri::command]
 pub(crate) async fn data_profiles_set_next_launch(
     webview: tauri::Webview,
-    app_state: tauri::State<'_, crate::AppState>,
     context: tauri::State<'_, CleanupContext>,
     name: String,
 ) -> Result<NextLaunch, String> {
-    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    crate::require_preferences_or_local_app_webview_async(&webview).await?;
     run(&context, move |roots, current| {
         set_next_launch(roots, current, &name, SystemTime::now())
     })
@@ -1104,10 +1101,9 @@ pub(crate) async fn data_profiles_set_next_launch(
 #[tauri::command]
 pub(crate) async fn data_profiles_relaunch(
     webview: tauri::Webview,
-    app_state: tauri::State<'_, crate::AppState>,
     context: tauri::State<'_, CleanupContext>,
 ) -> Result<(), String> {
-    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    crate::require_preferences_or_local_app_webview_async(&webview).await?;
     let app = webview.app_handle().clone();
     run(&context, move |_, _| crate::shutdown::request_restart(app)).await
 }
