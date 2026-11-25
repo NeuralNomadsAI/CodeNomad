@@ -564,13 +564,19 @@ pub(super) fn view(
                         &mut s.settings.web.logging
                     }),
             ),
-        Section::Remote if local => panel.remote.view(&s.settings.shared, |s: &mut State| {
-            let panel = &mut s.settings.web;
-            (panel.shown
-                && panel.section == Section::Remote
-                && panel.local(&s.settings.shared.borrow()))
-            .then_some(&mut panel.remote)
-        }),
+        Section::Remote if local => panel.remote.view(
+            &s.settings.shared,
+            |s: &mut State| {
+                let paired = !crate::platform::pairing::required(s);
+                let panel = &mut s.settings.web;
+                (paired
+                    && panel.shown
+                    && panel.section == Section::Remote
+                    && panel.local(&s.settings.shared.borrow()))
+                .then_some(&mut panel.remote)
+            },
+            |s: &mut State| &mut s.settings.web.remote,
+        ),
         Section::ConfigFiles if panel.scope.config_files(prefs) => {
             panel
                 .config_files

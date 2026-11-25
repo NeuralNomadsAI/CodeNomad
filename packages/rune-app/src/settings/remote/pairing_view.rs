@@ -10,25 +10,43 @@ use std::{cell::RefCell, rc::Rc};
 #[derive(Default)]
 pub(super) struct Copy {
     #[cfg(target_arch = "wasm32")]
-    reply: Option<codenomad_client::Receiver<bool>>,
+    reply: Option<(String, codenomad_client::Receiver<bool>)>,
+    target: Option<String>,
     result: Option<bool>,
 }
 
 impl Copy {
     pub fn poll(&mut self) -> bool {
         #[cfg(target_arch = "wasm32")]
-        if let Some(result) = self.reply.as_ref().and_then(|reply| reply.try_recv().ok()) {
+        if let Some((target, result)) = self
+            .reply
+            .as_ref()
+            .and_then(|(target, reply)| reply.try_recv().ok().map(|ok| (target.clone(), ok)))
+        {
             self.reply = None;
+            self.target = Some(target);
             self.result = Some(result);
             return true;
         }
         false
     }
 
-    fn write(&mut self, url: &str, _prefs: &Preferences, _tx: &mut rune::Tx) {
+    pub fn copied(&self, url: &str) -> bool {
+        self.result == Some(true) && self.target.as_deref() == Some(url)
+    }
+
+    pub fn failed(&self, url: &str) -> bool {
+        self.result == Some(false) && self.target.as_deref() == Some(url)
+    }
+
+    pub fn write(&mut self, url: &str, _prefs: &Preferences, _tx: &mut rune::Tx) {
         crate::chat::tools::children::note_clipboard_write();
         #[cfg(not(target_arch = "wasm32"))]
-        _tx.copy(url.to_owned());
+        {
+            _tx.copy(url.to_owned());
+            self.target = Some(url.to_owned());
+            self.result = Some(true);
+        }
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen::JsCast;
@@ -41,12 +59,14 @@ impl Copy {
                     .dyn_into::<web_sys::Clipboard>()
                     .ok()
             }) else {
+                self.target = Some(url.to_owned());
                 self.result = Some(false);
                 return;
             };
             let result = clipboard.write_text(url);
             let (out, reply) = codenomad_client::bounded(1);
-            self.reply = Some(reply);
+            self.reply = Some((url.to_owned(), reply));
+            self.target = Some(url.to_owned());
             self.result = None;
             let wake = _prefs.main_wake.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -69,11 +89,13 @@ pub(super) fn view<S: 'static>(
     access: fn(&mut S) -> Option<&mut Remote>,
 ) -> El {
     let shared = shared.clone();
-    let label = t(if copy.result == Some(true) {
+    let label = t(if copy.copied(&pairing.url) {
         "remoteControl.pairing.copied"
     } else {
         "remoteControl.pairing.copy"
     });
+    let expires = t("remoteControl.pairing.expires")
+        .replace("{time}", &expiry_time(&pairing.expires_at_rfc3339));
     col()
         .full_width()
         .separate(Space::Sm)
@@ -82,22 +104,25 @@ pub(super) fn view<S: 'static>(
                 .text_role(TextRole::Title)
                 .role("heading"),
         )
+        .child(text(t("remoteControl.pairing.description")).wrap())
         .child(text(&pairing.url).wrap().literal_direction())
         .child(layout::button_tx(label, busy, move |s, tx| {
             let Some(state) = access(s) else {
                 return;
             };
             let prefs = shared.borrow();
-            if let Some(pairing) = state.pairing.as_ref()
+            if let Some(active) = state.pairing.as_ref()
                 && prefs.can_retry()
                 && state.owner.as_ref() == prefs.backend.as_ref().map(|backend| &backend.client_id)
-                && !pairing.remaining().is_zero()
+                && !active.pairing.remaining().is_zero()
             {
-                state.copy.write(&pairing.url, &prefs, tx);
+                let url = active.pairing.url.clone();
+                state.copy.write(&url, &prefs, tx);
             }
         }))
+        .child(text(&expires).wrap())
         .children(
-            (copy.result == Some(false))
+            copy.failed(&pairing.url)
                 .then(|| text(t("messageSection.quote.copyFailed")).role("alert")),
         )
 }
@@ -112,6 +137,23 @@ pub(super) fn last_seen(stamp: &str) -> String {
                 .to_locale_string(crate::strings::locale(), &Object::new())
                 .as_string()
         {
+            return value;
+        }
+    }
+    stamp.to_owned()
+}
+
+fn expiry_time(stamp: &str) -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use js_sys::{Date, Object};
+        let date = Date::new(&stamp.into());
+        if date.get_time().is_finite()
+            && let Some(value) = date
+                .to_locale_time_string(crate::strings::locale())
+                .as_string()
+        {
+            let _ = Object::new();
             return value;
         }
     }
