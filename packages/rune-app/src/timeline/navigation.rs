@@ -15,14 +15,66 @@ use rune::Tx;
 pub(super) struct Navigation {
     serial: u64,
     flight: Option<(Sender<()>, Marker)>,
-    align: Option<(String, String)>,
+    pub(super) align: Option<(String, String)>,
     pub(super) retry: Option<Marker>,
     pub(super) filtered: bool,
+    filtered_by_rail: bool,
     pub(super) requested_active: Option<String>,
     pub(super) active: Option<String>,
+    pub(super) active_version: Option<u64>,
+    active_index: Option<(u64, usize)>,
     locked: bool,
-    last: super::view::Scroll,
+    pub(super) last: super::view::Scroll,
     browse: bool,
+}
+
+pub(super) fn clear_browse(s: &mut State) {
+    let t = owner(s);
+    t.jump.browse = false;
+    let mut scroll = t.scroll.get();
+    scroll.rail_glide = None;
+    scroll.rail_glide_interrupted = false;
+    scroll.halt_rail_glide = false;
+    t.scroll.set(scroll);
+    t.jump.last.rail = scroll.rail;
+}
+
+pub(super) fn has_pending_or_locked(s: &State) -> bool {
+    let j = &s.transcript_display.timeline.jump;
+    j.flight.is_some() || j.locked || j.retry.is_some()
+}
+
+pub(super) fn cancel_rail_jump(s: &mut State, clear_locked: bool) -> bool {
+    let j = &s.transcript_display.timeline.jump;
+    let rail_jump = j.flight.as_ref().is_some_and(|(_, m)| !m.id.is_empty())
+        || j.retry.as_ref().is_some_and(|m| !m.id.is_empty())
+        || (clear_locked && j.locked && j.requested_active.is_some());
+    if rail_jump {
+        cancel_jump(s);
+        true
+    } else if j.filtered && j.filtered_by_rail {
+        set_filtered(s, false);
+        true
+    } else {
+        false
+    }
+}
+
+impl Navigation {
+    pub(super) fn has_flight(&self) -> bool {
+        self.flight.is_some()
+    }
+}
+
+#[cfg(test)]
+impl Navigation {
+    pub(super) fn is_browsing(&self) -> bool {
+        self.browse
+    }
+
+    pub(super) fn is_locked(&self) -> bool {
+        self.locked
+    }
 }
 
 pub(crate) fn cancel_jump(s: &mut State) {
@@ -57,6 +109,10 @@ pub(super) fn cancel_search(s: &mut State) {
             .is_some_and(|target| target.id.is_empty())
     {
         cancel_jump(s);
+    } else if jump.locked && jump.requested_active.is_none() {
+        let jump = &mut owner(s).jump;
+        jump.locked = false;
+        jump.active_version = None;
     }
     set_filtered(s, false);
 }
@@ -111,10 +167,11 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
     if let Some(row) = s.messages.iter().find(|row| row.id == target.message) {
         match locate(s, row, &target) {
             Landing::Visible(key, steps) => {
+                owner(s).jump.browse = false;
                 settle(s, &target, (key, steps));
                 apply_alignment(s, tx);
             }
-            Landing::Filtered => refuse_filtered(s),
+            Landing::Filtered => refuse_filtered_with_origin(s, !target.id.is_empty()),
             Landing::Missing => owner(s).jump.retry = Some(target),
         }
         return;
@@ -144,17 +201,26 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
         }
     }
     let j = &mut owner(s).jump;
+    j.browse = false;
     j.requested_active = (!target.id.is_empty()).then(|| target.id.clone());
     j.flight = Some((cancel, target));
     super::filters::reselect(s);
 }
 
 pub(super) fn refuse_filtered(s: &mut State) {
+    refuse_filtered_with_origin(s, false);
+}
+
+fn refuse_filtered_with_origin(s: &mut State, from_rail: bool) {
     s.transcript_display.search_highlight = None;
+    owner(s).jump.filtered_by_rail = from_rail;
     set_filtered(s, true);
 }
 
 pub(super) fn set_filtered(s: &mut State, filtered: bool) {
+    if !filtered {
+        owner(s).jump.filtered_by_rail = false;
+    }
     if std::mem::replace(&mut owner(s).jump.filtered, filtered) == filtered {
         return;
     }
@@ -229,10 +295,21 @@ pub(crate) fn admit(s: &mut State, serial: u64, page: Page, admit: Admission) {
 }
 
 pub(super) fn admit_window(s: &mut State, serial: u64, page: Page, accept: impl FnOnce() -> bool) {
-    if !(super::demanded(s) || super::search::is_open(s))
-        || owner(s).jump.serial != serial
-        || gesture(s)
-    {
+    let Some(is_search) = owner(s)
+        .jump
+        .flight
+        .as_ref()
+        .map(|(_, target)| target.id.is_empty())
+    else {
+        return;
+    };
+    let allowed = if is_search {
+        super::conversation_shown(s)
+            && (super::search::is_open(s) || crate::settings::show_timeline(s))
+    } else {
+        super::demanded(s)
+    };
+    if !allowed || owner(s).jump.serial != serial || gesture(s) {
         return;
     }
     let Some((_cancel, target)) = owner(s).jump.flight.take() else {
@@ -248,7 +325,7 @@ pub(super) fn admit_window(s: &mut State, serial: u64, page: Page, accept: impl 
             reader::install_anchor(s, page);
             settle(s, &target, (key, steps));
         }
-        Landing::Filtered => refuse_filtered(s),
+        Landing::Filtered => refuse_filtered_with_origin(s, !target.id.is_empty()),
         _ => owner(s).jump.retry = Some(target),
     }
 }
@@ -266,16 +343,18 @@ fn gesture(s: &mut State) -> bool {
     let t = owner(s);
     let observed = t.scroll.get();
     let previous = std::mem::replace(&mut t.jump.last, observed);
-    if previous.rail != observed.rail {
-        t.jump.browse = true;
-    }
-    if previous.transcript != observed.transcript {
+    let rail_moved = previous.rail != observed.rail;
+    let transcript_moved = previous.transcript != observed.transcript;
+    let last_rail = observed.wheel_last_rail.unwrap_or(observed.last_hand_rail);
+    if transcript_moved {
         cancel_jump(s);
-        owner(s).jump.browse = false;
-        true
-    } else {
-        false
     }
+    if rail_moved && (!transcript_moved || last_rail) {
+        owner(s).jump.browse = true;
+    } else if transcript_moved {
+        owner(s).jump.browse = false;
+    }
+    transcript_moved
 }
 
 pub(super) fn hand_scrolled(s: &mut State, rail: bool) {
@@ -315,6 +394,7 @@ pub(super) fn apply_alignment(s: &mut State, tx: &mut Tx) -> bool {
     let Some((message, key)) = owner(s).jump.align.take() else {
         return false;
     };
+    owner(s).keep_passage_deferred = None;
     tx.instant();
     tx.scroll_key_to(
         if key == message {
@@ -336,28 +416,174 @@ pub(super) fn apply_alignment(s: &mut State, tx: &mut Tx) -> bool {
 }
 
 pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
+    {
+        let t = owner(s);
+        let mut scroll = t.scroll.get();
+        scroll.rail_wheel.clear_frame();
+        scroll.transcript_wheel_target = None;
+        scroll.transcript_wheel_momentum = false;
+        t.scroll.set(scroll);
+    }
     let moved = gesture(s);
+    let mut halted = false;
+    {
+        let t = owner(s);
+        let mut scroll = t.scroll.get();
+        let mut dirty = scroll.wheel_last_rail.take().is_some();
+        if scroll.halt_rail_glide {
+            scroll.halt_rail_glide = false;
+            scroll.rail_glide = None;
+            scroll.rail_glide_interrupted = false;
+            scroll.rail_glide_stalled = 0;
+            let at = scroll.at.offset[1];
+            scroll.programmatic_rail = Some(at);
+            dirty = true;
+            rune_theme_codenomad::timeline::scroll_rail_to(at, tx);
+            halted = true;
+        }
+        if dirty {
+            t.scroll.set(scroll);
+        }
+    }
     let aligned = apply_alignment(s, tx);
-    if owner(s).jump.locked || owner(s).jump.flight.is_some() {
-        return moved || aligned;
+    let rail_mounted = super::demanded(s) && !s.transcript_display.timeline.markers.is_empty();
+    if !rail_mounted {
+        return moved || halted || aligned;
     }
     let bounds = s.tool_diff_preferences.history_bounds.get();
     let t = owner(s);
-    t.jump.requested_active = t.reading_line.first(bounds);
-    let marker = t
-        .jump
-        .requested_active
-        .as_deref()
-        .and_then(|id| super::filters::visible_id(t, id));
-    if t.jump.active == marker {
-        return moved || aligned;
+    let active_changed = if t.jump.locked || t.jump.flight.is_some() {
+        false
+    } else {
+        let next = t.reading_line.first(bounds);
+        if next != t.jump.requested_active || t.jump.active_version != Some(t.version) {
+            t.jump.requested_active = next;
+            t.jump.active_version = Some(t.version);
+            let marker = t
+                .jump
+                .requested_active
+                .as_deref()
+                .and_then(|id| super::filters::visible_id(t, id));
+            let changed = t.jump.active != marker;
+            t.jump.active = marker;
+            changed
+        } else {
+            false
+        }
+    };
+    moved || halted || aligned || active_changed
+}
+
+pub(crate) fn poll_reveal(s: &mut State, tx: &mut Tx, commit_pending: bool) {
+    let rail_mounted = super::demanded(s) && !s.transcript_display.timeline.markers.is_empty();
+    if !rail_mounted || s.transcript_display.timeline.jump.browse {
+        return;
     }
-    t.jump.active = marker;
-    if !t.jump.browse
-        && let Some(active) = &t.jump.active
-        && let Some(index) = t.markers.iter().position(|m| &m.id == active)
+    // Runs at the end of `crate::poll` once every subsystem's `changed` is known: defer reveal
+    // whenever any subsystem will cause `crate::poll` to call `tx.instant()` (which snaps
+    // `Tx::scroll_to` glides) or when queued native input is waiting.
+    let _ = reveal_active(s, tx, commit_pending || tx.input_waiting());
+}
+
+fn halt_obsolete_glide(
+    t: &mut super::Timeline,
+    at: rune_theme_codenomad::timeline::ScrollPosition,
+    tx: &mut Tx,
+) {
+    let mut scroll = t.scroll.get();
+    let Some(old_aim) = scroll.rail_glide else {
+        return;
+    };
+    let clamped = old_aim.clamp(0.0, at.max[1].max(0.0));
+    if (at.offset[1] - clamped).abs() <= 0.5 {
+        scroll.rail_glide = None;
+        scroll.rail_glide_interrupted = false;
+        scroll.rail_glide_stalled = 0;
+        scroll.halt_rail_glide = false;
+        t.scroll.set(scroll);
+        return;
+    }
+    if tx.input_waiting() {
+        tx.wake_after(std::time::Duration::ZERO);
+        return;
+    }
+    scroll.rail_glide = None;
+    scroll.rail_glide_interrupted = false;
+    scroll.rail_glide_stalled = 0;
+    scroll.halt_rail_glide = false;
+    scroll.programmatic_rail = Some(at.offset[1]);
+    t.scroll.set(scroll);
+    rune_theme_codenomad::timeline::scroll_rail_to(at.offset[1], tx);
+}
+
+const RAIL_GLIDE_WATCHDOG: std::time::Duration = std::time::Duration::from_millis(50);
+
+pub(super) fn reveal_active(s: &mut State, tx: &mut Tx, input_waiting: bool) -> bool {
+    let t = owner(s);
+    let at = t.scroll.get().at;
+    let index = match t.jump.active.as_deref() {
+        None => {
+            t.jump.active_index = None;
+            halt_obsolete_glide(t, at, tx);
+            return false;
+        }
+        Some(active) => {
+            let cached = t
+                .jump
+                .active_index
+                .filter(|&(version, idx)| {
+                    version == t.version && t.markers.get(idx).is_some_and(|m| m.id == active)
+                })
+                .map(|(_, idx)| idx);
+            let Some(idx) = cached.or_else(|| t.markers.iter().position(|m| m.id == active)) else {
+                t.jump.active_index = None;
+                halt_obsolete_glide(t, at, tx);
+                return false;
+            };
+            t.jump.active_index = Some((t.version, idx));
+            idx
+        }
+    };
+    let Some(target) = rune_theme_codenomad::timeline::reveal_target(index, at) else {
+        halt_obsolete_glide(t, at, tx);
+        return false;
+    };
+    let mut current = t.scroll.get();
+    if current
+        .rail_glide
+        .is_some_and(|aim| (aim - target).abs() <= 0.5)
     {
-        rune_theme_codenomad::timeline::reveal_when_outside(index, t.scroll.get().at, tx);
+        if (at.offset[1] - current.rail_glide_last).abs() > 0.01 {
+            current.rail_glide_last = at.offset[1];
+            current.rail_glide_stalled = 0;
+            t.scroll.set(current);
+            tx.wake_after(RAIL_GLIDE_WATCHDOG);
+            return false;
+        }
+        if current.rail_glide_stalled == 0 {
+            current.rail_glide_stalled = 1;
+            t.scroll.set(current);
+            tx.wake_after(RAIL_GLIDE_WATCHDOG);
+            return false;
+        }
     }
+    // Defer reveal while queued native input is waiting or a poll commit is pending; glide rather
+    // than jumping so concurrent touch pans (`TouchEffect::Pan`) and `WheelOwner::Vertical` bursts
+    // preserve `by_hand` and transition cleanly into `browse` instead of being overwritten. Under
+    // `reduced_motion`, Rune 1d78d5688 converts glides to instant jumps.
+    if input_waiting {
+        tx.wake_after(std::time::Duration::ZERO);
+        return false;
+    }
+    rune_theme_codenomad::timeline::glide_rail_to(target, tx);
+    let mut scroll = t.scroll.get();
+    scroll.programmatic_rail = Some(target);
+    scroll.rail_glide = Some(target);
+    scroll.rail_glide_last = at.offset[1];
+    scroll.rail_glide_stalled = 0;
+    scroll.rail_glide_interrupted = false;
+    scroll.halt_rail_glide = false;
+    t.scroll.set(scroll);
+    tx.wake_after(RAIL_GLIDE_WATCHDOG);
     true
 }
