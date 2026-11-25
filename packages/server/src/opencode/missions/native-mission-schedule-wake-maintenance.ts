@@ -9,6 +9,7 @@ import { acquireNativeMissionScheduleOwner } from "./native-mission-schedule-own
 import { readNativeScheduleCarrierOwnership, assertNativeScheduleCarrierArtifacts } from "./native-schedule-carrier-binding"
 import { nativeScheduleIncarnationGuard, readNativeScheduleIncarnation } from "./native-schedule-transport-identity"
 import { boundedNativeScheduleResponse } from "./native-schedule-transport"
+import { compactNativeMissionDocumentDeletion } from "./native-mission-schedule-deletion"
 import type { MissionDocument } from "../../missions/mission-document"
 import type { MissionCalendarOwnerSlot } from "../../missions/mission-calendar-owner-state"
 
@@ -62,14 +63,17 @@ const inputSchema = z.object({ sessionID: z.string().min(1).max(1024), registrat
   incarnation: z.object({ id: z.string().min(1).max(1024), pid: z.number().int().positive(), url: z.string().max(4096), version: z.string().max(1024).optional() }).strict() }).strict()
 
 export async function reconcileNativeMissionScheduleMaintenance(doc: MissionDocument, sessionID: string,
-  quiet: (descriptor: MissionCalendarOwnerSlot) => Promise<boolean>, reconcile: () => Promise<MissionDocument>): Promise<{ complete: boolean }> {
+  quiet: (descriptor: MissionCalendarOwnerSlot) => Promise<boolean>, reconcile: () => Promise<MissionDocument>,
+  compact?: () => Promise<void>): Promise<{ complete: boolean }> {
   const state = doc.calendarOwner, descriptor = state?.slots.find(slot => slot.sessionID === sessionID)
     ?? state?.retired.find(item => item.descriptor.sessionID === sessionID)?.descriptor
   if (!state || !descriptor || doc.pending || !state.retired.length && !["finished", "stopped"].includes(doc.state) && !doc.deletion
     || !await quiet(descriptor)) return { complete: false }
   const result = await reconcile()
-  return { complete: result.calendarOwner?.operation.pending === false && !result.calendarOwner.retired.length
-    && !result.calendarOwner.slots.some(slot => slot.sessionID === sessionID) }
+  const complete = result.calendarOwner?.operation.pending === false && !result.calendarOwner.retired.length
+    && !result.calendarOwner.slots.some(slot => slot.sessionID === sessionID)
+  if (complete && result.deletion) await compact?.()
+  return { complete }
 }
 
 /** Maintenance reconciles saved technical cleanup only. The terminal event is a
@@ -88,9 +92,10 @@ export function nativeMissionScheduleMaintenanceHandler(ctx: Plugin.Context) {
       processCurrent(); return assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation)
     }
     const run = <A>(effect: Effect.Effect<A, unknown>) => invocation.check(run => run(effect))
-    const { owner, native } = yield* acquireNativeMissionScheduleOwner(ctx, doc, run, current)
+    const { owner, native, store } = yield* acquireNativeMissionScheduleOwner(ctx, doc, run, current)
     return yield* Effect.tryPromise(() => reconcileNativeMissionScheduleMaintenance(doc, input.sessionID,
-      descriptor => native.carrierQuiet({ missionID: doc.id, descriptor }, current), () => owner.reconcile(doc.id)))
+      descriptor => native.carrierQuiet({ missionID: doc.id, descriptor }, current), () => owner.reconcile(doc.id),
+      () => compactNativeMissionDocumentDeletion(ctx, store, doc.id, run, current).then(() => undefined)))
   })).pipe(Effect.orDie))
 }
 
