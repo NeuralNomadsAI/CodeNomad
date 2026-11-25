@@ -2,10 +2,8 @@ import { missionLaunchModel, type MissionConfiguration } from "../../missions/la
 import { MISSION_JOURNAL_STORAGE_PREFIX, type MissionStorage } from "../../missions/journal"
 import { MISSION_DOCUMENT_PREFIX, type MissionDocument } from "../../missions/mission-document"
 import { stableToken } from "../../missions/receipt-identity"
-import type { NativeMissionSession } from "../../missions/control-types"
 import type { NativeScheduledPassageContext } from "./native-scheduled-passage-business"
 import type { NativeSourceFence } from "./native-source-fence"
-import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
 import { isReservedMissionScheduleSessionID } from "../../missions/mission-schedule-carrier-identity"
 import { NATIVE_SCHEDULE_CARRIER_MARKER } from "./native-schedule-carrier-binding"
 import type { Plugin } from "@opencode/plugin/effect"
@@ -81,21 +79,9 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
     || session.location.directory !== input.native.location.directory || session.location.workspaceID !== input.native.location.workspaceID
     || isReservedMissionScheduleSessionID(id) || session.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER] !== undefined)
     throw new ScheduledCoordinatorRefusal("coordinator-owned")
-  // A conversation may serve several Missions, and an active one queues the passage prompt
-  // natively. Only another calendar's passage running in it right now holds its single marker.
-  await validateMarker(session)
+  // A conversation may serve several Missions. A passage running in it when another one
+  // starts only delays that start (`adoptNativeScheduledCoordinator`).
   const current = (): true => { input.signal.throwIfAborted(); input.current(); return fence.current() }
   current()
   return current
-
-  async function validateMarker(session: NativeMissionSession) {
-    const raw = session.metadata?.["codenomad.mission"]
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return
-    const marker = raw as { missionID?: string; document?: { missionID?: string; passageID?: string; coordinatorReused?: unknown } }
-    if (!marker.document || marker.document.missionID === doc.id) return
-    const owner = await storage.get(`${documents}${marker.document.missionID}`)
-    let running = false
-    try { running = !!scheduledPassageOwner(owner, doc, id!, marker) } catch { /* A stale or unknown marker is simply replaced. */ }
-    if (running) throw new ScheduledCoordinatorRefusal("coordinator-owned")
-  }
 }
