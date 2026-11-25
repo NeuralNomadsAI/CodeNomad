@@ -6,6 +6,8 @@ mod upstream;
 
 pub use bridge::bridge;
 pub use hub::Hub;
+#[cfg(test)]
+pub use hub::{Next, Sub};
 
 use std::{
     convert::Infallible,

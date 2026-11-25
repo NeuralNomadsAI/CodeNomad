@@ -266,7 +266,20 @@ async fn repo_target_and_worktrees_list_avoid_duplicate_root_probe() {
         h.trace.lock().unwrap()
     );
 
-    // 2. git::repo (repo_target) on a 1-checkout repo: 1 rev-parse only.
+    // 2. Warm git::repo hits the 10 s HTTP cache (0 rev-parse); after blocking invalidation,
+    //    cold git::repo runs rev-parse once (no duplicate root probe).
+    let warm_repo =
+        REQUEST.scope(("repo-warm", h.trace.clone()), crate::git::repo(&h.app, &h.id.to_string(), "root")).await;
+    if let Err(err) = warm_repo {
+        panic!("warm repo_target must succeed: {err:?}");
+    }
+    assert_eq!(
+        h.rev_parse_runs("repo-warm"),
+        0,
+        "warm git::repo_target must reuse the 10 s worktree cache: {:?}",
+        h.trace.lock().unwrap()
+    );
+    linked::invalidate_blocking(&h.app);
     let repo_res = REQUEST.scope(("repo", h.trace.clone()), crate::git::repo(&h.app, &h.id.to_string(), "root")).await;
     if let Err(err) = repo_res {
         panic!("repo_target must succeed: {err:?}");

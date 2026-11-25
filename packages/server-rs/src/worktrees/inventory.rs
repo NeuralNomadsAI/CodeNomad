@@ -3,8 +3,9 @@ mod cache;
 use super::linked::{conflict, git, missing, native, native_error, physical};
 use crate::{App, Error, Workspace, files};
 use axum::http::Method;
-pub use cache::{EventCache, event_catalogue, forget, invalidate};
-pub(super) use cache::{history_catalogue, receipt_catalogue, revision, store_if_current};
+pub use cache::{EventCache, blocking_invalidation, event_catalogue, forget, invalidate, invalidate_blocking};
+pub(crate) use cache::{HttpSnapshot, ReadMode, http_read};
+pub(super) use cache::{history_catalogue, http_list, receipt_catalogue, revision, store_if_current};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -633,6 +634,12 @@ impl Catalogue {
                     && a.nested_missing == b.nested_missing
             })
     }
+
+    /// Re-verifies locally (no Git subprocess) that the workspace root checkout still matches
+    /// the cached layout and ancestor markers.
+    pub(crate) fn root_live_for(&self, opened: &Path) -> bool {
+        self.get("root").is_ok_and(|root| root.layout.live_for(opened))
+    }
 }
 pub fn scope(mut w: Workspace, tree: &Tree) -> Workspace {
     w.path = tree.path.clone();
@@ -731,14 +738,6 @@ pub(crate) async fn root_supported_with(app: &App, w: &Workspace, local: Physica
 }
 pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalogue, Error> {
     catalogue_in(app, w, refresh, true, None).await
-}
-pub(crate) async fn catalogue_with_local(
-    app: &App,
-    w: &Workspace,
-    refresh: bool,
-    local: Physical,
-) -> Result<Catalogue, Error> {
-    catalogue_in(app, w, refresh, true, Some(local)).await
 }
 
 async fn catalogue_in(

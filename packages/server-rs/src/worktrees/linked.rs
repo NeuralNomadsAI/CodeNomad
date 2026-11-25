@@ -1,8 +1,9 @@
 //! Linked worktrees: creation, removal with session evacuation and session placement.
 pub use super::inventory::{
-    Catalogue, EventCache, Tree, catalogue, event_catalogue, forget, invalidate, readable_checkout, scope,
+    Catalogue, EventCache, Tree, blocking_invalidation, catalogue, event_catalogue, forget, invalidate,
+    invalidate_blocking, readable_checkout, scope,
 };
-pub(crate) use super::inventory::{RootCheckout, catalogue_with_local, probe_root_checkout};
+pub(crate) use super::inventory::{HttpSnapshot, ReadMode, http_read};
 use crate::{App, Error, Shared, Workspace, error, files, git, opencode::proxy};
 use axum::{
     Extension, Json,
@@ -128,7 +129,7 @@ pub(super) fn host(path: &Path) -> Result<&str, Error> {
 }
 
 fn announce(app: &App, w: &Workspace) {
-    invalidate(app);
+    invalidate_blocking(app);
     app.emit(json!({"type":"workspace.worktreesChanged","workspaceId":w.id}));
 }
 
@@ -403,6 +404,7 @@ pub async fn create(
     let name = branch.replace('/', "-");
     let body = json!({"projectID": catalogue.project, "from": from.service_root, "branch": rev,
         "directory": catalogue.parent, "name": name});
+    let _invalidate = blocking_invalidation(&app);
     let created = native_at(&app, &endpoint, Method::POST, "/api/worktree", &[], Some(body), 64 * 1024).await?;
     let service = created["directory"].as_str().ok_or_else(native_error)?;
     let inside = |d: &PathBuf| *d != catalogue.parent && d.starts_with(&catalogue.parent);
@@ -630,6 +632,7 @@ async fn place_owned(
         paths.push(super::fence::identity(tree.registered()));
     }
     let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A session worktree is being removed"))?;
+    let _invalidate = blocking_invalidation(&app);
     move_members(&app, &w, &cat, None, &members, target, &principal).await?;
     announce(&app, &w);
     let ids: Vec<_> = members.iter().map(|m| &m["id"]).collect();
@@ -735,6 +738,7 @@ async fn remove_owned(
     };
     let _deleting =
         super::fence::reserve_deletion_root(&super::fence::identity(&preliminary_root)).map_err(conflict)?;
+    let _invalidate = blocking_invalidation(&app);
     if app
         .inner
         .lock()

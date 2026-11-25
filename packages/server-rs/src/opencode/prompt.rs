@@ -171,9 +171,31 @@ async fn owns_physical(app: &App, workspace: &Workspace, target: &Path) -> bool 
     if target.starts_with(&workspace.path) {
         return dunce::canonicalize(&workspace.path).ok().as_ref() == Some(&workspace.path);
     }
-    crate::worktrees::linked::catalogue(app, workspace, false)
+    let Ok(hit) =
+        crate::worktrees::linked::http_read(app, workspace, crate::worktrees::linked::ReadMode::Validated, false).await
+    else {
+        return false;
+    };
+    let Some(catalogue) = hit.snapshot.catalogue() else {
+        return false;
+    };
+    let root_live = !hit.from_cache || catalogue.root_live_for(&workspace.path);
+    if root_live && catalogue.trees.iter().any(|tree| tree.contains_live(target)) {
+        return true;
+    }
+    if hit.from_cache && (!root_live || !hit.refreshed_on_miss) {
+        return crate::worktrees::linked::http_read(
+            app,
+            workspace,
+            crate::worktrees::linked::ReadMode::Fresh,
+            root_live,
+        )
         .await
-        .is_ok_and(|catalogue| catalogue.trees.iter().any(|tree| tree.contains_live(target)))
+        .ok()
+        .and_then(|fresh| fresh.snapshot.catalogue())
+        .is_some_and(|catalogue| catalogue.trees.iter().any(|tree| tree.contains_live(target)));
+    }
+    false
 }
 
 #[derive(PartialEq, Eq)]

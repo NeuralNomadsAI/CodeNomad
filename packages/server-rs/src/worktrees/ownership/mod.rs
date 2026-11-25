@@ -216,9 +216,14 @@ pub(crate) async fn capture_directory_with_refresh(
         return None;
     }
     for &refresh in if refresh_on_miss { &[false, true][..] } else { &[false] } {
-        let catalogue = super::linked::catalogue(app, workspace, refresh).await.ok()?;
+        let mode = if refresh { super::linked::ReadMode::Fresh } else { super::linked::ReadMode::Validated };
+        let Ok(hit) = super::linked::http_read(app, workspace, mode, refresh).await else { return None };
+        let catalogue = hit.snapshot.catalogue()?;
         if let Some(proof) = catalogue_proof(&catalogue, physical, external, ProofMode::Live) {
             return proof.live(physical).then_some(proof);
+        }
+        if !refresh && (!hit.from_cache || hit.refreshed_on_miss) {
+            break;
         }
     }
     None
@@ -421,10 +426,18 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
     }
     for fresh in [false, true] {
         // A non-Git folder has no inventory: only the opened folder itself is owned.
-        let catalogue = match crate::worktrees::linked::catalogue(app, w, fresh).await {
-            Ok(catalogue) => catalogue,
+        let mode = if fresh {
+            crate::worktrees::linked::ReadMode::Fresh
+        } else {
+            crate::worktrees::linked::ReadMode::Validated
+        };
+        let hit = match crate::worktrees::linked::http_read(app, w, mode, fresh).await {
+            Ok(hit) => hit,
             Err(_) if strict && matches!(read_common_directory(root).await, Ok(None)) => return Ok(None),
             Err(_) => return Err(()),
+        };
+        let Some(catalogue) = hit.snapshot.catalogue() else {
+            return if strict { Ok(None) } else { Err(()) };
         };
         let owner =
             catalogue.trees.iter().filter(|t| t.contains_live(&resolved)).max_by_key(|t| t.path.as_os_str().len());
@@ -433,6 +446,9 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
                 directory: resolved.to_string_lossy().into_owned(),
                 checkout: tree.registered().to_path_buf(),
             }));
+        }
+        if !fresh && (!hit.from_cache || hit.refreshed_on_miss) {
+            break;
         }
     }
     Ok(None)
