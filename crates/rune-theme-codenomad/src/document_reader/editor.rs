@@ -121,6 +121,28 @@ pub fn confirmation<S: 'static>(
     confirm: &str,
     decide: impl Fn(&mut S, bool, &mut Tx) + 'static,
 ) -> El {
+    confirmation_with_title(dark, None, message, cancel, confirm, decide)
+}
+
+pub fn confirmation_titled<S: 'static>(
+    dark: bool,
+    title: &str,
+    message: &str,
+    cancel: &str,
+    confirm: &str,
+    decide: impl Fn(&mut S, bool, &mut Tx) + 'static,
+) -> El {
+    confirmation_with_title(dark, Some(title), message, cancel, confirm, decide)
+}
+
+fn confirmation_with_title<S: 'static>(
+    dark: bool,
+    title: Option<&str>,
+    message: &str,
+    cancel: &str,
+    confirm: &str,
+    decide: impl Fn(&mut S, bool, &mut Tx) + 'static,
+) -> El {
     let t = tokens(dark);
     let decide = std::rc::Rc::new(decide);
     let cancel = rune_kit::Button::new(cancel)
@@ -140,14 +162,18 @@ pub fn confirmation<S: 'static>(
         .build(kit(dark))
         .key("file-decision-confirm");
     let enter = decide.clone();
-    let card = rune::col()
+    let mut card = rune::col()
         .w_full()
         .max_w(t.length(Length::TouchTarget).px() * 10.0)
         .pad(Space::Lg)
         .separate(Space::Md)
         .role("alertdialog")
-        .label(message)
-        .fill(t.color("surface-overlay"))
+        .label(title.unwrap_or(message))
+        .fill(t.color("surface-overlay"));
+    if let Some(title) = title {
+        card = card.child(rune::text(title).text_role(crate::TextRole::Title).wrap());
+    }
+    let card = card
         .child(rune::text(message).wrap())
         .child(
             rune::row()

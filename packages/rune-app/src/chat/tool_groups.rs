@@ -168,12 +168,8 @@ impl Groups {
                             .saturating_add(reasoning::duration_ms(fragment));
                         run.summary.title = reasoning::extract_title(&fragment.text);
                         run.summary.completed = message.completed;
-                        run.prune.push(
-                            &message.id,
-                            message.completed,
-                            fragment.part_index,
-                            PruneKind::Reasoning,
-                        );
+                        run.prune
+                            .push(message, fragment.part_index, PruneKind::Reasoning, content);
                         run.summary.search_hit |= super::search_hit::query(
                             s,
                             &message.id,
@@ -216,12 +212,8 @@ impl Groups {
                         run.summary.count += 1;
                         run.summary.reads += usize::from(tool.name == "read");
                         run.summary.completed = message.completed;
-                        run.prune.push(
-                            &message.id,
-                            message.completed,
-                            tool.part_index,
-                            PruneKind::Tool,
-                        );
+                        run.prune
+                            .push(message, tool.part_index, PruneKind::Tool, content);
                         run.summary.search_hit |= super::search_hit::query(
                             s,
                             &message.id,
@@ -321,6 +313,22 @@ impl Groups {
         let chunk = self.chunk_for_part_key(s, message, key)?;
         (!chunk.expanded(s)).then(|| format!("{}/{}", chunk.summary.message, chunk.summary.key))
     }
+
+    pub(super) fn prune_targets_for(&self, key: &str) -> Option<&[PruneMessageTarget]> {
+        self.chunks
+            .values()
+            .find(|chunk| chunk.first && chunk.summary.key == key)
+            .map(|chunk| chunk.summary.prune_targets.as_slice())
+    }
+
+    pub(super) fn group_delete_active(&self, s: &State, key: &str) -> bool {
+        self.chunks.values().any(|chunk| {
+            chunk.first
+                && chunk.summary.key == key
+                && !chunk.expanded(s)
+                && !chunk.summary.prune_targets.is_empty()
+        })
+    }
 }
 
 fn waiting(s: &State, rows: &[Row]) -> HashMap<String, HashSet<String>> {
@@ -384,6 +392,7 @@ impl Chunk {
         message_completed: bool,
         parts: &[Part],
         start: usize,
+        prune_highlight: &HashSet<(String, u64)>,
         marker: &mut impl FnMut(Option<usize>) -> Option<codenomad_client::timeline::Marker<'a>>,
     ) -> Option<El> {
         let summary = &self.summary;
@@ -415,6 +424,7 @@ impl Chunk {
                     search_id,
                     first: self.first,
                     prune_targets: &summary.prune_targets,
+                    prune_highlight,
                 },
                 marker,
             );
@@ -425,8 +435,9 @@ impl Chunk {
         }
         let header = self.first.then(|| {
             let toggle = summary.keys.clone();
+            let label = summary.label();
             let toggle_button = layout::button(
-                &summary.label(),
+                &label,
                 false,
                 screen::action(&s.input_scope, move |s| {
                     if let Some(id) = search_id {
@@ -443,7 +454,7 @@ impl Chunk {
             .expanded(expanded);
             if !expanded && !summary.prune_targets.is_empty() {
                 layout::action_row().child(toggle_button).child(
-                    message_actions::group_delete_button(s, key, &summary.prune_targets),
+                    message_actions::group_delete_button(s, key, label, &summary.prune_targets),
                 )
             } else {
                 toggle_button
@@ -456,7 +467,11 @@ impl Chunk {
                     Part::Tool(tool) if tools::visible(s, message, tool) => {
                         let card = layout::prune_preview(
                             tools::view(s, message, tool),
-                            message_actions::part_highlighted(s, message, tool.part_index),
+                            message_actions::part_highlighted(
+                                prune_highlight,
+                                message,
+                                tool.part_index,
+                            ),
                         );
                         Some(super::reading::passage(
                             s,
@@ -475,7 +490,7 @@ impl Chunk {
             if !expanded {
                 body = layout::prune_preview(
                     body,
-                    message_actions::targets_highlighted(s, &summary.prune_targets),
+                    message_actions::targets_highlighted(prune_highlight, &summary.prune_targets),
                 );
             }
             body = super::reading::passage(

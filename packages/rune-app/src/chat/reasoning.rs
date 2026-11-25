@@ -114,6 +114,7 @@ pub(super) struct GroupView<'a> {
     pub search_id: Option<u64>,
     pub first: bool,
     pub prune_targets: &'a [codenomad_client::message_actions::PruneMessageTarget],
+    pub prune_highlight: &'a std::collections::HashSet<(String, u64)>,
 }
 
 /// Resolve a rail run to the first displayed fragment of its visible segment.
@@ -185,6 +186,7 @@ pub(super) fn view_chunk<'a>(
             format!("toggle-{fragment}"),
             None,
             expanded,
+            group.prune_highlight,
             move |s| {
                 if let Some(id) = search_id {
                     Display::set_group_search_collapsed(s, id, &toggle_keys, expanded);
@@ -219,7 +221,14 @@ pub(super) fn view_chunk<'a>(
             };
             any = true;
             let fragment = block_key(message, part.ordinal);
-            let card = sub_card(s, message, &fragment, part, group.message_completed);
+            let card = sub_card(
+                s,
+                message,
+                &fragment,
+                part,
+                group.message_completed,
+                group.prune_highlight,
+            );
             container = container.child(super::reading::passage(
                 s,
                 card,
@@ -265,16 +274,16 @@ pub(super) fn view_chunk<'a>(
             .expanded(expanded),
         )
         .child(text(title))
-        .child(text(steps))
+        .child(text(steps.clone()))
         .children(duration.map(text))
         .children((!expanded && !group.prune_targets.is_empty()).then(|| {
-            super::message_actions::group_delete_button(s, group.key, group.prune_targets)
+            super::message_actions::group_delete_button(s, group.key, steps, group.prune_targets)
         }));
     let mut container = col().full_width().separate(Space::Sm).child(header);
     if !expanded {
         container = layout::prune_preview(
             container,
-            super::message_actions::targets_highlighted(s, group.prune_targets),
+            super::message_actions::targets_highlighted(group.prune_highlight, group.prune_targets),
         );
     }
     if expanded {
@@ -287,7 +296,14 @@ pub(super) fn view_chunk<'a>(
                 continue;
             }
             let fragment = block_key(message, part.ordinal);
-            let card = sub_card(s, message, &fragment, part, group.message_completed);
+            let card = sub_card(
+                s,
+                message,
+                &fragment,
+                part,
+                group.message_completed,
+                group.prune_highlight,
+            );
             if is_first_visible {
                 is_first_visible = false;
                 container = container.child(card);
@@ -319,6 +335,7 @@ fn sub_card(
     fragment: &str,
     part: &Reasoning,
     message_completed: bool,
+    prune_highlight: &std::collections::HashSet<(String, u64)>,
 ) -> El {
     let card_key = format!("card-{fragment}");
     let query = super::search_hit::query(
@@ -349,6 +366,7 @@ fn sub_card(
         format!("toggle-card-{fragment}"),
         Some(card_key),
         expanded,
+        prune_highlight,
         move |s| {
             if let Some(id) = search_id {
                 Display::set_card_search_expanded(s, id, &toggle_state, !expanded);
@@ -369,6 +387,7 @@ fn reasoning_card(
     toggle_key: String,
     card_key: Option<String>,
     expanded: bool,
+    prune_highlight: &std::collections::HashSet<(String, u64)>,
     toggle: impl Fn(&mut State) + 'static,
 ) -> El {
     let claimed = std::cell::Cell::new(false);
@@ -433,7 +452,7 @@ fn reasoning_card(
                     query,
                 )
             })),
-        super::message_actions::part_highlighted(s, message, part.part_index),
+        super::message_actions::part_highlighted(prune_highlight, message, part.part_index),
     );
     match card_key {
         Some(key) => card.key(key),

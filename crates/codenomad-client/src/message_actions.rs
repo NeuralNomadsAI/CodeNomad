@@ -4,6 +4,7 @@ use crate::{
     history::{Result, valid_id},
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     time::Duration,
@@ -32,10 +33,24 @@ impl PruneKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PrunePartIdentity {
+    Tool {
+        id: String,
+        name: String,
+    },
+    Reasoning {
+        text: String,
+        created: Option<u64>,
+        completed: Option<u64>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrunePartTarget {
     pub index: u64,
     pub kind: PruneKind,
+    pub identity: PrunePartIdentity,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -303,7 +318,7 @@ impl Backend {
         if !valid_id(message) {
             return Err("invalid message action target".into());
         }
-        let (revision, parts) = self.fetch_prune_preview(message).await?;
+        let (revision, parts) = self.fetch_prune_preview(message, false).await?;
         if parts.is_empty() {
             return Err("invalid prune parts".into());
         }
@@ -332,32 +347,56 @@ impl Backend {
         targets: &[PruneMessageTarget],
         cancel: &Receiver<()>,
     ) -> Result<PrunePreview> {
-        self.action_session()?;
+        let session_url = self.action_session()?;
         let normalized = validate_prune_targets(targets)?;
         let mut messages = Vec::with_capacity(normalized.len());
         for target in normalized {
             if cancel.is_closed() {
                 return Err("pruning selection expired".into());
             }
-            let (revision, available) = self.fetch_prune_preview(&target.message).await?;
+            let (preview_revision, available) =
+                self.fetch_prune_preview(&target.message, true).await?;
             if cancel.is_closed() {
                 return Err("pruning selection expired".into());
             }
+            let fresh_content = self
+                .fetch_completed_message_content(&session_url, &target.message)
+                .await?;
+            if cancel.is_closed() {
+                return Err("pruning selection expired".into());
+            }
+            // Bind resolved part identities cryptographically to the exact revision
+            // that preview returned and prune will submit.
+            if content_revision(&fresh_content) != preview_revision {
+                return Err(PruneBlocked {
+                    reason: PruneReason::Conflict,
+                }
+                .into());
+            }
+            let fresh_parts = fresh_content.as_array().ok_or(PruneBlocked {
+                reason: PruneReason::NotDeletable,
+            })?;
             let mut indexes = Vec::with_capacity(target.parts.len());
+            let mut resolved_seen = HashSet::with_capacity(target.parts.len());
             let mut tools = 0;
             for part in target.parts {
-                if available.get(&part.index) != Some(&part.kind) {
+                let resolved = resolve_identity_index(fresh_parts, part.kind, &part.identity)
+                    .ok_or(PruneBlocked {
+                        reason: PruneReason::Conflict,
+                    })?;
+                if available.get(&resolved) != Some(&part.kind) || !resolved_seen.insert(resolved) {
                     return Err(PruneBlocked {
                         reason: PruneReason::Conflict,
                     }
                     .into());
                 }
-                indexes.push(part.index);
+                indexes.push(resolved);
                 tools += usize::from(part.kind == PruneKind::Tool);
             }
+            indexes.sort_unstable();
             messages.push(PruneMessagePlan {
                 message: target.message,
-                revision,
+                revision: preview_revision,
                 indexes,
                 tools,
             });
@@ -371,9 +410,48 @@ impl Backend {
         })
     }
 
+    async fn fetch_completed_message_content(
+        &self,
+        session_url: &str,
+        message: &str,
+    ) -> Result<Value> {
+        let response = self
+            .client
+            .get(format!("{session_url}/message/{message}"))
+            .timeout(DEADLINE)
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(PruneBlocked {
+                reason: PruneReason::Conflict,
+            }
+            .into());
+        }
+        let body =
+            read_json_limited(response.error_for_status()?, crate::history::MESSAGE_BYTES).await?;
+        let record = body.get("data").unwrap_or(&body);
+        if record["id"] != message
+            || record["type"] != "assistant"
+            || record["time"]["completed"].is_null()
+        {
+            return Err(PruneBlocked {
+                reason: PruneReason::NotDeletable,
+            }
+            .into());
+        }
+        if !record["content"].is_array() {
+            return Err(PruneBlocked {
+                reason: PruneReason::NotDeletable,
+            }
+            .into());
+        }
+        Ok(record["content"].clone())
+    }
+
     async fn fetch_prune_preview(
         &self,
         message: &str,
+        require_bytes: bool,
     ) -> Result<(String, HashMap<u64, PruneKind>)> {
         let url = format!(
             "{}api/workspaces/{}/session-pruning/preview",
@@ -417,6 +495,16 @@ impl Backend {
                 .as_str()
                 .and_then(PruneKind::parse)
                 .ok_or("invalid prune selection")?;
+            let bytes = part.get("bytes");
+            if require_bytes {
+                if bytes.and_then(Value::as_u64).is_none() {
+                    return Err("invalid prune bytes".into());
+                }
+            } else if let Some(value) = bytes
+                && value.as_u64().is_none()
+            {
+                return Err("invalid prune bytes".into());
+            }
             if parts.insert(index, kind).is_some() {
                 return Err("invalid prune selection".into());
             }
@@ -495,12 +583,24 @@ fn validate_prune_targets(targets: &[PruneMessageTarget]) -> Result<Vec<PruneMes
             return Err("invalid message action target".into());
         }
         let mut seen_indexes = HashSet::with_capacity(target.parts.len());
+        let mut seen_identities = HashSet::with_capacity(target.parts.len());
         let mut parts = Vec::with_capacity(target.parts.len());
         for part in &target.parts {
-            if part.index > MAX_PRUNE_INDEX || !seen_indexes.insert(part.index) {
+            let valid_identity = match (part.kind, &part.identity) {
+                (PruneKind::Tool, PrunePartIdentity::Tool { id, name }) => {
+                    !id.is_empty() && id.len() <= 256 && name.len() <= 256
+                }
+                (PruneKind::Reasoning, PrunePartIdentity::Reasoning { .. }) => true,
+                _ => false,
+            };
+            if !valid_identity
+                || part.index > MAX_PRUNE_INDEX
+                || !seen_indexes.insert(part.index)
+                || !seen_identities.insert(&part.identity)
+            {
                 return Err("invalid prune selection".into());
             }
-            parts.push(*part);
+            parts.push(part.clone());
         }
         parts.sort_unstable_by_key(|part| part.index);
         normalized.push(PruneMessageTarget {
@@ -509,6 +609,96 @@ fn validate_prune_targets(targets: &[PruneMessageTarget]) -> Result<Vec<PruneMes
         });
     }
     Ok(normalized)
+}
+
+fn resolve_identity_index(
+    fresh_parts: &[Value],
+    kind: PruneKind,
+    identity: &PrunePartIdentity,
+) -> Option<u64> {
+    let mut matched: Option<u64> = None;
+    for (index, item) in fresh_parts.iter().enumerate() {
+        let same = match (kind, identity) {
+            (PruneKind::Tool, PrunePartIdentity::Tool { id, name }) => {
+                item["type"] == "tool"
+                    && item["id"].as_str() == Some(id.as_str())
+                    && item["name"].as_str() == Some(name.as_str())
+            }
+            (
+                PruneKind::Reasoning,
+                PrunePartIdentity::Reasoning {
+                    text,
+                    created,
+                    completed,
+                },
+            ) => {
+                item["type"] == "reasoning"
+                    && item["text"].as_str() == Some(text.as_str())
+                    && item["time"]["created"].as_u64() == *created
+                    && item["time"]["completed"].as_u64() == *completed
+            }
+            _ => false,
+        };
+        if same {
+            let index = u64::try_from(index)
+                .ok()
+                .filter(|value| *value <= MAX_PRUNE_INDEX)?;
+            if matched.replace(index).is_some() {
+                return None;
+            }
+        }
+    }
+    matched
+}
+
+/// Canonical SHA-256 content revision matching `packages/server/src/opencode/session-pruning/revision.ts`.
+pub fn content_revision(content: &Value) -> String {
+    let mut canonical = String::new();
+    write_canonical_json(content, &mut canonical);
+    let digest = Sha256::digest(canonical.as_bytes());
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut hex, "{byte:02x}");
+    }
+    hex
+}
+
+fn write_canonical_json(value: &Value, out: &mut String) {
+    match value {
+        Value::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_canonical_json(item, out);
+            }
+            out.push(']');
+        }
+        Value::Object(map) => {
+            let mut entries: Vec<_> = map.iter().collect();
+            // JS `Array.prototype.sort` compares strings by UTF-16 code units.
+            entries.sort_by(|(a, _), (b, _)| a.encode_utf16().cmp(b.encode_utf16()));
+            out.push('{');
+            for (index, (key, entry)) in entries.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                if let Ok(encoded) = serde_json::to_string(key) {
+                    out.push_str(&encoded);
+                }
+                out.push(':');
+                write_canonical_json(entry, out);
+            }
+            out.push('}');
+        }
+        scalar => {
+            if let Ok(encoded) = serde_json::to_string(scalar) {
+                out.push_str(&encoded);
+            }
+        }
+    }
 }
 
 fn revision(value: &Value) -> Option<&str> {
@@ -524,12 +714,26 @@ fn revision(value: &Value) -> Option<&str> {
 mod tests {
     use super::*;
 
-    fn target(message: &str, parts: &[(u64, PruneKind)]) -> PruneMessageTarget {
+    fn target(message: &str, parts: &[(u64, PruneKind, &str)]) -> PruneMessageTarget {
         PruneMessageTarget {
             message: message.into(),
             parts: parts
                 .iter()
-                .map(|&(index, kind)| PrunePartTarget { index, kind })
+                .map(|&(index, kind, token)| PrunePartTarget {
+                    index,
+                    kind,
+                    identity: match kind {
+                        PruneKind::Tool => PrunePartIdentity::Tool {
+                            id: token.into(),
+                            name: "read".into(),
+                        },
+                        PruneKind::Reasoning => PrunePartIdentity::Reasoning {
+                            text: token.into(),
+                            created: None,
+                            completed: None,
+                        },
+                    },
+                })
                 .collect(),
         }
     }
@@ -538,37 +742,87 @@ mod tests {
     fn validate_prune_targets_enforces_bounds_and_uniqueness() {
         assert!(validate_prune_targets(&[]).is_err());
         assert!(validate_prune_targets(&[target("m1", &[])]).is_err());
-        assert!(validate_prune_targets(&[target("../bad", &[(0, PruneKind::Tool)])]).is_err());
+        assert!(
+            validate_prune_targets(&[target("../bad", &[(0, PruneKind::Tool, "t0")])]).is_err()
+        );
         assert!(
             validate_prune_targets(&[
-                target("m1", &[(0, PruneKind::Tool)]),
-                target("m1", &[(1, PruneKind::Tool)]),
+                target("m1", &[(0, PruneKind::Tool, "t0")]),
+                target("m1", &[(1, PruneKind::Tool, "t1")]),
             ])
             .is_err()
         );
         assert!(
             validate_prune_targets(&[target(
                 "m1",
-                &[(2, PruneKind::Tool), (2, PruneKind::Reasoning)],
+                &[(2, PruneKind::Tool, "t2"), (2, PruneKind::Reasoning, "r2"),],
             )])
             .is_err()
         );
         assert!(
-            validate_prune_targets(&[target("m1", &[(MAX_PRUNE_INDEX + 1, PruneKind::Tool)])])
-                .is_err()
+            validate_prune_targets(&[target(
+                "m1",
+                &[
+                    (0, PruneKind::Reasoning, "same"),
+                    (1, PruneKind::Reasoning, "same"),
+                ],
+            )])
+            .is_err()
+        );
+        assert!(
+            validate_prune_targets(&[
+                target("m1", &[(MAX_PRUNE_INDEX + 1, PruneKind::Tool, "t")],)
+            ])
+            .is_err()
         );
         let too_many: Vec<_> = (0..=MAX_PRUNE_MESSAGES)
-            .map(|i| target(&format!("m{i}"), &[(0, PruneKind::Tool)]))
+            .map(|i| target(&format!("m{i}"), &[(0, PruneKind::Tool, "t")]))
             .collect();
         assert!(validate_prune_targets(&too_many).is_err());
 
         let normalized = validate_prune_targets(&[target(
             "m1",
-            &[(4, PruneKind::Reasoning), (1, PruneKind::Tool)],
+            &[(4, PruneKind::Reasoning, "r4"), (1, PruneKind::Tool, "t1")],
         )])
         .unwrap();
         assert_eq!(normalized[0].parts[0].index, 1);
         assert_eq!(normalized[0].parts[1].index, 4);
+    }
+
+    #[test]
+    fn content_revision_is_key_order_independent_and_matches_identity_resolution() {
+        let a = json!([{"type":"tool","name":"read","id":"a","state":{"status":"completed"}}]);
+        let b = json!([{"state":{"status":"completed"},"id":"a","type":"tool","name":"read"}]);
+        assert_eq!(content_revision(&a), content_revision(&b));
+        assert_eq!(content_revision(&a).len(), 64);
+
+        let shifted = json!([
+            {"type":"tool","name":"grep","id":"b","state":{"status":"completed"}},
+            {"type":"tool","name":"bash","id":"c","state":{"status":"completed"}},
+        ]);
+        let parts = shifted.as_array().unwrap();
+        assert_eq!(
+            resolve_identity_index(
+                parts,
+                PruneKind::Tool,
+                &PrunePartIdentity::Tool {
+                    id: "a".into(),
+                    name: "read".into(),
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_identity_index(
+                parts,
+                PruneKind::Tool,
+                &PrunePartIdentity::Tool {
+                    id: "b".into(),
+                    name: "grep".into(),
+                }
+            ),
+            Some(0)
+        );
     }
 
     #[test]

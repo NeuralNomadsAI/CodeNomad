@@ -18,18 +18,33 @@ mod tests;
 pub(super) use cleanup::GroupPrune;
 pub(super) use menu::{group_delete_button, header, overlays, restore};
 
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum PruneHover {
+    Response(String),
+    Message(String),
+    Group(String),
+}
+
+#[derive(Clone, Default)]
+pub(super) struct PruneContext {
+    pub group_key: Option<String>,
+    pub summary_label: Option<String>,
+    pub return_focus: Option<(String, Option<String>)>,
+}
+
 #[derive(Default)]
 pub(crate) struct Actions {
     backend: Option<Backend>,
     boundary: Option<String>,
     refresh_boundary: bool,
+    refresh_transcript: bool,
     read: Option<Receiver<codenomad_client::history::Result<Option<String>>>>,
     job: Option<Job>,
-    confirmation: Option<(Weak<()>, PrunePreview, bool)>,
+    confirmation: Option<(Weak<()>, PrunePreview, PruneContext)>,
     error: Option<&'static str>,
     menu: rune_theme_codenomad::action_menu::State<State>,
     open_menu: Option<String>,
-    prune_hover: Option<(String, HashSet<(String, u64)>)>,
+    prune_hover: Option<PruneHover>,
 }
 
 struct Job {
@@ -49,23 +64,33 @@ enum Intent {
     Fork(String),
     PreviewPrune {
         targets: Vec<PruneMessageTarget>,
-        group: bool,
+        context: PruneContext,
     },
     Prune {
         preview: PrunePreview,
-        group: bool,
+        context: PruneContext,
     },
 }
 
 enum Outcome {
-    Edit { id: String, text: String },
+    Edit {
+        id: String,
+        text: String,
+    },
     Restore,
     Fork(String),
-    PreviewPrune { preview: PrunePreview, group: bool },
+    PreviewPrune {
+        preview: PrunePreview,
+        context: PruneContext,
+    },
     Pruned,
 }
 
 impl Actions {
+    pub(crate) fn suspend_scope(&mut self) {
+        self.suspend();
+    }
+
     pub(super) fn suspend(&mut self) {
         menu::close(self);
         if let Some(job) = &mut self.job {
@@ -96,6 +121,7 @@ impl Actions {
         self.suspend();
         self.read = None;
         self.refresh_boundary = false;
+        self.refresh_transcript = false;
     }
 
     pub(super) fn invalidate_boundary(&mut self) {
@@ -117,7 +143,7 @@ impl Actions {
     }
 
     pub(crate) fn pending(&self) -> bool {
-        self.job.is_some() || self.confirmation.is_some()
+        self.job.is_some() || self.confirmation.is_some() || self.refresh_transcript
     }
 
     pub(crate) fn confirmation_open(&self, scope: &Rc<()>) -> bool {
@@ -137,7 +163,8 @@ impl Actions {
 
     #[cfg(test)]
     pub(crate) fn fixture_confirmation(&mut self, scope: &Rc<()>, preview: Option<PrunePreview>) {
-        self.confirmation = preview.map(|preview| (Rc::downgrade(scope), preview, false));
+        self.confirmation =
+            preview.map(|preview| (Rc::downgrade(scope), preview, PruneContext::default()));
     }
 
     #[cfg(test)]
@@ -187,16 +214,16 @@ fn start(s: &mut State, intent: Intent) {
         Intent::Edit { .. } => ("sessionView.alerts.revertFailed.message", true),
         Intent::Restore if owner.can_restore() => ("commands.redoLastMessage.failed.message", true),
         Intent::Fork(_) => ("sessionView.alerts.forkFailed.message", false),
-        Intent::PreviewPrune { group, .. } => (
-            if *group {
+        Intent::PreviewPrune { context, .. } => (
+            if context.group_key.is_some() {
                 "messagePart.actions.deleteFailedMessage"
             } else {
                 "messageItem.actions.deleteTechnicalParts.failedMessage"
             },
             false,
         ),
-        Intent::Prune { group, .. } => (
-            if *group {
+        Intent::Prune { context, .. } => (
+            if context.group_key.is_some() {
                 "messagePart.actions.deleteFailedMessage"
             } else {
                 "messageItem.actions.deleteTechnicalParts.failedMessage"
@@ -208,7 +235,10 @@ fn start(s: &mut State, intent: Intent) {
     let (cancel, cancelled) = bounded(1);
     let (done, returned) = bounded(1);
     owner.error = None;
-    owner.prune_hover = None;
+    if owner.prune_hover.take().is_some() {
+        s.revision += 1;
+    }
+    let owner = &mut s.transcript_display.messages;
     owner.job = Some(Job {
         scope: Rc::downgrade(&s.input_scope),
         cancel,
@@ -234,9 +264,9 @@ fn start(s: &mut State, intent: Intent) {
                 Intent::Fork(id) => {
                     Outcome::Fork(backend.fork_after_message(&id, &cancelled).await?)
                 }
-                Intent::PreviewPrune { targets, group } => Outcome::PreviewPrune {
+                Intent::PreviewPrune { targets, context } => Outcome::PreviewPrune {
                     preview: backend.preview_prune_targets(&targets, &cancelled).await?,
-                    group,
+                    context,
                 },
                 Intent::Prune { preview, .. } => {
                     backend.prune_targets(preview, &cancelled).await?;
@@ -250,58 +280,76 @@ fn start(s: &mut State, intent: Intent) {
     });
 }
 
-pub(super) fn set_prune_hover(s: &mut State, owner: String, targets: &[PruneMessageTarget]) {
-    let set: HashSet<(String, u64)> = targets
-        .iter()
-        .flat_map(|target| {
-            target
-                .parts
-                .iter()
-                .map(move |part| (target.message.clone(), part.index))
-        })
-        .collect();
-    if set.is_empty() {
-        clear_prune_hover(s, &owner);
-        return;
-    }
-    let next = Some((owner, set));
+pub(super) fn set_prune_hover(s: &mut State, hover: PruneHover) {
+    let next = Some(hover);
     if s.transcript_display.messages.prune_hover != next {
         s.transcript_display.messages.prune_hover = next;
         s.revision += 1;
     }
 }
 
-pub(super) fn clear_prune_hover(s: &mut State, owner: &str) {
-    if s.transcript_display
-        .messages
-        .prune_hover
-        .as_ref()
-        .is_some_and(|(current, _)| current == owner)
-    {
+pub(super) fn clear_prune_hover(s: &mut State, hover: &PruneHover) {
+    if s.transcript_display.messages.prune_hover.as_ref() == Some(hover) {
         s.transcript_display.messages.prune_hover = None;
         s.revision += 1;
     }
 }
 
-pub(in crate::chat) fn part_highlighted(s: &State, message: &str, index: Option<usize>) -> bool {
-    let Some((_, set)) = &s.transcript_display.messages.prune_hover else {
-        return false;
+/// Resolve the currently hovered cleanup targets fresh from the current transcript and groups
+/// so stationary-pointer hovers never paint stale indices after a refresh.
+pub(in crate::chat) fn active_highlight(
+    s: &State,
+    groups: &super::tool_groups::Groups,
+) -> HashSet<(String, u64)> {
+    let Some(hover) = &s.transcript_display.messages.prune_hover else {
+        return HashSet::new();
     };
+    let targets = match hover {
+        PruneHover::Response(id) => cleanup::response_targets(s, id),
+        PruneHover::Message(id) => cleanup::message_targets(s, id),
+        PruneHover::Group(key) => groups
+            .prune_targets_for(key)
+            .map(<[_]>::to_vec)
+            .unwrap_or_default(),
+    };
+    targets
+        .into_iter()
+        .flat_map(|target| {
+            let message = target.message;
+            target
+                .parts
+                .into_iter()
+                .map(move |part| (message.clone(), part.index))
+        })
+        .collect()
+}
+
+pub(in crate::chat) fn part_highlighted(
+    highlight: &HashSet<(String, u64)>,
+    message: &str,
+    index: Option<usize>,
+) -> bool {
+    if highlight.is_empty() {
+        return false;
+    }
     let Some(index) = index.and_then(|value| u64::try_from(value).ok()) else {
         return false;
     };
-    set.contains(&(message.to_owned(), index))
+    highlight.contains(&(message.to_owned(), index))
 }
 
-pub(in crate::chat) fn targets_highlighted(s: &State, targets: &[PruneMessageTarget]) -> bool {
-    let Some((_, set)) = &s.transcript_display.messages.prune_hover else {
+pub(in crate::chat) fn targets_highlighted(
+    highlight: &HashSet<(String, u64)>,
+    targets: &[PruneMessageTarget],
+) -> bool {
+    if highlight.is_empty() {
         return false;
-    };
+    }
     targets.iter().any(|target| {
         target
             .parts
             .iter()
-            .any(|part| set.contains(&(target.message.clone(), part.index)))
+            .any(|part| highlight.contains(&(target.message.clone(), part.index)))
     })
 }
 
@@ -317,9 +365,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             owner.job = None;
             if reread {
                 owner.invalidate_boundary();
-                // Keep the last displayed page until its authoritative replacement arrives.
-                if current {
-                    super::reader::refresh_after_message_action(s);
+                // Reconcile any admitted write on the bound conversation even if input_scope rotated.
+                if !s.screen.is_launcher() && owner.backend.is_some() {
+                    owner.refresh_transcript = true;
                 }
             }
             if current {
@@ -339,9 +387,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         s.revision += 1;
                     }
                     Ok(Outcome::Fork(id)) => crate::launcher::choose(s, id, tx),
-                    Ok(Outcome::PreviewPrune { preview, group }) => {
+                    Ok(Outcome::PreviewPrune { preview, context }) => {
                         s.transcript_display.messages.confirmation =
-                            Some((Rc::downgrade(&s.input_scope), preview, group));
+                            Some((Rc::downgrade(&s.input_scope), preview, context));
                     }
                     Err(err) => {
                         s.transcript_display.messages.error =
@@ -361,6 +409,14 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             owner.job = None;
             changed = true;
         }
+    }
+    if s.transcript_display.messages.refresh_transcript
+        && !s.screen.is_launcher()
+        && s.transcript_display.messages.job.is_none()
+        && super::reader::refresh_after_message_action(s)
+    {
+        s.transcript_display.messages.refresh_transcript = false;
+        changed = true;
     }
     let owner = &mut s.transcript_display.messages;
     if let Some(read) = &owner.read {

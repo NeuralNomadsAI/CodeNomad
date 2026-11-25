@@ -49,6 +49,7 @@ pub(super) fn part_window(len: usize, steps: usize) -> (usize, usize) {
 pub fn rows(s: &State) -> El {
     let locale = locale();
     let groups = Groups::project(s);
+    let prune_highlight = super::message_actions::active_highlight(s, &groups);
     layout::transcript_rows(
         s.transcript_display.messages.visible(&s.messages).len(),
         |s: &State, i| s.messages[i].id.clone().into(),
@@ -57,7 +58,7 @@ pub fn rows(s: &State) -> El {
                 super::reading::row(
                     s,
                     s.messages[i].id.clone(),
-                    message_with_groups(s, i, &groups),
+                    message_with_groups(s, i, &groups, &prune_highlight),
                 )
             })
         },
@@ -68,10 +69,17 @@ pub fn rows(s: &State) -> El {
 
 #[cfg(test)]
 pub fn message(s: &State, i: usize) -> El {
-    message_with_groups(s, i, &Groups::project(s))
+    let groups = Groups::project(s);
+    let prune_highlight = super::message_actions::active_highlight(s, &groups);
+    message_with_groups(s, i, &groups, &prune_highlight)
 }
 
-fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
+fn message_with_groups(
+    s: &State,
+    i: usize,
+    groups: &Groups,
+    prune_highlight: &std::collections::HashSet<(String, u64)>,
+) -> El {
     let m = &s.messages[i];
     if let Some(context) = context::view(s, m) {
         return context;
@@ -218,6 +226,7 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                             m.completed,
                             &m.parts[index..group_end],
                             index,
+                            prune_highlight,
                             &mut marker,
                         );
                         hidden_continuation |= body.is_none();
@@ -227,7 +236,11 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                         s,
                         layout::prune_preview(
                             tools::view(s, &m.id, tool),
-                            super::message_actions::part_highlighted(s, &m.id, tool.part_index),
+                            super::message_actions::part_highlighted(
+                                prune_highlight,
+                                &m.id,
+                                tool.part_index,
+                            ),
                         ),
                         &m.id,
                         tools::tool_key(&m.id, &tool.id),
@@ -247,6 +260,7 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                             m.completed,
                             &m.parts[index..group_end],
                             index,
+                            prune_highlight,
                             &mut marker,
                         );
                         hidden_continuation |= body.is_none();

@@ -1,5 +1,6 @@
 use super::{
-    Actions, Intent, available, cleanup, clear_prune_hover, empty_draft, set_prune_hover, start,
+    Actions, Intent, PruneContext, PruneHover, available, cleanup, clear_prune_hover, empty_draft,
+    set_prune_hover, start,
 };
 use crate::{
     Message, State,
@@ -108,22 +109,45 @@ fn controls(s: &State, message: &Message) -> Option<Rc<Menu<State>>> {
         items.push(Rc::new(edit));
     }
     if eligible && !user {
-        let targets = cleanup::response_targets(s, id);
+        let has_response = cleanup::has_response_part(message);
+        let targets = if has_response {
+            cleanup::response_targets(s, id)
+        } else {
+            cleanup::message_targets(s, id)
+        };
         if !targets.is_empty() {
-            let hover_owner = format!("menu:{id}");
+            let hover = if has_response {
+                PruneHover::Response(id.clone())
+            } else {
+                PruneHover::Message(id.clone())
+            };
             let mut prune = Item::new(
                 "delete-technical-parts",
                 t("messageItem.actions.deleteTechnicalParts"),
                 screen::action_tx(&s.input_scope, {
                     let id = id.clone();
                     move |s, _| {
-                        let targets = cleanup::response_targets(s, &id);
+                        let Some(row) = lookup(s, &id) else {
+                            return;
+                        };
+                        let targets = if cleanup::has_response_part(row) {
+                            cleanup::response_targets(s, &id)
+                        } else {
+                            cleanup::message_targets(s, &id)
+                        };
                         if !targets.is_empty() {
                             start(
                                 s,
                                 Intent::PreviewPrune {
                                     targets,
-                                    group: false,
+                                    context: PruneContext {
+                                        group_key: None,
+                                        summary_label: None,
+                                        return_focus: Some((
+                                            format!("message-actions-{id}:trigger"),
+                                            None,
+                                        )),
+                                    },
                                 },
                             );
                         }
@@ -134,17 +158,15 @@ fn controls(s: &State, message: &Message) -> Option<Rc<Menu<State>>> {
             if owner.backend.is_none() {
                 prune.description = Some(t("history.sessionUnavailable").into());
             } else {
-                let enter_owner = hover_owner.clone();
-                let leave_owner = hover_owner;
-                let hover_id = id.clone();
+                let enter_hover = hover.clone();
+                let leave_hover = hover;
                 prune.on_mouse_enter =
                     Some(Rc::new(screen::action_tx(&s.input_scope, move |s, _| {
-                        let targets = cleanup::response_targets(s, &hover_id);
-                        set_prune_hover(s, enter_owner.clone(), &targets);
+                        set_prune_hover(s, enter_hover.clone());
                     })));
                 prune.on_mouse_leave =
                     Some(Rc::new(screen::action_tx(&s.input_scope, move |s, _| {
-                        clear_prune_hover(s, &leave_owner);
+                        clear_prune_hover(s, &leave_hover);
                     })));
             }
             items.push(Rc::new(prune));
@@ -192,13 +214,13 @@ pub(in crate::chat) fn header(s: &State, message: &Message, header: El) -> El {
 pub(in crate::chat) fn group_delete_button(
     s: &State,
     key: &str,
+    summary_label: String,
     targets: &[PruneMessageTarget],
 ) -> El {
     let disabled = !available(s) || s.transcript_display.messages.backend.is_none();
-    let targets = targets.to_vec();
-    let click_targets = targets.clone();
-    let hover_targets = targets;
-    let hover_owner = format!("group:{key}");
+    let click_targets = targets.to_vec();
+    let group_key = key.to_owned();
+    let hover = PruneHover::Group(key.to_owned());
     let hover_scope = s.input_scope.clone();
     let button = layout::button(
         t("messagePart.actions.delete"),
@@ -208,7 +230,14 @@ pub(in crate::chat) fn group_delete_button(
                 s,
                 Intent::PreviewPrune {
                     targets: click_targets.clone(),
-                    group: true,
+                    context: PruneContext {
+                        group_key: Some(group_key.clone()),
+                        summary_label: Some(summary_label.clone()),
+                        return_focus: Some((
+                            format!("delete-group-{group_key}"),
+                            Some(format!("toggle-{group_key}")),
+                        )),
+                    },
                 },
             );
         }),
@@ -222,9 +251,9 @@ pub(in crate::chat) fn group_delete_button(
                 return;
             }
             if inside {
-                set_prune_hover(s, hover_owner.clone(), &hover_targets);
+                set_prune_hover(s, hover.clone());
             } else {
-                clear_prune_hover(s, &hover_owner);
+                clear_prune_hover(s, &hover);
             }
         })
     }
@@ -241,32 +270,62 @@ pub(in crate::chat) fn overlays(s: &State, layers: &mut Vec<El>) {
     {
         layers.push(popup);
     }
-    if let Some((scope, preview, _)) = &owner.confirmation
+    if let Some((scope, preview, context)) = &owner.confirmation
         && scope.ptr_eq(&Rc::downgrade(&s.input_scope))
     {
         let owner_scope = scope.clone();
         let (tools, reasoning) = preview.counts();
-        let message = catalogue::format(
-            locale(),
-            "messageItem.actions.deleteTechnicalParts.confirmMessage",
-            &[
-                ("toolCount", &tools.to_string()),
-                ("reasoningCount", &reasoning.to_string()),
-            ],
-        );
-        layers.push(document_reader::editor::confirmation(
+        let (title, message, confirm_label) = if let Some(summary) = &context.summary_label {
+            (
+                t("messagePart.actions.delete"),
+                summary.clone(),
+                t("messagePart.actions.delete"),
+            )
+        } else {
+            (
+                t("messageItem.actions.deleteTechnicalParts.confirmTitle"),
+                catalogue::format(
+                    locale(),
+                    "messageItem.actions.deleteTechnicalParts.confirmMessage",
+                    &[
+                        ("toolCount", &tools.to_string()),
+                        ("reasoningCount", &reasoning.to_string()),
+                    ],
+                ),
+                t("messageItem.actions.deleteTechnicalParts.confirmLabel"),
+            )
+        };
+        layers.push(document_reader::editor::confirmation_titled(
             layout::dark(),
+            title,
             &message,
             t("alertDialog.actions.cancel"),
-            t("messageItem.actions.deleteTechnicalParts.confirmLabel"),
-            move |s: &mut State, accepted, _| {
+            confirm_label,
+            move |s: &mut State, accepted, tx| {
                 if !owner_scope.ptr_eq(&Rc::downgrade(&s.input_scope)) {
                     return;
                 }
-                if let Some((_, preview, group)) = s.transcript_display.messages.confirmation.take()
-                    && accepted
+                if let Some((_, preview, context)) =
+                    s.transcript_display.messages.confirmation.take()
                 {
-                    start(s, Intent::Prune { preview, group });
+                    if accepted {
+                        start(s, Intent::Prune { preview, context });
+                    } else if let Some((primary, fallback)) = context.return_focus {
+                        let target = if let Some(group_key) = &context.group_key {
+                            if super::super::tool_groups::Groups::project(s)
+                                .group_delete_active(s, group_key)
+                            {
+                                Some(primary)
+                            } else {
+                                fallback
+                            }
+                        } else {
+                            Some(primary)
+                        };
+                        if let Some(target) = target {
+                            tx.return_focus(target, tx.focus_visible());
+                        }
+                    }
                 }
             },
         ));

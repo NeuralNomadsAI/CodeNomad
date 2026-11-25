@@ -200,14 +200,17 @@ pub(crate) fn invalidate(s: &mut State) {
     }
 }
 
-pub(super) fn refresh_after_message_action(s: &mut State) {
+pub(super) fn refresh_after_message_action(s: &mut State) -> bool {
     cancel_page(s);
     s.history_error = false;
     if let Some(reader) = &mut s.reader {
         reader.resume(Bookmark::Latest);
         s.paging = false;
+        true
     } else if let Some(command) = &s.commands {
-        let _ = command.try_send(crate::transport::Command::Latest);
+        command.try_send(crate::transport::Command::Latest).is_ok()
+    } else {
+        true
     }
 }
 
