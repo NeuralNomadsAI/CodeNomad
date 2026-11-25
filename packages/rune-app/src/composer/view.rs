@@ -319,7 +319,7 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
             choose(s, tx, index, false, false);
         }
     })
-    .build(kit(layout::dark()), layer);
+    .build(&kit(layout::dark()), layer);
 }
 
 pub(super) fn changed(s: &mut State, tx: &mut Tx) {

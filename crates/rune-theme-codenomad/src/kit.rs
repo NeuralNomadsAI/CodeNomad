@@ -1,28 +1,67 @@
 //! Map shared CodeNomad surface roles onto rune-kit's generic semantic schema.
 //! Component geometry, glyphs and spring-curve parity remain explicit qualification gaps.
-use crate::{MotionRole, TextRole, document, tokens};
+use crate::{
+    MotionRole, TextRole, document,
+    palettes::{CustomPalette, ResolvedPalette},
+    tokens,
+};
 use rune::{Color, Spring};
 use rune_kit::{Elevation, Kit, Motion, Palette, Radius, StateColors, Type, css, glyphs};
-use std::sync::OnceLock;
+use std::{ops::Deref, rc::Rc, sync::OnceLock};
 
-pub fn kit(dark: bool) -> &'static Kit {
+pub enum KitRef {
+    Static(&'static Kit),
+    Dynamic(Rc<CustomPalette>, bool),
+}
+
+impl Deref for KitRef {
+    type Target = Kit;
+    fn deref(&self) -> &Kit {
+        match self {
+            Self::Static(kit) => kit,
+            Self::Dynamic(palette, false) => palette.kit(),
+            Self::Dynamic(palette, true) => palette.field_kit(),
+        }
+    }
+}
+
+impl AsRef<Kit> for KitRef {
+    fn as_ref(&self) -> &Kit {
+        self
+    }
+}
+
+pub fn kit(dark: bool) -> KitRef {
     if let Some(palette) = crate::palettes::active(dark) {
-        return palette.kit.get_or_init(|| build(dark));
+        return match palette {
+            ResolvedPalette::BuiltIn(palette) => {
+                KitRef::Static(palette.kit.get_or_init(|| build(dark)))
+            }
+            ResolvedPalette::Custom(palette) => KitRef::Dynamic(palette, false),
+        };
     }
     static KITS: [OnceLock<Kit>; 4] = [const { OnceLock::new() }; 4];
-    KITS[crate::palette_index(dark)].get_or_init(|| build(dark))
+    KitRef::Static(KITS[crate::palette_index(dark)].get_or_init(|| build(dark)))
 }
-pub fn field_kit(dark: bool) -> &'static Kit {
+pub fn field_kit(dark: bool) -> KitRef {
+    if let Some(palette) = crate::palettes::active(dark) {
+        return match palette {
+            ResolvedPalette::BuiltIn(palette) => KitRef::Static(palette.field.get_or_init(|| {
+                let mut kit = kit(dark).clone();
+                kit.c.bg_base = kit.c.surface_base;
+                kit
+            })),
+            ResolvedPalette::Custom(palette) => KitRef::Dynamic(palette, true),
+        };
+    }
     static FIELDS: [OnceLock<Kit>; 4] = [const { OnceLock::new() }; 4];
-    let cache =
-        crate::palettes::active(dark).map_or(&FIELDS[crate::palette_index(dark)], |p| &p.field);
-    cache.get_or_init(|| {
+    KitRef::Static(FIELDS[crate::palette_index(dark)].get_or_init(|| {
         let mut kit = kit(dark).clone();
         kit.c.bg_base = kit.c.surface_base;
         kit
-    })
+    }))
 }
-fn build(dark: bool) -> Kit {
+pub(crate) fn build(dark: bool) -> Kit {
     let t = tokens(dark);
     let c = |name| t.color(name);
     let state = |bg, fg| StateColors {

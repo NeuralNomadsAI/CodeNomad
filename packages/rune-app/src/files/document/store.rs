@@ -304,7 +304,6 @@ impl Store {
         store.saved = saved;
         true
     }
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn file_draft_revision(&self) -> u64 {
         lock(&self.0).revision
     }

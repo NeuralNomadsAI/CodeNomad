@@ -102,7 +102,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
             .help(t(help))
             .disabled(!available)
             .on_press(screen::action(scope, move |s| launcher::visit(s, back)))
-            .build(kit(layout::dark()))
+            .build(&kit(layout::dark()))
             .key(key)
             .on_key(move |s: &mut State, event, tx| {
                 if available && event.key == rune::Key::Enter && event.mods == rune::Mods::default()
@@ -141,7 +141,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 .on_press_tx(screen::action_tx(scope, |s, _| {
                     launcher::create_blank(s);
                 }))
-                .build(kit(layout::dark()))
+                .build(&kit(layout::dark()))
                 .key("session-new"),
             shell::control(&SEARCH, t("sessionList.filter.ariaLabel"), touch)
                 .expanded(l.show_search)
@@ -153,7 +153,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                         }
                     }
                 }))
-                .build(kit(layout::dark()))
+                .build(&kit(layout::dark()))
                 .key("session-search-toggle"),
         ],
     );
@@ -164,7 +164,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 .label(name)
                 .on_edit(screen::edit(scope, Editor::Search))
                 .on_key(editor_keys.clone())
-                .build(field_kit(layout::dark()))
+                .build(&field_kit(layout::dark()))
                 .key("session-search"),
         )
     });
@@ -257,7 +257,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                         .on_edit(screen::edit(scope, Editor::Title))
                         .on_key(editor_keys)
                         .on_submit(screen::action_tx(scope, launcher::create))
-                        .build(field_kit(layout::dark()))
+                        .build(&field_kit(layout::dark()))
                         .key("session-title"),
                 )
                 .child(button_tx(

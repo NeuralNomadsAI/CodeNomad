@@ -1,4 +1,5 @@
 use super::*;
+mod palettes_startup;
 use rune::{Env, Runtime};
 use serde_json::Value;
 
@@ -755,7 +756,7 @@ fn general_behavior_renders_six_checkboxes_natively_and_hides_keep_awake_on_web(
         },
         |s, cx| {
             let prefs = s.shared.borrow();
-            render_with(cx, &prefs, false, |_| {
+            render_with(cx, &prefs, false, false, |_| {
                 let mut layers = Vec::new();
                 s.behavior
                     .view(&s.shared, false, &mut layers, |s: &mut WebCard| {

@@ -90,6 +90,26 @@ impl Files {
     pub fn save(&self, bytes: &[u8]) -> Result<()> {
         self.save_file("state.json", MAX_BYTES, bytes)
     }
+    pub(super) fn remove_file(&self, name: &str) -> Result<()> {
+        let path = self.directory.join(name);
+        plain(&path, false)?;
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
+    pub(super) fn restore_enabled(&self) -> Result<bool> {
+        let Some(bytes) = self.load_file("restore-enabled.json", 128)? else {
+            return Ok(true);
+        };
+        let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+        Ok(value["restoreEnabled"].as_bool().unwrap_or(true))
+    }
+    pub(super) fn save_restore_enabled(&self, enabled: bool) -> Result<()> {
+        let bytes = serde_json::to_vec(&serde_json::json!({ "restoreEnabled": enabled }))?;
+        self.save_file("restore-enabled.json", 128, &bytes)
+    }
     fn save_file(&self, name: &str, limit: usize, bytes: &[u8]) -> Result<()> {
         self.save_file_with(
             name,
@@ -221,6 +241,65 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
             files.load()
+        })
+        .await?
+    }
+    pub async fn restore_enabled(&self) -> Result<bool> {
+        let files = self.files.clone();
+        let state_lock = self.state_lock.clone();
+        tokio::task::spawn_blocking(move || {
+            let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
+            files.restore_enabled()
+        })
+        .await?
+    }
+    pub async fn set_restore_enabled(&self, enabled: bool) -> Result<()> {
+        let files = self.files.clone();
+        let state_lock = self.state_lock.clone();
+        let file_drafts_lock = self.file_drafts_lock.clone();
+        let staged = self.staged.clone();
+        let queue = self.file_drafts_queue.clone();
+        tokio::task::spawn_blocking(move || {
+            if !enabled && let Ok(mut state) = queue.lock() {
+                state.cancel_all();
+            }
+            let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
+            files.save_restore_enabled(enabled)?;
+            if !enabled {
+                if let Ok(mut staged) = staged.lock() {
+                    *staged = None;
+                }
+                files.remove_file("state.json")?;
+                files.remove_file("outlines-v1.json")?;
+                let _drafts = file_drafts_lock
+                    .lock()
+                    .map_err(|_| "state store unavailable")?;
+                files.remove_file("workspace-file-drafts.json")?;
+            }
+            Ok(())
+        })
+        .await?
+    }
+    pub async fn clear_startup_state(&self) -> Result<()> {
+        let files = self.files.clone();
+        let state_lock = self.state_lock.clone();
+        let file_drafts_lock = self.file_drafts_lock.clone();
+        let staged = self.staged.clone();
+        let queue = self.file_drafts_queue.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Ok(mut state) = queue.lock() {
+                state.cancel_all();
+            }
+            let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
+            if let Ok(mut staged) = staged.lock() {
+                *staged = None;
+            }
+            files.remove_file("state.json")?;
+            files.remove_file("outlines-v1.json")?;
+            let _drafts = file_drafts_lock
+                .lock()
+                .map_err(|_| "state store unavailable")?;
+            files.remove_file("workspace-file-drafts.json")
         })
         .await?
     }

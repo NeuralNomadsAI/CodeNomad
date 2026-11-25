@@ -33,20 +33,24 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 let mut prefs = s.shared.borrow_mut();
                 let jump = std::mem::take(&mut prefs.open_providers);
                 if jump && !s.config_files.busy() && !s.confirm_close && !s.closing {
-                    s.section = Section::Providers;
-                    s.general.close();
-                    s.transcript_picker.set(None);
-                    s.advanced_help = None;
-                    s.recording_shortcut = false;
-                    s.shortcut_capture = Default::default();
-                    s.behavior.close();
-                    s.opencode = super::opencode::Status::default();
-                    s.logging.close();
-                    prefs.hide_opencode();
-                    prefs.memory.show(false);
-                    s.memory_help_failed = false;
-                    s.remote.close();
-                    s.info.close();
+                    if s.general.dirty() && s.section != Section::Providers {
+                        s.pending_section = Some(Section::Providers);
+                    } else {
+                        s.section = Section::Providers;
+                        s.general.close();
+                        s.transcript_picker.set(None);
+                        s.advanced_help = None;
+                        s.recording_shortcut = false;
+                        s.shortcut_capture = Default::default();
+                        s.behavior.close();
+                        s.opencode = super::opencode::Status::default();
+                        s.logging.close();
+                        prefs.hide_opencode();
+                        prefs.memory.show(false);
+                        s.memory_help_failed = false;
+                        s.remote.close();
+                        s.info.close();
+                    }
                 }
                 let environment = s
                     .environment
@@ -149,6 +153,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             }
             if s.confirm_close {
                 s.confirm_close = false;
+            } else if s.pending_section.take().is_some() || s.general.dismiss_overlay() {
             } else if s.memory_editor.shown() {
                 s.memory_editor.dismiss();
             } else {

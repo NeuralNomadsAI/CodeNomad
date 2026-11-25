@@ -63,7 +63,7 @@ pub fn picture_hover(image: &rune::Image, label: &str, anchor: &str) -> Option<E
         .a11y_hidden()
         .inert();
     Some(rune_kit::popover::anchored(
-        crate::kit(dark),
+        &crate::kit(dark),
         body,
         anchor,
         rune_kit::Placement::TopStart,

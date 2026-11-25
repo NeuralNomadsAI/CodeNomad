@@ -208,7 +208,7 @@ pub(crate) fn dialog(s: &State) -> Option<El> {
             scope,
             crate::screen::Editor::DirectUsername,
         ))
-        .build(field_kit(layout::dark()))
+        .build(&field_kit(layout::dark()))
         .key("direct-recovery-username");
     let field = literal_field(password)
         .label(t("authRecovery.password"))
@@ -219,7 +219,7 @@ pub(crate) fn dialog(s: &State) -> Option<El> {
             crate::screen::Editor::DirectPassword,
         ))
         .on_submit(crate::screen::action_tx(scope, |s, _| submit(s)))
-        .build(field_kit(layout::dark()))
+        .build(&field_kit(layout::dark()))
         .key("direct-recovery-password")
         .autofocus();
     let error = challenge

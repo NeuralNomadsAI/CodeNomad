@@ -34,6 +34,7 @@ pub(super) struct Window {
     memory_editor: super::memory::editor::Editor,
     seen_revision: u64,
     section: Section,
+    pending_section: Option<Section>,
     recording_shortcut: bool,
     shortcut_capture: super::shortcuts::editor::Capture,
     shortcut_filter: rune::TextEdit,
@@ -56,9 +57,10 @@ pub(super) struct CloseRequest {
     pub requested: Cell<bool>,
     pub reopen: RefCell<Option<super::memory::editor::Editor>>,
     pub config_reopen: RefCell<Option<super::config_files::Editor>>,
+    pub palette_reopen: RefCell<Option<super::general::Controls>>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
     General,
     Conversation,
@@ -129,7 +131,45 @@ impl Window {
             self.section = Section::ConfigFiles;
             self.confirm_close = self.config_files.dirty() && !self.config_files.busy();
         }
+        if let Some(general) = self
+            .close_request
+            .as_ref()
+            .and_then(|request| request.palette_reopen.borrow_mut().take())
+        {
+            self.general = general;
+            self.section = Section::General;
+            self.confirm_close = self.general.dirty();
+        }
         self
+    }
+
+    fn switch_section(&mut self, next: Section) {
+        self.general.close();
+        self.transcript_picker.set(None);
+        self.advanced_help = None;
+        self.recording_shortcut = false;
+        self.shortcut_capture = Default::default();
+        self.behavior.close();
+        self.section = next;
+        if self.section != Section::OpenCode {
+            self.opencode = opencode::Status::default();
+            self.logging.close();
+            self.shared.borrow_mut().hide_opencode();
+        }
+        self.shared
+            .borrow_mut()
+            .memory
+            .show(self.section == Section::General);
+        self.memory_help_failed = false;
+        if self.section != Section::Providers {
+            self.providers.suspend();
+        }
+        if self.section != Section::Remote {
+            self.remote.close();
+        }
+        if self.section != Section::Info {
+            self.info.close();
+        }
     }
 
     fn request_close(&mut self, tx: &mut rune::Tx) {
@@ -144,7 +184,7 @@ impl Window {
         }
         self.logging.close();
         self.remote.close();
-        if self.memory_editor.has_unsaved() || self.config_files.dirty() {
+        if self.memory_editor.has_unsaved() || self.config_files.dirty() || self.general.dirty() {
             self.confirm_close = true;
         } else {
             self.closing = true;
@@ -155,7 +195,8 @@ impl Window {
     fn retain_editor_on_native_close(&mut self) -> bool {
         if (!self.memory_editor.has_unsaved()
             && !self.config_files.dirty()
-            && !self.config_files.busy())
+            && !self.config_files.busy()
+            && !self.general.dirty())
             || self.token.as_ref().is_some_and(|token| token.get())
         {
             return false;
@@ -170,6 +211,9 @@ impl Window {
             self.config_files.suspend();
             *request.config_reopen.borrow_mut() = Some(std::mem::take(&mut self.config_files));
         }
+        if self.general.dirty() {
+            *request.palette_reopen.borrow_mut() = Some(std::mem::take(&mut self.general));
+        }
         let mut prefs = self.shared.borrow_mut();
         prefs.window_wake = None;
         if let Some(wake) = &prefs.main_wake {
@@ -181,6 +225,7 @@ impl Window {
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
         {
             let mut prefs = self.shared.borrow_mut();
+            prefs.set_palette_preview(None);
             prefs.window_wake = None;
             prefs.hide_opencode();
             prefs.show_environment(false);
@@ -204,7 +249,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     let system_more = cx.system_increased_contrast();
     s.general
         .close_palette_on_slot_change(prefs.dark(system_dark));
-    render_with(cx, &prefs, system_more, |cx| {
+    render_with(cx, &prefs, system_more, true, |cx| {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
         let notifications_label = t("settings.nav.notifications");
@@ -292,13 +337,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 if s.config_files.busy() {
                     return;
                 }
-                s.general.close();
-                s.transcript_picker.set(None);
-                s.advanced_help = None;
-                s.recording_shortcut = false;
-                s.shortcut_capture = Default::default();
-                s.behavior.close();
-                s.section = match key {
+                let next = match key {
                     "settings-opencode" => Section::OpenCode,
                     "settings-conversation" => Section::Conversation,
                     "settings-notifications" => Section::Notifications,
@@ -313,25 +352,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-info" => Section::Info,
                     _ => Section::General,
                 };
-                if s.section != Section::OpenCode {
-                    s.opencode = opencode::Status::default();
-                    s.logging.close();
-                    s.shared.borrow_mut().hide_opencode();
+                if next != s.section && s.general.dirty() {
+                    s.pending_section = Some(next);
+                    return;
                 }
-                s.shared
-                    .borrow_mut()
-                    .memory
-                    .show(s.section == Section::General);
-                s.memory_help_failed = false;
-                if s.section != Section::Providers {
-                    s.providers.suspend();
-                }
-                if s.section != Section::Remote {
-                    s.remote.close();
-                }
-                if s.section != Section::Info {
-                    s.info.close();
-                }
+                s.switch_section(next);
             },
         );
         let mut layers = Vec::new();
@@ -411,7 +436,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             }
             Section::General => (
                 "general",
-                general::view(s, &prefs, system_dark, system_more, &mut layers),
+                general::view(s, cx, &prefs, system_dark, system_more, &mut layers),
             ),
             Section::Notifications => (
                 "notifications",
@@ -512,6 +537,18 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     }
                 },
             ));
+        } else if s.confirm_close && s.general.dirty() {
+            layers.push(super::config_files::confirm_discard(
+                |s: &mut Window, accept, tx| {
+                    s.confirm_close = false;
+                    if accept {
+                        let mut prefs = s.shared.borrow_mut();
+                        s.general.discard_draft(&mut prefs);
+                        drop(prefs);
+                        s.request_close(tx);
+                    }
+                },
+            ));
         } else if s.confirm_close {
             layers.push(rune_theme_codenomad::document_reader::editor::confirmation(
                 layout::dark(),
@@ -523,6 +560,18 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     if accept {
                         s.memory_editor = Default::default();
                         s.request_close(tx);
+                    }
+                },
+            ));
+        } else if let Some(next_section) = s.pending_section {
+            layers.push(super::config_files::confirm_discard(
+                move |s: &mut Window, accept, _| {
+                    s.pending_section = None;
+                    if accept {
+                        let mut prefs = s.shared.borrow_mut();
+                        s.general.discard_draft(&mut prefs);
+                        drop(prefs);
+                        s.switch_section(next_section);
                     }
                 },
             ));

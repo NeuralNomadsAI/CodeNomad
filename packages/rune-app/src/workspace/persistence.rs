@@ -7,7 +7,12 @@ use codenomad_client::TryRecvError;
 use codenomad_client::{Receiver, bounded};
 use std::path::PathBuf;
 
-type Loaded = (Store, Result<Option<Snapshot>>, Result<Option<Vec<u8>>>);
+type Loaded = (
+    Store,
+    bool,
+    Result<Option<Snapshot>>,
+    Result<Option<Vec<u8>>>,
+);
 
 #[cfg(not(target_arch = "wasm32"))]
 const FILE_DRAFT_DEBOUNCE_SECS: f64 = 0.25;
@@ -16,6 +21,7 @@ const FILE_DRAFT_MAX_WAIT_SECS: f64 = 2.0;
 
 pub(super) struct Persistence {
     pub loading: bool,
+    pub restore_enabled: bool,
     pub read_error: bool,
     pub write_error: bool,
     pub file_draft_error: bool,
@@ -44,6 +50,7 @@ impl Persistence {
     pub fn new() -> Self {
         Self {
             loading: false,
+            restore_enabled: true,
             read_error: false,
             write_error: false,
             file_draft_error: false,
@@ -92,13 +99,21 @@ impl Persistence {
                 let store = Store::open(directory).await?;
                 #[cfg(target_arch = "wasm32")]
                 let store = Store::open().await?;
-                let snapshot = store.load().await.and_then(|bytes| {
-                    bytes
-                        .map(|bytes| decode(&bytes).map_err(|_| "invalid saved workspace".into()))
-                        .transpose()
-                });
-                let drafts = store.load_file_drafts().await;
-                Ok((store, snapshot, drafts))
+                let restore_enabled = store.restore_enabled().await.unwrap_or(true);
+                let (snapshot, drafts) = if restore_enabled {
+                    let snapshot = store.load().await.and_then(|bytes| {
+                        bytes
+                            .map(|bytes| {
+                                decode(&bytes).map_err(|_| "invalid saved workspace".into())
+                            })
+                            .transpose()
+                    });
+                    let drafts = store.load_file_drafts().await;
+                    (snapshot, drafts)
+                } else {
+                    (Ok(None), Ok(None))
+                };
+                Ok((store, restore_enabled, snapshot, drafts))
             }
             .await;
             let _ = out.send(result).await;
@@ -110,12 +125,17 @@ impl Persistence {
         self.loaded = None;
         self.loading = false;
         match result {
-            Ok((store, snapshot, drafts)) => {
-                self.read_error = snapshot.is_err();
-                let snapshot = snapshot.ok().flatten();
+            Ok((store, restore_enabled, snapshot, drafts)) => {
+                self.restore_enabled = restore_enabled;
+                self.read_error = restore_enabled && snapshot.is_err();
+                let snapshot = if restore_enabled {
+                    snapshot.ok().flatten()
+                } else {
+                    None
+                };
                 self.saved = snapshot.as_ref().map_or(0, |s| s.revision);
                 self.store = Some(store);
-                Some((snapshot, drafts))
+                Some((snapshot, if restore_enabled { drafts } else { Ok(None) }))
             }
             Err(_) => {
                 self.read_error = true;
@@ -143,7 +163,8 @@ impl Persistence {
         let Some(store) = self.store.clone() else {
             return;
         };
-        if self.read_error
+        if !self.restore_enabled
+            || self.read_error
             || self.write_error
             || self.saving.is_some()
             || self.saved >= snapshot.revision
@@ -224,7 +245,72 @@ impl Persistence {
         }
         true
     }
+    pub fn apply_restore_enabled(
+        &mut self,
+        enabled: bool,
+        current_revision: u64,
+        documents: &Documents,
+    ) {
+        self.restore_enabled = enabled;
+        self.read_error = false;
+        self.write_error = false;
+        self.partial = false;
+        self.file_draft_error = false;
+        self.file_draft_read_error = false;
+        self.saving = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.saving_file_drafts = None;
+            self.file_drafts_first_dirty = None;
+        }
+        documents.block_file_draft_updates(false);
+        if enabled {
+            self.saved = 0;
+            self.saved_file_drafts = 0;
+            self.attempted_file_drafts = 0;
+            self.due = 0.0;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.file_drafts_dirty_revision = documents.file_draft_revision();
+                self.file_drafts_due = 0.0;
+                self.file_draft_retry_requested = true;
+            }
+        } else {
+            let drafts_rev = documents.file_draft_revision();
+            self.saved = current_revision;
+            self.saved_file_drafts = drafts_rev;
+            self.attempted_file_drafts = drafts_rev;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.file_drafts_dirty_revision = drafts_rev;
+                self.file_draft_retry_requested = false;
+            }
+        }
+    }
+    pub fn apply_cleared(&mut self, current_revision: u64, documents: &Documents) {
+        let drafts_rev = documents.file_draft_revision();
+        self.read_error = false;
+        self.write_error = false;
+        self.partial = false;
+        self.file_draft_error = false;
+        self.file_draft_read_error = false;
+        self.saving = None;
+        self.saved = current_revision;
+        self.saved_file_drafts = drafts_rev;
+        self.attempted_file_drafts = drafts_rev;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.saving_file_drafts = None;
+            self.file_drafts_dirty_revision = drafts_rev;
+            self.file_drafts_first_dirty = None;
+            self.file_draft_retry_requested = false;
+        }
+        documents.block_file_draft_updates(false);
+    }
     pub fn flush(&mut self, snapshot: &Snapshot) -> bool {
+        if !self.restore_enabled {
+            return true;
+        }
         if self.read_error || self.loading {
             return false;
         }
@@ -265,6 +351,9 @@ impl Persistence {
         }
     }
     pub fn flush_file_drafts(&mut self, documents: &Documents) -> bool {
+        if !self.restore_enabled {
+            return true;
+        }
         #[cfg(target_arch = "wasm32")]
         {
             self.save_file_drafts_since(documents, self.saved_file_drafts)
@@ -335,6 +424,11 @@ impl Persistence {
         tx: &mut rune::Tx,
         wake: rune::Waker,
     ) {
+        if !self.restore_enabled {
+            #[cfg(not(target_arch = "wasm32"))]
+            self.drain_file_draft_save();
+            return;
+        }
         #[cfg(target_arch = "wasm32")]
         {
             let _ = (now, tx, wake);

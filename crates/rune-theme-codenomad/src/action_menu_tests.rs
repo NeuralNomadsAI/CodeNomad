@@ -62,7 +62,7 @@ fn view_app(s: &App, cx: &mut Cx<App>) -> El {
         }
         let trigger = Button::new("Actions")
             .variant(ButtonVariant::Ghost)
-            .build(kit(layout::dark()));
+            .build(&kit(layout::dark()));
         let (trigger, surface) = view(&s.menu, at, descriptor(s), trigger, 500.0);
         let mut layers: Vec<_> = surface.into_iter().collect();
         if s.dialog {
@@ -75,12 +75,12 @@ fn view_app(s: &App, cx: &mut Cx<App>) -> El {
                     .child(
                         Button::new("Cancel")
                             .on_press(|s: &mut App| s.dialog = false)
-                            .build(kit(layout::dark()))
+                            .build(&kit(layout::dark()))
                             .key("cancel"),
                     )
                     .child(
                         Button::new("Accept")
-                            .build(kit(layout::dark()))
+                            .build(&kit(layout::dark()))
                             .key("accept"),
                     ),
             );
@@ -92,7 +92,7 @@ fn view_app(s: &App, cx: &mut Cx<App>) -> El {
                 .child(trigger)
                 .children(s.inline_target.then(|| {
                     Button::new("Accept")
-                        .build(kit(layout::dark()))
+                        .build(&kit(layout::dark()))
                         .key("accept")
                 })),
             layers,

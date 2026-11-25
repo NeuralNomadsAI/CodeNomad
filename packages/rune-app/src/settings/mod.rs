@@ -11,9 +11,11 @@ mod memory;
 pub(crate) mod notification_routing;
 mod notification_settings;
 mod opencode;
+mod palettes;
 mod preferences;
 mod providers;
 mod remote;
+mod startup_state;
 mod stats;
 pub(crate) mod transcript_filters;
 mod transcript_preset;
@@ -74,7 +76,7 @@ pub(crate) struct Host {
     contrast: Option<web_contrast::Watch>,
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
-    last_display: Option<([&'static str; 5], bool, bool, bool)>,
+    last_display: Option<([&'static str; 3], String, String, bool, bool, bool)>,
     last_revision: u64,
     last_transcript: Option<[&'static str; transcript_preset::ROW_COUNT]>,
     transcript_filters: transcript_filters::Filters,
@@ -152,8 +154,10 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some((request, editor)) = s.settings.window.as_ref().and_then(|(_, _, request)| {
         let editor = request.reopen.borrow_mut().take();
-        (editor.is_some() || request.config_reopen.borrow().is_some())
-            .then(|| (request.clone(), editor))
+        (editor.is_some()
+            || request.config_reopen.borrow().is_some()
+            || request.palette_reopen.borrow().is_some())
+        .then(|| (request.clone(), editor))
     }) {
         launch_preferences(s, request, editor);
     }
@@ -254,6 +258,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     #[cfg(target_arch = "wasm32")]
     if s.settings
         .last_display
+        .as_ref()
         .is_none_or(|(last, ..)| last[0] != locale)
         && let Some(root) = web_sys::window()
             .and_then(|window| window.document())
@@ -262,13 +267,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         let _ = root.set_attribute("lang", locale);
     }
     let display = Some((
-        [
-            locale,
-            shared.mode(),
-            shared.palette(false).map_or("", |p| p.id),
-            shared.palette(true).map_or("", |p| p.id),
-            shared.contrast(),
-        ],
+        [locale, shared.mode(), shared.contrast()],
+        shared.palette_display_signature(false),
+        shared.palette_display_signature(true),
         awaiting_appearance(s, &shared),
         shared.show_timeline(),
         shared.transcript_ready(),
@@ -304,7 +305,11 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let locale = shared.locale().unwrap_or_else(strings::locale);
     let notify_failure = shared.take_notification_failure();
     let update = shared.notification_update.take();
+    let startup_notice = shared.startup.take_notice();
     drop(shared);
+    let startup_changed = startup_state::StartupState::poll_main(s);
+    let startup_notice =
+        startup_notice.or_else(|| s.settings.shared.borrow_mut().startup.take_notice());
     strings::with_locale(locale, || {
         use crate::shell::notifications::{Category, emit, emit_outcome};
         if notify_failure {
@@ -315,6 +320,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 strings::t("settings.preferenceSaveFailed"),
                 true,
             );
+        }
+        if let Some((key, failed)) = startup_notice {
+            emit_outcome(s, Category::Settings, None, strings::t(key), failed);
         }
         if let Some(version) = update {
             emit(
@@ -343,13 +351,16 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     }
     let filters_changed =
         preferences_changed && s.settings.transcript_filters.is_open(&s.input_scope);
+    let display_changed = s.settings.last_display != display;
+    s.settings.last_display = display;
     preferences_changed
         | revision_changed
         | changed
+        | startup_changed
         | expired
         | filters_changed
         | transcript_changed
-        | (display != std::mem::replace(&mut s.settings.last_display, display))
+        | display_changed
 }
 
 pub(crate) fn queues_follow_ups(s: &State) -> bool {

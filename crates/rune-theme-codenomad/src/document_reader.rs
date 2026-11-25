@@ -103,7 +103,7 @@ pub fn eye<S: 'static>(
     active: bool,
     press: impl Fn(&mut S, &mut rune::Tx) + 'static,
 ) -> El {
-    let k = kit(dark);
+    let k = &*kit(dark);
     let mut selected;
     let k = if active && !disabled {
         selected = k.clone();
@@ -298,7 +298,7 @@ pub fn mermaid_error(dark: bool, message: &str, source: &str) -> El {
 }
 fn markdown_style(dark: bool) -> MarkdownStyle {
     let t = tokens(dark);
-    let mut style = MarkdownStyle::from_kit(kit(dark))
+    let mut style = MarkdownStyle::from_kit(&kit(dark))
         .body_font(font(t, "readerMarkdown"))
         .strong_weight(t.number("font-weight-regular").px())
         .link_underline(rune::Color::TRANSPARENT)
@@ -328,7 +328,7 @@ pub fn markdown<S: 'static>(
         .on_link_tx(open)
         .images(image)
         .diagram_frame(move |diagram, _| diagram.label(diagram_label))
-        .build(kit(dark))
+        .build(&kit(dark))
 }
 pub fn markdown_image_sources(text: &str) -> Vec<String> {
     fn collect(blocks: Vec<Block>, found: &mut Vec<String>) {
@@ -379,7 +379,7 @@ pub fn code_copy<S: 'static>(
         .variant(rune_kit::IconButtonVariant::GhostMuted)
         .label(label)
         .on_press_tx(move |s, tx| copy(s, tx))
-        .build(kit(dark))
+        .build(&kit(dark))
         .on_key(move |s: &mut S, key, tx| {
             if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
                 return false;

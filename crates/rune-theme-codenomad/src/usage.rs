@@ -32,7 +32,7 @@ pub fn disclosure<S: 'static>(
     items: impl IntoIterator<Item = El>,
     press: impl Fn(&mut S) + 'static,
 ) -> El {
-    let kit = kit(layout::dark());
+    let kit = &*kit(layout::dark());
     let theme = tokens(layout::dark());
     let glyph = if expanded {
         &crate::git_panel::CHEVRON_DOWN

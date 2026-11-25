@@ -1,5 +1,6 @@
 use crate::settings::{
     notification_routing::{Category, Destination},
+    palettes::PaletteMutation,
     transcript_preset::{self, Row},
 };
 use serde_json::{Value, json};
@@ -23,6 +24,7 @@ pub(in crate::settings::preferences) enum Choice {
     NotificationsFocused,
     Mode,
     Palette(bool),
+    PaletteMutation,
 }
 
 fn env_key_eq(a: &str, b: &str) -> bool {
@@ -90,6 +92,10 @@ impl Choice {
             }
             return;
         }
+        if let (Self::PaletteMutation, ChoiceValue::Palette(mutation)) = (self, value) {
+            mutation.put(patch);
+            return;
+        }
         let ChoiceValue::Text(value) = *value else {
             return;
         };
@@ -123,7 +129,9 @@ impl Choice {
                 row.put(&mut patch["settings"], &snapshot["settings"], value, atomic)
             }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
-            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment => (),
+            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment | Self::PaletteMutation => {
+                ()
+            }
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 patch["appearancePreferences"][mode] = json!({
@@ -165,6 +173,9 @@ impl Choice {
             };
             return value_ok && mask_ok;
         }
+        if let (Self::PaletteMutation, ChoiceValue::Palette(mutation)) = (self, value) {
+            return mutation.confirmed(snapshot);
+        }
         let ChoiceValue::Text(value) = *value else {
             return false;
         };
@@ -191,7 +202,9 @@ impl Choice {
             Self::TranscriptPreset => transcript_preset::confirmed(value, &snapshot["settings"]),
             Self::TranscriptRow(row) => row.confirmed(value, &snapshot["settings"]),
             Self::Mode => appearance["mode"] == value,
-            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment => false,
+            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment | Self::PaletteMutation => {
+                false
+            }
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 let slot = &appearance[mode];
@@ -212,6 +225,7 @@ impl Choice {
                 | Self::Shortcut(_)
                 | Self::ShortcutReset
                 | Self::UpdateFeed
+                | Self::PaletteMutation
         )
     }
 }
@@ -220,6 +234,7 @@ impl Choice {
 pub(super) enum ChoiceValue {
     Text(&'static str),
     Shortcut(Value),
+    Palette(Box<PaletteMutation>),
     Environment {
         name: String,
         value: Option<String>,

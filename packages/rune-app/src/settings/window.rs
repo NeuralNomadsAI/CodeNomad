@@ -70,7 +70,9 @@ fn open_window(s: &mut State, providers: bool) {
         return;
     }
     if host.window.as_ref().is_some_and(|(_, _, request)| {
-        request.reopen.borrow().is_some() || request.config_reopen.borrow().is_some()
+        request.reopen.borrow().is_some()
+            || request.config_reopen.borrow().is_some()
+            || request.palette_reopen.borrow().is_some()
     }) {
         return;
     }

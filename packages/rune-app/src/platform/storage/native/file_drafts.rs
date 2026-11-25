@@ -33,6 +33,18 @@ pub(super) struct FileDraftQueue {
     writes: u64,
 }
 
+impl FileDraftQueue {
+    pub(super) fn cancel_all(&mut self) {
+        if let Some(active) = self.active.take() {
+            let _ = cancel_draft(&active);
+        }
+        if let Some(evicted) = self.pending.take() {
+            let _ = cancel_draft(&evicted.state);
+            let _ = evicted.reply.send(Ok(false));
+        }
+    }
+}
+
 fn spawn_file_draft_worker(
     files: std::sync::Arc<Files>,
     file_drafts_lock: std::sync::Arc<std::sync::Mutex<()>>,

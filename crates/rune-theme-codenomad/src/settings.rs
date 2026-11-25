@@ -1,4 +1,5 @@
 //! Preferences geometry follows settings-screen.css and the native Preferences bounds.
+pub mod palette;
 pub mod stats;
 use crate::{
     Space, TextRole,
@@ -135,7 +136,7 @@ pub fn nav<S: 'static>(
     select: impl Fn(&mut S, &'static str) + Clone + 'static,
 ) -> El {
     let dark = layout::dark();
-    let kit = crate::kit(dark);
+    let kit = &*crate::kit(dark);
     let mut sidebar = Sidebar::new()
         .inset(tokens(dark).space(Space::Sm).px())
         .header(heading(title))
@@ -174,7 +175,7 @@ pub fn preset_buttons<S: 'static>(
     choose: impl Fn(&mut S, usize) + Clone + 'static,
 ) -> El {
     let dark = layout::dark();
-    let kit = crate::kit(dark);
+    let kit = &*crate::kit(dark);
     col()
         .key("transcript-presets")
         .role("group")
@@ -231,7 +232,7 @@ pub fn segments<S: 'static>(
             control = control.segment_state(index, rune_kit::State::Disabled);
         }
     }
-    control.build(crate::kit(layout::dark()))
+    control.build(&crate::kit(layout::dark()))
 }
 
 const PICKER_WIDTH: f32 = 180.0;
@@ -336,7 +337,7 @@ pub fn transcript_popup<S: 'static>(
                 .child(content),
         );
     rune_kit::popover::anchored(
-        crate::kit(dark),
+        &crate::kit(dark),
         body,
         trigger,
         rune_kit::Placement::BottomEnd,
@@ -465,10 +466,10 @@ pub fn transcript_filter_row<S: 'static>(
 pub fn render<S, T>(
     cx: &mut Cx<S>,
     dark: bool,
-    palette: Option<&'static crate::palettes::Palette>,
+    palette: Option<crate::palettes::ResolvedPalette>,
     build: impl FnOnce(&mut Cx<S>) -> T,
 ) -> T {
-    crate::palettes::with_palette(palette, || {
+    crate::palettes::with_resolved(palette, || {
         cx.foreground(tokens(dark).color("text-primary"));
         layout::with_appearance(dark, || build(cx))
     })
@@ -616,7 +617,7 @@ pub fn checkbox_cell<S: 'static>(
         .hide_label()
         .disabled(disabled)
         .on_toggle(toggle)
-        .build(crate::kit(layout::dark()))
+        .build(&crate::kit(layout::dark()))
 }
 
 pub fn setting_row_with_info(label: &str, info: Option<El>, control: El) -> El {
@@ -660,7 +661,7 @@ pub fn setting_switch<S: 'static>(
         .hide_label()
         .disabled(disabled)
         .on_toggle(toggle)
-        .build(crate::kit(layout::dark()))
+        .build(&crate::kit(layout::dark()))
 }
 
 pub fn primary_action<S: 'static>(
@@ -680,10 +681,18 @@ pub fn primary_action_tx<S: 'static>(
         .variant(rune_kit::ButtonVariant::Submit)
         .disabled(disabled)
         .on_press_tx(press)
-        .build(crate::kit(layout::dark()))
+        .build(&crate::kit(layout::dark()))
 }
 
-pub fn color_scheme(title: &str, mode: &str, segments: El, contrast: El, picker: El) -> El {
+pub fn color_scheme(
+    title: &str,
+    mode: &str,
+    segments: El,
+    contrast: El,
+    workbench: El,
+    name_editor: Option<El>,
+    error: Option<El>,
+) -> El {
     col()
         .full_width()
         .separate(Space::Sm)
@@ -694,7 +703,18 @@ pub fn color_scheme(title: &str, mode: &str, segments: El, contrast: El, picker:
                 .child(segments)
                 .child(contrast),
         )
-        .child(picker)
+        .child(workbench)
+        .children(name_editor)
+        .children(error)
+}
+
+pub fn startup_state_card(title: &str, info: El, switch: El, clear_button: El) -> El {
+    col()
+        .key("startup-state-settings")
+        .full_width()
+        .separate(Space::Sm)
+        .child(setting_row_with_info(title, Some(info), switch))
+        .child(row().full_width().justify_end().child(clear_button))
 }
 
 pub fn contrast_controls<S: 'static>(
@@ -730,7 +750,7 @@ pub fn disclosure<S: 'static>(
     rune_kit::Collapsible::new(label, open)
         .child(body)
         .on_toggle(move |s| press(s))
-        .build(crate::kit(layout::dark()))
+        .build(&crate::kit(layout::dark()))
         .on_key(move |s, event, tx| {
             if tx.focused() != Some("trigger")
                 || event.key != rune::Key::Enter

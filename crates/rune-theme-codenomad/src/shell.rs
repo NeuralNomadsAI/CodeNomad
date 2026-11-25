@@ -172,7 +172,7 @@ pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
                 .truncate(),
         )
         .leading(menus)
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
 }
 
 pub fn titlebar_menu<S: 'static>(label: &str, activate: impl Fn(&mut S, &mut Tx) + 'static) -> El {
@@ -182,7 +182,7 @@ pub fn titlebar_menu<S: 'static>(label: &str, activate: impl Fn(&mut S, &mut Tx)
         .variant(ButtonVariant::GhostMuted)
         .control_size(ControlSize::Small)
         .on_press_tx(move |s, tx| press(s, tx))
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
         .on_key(enter_action(activate))
 }
 
@@ -208,7 +208,7 @@ pub fn panel_tabs<S: 'static>(
                 })
                 .control_size(ControlSize::Small)
                 .on_press_tx(move |s, tx| press(s, tx))
-                .build(kit(dark))
+                .build(&kit(dark))
                 .h(height)
                 .key(format!("right-panel-tab-{index}"))
                 .role("tab")
@@ -321,7 +321,7 @@ pub fn older_button<S: 'static>(
         .help(label)
         .disabled(busy)
         .on_press_tx(activate)
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
         .key("older")
 }
 
@@ -335,7 +335,7 @@ pub fn session_row<S: 'static>(
     if !disabled {
         row = row.on_select(select);
     }
-    row.build(kit(layout::dark())).disabled(disabled)
+    row.build(&kit(layout::dark())).disabled(disabled)
 }
 
 fn control_size(touch: bool) -> f32 {

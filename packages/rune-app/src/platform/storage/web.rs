@@ -10,6 +10,7 @@ struct BrowserStage {
     window: web_sys::Window,
     storage: web_sys::Storage,
     payload: std::cell::RefCell<(Vec<u8>, Vec<(String, String)>)>,
+    restore_enabled: std::cell::Cell<bool>,
     departing: std::cell::Cell<bool>,
     openings: std::cell::RefCell<Option<crate::workspace::opening::Openings>>,
 }
@@ -19,19 +20,23 @@ impl BrowserStage {
             return;
         }
         let current = self.payload.try_borrow();
-        let saved = current.as_ref().ok().is_some_and(|current| {
-            !current.0.is_empty()
-                && std::str::from_utf8(&current.0).is_ok_and(|text| {
-                    self.storage.set_item(Store::KEY, text).is_ok()
-                        && self.storage.set_item(Store::RELEASED, "1").is_ok()
-                })
-        });
+        let release_records = if self.restore_enabled.get() {
+            current.as_ref().ok().is_some_and(|current| {
+                !current.0.is_empty()
+                    && std::str::from_utf8(&current.0).is_ok_and(|text| {
+                        self.storage.set_item(Store::KEY, text).is_ok()
+                            && self.storage.set_item(Store::RELEASED, "1").is_ok()
+                    })
+            })
+        } else {
+            true
+        };
         if let Ok(openings) = self.openings.try_borrow() {
             if let Some(openings) = openings.as_ref() {
                 cancel_openings(openings);
             }
         }
-        if !saved {
+        if !release_records {
             return;
         }
         let Ok(current) = current else {
@@ -73,6 +78,7 @@ impl Store {
     const FILE_DRAFTS: &'static str = "codenomad.rune.alpha.workspace-file-drafts.v1";
     const OUTLINES: &'static str = "codenomad.rune.alpha.outlines.v1";
     const RELEASED: &'static str = "codenomad.rune.alpha.records-released";
+    const RESTORE_DISABLED: &'static str = "codenomad.rune.alpha.restore-disabled";
     pub async fn open() -> Result<Self> {
         use wasm_bindgen::JsCast;
         let window = web_sys::window().ok_or("state store unavailable")?;
@@ -80,10 +86,17 @@ impl Store {
             .session_storage()
             .map_err(|_| "state store unavailable")?
             .ok_or("state store unavailable")?;
+        let restore_enabled = storage
+            .get_item(Self::RESTORE_DISABLED)
+            .ok()
+            .flatten()
+            .as_deref()
+            != Some("true");
         let staged = std::rc::Rc::new(BrowserStage {
             window: window.clone(),
             storage: storage.clone(),
             payload: Default::default(),
+            restore_enabled: std::cell::Cell::new(restore_enabled),
             departing: Default::default(),
             openings: Default::default(),
         });
@@ -117,6 +130,46 @@ impl Store {
             return Err("state too large".into());
         }
         Ok(raw.map(String::into_bytes))
+    }
+    pub async fn restore_enabled(&self) -> Result<bool> {
+        let disabled = self
+            .storage
+            .get_item(Self::RESTORE_DISABLED)
+            .map_err(|_| "state read failed")?;
+        let enabled = disabled.as_deref() != Some("true");
+        self.staged.restore_enabled.set(enabled);
+        Ok(enabled)
+    }
+    pub async fn set_restore_enabled(&self, enabled: bool) -> Result<()> {
+        if enabled {
+            self.storage
+                .remove_item(Self::RESTORE_DISABLED)
+                .map_err(|_| "state write failed")?;
+            self.staged.restore_enabled.set(true);
+            Ok(())
+        } else {
+            self.storage
+                .set_item(Self::RESTORE_DISABLED, "true")
+                .map_err(|_| "state write failed")?;
+            self.staged.restore_enabled.set(false);
+            self.clear_startup_state().await
+        }
+    }
+    pub async fn clear_startup_state(&self) -> Result<()> {
+        self.staged.payload.borrow_mut().0.clear();
+        self.storage
+            .remove_item(Self::KEY)
+            .map_err(|_| "state write failed")?;
+        self.storage
+            .remove_item(Self::FILE_DRAFTS)
+            .map_err(|_| "state write failed")?;
+        self.storage
+            .remove_item(Self::OUTLINES)
+            .map_err(|_| "state write failed")?;
+        self.storage
+            .remove_item(Self::RELEASED)
+            .map_err(|_| "state write failed")?;
+        Ok(())
     }
     pub async fn load_file_drafts(&self) -> Result<Option<Vec<u8>>> {
         let raw = self

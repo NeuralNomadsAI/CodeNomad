@@ -77,7 +77,7 @@ pub fn view(s: &State, cx: &Cx<State>) -> El {
             field(&a.search)
                 .label(t("rune.find_model"))
                 .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Model))
-                .build(field_kit(layout::dark()))
+                .build(&field_kit(layout::dark()))
                 .key("model-search"),
         );
         body = body.child(interruption::scroll_region().key("model-list").child(list));
@@ -133,7 +133,7 @@ pub fn view(s: &State, cx: &Cx<State>) -> El {
                         &scope,
                         crate::screen::Editor::Reason(id),
                     ))
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .key(format!("reason-{}", p.id)),
             );
             let mut actions = rune_theme_codenomad::layout::action_row().separate(Space::Sm);

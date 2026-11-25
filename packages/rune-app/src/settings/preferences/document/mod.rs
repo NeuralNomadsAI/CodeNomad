@@ -223,6 +223,48 @@ impl Document {
         );
     }
 
+    pub(super) fn stage_palette_mutation(
+        &mut self,
+        mutation: crate::settings::palettes::PaletteMutation,
+    ) {
+        if let Some(dark) = mutation.target_dark() {
+            self.write.requested.remove(&Choice::Palette(dark));
+            self.write.pending.remove(&Choice::Palette(dark));
+            self.write.failed.remove(&Choice::Palette(dark));
+            self.write.retry.remove(&Choice::Palette(dark));
+        } else {
+            for dark in [false, true] {
+                self.write.requested.remove(&Choice::Palette(dark));
+                self.write.pending.remove(&Choice::Palette(dark));
+                self.write.failed.remove(&Choice::Palette(dark));
+                self.write.retry.remove(&Choice::Palette(dark));
+            }
+        }
+        self.stage_value(
+            Choice::PaletteMutation,
+            ChoiceValue::Palette(Box::new(mutation)),
+        );
+    }
+
+    pub(super) fn clear_palette_mutation(&mut self) {
+        self.write.requested.remove(&Choice::PaletteMutation);
+        self.write.pending.remove(&Choice::PaletteMutation);
+        self.write.failed.remove(&Choice::PaletteMutation);
+        self.write.retry.remove(&Choice::PaletteMutation);
+        self.write.uncertain.remove(&Choice::PaletteMutation);
+    }
+
+    pub(super) fn palette_mutation_pending(&self) -> bool {
+        (self.write.requested.contains_key(&Choice::PaletteMutation)
+            || self.write.pending.contains(&Choice::PaletteMutation)
+            || self.write.uncertain.contains_key(&Choice::PaletteMutation))
+            && !self.choice_failed(Choice::PaletteMutation)
+    }
+
+    pub(super) fn palette_mutation_failed(&self) -> bool {
+        self.choice_failed(Choice::PaletteMutation)
+    }
+
     pub(super) fn environment_pending(&self) -> bool {
         self.write.requested.contains_key(&Choice::Environment)
             && !self.choice_failed(Choice::Environment)
@@ -447,7 +489,9 @@ impl Document {
     pub(super) fn requested(&self, choice: Choice) -> Option<&'static str> {
         match self.write.requested.get(&choice)? {
             ChoiceValue::Text(value) => Some(*value),
-            ChoiceValue::Shortcut(_) | ChoiceValue::Environment { .. } => None,
+            ChoiceValue::Shortcut(_)
+            | ChoiceValue::Palette(_)
+            | ChoiceValue::Environment { .. } => None,
         }
     }
 

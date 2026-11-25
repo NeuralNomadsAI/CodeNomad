@@ -111,7 +111,7 @@ pub fn save<S: 'static>(
     } else {
         button.shortcut(shortcut)
     };
-    button.build(kit(dark))
+    button.build(&kit(dark))
 }
 
 pub fn confirmation<S: 'static>(
@@ -128,7 +128,7 @@ pub fn confirmation<S: 'static>(
             let decide = decide.clone();
             move |s, tx| decide(s, false, tx)
         })
-        .build(kit(dark))
+        .build(&kit(dark))
         .key("file-decision-cancel");
     let confirm = rune_kit::Button::new(confirm)
         .variant(ButtonVariant::Submit)
@@ -136,7 +136,7 @@ pub fn confirmation<S: 'static>(
             let decide = decide.clone();
             move |s, tx| decide(s, true, tx)
         })
-        .build(kit(dark))
+        .build(&kit(dark))
         .key("file-decision-confirm");
     let enter = decide.clone();
     let card = rune::col()

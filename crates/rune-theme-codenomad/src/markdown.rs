@@ -22,7 +22,7 @@ pub fn prose<S: 'static>(
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
 ) -> El {
     let dark = dark();
-    let kit = kit(dark);
+    let kit = &*kit(dark);
     let t = tokens(dark);
     let style = MarkdownStyle::from_kit(kit)
         .code_block(kit.c.bg_deep, kit.c.border_base)
@@ -523,7 +523,7 @@ pub fn language_for_path(path: &str) -> &str {
 }
 
 pub fn copy_button<S: 'static>(label: &str, copy: impl Fn(&mut S, &mut rune::Tx) + 'static) -> El {
-    let kit = kit(dark());
+    let kit = &*kit(dark());
     rune_kit::IconButton::new(kit.glyph.copy)
         .label(label)
         .help(label)
@@ -605,7 +605,7 @@ pub fn search_code(
 ) -> El {
     let dark = dark();
     let spans = if highlight {
-        syntax::SyntaxTheme::from_kit(kit(dark))
+        syntax::SyntaxTheme::from_kit(&kit(dark))
             .spans(&syntax::highlight(Some(language), source), 0)
     } else {
         Vec::new()

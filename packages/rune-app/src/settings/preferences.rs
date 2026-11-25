@@ -9,7 +9,9 @@ pub(super) use codenomad_client::settings::Owner;
 use codenomad_client::settings::PreferencesWatch;
 pub(super) use document::env_var_is_masked;
 use document::{Choice, Document};
-use rune_theme_codenomad::palettes::{Palette, built_in};
+use rune_theme_codenomad::palettes::{
+    ColorSchemeColors, Palette, ResolvedPalette, built_in, custom,
+};
 use serde_json::Value;
 #[cfg(any(test, feature = "test-support"))]
 use serde_json::json;
@@ -21,9 +23,11 @@ pub(super) struct Preferences {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) open_providers: bool,
     pub(super) memory: super::memory::Setting,
+    pub(super) startup: super::startup_state::StartupState,
     pub(super) opencode_install: super::opencode::install::Install,
     pub(super) notification_update: Option<String>,
     pub(super) announced_update: Option<String>,
+    palette_preview: Option<(bool, Option<&'static str>, ColorSchemeColors)>,
     config: Document,
     state: Document,
     server: Document,
@@ -1175,9 +1179,264 @@ impl Preferences {
         if !self.palette_ready() || self.backend.is_none() {
             return;
         }
+        self.state.clear_palette_mutation();
         if self.state.requested(Choice::Palette(palette.dark)) != Some(palette.id) {
             self.state.stage(Choice::Palette(palette.dark), palette.id);
         }
+    }
+
+    pub(super) fn set_palette_preview(
+        &mut self,
+        preview: Option<(bool, Option<&'static str>, ColorSchemeColors)>,
+    ) {
+        if self.palette_preview != preview {
+            self.palette_preview = preview;
+            self.revision += 1;
+        }
+    }
+
+    pub(super) fn palette_slot(&self, dark: bool) -> Option<super::palettes::SlotSelection> {
+        let state = self.saved(Owner::State)?;
+        let legacy = self.legacy(state);
+        if let Some(id) = self.state.requested(Choice::Palette(dark))
+            && let Some(palette) = built_in().iter().find(|p| p.dark == dark && p.id == id)
+        {
+            let override_colors = super::palettes::normalize_overrides(state)
+                .get(palette.id)
+                .cloned();
+            return Some(super::palettes::SlotSelection {
+                key: format!("builtin:{}", palette.id),
+                builtin_id: Some(palette.id),
+                preset_id: None,
+                dark,
+                colors: override_colors,
+            });
+        }
+        Some(super::palettes::resolve_slot(state, legacy, dark))
+    }
+
+    pub(super) fn resolved_palette(
+        &self,
+        dark: bool,
+        high_contrast: bool,
+        include_preview: bool,
+    ) -> Option<ResolvedPalette> {
+        if include_preview
+            && let Some((preview_dark, builtin_id, colors)) = &self.palette_preview
+            && *preview_dark == dark
+        {
+            let id = builtin_id.filter(|id| *id != "custom");
+            return Some(custom(id, dark, high_contrast, colors.clone()));
+        }
+        let slot = self.palette_slot(dark)?;
+        slot.resolve(high_contrast)
+    }
+
+    pub(super) fn palette_display_signature(&self, dark: bool) -> String {
+        self.palette_slot(dark)
+            .map_or_else(String::new, |slot| slot.display_signature())
+    }
+
+    pub(super) fn palette_options(&self, dark: bool) -> Vec<super::palettes::PaletteOption> {
+        let Some(state) = self.saved(Owner::State) else {
+            return Vec::new();
+        };
+        let Some(active) = self.palette_slot(dark) else {
+            return Vec::new();
+        };
+        super::palettes::options(state, &active, dark)
+    }
+
+    pub(super) fn has_saved_override(&self, builtin_id: &str) -> bool {
+        self.saved(Owner::State).is_some_and(|state| {
+            super::palettes::normalize_overrides(state).contains_key(builtin_id)
+        })
+    }
+
+    pub(super) fn preset_count(&self) -> usize {
+        self.saved(Owner::State)
+            .map_or(0, |state| super::palettes::normalize_presets(state).len())
+    }
+
+    pub(super) fn preset_names(&self) -> Vec<String> {
+        self.saved(Owner::State).map_or_else(Vec::new, |state| {
+            super::palettes::normalize_presets(state)
+                .into_iter()
+                .map(|p| p.name)
+                .collect()
+        })
+    }
+
+    pub(super) fn palette_saving(&self) -> bool {
+        self.state.palette_mutation_pending()
+    }
+
+    pub(super) fn palette_save_failed(&self) -> bool {
+        self.state.palette_mutation_failed()
+    }
+
+    pub(super) fn clear_palette_save_failed(&mut self) {
+        self.state.clear_palette_mutation();
+    }
+
+    pub(super) fn select_palette_option(
+        &mut self,
+        option: &super::palettes::PaletteOption,
+    ) -> bool {
+        if !self.palette_ready() || self.backend.is_none() {
+            return false;
+        }
+        if let Some(preset_id) = &option.preset_id {
+            self.state
+                .stage_palette_mutation(super::palettes::PaletteMutation::SelectPreset {
+                    preset_id: preset_id.clone(),
+                    dark: option.dark,
+                    colors: option.colors.clone(),
+                });
+            return true;
+        }
+        let Some(id) = option.builtin_id else {
+            return false;
+        };
+        if id == "custom" {
+            self.state
+                .stage_palette_mutation(super::palettes::PaletteMutation::SelectCustom {
+                    dark: option.dark,
+                    colors: option.colors.clone(),
+                });
+            return true;
+        }
+        if self.has_saved_override(id) {
+            self.state
+                .stage_palette_mutation(super::palettes::PaletteMutation::SelectBuiltIn {
+                    id,
+                    dark: option.dark,
+                    colors: Some(option.colors.clone()),
+                });
+            return true;
+        }
+        if let Some(palette) = built_in()
+            .iter()
+            .find(|p| p.id == id && p.dark == option.dark)
+        {
+            self.set_palette(palette);
+            return true;
+        }
+        false
+    }
+
+    pub(super) fn save_palette_override(
+        &mut self,
+        id: &'static str,
+        dark: bool,
+        colors: ColorSchemeColors,
+    ) -> bool {
+        if !self.palette_ready() || self.backend.is_none() {
+            return false;
+        }
+        let mutation = if id == "custom" {
+            super::palettes::PaletteMutation::SaveCustom { dark, colors }
+        } else {
+            super::palettes::PaletteMutation::SaveOverride { id, dark, colors }
+        };
+        self.state.stage_palette_mutation(mutation);
+        true
+    }
+
+    pub(super) fn reset_palette_override(&mut self, id: &'static str, dark: bool) -> bool {
+        if !self.palette_ready() || self.backend.is_none() {
+            return false;
+        }
+        if id == "custom" {
+            self.state
+                .stage_palette_mutation(super::palettes::PaletteMutation::SaveCustom {
+                    dark,
+                    colors: ColorSchemeColors::default_custom(),
+                });
+            return true;
+        }
+        let Some(palette) = built_in().iter().find(|p| p.id == id && p.dark == dark) else {
+            return false;
+        };
+        self.state
+            .stage_palette_mutation(super::palettes::PaletteMutation::ResetOverride {
+                id,
+                dark,
+                default_colors: palette.colors(),
+            });
+        true
+    }
+
+    pub(super) fn save_palette_preset(
+        &mut self,
+        name: &str,
+        dark: bool,
+        colors: ColorSchemeColors,
+        preset_id: Option<String>,
+    ) -> Option<String> {
+        if !self.palette_ready() || self.backend.is_none() {
+            return None;
+        }
+        let trimmed: String = name
+            .trim()
+            .chars()
+            .take(super::palettes::MAX_PRESET_NAME_LEN)
+            .collect();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if preset_id.is_none() && self.preset_count() >= super::palettes::MAX_PRESETS {
+            return None;
+        }
+        if let Some(existing_id) = &preset_id {
+            let exists = self.saved(Owner::State).is_some_and(|state| {
+                super::palettes::normalize_presets(state)
+                    .iter()
+                    .any(|p| p.id == *existing_id)
+            });
+            if !exists {
+                return None;
+            }
+        }
+        let id = match preset_id {
+            Some(id) => id,
+            None => codenomad_client::http::client_id().ok()?,
+        };
+        self.state
+            .stage_palette_mutation(super::palettes::PaletteMutation::SavePreset {
+                preset_id: id.clone(),
+                name: trimmed,
+                dark,
+                colors,
+            });
+        Some(id)
+    }
+
+    pub(super) fn delete_palette_preset(&mut self, preset_id: &str) -> bool {
+        if !self.palette_ready() || self.backend.is_none() {
+            return false;
+        }
+        let Some(state) = self.saved(Owner::State) else {
+            return false;
+        };
+        if !super::palettes::normalize_presets(state)
+            .iter()
+            .any(|p| p.id == preset_id)
+        {
+            return false;
+        }
+        let legacy = self.legacy(state);
+        let fallback_light = super::palettes::fallback_slot_patch(state, legacy, false, preset_id);
+        let fallback_dark = super::palettes::fallback_slot_patch(state, legacy, true, preset_id);
+        let clear_active = state["activeColorSchemePresetId"].as_str() == Some(preset_id);
+        self.state
+            .stage_palette_mutation(super::palettes::PaletteMutation::DeletePreset {
+                preset_id: preset_id.to_owned(),
+                fallback_light,
+                fallback_dark,
+                clear_active,
+            });
+        true
     }
 
     pub fn palette_ready(&self) -> bool {
@@ -1197,21 +1456,6 @@ impl Preferences {
             .requested(Choice::Palette(dark))
             .and_then(|id| built_in().iter().find(|p| p.dark == dark && p.id == id))
             .or_else(|| self.palette(dark))
-    }
-
-    pub fn step_palette(&mut self, dark: bool, step: isize) {
-        let options: Vec<_> = built_in().iter().filter(|p| p.dark == dark).collect();
-        let Some(current) = self.palette_display(dark) else {
-            return;
-        };
-        let next = options
-            .iter()
-            .position(|p| p.id == current.id)
-            .and_then(|index| index.checked_add_signed(step))
-            .and_then(|index| options.get(index));
-        if let Some(palette) = next {
-            self.set_palette(palette);
-        }
     }
 
     #[cfg(any(test, feature = "test-support"))]

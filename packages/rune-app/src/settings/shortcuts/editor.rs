@@ -81,7 +81,7 @@ pub(in crate::settings) fn view<S: 'static>(
                     layout::hinted_field(filter, t("hotkeys.filter"))
                         .label(t("hotkeys.filter"))
                         .on_edit(filter_edit)
-                        .build(field_kit(layout::dark()))
+                        .build(&field_kit(layout::dark()))
                         .on_input_change(move |s: &mut S, _| {
                             if let Some((recording, capture)) = access(s) {
                                 *recording = false;
