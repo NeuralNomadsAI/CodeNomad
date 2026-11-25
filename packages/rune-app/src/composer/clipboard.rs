@@ -10,6 +10,7 @@ pub fn physical(s: &mut State, event: &PhysicalInput, tx: &mut Tx) -> bool {
         mods,
         pressed: true,
         repeat,
+        ..
     } = *event
     else {
         return false;

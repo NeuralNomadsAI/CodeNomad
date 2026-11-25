@@ -1,11 +1,13 @@
 use crate::strings::{locale, t};
 use codenomad_client::missions::{Task, TaskStatus};
-use rune::{El, col, text};
+use rune::{El, Tx, col, row, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue,
+    Space, TextRole, catalogue, git_panel as theme,
     layout::{self, Layout},
 };
 use std::{borrow::Cow, collections::HashMap, rc::Rc};
+
+pub(super) type TaskOpen<S> = Rc<dyn Fn(&mut S, String, String, &mut Tx)>;
 
 #[derive(Clone)]
 pub(super) struct TaskRows {
@@ -21,6 +23,21 @@ impl TaskRows {
 
     pub fn contains(&self, key: &str) -> bool {
         self.keys.contains_key(key)
+    }
+
+    pub fn find_by_id_or_key(&self, id: &str, key: &str) -> Option<&Task> {
+        self.ids
+            .get(id)
+            .or_else(|| self.keys.get(key))
+            .map(|&i| self.rows[i].as_ref())
+    }
+
+    pub fn find_by_key(&self, key: &str) -> Option<&Task> {
+        self.keys.get(key).map(|&i| self.rows[i].as_ref())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Task> {
+        self.rows.iter().map(Rc::as_ref)
     }
 
     pub fn new(mut tasks: Vec<Task>) -> Self {
@@ -71,20 +88,38 @@ impl TaskRows {
         self.keys.get(key).map_or("", |&i| title(&self.rows[i]))
     }
 
+    #[cfg(test)]
     pub fn view<S: 'static>(self: &Rc<Self>) -> El {
+        self.view_with_open::<S>(None, None)
+    }
+
+    pub fn view_with_open<S: 'static>(
+        self: &Rc<Self>,
+        open_task_id: Option<String>,
+        on_open: Option<TaskOpen<S>>,
+    ) -> El {
         let keys = self.clone();
         let rows = self.clone();
         let language = locale();
         layout::transcript_rows(
             rows.rows.len(),
             move |_: &S, i| Cow::Owned(format!("mission-task-{}", keys.rows[i].id)),
-            move |_: &S, i| crate::strings::with_locale(language, || rows.row(&rows.rows[i])),
+            move |_: &S, i| {
+                crate::strings::with_locale(language, || {
+                    rows.row(&rows.rows[i], open_task_id.as_deref(), on_open.as_ref())
+                })
+            },
         )
         .role("list")
         .label(t("missions.control.profiles.role.specialist"))
     }
 
-    fn row(&self, task: &Task) -> El {
+    fn row<S: 'static>(
+        &self,
+        task: &Task,
+        open_task_id: Option<&str>,
+        on_open: Option<&TaskOpen<S>>,
+    ) -> El {
         let title = title(task);
         let state = t(match task.status {
             TaskStatus::Blocked => "missions.control.task.status.blocked",
@@ -96,12 +131,33 @@ impl TaskRows {
             TaskStatus::Failed => "missions.control.task.status.failed",
             TaskStatus::Withdrawn => "missions.control.task.status.superseded",
         });
+        let header = if let Some(open) = on_open {
+            let active = open_task_id == Some(task.id.as_str());
+            let id = task.id.clone();
+            let key = task.key.clone();
+            let open = open.clone();
+            row()
+                .full_width()
+                .child(text(title).wrap_anywhere().remaining())
+                .child(
+                    theme::icon_button(
+                        &theme::EYE,
+                        format!("{} · {title}", t("missions.control.task.details")),
+                        false,
+                        Some(active),
+                        move |s: &mut S, tx| open(s, id.clone(), key.clone(), tx),
+                    )
+                    .key(format!("mission-task-eye-{}", task.id)),
+                )
+        } else {
+            row().full_width().child(text(title).wrap_anywhere())
+        };
         let mut row = col()
             .full_width()
             .pad(Space::Sm)
             .role("listitem")
             .label(title)
-            .child(text(title).wrap_anywhere())
+            .child(header)
             .child(text(state).text_role(TextRole::Small));
         if !task.blocked_by.is_empty() {
             let dependencies = task

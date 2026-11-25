@@ -235,7 +235,12 @@ pub(super) fn tool_timing(tool: &Tool) -> Option<(u64, Option<u64>)> {
     }
 }
 
-pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, status: El) -> El {
+pub(in crate::chat) fn view(
+    s: &State,
+    key: &str,
+    timing: Option<(u64, Option<u64>)>,
+    status: El,
+) -> El {
     let entry_key = format!("{key}-duration");
     let retire = || {
         let clock = &s.transcript_display.tool_clock;

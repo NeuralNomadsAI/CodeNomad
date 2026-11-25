@@ -352,6 +352,7 @@ pub(crate) fn open_notification(
     if let Some(files) = &mut s.files {
         files.close_reader();
     }
+    super::close_mission_reader(s);
     crate::chat::reading::restore_position(s, tx);
     if target.tab.is_some() {
         crate::launcher::choose_destination(s, target.session.clone(), Some(ticket), tx);

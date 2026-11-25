@@ -1,12 +1,16 @@
-use super::directory::{Kind, Panel, title};
+use super::{
+    directory::{Kind, Panel, title},
+    reader::ReaderTarget,
+};
 use crate::strings::{locale, t};
 use codenomad_client::missions::{RunState, Status};
-use rune::{El, col, edit::TextEdit, text};
+use rune::{El, Tx, col, edit::TextEdit, row, text};
 use rune_theme_codenomad::{
     Space, TextRole, catalogue, field_kit, git_panel as theme,
     layout::{self, Layout},
     shell,
 };
+use std::rc::Rc;
 
 type Owner<S> = fn(&mut S) -> (Option<&mut Panel>, &mut TextEdit);
 
@@ -37,10 +41,15 @@ impl<S> Scoped<S> {
 /// Panel content only. The Shell owns its occurrence, visibility and mounting.
 #[cfg(test)]
 pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
-    panel_body(ui, owner, rune::el())
+    panel_body(ui, owner, rune::el(), |_, _| {})
 }
 
-pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El) -> El {
+pub(crate) fn panel_body<S: 'static>(
+    ui: &Panel,
+    owner: Owner<S>,
+    actions: El,
+    on_reader_open: fn(&mut S, &mut Tx),
+) -> El {
     let heading = t("missions.control.mapLabel");
     let search = t("missionsPanel.picker.search");
     let partial = ui.has_more(Kind::Summaries);
@@ -50,20 +59,54 @@ pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El) -
     };
     let mut list = col().full_width().role("list").label(heading);
     let mut shown = false;
-    for row in ui.shown_rows() {
+    for item in ui.shown_rows() {
         shown = true;
-        let id = row.id.clone();
+        let id = item.id.clone();
+        let eye_id = item.id.clone();
+        let name = title(item);
         let selected = ui.selected.as_deref() == Some(&id);
-        let scoped = scoped.clone();
+        let active_eye = ui.reader.is_overview_open(&id);
+        let scoped_row = scoped.clone();
+        let scoped_eye = scoped.clone();
         list = list.child(
-            shell::session_row(title(row), selected, false, move |state, tx| {
-                if let Some(panel) = scoped.get(state).0 {
-                    panel.select(&id);
-                    tx.instant();
-                }
-            })
-            .key(format!("mission-row-{}", row.id))
-            .description(status(row.status, row.run_state)),
+            row()
+                .full_width()
+                .key(format!("mission-row-container-{}", item.id))
+                .child(
+                    shell::session_row(name, selected, false, move |state, tx| {
+                        if let Some(panel) = scoped_row.get(state).0 {
+                            panel.select(&id);
+                            tx.instant();
+                        }
+                    })
+                    .remaining()
+                    .key(format!("mission-row-{}", item.id))
+                    .description(status(item.status, item.run_state)),
+                )
+                .child(
+                    theme::icon_button(
+                        &theme::EYE,
+                        format!("{} · {name}", t("missionsPanel.overview")),
+                        false,
+                        Some(active_eye),
+                        move |state, tx| {
+                            if let Some(panel) = scoped_eye.get(state).0 {
+                                let eye_key = format!("mission-row-eye-{eye_id}");
+                                if panel.toggle_overview(&eye_id) {
+                                    panel.reader.set_return_focus(
+                                        tx.focused().unwrap_or(&eye_key).to_owned(),
+                                    );
+                                    on_reader_open(state, tx);
+                                    tx.focus("mission-reader-close", tx.focus_visible());
+                                } else if let Some(back) = panel.reader.take_return_focus() {
+                                    tx.focus(back, tx.focus_visible());
+                                }
+                                tx.instant();
+                            }
+                        },
+                    )
+                    .key(format!("mission-row-eye-{}", item.id)),
+                ),
         );
     }
     let mut body = theme::scroll().child(list);
@@ -85,7 +128,9 @@ pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El) -
                 }
             }));
         }
-        body = body.child(actions).child(detail(ui, scoped.clone()));
+        body = body
+            .child(actions)
+            .child(detail(ui, scoped.clone(), on_reader_open));
     }
     if !ui.cleanups.is_empty() {
         body = body.child(
@@ -194,7 +239,7 @@ fn page_footer<S: 'static>(ui: &Panel, owner: Scoped<S>, kind: Kind) -> El {
     footer
 }
 
-fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>) -> El {
+fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>, on_reader_open: fn(&mut S, &mut Tx)) -> El {
     let detail = &ui.detail;
     let mut result = col()
         .full_width()
@@ -260,7 +305,38 @@ fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>) -> El {
                 );
             }
         }
-        result = result.child(snapshot.tasks.view::<S>());
+        let open_task_id = match ui.reader.target() {
+            Some(ReaderTarget::Task {
+                mission_id,
+                task_id,
+                ..
+            }) if mission_id == &header.id => Some(task_id.clone()),
+            _ => None,
+        };
+        let task_owner = owner.clone();
+        let mission_id = header.id.clone();
+        let on_open: super::task_rows::TaskOpen<S> = Rc::new(
+            move |s: &mut S, task_id: String, task_key: String, tx: &mut Tx| {
+                if let Some(panel) = task_owner.get(s).0 {
+                    let eye_key = format!("mission-task-eye-{task_id}");
+                    if panel.toggle_task(&mission_id, &task_id, &task_key) {
+                        panel
+                            .reader
+                            .set_return_focus(tx.focused().unwrap_or(&eye_key).to_owned());
+                        on_reader_open(s, tx);
+                        tx.focus("mission-reader-close", tx.focus_visible());
+                    } else if let Some(back) = panel.reader.take_return_focus() {
+                        tx.focus(back, tx.focus_visible());
+                    }
+                    tx.instant();
+                }
+            },
+        );
+        result = result.child(
+            snapshot
+                .tasks
+                .view_with_open::<S>(open_task_id, Some(on_open)),
+        );
     }
     if detail.busy() || detail.snapshot.is_none() && !detail.failed {
         result = result.child(theme::note(t("missions.control.loading"), "status"));
@@ -292,7 +368,7 @@ fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>) -> El {
     result
 }
 
-fn status(status: Status, run_state: Option<RunState>) -> &'static str {
+pub(super) fn status(status: Status, run_state: Option<RunState>) -> &'static str {
     t(match (status, run_state) {
         (Status::Completed, _) => "missions.control.status.completed",
         (Status::Failed, _) => "missions.control.status.failed",

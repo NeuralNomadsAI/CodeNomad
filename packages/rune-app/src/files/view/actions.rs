@@ -167,6 +167,7 @@ pub(super) fn row(s: &State, ui: &Ui, row: &Row, width: f32, touch: bool) -> (El
                         #[cfg(target_arch = "wasm32")]
                         super::refresh_browser_file_wrap(s);
                         crate::git::close_preview(s);
+                        crate::workspace::close_mission_reader(s);
                     }
                     Some(false) => crate::chat::reading::restore_position(s, tx),
                     None => {}

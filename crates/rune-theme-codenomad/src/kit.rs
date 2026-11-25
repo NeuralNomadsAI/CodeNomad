@@ -213,5 +213,6 @@ pub(crate) fn build_from(
         ring: None,
         invalid_text: false,
         forced: None,
+        metrics: rune_kit::Metrics::default(),
     }
 }

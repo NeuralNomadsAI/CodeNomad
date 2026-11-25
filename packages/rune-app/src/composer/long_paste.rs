@@ -161,6 +161,8 @@ mod tests {
             },
             pressed: true,
             repeat: false,
+            text: None,
+            consumed_mods: Mods::default(),
         });
         rt.frame(0.0);
         rt.frame(0.0);
