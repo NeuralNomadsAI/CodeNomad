@@ -88,8 +88,8 @@ The conversation permission mode route (`/api/workspaces/:id/sessions/:sessionId
 ### Published UI compatibility
 
 `packages/cloudflare/release-config.json` sets the remote UI's minimum CodeNomad
-server to **1.1.0**. The Missions interface consumes `POST /api/workspaces/:id/missions/panel-page`
-for its inventory and task reads. `ui/remote-ui.ts` checks the manifest's minimum
+server to **1.2.0**. The Status panel reads and writes conversation permissions
+through `/api/workspaces/:id/sessions/:sessionId/permission-mode`. `ui/remote-ui.ts` checks the manifest's minimum
 before downloading: older servers keep their cached or bundled interface and expose
 the server-upgrade status. `ui/__tests__/remote-ui.test.ts` covers both sides of this boundary.
 

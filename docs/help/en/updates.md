@@ -34,7 +34,7 @@ Installation flushes all application windows and stops the owned CodeNomad backe
 
 ## Update a standalone server {#standalone-update}
 
-The 1.1 interface requires CodeNomad server **1.1.0 or later** for its Missions APIs. Servers on 1.0.x retain their cached or bundled interface instead of downloading the incompatible interface.
+The 1.2 interface requires CodeNomad server **1.2.0 or later** for conversation permissions. Older servers keep their cached or bundled interface.
 
 1. Identify how you launched CodeNomad and save any work that depends on that backend.
 2. Stop that CodeNomad server process using its normal process/service control.
