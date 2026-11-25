@@ -74,6 +74,8 @@ export class PreviewTab {
   private url = "about:blank"
   /** The target whose address `url` holds: a failed read is retried on the next refresh. */
   private urlTarget: string | undefined
+  /** The tab (and, for a readout, the document) a successful command names; the inventory publication rechecks it. */
+  private claim: { id: string; document?: number } | undefined
   /** The preview registration the target belongs to: a load that ends in another preview is no receipt for this tab. */
   private registration: string | undefined
   private refreshes = 0
@@ -145,8 +147,14 @@ export class PreviewTab {
       await previous
       if (signal.aborted) return failure("operation_failed", "The browser action was cancelled.")
       // `conclude` (the inventory publication) runs before the next command: a later open cannot replace the tab an
-      // earlier one is about to report.
-      return await conclude(await admit() ?? await this.execute(action, generation, signal))
+      // earlier one is about to report. The publication refreshes the tab: a success naming a tab or document it
+      // replaced fails instead.
+      this.claim = undefined
+      const outcome = await conclude(await admit() ?? await this.execute(action, generation, signal))
+      const claim = this.claim
+      if (outcome.type === "success" && claim && (!this.target || this.id !== claim.id
+        || (claim.document !== undefined && this.generation !== claim.document))) return replaced()
+      return outcome
     } finally {
       // The page may have changed its history or title: the next refresh reads them again.
       this.urlTarget = undefined
@@ -234,17 +242,20 @@ export class PreviewTab {
       case "console": {
         const tab = this.id, document = this.generation
         await this.pull(page)
+        this.claim = { id: tab, document }
         return this.id !== tab || this.generation !== document ? replaced() : this.success({ tab: this.tab(), ...this.diagnostics.console(action as Parameters<PreviewDiagnostics["console"]>[0]) })
       }
       case "network.list": {
         const tab = this.id, document = this.generation
         await this.pull(page)
+        this.claim = { id: tab, document }
         return this.id !== tab || this.generation !== document ? replaced() : this.success({ tab: this.tab(), ...this.diagnostics.list(action as Parameters<PreviewDiagnostics["list"]>[0]) })
       }
       case "network.get": {
         const tab = this.id, document = this.generation
         await this.pull(page)
         const request = await this.diagnostics.get(action as Action & { id: string }, async (nativeID, session) => page({ action: "response-body", request: nativeID, ...(session ? { session } : {}) }))
+        this.claim = { id: tab, document }
         return this.id !== tab || this.generation !== document ? replaced() : this.success({ tab: this.tab(), ...request })
       }
       case "screenshot": {
@@ -276,6 +287,7 @@ export class PreviewTab {
       if (this.urlTarget !== this.target) this.url = opened.url
       // OpenCode's web open gives a new tab: the one preview takes a new ID, so the previous one is never retargeted.
       this.tabID = `tab_${randomUUID()}`
+      this.claim = { id: this.id }
       return this.success(this.tab())
     } catch (error) { return failed(error) }
   }
@@ -287,6 +299,7 @@ export class PreviewTab {
     if (!this.target || registration !== this.registration)
       return failure("operation_failed", "The page loaded, but its preview is no longer the one shown to the agent. Call browser.tabs.list({}).")
     if (this.urlTarget !== this.target) this.url = url
+    this.claim = { id: this.id }
     return this.success(this.tab())
   }
 
