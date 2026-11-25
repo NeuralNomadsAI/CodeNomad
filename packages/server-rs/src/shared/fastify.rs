@@ -31,14 +31,17 @@ pub fn body(headers: &HeaderMap, bytes: &[u8]) -> Result<Option<Body>, Error> {
             "FST_ERR_CTP_EMPTY_JSON_BODY",
             "Body cannot be empty when content-type is set to 'application/json'",
         )),
-        "application/json" => match serde_json::from_slice::<Value>(bytes) {
-            Ok(v) if !poisoned(&v) => Ok(Some(Body::Json(v))),
-            _ => Err(error(
-                Status::BAD_REQUEST,
-                "FST_ERR_CTP_INVALID_JSON_BODY",
-                "Body is not valid JSON but content-type is set to 'application/json'",
-            )),
-        },
+        "application/json" => {
+            let json_bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+            match serde_json::from_slice::<Value>(json_bytes) {
+                Ok(v) if !poisoned(&v) => Ok(Some(Body::Json(v))),
+                _ => Err(error(
+                    Status::BAD_REQUEST,
+                    "FST_ERR_CTP_INVALID_JSON_BODY",
+                    "Body is not valid JSON but content-type is set to 'application/json'",
+                )),
+            }
+        }
         "text/plain" => Ok(Some(Body::Text(String::from_utf8_lossy(bytes).into_owned()))),
         _ => Err(media()),
     }

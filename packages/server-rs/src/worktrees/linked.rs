@@ -1,7 +1,6 @@
 //! Linked worktrees: creation, removal with session evacuation and session placement.
 pub use super::inventory::{
-    Catalogue, EventCache, Tree, catalogue, event_catalogue, forget, invalidate, invalidate_project, readable_checkout,
-    scope,
+    Catalogue, EventCache, Tree, catalogue, event_catalogue, forget, invalidate, readable_checkout, scope,
 };
 use crate::{App, Error, Shared, Workspace, error, files, git, opencode::proxy};
 use axum::{
@@ -39,11 +38,30 @@ pub async fn native(
     body: Option<Value>,
     max: usize,
 ) -> Result<Value, Error> {
-    let mut request = app
-        .native
-        .request(method, app.native.url().join(path).map_err(|_| native_error())?)
-        .query(query)
-        .timeout(Duration::from_secs(60));
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let endpoint = app.native.acquire(deadline).await.map_err(|_| native_error())?;
+    let url = endpoint.url.join(path).map_err(|_| native_error())?;
+    let request = app.native.client.request(method, url).basic_auth("opencode", Some(&endpoint.password));
+    send(request, query, body, max).await
+}
+
+pub(super) async fn send(
+    request: reqwest::RequestBuilder,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+) -> Result<Value, Error> {
+    send_with_timeout(request, query, body, max, Duration::from_secs(60)).await
+}
+
+pub(super) async fn send_with_timeout(
+    request: reqwest::RequestBuilder,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+    timeout: Duration,
+) -> Result<Value, Error> {
+    let mut request = request.query(query).timeout(timeout);
     if let Some(body) = body {
         request = request.json(&body);
     }
@@ -56,6 +74,39 @@ pub async fn native(
 async fn native_get(app: &App, path: &str, max: usize) -> Result<Value, Error> {
     native(app, Method::GET, path, &[], None, max).await
 }
+/// `DELETE /api/worktree` without force, pinned to an acquired endpoint.
+async fn delete_worktree_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    project: &str,
+    directory: &str,
+) -> Result<(), Error> {
+    if !app.native.current(endpoint) {
+        return Err(native_error());
+    }
+    let body = json!({"projectID": project, "directory": directory, "force": false});
+    let url = endpoint.url.join("/api/worktree").map_err(|_| native_error())?;
+    let request = app.native.client.request(Method::DELETE, url).basic_auth("opencode", Some(&endpoint.password));
+    send(request, &[], Some(body), 16384).await.map(drop)
+}
+
+async fn native_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    method: Method,
+    path: &str,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+) -> Result<Value, Error> {
+    if !app.native.current(endpoint) {
+        return Err(native_error());
+    }
+    let url = endpoint.url.join(path).map_err(|_| native_error())?;
+    let request = app.native.client.request(method, url).basic_auth("opencode", Some(&endpoint.password));
+    send(request, query, body, max).await
+}
+
 /// `DELETE /api/worktree` without force.
 async fn delete_worktree(app: &App, project: &str, directory: &str) -> Result<(), Error> {
     let body = json!({"projectID": project, "directory": directory, "force": false});
@@ -130,18 +181,20 @@ pub async fn create(
         return Err(invalid("Invalid worktree branch"));
     }
     let w = app.workspace(&id)?;
+    let endpoint =
+        app.native.acquire(tokio::time::Instant::now() + Duration::from_secs(30)).await.map_err(|_| native_error())?;
     let from_slug = input.from_slug.as_deref().unwrap_or("root");
-    let catalogue = catalogue(&app, &w, true).await?;
+    let catalogue = super::inventory::catalogue_at(&app, &w, true, Some(&endpoint), Duration::from_secs(12)).await?;
     git::guard_config(&catalogue.main).await?;
     let from = catalogue.get(from_slug)?;
-    if from.nested_missing {
-        return Err(conflict("Source worktree does not contain the workspace folder"));
+    if !from.creatable_source() {
+        return Err(invalid("Source worktree not found"));
     }
     let mut paths: Vec<_> = catalogue.trees.iter().map(|tree| super::fence::identity(tree.registered())).collect();
     paths.push(super::fence::identity(&catalogue.parent));
     let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A worktree is being removed"))?;
-    let confirmed = self::catalogue(&app, &w, false).await?;
-    if confirmed.get(from_slug).ok() != Some(from) || !from.contains_live(&from.path) {
+    let confirmed = super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), Duration::from_secs(12)).await?;
+    if confirmed.get(from_slug).ok() != Some(from) || !from.source_live() {
         return Err(conflict("Source worktree changed"));
     }
     git(&w.path, &["check-ref-format", "--branch", branch]).await.map_err(|_| invalid("Invalid worktree branch"))?;
@@ -164,9 +217,9 @@ pub async fn create(
     if !git::sha(&rev) {
         return Err(native_error());
     }
-    let relative = w.path.strip_prefix(catalogue.get("root")?.registered()).map_err(|_| native_error())?;
+    let relative = from.source_relative(&w.path, catalogue.get("root")?.registered()).ok_or_else(native_error)?;
     if !relative.as_os_str().is_empty() {
-        let relative = host(relative)?.replace('\\', "/");
+        let relative = host(&relative)?.replace('\\', "/");
         let kind = git(from.registered(), &["cat-file", "-t", &format!("{rev}:{relative}")]).await.ok();
         if kind.as_deref().map(str::trim) != Some("tree") {
             let body = json!({"code": "nested_folder_unavailable",
@@ -189,45 +242,195 @@ pub async fn create(
                 return Err(conflict("Worktree parent was replaced"));
             }
         }
-        let info = into.open_dir(".git/info").map_err(|_| conflict("Git exclude is unavailable"))?;
-        if into.canonicalize(".git/info").ok().as_deref() != Some(Path::new(".git/info")) {
-            return Err(conflict("Git exclude is not physically owned"));
-        }
-        let mut options = cap_std::fs::OpenOptions::new();
-        options.read(true).append(true).create(true);
-        if info.symlink_metadata("exclude").is_ok_and(|m| !m.is_file() || m.is_symlink()) {
-            return Err(conflict("Git exclude is not physically owned"));
-        }
-        let mut excludes = info.open_with("exclude", &options).map_err(|_| conflict("Git exclude is unavailable"))?;
-        let mut contents = Vec::new();
-        let unavailable = || conflict("Git exclude is unavailable");
-        (&mut excludes).take(64 * 1024 + 1).read_to_end(&mut contents).map_err(|_| unavailable())?;
-        if contents.len() > 64 * 1024 {
-            return Err(conflict("Git exclude exceeds the limit"));
-        }
-        let text = String::from_utf8_lossy(&contents);
-        if !text.lines().any(|line| line == ".codenomad/worktrees/") {
-            excludes.write_all(b"\n# codenomad\n.codenomad/worktrees/\n").map_err(|_| unavailable())?;
+        // Ensure `.codenomad/worktrees/` is listed in the effective `info/exclude`, matching TS
+        // `worktree-map.ts:6-21, 62-74`, `native-worktrees.ts:217-229`, and `worktrees.ts:359-364`:
+        // ignore mkdir/read failures (e.g. unwritable info dir or directory at `info/exclude`), and
+        // propagate only append failures as `400` before `POST /api/worktree`. Anchor every step
+        // to the verified Git common directory via `cap_std` + Unix `O_NONBLOCK` + `fstat` so a
+        // racing symlink at `info/` or FIFO at `exclude` can neither escape the repo nor block.
+        let git_paths = git(
+            &catalogue.main,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir", "--git-path", "info/exclude"],
+        )
+        .await;
+        if let Ok(raw) = git_paths {
+            let mut lines = raw.lines();
+            if let (Some(common_raw), Some(exclude_raw)) = (lines.next(), lines.next()) {
+                let common_path = PathBuf::from(common_raw.trim());
+                let exclude_path = PathBuf::from(exclude_raw.trim());
+                // Move `_exclude` into `spawn_blocking` so cancelling the request mid-write
+                // never releases the serialization lock before the worker finishes.
+                let exclude_updated = tokio::task::spawn_blocking(move || -> Result<(), Error> {
+                    let _exclude_guard = _exclude;
+                    let Ok(common_canon) = dunce::canonicalize(&common_path) else { return Ok(()) };
+                    let rel = match exclude_path
+                        .strip_prefix(&common_path)
+                        .or_else(|_| exclude_path.strip_prefix(&common_canon))
+                    {
+                        Ok(r) => r.to_path_buf(),
+                        Err(_) => return Ok(()),
+                    };
+                    let mut comps = rel.components();
+                    let (
+                        Some(std::path::Component::Normal(info_comp)),
+                        Some(std::path::Component::Normal(file_comp)),
+                        None,
+                    ) = (comps.next(), comps.next(), comps.next())
+                    else {
+                        return Ok(());
+                    };
+                    // Require the exact `info/exclude` components: if `<common_dir>/info` was an
+                    // in-repo symlink already resolved by `git rev-parse --path-format=absolute`,
+                    // `info_comp` will not be `"info"` and we refuse to follow it.
+                    if info_comp != std::ffi::OsStr::new("info") || file_comp != std::ffi::OsStr::new("exclude") {
+                        return Ok(());
+                    }
+                    let Ok(common_dir) =
+                        cap_std::fs::Dir::open_ambient_dir(&common_canon, cap_std::ambient_authority())
+                    else {
+                        return Ok(());
+                    };
+                    // Match TS `worktree-map.ts:8-12`: ignore mkdir/open failure for `info/`.
+                    // Refuse to follow an in-repo symlink at `info` so we never write outside the
+                    // physical `info/` directory inside the verified Git common directory.
+                    let _ = common_dir.create_dir(info_comp);
+                    let Ok(info_meta) = common_dir.symlink_metadata(info_comp) else { return Ok(()) };
+                    if !info_meta.is_dir() || info_meta.is_symlink() {
+                        return Ok(());
+                    }
+                    let Ok(info) = common_dir.open_dir(info_comp) else { return Ok(()) };
+                    #[cfg(unix)]
+                    {
+                        use cap_std::fs::MetadataExt;
+                        let expected_info_path = common_canon.join(info_comp);
+                        if dunce::canonicalize(&expected_info_path).ok().as_deref()
+                            != Some(expected_info_path.as_path())
+                        {
+                            return Ok(());
+                        }
+                        let Ok(opened_meta) = info.dir_metadata() else { return Ok(()) };
+                        if opened_meta.dev() != info_meta.dev() || opened_meta.ino() != info_meta.ino() {
+                            return Ok(());
+                        }
+                    }
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+                        use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
+                        let expected_info_path = common_canon.join(info_comp);
+                        let handle = info.as_raw_handle();
+                        let len = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
+                        if len == 0 {
+                            return Ok(());
+                        }
+                        let mut buf = vec![0u16; len as usize];
+                        let written = unsafe { GetFinalPathNameByHandleW(handle, buf.as_mut_ptr(), len, 0) };
+                        if written == 0 || written as usize >= buf.len() {
+                            return Ok(());
+                        }
+                        let actual =
+                            dunce::simplified(Path::new(&std::ffi::OsString::from_wide(&buf[..written as usize])))
+                                .to_path_buf();
+                        if actual != expected_info_path {
+                            return Ok(());
+                        }
+                    }
+                    #[cfg(unix)]
+                    let add_nonblock = |opts: &mut cap_std::fs::OpenOptions| {
+                        use cap_std::fs::OpenOptionsExt;
+                        #[cfg(any(
+                            target_os = "macos",
+                            target_os = "freebsd",
+                            target_os = "openbsd",
+                            target_os = "netbsd"
+                        ))]
+                        const O_NONBLOCK: i32 = 0x0004;
+                        #[cfg(not(any(
+                            target_os = "macos",
+                            target_os = "freebsd",
+                            target_os = "openbsd",
+                            target_os = "netbsd"
+                        )))]
+                        const O_NONBLOCK: i32 = 0x0800;
+                        opts.custom_flags(O_NONBLOCK);
+                    };
+                    // Match TS `worktree-map.ts:15-20`: missing file is empty; any other read failure
+                    // (including a directory, symlink, or FIFO at `info/exclude`) returns without error.
+                    let mut contents = Vec::new();
+                    match info.symlink_metadata(file_comp) {
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                        Ok(m) if m.is_file() && !m.is_symlink() => {
+                            let mut read_opts = cap_std::fs::OpenOptions::new();
+                            read_opts.read(true);
+                            #[cfg(unix)]
+                            add_nonblock(&mut read_opts);
+                            let Ok(mut reader) = info.open_with(file_comp, &read_opts) else { return Ok(()) };
+                            if !reader.metadata().is_ok_and(|m| m.is_file()) {
+                                return Ok(());
+                            }
+                            if (&mut reader).take(64 * 1024 + 1).read_to_end(&mut contents).is_err()
+                                || contents.len() > 64 * 1024
+                            {
+                                return Ok(());
+                            }
+                        }
+                        _ => return Ok(()),
+                    }
+                    let text = String::from_utf8_lossy(&contents);
+                    if text.lines().any(|line| line.trim_end_matches('\r') == ".codenomad/worktrees/") {
+                        return Ok(());
+                    }
+                    // Match TS `worktree-map.ts:21, 62-74`: append failure propagates as `400`.
+                    let write_err = || error(Status::BAD_REQUEST, "Git exclude is unavailable");
+                    let mut append_opts = cap_std::fs::OpenOptions::new();
+                    append_opts.append(true).create(true);
+                    #[cfg(unix)]
+                    add_nonblock(&mut append_opts);
+                    let mut writer = info.open_with(file_comp, &append_opts).map_err(|_| write_err())?;
+                    if !writer.metadata().is_ok_and(|m| m.is_file()) {
+                        return Err(write_err());
+                    }
+                    writer.write_all(b"\n# codenomad\n.codenomad/worktrees/\n").map_err(|_| write_err())?;
+                    Ok(())
+                })
+                .await
+                .map_err(|_| error(Status::BAD_REQUEST, "Git exclude is unavailable"))?;
+                exclude_updated?;
+            }
         }
     }
     let name = branch.replace('/', "-");
     let body = json!({"projectID": catalogue.project, "from": from.service_root, "branch": rev,
         "directory": catalogue.parent, "name": name});
-    let created = native(&app, Method::POST, "/api/worktree", &[], Some(body), 64 * 1024).await?;
+    let created = native_at(&app, &endpoint, Method::POST, "/api/worktree", &[], Some(body), 64 * 1024).await?;
     let service = created["directory"].as_str().ok_or_else(native_error)?;
     let inside = |d: &PathBuf| *d != catalogue.parent && d.starts_with(&catalogue.parent);
     physical(service).filter(inside).ok_or_else(native_error)?;
-    let confirmed = self::catalogue(&app, &w, false).await?;
+    if catalogue.by_registered(service).is_some() {
+        return Err(native_error());
+    }
+    let read_catalogue_once_retry = || async {
+        match super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), Duration::from_secs(12)).await {
+            Ok(cat) => Ok(cat),
+            Err(err) if err.1["error"].as_str() == Some(super::inventory::CONFIG_CHANGED_ERROR) => {
+                super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), Duration::from_secs(12)).await
+            }
+            Err(err) => Err(err),
+        }
+    };
+    let confirmed = read_catalogue_once_retry().await?;
     let checkout = confirmed
         .by_registered(service)
         .filter(|t| t.slug != "root" && t.head.as_deref() == Some(&rev))
         .ok_or_else(native_error)?;
     let args = if existing { vec!["switch", "--", branch] } else { vec!["switch", "-c", branch] };
     if git(checkout.registered(), &args).await.is_err() {
-        delete_worktree(&app, &catalogue.project, service).await?;
+        delete_worktree_at(&app, &endpoint, &catalogue.project, service).await?;
         return Err(conflict("Unable to attach the branch"));
     }
-    let updated = self::catalogue(&app, &w, false).await?;
+    // Retry the final inventory read once ONLY on `WorktreeConfigChangedError` so a newly created
+    // and attached worktree is not falsely reported as failed (TS `native-worktrees.ts:256-264`).
+    let updated = read_catalogue_once_retry().await?;
     let row = updated
         .by_registered(service)
         .filter(|r| r.branch.as_deref() == Some(branch))

@@ -45,6 +45,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("POST",r"^/api/(?:client-connections/pong|workspaces(?:/creation/cancel|/[^/]+/creation/release)?)$"),
     ("POST",r"^/api/workspaces/[^/]+/session-history/(?:outline|outlinePreview|window|query|ranked)$"),
     ("GET",r"^/api/workspaces/[^/]+/session-attachment/[^/]+/[^/]+/[0-9]+/[a-f0-9]{64}$"),
+    ("GET",r"^/api/workspaces/[^/]+/session-media/[^/]+/[^/]+/[^/]+/[^/]+/[^/]+$"),
     ("DELETE",r"^/api/workspaces/[^/]+$"),
     ("GET",r"^/api/panel-extensions/[^/]+/panel$"),
     ("GET",r"^/workspaces/[^/]+/instance/api/(?:agent(?:/[^/]+)?|command|location|mcp|model(?:/default)?|provider|project|session(?:/active|/[^/]+(?:/(?:inbox|permission|form|message(?:/[^/]+)?))?)?|experimental/session/[^/]+/log)$"),
@@ -87,7 +88,17 @@ fn browser_metadata(h: &HeaderMap) -> bool {
 pub(super) fn cors(mut response: Response, origin: Option<HeaderValue>) -> Response {
     let raw = response.extensions().get::<crate::opencode::NativeBody>().is_some();
     let h = response.headers_mut();
-    h.entry(header::VARY).or_insert(HeaderValue::from_static("Origin"));
+    match h.get(header::VARY).and_then(|v| v.to_str().ok()) {
+        None => {
+            h.insert(header::VARY, HeaderValue::from_static("Origin"));
+        }
+        Some(existing) if existing.split(',').any(|part| part.trim().eq_ignore_ascii_case("origin")) => {}
+        Some(existing) => {
+            if let Ok(merged) = HeaderValue::from_str(&format!("{existing}, Origin")) {
+                h.insert(header::VARY, merged);
+            }
+        }
+    }
     if let Some(origin) = origin {
         h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
         h.insert(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
@@ -111,15 +122,20 @@ fn route_path(uri: &axum::http::Uri) -> Option<String> {
         return None;
     }
     let mut output = String::new();
+    let media_route = path.starts_with("/api/workspaces/") && path[1..].split('/').nth(3) == Some("session-media");
     for (index, segment) in path[1..].split('/').enumerate() {
         let decoded = percent_encoding::percent_decode_str(segment).decode_utf8().ok()?;
         // The instance storage route accepts encoded physical paths as its
         // final key, and rechecks them against an open workspace.
         let storage = index == 3 && path.starts_with("/api/storage/instances/");
+        let media_id = media_route && matches!(index, 4 | 5);
         if decoded == "."
             || decoded == ".."
-            || decoded.contains(['\0', ';', '#', '?'])
-            || (!storage && decoded.contains(['/', '\\', '%']))
+            || decoded.contains('\0')
+            || (!media_id && decoded.contains([';', '#', '?']))
+            || (!storage && !media_id && decoded.contains('/'))
+            || (!storage && !media_id && decoded.contains('\\'))
+            || (!storage && !media_id && decoded.contains('%'))
         {
             return None;
         }
