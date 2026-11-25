@@ -160,14 +160,15 @@ fn on_connection(app: &App, endpoint: &Arc<Endpoint>) -> bool {
     app.native.endpoint().is_some_and(|current| Arc::ptr_eq(&current, endpoint))
 }
 
-pub(crate) async fn rpc(
+async fn rpc_raw(
     app: &App,
     endpoint: &Arc<Endpoint>,
     dir: &str,
     method: &str,
     input: Value,
     max: usize,
-) -> Result<Value, Error> {
+    timeout: std::time::Duration,
+) -> Result<(Status, Value), Error> {
     let url = endpoint.url.join(&format!("/api/rpc/codenomad.missions/{method}")).map_err(|_| unavailable())?;
     if !on_connection(app, endpoint) {
         return Err(unavailable());
@@ -179,15 +180,32 @@ pub(crate) async fn rpc(
         .basic_auth("opencode", Some(&endpoint.password))
         .query(&[("location[directory]", dir)])
         .json(&json!({"input":input}))
-        .timeout(std::time::Duration::from_secs(100))
+        .timeout(timeout)
         .send()
         .await
         .map_err(|_| unavailable())?;
-    if !response.status().is_success() {
+    let status = response.status();
+    if !status.is_success() && status != Status::BAD_REQUEST {
         return Err(unavailable());
     }
     let result = crate::opencode::read_json(response, max).await.map_err(|_| unavailable())?;
     if !on_connection(app, endpoint) {
+        return Err(unavailable());
+    }
+    Ok((status, result))
+}
+
+pub(crate) async fn rpc(
+    app: &App,
+    endpoint: &Arc<Endpoint>,
+    dir: &str,
+    method: &str,
+    input: Value,
+    max: usize,
+) -> Result<Value, Error> {
+    let (status, result) =
+        rpc_raw(app, endpoint, dir, method, input, max, std::time::Duration::from_secs(100)).await?;
+    if !status.is_success() {
         return Err(unavailable());
     }
     result.get("output").cloned().ok_or_else(unavailable)
@@ -240,14 +258,43 @@ pub async fn list(
     }
     Ok(Json(seen))
 }
-async fn flag(app: &App, endpoint: &Arc<Endpoint>, w: &Workspace) -> Result<Value, Error> {
-    let flag = rpc(app, endpoint, directory(w)?, "scheduleFlag", json!({}), 32768).await?;
-    if !flag["enabled"].is_boolean()
-        || !matches!(
+pub(super) fn valid_flag(flag: &Value) -> bool {
+    let Some(obj) = flag.as_object() else {
+        return false;
+    };
+    if !obj.keys().all(|k| matches!(k.as_str(), "enabled" | "provenance" | "path" | "hiddenOff")) {
+        return false;
+    }
+    let valid_str = |v: &Value| v.as_str().is_some_and(|s| (1..=4096).contains(&s.encode_utf16().count()));
+    flag["enabled"].is_boolean()
+        && matches!(
             flag["provenance"].as_str(),
-            Some("environment" | "experimental-block" | "all-flags" | "channel-default")
+            Some("environment" | "experimental-block" | "all-flags" | "channel-default" | "automations-setting")
         )
-    {
+        && obj.get("path").is_none_or(valid_str)
+        && obj.get("hiddenOff").is_none_or(|v| {
+            v.as_array().is_some_and(|items| items.len() <= 256 && items.iter().all(valid_str))
+        })
+}
+
+async fn flag(app: &App, endpoint: &Arc<Endpoint>, w: &Workspace) -> Result<Value, Error> {
+    let dir = directory(w)?;
+    let timeout = std::time::Duration::from_secs(5);
+    let (status, body) = rpc_raw(app, endpoint, dir, "scheduleSetting", json!({}), 32768, timeout).await?;
+    let flag = if status.is_success() {
+        body.get("output").cloned().ok_or_else(unavailable)?
+    } else if crate::opencode::native_rpc_absent(&body, status) && body["type"] == "rpc.method_not_found" {
+        // Only a bundle without `scheduleSetting` falls back to `scheduleFlag`; other errors stay errors.
+        let (fallback_status, fallback_body) =
+            rpc_raw(app, endpoint, dir, "scheduleFlag", json!({}), 32768, timeout).await?;
+        if !fallback_status.is_success() {
+            return Err(unavailable());
+        }
+        fallback_body.get("output").cloned().ok_or_else(unavailable)?
+    } else {
+        return Err(unavailable());
+    };
+    if !valid_flag(&flag) {
         return Err(unavailable());
     }
     Ok(flag)
@@ -890,6 +937,178 @@ mod tests {
         assert!(!ok(json!({"requestID":"req_1","expectedRevision":2,"action":"play","other":1}), false));
         assert!(!ok(json!({"requestID":"req_1","expectedRevision":2,"action":"play","directory":""}), false));
         assert_eq!(parse(json!([]), false).err().unwrap().1.0["code"], "schedule-input-invalid");
+    }
+
+    #[test]
+    fn valid_flag_enforces_strict_schedule_setting_schema() {
+        assert!(valid_flag(&json!({"enabled":true,"provenance":"channel-default"})));
+        assert!(valid_flag(
+            &json!({"enabled":true,"provenance":"automations-setting","path":"/p.json","hiddenOff":["/g.json"]})
+        ));
+        assert!(!valid_flag(&json!(null)));
+        assert!(!valid_flag(&json!([])));
+        assert!(!valid_flag(&json!({"enabled":"true","provenance":"channel-default"})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"unknown"})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"channel-default","extra":1})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"automations-setting","path":""})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"automations-setting","path":null})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"automations-setting","hiddenOff":[""]})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"automations-setting","hiddenOff":[null]})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"automations-setting","hiddenOff":[1]})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"automations-setting","hiddenOff":null})));
+
+        // UTF-16 length boundary (4096 vs 4097 code units, including 2-unit surrogate pairs).
+        let ok_ascii = "a".repeat(4096);
+        let long_ascii = "a".repeat(4097);
+        let ok_emoji = "🚀".repeat(2048);
+        let long_emoji = "🚀".repeat(2049);
+        assert!(valid_flag(&json!({"enabled":true,"provenance":"automations-setting","path":ok_ascii})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"automations-setting","path":long_ascii})));
+        assert!(valid_flag(&json!({"enabled":true,"provenance":"automations-setting","path":ok_emoji})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"automations-setting","path":long_emoji})));
+        assert!(valid_flag(&json!({"enabled":true,"provenance":"automations-setting","hiddenOff":[ok_emoji]})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"automations-setting","hiddenOff":[long_emoji]})));
+
+        // hiddenOff array cap (256 vs 257 entries).
+        let ok_hidden: Vec<String> = (0..256).map(|i| format!("/f{i}.json")).collect();
+        let too_many_hidden: Vec<String> = (0..257).map(|i| format!("/f{i}.json")).collect();
+        assert!(valid_flag(&json!({"enabled":true,"provenance":"automations-setting","hiddenOff":ok_hidden})));
+        assert!(!valid_flag(&json!({"enabled":true,"provenance":"automations-setting","hiddenOff":too_many_hidden})));
+    }
+
+    #[tokio::test]
+    async fn flag_prefers_schedule_setting_and_falls_back_only_on_method_not_found() {
+        use axum::{Router, routing::post};
+        use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
+        struct Cleanup {
+            dir: PathBuf,
+            server: tokio::task::JoinHandle<()>,
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                self.server.abort();
+                let _ = std::fs::remove_dir_all(&self.dir);
+            }
+        }
+
+        let mode = Arc::new(std::sync::Mutex::new("detailed"));
+        let fallback_calls = Arc::new(AtomicUsize::new(0));
+        let m1 = mode.clone();
+        let fc = fallback_calls.clone();
+        let router = Router::new()
+            .route(
+                "/api/rpc/codenomad.missions/scheduleSetting",
+                post(move || {
+                    let current = *m1.lock().unwrap();
+                    async move {
+                        match current {
+                            "detailed" => (
+                                Status::OK,
+                                Json(json!({"output":{"enabled":true,"provenance":"automations-setting","path":"/p.json","hiddenOff":["/g.json"]}})),
+                            ),
+                            "missing" => (
+                                Status::BAD_REQUEST,
+                                Json(json!({"_tag":"RpcError","type":"rpc.method_not_found","message":"Unknown RPC method"})),
+                            ),
+                            "unavailable" => (
+                                Status::BAD_REQUEST,
+                                Json(json!({"_tag":"RpcError","type":"rpc.unavailable","message":"RPC unavailable"})),
+                            ),
+                            "bad-output" => (
+                                Status::OK,
+                                Json(json!({"output":{"enabled":true,"provenance":"unknown"}})),
+                            ),
+                            "bad-rpc-shape" => (
+                                Status::BAD_REQUEST,
+                                Json(json!({"_tag":"RpcError","type":"rpc.method_not_found","message":"Unknown","extra":true})),
+                            ),
+                            "wrong-tag" => (
+                                Status::BAD_REQUEST,
+                                Json(json!({"_tag":"Other","type":"rpc.method_not_found","message":"Unknown"})),
+                            ),
+                            _ => (Status::INTERNAL_SERVER_ERROR, Json(json!({"error":"boom"}))),
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/api/rpc/codenomad.missions/scheduleFlag",
+                post(move || {
+                    fc.fetch_add(1, Relaxed);
+                    async { (Status::OK, Json(json!({"output":{"enabled":true,"provenance":"channel-default"}}))) }
+                }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+        let dir = crate::shared::test_dir("calendar-flag-rpc");
+        let _cleanup = Cleanup { dir: dir.clone(), server };
+        let auth = crate::auth::Auth::new(crate::auth::Settings {
+            username: "opencode".into(),
+            password: None,
+            file: None,
+            cookie: "cn".into(),
+            token: false,
+            skip: true,
+            idle: std::time::Duration::from_secs(60),
+            absolute: std::time::Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let settings = crate::settings::Settings::new(crate::settings::document::Location::resolve(
+            dir.join("config.yaml").to_str().unwrap(),
+        ));
+        let native = crate::opencode::Native::test_connection(addr);
+        let app = App::new(
+            auth,
+            0,
+            dir.clone(),
+            dir.clone(),
+            false,
+            settings,
+            Value::Null,
+            native,
+            PathBuf::new(),
+            None,
+            files::watch::Watches::new(tx),
+            None,
+        );
+        let endpoint = app.native.endpoint().unwrap();
+        let id = uuid::Uuid::new_v4();
+        let workspace = Workspace {
+            id,
+            request_id: None,
+            path: dir.clone(),
+            name: None,
+            status: "running",
+            proxy_path: format!("/workspaces/{id}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({"directory": dir}),
+        };
+
+        let detailed = flag(&app, &endpoint, &workspace).await.unwrap();
+        assert_eq!(
+            detailed,
+            json!({"enabled":true,"provenance":"automations-setting","path":"/p.json","hiddenOff":["/g.json"]})
+        );
+        assert_eq!(fallback_calls.load(Relaxed), 0);
+
+        *mode.lock().unwrap() = "missing";
+        let legacy = flag(&app, &endpoint, &workspace).await.unwrap();
+        assert_eq!(legacy, json!({"enabled":true,"provenance":"channel-default"}));
+        assert_eq!(fallback_calls.load(Relaxed), 1);
+
+        for failure in ["unavailable", "bad-output", "bad-rpc-shape", "wrong-tag", "internal"] {
+            *mode.lock().unwrap() = failure;
+            assert!(flag(&app, &endpoint, &workspace).await.is_err(), "{failure} must not fall back");
+        }
+        assert_eq!(fallback_calls.load(Relaxed), 1, "non-missing errors never call scheduleFlag");
     }
 }
 #[cfg(test)]
