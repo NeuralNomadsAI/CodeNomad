@@ -142,11 +142,9 @@ fn controls(s: &State, message: &Message) -> Option<Rc<Menu<State>>> {
                                     targets,
                                     context: PruneContext {
                                         group_key: None,
+                                        owner_message: Some(id.clone()),
                                         summary_label: None,
-                                        return_focus: Some((
-                                            format!("message-actions-{id}:trigger"),
-                                            None,
-                                        )),
+                                        return_focus: Some(format!("message-actions-{id}:trigger")),
                                     },
                                 },
                             );
@@ -214,12 +212,14 @@ pub(in crate::chat) fn header(s: &State, message: &Message, header: El) -> El {
 pub(in crate::chat) fn group_delete_button(
     s: &State,
     key: &str,
+    owner_message: &str,
     summary_label: String,
     targets: &[PruneMessageTarget],
 ) -> El {
     let disabled = !available(s) || s.transcript_display.messages.backend.is_none();
     let click_targets = targets.to_vec();
     let group_key = key.to_owned();
+    let owner_message = owner_message.to_owned();
     let hover = PruneHover::Group(key.to_owned());
     let hover_scope = s.input_scope.clone();
     let button = layout::button(
@@ -232,11 +232,9 @@ pub(in crate::chat) fn group_delete_button(
                     targets: click_targets.clone(),
                     context: PruneContext {
                         group_key: Some(group_key.clone()),
+                        owner_message: Some(owner_message.clone()),
                         summary_label: Some(summary_label.clone()),
-                        return_focus: Some((
-                            format!("delete-group-{group_key}"),
-                            Some(format!("toggle-{group_key}")),
-                        )),
+                        return_focus: Some(format!("delete-group-{group_key}")),
                     },
                 },
             );
@@ -310,26 +308,40 @@ pub(in crate::chat) fn overlays(s: &State, layers: &mut Vec<El>) {
                 {
                     if accepted {
                         start(s, Intent::Prune { preview, context });
-                    } else if let Some((primary, fallback)) = context.return_focus {
-                        let target = if let Some(group_key) = &context.group_key {
-                            if super::super::tool_groups::Groups::project(s)
-                                .group_delete_active(s, group_key)
-                            {
-                                Some(primary)
-                            } else {
-                                fallback
-                            }
-                        } else {
-                            Some(primary)
-                        };
-                        if let Some(target) = target {
-                            tx.return_focus(target, tx.focus_visible());
-                        }
+                    } else if let Some(target) = resolve_return_focus(s, &context) {
+                        tx.return_focus(target, tx.focus_visible());
                     }
                 }
             },
         ));
     }
+}
+
+fn resolve_return_focus(s: &State, context: &PruneContext) -> Option<String> {
+    if let Some(group_key) = &context.group_key {
+        let groups = super::super::tool_groups::Groups::project(s);
+        if groups.group_delete_active(s, group_key) {
+            return Some(format!("delete-group-{group_key}"));
+        }
+        if groups.has_group(group_key) {
+            return Some(format!("toggle-{group_key}"));
+        }
+    }
+    if let Some(message_id) = &context.owner_message
+        && let Some(row) = lookup(s, message_id)
+    {
+        if controls(s, row).is_some() {
+            return Some(format!("message-actions-{message_id}:trigger"));
+        }
+        if !row.body.trim().is_empty() {
+            return Some(format!("copy-message-{message_id}"));
+        }
+    }
+    context
+        .return_focus
+        .clone()
+        .filter(|_| context.group_key.is_none())
+        .or_else(|| Some("rows".into()))
 }
 
 pub(in crate::chat) fn restore(s: &State) -> impl Iterator<Item = El> {

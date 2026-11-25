@@ -28,8 +28,9 @@ pub(super) enum PruneHover {
 #[derive(Clone, Default)]
 pub(super) struct PruneContext {
     pub group_key: Option<String>,
+    pub owner_message: Option<String>,
     pub summary_label: Option<String>,
-    pub return_focus: Option<(String, Option<String>)>,
+    pub return_focus: Option<String>,
 }
 
 #[derive(Default)]
@@ -38,6 +39,7 @@ pub(crate) struct Actions {
     boundary: Option<String>,
     refresh_boundary: bool,
     refresh_transcript: bool,
+    refresh_on_reconnect: bool,
     read: Option<Receiver<codenomad_client::history::Result<Option<String>>>>,
     job: Option<Job>,
     confirmation: Option<(Weak<()>, PrunePreview, PruneContext)>,
@@ -99,16 +101,19 @@ impl Actions {
         }
     }
     pub(super) fn bind(&mut self, backend: Backend) {
-        if !self.backend.as_ref().is_some_and(|old| {
+        let same = self.backend.as_ref().is_some_and(|old| {
             old.workspace == backend.workspace
                 && old.session == backend.session
                 && old.client.same_connection(&backend.client)
                 && old.session_directory == backend.session_directory
-        }) {
+        });
+        if !same {
             *self = Self {
                 backend: Some(backend),
                 ..Self::default()
             };
+        } else if std::mem::take(&mut self.refresh_on_reconnect) {
+            self.refresh_transcript = true;
         }
         self.refresh();
     }
@@ -122,6 +127,7 @@ impl Actions {
         self.read = None;
         self.refresh_boundary = false;
         self.refresh_transcript = false;
+        self.refresh_on_reconnect = false;
     }
 
     pub(super) fn invalidate_boundary(&mut self) {
@@ -413,10 +419,20 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if s.transcript_display.messages.refresh_transcript
         && !s.screen.is_launcher()
         && s.transcript_display.messages.job.is_none()
-        && super::reader::refresh_after_message_action(s)
     {
-        s.transcript_display.messages.refresh_transcript = false;
-        changed = true;
+        match super::reader::refresh_after_message_action(s) {
+            super::reader::RefreshAdmission::Admitted => {
+                s.transcript_display.messages.refresh_transcript = false;
+                s.transcript_display.messages.refresh_on_reconnect = false;
+                changed = true;
+            }
+            super::reader::RefreshAdmission::Full => {}
+            super::reader::RefreshAdmission::Closed => {
+                s.transcript_display.messages.refresh_transcript = false;
+                s.transcript_display.messages.refresh_on_reconnect = true;
+                changed = true;
+            }
+        }
     }
     let owner = &mut s.transcript_display.messages;
     if let Some(read) = &owner.read {

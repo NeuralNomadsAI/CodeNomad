@@ -200,17 +200,28 @@ pub(crate) fn invalidate(s: &mut State) {
     }
 }
 
-pub(super) fn refresh_after_message_action(s: &mut State) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RefreshAdmission {
+    Admitted,
+    Full,
+    Closed,
+}
+
+pub(super) fn refresh_after_message_action(s: &mut State) -> RefreshAdmission {
     cancel_page(s);
     s.history_error = false;
     if let Some(reader) = &mut s.reader {
         reader.resume(Bookmark::Latest);
         s.paging = false;
-        true
+        RefreshAdmission::Admitted
     } else if let Some(command) = &s.commands {
-        command.try_send(crate::transport::Command::Latest).is_ok()
+        match command.try_send(crate::transport::Command::Latest) {
+            Ok(()) => RefreshAdmission::Admitted,
+            Err(err) if err.is_closed() => RefreshAdmission::Closed,
+            Err(_) => RefreshAdmission::Full,
+        }
     } else {
-        true
+        RefreshAdmission::Admitted
     }
 }
 

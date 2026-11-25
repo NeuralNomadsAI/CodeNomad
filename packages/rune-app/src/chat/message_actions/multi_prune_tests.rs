@@ -1,8 +1,6 @@
 use super::*;
 use crate::files::test_http::Http;
-use codenomad_client::message_actions::{
-    PruneKind, PruneMessageTarget, PrunePartIdentity, PrunePartTarget, content_revision,
-};
+use codenomad_client::message_actions::{PruneKind, content_revision};
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 use serde_json::{Value, json};
 
@@ -168,56 +166,41 @@ fn response_targets_respects_user_text_gap_filtered_and_empty_reasoning_boundari
     // retaining empty reasoning at index 0), skips transparent `sys`, stops at `mid`, and
     // excludes `after`.
     let targets = cleanup::response_targets(&s, "ans");
-    assert_eq!(
-        targets,
-        vec![
-            PruneMessageTarget {
-                message: "s1".into(),
-                parts: vec![
-                    PrunePartTarget {
-                        index: 0,
-                        kind: PruneKind::Tool,
-                        identity: PrunePartIdentity::Tool {
-                            id: "t1".into(),
-                            name: "read".into(),
-                        },
-                    },
-                    PrunePartTarget {
-                        index: 1,
-                        kind: PruneKind::Reasoning,
-                        identity: PrunePartIdentity::Reasoning {
-                            text: "Thinking".into(),
-                            created: None,
-                            completed: None,
-                        },
-                    },
-                ],
-            },
-            PruneMessageTarget {
-                message: "s2".into(),
-                parts: vec![PrunePartTarget {
-                    index: 0,
-                    kind: PruneKind::Tool,
-                    identity: PrunePartIdentity::Tool {
-                        id: "t2".into(),
-                        name: "bash".into(),
-                    },
-                }],
-            },
-            PruneMessageTarget {
-                message: "ans".into(),
-                parts: vec![PrunePartTarget {
-                    index: 0,
-                    kind: PruneKind::Reasoning,
-                    identity: PrunePartIdentity::Reasoning {
-                        text: "   ".into(),
-                        created: None,
-                        completed: None,
-                    },
-                }],
-            },
+    assert_eq!(targets.len(), 3);
+    assert_eq!(targets[0].message, "s1");
+    assert_eq!(targets[0].parts.len(), 2);
+    assert_eq!(targets[0].parts[0].index, 0);
+    assert_eq!(targets[0].parts[0].kind, PruneKind::Tool);
+    assert_eq!(targets[0].parts[1].index, 1);
+    assert_eq!(targets[0].parts[1].kind, PruneKind::Reasoning);
+    assert_eq!(targets[1].message, "s2");
+    assert_eq!(targets[1].parts.len(), 1);
+    assert_eq!(targets[1].parts[0].index, 0);
+    assert_eq!(targets[2].message, "ans");
+    assert_eq!(targets[2].parts.len(), 1);
+    assert_eq!(targets[2].parts[0].index, 0);
+    assert_eq!(targets[2].parts[0].kind, PruneKind::Reasoning);
+
+    // With Thinking hidden, nonempty reasoning still splits the content row so
+    // `[tool A, earlier prose, reasoning R, final prose]` selects R, not A.
+    let mut hidden_thinking = crate::init();
+    crate::settings::fixture_transcript(&mut hidden_thinking, json!({"showThinkingBlocks": false}));
+    hidden_thinking.messages = decode(&[json!({
+        "id": "m_hidden_r",
+        "type": "assistant",
+        "time": {"completed": 1},
+        "content": [
+            {"type":"tool","name":"read","id":"a","state":{"status":"completed"}},
+            {"type":"text","text":"Earlier prose"},
+            {"type":"reasoning","text":"Hidden reasoning"},
+            {"type":"text","text":"Final prose"}
         ]
-    );
+    })]);
+    let split = cleanup::response_targets(&hidden_thinking, "m_hidden_r");
+    assert_eq!(split.len(), 1);
+    assert_eq!(split[0].parts.len(), 1);
+    assert_eq!(split[0].parts[0].index, 2);
+    assert_eq!(split[0].parts[0].kind, PruneKind::Reasoning);
 
     // An incomplete preceding step blocks the whole cleanup run.
     let mut incomplete = s.messages.clone();
@@ -479,6 +462,35 @@ fn shifted_indices_never_delete_unselected_parts() {
                 .messages
                 .confirmation_open(&rt.state.input_scope)
         );
+
+        // Case 3: Reasoning B shares text and timestamps with rendered reasoning A but has
+        // different `native` provider state. Full native digest comparison refuses with Conflict.
+        let r_displayed = json!({"id":"r1","type":"assistant","time":{"completed":1},"content":[
+            {"type":"reasoning","text":"Same thought","time":{"created":10,"completed":20},"native":{"sig":"A"}},
+            {"type":"text","text":"Reply"}
+        ]});
+        let r_mutated = json!({"id":"r1","type":"assistant","time":{"completed":1},"content":[
+            {"type":"reasoning","text":"Same thought","time":{"created":10,"completed":20},"native":{"sig":"B"}},
+            {"type":"text","text":"Reply"}
+        ]});
+        let mut rt_r = runtime(state_with(&http.backend, &[r_displayed]));
+        select_last(&mut rt_r, "r1", "delete-technical-parts");
+        wait_for(&mut rt_r, "native reasoning mismatch preview", |s| {
+            s.transcript_display.messages.pending()
+        })
+        .await;
+        let _ = reply_preview_and_fresh(&http, &r_mutated).await;
+        wait_for(&mut rt_r, "native reasoning mismatch conflict", |s| {
+            s.transcript_display.messages.error == Some("session.pruning.conflict")
+        })
+        .await;
+        assert!(
+            !rt_r
+                .state
+                .transcript_display
+                .messages
+                .confirmation_open(&rt_r.state.input_scope)
+        );
         http.quiet().await;
     });
 }
@@ -525,8 +537,10 @@ fn collapsed_tool_and_reasoning_groups_hover_dynamically_cancel_focus_and_prune_
             {"type":"reasoning","text":"**Step 1**\n\nThought one"},
             {"type":"reasoning","text":"**Step 2**\n\nThought two"}
         ]});
-        rt.state.messages = decode(&[g1.clone(), g2_without_read]);
-        rt.state.revision += 1;
+        rt.update(|s, _| {
+            s.messages = decode(&[g1.clone(), g2_without_read]);
+            s.revision += 1;
+        });
         settle(&mut rt);
         let groups_after = super::super::tool_groups::Groups::project(&rt.state);
         let hi_after = active_highlight(&rt.state, &groups_after);
@@ -534,8 +548,10 @@ fn collapsed_tool_and_reasoning_groups_hover_dynamically_cancel_focus_and_prune_
         assert!(!part_highlighted(&hi_after, "g2", Some(0)));
 
         // Restore g2 and exercise keyboard focus return on Escape cancel.
-        rt.state.messages = decode(&[g1.clone(), g2.clone()]);
-        rt.state.revision += 1;
+        rt.update(|s, _| {
+            s.messages = decode(&[g1.clone(), g2.clone()]);
+            s.revision += 1;
+        });
         settle(&mut rt);
         rt.update(|_, tx| tx.focus(group_delete, true));
         settle(&mut rt);
@@ -575,6 +591,47 @@ fn collapsed_tool_and_reasoning_groups_hover_dynamically_cancel_focus_and_prune_
                 .iter()
                 .any(|e| e.focused && e.key.as_deref() == Some(group_delete))
         );
+
+        // If the tool group collapses to a singleton while confirmation is open, Escape falls back
+        // to the surviving message-actions trigger instead of losing keyboard focus.
+        click(&mut rt, group_delete);
+        wait_for(&mut rt, "singleton fallback preview", |s| {
+            s.transcript_display.messages.pending()
+        })
+        .await;
+        let _ = reply_preview_and_fresh(&http, &g1).await;
+        let _ = reply_preview_and_fresh(&http, &g2).await;
+        wait_for(&mut rt, "singleton fallback confirm", |s| {
+            s.transcript_display
+                .messages
+                .confirmation_open(&s.input_scope)
+        })
+        .await;
+        let g1_singleton = json!({"id":"g1","type":"assistant","time":{"completed":1},"content":[
+            {"type":"tool","name":"read","id":"r1","state":{"status":"completed"}}
+        ]});
+        rt.update(|s, _| {
+            s.messages = decode(&[g1_singleton]);
+            s.revision += 1;
+        });
+        settle(&mut rt);
+        rt.key(KeyEvent {
+            key: Key::Escape,
+            mods: Mods::default(),
+        });
+        settle(&mut rt);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| { e.focused && e.key.as_deref() == Some("message-actions-g1:trigger") })
+        );
+
+        // Restore g1+g2 so the collapsed reasoning group check runs next.
+        rt.update(|s, _| {
+            s.messages = decode(&[g1.clone(), g2.clone()]);
+            s.revision += 1;
+        });
+        settle(&mut rt);
 
         // Collapsed multi-part reasoning group also exposes its delete action and prunes only [1, 2].
         let reasoning_delete = "delete-group-reasoning-g2:0";
@@ -751,6 +808,67 @@ fn blocked_partial_failure_full_queue_and_scope_rotation_are_handled_safely() {
         .await;
         assert!(matches!(
             cmd_rx.try_recv(),
+            Ok(crate::transport::Command::Latest)
+        ));
+        http.accept()
+            .await
+            .reply(200, json!({"data":{"id":"session","revert":null}}))
+            .await;
+
+        // 5. Dropping the direct transport receiver during a prune releases pending() instead
+        // of stalling forever and carries the reload onto the replacement transport on bind().
+        drop(cmd_rx);
+        select_last(&mut rt, "ans", "delete-technical-parts");
+        wait_for(&mut rt, "closed transport preview", |s| {
+            s.transcript_display.messages.pending()
+        })
+        .await;
+        let _ = reply_preview_and_fresh(&http, &s1).await;
+        let _ = reply_preview_and_fresh(&http, &s2).await;
+        wait_for(&mut rt, "closed transport confirm", |s| {
+            s.transcript_display
+                .messages
+                .confirmation_open(&s.input_scope)
+        })
+        .await;
+        click(&mut rt, "file-decision-confirm");
+        http.accept()
+            .await
+            .reply(
+                200,
+                json!({"status":"pruned","messageID":"s1","revision":rev('f'),"removedCount":1}),
+            )
+            .await;
+        http.accept()
+            .await
+            .reply(
+                200,
+                json!({"status":"pruned","messageID":"s2","revision":rev('0'),"removedCount":1}),
+            )
+            .await;
+        wait_for(&mut rt, "closed queue releases pending", |s| {
+            !s.transcript_display.messages.pending()
+        })
+        .await;
+        http.accept()
+            .await
+            .reply(200, json!({"data":{"id":"session","revert":null}}))
+            .await;
+        wait_for(&mut rt, "boundary read settled", |s| {
+            s.transcript_display.messages.read.is_none()
+        })
+        .await;
+        let (new_tx, new_rx) = bounded(1);
+        rt.update(|s, _| {
+            s.commands = Some(new_tx);
+            s.transcript_display.messages.bind(http.backend.clone());
+        });
+        wait_for(&mut rt, "replacement transport reloaded", |s| {
+            !s.transcript_display.messages.pending()
+        })
+        .await;
+        assert!(matches!(
+            new_rx.try_recv(),
             Ok(crate::transport::Command::Latest)
         ));
         http.accept()

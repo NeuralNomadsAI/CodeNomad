@@ -277,7 +277,13 @@ pub(super) fn view_chunk<'a>(
         .child(text(steps.clone()))
         .children(duration.map(text))
         .children((!expanded && !group.prune_targets.is_empty()).then(|| {
-            super::message_actions::group_delete_button(s, group.key, steps, group.prune_targets)
+            super::message_actions::group_delete_button(
+                s,
+                group.key,
+                message,
+                steps,
+                group.prune_targets,
+            )
         }));
     let mut container = col().full_width().separate(Space::Sm).child(header);
     if !expanded {

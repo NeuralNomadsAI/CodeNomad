@@ -82,7 +82,11 @@ pub fn focusable_disabled_button(label: &str) -> El {
 /// Highlight technical transcript parts targeted by a pending cleanup hover.
 pub fn prune_preview(el: El, active: bool) -> El {
     if active {
-        el.fill(tokens(dark()).color("status-error-bg"))
+        let t = tokens(dark());
+        el.fill(
+            t.color("surface-inset")
+                .mix(t.color("status-error-bg"), 0.5),
+        )
     } else {
         el
     }

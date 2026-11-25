@@ -3,7 +3,7 @@ use codenomad_client::message_actions::{
     MAX_PRUNE_INDEX, MAX_PRUNE_MESSAGES, PruneKind, PruneMessageTarget, PrunePartIdentity,
     PrunePartTarget,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 fn non_blank(text: &str) -> bool {
     !text
@@ -40,11 +40,23 @@ fn window(s: &State, message: &crate::Message) -> (usize, usize) {
     super::super::transcript::part_window(message.parts.len(), steps)
 }
 
-/// Build an unambiguous stable identity for a technical part within its displayed message.
-/// Duplicate or truncated reasoning parts return `None` so pruning never guesses between peers.
-pub(in crate::chat) fn part_identity(
-    row: &crate::Message,
+/// Count native reasoning digests once per message in O(N) so duplicate reasoning blocks
+/// stay unambiguous without quadratic re-scans.
+fn reasoning_digest_counts(row: &crate::Message) -> HashMap<&str, usize> {
+    let mut counts = HashMap::new();
+    for part in &row.parts {
+        if let Part::Reasoning(reasoning) = part
+            && let Some(digest) = reasoning.identity.as_deref()
+        {
+            *counts.entry(digest).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn part_identity_with_counts(
     part: &Part,
+    reasoning_counts: &HashMap<&str, usize>,
 ) -> Option<PrunePartIdentity> {
     match part {
         Part::Tool(tool) => Some(PrunePartIdentity::Tool {
@@ -52,26 +64,9 @@ pub(in crate::chat) fn part_identity(
             name: tool.name.clone(),
         }),
         Part::Reasoning(reasoning) => {
-            if reasoning.retained_units != reasoning.units {
-                return None;
-            }
-            let same = row
-                .parts
-                .iter()
-                .filter(|candidate| match candidate {
-                    Part::Reasoning(other) => {
-                        other.retained_units == other.units
-                            && other.text == reasoning.text
-                            && other.created == reasoning.created
-                            && other.completed == reasoning.completed
-                    }
-                    _ => false,
-                })
-                .count();
-            (same == 1).then(|| PrunePartIdentity::Reasoning {
-                text: reasoning.text.clone(),
-                created: reasoning.created,
-                completed: reasoning.completed,
+            let digest = reasoning.identity.as_deref()?;
+            (reasoning_counts.get(digest) == Some(&1)).then(|| PrunePartIdentity::Reasoning {
+                digest: digest.to_owned(),
             })
         }
         _ => None,
@@ -79,9 +74,10 @@ pub(in crate::chat) fn part_identity(
 }
 
 /// Collect the contiguous multi-message technical run preceding a completed assistant response.
-/// Finds the last response part in the full record (refusing to fall back when omitted by a gap),
-/// anchors at the first rendered part of that final content row, and scans backward across adjacent
-/// assistant messages up to user turns, response boundaries, body-only responses or omitted gaps.
+/// Finds the last response part in the full record (refusing fallback when omitted by a gap),
+/// anchors at the first rendered part of that final content row (splitting on nonempty reasoning
+/// regardless of Thinking visibility to match Solid), and scans backward across adjacent assistant
+/// messages up to user turns, response boundaries, body-only responses or omitted gaps.
 pub(super) fn response_targets(s: &State, message_id: &str) -> Vec<PruneMessageTarget> {
     let rows = s.transcript_display.messages.visible(&s.messages);
     let Some(target_row) = rows.iter().position(|row| row.id == message_id) else {
@@ -104,9 +100,9 @@ pub(super) fn response_targets(s: &State, message_id: &str) -> Vec<PruneMessageT
         if last >= head && last < tail {
             return Vec::new();
         }
-        // Anchor at the first rendered content part of the final content row, stepping past
-        // filtered-out tools and hidden/empty reasoning without absorbing preceding technical parts.
-        let show_thinking = super::super::anchors::reasoning_visible(s);
+        // Anchor at the first rendered content part of the final content row. Solid splits content
+        // rows on nonempty reasoning before hiding its card, while treating empty reasoning and
+        // filtered-out tools as transparent for content-row grouping.
         let mut block_start = last;
         let mut scan = last;
         while scan > 0 {
@@ -117,7 +113,7 @@ pub(super) fn response_targets(s: &State, message_id: &str) -> Vec<PruneMessageT
             match &row.parts[scan] {
                 part if is_response_part(part) => block_start = scan,
                 Part::Tool(tool) if super::super::tools::visible(s, &row.id, tool) => break,
-                Part::Reasoning(part) if show_thinking && part.visible() => break,
+                Part::Reasoning(part) if part.visible() => break,
                 _ => {}
             }
         }
@@ -145,6 +141,7 @@ pub(super) fn response_targets(s: &State, message_id: &str) -> Vec<PruneMessageT
         } else {
             current.parts.len()
         };
+        let reasoning_counts = reasoning_digest_counts(current);
         let mut parts: Vec<PrunePartTarget> = Vec::new();
         let mut seen = HashSet::new();
         let mut stopped = false;
@@ -161,7 +158,7 @@ pub(super) fn response_targets(s: &State, message_id: &str) -> Vec<PruneMessageT
                     let Some(index) = valid_index(tool.part_index) else {
                         return Vec::new();
                     };
-                    let Some(identity) = part_identity(current, part) else {
+                    let Some(identity) = part_identity_with_counts(part, &reasoning_counts) else {
                         return Vec::new();
                     };
                     if seen.insert(index) {
@@ -179,7 +176,7 @@ pub(super) fn response_targets(s: &State, message_id: &str) -> Vec<PruneMessageT
                     let Some(index) = valid_index(reasoning.part_index) else {
                         return Vec::new();
                     };
-                    let Some(identity) = part_identity(current, part) else {
+                    let Some(identity) = part_identity_with_counts(part, &reasoning_counts) else {
                         return Vec::new();
                     };
                     if seen.insert(index) {
@@ -226,6 +223,7 @@ pub(super) fn message_targets(s: &State, message_id: &str) -> Vec<PruneMessageTa
         return Vec::new();
     }
     let (head, tail) = window(s, row);
+    let reasoning_counts = reasoning_digest_counts(row);
     let mut parts = Vec::new();
     let mut seen = HashSet::new();
     for (idx, part) in row.parts.iter().enumerate() {
@@ -240,7 +238,7 @@ pub(super) fn message_targets(s: &State, message_id: &str) -> Vec<PruneMessageTa
         let Some(index) = valid_index(part_index) else {
             return Vec::new();
         };
-        let Some(identity) = part_identity(row, part) else {
+        let Some(identity) = part_identity_with_counts(part, &reasoning_counts) else {
             return Vec::new();
         };
         if seen.insert(index) {
@@ -261,11 +259,19 @@ pub(super) fn message_targets(s: &State, message_id: &str) -> Vec<PruneMessageTa
     }]
 }
 
-/// Accumulates exact `(message_id, part_index, kind, identity)` targets for a technical group run.
+/// Accumulates exact `(message_id, part_index, kind, identity)` targets for a technical group run
+/// in O(N) total time per message.
 #[derive(Default)]
 pub(in crate::chat) struct GroupPrune {
     invalid: bool,
     messages: Vec<PruneMessageTarget>,
+    seen_messages: HashSet<String>,
+    current_row: Option<(
+        String,
+        HashMap<String, usize>,
+        HashSet<u64>,
+        HashSet<PrunePartIdentity>,
+    )>,
 }
 
 impl GroupPrune {
@@ -287,39 +293,60 @@ impl GroupPrune {
             self.invalid = true;
             return;
         };
-        let Some(identity) = part_identity(row, part) else {
+        let switching = self
+            .current_row
+            .as_ref()
+            .is_none_or(|(id, _, _, _)| id != &row.id);
+        if switching {
+            if self.messages.len() >= MAX_PRUNE_MESSAGES
+                || !self.seen_messages.insert(row.id.clone())
+            {
+                self.invalid = true;
+                return;
+            }
+            let counts: HashMap<String, usize> = reasoning_digest_counts(row)
+                .into_iter()
+                .map(|(k, v)| (k.to_owned(), v))
+                .collect();
+            self.messages.push(PruneMessageTarget {
+                message: row.id.clone(),
+                parts: Vec::new(),
+            });
+            self.current_row = Some((row.id.clone(), counts, HashSet::new(), HashSet::new()));
+        }
+        let (_, counts, seen_indexes, seen_identities) =
+            self.current_row.as_mut().expect("active row");
+        let identity = match part {
+            Part::Tool(tool) => Some(PrunePartIdentity::Tool {
+                id: tool.id.clone(),
+                name: tool.name.clone(),
+            }),
+            Part::Reasoning(reasoning) => reasoning
+                .identity
+                .as_deref()
+                .filter(|digest| counts.get(*digest) == Some(&1))
+                .map(|digest| PrunePartIdentity::Reasoning {
+                    digest: digest.to_owned(),
+                }),
+            _ => None,
+        };
+        let Some(identity) = identity else {
             self.invalid = true;
             return;
         };
-        let entry = match self.messages.last_mut() {
-            Some(last) if last.message == row.id => last,
-            _ => {
-                if self.messages.len() >= MAX_PRUNE_MESSAGES
-                    || self.messages.iter().any(|old| old.message == row.id)
-                {
-                    self.invalid = true;
-                    return;
-                }
-                self.messages.push(PruneMessageTarget {
-                    message: row.id.clone(),
-                    parts: Vec::new(),
-                });
-                self.messages.last_mut().expect("pushed entry")
-            }
-        };
-        if entry
-            .parts
-            .iter()
-            .any(|old| old.index == index || old.identity == identity)
-        {
+        if !seen_indexes.insert(index) || !seen_identities.insert(identity.clone()) {
             self.invalid = true;
             return;
         }
-        entry.parts.push(PrunePartTarget {
-            index,
-            kind,
-            identity,
-        });
+        self.messages
+            .last_mut()
+            .expect("pushed entry")
+            .parts
+            .push(PrunePartTarget {
+                index,
+                kind,
+                identity,
+            });
     }
 
     pub(in crate::chat) fn finish(mut self, allow: bool) -> Vec<PruneMessageTarget> {

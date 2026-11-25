@@ -719,6 +719,7 @@ fn standalone_and_title_only_reasoning_cards_match_solid_summary_rules() {
         provenance: TextProvenance::Closed,
         created: None,
         completed: None,
+        identity: None,
     };
     let summary = parse_summary(&truncated.text);
     assert_eq!(body_totals(&truncated, &summary), (4, 1004));
@@ -838,6 +839,7 @@ fn reasoning_card_claims_single_search_anchor_and_stops_live_timer_when_ready() 
                 provenance: TextProvenance::Closed,
                 created: None,
                 completed: None,
+                identity: None,
             };
             let terms = vec!["Plan".to_owned()];
             let q = Query {

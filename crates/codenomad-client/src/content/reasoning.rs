@@ -13,6 +13,7 @@ pub struct Reasoning {
     pub provenance: TextProvenance,
     pub created: Option<u64>,
     pub completed: Option<u64>,
+    pub identity: Option<String>,
 }
 
 #[derive(Debug)]
@@ -84,6 +85,7 @@ fn apply(row: &mut Message, event: &ReasoningEvent, capacity: usize) -> TextFit 
                 provenance: TextProvenance::Live,
                 created: Some(*at),
                 completed: None,
+                identity: None,
             }));
             TextFit::Applied
         };
@@ -111,6 +113,7 @@ fn apply(row: &mut Message, event: &ReasoningEvent, capacity: usize) -> TextFit 
     }
     match event {
         ReasoningEvent::Delta { text, .. } => {
+            part.identity = None;
             if part.retained_units == part.units {
                 let cut = text
                     .floor_char_boundary(text.len().min(budget.saturating_sub(part.text.len())));
@@ -120,6 +123,7 @@ fn apply(row: &mut Message, event: &ReasoningEvent, capacity: usize) -> TextFit 
             part.units = part.units.saturating_add(text.encode_utf16().count());
         }
         ReasoningEvent::End { at, text, .. } => {
+            part.identity = None;
             let cut = text.floor_char_boundary(text.len().min(budget));
             part.text.clear();
             part.text.push_str(&text[..cut]);
@@ -152,6 +156,7 @@ pub(super) fn decode(part: &Value, ordinal: usize, index: usize, row_completed: 
         },
         created,
         completed,
+        identity: Some(crate::message_actions::reasoning_part_digest(part)),
     }
 }
 

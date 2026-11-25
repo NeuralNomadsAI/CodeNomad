@@ -16,6 +16,7 @@ const LIST_LIMIT: usize = 24 * 1024 * 1024;
 pub const MAX_PRUNE_MESSAGES: usize = 256;
 pub const MAX_PRUNE_INDEX: u64 = 100_000;
 const MAX_PRUNE_PARTS: usize = 100_001;
+const MAX_SAFE_JS_INT: u64 = 9_007_199_254_740_991;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PruneKind {
@@ -39,10 +40,9 @@ pub enum PrunePartIdentity {
         id: String,
         name: String,
     },
+    /// Canonical SHA-256 digest of the native reasoning part (excluding volatile envelope keys).
     Reasoning {
-        text: String,
-        created: Option<u64>,
-        completed: Option<u64>,
+        digest: String,
     },
 }
 
@@ -376,14 +376,19 @@ impl Backend {
             let fresh_parts = fresh_content.as_array().ok_or(PruneBlocked {
                 reason: PruneReason::NotDeletable,
             })?;
+            let fresh_index = build_fresh_identity_index(fresh_parts);
             let mut indexes = Vec::with_capacity(target.parts.len());
             let mut resolved_seen = HashSet::with_capacity(target.parts.len());
             let mut tools = 0;
             for part in target.parts {
-                let resolved = resolve_identity_index(fresh_parts, part.kind, &part.identity)
-                    .ok_or(PruneBlocked {
-                        reason: PruneReason::Conflict,
-                    })?;
+                let resolved =
+                    fresh_index
+                        .get(&part.identity)
+                        .copied()
+                        .flatten()
+                        .ok_or(PruneBlocked {
+                            reason: PruneReason::Conflict,
+                        })?;
                 if available.get(&resolved) != Some(&part.kind) || !resolved_seen.insert(resolved) {
                     return Err(PruneBlocked {
                         reason: PruneReason::Conflict,
@@ -432,7 +437,9 @@ impl Backend {
         let record = body.get("data").unwrap_or(&body);
         if record["id"] != message
             || record["type"] != "assistant"
-            || record["time"]["completed"].is_null()
+            || record["time"]["completed"]
+                .as_u64()
+                .is_none_or(|ts| ts > MAX_SAFE_JS_INT)
         {
             return Err(PruneBlocked {
                 reason: PruneReason::NotDeletable,
@@ -496,12 +503,14 @@ impl Backend {
                 .and_then(PruneKind::parse)
                 .ok_or("invalid prune selection")?;
             let bytes = part.get("bytes");
+            let valid_bytes =
+                |value: &Value| value.as_u64().is_some_and(|count| count <= MAX_SAFE_JS_INT);
             if require_bytes {
-                if bytes.and_then(Value::as_u64).is_none() {
+                if !bytes.is_some_and(valid_bytes) {
                     return Err("invalid prune bytes".into());
                 }
             } else if let Some(value) = bytes
-                && value.as_u64().is_none()
+                && !valid_bytes(value)
             {
                 return Err("invalid prune bytes".into());
             }
@@ -590,7 +599,9 @@ fn validate_prune_targets(targets: &[PruneMessageTarget]) -> Result<Vec<PruneMes
                 (PruneKind::Tool, PrunePartIdentity::Tool { id, name }) => {
                     !id.is_empty() && id.len() <= 256 && name.len() <= 256
                 }
-                (PruneKind::Reasoning, PrunePartIdentity::Reasoning { .. }) => true,
+                (PruneKind::Reasoning, PrunePartIdentity::Reasoning { digest }) => {
+                    is_hex_digest(digest)
+                }
                 _ => false,
             };
             if !valid_identity
@@ -611,57 +622,121 @@ fn validate_prune_targets(targets: &[PruneMessageTarget]) -> Result<Vec<PruneMes
     Ok(normalized)
 }
 
-fn resolve_identity_index(
-    fresh_parts: &[Value],
-    kind: PruneKind,
-    identity: &PrunePartIdentity,
-) -> Option<u64> {
-    let mut matched: Option<u64> = None;
-    for (index, item) in fresh_parts.iter().enumerate() {
-        let same = match (kind, identity) {
-            (PruneKind::Tool, PrunePartIdentity::Tool { id, name }) => {
-                item["type"] == "tool"
-                    && item["id"].as_str() == Some(id.as_str())
-                    && item["name"].as_str() == Some(name.as_str())
-            }
-            (
-                PruneKind::Reasoning,
-                PrunePartIdentity::Reasoning {
-                    text,
-                    created,
-                    completed,
-                },
-            ) => {
-                item["type"] == "reasoning"
-                    && item["text"].as_str() == Some(text.as_str())
-                    && item["time"]["created"].as_u64() == *created
-                    && item["time"]["completed"].as_u64() == *completed
-            }
-            _ => false,
+/// Build an O(N) lookup from unambiguous technical part identities to their fresh array index.
+/// Duplicate identities map to `None` so callers refuse with `Conflict` rather than guessing.
+fn build_fresh_identity_index(fresh_parts: &[Value]) -> HashMap<PrunePartIdentity, Option<u64>> {
+    let mut index: HashMap<PrunePartIdentity, Option<u64>> =
+        HashMap::with_capacity(fresh_parts.len());
+    for (pos, item) in fresh_parts.iter().enumerate() {
+        let Ok(pos) = u64::try_from(pos) else {
+            continue;
         };
-        if same {
-            let index = u64::try_from(index)
-                .ok()
-                .filter(|value| *value <= MAX_PRUNE_INDEX)?;
-            if matched.replace(index).is_some() {
-                return None;
-            }
+        if pos > MAX_PRUNE_INDEX {
+            continue;
+        }
+        let identity = match item["type"].as_str() {
+            Some("tool") => match (item["id"].as_str(), item["name"].as_str()) {
+                (Some(id), Some(name))
+                    if !id.is_empty() && id.len() <= 256 && name.len() <= 256 =>
+                {
+                    Some(PrunePartIdentity::Tool {
+                        id: id.into(),
+                        name: name.into(),
+                    })
+                }
+                _ => None,
+            },
+            Some("reasoning") => Some(PrunePartIdentity::Reasoning {
+                digest: reasoning_part_digest(item),
+            }),
+            _ => None,
+        };
+        if let Some(identity) = identity {
+            index
+                .entry(identity)
+                .and_modify(|slot| *slot = None)
+                .or_insert(Some(pos));
         }
     }
-    matched
+    index
+}
+
+/// Canonical SHA-256 identity of a native reasoning part (excluding volatile envelope keys),
+/// matching Solid's `technicalPartIdentity` so provider-native state differences never collide.
+pub(crate) fn reasoning_part_digest(part: &Value) -> String {
+    let mut canonical = String::new();
+    match part {
+        Value::Object(map) => write_canonical_object(
+            map,
+            &[
+                "id",
+                "sessionID",
+                "messageID",
+                "renderCache",
+                "pendingPermission",
+            ],
+            &mut canonical,
+        ),
+        other => write_canonical_json(other, &mut canonical),
+    }
+    sha256_hex(canonical.as_bytes())
 }
 
 /// Canonical SHA-256 content revision matching `packages/server/src/opencode/session-pruning/revision.ts`.
 pub fn content_revision(content: &Value) -> String {
     let mut canonical = String::new();
     write_canonical_json(content, &mut canonical);
-    let digest = Sha256::digest(canonical.as_bytes());
+    sha256_hex(canonical.as_bytes())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
     let mut hex = String::with_capacity(64);
     for byte in digest {
         use std::fmt::Write as _;
         let _ = write!(&mut hex, "{byte:02x}");
     }
     hex
+}
+
+fn js_array_index(key: &str) -> Option<u32> {
+    if key.is_empty() || (key.len() > 1 && key.starts_with('0')) {
+        return None;
+    }
+    if !key.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    key.parse::<u32>().ok().filter(|&n| n < u32::MAX)
+}
+
+fn write_canonical_object(map: &serde_json::Map<String, Value>, omit: &[&str], out: &mut String) {
+    let mut entries: Vec<_> = map
+        .iter()
+        .filter(|(key, _)| !omit.contains(&key.as_str()))
+        .collect();
+    // JS `Object.fromEntries(...sort())` + `JSON.stringify` enumerates array-index keys
+    // (`0..2^32-2` without leading zeros) in ascending numeric order first, then remaining
+    // string keys in insertion (UTF-16 code-unit sorted) order.
+    entries.sort_by(
+        |(a, _), (b, _)| match (js_array_index(a), js_array_index(b)) {
+            (Some(na), Some(nb)) => na.cmp(&nb),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.encode_utf16().cmp(b.encode_utf16()),
+        },
+    );
+    out.push('{');
+    for (index, (key, entry)) in entries.into_iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        if let Ok(encoded) = serde_json::to_string(key) {
+            out.push_str(&encoded);
+        }
+        out.push(':');
+        write_canonical_json(entry, out);
+    }
+    out.push('}');
 }
 
 fn write_canonical_json(value: &Value, out: &mut String) {
@@ -676,22 +751,18 @@ fn write_canonical_json(value: &Value, out: &mut String) {
             }
             out.push(']');
         }
-        Value::Object(map) => {
-            let mut entries: Vec<_> = map.iter().collect();
-            // JS `Array.prototype.sort` compares strings by UTF-16 code units.
-            entries.sort_by(|(a, _), (b, _)| a.encode_utf16().cmp(b.encode_utf16()));
-            out.push('{');
-            for (index, (key, entry)) in entries.into_iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
-                if let Ok(encoded) = serde_json::to_string(key) {
-                    out.push_str(&encoded);
-                }
-                out.push(':');
-                write_canonical_json(entry, out);
+        Value::Object(map) => write_canonical_object(map, &[], out),
+        Value::Number(number) => {
+            if let Some(f) = number.as_f64()
+                && f.is_finite()
+                && f.fract() == 0.0
+                && f.abs() <= MAX_SAFE_JS_INT as f64
+            {
+                use std::fmt::Write as _;
+                let _ = write!(out, "{}", f as i64);
+            } else if let Ok(encoded) = serde_json::to_string(number) {
+                out.push_str(&encoded);
             }
-            out.push('}');
         }
         scalar => {
             if let Ok(encoded) = serde_json::to_string(scalar) {
@@ -701,36 +772,40 @@ fn write_canonical_json(value: &Value, out: &mut String) {
     }
 }
 
+fn is_hex_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|ch| ch.is_ascii_digit() || (b'a'..=b'f').contains(&ch))
+}
+
 fn revision(value: &Value) -> Option<&str> {
-    value["revision"].as_str().filter(|rev| {
-        rev.len() == 64
-            && rev
-                .bytes()
-                .all(|ch| ch.is_ascii_digit() || (b'a'..=b'f').contains(&ch))
-    })
+    value["revision"].as_str().filter(|rev| is_hex_digest(rev))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn target(message: &str, parts: &[(u64, PruneKind, &str)]) -> PruneMessageTarget {
+    fn hex(ch: char) -> String {
+        std::iter::repeat_n(ch, 64).collect()
+    }
+
+    fn target(message: &str, parts: &[(u64, PruneKind, String)]) -> PruneMessageTarget {
         PruneMessageTarget {
             message: message.into(),
             parts: parts
                 .iter()
-                .map(|&(index, kind, token)| PrunePartTarget {
-                    index,
-                    kind,
+                .map(|(index, kind, token)| PrunePartTarget {
+                    index: *index,
+                    kind: *kind,
                     identity: match kind {
                         PruneKind::Tool => PrunePartIdentity::Tool {
-                            id: token.into(),
+                            id: token.clone(),
                             name: "read".into(),
                         },
                         PruneKind::Reasoning => PrunePartIdentity::Reasoning {
-                            text: token.into(),
-                            created: None,
-                            completed: None,
+                            digest: token.clone(),
                         },
                     },
                 })
@@ -743,19 +818,23 @@ mod tests {
         assert!(validate_prune_targets(&[]).is_err());
         assert!(validate_prune_targets(&[target("m1", &[])]).is_err());
         assert!(
-            validate_prune_targets(&[target("../bad", &[(0, PruneKind::Tool, "t0")])]).is_err()
+            validate_prune_targets(&[target("../bad", &[(0, PruneKind::Tool, "t0".into())])])
+                .is_err()
         );
         assert!(
             validate_prune_targets(&[
-                target("m1", &[(0, PruneKind::Tool, "t0")]),
-                target("m1", &[(1, PruneKind::Tool, "t1")]),
+                target("m1", &[(0, PruneKind::Tool, "t0".into())]),
+                target("m1", &[(1, PruneKind::Tool, "t1".into())]),
             ])
             .is_err()
         );
         assert!(
             validate_prune_targets(&[target(
                 "m1",
-                &[(2, PruneKind::Tool, "t2"), (2, PruneKind::Reasoning, "r2"),],
+                &[
+                    (2, PruneKind::Tool, "t2".into()),
+                    (2, PruneKind::Reasoning, hex('a')),
+                ],
             )])
             .is_err()
         );
@@ -763,26 +842,37 @@ mod tests {
             validate_prune_targets(&[target(
                 "m1",
                 &[
-                    (0, PruneKind::Reasoning, "same"),
-                    (1, PruneKind::Reasoning, "same"),
+                    (0, PruneKind::Reasoning, hex('a')),
+                    (1, PruneKind::Reasoning, hex('a')),
                 ],
             )])
             .is_err()
         );
         assert!(
-            validate_prune_targets(&[
-                target("m1", &[(MAX_PRUNE_INDEX + 1, PruneKind::Tool, "t")],)
-            ])
+            validate_prune_targets(&[target(
+                "m1",
+                &[(0, PruneKind::Reasoning, "not-a-digest".into())],
+            )])
+            .is_err()
+        );
+        assert!(
+            validate_prune_targets(&[target(
+                "m1",
+                &[(MAX_PRUNE_INDEX + 1, PruneKind::Tool, "t".into())],
+            )])
             .is_err()
         );
         let too_many: Vec<_> = (0..=MAX_PRUNE_MESSAGES)
-            .map(|i| target(&format!("m{i}"), &[(0, PruneKind::Tool, "t")]))
+            .map(|i| target(&format!("m{i}"), &[(0, PruneKind::Tool, "t".into())]))
             .collect();
         assert!(validate_prune_targets(&too_many).is_err());
 
         let normalized = validate_prune_targets(&[target(
             "m1",
-            &[(4, PruneKind::Reasoning, "r4"), (1, PruneKind::Tool, "t1")],
+            &[
+                (4, PruneKind::Reasoning, hex('b')),
+                (1, PruneKind::Tool, "t1".into()),
+            ],
         )])
         .unwrap();
         assert_eq!(normalized[0].parts[0].index, 1);
@@ -790,38 +880,53 @@ mod tests {
     }
 
     #[test]
-    fn content_revision_is_key_order_independent_and_matches_identity_resolution() {
-        let a = json!([{"type":"tool","name":"read","id":"a","state":{"status":"completed"}}]);
-        let b = json!([{"state":{"status":"completed"},"id":"a","type":"tool","name":"read"}]);
-        assert_eq!(content_revision(&a), content_revision(&b));
-        assert_eq!(content_revision(&a).len(), 64);
-
-        let shifted = json!([
-            {"type":"tool","name":"grep","id":"b","state":{"status":"completed"}},
-            {"type":"tool","name":"bash","id":"c","state":{"status":"completed"}},
-        ]);
-        let parts = shifted.as_array().unwrap();
-        assert_eq!(
-            resolve_identity_index(
-                parts,
-                PruneKind::Tool,
-                &PrunePartIdentity::Tool {
-                    id: "a".into(),
-                    name: "read".into(),
+    fn content_revision_matches_js_key_order_and_native_reasoning_digest() {
+        // Exact digest verified against `packages/server/src/opencode/session-pruning/revision.ts`
+        // under Node.js: numeric keys `"2"` precede `"10"`, leading-zero `"02"` sorts as a string,
+        // and integral float `1.0` serializes as `1`.
+        let sample = json!([
+            {
+                "type": "tool",
+                "id": "t1",
+                "name": "read",
+                "state": {
+                    "status": "completed",
+                    "input": { "10": "b", "2": "a", "02": "c", "z": 1.0, "a": true }
                 }
-            ),
+            },
+            {
+                "type": "reasoning",
+                "text": "Same",
+                "time": { "created": 1, "completed": 2 },
+                "native": { "sig": "A" }
+            }
+        ]);
+        assert_eq!(
+            content_revision(&sample),
+            "5dacbb11f59229d04566faac24c818c5fb65a0a7404d0ca690572250e38d94b3"
+        );
+
+        let r_a = json!({"type":"reasoning","text":"Same","time":{"created":1,"completed":2},"native":{"sig":"A"}});
+        let r_b = json!({"type":"reasoning","text":"Same","time":{"created":1,"completed":2},"native":{"sig":"B"}});
+        assert_ne!(reasoning_part_digest(&r_a), reasoning_part_digest(&r_b));
+
+        let fresh = json!([
+            {"type":"tool","name":"grep","id":"b","state":{"status":"completed"}},
+            r_b,
+        ]);
+        let index = build_fresh_identity_index(fresh.as_array().unwrap());
+        assert_eq!(
+            index.get(&PrunePartIdentity::Reasoning {
+                digest: reasoning_part_digest(&r_a),
+            }),
             None
         );
         assert_eq!(
-            resolve_identity_index(
-                parts,
-                PruneKind::Tool,
-                &PrunePartIdentity::Tool {
-                    id: "b".into(),
-                    name: "grep".into(),
-                }
-            ),
-            Some(0)
+            index.get(&PrunePartIdentity::Tool {
+                id: "b".into(),
+                name: "grep".into(),
+            }),
+            Some(&Some(0))
         );
     }
 

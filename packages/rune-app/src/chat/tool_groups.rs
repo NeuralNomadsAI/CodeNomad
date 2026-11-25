@@ -329,6 +329,12 @@ impl Groups {
                 && !chunk.summary.prune_targets.is_empty()
         })
     }
+
+    pub(super) fn has_group(&self, key: &str) -> bool {
+        self.chunks
+            .values()
+            .any(|chunk| chunk.first && chunk.summary.key == key)
+    }
 }
 
 fn waiting(s: &State, rows: &[Row]) -> HashMap<String, HashSet<String>> {
@@ -454,7 +460,13 @@ impl Chunk {
             .expanded(expanded);
             if !expanded && !summary.prune_targets.is_empty() {
                 layout::action_row().child(toggle_button).child(
-                    message_actions::group_delete_button(s, key, label, &summary.prune_targets),
+                    message_actions::group_delete_button(
+                        s,
+                        key,
+                        &summary.message,
+                        label,
+                        &summary.prune_targets,
+                    ),
                 )
             } else {
                 toggle_button
