@@ -32,8 +32,8 @@ export async function pendingOpenFixture({origin,serverPid,backendPassword,profi
         if(!url)return
         req.pause()
         const ok=await clientGate.verify(req.socket)
-        if(res.destroyed||req.destroyed)return
-        if(!ok){res.writeHead(403);res.end('Attested client PID required');return}
+        if(res.destroyed||req.socket.destroyed)return
+        if(!ok){req.resume();res.writeHead(403,{connection:'close'});res.end('Attested client PID required');return}
         req.resume()
         const chunks=[];let total=0
         for await(const chunk of req){total+=chunk.length;assert(total<262144);chunks.push(chunk)}

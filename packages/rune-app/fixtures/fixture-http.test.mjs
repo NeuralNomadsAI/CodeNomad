@@ -526,7 +526,7 @@ test('createAttestedTcpRelay rotates between valid targets, parseWindowsCommandL
       if (mode === 'spoof') {
         const res = await runProbes({
           spoof: {
-            targetPid: good.pid, launcherPid: process.pid, profile,
+            targetPid: good.pid, launcherPid: process.pid, profile, root: process.cwd(),
             allowedLaunchers: [allowedLauncher], allowedServerExecutables: [process.execPath],
           },
         })
@@ -536,7 +536,7 @@ test('createAttestedTcpRelay rotates between valid targets, parseWindowsCommandL
         const badNeighbor = await spawnDummy(['--config', neighbor + '/config.yaml', '--workspace-root', neighbor + '/workspace'])
         const badUnrelated = await spawnDummy(['--note', profile])
         children.push(badDupConfig, badNeighbor, badUnrelated)
-        const base = {launcherPid: process.pid, profile, allowedLaunchers: [allowedLauncher], allowedServerExecutables: [process.execPath]}
+        const base = {launcherPid: process.pid, profile, root: process.cwd(), allowedLaunchers: [allowedLauncher], allowedServerExecutables: [process.execPath]}
         const res = await runProbes({
           good: {...base, targetPid: good.pid},
           badDupConfig: {...base, targetPid: badDupConfig.pid},
@@ -730,4 +730,84 @@ test('originGuardProxy and signInFixture refuse missing target PID without unatt
   await assert.rejects(originGuardProxy('http://127.0.0.1:1',0),/target PID/i)
   await assert.rejects(signInFixture('http://127.0.0.1:1','secret',undefined),/target PID/i)
   await assert.rejects(signInFixture('http://127.0.0.1:1','secret',null),/target PID/i)
+})
+
+test('extractNodeEntryScript rejects inline eval/print and handles boolean/optional Node flags',async()=>{
+  const {extractNodeEntryScript}=await import('../../../scripts/native-fixture-http.mjs')
+  assert.equal(extractNodeEntryScript(['node','--eval=console.log(1)','real.mjs']),null)
+  assert.equal(extractNodeEntryScript(['node','-e=1','real.mjs']),null)
+  assert.equal(extractNodeEntryScript(['node','--print=1','real.mjs']),null)
+  assert.equal(extractNodeEntryScript(['node','-p=1','real.mjs']),null)
+  assert.equal(extractNodeEntryScript(['node','--inspect','--use-openssl-ca','scripts/rune/web-fixture.mjs']),'scripts/rune/web-fixture.mjs')
+  assert.equal(extractNodeEntryScript(['node','--inspect=0','--','./launcher.mjs']),'./launcher.mjs')
+})
+
+test('attested transports reject same-PID target incarnation changes and admit real OS descendants',{timeout:25000},async t=>{
+  const {createAttestedFetch,createAttestedTcpRelay,originGuardProxy}=await import('../../../scripts/native-fixture-http.mjs')
+  const target=await listen(t,(_req,res)=>{res.end('ok')})
+  const port=Number(new URL(target.origin).port)
+  let currentStartId='inc-1'
+  const fakeProbe=async()=>({status:'ok',identity:{ppid:process.ppid,startId:currentStartId,createdAt:1n}})
+
+  // 1) Same PID with changed target startId is rejected before application bytes on TCP relay and attestedFetch.
+  const tcp=await createAttestedTcpRelay(port,process.pid,{
+    verifyOwner:async()=>{},
+    verifyPeer:async()=>{},
+    targetStartId:'inc-1',
+    probeIdentity:fakeProbe,
+  })
+  t.after(()=>tcp.close())
+  const fetchBound=createAttestedFetch(target.origin,port,process.pid,{
+    verifyOwner:async()=>{},
+    verifyPeer:async()=>{},
+    targetStartId:'inc-1',
+    probeIdentity:fakeProbe,
+  })
+  t.after(()=>fetchBound.close())
+  assert.equal((await fixtureFetch(`http://127.0.0.1:${tcp.port}/a`,{headers:{connection:'close'},signal:AbortSignal.timeout(5000)})).status,200)
+  assert.equal((await fetchBound(`${target.origin}/a`,{headers:{connection:'close'},signal:AbortSignal.timeout(5000)})).status,200)
+  currentStartId='inc-2'
+  await assert.rejects(fixtureFetch(`http://127.0.0.1:${tcp.port}/b`,{signal:AbortSignal.timeout(5000)}))
+  const fetchBoundFresh=createAttestedFetch(target.origin,port,process.pid,{
+    verifyOwner:async()=>{},
+    verifyPeer:async()=>{},
+    targetStartId:'inc-1',
+    probeIdentity:fakeProbe,
+  })
+  t.after(()=>fetchBoundFresh.close())
+  await assert.rejects(fetchBoundFresh(`${target.origin}/b`,{signal:AbortSignal.timeout(5000)}))
+
+  // 2) Real OS descendant process (child of process.pid) is admitted by originGuardProxy with allowDescendants: true
+  // using the native OS identity probe (no PowerShell/WMI or ps lstart format mismatch).
+  const guard=await originGuardProxy(target.origin,process.pid,{
+    requireClientAttestation:true,
+    allowDescendants:true,
+    allowedClientPids:[process.pid],
+  })
+  t.after(()=>guard.close())
+  const childScript=`
+    const http = require('node:http')
+    const proxyPort = Number(process.argv[1])
+    const targetUrl = process.argv[2]
+    const req = http.request({host: '127.0.0.1', port: proxyPort, method: 'GET', path: targetUrl, headers: {host: new URL(targetUrl).host}}, res => {
+      let body = ''
+      res.on('data', d => { body += d })
+      res.on('end', () => { process.stdout.write(JSON.stringify({status: res.statusCode, body})); process.exit(0) })
+    })
+    req.on('error', err => { console.error(err); process.exit(2) })
+    req.end()
+  `
+  const childRes=await new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,['-e',childScript,String(guard.port),`${target.origin}/from-descendant`],{
+      stdio:['ignore','pipe','pipe'],windowsHide:true,
+    })
+    t.after(()=>{try{child.kill('SIGKILL')}catch{}})
+    let stdout='',stderr=''
+    child.stdout.on('data',d=>{stdout+=d})
+    child.stderr.on('data',d=>{stderr+=d})
+    child.once('error',reject)
+    child.once('close',code=>resolve({code,stdout,stderr}))
+  })
+  assert.equal(childRes.code,0,`descendant client failed: ${childRes.stderr}`)
+  assert.deepEqual(JSON.parse(childRes.stdout),{status:200,body:'ok'})
 })

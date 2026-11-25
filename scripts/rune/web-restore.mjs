@@ -10,7 +10,7 @@ import {pendingBrowser} from './web-pending-open.mjs'
 import {fileWrapBrowser} from './web-file-wrap.mjs'
 import {outlineRestore} from './web-outline-restore.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,bundleAssetPaths,createPrivateOutputDir,workspacePolicy,writePrivateFile} from './web-workspace-policy.mjs'
+import {privateWebFixture,bundleAssetPaths,createPrivateOutputDir,privateChromiumEnv,workspacePolicy,writePrivateFile} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
 const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},'target-pid':{type:'string'},'launcher-pid':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},outline:{type:'boolean'}}})
@@ -24,7 +24,7 @@ assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Connected web-restore r
 const out=path.resolve(values.out)
 const {profile,storage}=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
 await verifyLoopbackListenerOwner(Number(url.port),targetPid)
-await verifyPrivateFixtureServer({targetPid,launcherPid,profile,root})
+const targetStartId=(await verifyPrivateFixtureServer({targetPid,launcherPid,profile,root})).targetStartId
 url.search='?locale=fr'
 await createPrivateOutputDir(out,profile)
 const outputAuthorized=true
@@ -62,13 +62,14 @@ const attestedFulfillWorkspaceCreation=async(route,policy)=>{
   return {status:res.status,admitted:res.ok}
 }
 try {
-  attestedFetch=createAttestedFetch(url.origin,Number(url.port),targetPid,{allowSelfSigned:url.protocol==='https:'})
+  const chromiumEnv=await privateChromiumEnv(profile)
+  attestedFetch=createAttestedFetch(url.origin,Number(url.port),targetPid,{allowSelfSigned:url.protocol==='https:',targetStartId})
   ownedBrowser=await launchOwnedChromium({
-    executablePath:values.executable,profile,env:stripFixtureServerSecrets(process.env),origin:url.origin,targetPid,
+    executablePath:values.executable,profile,env:chromiumEnv,origin:url.origin,targetPid,targetStartId,
     ...(url.protocol==='http:'?{injectCookie:realCookieHeader}:{}),
   })
   const browser=ownedBrowser.browser
-  if(values['pending-open']){await pendingBrowser({values,m,out,browser,ownedBrowser,storageState:browserStorageState,realCookieHeader,attestedFetch});wroteSummary=true}
+  if(values['pending-open']){await pendingBrowser({values,m,out,profile,browser,ownedBrowser,storageState:browserStorageState,realCookieHeader,attestedFetch});wroteSummary=true}
   else if(values['file-wrap']){await fileWrapBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,url,root});wroteSummary=true}
   else {
 const KEY='codenomad.rune.alpha.client-state.v1',RELEASED='codenomad.rune.alpha.records-released'
@@ -254,8 +255,8 @@ const imagePage=await browser.newPage()
       return raw
     }
     const capture=async stage=>{
-      record.stages.push(stage);await writeFile(path.join(out,`${spec.name}-${stage}.aria.yml`),await page.locator('body').ariaSnapshot())
-      if(stage==='failure'){await page.screenshot({path:path.join(out,`${spec.name}-${stage}.png`)});return}
+      record.stages.push(stage);await writePrivateFile(path.join(out,`${spec.name}-${stage}.aria.yml`),await page.locator('body').ariaSnapshot(),profile)
+      if(stage==='failure'){const buf=await page.screenshot();await writePrivateFile(path.join(out,`${spec.name}-${stage}.png`),buf,profile);return}
       const attempts=[]
       for(const deadline=Date.now()+5000;;){
       const boxes={}
@@ -287,7 +288,7 @@ const imagePage=await browser.newPage()
         paint=await assertRenderedTextContrast(imagePage,png,regions,palette[spec.colorScheme])
         paintSamples.push(paint.map(region=>({name:region.name,drawnInkPixels:region.drawnInkPixels})))
       }
-      await writeFile(path.join(out,`${spec.name}-${stage}.png`),png)
+      await writePrivateFile(path.join(out,`${spec.name}-${stage}.png`),png,profile)
       ;(record.viewportProof??=[]).push({stage,viewport:[spec.width,spec.height],boxes,paint,paintSamples,settlementAttempts:attempts})
       break
       }catch(error){

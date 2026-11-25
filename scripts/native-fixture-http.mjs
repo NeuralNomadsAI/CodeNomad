@@ -290,18 +290,30 @@ const {Agent,Pool,buildConnector,fetch:undiciFetch}=await import(resolveWorktree
 const dispatcher=new Agent()
 export const fixtureHttpAgent=new HttpAgent({keepAlive:true,proxyEnv:{}})
 
+async function assertTargetIncarnation(pid,expectedStartId,probeIdentity=probeProcessIdentity){
+  const res=await probeIdentity(pid,{refresh:true}).catch(()=>({status:'unknown',identity:null}))
+  if(res.status!=='ok'||!res.identity?.startId){
+    throw Error(`Unable to attest target PID ${pid} OS incarnation (status=${res.status})`)
+  }
+  if(expectedStartId&&res.identity.startId!==expectedStartId){
+    throw Error(`Target PID ${pid} incarnation changed (expected ${expectedStartId}, got ${res.identity.startId})`)
+  }
+  return res.identity.startId
+}
+
 export async function originGuardProxy(localOrigin,targetPid,options={}){
-  const {requireClientAttestation=false,allowDescendants=false,allowedClientPids=[],injectCookie}=options
+  const {requireClientAttestation=false,allowDescendants=false,allowedClientPids=[],injectCookie,targetStartId:initialStartId=null,probeIdentity=probeProcessIdentity}=options
   if(!Number.isSafeInteger(targetPid)||targetPid<=0)throw Error('Attested origin guard target PID required')
   const base=new URL(localOrigin)
   assert(['http:','https:'].includes(base.protocol)&&base.hostname==='127.0.0.1'&&base.port,'Expected a loopback HTTP(S) origin for originGuardProxy')
   const isHttps=base.protocol==='https:'
   const targetPort=Number(base.port)
   let currentTargetPid=targetPid
+  let currentTargetStartId=initialStartId??await assertTargetIncarnation(targetPid,null,probeIdentity)
   let generation=0
   let closed=false
   let closePromise=null
-  let agent=isHttps?null:createAttestedHttpAgent(targetPort,currentTargetPid)
+  let agent=isHttps?null:createAttestedHttpAgent(targetPort,currentTargetPid,{targetStartId:currentTargetStartId,probeIdentity})
   const injectCookieMap=parseCookiePairs(injectCookie)
   let proxyPort=0
   const clientGate=createClientPidGate(()=>proxyPort,verifyLoopbackConnectionPeer,{allowDescendants})
@@ -383,27 +395,31 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
     if(closed){teardown('503 Service Unavailable');return}
     socket.pause()
     const pid=currentTargetPid
+    const expectedStartId=currentTargetStartId
+    const reqGen=generation
     const gate=requireClientAttestation?clientGate.verify(socket):Promise.resolve(true)
     gate.then(allowed=>{
       if(!allowed||closed||socket.destroyed){teardown('403 Forbidden');return}
       return verifyLoopbackListenerOwner(targetPort,pid).then(()=>{
-        if(closed||socket.destroyed||pid!==currentTargetPid){teardown('502 Bad Gateway');return}
+        if(closed||socket.destroyed||reqGen!==generation||pid!==currentTargetPid){teardown('502 Bad Gateway');return}
         upstream=net.createConnection({host:'127.0.0.1',port:targetPort})
         tunnelSockets.add(upstream)
         upstream.once('close',()=>{tunnelSockets.delete(upstream);try{socket.destroy()}catch{}})
         upstream.once('error',()=>teardown('502 Bad Gateway'))
         upstream.once('connect',()=>{
-          if(closed||socket.destroyed||upstream.destroyed||!upstream.localPort||pid!==currentTargetPid){
+          if(closed||socket.destroyed||upstream.destroyed||!upstream.localPort||reqGen!==generation||pid!==currentTargetPid){
             teardown('502 Bad Gateway');return
           }
-          attestPeerWithRetry(upstream.localPort,targetPort,pid,verifyLoopbackConnectionPeer,()=>closed||socket.destroyed||upstream.destroyed||pid!==currentTargetPid).then(()=>{
-            if(closed||socket.destroyed||upstream.destroyed||pid!==currentTargetPid){teardown('502 Bad Gateway');return}
-            socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
-            if(head?.length)upstream.write(head)
-            socket.pipe(upstream)
-            upstream.pipe(socket)
-            socket.resume()
-          },()=>teardown('502 Bad Gateway'))
+          attestPeerWithRetry(upstream.localPort,targetPort,pid,verifyLoopbackConnectionPeer,()=>closed||socket.destroyed||upstream.destroyed||reqGen!==generation||pid!==currentTargetPid)
+            .then(()=>assertTargetIncarnation(pid,expectedStartId,probeIdentity))
+            .then(()=>{
+              if(closed||socket.destroyed||upstream.destroyed||reqGen!==generation||pid!==currentTargetPid){teardown('502 Bad Gateway');return}
+              socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+              if(head?.length)upstream.write(head)
+              socket.pipe(upstream)
+              upstream.pipe(socket)
+              socket.resume()
+            },()=>teardown('502 Bad Gateway'))
         })
       },()=>teardown('502 Bad Gateway'))
     },()=>teardown('403 Forbidden')).catch(()=>teardown('502 Bad Gateway'))
@@ -416,15 +432,16 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
     allowClientPid:clientGate.allow,
     substituteCookies:header=>substitutePlaceholderCookies(header,injectCookieMap),
     maskSetCookies:setCookie=>maskSetCookieHeaders(setCookie,injectCookieMap),
-    setTargetPid(nextPid){
+    setTargetPid(nextPid,nextStartId=null){
       assert(Number.isSafeInteger(nextPid)&&nextPid>0,'Attested origin guard target PID required')
       generation++
       currentTargetPid=nextPid
+      currentTargetStartId=nextStartId
       for(const socket of [...tunnelSockets]){try{socket.destroy()}catch{}}
       tunnelSockets.clear()
       if(!isHttps){
         agent?.destroy()
-        agent=createAttestedHttpAgent(targetPort,currentTargetPid)
+        agent=createAttestedHttpAgent(targetPort,currentTargetPid,{targetStartId:currentTargetStartId,probeIdentity})
       }
     },
     close:()=>{
@@ -456,6 +473,13 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
   const checkPeer=opts.verifyPeer??(verifyOwner===verifyLoopbackListenerOwner?verifyLoopbackConnectionPeer:(_local,remote,expectedPid)=>verifyOwner(remote,expectedPid))
   const allowSelfSigned=opts.allowSelfSigned===true
   const ca=opts.ca
+  const probeIdentity=opts.probeIdentity??probeProcessIdentity
+  const enforceIncarnation=verifyOwner===verifyLoopbackListenerOwner||opts.targetStartId!=null||opts.probeIdentity!=null
+  let expectedStartId=opts.targetStartId??null
+  const checkIncarnation=async()=>{
+    if(!enforceIncarnation)return
+    expectedStartId=await assertTargetIncarnation(pid,expectedStartId,probeIdentity)
+  }
   const isHttps=new URL(origin).protocol==='https:'
   const connector=isHttps?null:buildConnector({})
   let closed=false
@@ -465,7 +489,7 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
     keepAliveTimeout:60_000,
     connect(opts,cb){
       if(closed){cb(Error('Attested pool is closed'),null);return}
-      verifyOwner(port,pid).then(()=>{
+      verifyOwner(port,pid).then(()=>checkIncarnation()).then(()=>{
         if(closed){cb(Error('Attested pool is closed'),null);return}
         attestedConnectDepth++
         try{
@@ -492,17 +516,19 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
                 done(Error('Socket connection closed before peer attestation'),null)
                 return
               }
-              attestPeerWithRetry(tcpSocket.localPort,port,pid,checkPeer,()=>closed||tcpSocket.destroyed).then(()=>{
-                if(closed||tcpSocket.destroyed){done(Error('Socket closed during peer attestation'),null);return}
-                const servername=new URL(origin).hostname
-                const tlsSocket=tls.connect({
-                  socket:tcpSocket,
-                  servername,
-                  ...(ca?{ca,rejectUnauthorized:true}:{rejectUnauthorized:!allowSelfSigned}),
-                })
-                tlsSocket.once('secureConnect',()=>done(null,tlsSocket))
-                tlsSocket.once('error',err=>done(err,null))
-              },postError=>done(postError,null))
+              attestPeerWithRetry(tcpSocket.localPort,port,pid,checkPeer,()=>closed||tcpSocket.destroyed)
+                .then(()=>checkIncarnation())
+                .then(()=>{
+                  if(closed||tcpSocket.destroyed){done(Error('Socket closed during peer attestation'),null);return}
+                  const servername=new URL(origin).hostname
+                  const tlsSocket=tls.connect({
+                    socket:tcpSocket,
+                    servername,
+                    ...(ca?{ca,rejectUnauthorized:true}:{rejectUnauthorized:!allowSelfSigned}),
+                  })
+                  tlsSocket.once('secureConnect',()=>done(null,tlsSocket))
+                  tlsSocket.once('error',err=>done(err,null))
+                },postError=>done(postError,null))
             })
             return
           }
@@ -528,10 +554,12 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
             pendingSockets.add(entry)
             socket.once('close',onEarlyClose)
             socket.once('error',onEarlyError)
-            attestPeerWithRetry(socket.localPort,port,pid,checkPeer,()=>closed||socket.destroyed).then(()=>{
-              if(closed||socket.destroyed){done(Error('Socket closed during peer attestation'),null);return}
-              done(null,socket)
-            },postError=>done(postError,null))
+            attestPeerWithRetry(socket.localPort,port,pid,checkPeer,()=>closed||socket.destroyed)
+              .then(()=>checkIncarnation())
+              .then(()=>{
+                if(closed||socket.destroyed){done(Error('Socket closed during peer attestation'),null);return}
+                done(null,socket)
+              },postError=>done(postError,null))
           })
         }finally{attestedConnectDepth--}
       },error=>cb(error,null))
@@ -562,8 +590,19 @@ export function createAttestedFetch(origin,port,pid,verifyOwnerOrOptions=verifyL
   return fetchBound
 }
 
-export function createAttestedHttpAgent(port,pid,verifyOwner=verifyLoopbackListenerOwner,verifyPeer){
-  const checkPeer=verifyPeer??(verifyOwner===verifyLoopbackListenerOwner?verifyLoopbackConnectionPeer:(_local,remote,expectedPid)=>verifyOwner(remote,expectedPid))
+export function createAttestedHttpAgent(port,pid,verifyOwnerOrOptions=verifyLoopbackListenerOwner,verifyPeerArg){
+  const opts=typeof verifyOwnerOrOptions==='function'
+    ?{verifyOwner:verifyOwnerOrOptions,verifyPeer:verifyPeerArg}
+    :(verifyOwnerOrOptions??{})
+  const verifyOwner=opts.verifyOwner??verifyLoopbackListenerOwner
+  const checkPeer=opts.verifyPeer??(verifyOwner===verifyLoopbackListenerOwner?verifyLoopbackConnectionPeer:(_local,remote,expectedPid)=>verifyOwner(remote,expectedPid))
+  const probeIdentity=opts.probeIdentity??probeProcessIdentity
+  const enforceIncarnation=verifyOwner===verifyLoopbackListenerOwner||opts.targetStartId!=null||opts.probeIdentity!=null
+  let expectedStartId=opts.targetStartId??null
+  const checkIncarnation=async()=>{
+    if(!enforceIncarnation)return
+    expectedStartId=await assertTargetIncarnation(pid,expectedStartId,probeIdentity)
+  }
   let closed=false
   const pending=new Set()
   const agent=new HttpAgent({keepAlive:true,proxyEnv:{}})
@@ -593,17 +632,19 @@ export function createAttestedHttpAgent(port,pid,verifyOwner=verifyLoopbackListe
     const onClose=()=>finish(Error('Socket closed during peer attestation'))
     const entry={fail:err=>finish(err)}
     pending.add(entry)
-    verifyOwner(port,pid).then(()=>{
+    verifyOwner(port,pid).then(()=>checkIncarnation()).then(()=>{
       if(closed||settled){finish(Error('Attested HTTP agent is closed'));return}
       socket=net.createConnection({host:'127.0.0.1',port})
       socket.once('error',onError)
       socket.once('close',onClose)
       socket.once('connect',()=>{
         if(closed||settled||socket.destroyed||!socket.localPort){finish(Error('Socket closed before peer attestation'));return}
-        attestPeerWithRetry(socket.localPort,port,pid,checkPeer,()=>closed||settled||socket.destroyed).then(()=>{
-          if(closed||settled||socket.destroyed){finish(Error('Socket closed during peer attestation'));return}
-          finish(null,socket)
-        },finish)
+        attestPeerWithRetry(socket.localPort,port,pid,checkPeer,()=>closed||settled||socket.destroyed)
+          .then(()=>checkIncarnation())
+          .then(()=>{
+            if(closed||settled||socket.destroyed){finish(Error('Socket closed during peer attestation'));return}
+            finish(null,socket)
+          },finish)
       })
     },finish)
     return undefined
@@ -626,10 +667,16 @@ export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verif
     verifyPeer=verifyLoopbackConnectionPeer,
     requireClientAttestation=false,
     allowedClientPids=[],
+    targetStartId:initialStartId=null,
+    probeIdentity=probeProcessIdentity,
   }=opts
   assert(Number.isSafeInteger(port)&&port>0&&port<=65535,'Invalid loopback port for TCP relay')
   assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID for TCP relay')
-  let closed=false,relayPort=0,currentPid=pid,closePromise=null
+  const enforceIncarnation=verifyOwner===verifyLoopbackListenerOwner||initialStartId!=null||opts.probeIdentity!=null
+  let closed=false,relayPort=0,currentPid=pid,currentStartId=initialStartId,generation=0,closePromise=null
+  if(enforceIncarnation&&!currentStartId){
+    currentStartId=await assertTargetIncarnation(currentPid,null,probeIdentity)
+  }
   const sockets=new Set()
   const clientGate=createClientPidGate(()=>relayPort,verifyPeer)
   for(const clientPid of allowedClientPids)clientGate.allow(clientPid)
@@ -645,22 +692,26 @@ export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verif
     gate.then(allowed=>{
       if(!allowed||closed||client.destroyed){client.destroy();return}
       const targetPid=currentPid
+      const expectedStartId=currentStartId
+      const reqGen=generation
       return verifyOwner(port,targetPid).then(()=>{
-        if(closed||client.destroyed||currentPid!==targetPid){client.destroy();return}
+        if(closed||client.destroyed||reqGen!==generation||currentPid!==targetPid){client.destroy();return}
         upstream=net.createConnection({host:'127.0.0.1',port})
         sockets.add(upstream)
         upstream.once('close',()=>{sockets.delete(upstream);client.destroy()})
         upstream.once('error',teardown)
         upstream.once('connect',()=>{
-          if(closed||client.destroyed||upstream.destroyed||!upstream.localPort||currentPid!==targetPid){
+          if(closed||client.destroyed||upstream.destroyed||!upstream.localPort||reqGen!==generation||currentPid!==targetPid){
             teardown();return
           }
-          attestPeerWithRetry(upstream.localPort,port,targetPid,verifyPeer,()=>closed||client.destroyed||upstream.destroyed||currentPid!==targetPid).then(()=>{
-            if(closed||client.destroyed||upstream.destroyed||currentPid!==targetPid){teardown();return}
-            client.pipe(upstream)
-            upstream.pipe(client)
-            client.resume()
-          },teardown)
+          attestPeerWithRetry(upstream.localPort,port,targetPid,verifyPeer,()=>closed||client.destroyed||upstream.destroyed||reqGen!==generation||currentPid!==targetPid)
+            .then(()=>enforceIncarnation?assertTargetIncarnation(targetPid,expectedStartId,probeIdentity):null)
+            .then(()=>{
+              if(closed||client.destroyed||upstream.destroyed||reqGen!==generation||currentPid!==targetPid){teardown();return}
+              client.pipe(upstream)
+              upstream.pipe(client)
+              client.resume()
+            },teardown)
         })
       })
     },teardown).catch(teardown)
@@ -670,9 +721,11 @@ export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verif
   return {
     port:relayPort,
     allowClientPid:clientGate.allow,
-    setTargetPid(nextPid){
+    setTargetPid(nextPid,nextStartId=null){
       assert(Number.isSafeInteger(nextPid)&&nextPid>0,'Invalid fixture target PID')
+      generation++
       currentPid=nextPid
+      currentStartId=nextStartId
       for(const s of [...sockets]){try{s.destroy()}catch{}}
       sockets.clear()
     },

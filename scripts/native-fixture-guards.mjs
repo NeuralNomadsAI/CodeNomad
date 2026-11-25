@@ -9,7 +9,7 @@ import { isLocalAbsolutePath, pidAlive, probeProcessIdentity, processIdentityOf,
 const jobs = new WeakMap()
 const jobIdentities = new WeakMap()
 
-export function fixtureJobExecutable({ required = process.platform === "win32" } = {}) {
+export function fixtureJobExecutable({ required = process.platform === "win32" || process.platform === "darwin" } = {}) {
   const root = fileURLToPath(new URL("../", import.meta.url))
   const suffix = process.platform === "win32" ? ".exe" : ""
   const rawExe = process.env.CODENOMAD_FIXTURE_JOB_EXE

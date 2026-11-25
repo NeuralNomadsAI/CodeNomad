@@ -5,7 +5,7 @@ import {spawn,execFile} from 'node:child_process'
 import {spawnFixtureChild,stopFixtureChild,fixtureChildPid} from '../../../scripts/native-fixture-guards.mjs'
 import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,stripFixtureServerSecrets} from '../../../scripts/native-fixture-http.mjs'
 import {promisify} from 'node:util'
-import {mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
+import {lstat,mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
 import path from 'node:path'
 import {FixtureStore} from './fixture-store.mjs'
@@ -74,6 +74,12 @@ const here=path.resolve(import.meta.dirname,'..')
 let output=draftOutput??gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'))
 if(web&&!draftOutput&&!gitOutput){
   output=(await assertWorktreeTestRoot(root)).testsReal
+}else if(draftOutput||gitOutput){
+  const parent=path.dirname(output)
+  const parentReal=await realpath(parent)
+  output=path.join(parentReal,path.basename(output))
+  const existing=await lstat(output).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+  assert(!existing||(!existing.isSymbolicLink()&&existing.isDirectory()),`Fixture output root must be a real directory: ${output}`)
 }
 const run=`launcher-${randomUUID()}`
 let profile=path.join(output,run)
@@ -444,7 +450,8 @@ const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
 let host,server,log='',client,clientRelay,androidCleanup,result=1,http,expired=false
 const webState={diagnostic:''}
 async function startServer(){
-  host=launchFixture(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],
+  const blockedCli=path.join(profile,'disabled-opencode-cli.exe')
+  host=launchFixture(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0',blockedCli],
     {cwd:profile,env,shutdown:ts?'codenomad:shutdown\n':'shutdown\n',graceMs:ts?15000:3000})
   server=host.child
   return host.ready(ts?stdout=>ts.ready(stdout):rustOrigin)

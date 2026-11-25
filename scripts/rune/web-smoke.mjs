@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import {isExpectedWaitError, now, withBudget} from './web-budget.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,bundleAssetPaths,createPrivateOutputDir,workspacePolicy,fulfillWorkspaceCreation as defaultFulfillWorkspaceCreation,writePrivateFile} from './web-workspace-policy.mjs'
+import {privateWebFixture,bundleAssetPaths,createPrivateOutputDir,privateChromiumEnv,workspacePolicy,fulfillWorkspaceCreation as defaultFulfillWorkspaceCreation,writePrivateFile} from './web-workspace-policy.mjs'
 import {activateControl,launchOwnedChromium} from './web-chromium.mjs'
 import {createAttestedFetch,maskSetCookieHeaders,parseCookiePairs,stripFixtureServerSecrets,substitutePlaceholderCookies,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
@@ -119,7 +119,7 @@ try {
     outputRootReal=browserProfile
   }
   await verifyLoopbackListenerOwner(Number(url.port),currentTargetPid)
-  await verifyPrivateFixtureServer({targetPid:currentTargetPid,launcherPid,profile:browserProfile,root})
+  let currentTargetStartId=(await verifyPrivateFixtureServer({targetPid:currentTargetPid,launcherPid,profile:browserProfile,root})).targetStartId
   await createPrivateOutputDir(out,outputRootReal)
   outputAuthorized=true
   if(values['storage-state']){
@@ -136,13 +136,15 @@ try {
     }
   }
   const caCert=url.protocol==='https:'?await readFile(path.join(browserProfile,'identity.data/tls/ca-cert.pem')).catch(()=>undefined):undefined
-  attestedFetch=createAttestedFetch(url.origin,Number(url.port),currentTargetPid,caCert?{ca:caCert}:{allowSelfSigned:url.protocol==='https:'})
+  const chromiumEnv=await privateChromiumEnv(browserProfile)
+  attestedFetch=createAttestedFetch(url.origin,Number(url.port),currentTargetPid,{...(caCert?{ca:caCert}:{allowSelfSigned:url.protocol==='https:'}),targetStartId:currentTargetStartId})
   ownedBrowser=await launchOwnedChromium({
     executablePath:values.executable,
     profile:browserProfile,
-    env:stripFixtureServerSecrets(process.env),
+    env:chromiumEnv,
     origin:url.origin,
     targetPid:currentTargetPid,
+    targetStartId:currentTargetStartId,
     ...(url.protocol==='http:'&&realCookieHeader?{injectCookie:realCookieHeader}:{}),
   })
   browser=ownedBrowser.browser
@@ -150,11 +152,12 @@ try {
   const onRestart = async nextPid => {
     assert(Number.isSafeInteger(nextPid)&&nextPid>0,'Restarted fixture must report owned server PID')
     await verifyLoopbackListenerOwner(Number(url.port),nextPid)
-    await verifyPrivateFixtureServer({targetPid:nextPid,launcherPid,profile:browserProfile,root})
+    const nextStartId=(await verifyPrivateFixtureServer({targetPid:nextPid,launcherPid,profile:browserProfile,root})).targetStartId
     const previousFetch = attestedFetch
     currentTargetPid = nextPid
-    attestedFetch = createAttestedFetch(url.origin, Number(url.port), currentTargetPid, caCert ? {ca: caCert} : {allowSelfSigned: url.protocol === 'https:'})
-    ownedBrowser?.setTargetPid(nextPid)
+    currentTargetStartId = nextStartId
+    attestedFetch = createAttestedFetch(url.origin, Number(url.port), currentTargetPid, {...(caCert ? {ca: caCert} : {allowSelfSigned: url.protocol === 'https:'}), targetStartId: currentTargetStartId})
+    ownedBrowser?.setTargetPid(nextPid, currentTargetStartId)
     await previousFetch?.close().catch(() => {})
   }
   const attestedGet = async (pathname, ctx) => {
@@ -782,7 +785,9 @@ try {
         const captureFocus = async state => {
           // The editing proxy can receive DOM focus before the canvas presents that frame.
           await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
-          return page.screenshot({path:path.join(out, `${name}-${colorScheme}-${state}.png`),scale:'css'})
+          const buf = await page.screenshot({scale:'css'})
+          await writePrivateFile(path.join(out, `${name}-${colorScheme}-${state}.png`), buf, outputRootReal)
+          return buf
         }
         const focused = values['paste-only'] ? await captureFocus('focus') : null
         await page.keyboard.press('Tab')
@@ -811,7 +816,8 @@ try {
         assert(snapshot.includes(messages['rune.latest']), 'Latest control must appear in the real accessibility mirror')
         await writePrivateFile(path.join(out, `${name}-${colorScheme}.aria.yml`), snapshot, outputRootReal)
         if(!values.connected)await page.waitForLoadState('networkidle', {timeout: 30_000})
-        const png = await page.screenshot({path: path.join(out, `${name}-${colorScheme}.png`),scale:'css'})
+        const png = await page.screenshot({scale:'css'})
+        await writePrivateFile(path.join(out, `${name}-${colorScheme}.png`), png, outputRootReal)
         const textRegions = await page.evaluate(title => {
           const nodes = [...document.querySelectorAll('[data-rune-a11y] p, [data-rune-a11y] h1, [data-rune-a11y] h2, [data-rune-a11y] [role=heading]')]
           const crop = (name, predicate, surface='surface-canvas', text='text-primary') => {
@@ -919,7 +925,10 @@ try {
         primaryError = error
         const bestEffort=(label,fn)=>withBudget(now()+2000,label,fn).catch(()=>null)
         await bestEffort('failure flushTouches',()=>flushTouches())
-        await bestEffort('failure screenshot',ms=>page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`),timeout:Math.max(1,ms)}))
+        await bestEffort('failure screenshot',async ms=>{
+          const buf=await page.screenshot({timeout:Math.max(1,ms)})
+          if(outputAuthorized&&outputRootReal)await writePrivateFile(path.join(out, `${name}-${colorScheme}-failure.png`), buf, outputRootReal)
+        })
         const mirror=await bestEffort('failure mirror',ms=>page.locator('body').ariaSnapshot({timeout:Math.max(1,ms)}))
         const marks=await bestEffort('failure marks',()=>page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))) ?? []
         await writePrivateFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,settlements,streamEvents,clientDiagnostics,measured,

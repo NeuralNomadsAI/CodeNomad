@@ -100,8 +100,8 @@ export async function launchWeb({
           http=resumed.http
           if(state.androidRelay){
             await verifyLoopbackListenerOwner(Number(new URL(uiOrigin).port),resumed.value.serverPid)
-            await verifyPrivateFixtureServer({targetPid:resumed.value.serverPid,launcherPid:process.pid,profile,root})
-            state.androidRelay.setTargetPid(resumed.value.serverPid)
+            const attested=await verifyPrivateFixtureServer({targetPid:resumed.value.serverPid,launcherPid:process.pid,profile,root})
+            state.androidRelay.setTargetPid(resumed.value.serverPid,attested.targetStartId)
           }
           return {value:resumed.value}
         }

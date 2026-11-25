@@ -229,6 +229,9 @@ test("hardKillFixtureChild terminates a stubborn owned child tree and confirms i
 })
 
 test("Missions native fixtures stop their owned serve with bounded escalation", () => {
+  const guardsSource = fs.readFileSync(new URL("native-fixture-guards.mjs", import.meta.url), "utf8")
+  assert.match(guardsSource, /required = process\.platform === "win32" \|\| process\.platform === "darwin"/,
+    "native codenomad-fixture-job supervisor must be required on Windows and macOS")
   for (const script of ["test-missions-native.mjs", "test-missions-native-family-control.mjs"]) {
     const source = fs.readFileSync(new URL(script, import.meta.url), "utf8")
     assert.match(source, /await stopFixtureChild\(child, stopped\)/, script)

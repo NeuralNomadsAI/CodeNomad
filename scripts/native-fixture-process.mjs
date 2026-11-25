@@ -21,14 +21,21 @@ const isUnc=value=>typeof value==='string'&&(/^[\\/]{2}/.test(value)||/^[\\/]{2}
 
 function fixtureJobBin(){
   const suffix=process.platform==='win32'?'.exe':''
+  const expectedName=`codenomad-fixture-job${suffix}`
   const candidates=[
     process.env.CODENOMAD_FIXTURE_JOB_EXE,
-    process.env.CARGO_TARGET_DIR?path.join(process.env.CARGO_TARGET_DIR,'debug',`codenomad-fixture-job${suffix}`):null,
-    path.join(repoRoot,'target','debug',`codenomad-fixture-job${suffix}`),
+    process.env.CARGO_TARGET_DIR?path.join(process.env.CARGO_TARGET_DIR,'debug',expectedName):null,
+    path.join(repoRoot,'target','debug',expectedName),
   ].filter(v=>typeof v==='string'&&v.length>0&&path.isAbsolute(v)&&!isUnc(v))
   for(const candidate of candidates){
     try{
-      if(existsSync(candidate)&&!lstatSync(candidate).isSymbolicLink())return realpathSync(candidate)
+      if(path.basename(candidate).toLowerCase()!==expectedName.toLowerCase())continue
+      if(!existsSync(candidate))continue
+      const info=lstatSync(candidate)
+      if(info.isSymbolicLink()||!info.isFile())continue
+      const resolved=realpathSync(candidate)
+      if(path.basename(resolved).toLowerCase()!==expectedName.toLowerCase())continue
+      return resolved
     }catch{}
   }
   return null
@@ -40,7 +47,7 @@ const system32Dir=()=>{
   if(jobBin){
     try{
       const resolved=execFileSync(jobBin,['--system-dir'],{windowsHide:true,encoding:'utf8',timeout:5000}).trim()
-      if(resolved&&/^[A-Za-z]:\\.+\\System32$/i.test(resolved)&&existsSync(resolved)&&!lstatSync(resolved).isSymbolicLink()){
+      if(resolved&&/^[A-Za-z]:\\Windows\\System32$/i.test(resolved)&&existsSync(resolved)&&!lstatSync(resolved).isSymbolicLink()){
         const parent=path.win32.dirname(resolved)
         if(!lstatSync(parent).isSymbolicLink()){
           cachedSystem32Dir=resolved
@@ -280,8 +287,8 @@ const NODE_VALUE_FLAGS=new Set([
   '--cpu-prof-dir','--cpu-prof-name','--cpu-prof-interval','--heap-prof-dir','--heap-prof-name',
   '--heap-prof-interval','--test-name-pattern','--test-reporter','--test-reporter-destination',
   '--test-shard','--test-concurrency','--test-timeout','--title','--openssl-config',
-  '--use-openssl-ca','--tls-cipher-list','--icu-data-dir','--report-directory','--report-filename',
-  '--report-signal','--watch-path','--inspect','--inspect-brk','--inspect-port',
+  '--tls-cipher-list','--icu-data-dir','--report-directory','--report-filename',
+  '--report-signal','--watch-path',
 ])
 
 export function extractNodeEntryScript(args){
@@ -290,7 +297,11 @@ export function extractNodeEntryScript(args){
     const token=args[i]
     if(token==='--')return args[i+1]??null
     if(!token.startsWith('-'))return token
-    if(token==='-e'||token==='--eval'||token==='-p'||token==='--print')return null
+    if(token==='-e'||token==='--eval'||token==='-p'||token==='--print'
+      ||token.startsWith('--eval=')||token.startsWith('-e=')
+      ||token.startsWith('--print=')||token.startsWith('-p=')){
+      return null
+    }
     if(token.includes('='))continue
     if(NODE_VALUE_FLAGS.has(token)){i++;continue}
   }
@@ -346,22 +357,13 @@ async function processTableSnapshot(){
 
 export async function isPidInOwnedTree(peerPid,rootPid,expectedRootStartId,maxDepth=8){
   if(!Number.isSafeInteger(peerPid)||peerPid<=0||!Number.isSafeInteger(rootPid)||rootPid<=0)return null
+  const lookup=pid=>processIdentityOf(pid,{refresh:true})
+  const peerInfo=await lookup(peerPid)
+  if(!peerInfo)return null
   if(peerPid===rootPid){
-    const peerInfo=await processIdentityOf(peerPid,{refresh:true})
-    if(!peerInfo)return null
     if(expectedRootStartId&&peerInfo.startId!==expectedRootStartId)return null
     return peerInfo.startId
   }
-  let lookup
-  if(process.platform==='linux'){
-    lookup=pid=>processIdentityOf(pid,{refresh:true})
-  }else{
-    const table=await processTableSnapshot()
-    if(!table)return null
-    lookup=pid=>Promise.resolve(table.get(pid)??null)
-  }
-  const peerInfo=await lookup(peerPid)
-  if(!peerInfo)return null
   const visited=new Set([peerPid])
   let childInfo=peerInfo
   for(let depth=0;depth<maxDepth;depth++){
@@ -394,16 +396,13 @@ async function processDetailsOf(pid,table){
     }catch{return {args:null,exe:null,cwd:null}}
   }
   if(process.platform==='win32'){
+    const probed=await probeViaNativeHelper(pid)
     const snap=table??await processTableSnapshot()
     const entry=snap?.get(pid)
     const args=typeof entry?.commandLine==='string'&&entry.commandLine.trim()
       ?parseWindowsCommandLine(entry.commandLine)
       :null
-    let exe=entry?.exe??null
-    if(!exe){
-      const probed=await probeViaNativeHelper(pid)
-      if(probed?.status==='ok')exe=probed.identity.exe??null
-    }
+    const exe=(probed?.status==='ok'?probed.identity.exe:null)??entry?.exe??null
     return {args,exe,cwd:null}
   }
   // macOS: structured KERN_PROCARGS2 via codenomad-fixture-job --probe-pid (preserves spaces, quotes, backslashes).
@@ -445,6 +444,7 @@ function uniqueFlagValue(args,flag){
   let found=null
   let count=0
   for(let i=1;i<args.length;i++){
+    if(args[i]==='--')break
     if(args[i]===flag){
       if(i+1>=args.length)return {ok:false,value:null}
       found=args[++i]
@@ -461,10 +461,14 @@ export async function verifyExecutableMatches(pid,expectedPath){
   assert(Number.isSafeInteger(pid)&&pid>0,'Process PID required for executable attestation')
   assert(typeof expectedPath==='string'&&path.isAbsolute(expectedPath),'Absolute expected executable path required')
   const expectedReal=await realpath(expectedPath)
-  const details=await processDetailsOf(pid)
-  const actualReal=details.exe?await resolveCanonicalMaybeMissing(details.exe):null
+  const probed=await probeProcessIdentity(pid,{refresh:true})
+  let exe=probed.status==='ok'?probed.identity.exe:null
+  if(!exe&&process.platform==='linux'){
+    exe=await readlink(`/proc/${pid}/exe`).catch(()=>null)
+  }
+  const actualReal=exe?await resolveCanonicalMaybeMissing(exe):null
   assert(actualReal&&normPath(actualReal)===normPath(expectedReal),
-    `Process PID ${pid} executable (${details.exe??'unknown'}) does not match expected ${expectedReal}`)
+    `Process PID ${pid} executable (${exe??'unknown'}) does not match expected ${expectedReal}`)
 }
 
 export async function verifyPrivateFixtureServer({targetPid,launcherPid,profile,root,maxDepth=2,allowedLaunchers,allowedServerExecutables}){
@@ -474,37 +478,21 @@ export async function verifyPrivateFixtureServer({targetPid,launcherPid,profile,
   assert(root||Array.isArray(allowedLaunchers),'Private fixture verification requires worktree root or allowedLaunchers')
   const profileReal=await realpath(profile)
   const rootReal=root?await realpath(root):null
-  const table=process.platform==='linux'?null:await processTableSnapshot()
-  const lookup=process.platform==='linux'?pid=>processIdentityOf(pid,{refresh:true}):pid=>Promise.resolve(table?.get(pid)??null)
-  const inTree=async(peerPid)=>{
-    const peerInfo=await lookup(peerPid)
-    if(!peerInfo)return null
-    if(peerPid===launcherPid)return peerInfo.startId
-    const visited=new Set([peerPid])
-    let childInfo=peerInfo
-    for(let depth=0;depth<maxDepth;depth++){
-      const parentPid=childInfo.ppid
-      if(!Number.isSafeInteger(parentPid)||parentPid<=1||visited.has(parentPid))return null
-      const parentInfo=await lookup(parentPid)
-      if(!parentInfo)return null
-      if(parentInfo.createdAt>childInfo.createdAt)return null
-      if(parentPid===launcherPid)return peerInfo.startId
-      visited.add(parentPid)
-      childInfo=parentInfo
-    }
-    return null
-  }
-  assert(await inTree(process.pid),`Fixture runner PID ${process.pid} is not a direct descendant of launcher PID ${launcherPid}`)
-  const targetStartId=await inTree(targetPid)
+  const launcherIdentity=await probeProcessIdentity(launcherPid,{refresh:true})
+  assert(launcherIdentity.status==='ok'&&launcherIdentity.identity?.startId,`Unable to attest private fixture launcher PID ${launcherPid}`)
+  const launcherStartId=launcherIdentity.identity.startId
+  assert(await isPidInOwnedTree(process.pid,launcherPid,launcherStartId,maxDepth),
+    `Fixture runner PID ${process.pid} is not a direct descendant of launcher PID ${launcherPid}`)
+  const targetStartId=await isPidInOwnedTree(targetPid,launcherPid,launcherStartId,maxDepth)
   assert(targetStartId,`Target server PID ${targetPid} was not launched by private fixture launcher PID ${launcherPid}`)
 
-  // Attest launcher OS executable image and exact Node entry script operand (supporting relative documented invocations).
+  // Attest launcher OS executable image (never falling back to spoofable argv[0]) and exact Node entry script operand.
+  const table=process.platform==='win32'?await processTableSnapshot():null
   const launcherDetails=await processDetailsOf(launcherPid,table)
   assert(launcherDetails.args&&launcherDetails.args.length>=2,`Unable to inspect launcher PID ${launcherPid} arguments`)
   const nodeExecReal=await realpath(process.execPath)
-  const launcherExeReal=launcherDetails.exe
-    ?await resolveCanonicalMaybeMissing(launcherDetails.exe)
-    :await resolveCanonicalMaybeMissing(launcherDetails.args[0])
+  assert(launcherDetails.exe,`Unable to attest OS executable image of launcher PID ${launcherPid}`)
+  const launcherExeReal=await resolveCanonicalMaybeMissing(launcherDetails.exe)
   assert(launcherExeReal&&normPath(launcherExeReal)===normPath(nodeExecReal),`Launcher PID ${launcherPid} is not the expected Node runtime`)
   const expectedScripts=new Set()
   if(Array.isArray(allowedLaunchers)){
@@ -520,19 +508,21 @@ export async function verifyPrivateFixtureServer({targetPid,launcherPid,profile,
   }
   const entryOperand=extractNodeEntryScript(launcherDetails.args)
   assert(entryOperand,`Launcher PID ${launcherPid} has no verifiable Node entry script operand`)
-  const launcherBaseDir=launcherDetails.cwd??rootReal??process.cwd()
+  const launcherBaseDir=launcherDetails.cwd??rootReal
+  assert(path.isAbsolute(entryOperand)||launcherBaseDir,
+    `Launcher PID ${launcherPid} relative entry script (${entryOperand}) cannot be verified without an attested working directory`)
   const entryReal=await resolveCanonicalMaybeMissing(entryOperand,launcherBaseDir)
   assert(entryReal&&expectedScripts.has(normPath(entryReal)),
     `Launcher PID ${launcherPid} entry script (${entryOperand}) is not an authorized private fixture launcher`)
 
-  // Attest target server OS executable image and canonically confined non-duplicated arguments.
+  // Attest target server OS executable image (never argv[0]) and closed, canonically confined arguments.
   const targetDetails=await processDetailsOf(targetPid,table)
   const targetArgs=targetDetails.args
   assert(targetArgs&&targetArgs.length>=2,`Unable to inspect OS arguments of target server PID ${targetPid}`)
-  const targetExeReal=targetDetails.exe
-    ?await resolveCanonicalMaybeMissing(targetDetails.exe)
-    :await resolveCanonicalMaybeMissing(targetArgs[0])
+  assert(targetDetails.exe,`Unable to attest OS executable image of target server PID ${targetPid}`)
+  const targetExeReal=await resolveCanonicalMaybeMissing(targetDetails.exe)
   assert(targetExeReal,`Unable to resolve OS executable image of target server PID ${targetPid}`)
+  let isRustServer=false
   if(Array.isArray(allowedServerExecutables)){
     const allowedSet=new Set()
     for(const candidate of allowedServerExecutables){
@@ -542,35 +532,56 @@ export async function verifyPrivateFixtureServer({targetPid,launcherPid,profile,
     assert(allowedSet.has(normPath(targetExeReal)),`Target server PID ${targetPid} executable (${targetExeReal}) is not allowed`)
   }else{
     const exeName=path.basename(targetExeReal).toLowerCase()
-    const isRustServer=/^codenomad-(?:rs|server)(?:\.exe)?$/.test(exeName)
+    const rustNameMatch=/^codenomad-(?:rs|server)(?:\.exe)?$/.test(exeName)
     const isNodeTsServer=normPath(targetExeReal)===normPath(nodeExecReal)
-    assert(isRustServer||isNodeTsServer,`Target server PID ${targetPid} executable (${exeName}) is not a recognized CodeNomad server`)
-    if(isNodeTsServer&&rootReal){
+    if(rustNameMatch){
+      const trustedRoots=[]
+      if(rootReal)trustedRoots.push(rootReal)
+      if(process.env.CARGO_TARGET_DIR&&path.isAbsolute(process.env.CARGO_TARGET_DIR)&&!isUnc(process.env.CARGO_TARGET_DIR)){
+        const cargoReal=await resolveCanonicalMaybeMissing(process.env.CARGO_TARGET_DIR)
+        if(cargoReal)trustedRoots.push(cargoReal)
+      }
+      const explicitServer=process.env.RUNE_SERVER_EXE&&path.isAbsolute(process.env.RUNE_SERVER_EXE)&&!isUnc(process.env.RUNE_SERVER_EXE)
+        ?await resolveCanonicalMaybeMissing(process.env.RUNE_SERVER_EXE)
+        :null
+      const inTrustedRoot=trustedRoots.some(base=>isPathStrictlyInside(base,targetExeReal))
+      const matchesExplicit=Boolean(explicitServer&&normPath(targetExeReal)===normPath(explicitServer))
+      assert(inTrustedRoot||matchesExplicit,
+        `Rust server PID ${targetPid} executable (${targetExeReal}) is outside trusted build roots`)
+      isRustServer=true
+    }else if(isNodeTsServer&&rootReal){
       const tsEntry=extractNodeEntryScript(targetArgs)
-      const tsEntryReal=tsEntry?await resolveCanonicalMaybeMissing(tsEntry,targetDetails.cwd??rootReal):null
+      const tsBaseDir=targetDetails.cwd??rootReal
+      const tsEntryReal=tsEntry?await resolveCanonicalMaybeMissing(tsEntry,tsBaseDir):null
       const expectedTs=await resolveCanonicalMaybeMissing(path.join(rootReal,'packages/server-rs/bench/ts-server.mjs'))
       assert(tsEntryReal&&expectedTs&&normPath(tsEntryReal)===normPath(expectedTs),
         `Node target server PID ${targetPid} is not running packages/server-rs/bench/ts-server.mjs`)
+    }else{
+      assert.fail(`Target server PID ${targetPid} executable (${targetExeReal}) is not an authorized CodeNomad server`)
     }
   }
 
-  // Contract 1: fixture-server positional args [<profile>/projects, <profile>/identity.json, ...]
+  // Contract 1: closed positional fixture-server invocation [<profile>/projects, <profile>/identity.json, <port>, <profile>/disabled-opencode-cli.exe]
   let confined=false
-  if(targetArgs.length>=5&&!targetArgs[1].startsWith('-')&&!targetArgs[2].startsWith('-')){
+  if(targetArgs.length===5&&!targetArgs[1].startsWith('-')&&!targetArgs[2].startsWith('-')&&/^\d+$/.test(targetArgs[3])){
     const arg1=await resolveCanonicalMaybeMissing(targetArgs[1])
     const arg2=await resolveCanonicalMaybeMissing(targetArgs[2])
+    const arg4=await resolveCanonicalMaybeMissing(targetArgs[4])
     const expectedProjects=normPath(path.join(profileReal,'projects'))
     const expectedIdentity=normPath(path.join(profileReal,'identity.json'))
-    if(arg1&&arg2&&normPath(arg1)===expectedProjects&&normPath(arg2)===expectedIdentity){
+    if(arg1&&arg2&&arg4
+      &&normPath(arg1)===expectedProjects
+      &&normPath(arg2)===expectedIdentity
+      &&isPathStrictlyInside(profileReal,arg4)){
       confined=true
     }
   }
-  // Contract 2: Rust `serve` or TS server with unique --config and --workspace-root strictly inside profileReal.
-  // Reject duplicate --config or --workspace-root flags (last-wins override attack).
+  // Contract 2: Rust `serve` or TS server with unique --config and --workspace-root strictly inside profileReal (before `--`).
   if(!confined){
+    const subcommandOk=!isRustServer||targetArgs[1]==='serve'
     const cfg=uniqueFlagValue(targetArgs,'--config')
     const ws=uniqueFlagValue(targetArgs,'--workspace-root')
-    if(cfg.ok&&ws.ok&&cfg.value&&ws.value){
+    if(subcommandOk&&cfg.ok&&ws.ok&&cfg.value&&ws.value){
       const cfgReal=await resolveCanonicalMaybeMissing(cfg.value,targetDetails.cwd)
       const wsReal=await resolveCanonicalMaybeMissing(ws.value,targetDetails.cwd)
       if(cfgReal&&wsReal&&isPathStrictlyInside(profileReal,cfgReal)&&isPathStrictlyInside(profileReal,wsReal)){

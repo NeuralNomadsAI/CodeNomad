@@ -70,7 +70,8 @@ try{
       if(!target)return
       req.pause()
       if(!(await clientGate.verify(req.socket))){
-        if(!res.destroyed&&!req.destroyed){res.writeHead(403);res.end('Attested client PID required')}
+        req.resume()
+        if(!res.destroyed&&!req.socket.destroyed){res.writeHead(403,{connection:'close'});res.end('Attested client PID required')}
         return
       }
       if(target.pathname.startsWith('/__real__/')){
@@ -151,7 +152,9 @@ try{
           res.end()
         }catch{res.destroy()}
       })
-      up.on('error',()=>{if(!res.headersSent)res.writeHead(503);res.end()});res.on('close',()=>up.destroy());req.pipe(up)
+      up.on('error',()=>{if(!res.headersSent)res.writeHead(503);res.end()});res.on('close',()=>up.destroy())
+      if(req.readableEnded)up.end()
+      else req.pipe(up)
     }catch(error){
       proxyError??=error
       if(!res.headersSent)res.writeHead(500)

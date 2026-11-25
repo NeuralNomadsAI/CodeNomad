@@ -252,20 +252,48 @@ fn probe_pid(pid: u32) -> io::Result<i32> {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::Foundation::{
         CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, FILETIME, GetLastError,
-        STILL_ACTIVE,
+        STILL_ACTIVE, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-        QueryFullProcessImageNameW,
+        PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW, WaitForSingleObject,
     };
-    // Exact millisecond offset between 0001-01-01 (.NET DateTime.Ticks / 10000) and 1601-01-01 (Win32 FILETIME).
-    const FILETIME_EPOCH_OFFSET_MS: u64 = 50_491_123_200_000;
+
+    #[repr(C)]
+    struct ProcessBasicInformation {
+        exit_status: i32,
+        peb_base_address: *mut core::ffi::c_void,
+        affinity_mask: usize,
+        base_priority: i32,
+        unique_process_id: usize,
+        inherited_from_unique_process_id: usize,
+    }
+    type NtQueryInfoFn = unsafe extern "system" fn(
+        windows_sys::Win32::Foundation::HANDLE,
+        u32,
+        *mut core::ffi::c_void,
+        u32,
+        *mut u32,
+    ) -> i32;
+
     if pid == 0 {
         println!(r#"{{"status":"dead"}}"#);
         return Ok(0);
     }
-    // SAFETY: OpenProcess with read-only PROCESS_QUERY_LIMITED_INFORMATION.
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let mut has_sync = true;
+    // SAFETY: read-only process handle query for the requested PID.
+    let mut handle = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            0,
+            pid,
+        )
+    };
+    if handle.is_null() {
+        has_sync = false;
+        handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    }
     if handle.is_null() {
         let err = unsafe { GetLastError() };
         if err == ERROR_INVALID_PARAMETER {
@@ -286,15 +314,28 @@ fn probe_pid(pid: u32) -> io::Result<i32> {
         }
     }
     let _guard = HandleGuard(handle);
-    let mut exit_code: u32 = 0;
-    // SAFETY: querying exit code of opened process handle.
-    if unsafe { GetExitCodeProcess(handle, &mut exit_code) } == 0 {
-        println!(r#"{{"status":"unknown"}}"#);
-        return Ok(0);
-    }
-    if exit_code != STILL_ACTIVE as u32 {
-        println!(r#"{{"status":"dead"}}"#);
-        return Ok(0);
+    if has_sync {
+        // SAFETY: zero-timeout wait checks signaled termination without colliding with exit code 259.
+        let wait = unsafe { WaitForSingleObject(handle, 0) };
+        if wait == WAIT_OBJECT_0 {
+            println!(r#"{{"status":"dead"}}"#);
+            return Ok(0);
+        }
+        if wait != WAIT_TIMEOUT {
+            println!(r#"{{"status":"unknown"}}"#);
+            return Ok(0);
+        }
+    } else {
+        let mut exit_code: u32 = 0;
+        // SAFETY: fallback exit code check when PROCESS_SYNCHRONIZE is unavailable.
+        if unsafe { GetExitCodeProcess(handle, &mut exit_code) } == 0 {
+            println!(r#"{{"status":"unknown"}}"#);
+            return Ok(0);
+        }
+        if exit_code != STILL_ACTIVE as u32 {
+            println!(r#"{{"status":"dead"}}"#);
+            return Ok(0);
+        }
     }
     let mut creation = FILETIME {
         dwLowDateTime: 0,
@@ -309,7 +350,48 @@ fn probe_pid(pid: u32) -> io::Result<i32> {
         return Ok(0);
     }
     let ticks_100ns = ((creation.dwHighDateTime as u64) << 32) | (creation.dwLowDateTime as u64);
-    let start_ms = (ticks_100ns / 10_000) + FILETIME_EPOCH_OFFSET_MS;
+
+    // Query native parent PID via ntdll!NtQueryInformationProcess(ProcessBasicInformation).
+    let ppid_json = {
+        let ntdll_wide: Vec<u16> = "ntdll.dll\0".encode_utf16().collect();
+        // SAFETY: ntdll.dll is loaded in every Windows process.
+        let ntdll = unsafe { GetModuleHandleW(ntdll_wide.as_ptr()) };
+        let proc = if !ntdll.is_null() {
+            unsafe { GetProcAddress(ntdll, b"NtQueryInformationProcess\0".as_ptr()) }
+        } else {
+            None
+        };
+        if let Some(func) = proc {
+            let query: NtQueryInfoFn = unsafe { core::mem::transmute(func) };
+            let mut pbi = ProcessBasicInformation {
+                exit_status: 0,
+                peb_base_address: core::ptr::null_mut(),
+                affinity_mask: 0,
+                base_priority: 0,
+                unique_process_id: 0,
+                inherited_from_unique_process_id: 0,
+            };
+            let mut ret_len: u32 = 0;
+            // SAFETY: ProcessBasicInformation (0) writes into stack-allocated ProcessBasicInformation.
+            let status = unsafe {
+                query(
+                    handle,
+                    0,
+                    (&mut pbi as *mut ProcessBasicInformation).cast(),
+                    core::mem::size_of::<ProcessBasicInformation>() as u32,
+                    &mut ret_len,
+                )
+            };
+            if status >= 0 && pbi.inherited_from_unique_process_id <= u32::MAX as usize {
+                format!("{}", pbi.inherited_from_unique_process_id)
+            } else {
+                "null".to_owned()
+            }
+        } else {
+            "null".to_owned()
+        }
+    };
+
     let mut image_buf = vec![0u16; 32768];
     let mut image_len = image_buf.len() as u32;
     // SAFETY: querying Win32 image path into owned UTF-16 buffer.
@@ -331,7 +413,7 @@ fn probe_pid(pid: u32) -> io::Result<i32> {
         None => "null".to_owned(),
     };
     println!(
-        r#"{{"status":"ok","startId":"{start_ms}","createdAt":"{start_ms}","exe":{exe_json}}}"#
+        r#"{{"status":"ok","ppid":{ppid_json},"startId":"{ticks_100ns}","createdAt":"{ticks_100ns}","exe":{exe_json}}}"#
     );
     Ok(0)
 }
@@ -346,37 +428,33 @@ fn probe_pid(pid: u32) -> io::Result<i32> {
         println!(r#"{{"status":"dead"}}"#);
         return Ok(0);
     }
-    let mut mib = [
-        libc::CTL_KERN,
-        libc::KERN_PROC,
-        libc::KERN_PROC_PID,
-        pid_i32,
-    ];
-    let mut info: libc::kinfo_proc = unsafe { std::mem::zeroed() };
-    let mut size = std::mem::size_of::<libc::kinfo_proc>();
-    // SAFETY: querying read-only kinfo_proc for pid_i32 into stack struct.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let expected_size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: querying read-only proc_bsdinfo for pid_i32 into stack struct.
     let rc = unsafe {
-        libc::sysctl(
-            mib.as_mut_ptr(),
-            4,
-            (&mut info as *mut libc::kinfo_proc).cast(),
-            &mut size,
-            std::ptr::null_mut(),
+        libc::proc_pidinfo(
+            pid_i32,
+            libc::PROC_PIDTBSDINFO,
             0,
+            (&mut info as *mut libc::proc_bsdinfo).cast(),
+            expected_size,
         )
     };
-    if rc != 0 || size == 0 {
+    if rc <= 0 {
         let err = io::Error::last_os_error().raw_os_error();
-        if err == Some(libc::ESRCH) || size == 0 {
+        if err == Some(libc::ESRCH) {
             println!(r#"{{"status":"dead"}}"#);
         } else {
             println!(r#"{{"status":"unknown"}}"#);
         }
         return Ok(0);
     }
-    let ppid = info.kp_eproc.e_ppid;
-    let tv = info.kp_proc.p_un.__p_starttime;
-    let start_us = (tv.tv_sec as i128) * 1_000_000 + (tv.tv_usec as i128);
+    if rc != expected_size {
+        println!(r#"{{"status":"unknown"}}"#);
+        return Ok(0);
+    }
+    let ppid = info.pbi_ppid;
+    let start_us = (info.pbi_start_tvsec as i128) * 1_000_000 + (info.pbi_start_tvusec as i128);
     let mut arg_mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid_i32];
     let mut arg_size: usize = 256 * 1024;
     let mut buf = vec![0u8; arg_size];

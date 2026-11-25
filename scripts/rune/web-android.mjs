@@ -24,7 +24,7 @@ const launcherPid=Number(rawLauncherPid)
 assert(Number.isSafeInteger(currentServerPid)&&currentServerPid>0,'Android fixture requires owned server PID')
 assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Android fixture requires private launcher PID')
 await verifyLoopbackListenerOwner(Number(new URL(origin).port),currentServerPid)
-await verifyPrivateFixtureServer({targetPid:currentServerPid,launcherPid,profile,root})
+let currentServerStartId=(await verifyPrivateFixtureServer({targetPid:currentServerPid,launcherPid,profile,root})).targetStartId
 const caCert=await readFile(path.join(profile,'identity.data/tls/ca-cert.pem'))
 const auth=new X509Certificate(await readFile(path.join(profile,'identity.data/tls/server-cert.pem')))
 const pin=createHash('sha256').update(auth.publicKey.export({type:'spki',format:'der'})).digest('base64')
@@ -59,7 +59,7 @@ const metrics=page=>page.evaluate(()=>({height:visualViewport.height,top:visualV
   dpr:devicePixelRatio,mobile:navigator.userAgentData?.mobile,ua:navigator.userAgent,
   active:document.activeElement?.tagName,inputMode:document.activeElement?.inputMode}))
 async function runAndroid() {
-  attestedFetch=createAttestedFetch(origin,Number(new URL(origin).port),currentServerPid,{ca:caCert})
+  attestedFetch=createAttestedFetch(origin,Number(new URL(origin).port),currentServerPid,{ca:caCert,targetStartId:currentServerStartId})
   openedDevices=await _android.devices({port:Number(port),omitDriverInstall:true})
   const [matched,...others]=openedDevices
   assert(matched?.serial()===serial&&!others.length,'Use a dedicated ADB server with the single named emulator')
@@ -302,10 +302,11 @@ async function runAndroid() {
   const restartedPid=Number(evidence.restart?.serverPid)
   assert(Number.isSafeInteger(restartedPid)&&restartedPid>0,'Restarted Android fixture must report owned server PID')
   await verifyLoopbackListenerOwner(Number(new URL(origin).port),restartedPid)
-  await verifyPrivateFixtureServer({targetPid:restartedPid,launcherPid,profile,root})
+  const restartedStartId=(await verifyPrivateFixtureServer({targetPid:restartedPid,launcherPid,profile,root})).targetStartId
   const previousFetch=attestedFetch
   currentServerPid=restartedPid
-  attestedFetch=createAttestedFetch(origin,Number(new URL(origin).port),currentServerPid,{ca:caCert})
+  currentServerStartId=restartedStartId
+  attestedFetch=createAttestedFetch(origin,Number(new URL(origin).port),currentServerPid,{ca:caCert,targetStartId:currentServerStartId})
   await previousFetch?.close().catch(()=>{})
   try { await page.getByText('Mobile Rust restart history',{exact:true}).waitFor({timeout:45000}) }
   catch(error){evidence.restartWaitMs=performance.now()-restart;throw error}

@@ -2,8 +2,17 @@ import assert from 'node:assert/strict'
 import {constants as fsConstants} from 'node:fs'
 import {lstat,mkdir,open,readdir,readFile,realpath} from 'node:fs/promises'
 import path from 'node:path'
+import {privateEnvironment} from '../../packages/rune-app/fixtures/private-profile.mjs'
 
 const inside=(parent,value)=>{const relative=path.relative(parent,value);return relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith(`..${path.sep}`)}
+
+export async function privateChromiumEnv(profile){
+  const env=await privateEnvironment(profile)
+  for(const key of ['DISPLAY','WAYLAND_DISPLAY','XAUTHORITY','DBUS_SESSION_BUS_ADDRESS','XDG_RUNTIME_DIR','LANG','LC_ALL','TZ']){
+    if(process.env[key])env[key]=process.env[key]
+  }
+  return env
+}
 
 export async function assertWorktreeTestRoot(root){
   const rootReal=await realpath(root)
@@ -43,16 +52,40 @@ export async function createPrivateOutputDir(out,allowedRoot){
   return outReal
 }
 
-export async function writePrivateFile(filePath,content,allowedRoot){
+async function openVerifiedPrivateFile(filePath,allowedRoot,extraFlags=0){
   const rootReal=await realpath(allowedRoot)
   const resolved=path.resolve(filePath)
   const dirReal=await realpath(path.dirname(resolved))
   assert(dirReal===rootReal||inside(rootReal,dirReal),`Output directory escapes allowed fixture root: ${dirReal}`)
   const existing=await lstat(resolved).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
-  assert(!existing||(!existing.isSymbolicLink()&&existing.isFile()),`Refusing to overwrite symlink or non-file output: ${resolved}`)
-  const flags=fsConstants.O_WRONLY|fsConstants.O_CREAT|fsConstants.O_TRUNC|(fsConstants.O_NOFOLLOW??0)
+  assert(!existing||(!existing.isSymbolicLink()&&existing.isFile()&&existing.nlink===1),`Refusing to overwrite symlink, hardlink, or non-file output: ${resolved}`)
+  const flags=fsConstants.O_WRONLY|fsConstants.O_CREAT|extraFlags|(fsConstants.O_NOFOLLOW??0)
   const handle=await open(resolved,flags,0o600)
-  try{await handle.writeFile(content)}finally{await handle.close()}
+  try{
+    const fdStat=await handle.stat()
+    assert(fdStat.isFile()&&fdStat.nlink===1,`Opened output file failed link/type verification: ${resolved}`)
+    const recheckDir=await realpath(path.dirname(resolved))
+    assert(recheckDir===dirReal&&(recheckDir===rootReal||inside(rootReal,recheckDir)),`Output parent shifted during open: ${resolved}`)
+    return handle
+  }catch(error){
+    await handle.close().catch(()=>{})
+    throw error
+  }
+}
+
+export async function writePrivateFile(filePath,content,allowedRoot){
+  const handle=await openVerifiedPrivateFile(filePath,allowedRoot)
+  try{
+    await handle.truncate(0)
+    await handle.writeFile(content)
+  }finally{await handle.close()}
+}
+
+export async function appendPrivateFile(filePath,content,allowedRoot){
+  const handle=await openVerifiedPrivateFile(filePath,allowedRoot,fsConstants.O_APPEND)
+  try{
+    await handle.writeFile(content)
+  }finally{await handle.close()}
 }
 
 export async function privateWebFixture({root,project,storageState,out,origin}){

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import {mkdir,readFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
 import path from 'node:path'
-import {createAttestedFetch,stripFixtureServerSecrets,verifyLoopbackListenerOwner} from '../native-fixture-http.mjs'
+import {createAttestedFetch,probeProcessIdentity,verifyLoopbackListenerOwner} from '../native-fixture-http.mjs'
 import {launchOwnedChromium} from './web-chromium.mjs'
-import {bundleAssetPaths} from './web-workspace-policy.mjs'
+import {bundleAssetPaths,privateChromiumEnv} from './web-workspace-policy.mjs'
 import {isExpectedWaitError, now, withBudget} from './web-budget.mjs'
 import {navigatePair} from './web-live.mjs'
 
@@ -40,10 +40,14 @@ export async function pairFixture({origin, targetPid, profile: fixtureProfile, p
   const pairProfile = path.join(fixtureProfile, 'pair-chromium')
   await mkdir(pairProfile, {recursive: true})
   const ca = await readFile(path.join(fixtureProfile, 'identity.data/tls/ca-cert.pem')).catch(() => undefined)
+  const targetProbe = await probeProcessIdentity(targetPid, {refresh: true})
+  assert(targetProbe.status === 'ok' && targetProbe.identity?.startId, 'Unable to attest mobile pairing server incarnation')
+  const targetStartId = targetProbe.identity.startId
+  const chromiumEnv = await privateChromiumEnv(pairProfile)
   let ownedBrowser, attestedFetch, primaryError = null
   try {
-    ownedBrowser = await launchOwnedChromium({profile: pairProfile, env: stripFixtureServerSecrets(process.env), origin, targetPid})
-    attestedFetch = createAttestedFetch(origin, Number(url.port), targetPid, ca ? {ca} : {allowSelfSigned: true})
+    ownedBrowser = await launchOwnedChromium({profile: pairProfile, env: chromiumEnv, origin, targetPid, targetStartId})
+    attestedFetch = createAttestedFetch(origin, Number(url.port), targetPid, {...(ca ? {ca} : {allowSelfSigned: true}), targetStartId})
     const browser = ownedBrowser.browser
     const context = await browser.newContext({...mobileContext(browser), ignoreHTTPSErrors:true})
     const page = await context.newPage()
