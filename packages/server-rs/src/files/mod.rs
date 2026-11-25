@@ -229,7 +229,7 @@ async fn select(app: &crate::App, id: &str, q: &Input) -> Result<Workspace, Erro
     }
     let slug = q.worktree.as_deref().filter(|s| !s.is_empty());
     if slug.is_some_and(|s| s != "root") || directory(&w, q.directory.as_deref()).is_err() {
-        let hit = crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Validated, false)
+        let hit = crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Validated)
             .await
             .map_err(|_| not_owned())?;
         let cat = hit.snapshot.catalogue().ok_or_else(not_owned)?;
@@ -261,10 +261,12 @@ async fn select(app: &crate::App, id: &str, q: &Input) -> Result<Workspace, Erro
             return Ok(crate::worktrees::linked::scope(w, &tree));
         }
         if hit.from_cache && (!root_live || !hit.refreshed_on_miss) {
-            let fresh =
-                crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Fresh, root_live)
-                    .await
-                    .map_err(|_| not_owned())?;
+            let retry_mode = if root_live {
+                crate::worktrees::linked::ReadMode::RefreshOnMiss(hit.generation)
+            } else {
+                crate::worktrees::linked::ReadMode::Fresh
+            };
+            let fresh = crate::worktrees::linked::http_read(app, &w, retry_mode).await.map_err(|_| not_owned())?;
             let cat = fresh.snapshot.catalogue().ok_or_else(not_owned)?;
             let tree = match (slug, q.directory.as_deref()) {
                 (Some(s), Some(p)) => cat.get(s).ok().filter(|t| cat.by_directory(p) == Some(*t)),

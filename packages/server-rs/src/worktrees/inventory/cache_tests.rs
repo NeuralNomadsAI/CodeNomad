@@ -27,7 +27,8 @@ struct Gate {
     hold: AtomicBool,
     entered: Notify,
     release: Notify,
-    waiting: AtomicUsize,
+    entries: AtomicUsize,
+    armed_at: AtomicUsize,
 }
 
 impl Gate {
@@ -36,11 +37,13 @@ impl Gate {
             hold: AtomicBool::new(false),
             entered: Notify::new(),
             release: Notify::new(),
-            waiting: AtomicUsize::new(0),
+            entries: AtomicUsize::new(0),
+            armed_at: AtomicUsize::new(0),
         }
     }
 
     fn arm(&self) {
+        self.armed_at.store(self.entries.load(Ordering::SeqCst), Ordering::SeqCst);
         self.hold.store(true, Ordering::SeqCst);
     }
 
@@ -51,17 +54,17 @@ impl Gate {
 
     async fn pass(&self) {
         if self.hold.load(Ordering::SeqCst) {
-            self.waiting.fetch_add(1, Ordering::SeqCst);
+            self.entries.fetch_add(1, Ordering::SeqCst);
             self.entered.notify_waiters();
             while self.hold.load(Ordering::SeqCst) {
                 self.release.notified().await;
             }
-            self.waiting.fetch_sub(1, Ordering::SeqCst);
         }
     }
 
     async fn wait_entered(&self) {
-        while self.waiting.load(Ordering::SeqCst) == 0 {
+        let baseline = self.armed_at.load(Ordering::SeqCst);
+        while self.entries.load(Ordering::SeqCst) <= baseline {
             self.entered.notified().await;
         }
     }
@@ -286,7 +289,7 @@ async fn http_cache_hits_within_ttl_and_lazy_refreshes_after_expiry() {
     let second = h.list_json(None).await;
     assert_eq!(second, first);
     let _ = crate::git::repo(&h.app, &h.id.to_string(), "root").await.unwrap();
-    let hit = http_read(&h.app, &h.ws, ReadMode::Validated, false).await.unwrap();
+    let hit = http_read(&h.app, &h.ws, ReadMode::Validated).await.unwrap();
     assert!(hit.from_cache);
     assert_eq!(h.gets(), 1);
     assert_eq!(h.refreshes(), 1);
@@ -304,8 +307,10 @@ async fn http_cache_hits_within_ttl_and_lazy_refreshes_after_expiry() {
 
     let app_for_val = h.app.clone();
     let ws_for_val = h.ws.clone();
-    let validated = tokio::spawn(async move { http_read(&app_for_val, &ws_for_val, ReadMode::Validated, false).await });
-    tokio::task::yield_now().await;
+    let validated = tokio::spawn(async move { http_read(&app_for_val, &ws_for_val, ReadMode::Validated).await });
+    while h.app.linked_events.lock().unwrap().test_joins == 0 {
+        tokio::task::yield_now().await;
+    }
     assert!(!validated.is_finished(), "Validated must wait for the in-flight refresh, not return expired data");
 
     h.native.gate.open();
@@ -340,7 +345,7 @@ async fn lazy_invalidation_keeps_display_snapshot_while_blocking_invalidation_wa
     h.native.gate.wait_entered().await;
     h.native.gate.open();
     // Wait for background scan to settle via Validated.
-    let after_lazy = http_read(&h.app, &h.ws, ReadMode::Validated, false).await.unwrap();
+    let after_lazy = http_read(&h.app, &h.ws, ReadMode::Validated).await.unwrap();
     assert_eq!(after_lazy.snapshot.catalogue().unwrap().trees.len(), 2);
     assert_eq!(h.drain_worktrees_changed(), 1);
 
@@ -369,34 +374,63 @@ async fn coalesces_concurrent_reads_fences_invalidated_flight_and_respects_forge
     let _git = crate::git::test_git_serial().await;
     let h = Harness::new("inv-coalesce-fence").await;
 
-    // 1. Concurrent cold reads coalesce into a single native scan.
+    // 1. Concurrent cold reads deterministically enter Step::Join and share one native scan.
     h.native.gate.arm();
     let (a1, w1) = (h.app.clone(), h.ws.clone());
+    let r1 = tokio::spawn(async move { http_list(&a1, &w1, ReadMode::Cached).await });
+    h.native.gate.wait_entered().await;
     let (a2, w2) = (h.app.clone(), h.ws.clone());
     let (a3, w3) = (h.app.clone(), h.ws.clone());
-    let r1 = tokio::spawn(async move { http_list(&a1, &w1, ReadMode::Cached).await });
-    let r2 = tokio::spawn(async move { http_read(&a2, &w2, ReadMode::Validated, false).await });
-    let r3 = tokio::spawn(async move { http_read(&a3, &w3, ReadMode::Validated, false).await });
-    h.native.gate.wait_entered().await;
+    let r2 = tokio::spawn(async move { http_read(&a2, &w2, ReadMode::Validated).await });
+    let r3 = tokio::spawn(async move { http_read(&a3, &w3, ReadMode::Validated).await });
+    while h.app.linked_events.lock().unwrap().test_joins < 2 {
+        tokio::task::yield_now().await;
+    }
     h.native.gate.open();
     assert!(r1.await.unwrap().is_ok());
     assert!(r2.await.unwrap().is_ok());
     assert!(r3.await.unwrap().is_ok());
     assert_eq!(h.gets(), 1, "concurrent cold reads must share one scan");
 
-    // 2. An invalidation mid-flight fences the stale scan and serializes one trailing scan.
+    // 2. An invalidation mid-flight puts a late reader into Step::WaitPrevious and serializes
+    //    one trailing validated scan after the overtaken flight completes.
     h.native.gate.arm();
     let (af, wf) = (h.app.clone(), h.ws.clone());
     let fresh_task = tokio::spawn(async move { http_list(&af, &wf, ReadMode::Fresh).await });
     h.native.gate.wait_entered().await;
     let _wt = h.add_linked("wt-midflight").await;
-    invalidate(&h.app);
+    invalidate_blocking(&h.app);
+    let (aw, ww) = (h.app.clone(), h.ws.clone());
+    let wait_prev_task = tokio::spawn(async move { http_read(&aw, &ww, ReadMode::Validated).await });
+    while h.app.linked_events.lock().unwrap().test_wait_previous < 1 {
+        tokio::task::yield_now().await;
+    }
     h.native.gate.open();
     let fresh_snap = fresh_task.await.unwrap().unwrap();
+    let waited_snap = wait_prev_task.await.unwrap().unwrap();
     assert_eq!(fresh_snap.catalogue().unwrap().trees.len(), 2, "must not return the overtaken pre-invalidation scan");
+    assert_eq!(waited_snap.snapshot.catalogue().unwrap().trees.len(), 2);
     assert_eq!(h.gets(), 3, "initial + overtaken + trailing validated scan");
 
-    // 3. forget() while a scan is in flight prevents post-disposal publication.
+    // 3. Aborting the inline leader clears `loading` via HttpFlightGuard so a joined follower
+    //    recovers and completes the scan on its own.
+    let joins_before_abort = h.app.linked_events.lock().unwrap().test_joins;
+    h.native.gate.arm();
+    let (al, wl) = (h.app.clone(), h.ws.clone());
+    let leader = tokio::spawn(async move { http_read(&al, &wl, ReadMode::Fresh).await });
+    h.native.gate.wait_entered().await;
+    let (aj, wj) = (h.app.clone(), h.ws.clone());
+    let follower = tokio::spawn(async move { http_read(&aj, &wj, ReadMode::Fresh).await });
+    while h.app.linked_events.lock().unwrap().test_joins <= joins_before_abort {
+        tokio::task::yield_now().await;
+    }
+    leader.abort();
+    let _ = leader.await;
+    h.native.gate.open();
+    let recovered = follower.await.unwrap().unwrap();
+    assert_eq!(recovered.snapshot.catalogue().unwrap().trees.len(), 2);
+
+    // 4. forget() while a scan is in flight prevents post-disposal publication.
     h.native.gate.arm();
     let (ad, wd) = (h.app.clone(), h.ws.clone());
     let disposed_task = tokio::spawn(async move { http_list(&ad, &wd, ReadMode::Fresh).await });
@@ -437,20 +471,29 @@ async fn backoff_retains_last_display_snapshot_and_sse_cache_stays_isolated() {
     let retained = h.list_json(None).await;
     assert_eq!(retained, first);
     // Validated joins or sees the failure and sets retry_at backoff.
-    let val_err = http_read(&h.app, &h.ws, ReadMode::Validated, false).await;
+    let val_err = http_read(&h.app, &h.ws, ReadMode::Validated).await;
     assert!(val_err.is_err());
+    {
+        let cache = h.app.linked_events.lock().unwrap();
+        let entry = cache.http_entries.get(&h.id).expect("retained display entry");
+        assert!(entry.loading.is_none());
+        assert!(entry.retry_at.is_some(), "failed scan must arm 10 s backoff");
+    }
     let refreshes_after_fail = h.refreshes();
-    // Cached inside the 10 s backoff window returns the last good snapshot without hammering native.
+    // Cached inside the 10 s backoff window returns the last good snapshot without starting a flight.
     let retained_again = h.list_json(None).await;
     assert_eq!(retained_again, first);
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(
+        h.app.linked_events.lock().unwrap().http_entries.get(&h.id).is_some_and(|e| e.loading.is_none()),
+        "Cached inside backoff must not spawn a background flight"
+    );
     assert_eq!(h.refreshes(), refreshes_after_fail, "Cached must respect the 10 s failure retry backoff");
 
     // Advance past backoff and recover with a new worktree -> also invalidates SSE cache.
     h.native.fail_worktree.store(false, Ordering::SeqCst);
     let _wt = h.add_linked("wt-recovered").await;
     h.app.linked_events.lock().unwrap().advance_for_test(Duration::from_secs(11));
-    let recovered = http_read(&h.app, &h.ws, ReadMode::Validated, false).await.unwrap();
+    let recovered = http_read(&h.app, &h.ws, ReadMode::Validated).await.unwrap();
     assert_eq!(recovered.snapshot.catalogue().unwrap().trees.len(), 2);
     assert!(
         !h.app.linked_events.lock().unwrap().sse_entries.contains_key(&h.id),
@@ -459,9 +502,9 @@ async fn backoff_retains_last_display_snapshot_and_sse_cache_stays_isolated() {
 }
 
 #[tokio::test]
-async fn refreshed_on_miss_runs_once_per_ttl_and_local_live_check_detects_removed_checkout() {
+async fn refreshed_on_miss_is_atomic_and_passive_refresh_retries_after_invalidation() {
     let _git = crate::git::test_git_serial().await;
-    let h = Harness::new("inv-miss-live").await;
+    let mut h = Harness::new("inv-miss-passive").await;
     let linked = h.add_linked("wt-live").await;
     let foreign1 = h._dir.0.join("foreign-1");
     let foreign2 = h._dir.0.join("foreign-2");
@@ -471,17 +514,78 @@ async fn refreshed_on_miss_runs_once_per_ttl_and_local_live_check_detects_remove
     // Warm HTTP cache with root + linked.
     assert!(owns(&h.app, &h.ws, linked.to_str().unwrap()).await);
     assert_eq!(h.gets(), 1);
+    let warm = http_read(&h.app, &h.ws, ReadMode::Validated).await.unwrap();
+    assert!(warm.from_cache && !warm.refreshed_on_miss);
+    let obs_gen = warm.generation;
 
-    // First foreign miss triggers at most one refresh for this cache lifetime.
+    // 1. Concurrent RefreshOnMiss calls for the same generation coalesce into ONE Fresh scan.
+    let joins_before = h.app.linked_events.lock().unwrap().test_joins;
+    h.native.gate.arm();
+    let (a1, w1) = (h.app.clone(), h.ws.clone());
+    let m1 = tokio::spawn(async move { http_read(&a1, &w1, ReadMode::RefreshOnMiss(obs_gen)).await });
+    h.native.gate.wait_entered().await;
+    let (a2, w2) = (h.app.clone(), h.ws.clone());
+    let m2 = tokio::spawn(async move { http_read(&a2, &w2, ReadMode::RefreshOnMiss(obs_gen)).await });
+    while h.app.linked_events.lock().unwrap().test_joins <= joins_before {
+        tokio::task::yield_now().await;
+    }
+    h.native.gate.open();
+    let r1 = m1.await.unwrap().unwrap();
+    let r2 = m2.await.unwrap().unwrap();
+    assert_eq!(h.gets(), 2, "concurrent RefreshOnMiss must share one Fresh scan");
+    assert!(r1.refreshed_on_miss && r2.refreshed_on_miss);
+    assert_eq!(r1.generation, r2.generation);
+    assert_ne!(r1.generation, obs_gen);
+
+    // Subsequent RefreshOnMiss with either the old or new generation must NOT scan again.
+    let r3 = http_read(&h.app, &h.ws, ReadMode::RefreshOnMiss(obs_gen)).await.unwrap();
+    assert!(r3.from_cache && r3.refreshed_on_miss);
     assert!(!owns(&h.app, &h.ws, foreign1.to_str().unwrap()).await);
-    assert_eq!(h.gets(), 2, "first miss refreshes once");
-
-    // Second foreign miss within the same 10 s TTL does NOT trigger another refresh.
     assert!(!owns(&h.app, &h.ws, foreign2.to_str().unwrap()).await);
-    assert_eq!(h.gets(), 2, "sequential misses within one TTL must not repeat scans");
+    assert_eq!(h.gets(), 2, "repeated misses inside one TTL must not repeat scans");
 
-    // Corrupting the linked checkout's .git file on disk is caught immediately by local live()
-    // checks even while the 10 s cache entry is still warm.
+    // 2. Passive refresh invalidated mid-flight automatically follows up without a new request.
+    h.app.linked_events.lock().unwrap().advance_for_test(Duration::from_secs(11));
+    h.native.gate.arm();
+    let stale_display = h.list_json(None).await;
+    assert_eq!(stale_display["worktrees"].as_array().unwrap().len(), 2);
+    h.native.gate.wait_entered().await;
+    let _wt3 = h.add_linked("wt-passive-retry").await;
+    invalidate(&h.app);
+    h.native.gate.open();
+    // Wait for the background follow-up scan to publish the 3-worktree snapshot with no caller.
+    // Acquire `app.inner` before `app.linked_events` so observing the published snapshot also
+    // orders strictly after `finish_http_scan`'s `workspace.worktreesChanged` emission.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let ready = {
+            let _workspaces = h.app.inner.lock().unwrap();
+            let cache = h.app.linked_events.lock().unwrap();
+            cache.http_entries.get(&h.id).is_some_and(|e| {
+                e.loading.is_none()
+                    && !e.expired
+                    && matches!(&e.value, Some(HttpSnapshot::Git(cat)) if cat.trees.len() == 3)
+            })
+        };
+        if ready {
+            break;
+        }
+        assert!(Instant::now() < deadline, "passive refresh did not follow up after mid-flight invalidation");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(h.drain_worktrees_changed(), 1);
+
+    // 3. Local live() check detects removed checkout immediately even on a warm cache, and
+    //    strict resolve_checked reports Err(()) (unverifiable) when the opened .git is broken.
     std::fs::remove_file(linked.join(".git")).unwrap();
     assert!(!owns(&h.app, &h.ws, linked.to_str().unwrap()).await);
+
+    let broken_root = h._dir.0.join("foreign-1");
+    std::fs::remove_dir_all(h.ws.path.join(".git")).unwrap();
+    std::fs::write(h.ws.path.join(".git"), "gitdir: /nonexistent-corrupt-gitdir\n").unwrap();
+    invalidate_blocking(&h.app);
+    assert!(
+        crate::worktrees::ownership::resolve_checked(&h.app, &h.ws, broken_root.to_str().unwrap(), true).await.is_err(),
+        "strict resolve_checked must treat a broken .git checkout as unverifiable Err(())"
+    );
 }

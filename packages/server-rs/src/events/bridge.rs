@@ -702,7 +702,8 @@ async fn deliver(
                     };
                     if let Some((physical, identity)) = resolved
                         && let Some(proof) =
-                            crate::worktrees::ownership::capture_directory(app, &workspace, &physical).await
+                            crate::worktrees::ownership::capture_event_directory(app, &workspace, &endpoint, &physical)
+                                .await
                     {
                         inbox_proof = Some((physical, identity, proof));
                         true

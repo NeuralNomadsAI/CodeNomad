@@ -5,7 +5,7 @@ use crate::{App, Error, Workspace, files};
 use axum::http::Method;
 pub use cache::{EventCache, blocking_invalidation, event_catalogue, forget, invalidate, invalidate_blocking};
 pub(crate) use cache::{HttpSnapshot, ReadMode, http_read};
-pub(super) use cache::{history_catalogue, http_list, receipt_catalogue, revision, store_if_current};
+pub(super) use cache::{history_catalogue, http_list, media_http_read, receipt_catalogue, revision};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};

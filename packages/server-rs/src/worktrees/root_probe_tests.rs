@@ -266,8 +266,10 @@ async fn repo_target_and_worktrees_list_avoid_duplicate_root_probe() {
         h.trace.lock().unwrap()
     );
 
-    // 2. Warm git::repo hits the 10 s HTTP cache (0 rev-parse); after blocking invalidation,
-    //    cold git::repo runs rev-parse once (no duplicate root probe).
+    // 2. Warm git::repo hits the 10 s HTTP cache (0 rev-parse, 0 native HTTP worktree calls);
+    //    after blocking invalidation, cold git::repo runs rev-parse once (no duplicate root probe).
+    let worktree_gets_before = h.native_calls("native GET /api/worktree");
+    let worktree_refreshes_before = h.native_calls("native POST /api/worktree/refresh");
     let warm_repo =
         REQUEST.scope(("repo-warm", h.trace.clone()), crate::git::repo(&h.app, &h.id.to_string(), "root")).await;
     if let Err(err) = warm_repo {
@@ -277,6 +279,18 @@ async fn repo_target_and_worktrees_list_avoid_duplicate_root_probe() {
         h.rev_parse_runs("repo-warm"),
         0,
         "warm git::repo_target must reuse the 10 s worktree cache: {:?}",
+        h.trace.lock().unwrap()
+    );
+    assert_eq!(
+        h.native_calls("native GET /api/worktree"),
+        worktree_gets_before,
+        "warm git::repo_target must not query native /api/worktree: {:?}",
+        h.trace.lock().unwrap()
+    );
+    assert_eq!(
+        h.native_calls("native POST /api/worktree/refresh"),
+        worktree_refreshes_before,
+        "warm git::repo_target must not trigger native /api/worktree/refresh: {:?}",
         h.trace.lock().unwrap()
     );
     linked::invalidate_blocking(&h.app);

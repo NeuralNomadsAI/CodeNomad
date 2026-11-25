@@ -30,9 +30,13 @@ pub(crate) enum ReadMode {
     /// otherwise waits for a validated scan (coalescing concurrent callers and serializing
     /// behind any invalidated in-flight scan).
     Validated,
-    /// Explicit fresh scan (`?fresh=true`, miss refresh, live-check mismatch): ignores any cached
-    /// value and waits for a new scan (still serializing behind an invalidated in-flight scan).
+    /// Explicit fresh scan (`?fresh=true`, live-check mismatch): ignores any cached value and
+    /// waits for a new scan (still serializing behind an invalidated in-flight scan).
     Fresh,
+    /// Atomically claim the single miss-triggered refresh for `observed_generation`: returns a
+    /// newer fresh snapshot or the already-refreshed generation without rescanning, or joins /
+    /// starts a fresh scan and records `refreshed_on_miss = true` on publication.
+    RefreshOnMiss(u64),
 }
 
 #[derive(Clone)]
@@ -70,11 +74,16 @@ pub(crate) struct CachedHttp {
     pub snapshot: HttpSnapshot,
     pub from_cache: bool,
     pub refreshed_on_miss: bool,
+    pub generation: u64,
 }
 
 type CachedError = (Status, Value);
 type SseRead = SharedFuture<BoxFuture<'static, Option<Arc<Catalogue>>>>;
-type HttpFlightResult = Option<Result<HttpSnapshot, CachedError>>;
+type HttpFlightSuccess = (HttpSnapshot, Option<Arc<crate::opencode::Endpoint>>, u64, bool);
+type HttpFlightError = (CachedError, Option<Arc<crate::opencode::Endpoint>>);
+type HttpScanOutcome =
+    Result<(HttpSnapshot, Option<Arc<crate::opencode::Endpoint>>), (Error, Option<Arc<crate::opencode::Endpoint>>)>;
+type HttpFlightResult = Option<Result<HttpFlightSuccess, HttpFlightError>>;
 type HttpRead = SharedFuture<BoxFuture<'static, HttpFlightResult>>;
 
 fn from_error(err: Error) -> CachedError {
@@ -108,10 +117,12 @@ struct HttpFlight {
 
 struct HttpEntry {
     at: Instant,
+    generation: u64,
     expired: bool,
     retry_at: Option<Instant>,
     require_validation: bool,
     refreshed_on_miss: bool,
+    pending_refreshed_on_miss: bool,
     value: Option<HttpSnapshot>,
     endpoint: Option<Arc<crate::opencode::Endpoint>>,
     loading: Option<HttpFlight>,
@@ -127,6 +138,10 @@ pub struct InventoryCache {
     sse_generation: HashMap<Uuid, u64>,
     sse_entries: HashMap<Uuid, SseEntry>,
     http_entries: HashMap<Uuid, HttpEntry>,
+    #[cfg(test)]
+    test_joins: usize,
+    #[cfg(test)]
+    test_wait_previous: usize,
 }
 
 impl InventoryCache {
@@ -148,25 +163,6 @@ impl InventoryCache {
         (Arc::ptr_eq(&entry.endpoint, endpoint) && entry.at.elapsed() < MAX_AGE)
             .then_some(entry.value.as_ref()?)
             .map(Arc::clone)
-    }
-
-    pub(in crate::worktrees) fn cached_refreshed(
-        &self,
-        id: Uuid,
-        endpoint: &Arc<crate::opencode::Endpoint>,
-    ) -> Option<Arc<Catalogue>> {
-        let entry = self.http_entries.get(&id)?;
-        let valid = !entry.expired
-            && !entry.require_validation
-            && entry.at.elapsed() < MAX_AGE
-            && entry.endpoint.as_ref().is_some_and(|ep| Arc::ptr_eq(ep, endpoint));
-        if !valid {
-            return None;
-        }
-        match entry.value.as_ref()? {
-            HttpSnapshot::Git(cat) => Some(Arc::clone(cat)),
-            HttpSnapshot::NonGit | HttpSnapshot::MissingGit => None,
-        }
     }
 
     #[cfg(test)]
@@ -249,97 +245,20 @@ impl InventoryCache {
             return;
         }
         self.http_entries.retain(|&k, e| k == keep || e.loading.is_some() || (!e.expired && e.at.elapsed() < MAX_AGE));
-        if self.http_entries.len() >= MAX_ENTRIES
-            && !self.http_entries.contains_key(&keep)
-            && let Some(oldest) =
-                self.http_entries.iter().filter(|(_, e)| e.loading.is_none()).min_by_key(|(_, e)| e.at).map(|(&k, _)| k)
-        {
+        let target = if self.http_entries.contains_key(&keep) { MAX_ENTRIES } else { MAX_ENTRIES - 1 };
+        while self.http_entries.len() > target {
+            let Some(oldest) = self
+                .http_entries
+                .iter()
+                .filter(|&(&k, e)| k != keep && e.loading.is_none())
+                .min_by_key(|(_, e)| e.at)
+                .map(|(&k, _)| k)
+            else {
+                break;
+            };
             self.http_entries.remove(&oldest);
         }
     }
-
-    fn store_entry(
-        &mut self,
-        id: Uuid,
-        refresh: bool,
-        endpoint: &Arc<crate::opencode::Endpoint>,
-        revision: u64,
-        value: Arc<Catalogue>,
-    ) {
-        if self.serial != revision {
-            return;
-        }
-        if refresh {
-            let snapshot = HttpSnapshot::Git(value);
-            self.invalidate_sse_for_http_change(id, Some(endpoint), &snapshot);
-            self.evict_http_if_full(id);
-            if let Some(entry) = self.http_entries.get_mut(&id) {
-                entry.at = Instant::now();
-                entry.expired = false;
-                entry.retry_at = None;
-                entry.require_validation = false;
-                entry.refreshed_on_miss = false;
-                entry.value = Some(snapshot);
-                entry.endpoint = Some(endpoint.clone());
-            } else if self.http_entries.len() < MAX_ENTRIES {
-                self.http_entries.insert(
-                    id,
-                    HttpEntry {
-                        at: Instant::now(),
-                        expired: false,
-                        retry_at: None,
-                        require_validation: false,
-                        refreshed_on_miss: false,
-                        value: Some(snapshot),
-                        endpoint: Some(endpoint.clone()),
-                        loading: None,
-                    },
-                );
-            }
-            return;
-        }
-        if self.sse_entries.len() >= MAX_ENTRIES {
-            self.sse_entries.retain(|_, e| e.loading.is_some() || e.at.elapsed() < MAX_AGE);
-        }
-        if let Some(entry) = self.sse_entries.get_mut(&id) {
-            if Arc::ptr_eq(&entry.endpoint, endpoint) {
-                if entry.loading.as_ref().is_some_and(|f| !Arc::ptr_eq(&f.endpoint, endpoint)) {
-                    entry.loading = None;
-                }
-                entry.at = Instant::now();
-                entry.value = Some(value);
-            } else {
-                *entry = SseEntry { at: Instant::now(), value: Some(value), endpoint: endpoint.clone(), loading: None };
-            }
-        } else if self.sse_entries.len() < MAX_ENTRIES {
-            self.sse_entries.insert(
-                id,
-                SseEntry { at: Instant::now(), value: Some(value), endpoint: endpoint.clone(), loading: None },
-            );
-        }
-    }
-}
-
-pub(in crate::worktrees) fn store_if_current(
-    app: &App,
-    id: Uuid,
-    refresh: bool,
-    endpoint: &Arc<crate::opencode::Endpoint>,
-    revision: u64,
-    value: Arc<Catalogue>,
-) {
-    // Acquire `inner` (workspace inventory) before `linked_events` (matching `App::remove` ->
-    // `forget`) so a concurrent close/forget can neither invert lock order nor leave post-forget
-    // entries behind.
-    let workspaces = app.inner.lock().unwrap();
-    if !workspaces.workspaces.iter().any(|w| w.id == id) {
-        return;
-    }
-    let mut cache = app.linked_events.lock().unwrap();
-    if !app.native.current(endpoint) {
-        return;
-    }
-    cache.store_entry(id, refresh, endpoint, revision, value);
 }
 
 fn invalidate_mode(app: &App, blocking: bool) {
@@ -413,6 +332,7 @@ impl Drop for HttpFlightGuard<'_> {
             && entry.loading.as_ref().is_some_and(|f| f.id == self.flight_id)
         {
             entry.loading = None;
+            entry.pending_refreshed_on_miss = false;
             if entry.value.is_none() {
                 cache.http_entries.remove(&self.workspace_id);
             }
@@ -424,29 +344,30 @@ async fn run_http_scan(
     app: &App,
     w: &Workspace,
     pinned_endpoint: Option<&Arc<crate::opencode::Endpoint>>,
-) -> Result<(HttpSnapshot, Option<Arc<crate::opencode::Endpoint>>), Error> {
+) -> HttpScanOutcome {
     let started = Instant::now();
-    let out = match probe_root_checkout(w).await? {
-        RootCheckout::NonGit => Ok((HttpSnapshot::NonGit, None)),
-        RootCheckout::MissingGit => Ok((HttpSnapshot::MissingGit, None)),
-        RootCheckout::Git(res) => {
-            let local = *res?;
+    let out = match probe_root_checkout(w).await {
+        Err(err) => Err((err, None)),
+        Ok(RootCheckout::NonGit) => Ok((HttpSnapshot::NonGit, None)),
+        Ok(RootCheckout::MissingGit) => Ok((HttpSnapshot::MissingGit, None)),
+        Ok(RootCheckout::Git(Err(err))) => Err((err, None)),
+        Ok(RootCheckout::Git(Ok(local))) => {
             let endpoint = match pinned_endpoint {
                 Some(ep) => {
                     if !app.native.current(ep) {
-                        return Err(crate::opencode::upstream_error());
+                        return Err((crate::opencode::upstream_error(), Some(Arc::clone(ep))));
                     }
                     Arc::clone(ep)
                 }
-                None => app
-                    .native
-                    .acquire(tokio::time::Instant::now() + Duration::from_secs(12))
-                    .await
-                    .map_err(|_| crate::opencode::upstream_error())?,
+                None => match app.native.acquire(tokio::time::Instant::now() + Duration::from_secs(12)).await {
+                    Ok(ep) => ep,
+                    Err(_) => return Err((crate::opencode::upstream_error(), None)),
+                },
             };
-            let cat =
-                catalogue_at_with_local(app, w, true, Some(&endpoint), Duration::from_secs(12), Some(local)).await?;
-            Ok((HttpSnapshot::Git(Arc::new(cat)), Some(endpoint)))
+            match catalogue_at_with_local(app, w, true, Some(&endpoint), Duration::from_secs(12), Some(*local)).await {
+                Ok(cat) => Ok((HttpSnapshot::Git(Arc::new(cat)), Some(endpoint))),
+                Err(err) => Err((err, Some(endpoint))),
+            }
         }
     };
     crate::bench::trace_elapsed("http-worktree-inventory", started);
@@ -458,83 +379,78 @@ fn finish_http_scan(
     w: &Workspace,
     flight_id: Uuid,
     epoch: u64,
-    mark_refreshed_on_miss: bool,
-    outcome: Result<(HttpSnapshot, Option<Arc<crate::opencode::Endpoint>>), Error>,
+    outcome: HttpScanOutcome,
 ) -> HttpFlightResult {
-    let (result, emit_changed) = {
-        let workspaces = app.inner.lock().unwrap();
-        let alive = workspaces.workspaces.iter().any(|item| item.id == w.id);
-        let mut cache = app.linked_events.lock().unwrap();
-        if !alive {
-            cache.http_entries.remove(&w.id);
-            return Some(Err(from_error(error(Status::NOT_FOUND, "Workspace not found"))));
-        }
-        let owns_flight =
-            cache.http_entries.get(&w.id).and_then(|e| e.loading.as_ref()).is_some_and(|f| f.id == flight_id);
-        match outcome {
-            Ok((snapshot, endpoint)) => {
-                let endpoint_current = endpoint.as_ref().is_none_or(|ep| app.native.current(ep));
-                if !owns_flight || !endpoint_current || !cache.valid(epoch, snapshot.project()) {
-                    if owns_flight && let Some(entry) = cache.http_entries.get_mut(&w.id) {
-                        entry.loading = None;
-                        if entry.value.is_none() {
-                            cache.http_entries.remove(&w.id);
-                        }
-                    }
-                    (None, false)
-                } else {
-                    let changed = cache
-                        .http_entries
-                        .get(&w.id)
-                        .and_then(|e| e.value.as_ref())
-                        .is_some_and(|prev| !prev.same_snapshot(&snapshot));
-                    cache.invalidate_sse_for_http_change(w.id, endpoint.as_ref(), &snapshot);
-                    cache.evict_http_if_full(w.id);
-                    if let Some(entry) = cache.http_entries.get_mut(&w.id) {
-                        entry.at = Instant::now();
-                        entry.expired = false;
-                        entry.retry_at = None;
-                        entry.require_validation = false;
-                        entry.refreshed_on_miss = mark_refreshed_on_miss;
-                        entry.value = Some(snapshot.clone());
-                        entry.endpoint = endpoint;
-                        entry.loading = None;
-                    } else if cache.http_entries.len() < MAX_ENTRIES {
-                        cache.http_entries.insert(
-                            w.id,
-                            HttpEntry {
-                                at: Instant::now(),
-                                expired: false,
-                                retry_at: None,
-                                require_validation: false,
-                                refreshed_on_miss: mark_refreshed_on_miss,
-                                value: Some(snapshot.clone()),
-                                endpoint,
-                                loading: None,
-                            },
-                        );
-                    }
-                    (Some(Ok(snapshot)), changed)
-                }
-            }
-            Err(err) => {
-                let valid = cache.valid(epoch, None);
+    // Keep `workspaces` (`app.inner`) locked through `app.emit` (after dropping `cache`), matching
+    // `App::remove` so `workspace.worktreesChanged` can never be emitted after `workspace.stopped`.
+    let workspaces = app.inner.lock().unwrap();
+    let alive = workspaces.workspaces.iter().any(|item| item.id == w.id);
+    let mut cache = app.linked_events.lock().unwrap();
+    if !alive {
+        cache.http_entries.remove(&w.id);
+        return Some(Err((from_error(error(Status::NOT_FOUND, "Workspace not found")), None)));
+    }
+    let owns_flight = cache.http_entries.get(&w.id).and_then(|e| e.loading.as_ref()).is_some_and(|f| f.id == flight_id);
+    let (result, emit_changed) = match outcome {
+        Ok((snapshot, endpoint)) => {
+            let endpoint_current = endpoint.as_ref().is_none_or(|ep| app.native.current(ep));
+            if !owns_flight || !endpoint_current || !cache.valid(epoch, snapshot.project()) {
                 if owns_flight && let Some(entry) = cache.http_entries.get_mut(&w.id) {
                     entry.loading = None;
-                    if valid {
-                        entry.retry_at = Some(Instant::now() + MAX_AGE);
-                    }
+                    entry.pending_refreshed_on_miss = false;
                     if entry.value.is_none() {
                         cache.http_entries.remove(&w.id);
                     }
                 }
-                if !valid { (None, false) } else { (Some(Err(from_error(err))), false) }
+                (None, false)
+            } else {
+                let changed = cache
+                    .http_entries
+                    .get(&w.id)
+                    .and_then(|e| e.value.as_ref())
+                    .is_some_and(|prev| !prev.same_snapshot(&snapshot));
+                cache.invalidate_sse_for_http_change(w.id, endpoint.as_ref(), &snapshot);
+                cache.evict_http_if_full(w.id);
+                let mut generation = 0u64;
+                let mut refreshed_on_miss = false;
+                if let Some(entry) = cache.http_entries.get_mut(&w.id) {
+                    refreshed_on_miss = entry.pending_refreshed_on_miss;
+                    entry.pending_refreshed_on_miss = false;
+                    entry.generation = entry.generation.wrapping_add(1);
+                    generation = entry.generation;
+                    entry.at = Instant::now();
+                    entry.expired = false;
+                    entry.retry_at = None;
+                    entry.require_validation = false;
+                    entry.refreshed_on_miss = refreshed_on_miss;
+                    entry.value = Some(snapshot.clone());
+                    entry.endpoint = endpoint.clone();
+                    entry.loading = None;
+                }
+                (Some(Ok((snapshot, endpoint, generation, refreshed_on_miss))), changed)
             }
         }
+        Err((err, endpoint)) => {
+            let endpoint_current = endpoint.as_ref().is_none_or(|ep| app.native.current(ep));
+            let valid = endpoint_current && cache.valid(epoch, None);
+            if owns_flight && let Some(entry) = cache.http_entries.get_mut(&w.id) {
+                entry.loading = None;
+                entry.pending_refreshed_on_miss = false;
+                if valid {
+                    entry.retry_at = Some(Instant::now() + MAX_AGE);
+                }
+                if entry.value.is_none() {
+                    cache.http_entries.remove(&w.id);
+                }
+            }
+            if !valid { (None, false) } else { (Some(Err((from_error(err), endpoint))), false) }
+        }
     };
+    drop(cache);
     if emit_changed {
         app.emit(json!({"type":"workspace.worktreesChanged","workspaceId":w.id}));
     }
+    drop(workspaces);
     result
 }
 
@@ -543,24 +459,89 @@ pub(in crate::worktrees) async fn http_list(
     w: &Workspace,
     mode: ReadMode,
 ) -> Result<HttpSnapshot, Error> {
-    http_read_core(app, Some(app), w, mode, false, None).await.map(|hit| hit.snapshot)
+    if mode == ReadMode::Cached {
+        let cached = {
+            let workspaces = app.inner.lock().unwrap();
+            if !workspaces.workspaces.iter().any(|item| item.id == w.id) {
+                return Err(error(Status::NOT_FOUND, "Workspace not found"));
+            }
+            let mut cache = app.linked_events.lock().unwrap();
+            if let Some(entry) = cache.http_entries.get_mut(&w.id)
+                && entry.endpoint.as_ref().is_some_and(|ep| !app.native.current(ep))
+            {
+                entry.value = None;
+                entry.endpoint = None;
+                entry.expired = true;
+                entry.retry_at = None;
+                if entry.loading.is_none() {
+                    cache.http_entries.remove(&w.id);
+                }
+            }
+            let epoch = cache.stamp();
+            let now = Instant::now();
+            if let Some(entry) = cache.http_entries.get(&w.id)
+                && let Some(val) = &entry.value
+                && !entry.require_validation
+            {
+                let fresh = !entry.expired && entry.at.elapsed() < MAX_AGE;
+                let display = val.clone();
+                if !fresh {
+                    let can_retry = entry.retry_at.is_none_or(|t| t <= now);
+                    if entry.loading.is_none() && can_retry {
+                        let (done, receive) = tokio::sync::oneshot::channel();
+                        let read = async move { receive.await.ok().flatten() }.boxed().shared();
+                        let flight_id = Uuid::new_v4();
+                        if let Some(e) = cache.http_entries.get_mut(&w.id) {
+                            e.pending_refreshed_on_miss = false;
+                            e.loading = Some(HttpFlight { id: flight_id, epoch, read });
+                        }
+                        let (shared, w_owned) = (app.clone(), w.clone());
+                        tokio::spawn(async move {
+                            let mut guard =
+                                HttpFlightGuard { app: &shared, workspace_id: w_owned.id, flight_id, committed: false };
+                            let outcome = run_http_scan(&shared, &w_owned, None).await;
+                            guard.committed = true;
+                            let res = finish_http_scan(&shared, &w_owned, flight_id, epoch, outcome);
+                            let retry = res.is_none();
+                            let _ = done.send(res);
+                            if retry {
+                                // An invalidation or endpoint rotation overtook the passive
+                                // refresh: follow up immediately without waiting for another
+                                // display request (TS `worktree-inventory.ts:61-78`).
+                                let _ = http_read_core(&shared, &w_owned, ReadMode::Validated, None).await;
+                            }
+                        });
+                    }
+                }
+                Some(display)
+            } else {
+                None
+            }
+        };
+        if let Some(display) = cached {
+            return Ok(display);
+        }
+    }
+    http_read_core(app, w, mode, None).await.map(|hit| hit.snapshot)
 }
 
-pub(crate) async fn http_read(
+pub(crate) async fn http_read(app: &App, w: &Workspace, mode: ReadMode) -> Result<CachedHttp, Error> {
+    http_read_core(app, w, mode, None).await
+}
+
+pub(in crate::worktrees) async fn media_http_read(
     app: &App,
     w: &Workspace,
+    endpoint: &Arc<crate::opencode::Endpoint>,
     mode: ReadMode,
-    mark_refreshed_on_miss: bool,
 ) -> Result<CachedHttp, Error> {
-    http_read_core(app, None, w, mode, mark_refreshed_on_miss, None).await
+    http_read_core(app, w, mode, Some(endpoint)).await
 }
 
 async fn http_read_core(
     app: &App,
-    spawn_app: Option<&Shared>,
     w: &Workspace,
     mode: ReadMode,
-    mark_refreshed_on_miss: bool,
     pinned_endpoint: Option<&Arc<crate::opencode::Endpoint>>,
 ) -> Result<CachedHttp, Error> {
     let mut restarts = 0usize;
@@ -601,49 +582,51 @@ async fn http_read_core(
                 && pinned_endpoint.is_none_or(|ep| entry.endpoint.as_ref().is_none_or(|cur| Arc::ptr_eq(cur, ep)))
             {
                 let fresh = !entry.expired && !entry.require_validation && entry.at.elapsed() < MAX_AGE;
-                if mode != ReadMode::Fresh && fresh {
+                let return_fresh = match mode {
+                    ReadMode::Cached | ReadMode::Validated => fresh,
+                    ReadMode::Fresh => false,
+                    ReadMode::RefreshOnMiss(obs_gen) => {
+                        fresh && (entry.generation != obs_gen || entry.refreshed_on_miss)
+                    }
+                };
+                if return_fresh {
                     return Ok(CachedHttp {
                         snapshot: val.clone(),
                         from_cache: true,
                         refreshed_on_miss: entry.refreshed_on_miss,
+                        generation: entry.generation,
                     });
                 }
                 if mode == ReadMode::Cached && !entry.require_validation {
-                    let display = CachedHttp {
+                    return Ok(CachedHttp {
                         snapshot: val.clone(),
                         from_cache: true,
                         refreshed_on_miss: entry.refreshed_on_miss,
-                    };
-                    let can_retry = entry.retry_at.is_none_or(|t| t <= now);
-                    if entry.loading.is_none()
-                        && can_retry
-                        && let Some(shared) = spawn_app
-                    {
-                        let (done, receive) = tokio::sync::oneshot::channel();
-                        let read = async move { receive.await.ok().flatten() }.boxed().shared();
-                        let flight_id = Uuid::new_v4();
-                        if let Some(e) = cache.http_entries.get_mut(&w.id) {
-                            e.loading = Some(HttpFlight { id: flight_id, epoch, read });
-                        }
-                        let (shared, w_owned, pinned) = (shared.clone(), w.clone(), pinned_endpoint.cloned());
-                        tokio::spawn(async move {
-                            let mut guard =
-                                HttpFlightGuard { app: &shared, workspace_id: w_owned.id, flight_id, committed: false };
-                            let outcome = run_http_scan(&shared, &w_owned, pinned.as_ref()).await;
-                            guard.committed = true;
-                            let res = finish_http_scan(&shared, &w_owned, flight_id, epoch, false, outcome);
-                            let _ = done.send(res);
-                        });
-                    }
-                    return Ok(display);
+                        generation: entry.generation,
+                    });
                 }
             }
-            if let Some(flight) = cache.http_entries.get(&w.id).and_then(|e| e.loading.as_ref()) {
+            if let Some(entry) = cache.http_entries.get_mut(&w.id)
+                && let Some(flight) = entry.loading.as_ref()
+            {
                 if flight.epoch == epoch {
-                    Step::Join(epoch, flight.read.clone())
+                    let read = flight.read.clone();
+                    if matches!(mode, ReadMode::RefreshOnMiss(_)) {
+                        entry.pending_refreshed_on_miss = true;
+                    }
+                    #[cfg(test)]
+                    {
+                        cache.test_joins += 1;
+                    }
+                    Step::Join(epoch, read)
                 } else {
                     // Serialize behind the invalidated in-flight scan (TS `worktree-inventory.ts:61-93`).
-                    Step::WaitPrevious(flight.read.clone())
+                    let read = flight.read.clone();
+                    #[cfg(test)]
+                    {
+                        cache.test_wait_previous += 1;
+                    }
+                    Step::WaitPrevious(read)
                 }
             } else {
                 cache.evict_http_if_full(w.id);
@@ -652,14 +635,17 @@ async fn http_read_core(
                 let flight_id = Uuid::new_v4();
                 let entry = cache.http_entries.entry(w.id).or_insert_with(|| HttpEntry {
                     at: now,
+                    generation: 0,
                     expired: true,
                     retry_at: None,
                     require_validation: false,
                     refreshed_on_miss: false,
+                    pending_refreshed_on_miss: false,
                     value: None,
                     endpoint: None,
                     loading: None,
                 });
+                entry.pending_refreshed_on_miss = matches!(mode, ReadMode::RefreshOnMiss(_));
                 entry.loading = Some(HttpFlight { id: flight_id, epoch, read });
                 Step::RunInline { flight_id, epoch, done }
             }
@@ -694,10 +680,17 @@ async fn http_read_core(
                     return Err(crate::opencode::upstream_error());
                 }
                 match outcome {
-                    Some(Ok(snapshot)) if cache.valid(epoch, snapshot.project()) => {
-                        return Ok(CachedHttp { snapshot, from_cache: false, refreshed_on_miss: false });
+                    Some(Ok((snapshot, ep, generation, refreshed_on_miss)))
+                        if ep.as_ref().is_none_or(|e| app.native.current(e))
+                            && cache.valid(epoch, snapshot.project()) =>
+                    {
+                        return Ok(CachedHttp { snapshot, from_cache: false, refreshed_on_miss, generation });
                     }
-                    Some(Err(err)) if cache.valid(epoch, None) => return Err(to_error(err)),
+                    Some(Err((err, ep)))
+                        if ep.as_ref().is_none_or(|e| app.native.current(e)) && cache.valid(epoch, None) =>
+                    {
+                        return Err(to_error(err));
+                    }
                     _ => {
                         drop(cache);
                         drop(workspaces);
@@ -713,17 +706,13 @@ async fn http_read_core(
                 let mut guard = HttpFlightGuard { app, workspace_id: w.id, flight_id, committed: false };
                 let outcome = run_http_scan(app, w, pinned_endpoint).await;
                 guard.committed = true;
-                let res = finish_http_scan(app, w, flight_id, epoch, mark_refreshed_on_miss, outcome);
+                let res = finish_http_scan(app, w, flight_id, epoch, outcome);
                 let _ = done.send(res.clone());
                 match res {
-                    Some(Ok(snapshot)) => {
-                        return Ok(CachedHttp {
-                            snapshot,
-                            from_cache: false,
-                            refreshed_on_miss: mark_refreshed_on_miss,
-                        });
+                    Some(Ok((snapshot, _, generation, refreshed_on_miss))) => {
+                        return Ok(CachedHttp { snapshot, from_cache: false, refreshed_on_miss, generation });
                     }
-                    Some(Err(err)) => return Err(to_error(err)),
+                    Some(Err((err, _))) => return Err(to_error(err)),
                     None => {
                         restarts += 1;
                         if restarts > RESTART_LIMIT {
@@ -744,10 +733,7 @@ pub(in crate::worktrees) async fn history_catalogue(
     w: &Workspace,
     endpoint: &Arc<crate::opencode::Endpoint>,
 ) -> Option<Arc<Catalogue>> {
-    http_read_core(app, Some(app), w, ReadMode::Validated, false, Some(endpoint))
-        .await
-        .ok()
-        .and_then(|hit| hit.snapshot.catalogue())
+    http_read_core(app, w, ReadMode::Validated, Some(endpoint)).await.ok().and_then(|hit| hit.snapshot.catalogue())
 }
 
 pub async fn event_catalogue(app: &Shared, w: &Workspace) -> Option<Arc<Catalogue>> {

@@ -175,16 +175,25 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                 return Err(error(Status::FORBIDDEN, "Session list does not belong to workspace"));
             }
             let rows = native["data"].as_array_mut().ok_or_else(upstream_error)?;
-            let catalogue = crate::worktrees::linked::http_read(
-                &app,
-                &workspace,
-                crate::worktrees::linked::ReadMode::Validated,
-                false,
-            )
-            .await?
-            .snapshot
-            .catalogue()
-            .ok_or_else(upstream_error)?;
+            let hit =
+                crate::worktrees::linked::http_read(&app, &workspace, crate::worktrees::linked::ReadMode::Validated)
+                    .await?;
+            let catalogue = match hit.snapshot.catalogue() {
+                Some(cat)
+                    if !hit.from_cache || {
+                        let c = std::sync::Arc::clone(&cat);
+                        let opened = workspace.path.clone();
+                        tokio::task::spawn_blocking(move || c.root_live_for(&opened)).await.unwrap_or(false)
+                    } =>
+                {
+                    cat
+                }
+                _ => crate::worktrees::linked::http_read(&app, &workspace, crate::worktrees::linked::ReadMode::Fresh)
+                    .await?
+                    .snapshot
+                    .catalogue()
+                    .ok_or_else(upstream_error)?,
+            };
             rows.retain(|row| {
                 row["location"].get("workspaceID").is_none()
                     && row["location"]["directory"].as_str().is_some_and(|p| catalogue.by_directory(p).is_some())
@@ -197,15 +206,34 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
             let mut native: Value = response.json().await.map_err(|_| upstream_error())?;
             if route == "/api/project" {
                 let mut projects = native.as_array().cloned().ok_or_else(upstream_error)?;
-                let catalogue = crate::worktrees::linked::http_read(
+                let catalogue = match crate::worktrees::linked::http_read(
                     &app,
                     &workspace,
                     crate::worktrees::linked::ReadMode::Validated,
-                    false,
                 )
                 .await
-                .ok()
-                .and_then(|hit| hit.snapshot.catalogue());
+                {
+                    Ok(hit) => match hit.snapshot.catalogue() {
+                        Some(cat) if hit.from_cache => {
+                            let c = std::sync::Arc::clone(&cat);
+                            let opened = workspace.path.clone();
+                            if tokio::task::spawn_blocking(move || c.root_live_for(&opened)).await.unwrap_or(false) {
+                                Some(cat)
+                            } else {
+                                crate::worktrees::linked::http_read(
+                                    &app,
+                                    &workspace,
+                                    crate::worktrees::linked::ReadMode::Fresh,
+                                )
+                                .await
+                                .ok()
+                                .and_then(|fresh| fresh.snapshot.catalogue())
+                            }
+                        }
+                        other => other,
+                    },
+                    Err(_) => None,
+                };
                 projects.retain(|project| {
                     project["canonical"].as_str().and_then(|s| dunce::canonicalize(s).ok()).as_ref()
                         == Some(catalogue.as_ref().map_or(&workspace.path, |c| &c.main))

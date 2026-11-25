@@ -182,8 +182,19 @@ async fn repo_target(
     guard: bool,
 ) -> Result<(Workspace, crate::worktrees::linked::Tree), Error> {
     let w = app.workspace(id)?;
-    let hit =
-        crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Validated, false).await?;
+    let hit = crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Validated).await?;
+    let hit = if hit.from_cache && matches!(hit.snapshot, crate::worktrees::linked::HttpSnapshot::NonGit) {
+        let dot_git = w.path.join(".git");
+        let appeared =
+            tokio::task::spawn_blocking(move || std::fs::symlink_metadata(&dot_git).is_ok()).await.unwrap_or(false);
+        if appeared {
+            crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Fresh).await?
+        } else {
+            hit
+        }
+    } else {
+        hit
+    };
     let mut cat = match hit.snapshot {
         crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(missing_git()),
         crate::worktrees::linked::HttpSnapshot::NonGit => return Err(bad("Workspace is not a Git repository")),
@@ -206,13 +217,12 @@ async fn repo_target(
         if !tree_ok {
             let missing_slug = root_live && cat.get(slug).is_err();
             if !missing_slug || !hit.refreshed_on_miss {
-                let fresh = crate::worktrees::linked::http_read(
-                    app,
-                    &w,
-                    crate::worktrees::linked::ReadMode::Fresh,
-                    missing_slug,
-                )
-                .await?;
+                let retry_mode = if missing_slug {
+                    crate::worktrees::linked::ReadMode::RefreshOnMiss(hit.generation)
+                } else {
+                    crate::worktrees::linked::ReadMode::Fresh
+                };
+                let fresh = crate::worktrees::linked::http_read(app, &w, retry_mode).await?;
                 cat = match fresh.snapshot {
                     crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(missing_git()),
                     crate::worktrees::linked::HttpSnapshot::NonGit => {

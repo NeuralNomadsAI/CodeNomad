@@ -143,7 +143,7 @@ pub async fn native_project(app: &App, workspace: &Workspace, project: &str) -> 
     if !crate::opencode::valid_id(project) || project == "global" {
         return Ok(false);
     }
-    let hit = match inventory::http_read(app, workspace, inventory::ReadMode::Validated, false).await {
+    let hit = match inventory::http_read(app, workspace, inventory::ReadMode::Validated).await {
         Ok(hit) => hit,
         Err(_) => return Ok(false),
     };
@@ -162,7 +162,9 @@ pub async fn native_project(app: &App, workspace: &Workspace, project: &str) -> 
                 return Ok(false);
             }
         }
-        let refreshed = match inventory::http_read(app, workspace, inventory::ReadMode::Fresh, live).await {
+        let retry_mode =
+            if live { inventory::ReadMode::RefreshOnMiss(hit.generation) } else { inventory::ReadMode::Fresh };
+        let refreshed = match inventory::http_read(app, workspace, retry_mode).await {
             Ok(res) => res,
             Err(_) => return Ok(false),
         };
@@ -287,7 +289,7 @@ pub async fn placement_verified(
 }
 
 async fn lookup_owned_tree(app: &App, w: &Workspace, directory: &str) -> Result<Option<linked::Tree>, ()> {
-    let hit = inventory::http_read(app, w, inventory::ReadMode::Validated, false).await.map_err(|_| ())?;
+    let hit = inventory::http_read(app, w, inventory::ReadMode::Validated).await.map_err(|_| ())?;
     let Some(cat) = hit.snapshot.catalogue() else {
         return Err(());
     };
@@ -308,7 +310,9 @@ async fn lookup_owned_tree(app: &App, w: &Workspace, directory: &str) -> Result<
         return Ok(found);
     }
     if hit.from_cache && (!root_live || !hit.refreshed_on_miss) {
-        let fresh = inventory::http_read(app, w, inventory::ReadMode::Fresh, root_live).await.map_err(|_| ())?;
+        let retry_mode =
+            if root_live { inventory::ReadMode::RefreshOnMiss(hit.generation) } else { inventory::ReadMode::Fresh };
+        let fresh = inventory::http_read(app, w, retry_mode).await.map_err(|_| ())?;
         let Some(cat) = fresh.snapshot.catalogue() else {
             return Err(());
         };
