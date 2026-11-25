@@ -118,10 +118,10 @@ test("user npm PATH repair remains available without an update and never downgra
     let migrated = false, installs = 0
     const service = new OpenCodeUpdateService(deps({
       resolveBinary: () => ({ path: migrated ? "common" : source, label: "OpenCode", source: migrated ? "path" : source }),
-      probeBinary: () => ({ valid: true, version: "2.3.3" }),
+      probeBinary: () => ({ valid: true, version: "2.4.2" }),
       resolveLatestVersion: async () => minimum,
       upgradeBinary: async (_binary, target) => {
-        assert.equal(target, "2.3.3")
+        assert.equal(target, "2.4.2")
         installs++; migrated = true
         return { success: true, version: target }
       },
@@ -244,7 +244,7 @@ test("coalesces overlapping installations and never downgrades a newer version",
   release()
   await Promise.all([first, second])
   assert.equal(upgrades, 1)
-  version = "2.3.999"
+  version = "2.4.999"
   assert.equal((await service.getStatus()).updateAvailable, false)
   assert.equal((await service.upgrade()).version, version)
   assert.equal(upgrades, 1)
@@ -332,8 +332,8 @@ test("optional upgrades retain explicit activation for an admitted but older dae
     return value
   }
   const service = new OpenCodeUpdateService(deps({
-    probeBinary: () => ({ valid: true, version: installed }), resolveLatestVersion: async () => "2.3.3",
-    upgradeBinary: async () => { installed = "2.3.3"; return { success: true, version: installed } },
+    probeBinary: () => ({ valid: true, version: installed }), resolveLatestVersion: async () => "2.4.2",
+    upgradeBinary: async () => { installed = "2.4.2"; return { success: true, version: installed } },
     lifecycle: async () => ({ discover: async () => endpoint(), ensure: async () => endpoint(),
       restart: async () => { restarts++; daemon = installed; return endpoint() } }),
   }))
@@ -383,7 +383,7 @@ test("same-version troubleshooting restart is explicit for host and WSL; reload 
 })
 
 test("troubleshooting restart refuses unknown identity/builds and a newer daemon", async () => {
-  for (const version of [undefined, "custom-build", "2.3.3"]) {
+  for (const version of [undefined, "custom-build", "2.4.2"]) {
     const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
     if (version) rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
     const service = new OpenCodeUpdateService(deps({
@@ -495,8 +495,8 @@ test("beta version comparison remains numeric", () => {
 })
 
 test("the native contract floor admits current and newer runtimes without a tested-version allowlist", async () => {
-  const latest = "2.4.0"
-  for (const version of ["2.3.2", "2.3.3", "2.3.4", latest, "3.0.0"]) {
+  const latest = "2.5.0"
+  for (const version of ["2.4.0", "2.4.2", "2.4.3", latest, "3.0.0"]) {
     const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
     rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
     const service = new OpenCodeUpdateService(deps({
@@ -504,19 +504,19 @@ test("the native contract floor admits current and newer runtimes without a test
       lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { throw new Error("must retain daemon") } }),
     }))
     const status = await service.start()
-    assert.equal(status.minimumVersion, "2.3.2")
+    assert.equal(status.minimumVersion, "2.4.0")
     assert.equal(status.recommendedVersion, recommended)
     assert.equal(status.state, "ready")
     assert.equal(status.serviceState, "ready")
     assert.equal(status.versionAssessment, version === recommended ? "tested" : "untested", "only the current recommendation is release-qualified")
     assert.equal(status.incompatibilityReason, undefined)
-    assert.equal(status.canUpgrade, ["2.3.2", "2.3.3", "2.3.4"].includes(version), "offer an optional upgrade below the latest release; never downgrade current or newer runtimes")
+    assert.equal(status.canUpgrade, ["2.4.0", "2.4.2", "2.4.3"].includes(version), "offer an optional upgrade below the latest release; never downgrade current or newer runtimes")
     assert.equal(status.canRestart, false)
   }
 })
 
 test("older daemons require the minimum's native contracts without being started or replaced", async () => {
-  for (const version of ["2.0.27", "2.0.32", "2.1.2", "2.2.2", "2.2.3", "2.2.7", "2.3.0", "2.3.1"]) {
+  for (const version of ["2.0.27", "2.0.32", "2.1.2", "2.2.2", "2.2.3", "2.2.7", "2.3.0", "2.3.1", "2.3.2"]) {
     const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
     rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
     const service = new OpenCodeUpdateService(deps({
@@ -528,7 +528,7 @@ test("older daemons require the minimum's native contracts without being started
     assert.equal(status.incompatibilityReason, "native_contract")
     assert.equal(status.versionAssessment, "incompatible")
     // Admission refuses the daemon itself; it is never started, restarted or replaced implicitly.
-    await assert.rejects(service.start(), /opencode_update_required.*Mission Automations of 2\.3\.2/)
+    await assert.rejects(service.start(), /opencode_update_required.*browser permission check of 2\.4\.0/)
   }
 })
 
@@ -563,7 +563,7 @@ test("custom labels are unverified, not an update demand; optional reload follow
 })
 
 test("production stdout parsing preserves custom labels through discovery and activation", async () => {
-  for (const [stdout, label] of [["custom-build\n", "custom-build"], ["opencode v2.3.2+custom-build\n", "2.3.2+custom-build"],
+  for (const [stdout, label] of [["custom-build\n", "custom-build"], ["opencode v2.4.0+custom-build\n", "2.4.0+custom-build"],
     ["opencode2 vendor-build\n", "vendor-build"], ["", "unknown"]]) {
     const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
     rememberRuntime(endpoint, { version: label!, pid: 123, discovery: "info" })

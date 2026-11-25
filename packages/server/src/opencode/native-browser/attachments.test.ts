@@ -14,6 +14,9 @@ const until = async (condition: () => boolean, label: string, timeout = 5_000) =
   }
 }
 
+/** The live daemon identity the attachment reads before `attach`. */
+const info = (version: string) => ({ version, pid: 1234, urls: [], paths: { tmp: "/tmp" } })
+
 test("NativeBrowserAttachments attaches through an owner, runs each command once, and rechecks ownership per command", async t => {
   const rpcCalls: Array<{ method: string; input: Record<string, unknown> }> = []
   const nativeCalls: Array<{ method: string; params: Record<string, unknown> }> = []
@@ -22,6 +25,7 @@ test("NativeBrowserAttachments attaches through an owner, runs each command once
   const attachedReady = new Promise<string>(resolve => { attached = resolve })
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
+  app.get("/api/info", async () => info("2.4.1"))
   app.get("/api/session/:id", async request => ({
     data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } },
   }))
@@ -104,6 +108,7 @@ test("a reconnect to OpenCode ends the attachment made on the replaced connectio
   const attaches: Array<{ connectionID: string; release: (outcome: string) => void }> = []
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
+  app.get("/api/info", async () => info("2.4.1"))
   app.get("/api/session/:id", async request => ({ data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } } }))
   app.post("/api/rpc/:rpcID/:method", async (request, reply) => {
     const { method } = request.params as { rpcID: string; method: string }
@@ -151,6 +156,7 @@ test("ownership is checked when a queued command's turn comes, and a failed inve
   const attachedReady = new Promise<string>(resolve => { attached = resolve })
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
+  app.get("/api/info", async () => info("2.4.1"))
   app.get("/api/session/:id", async request => ({ data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } } }))
   app.post("/api/rpc/:rpcID/:method", async (request, reply) => {
     const { method } = request.params as { rpcID: string; method: string }
@@ -213,12 +219,14 @@ test("ownership is checked when a queued command's turn comes, and a failed inve
   assert.deepEqual(dispatched, [true], "only the first open reached the preview")
   assert.equal(rpcCalls.filter(call => call.method === "state").length - states <= 1, true, "the refused command publishes nothing")
 })
-test("closing ends a retry wait, and an unreadable command is settled with probes naming the owners", async t => {
+test("a daemon reporting OpenCode older than 2.4 or a custom label is never attached, and an unreadable command is settled with probes naming the owners", async t => {
   const rpcCalls: Array<{ method: string; input: Record<string, unknown> }> = []
   const probes: Array<Record<string, unknown>> = []
   let releaseAttach: (outcome: string) => void = () => {}
+  let live = "2.3.2"
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
+  app.get("/api/info", async () => info(live))
   app.get("/api/session/:id", async request => ({ data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } } }))
   app.post("/api/rpc/:rpcID/:method", async (request, reply) => {
     const { method } = request.params as { rpcID: string; method: string }
@@ -236,11 +244,11 @@ test("closing ends a retry wait, and an unreadable command is settled with probe
     return { endpoint, client: OpenCode.make({ baseUrl: address, fetch: globalThis.fetch }), fetch: globalThis.fetch,
       assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
   }
+  // The shared service admitted 2.4.1; a same-address replacement now answers.
   const connection = runtime("2.4.1")
   const eventBus = new EventBus()
-  // No holder owns the session yet: the attachment waits to retry.
   const attachments = new NativeBrowserAttachments({
-    workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => false } as never,
+    workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
     eventBus,
     nativeParent: { available: true, browserAutomationUnavailable: false, request: async (method: string, params: Record<string, unknown>) => {
       if (method === "browser.probe") probes.push(params)
@@ -251,13 +259,25 @@ test("closing ends a retry wait, and an unreadable command is settled with probe
   t.after(() => attachments.close())
   attachments.hold("hold", "ws", "ses-1")
   await new Promise(resolve => setTimeout(resolve, 300))
-  assert.equal(rpcCalls.some(call => call.method === "attach"), false, "an unowned session is never attached")
+  assert.equal(rpcCalls.some(call => call.method === "attach"), false, "2.3 would let the preview bypass a browser deny")
   const timers = () => process.getActiveResourcesInfo().filter(kind => kind === "Timeout").length
   const waiting = timers()
   attachments.close()
   await new Promise(resolve => setImmediate(resolve))
   assert.ok(timers() < waiting, "closing ends the retry wait, so it never holds the process open")
 
+  live = "local-build"
+  const custom = new NativeBrowserAttachments({
+    workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
+    eventBus, nativeParent: { available: true, browserAutomationUnavailable: false, request: async () => ({ available: false }) } as never,
+    logger: { warn: () => {}, debug: () => {}, info: () => {}, error: () => {}, trace: () => {}, isLevelEnabled: () => false } as never,
+  })
+  custom.hold("hold", "ws", "ses-1")
+  await new Promise(resolve => setTimeout(resolve, 300))
+  custom.close()
+  assert.equal(rpcCalls.some(call => call.method === "attach"), false, "a custom label gives no evidence of the browser permission check")
+
+  live = "2.4.1"
   const current = new NativeBrowserAttachments({
     workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
     eventBus,
@@ -290,6 +310,7 @@ test("a session moved before a queued command's turn refuses it, and inventories
   const attachedReady = new Promise<string>(resolve => { attached = resolve })
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
+  app.get("/api/info", async () => info("2.4.1"))
   app.get("/api/session/:id", async request => ({ data: { id: (request.params as { id: string }).id, location: { directory } } }))
   app.post("/api/rpc/:rpcID/:method", async request => {
     const { method } = request.params as { rpcID: string; method: string }
@@ -354,6 +375,7 @@ test("a command whose ownership check fails is settled as failed", async t => {
   const attachedReady = new Promise<string>(resolve => { attached = resolve })
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
+  app.get("/api/info", async () => info("2.4.1"))
   app.get("/api/session/:id", async (request, reply) => ++reads > 1
     ? reply.code(503).send({ error: "unavailable" })
     : { data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } } })

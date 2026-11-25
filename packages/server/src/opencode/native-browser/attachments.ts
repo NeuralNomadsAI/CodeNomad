@@ -12,6 +12,8 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { locationRequestOptions } from "../compatibility/location"
 import { createRuntimeTransport } from "../compatibility/transport"
+import { MINIMUM_OPENCODE_VERSION } from "../runtime-support"
+import { compareVersionStrings } from "../../releases/release-monitor"
 import { PreviewTab, type BrowserOutcome, type PreviewHost } from "./commands"
 
 /** OpenCode's desktop browser contract (`@opencode/plugin-browser/rpc`). */
@@ -248,12 +250,17 @@ class SessionAttachment {
         const [owner] = owners
         this.owners = owners
         const connection = owner && await this.workspaceManager.getSharedServiceConnection(owner)
-        if (connection) {
+        const client = connection && this.attachClient(connection)
+        // 2.3 accepts this attachment, but its blanket browser grant overrides a configured `browser` deny.
+        // The daemon about to receive `attach` must report a numbered 2.4 release; a custom label never attaches.
+        if (client && compareVersionStrings((await client.server.info()).version ?? "", MINIMUM_OPENCODE_VERSION) < 0) {
+          wait = UNAVAILABLE_RETRY_MS
+        } else if (connection) {
           this.workspaceID = owner
           this.connection = connection
           this.location = location
           this.connectionID = randomUUID()
-          const outcome = await this.rpc("attach", { version: VERSION }, signal, this.attachClient(connection))
+          const outcome = await this.rpc("attach", { version: VERSION }, signal, client)
           // Another desktop took the session over: this one attaches again once every view has released it.
           if (outcome === "replaced") { this.connectionID = undefined; this.cancelRequests(); return }
         }
