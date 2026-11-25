@@ -74,14 +74,12 @@ impl Cache {
             self.saving = None;
         }
         if std::mem::take(&mut self.dirty) {
-            let store = store.clone();
-            let entries = self.entries.clone();
+            let bytes = timeline::encode_saved_outlines(&self.entries);
+            let write = store.start_save_outlines(bytes);
             let (tx, rx) = bounded(1);
             self.saving = Some(rx);
             platform::spawn(async move {
-                let _ = store
-                    .save_outlines(timeline::encode_saved_outlines(&entries))
-                    .await;
+                let _ = write.await;
                 let _ = tx.send(()).await;
                 wake();
             });
@@ -94,6 +92,11 @@ impl Cache {
         self.saving = None;
         self.dirty = false;
         self.invalidated_while_loading.clear();
+    }
+
+    pub(crate) fn clear_saved(&mut self) {
+        self.entries.clear();
+        self.reset_persistence();
     }
 
     pub(crate) fn mark_dirty_if_nonempty(&mut self) {

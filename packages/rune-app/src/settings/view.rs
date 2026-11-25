@@ -27,12 +27,19 @@ enum CloseConfirm {
     Memory,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AfterPaletteSave {
+    Close,
+    Section(Section),
+}
+
 #[derive(Default)]
 pub(super) struct Window {
     shared: Rc<RefCell<Preferences>>,
     token: Option<Rc<Cell<bool>>>,
     close_request: Option<Rc<CloseRequest>>,
     confirm_close: Option<CloseConfirm>,
+    after_palette_save: Option<AfterPaletteSave>,
     closing: bool,
     general: super::general::Controls,
     transcript_picker: Cell<Option<super::TranscriptRow>>,
@@ -146,7 +153,12 @@ impl Window {
         {
             self.general = general;
             self.section = Section::General;
-            self.confirm_close = self.general.dirty().then_some(CloseConfirm::Palette);
+            let saving = self.general.busy(&self.shared.borrow());
+            if saving {
+                self.after_palette_save = Some(AfterPaletteSave::Close);
+            } else {
+                self.confirm_close = self.general.dirty().then_some(CloseConfirm::Palette);
+            }
         }
         self
     }
@@ -184,6 +196,10 @@ impl Window {
         if self.config_files.busy() {
             return;
         }
+        if self.general.busy(&self.shared.borrow()) {
+            self.after_palette_save = Some(AfterPaletteSave::Close);
+            return;
+        }
         self.info.close();
         {
             let mut prefs = self.shared.borrow_mut();
@@ -205,10 +221,12 @@ impl Window {
     }
 
     fn retain_editor_on_native_close(&mut self) -> bool {
+        let palette_saving = self.general.busy(&self.shared.borrow());
         if (!self.memory_editor.has_unsaved()
             && !self.config_files.dirty()
             && !self.config_files.busy()
-            && !self.general.dirty())
+            && !self.general.dirty()
+            && !palette_saving)
             || self.token.as_ref().is_some_and(|token| token.get())
         {
             return false;
@@ -223,7 +241,7 @@ impl Window {
             self.config_files.suspend();
             *request.config_reopen.borrow_mut() = Some(std::mem::take(&mut self.config_files));
         }
-        if self.general.dirty() {
+        if self.general.dirty() || palette_saving {
             *request.palette_reopen.borrow_mut() = Some(std::mem::take(&mut self.general));
         }
         let mut prefs = self.shared.borrow_mut();
@@ -364,9 +382,15 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-info" => Section::Info,
                     _ => Section::General,
                 };
-                if next != s.section && s.general.dirty() {
-                    s.pending_section = Some(next);
-                    return;
+                if next != s.section {
+                    if s.general.busy(&s.shared.borrow()) {
+                        s.after_palette_save = Some(AfterPaletteSave::Section(next));
+                        return;
+                    }
+                    if s.general.dirty() {
+                        s.pending_section = Some(next);
+                        return;
+                    }
                 }
                 s.switch_section(next);
             },
@@ -539,11 +563,14 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         ) {
             layers.push(editor);
         }
+        let palette_saving = s.general.busy(&prefs);
         let active_confirm_close = match s.confirm_close {
             Some(CloseConfirm::ConfigFiles) if s.config_files.dirty() => {
                 Some(CloseConfirm::ConfigFiles)
             }
-            Some(CloseConfirm::Palette) if s.general.dirty() => Some(CloseConfirm::Palette),
+            Some(CloseConfirm::Palette) if s.general.dirty() && !palette_saving => {
+                Some(CloseConfirm::Palette)
+            }
             Some(CloseConfirm::Memory) if s.memory_editor.has_unsaved() => {
                 Some(CloseConfirm::Memory)
             }
@@ -585,7 +612,10 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     }
                 },
             ));
-        } else if let Some(next_section) = s.pending_section {
+        } else if let Some(next_section) = s
+            .pending_section
+            .filter(|_| s.general.dirty() && !palette_saving)
+        {
             layers.push(super::config_files::confirm_discard(
                 move |s: &mut Window, accept, _| {
                     s.pending_section = None;

@@ -1,4 +1,4 @@
-use super::{FILE_DRAFT_BYTES, MAX_BYTES, OUTLINE_BYTES, Result};
+use super::{ClearOutcome, FILE_DRAFT_BYTES, MAX_BYTES, OUTLINE_BYTES, Result};
 
 #[derive(Clone)]
 pub struct Store {
@@ -13,19 +13,29 @@ struct BrowserStage {
     restore_enabled: std::cell::Cell<bool>,
     snapshot_suppressed: std::cell::Cell<bool>,
     frozen: std::cell::Cell<bool>,
+    generation: std::cell::Cell<u64>,
     departing: std::cell::Cell<bool>,
     openings: std::cell::RefCell<Option<crate::workspace::opening::Openings>>,
 }
 impl BrowserStage {
+    fn admit(&self) -> Option<u64> {
+        (!self.frozen.get() && self.restore_enabled.get()).then(|| self.generation.get())
+    }
+    fn allows(&self, generation: u64) -> bool {
+        !self.frozen.get() && self.restore_enabled.get() && self.generation.get() == generation
+    }
+    fn bump_generation(&self) {
+        self.generation.set(self.generation.get().wrapping_add(1));
+    }
     fn depart(&self) {
         if self.departing.replace(true) {
             return;
         }
         let current = self.payload.try_borrow();
-        let release_records = if self.restore_enabled.get()
-            && !self.snapshot_suppressed.get()
-            && !self.frozen.get()
-        {
+        let release_records = if self.frozen.get() {
+            // An unconfirmed startup-state mutation is still in flight; keep workspace records.
+            false
+        } else if self.restore_enabled.get() && !self.snapshot_suppressed.get() {
             current.as_ref().ok().is_some_and(|current| {
                 !current.0.is_empty()
                     && std::str::from_utf8(&current.0).is_ok_and(|text| {
@@ -91,12 +101,10 @@ impl Store {
             .session_storage()
             .map_err(|_| "state store unavailable")?
             .ok_or("state store unavailable")?;
-        let restore_enabled = storage
-            .get_item(Self::RESTORE_DISABLED)
-            .ok()
-            .flatten()
-            .as_deref()
-            != Some("true");
+        let restore_enabled = match storage.get_item(Self::RESTORE_DISABLED) {
+            Ok(None) => true,
+            Ok(Some(_)) | Err(_) => false,
+        };
         let staged = std::rc::Rc::new(BrowserStage {
             window: window.clone(),
             storage: storage.clone(),
@@ -104,6 +112,7 @@ impl Store {
             restore_enabled: std::cell::Cell::new(restore_enabled),
             snapshot_suppressed: std::cell::Cell::new(false),
             frozen: std::cell::Cell::new(false),
+            generation: std::cell::Cell::new(0),
             departing: Default::default(),
             openings: Default::default(),
         });
@@ -143,58 +152,78 @@ impl Store {
             .storage
             .get_item(Self::RESTORE_DISABLED)
             .map_err(|_| "state read failed")?;
-        let enabled = disabled.as_deref() != Some("true");
+        let enabled = match disabled.as_deref() {
+            None => true,
+            Some("true") => false,
+            Some(_) => {
+                self.staged.restore_enabled.set(false);
+                return Err("invalid restore preference".into());
+            }
+        };
         self.staged.restore_enabled.set(enabled);
         Ok(enabled)
     }
     pub fn begin_startup_mutation(&self) {
         self.staged.frozen.set(true);
+        self.staged.bump_generation();
         self.staged.payload.borrow_mut().0.clear();
     }
     pub async fn set_restore_enabled(&self, enabled: bool) -> Result<bool> {
+        self.staged.frozen.set(true);
+        self.staged.bump_generation();
         if enabled {
-            if let Err(_) = self.storage.remove_item(Self::RESTORE_DISABLED) {
+            if !self.staged.restore_enabled.get() && !self.remove_startup_keys().all_ok() {
+                self.staged.frozen.set(false);
+                return Err("startup state cleanup failed".into());
+            }
+            if self.storage.remove_item(Self::RESTORE_DISABLED).is_err() {
                 self.staged.frozen.set(false);
                 return Err("state write failed".into());
             }
             self.staged.restore_enabled.set(true);
             self.staged.snapshot_suppressed.set(false);
+            self.staged.bump_generation();
             self.staged.frozen.set(false);
             Ok(true)
         } else {
-            if let Err(_) = self.storage.set_item(Self::RESTORE_DISABLED, "true") {
+            if self
+                .storage
+                .set_item(Self::RESTORE_DISABLED, "true")
+                .is_err()
+            {
                 self.staged.frozen.set(false);
                 return Err("state write failed".into());
             }
             self.staged.restore_enabled.set(false);
             self.staged.snapshot_suppressed.set(false);
+            self.staged.bump_generation();
             self.staged.payload.borrow_mut().0.clear();
-            let cleanup_ok = self.remove_startup_keys().is_ok();
+            let cleanup_ok = self.remove_startup_keys().all_ok();
             self.staged.frozen.set(false);
             Ok(cleanup_ok)
         }
     }
-    pub async fn clear_startup_state(&self) -> Result<()> {
+    pub async fn clear_startup_state(&self) -> Result<ClearOutcome> {
+        self.staged.frozen.set(true);
+        self.staged.bump_generation();
         self.staged.payload.borrow_mut().0.clear();
-        self.staged.snapshot_suppressed.set(true);
-        let result = self.remove_startup_keys();
+        let outcome = self.remove_startup_keys();
+        if outcome.state_ok {
+            self.staged.snapshot_suppressed.set(true);
+        }
         self.staged.frozen.set(false);
-        result
+        Ok(outcome)
     }
-    fn remove_startup_keys(&self) -> Result<()> {
-        self.storage
-            .remove_item(Self::KEY)
-            .map_err(|_| "state write failed")?;
-        self.storage
-            .remove_item(Self::FILE_DRAFTS)
-            .map_err(|_| "state write failed")?;
-        self.storage
-            .remove_item(Self::OUTLINES)
-            .map_err(|_| "state write failed")?;
-        self.storage
-            .remove_item(Self::RELEASED)
-            .map_err(|_| "state write failed")?;
-        Ok(())
+    fn remove_startup_keys(&self) -> ClearOutcome {
+        let key_ok = self.storage.remove_item(Self::KEY).is_ok();
+        let released_ok = self.storage.remove_item(Self::RELEASED).is_ok();
+        let drafts_ok = self.storage.remove_item(Self::FILE_DRAFTS).is_ok();
+        let outlines_ok = self.storage.remove_item(Self::OUTLINES).is_ok();
+        ClearOutcome {
+            state_ok: key_ok && released_ok,
+            outlines_ok,
+            drafts_ok,
+        }
     }
     pub async fn load_file_drafts(&self) -> Result<Option<Vec<u8>>> {
         let raw = self
@@ -229,25 +258,49 @@ impl Store {
             .filter(|text| text.len() <= OUTLINE_BYTES)
             .map(String::into_bytes))
     }
+    pub fn start_save_outlines(
+        &self,
+        bytes: Vec<u8>,
+    ) -> impl std::future::Future<Output = Result<()>> + 'static {
+        let generation = self.staged.admit();
+        let storage = self.storage.clone();
+        let staged = self.staged.clone();
+        async move {
+            let Some(generation) = generation else {
+                return Ok(());
+            };
+            if !staged.allows(generation) {
+                return Ok(());
+            }
+            if bytes.len() > OUTLINE_BYTES || staged.departing.get() {
+                return Err("outline store unavailable".into());
+            }
+            storage
+                .set_item(Self::OUTLINES, std::str::from_utf8(&bytes)?)
+                .map_err(|_| "outline write failed".into())
+        }
+    }
     pub async fn save_outlines(&self, bytes: Vec<u8>) -> Result<()> {
-        if self.staged.frozen.get() || !self.staged.restore_enabled.get() {
-            return Ok(());
+        self.start_save_outlines(bytes).await
+    }
+    pub fn start_save(
+        &self,
+        bytes: Vec<u8>,
+    ) -> impl std::future::Future<Output = Result<()>> + 'static {
+        let generation = self.staged.admit();
+        let store = self.clone();
+        async move {
+            let Some(generation) = generation else {
+                return Ok(());
+            };
+            if !store.staged.allows(generation) || store.staged.payload.borrow().0 != bytes {
+                return Ok(());
+            }
+            store.save_now(&bytes)
         }
-        if bytes.len() > OUTLINE_BYTES || self.staged.departing.get() {
-            return Err("outline store unavailable".into());
-        }
-        self.storage
-            .set_item(Self::OUTLINES, std::str::from_utf8(&bytes)?)
-            .map_err(|_| "outline write failed".into())
     }
     pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
-        if self.staged.frozen.get()
-            || !self.staged.restore_enabled.get()
-            || self.staged.payload.borrow().0 != bytes
-        {
-            return Ok(());
-        }
-        self.save_now(&bytes)
+        self.start_save(bytes).await
     }
     fn save_now(&self, bytes: &[u8]) -> Result<()> {
         if self.staged.frozen.get() || !self.staged.restore_enabled.get() {

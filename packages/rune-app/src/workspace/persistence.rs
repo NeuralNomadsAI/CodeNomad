@@ -1,6 +1,8 @@
 use super::{Snapshot, decode, encode_for_save};
 use crate::{
-    files::document::store::Store as Documents, history::Result, platform::storage::Store,
+    files::document::store::Store as Documents,
+    history::Result,
+    platform::storage::{ClearOutcome, Store},
 };
 #[cfg(not(target_arch = "wasm32"))]
 use codenomad_client::TryRecvError;
@@ -9,7 +11,7 @@ use std::path::PathBuf;
 
 type Loaded = (
     Store,
-    bool,
+    Option<bool>,
     Result<Option<Snapshot>>,
     Result<Option<Vec<u8>>>,
 );
@@ -22,6 +24,7 @@ const FILE_DRAFT_MAX_WAIT_SECS: f64 = 2.0;
 pub(super) struct Persistence {
     pub loading: bool,
     pub restore_enabled: bool,
+    pub restore_read_error: bool,
     pub mutating: bool,
     pub read_error: bool,
     pub write_error: bool,
@@ -53,6 +56,7 @@ impl Persistence {
         Self {
             loading: false,
             restore_enabled: true,
+            restore_read_error: false,
             mutating: false,
             read_error: false,
             write_error: false,
@@ -103,19 +107,24 @@ impl Persistence {
                 let store = Store::open(directory).await?;
                 #[cfg(target_arch = "wasm32")]
                 let store = Store::open().await?;
-                let restore_enabled = store.restore_enabled().await.unwrap_or(true);
-                let (snapshot, drafts) = if restore_enabled {
-                    let snapshot = store.load().await.and_then(|bytes| {
-                        bytes
-                            .map(|bytes| {
-                                decode(&bytes).map_err(|_| "invalid saved workspace".into())
-                            })
-                            .transpose()
-                    });
-                    let drafts = store.load_file_drafts().await;
-                    (snapshot, drafts)
-                } else {
-                    (Ok(None), Ok(None))
+                let restore_enabled = store.restore_enabled().await.ok();
+                let (snapshot, drafts) = match restore_enabled {
+                    Some(true) => {
+                        let snapshot = store.load().await.and_then(|bytes| {
+                            bytes
+                                .map(|bytes| {
+                                    decode(&bytes).map_err(|_| "invalid saved workspace".into())
+                                })
+                                .transpose()
+                        });
+                        let drafts = store.load_file_drafts().await;
+                        (snapshot, drafts)
+                    }
+                    Some(false) => (Ok(None), Ok(None)),
+                    None => (
+                        Err("invalid restore preference".into()),
+                        Err("invalid restore preference".into()),
+                    ),
                 };
                 Ok((store, restore_enabled, snapshot, drafts))
             }
@@ -130,16 +139,25 @@ impl Persistence {
         self.loading = false;
         match result {
             Ok((store, restore_enabled, snapshot, drafts)) => {
-                self.restore_enabled = restore_enabled;
-                self.read_error = restore_enabled && snapshot.is_err();
-                let snapshot = if restore_enabled {
+                self.restore_read_error = restore_enabled.is_none();
+                let enabled = restore_enabled.unwrap_or(false);
+                self.restore_enabled = enabled;
+                self.read_error = self.restore_read_error || (enabled && snapshot.is_err());
+                let snapshot = if enabled {
                     snapshot.ok().flatten()
                 } else {
                     None
                 };
                 self.saved = snapshot.as_ref().map_or(0, |s| s.revision);
                 self.store = Some(store);
-                Some((snapshot, if restore_enabled { drafts } else { Ok(None) }))
+                Some((
+                    snapshot,
+                    if enabled || self.restore_read_error {
+                        drafts
+                    } else {
+                        Ok(None)
+                    },
+                ))
             }
             Err(_) => {
                 self.read_error = true;
@@ -199,14 +217,20 @@ impl Persistence {
         let (out, input) = bounded(1);
         self.saving = Some(input);
         let revision = snapshot.revision;
+        let write = store.start_save(bytes);
         crate::platform::spawn(async move {
-            let ok = store.save(bytes).await.is_ok();
+            let ok = write.await.is_ok();
             let _ = out.send((revision, ok)).await;
             wake();
         });
     }
     pub fn retry(&mut self) {
-        if self.store.is_none() {
+        if self.restore_read_error {
+            self.store = None;
+            self.read_error = false;
+            self.restore_read_error = false;
+            self.file_draft_read_error = false;
+        } else if self.store.is_none() {
             self.read_error = false;
         }
         self.write_error = false;
@@ -274,8 +298,20 @@ impl Persistence {
         }
         outlines.reset_persistence();
     }
-    pub fn cancel_startup_mutation(&mut self) {
+    pub fn cancel_startup_mutation(&mut self, outlines: &mut super::outlines::Cache) {
         self.mutating = false;
+        self.saving = None;
+        self.due = 0.0;
+        self.attempted_file_drafts = self.saved_file_drafts;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.saving_file_drafts = None;
+            self.file_drafts_due = 0.0;
+            self.file_draft_retry_requested = true;
+        }
+        if self.restore_enabled {
+            outlines.mark_dirty_if_nonempty();
+        }
     }
     pub fn apply_restore_enabled(
         &mut self,
@@ -286,6 +322,7 @@ impl Persistence {
     ) {
         self.mutating = false;
         self.restore_enabled = enabled;
+        self.restore_read_error = false;
         self.read_error = false;
         self.write_error = false;
         self.partial = false;
@@ -314,7 +351,8 @@ impl Persistence {
                 self.file_draft_retry_requested = true;
             }
         } else {
-            outlines.reset_persistence();
+            documents.discard_unopened_saved_drafts();
+            outlines.clear_saved();
             let drafts_rev = documents.file_draft_revision();
             self.saved = current_revision;
             self.cleared_revision = Some(current_revision);
@@ -329,42 +367,67 @@ impl Persistence {
     }
     pub fn apply_cleared(
         &mut self,
+        outcome: ClearOutcome,
         current_revision: u64,
         documents: &Documents,
         outlines: &mut super::outlines::Cache,
     ) {
         self.mutating = false;
-        outlines.reset_persistence();
-        let drafts_rev = documents.file_draft_revision();
-        self.read_error = false;
-        self.write_error = false;
-        self.partial = false;
-        self.file_draft_error = false;
-        self.file_draft_read_error = false;
         self.saving = None;
         self.retrying_file_drafts = None;
-        self.saved = current_revision;
-        self.cleared_revision = Some(current_revision);
-        self.saved_file_drafts = drafts_rev;
-        self.attempted_file_drafts = drafts_rev;
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.saving_file_drafts = None;
-            self.file_drafts_dirty_revision = drafts_rev;
             self.file_drafts_first_dirty = None;
-            self.file_draft_retry_requested = false;
         }
-        documents.block_file_draft_updates(false);
+        if outcome.state_ok {
+            self.read_error = self.restore_read_error;
+            self.write_error = false;
+            self.partial = false;
+            self.saved = current_revision;
+            self.cleared_revision = Some(current_revision);
+        } else {
+            self.due = 0.0;
+        }
+        if outcome.outlines_ok {
+            outlines.clear_saved();
+        } else if self.restore_enabled {
+            outlines.mark_dirty_if_nonempty();
+        }
+        if outcome.drafts_ok {
+            documents.discard_unopened_saved_drafts();
+            let drafts_rev = documents.file_draft_revision();
+            self.file_draft_error = false;
+            self.file_draft_read_error = self.restore_read_error;
+            self.saved_file_drafts = drafts_rev;
+            self.attempted_file_drafts = drafts_rev;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.file_drafts_dirty_revision = drafts_rev;
+                self.file_draft_retry_requested = false;
+            }
+            if !self.restore_read_error {
+                documents.block_file_draft_updates(false);
+            }
+        } else {
+            // Re-arm any file draft write cancelled by the partial Clear so live edits persist.
+            self.attempted_file_drafts = self.saved_file_drafts;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.file_drafts_due = 0.0;
+                self.file_draft_retry_requested = true;
+            }
+        }
     }
     pub fn suppresses_snapshot(&self, current_revision: u64) -> bool {
         !self.restore_enabled || self.mutating || self.cleared_revision == Some(current_revision)
     }
     pub fn flush(&mut self, snapshot: &Snapshot) -> bool {
+        if self.mutating || self.read_error || self.loading {
+            return false;
+        }
         if self.suppresses_snapshot(snapshot.revision) {
             return true;
-        }
-        if self.read_error || self.loading {
-            return false;
         }
         let Some(store) = &self.store else {
             return true;
@@ -403,7 +466,10 @@ impl Persistence {
         }
     }
     pub fn flush_file_drafts(&mut self, documents: &Documents) -> bool {
-        if !self.restore_enabled || self.mutating {
+        if self.mutating || self.restore_read_error {
+            return false;
+        }
+        if !self.restore_enabled {
             return true;
         }
         #[cfg(target_arch = "wasm32")]
@@ -556,6 +622,8 @@ impl Persistence {
 pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
     super::capture_files_mode(s);
     super::capture(s);
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::settings::startup_state::wait_for_flight(s, std::time::Duration::from_secs(5));
     if let Some(mut ui) = s.workspace.take() {
         ui.openings.close();
         let snapshot = ui.snapshot();

@@ -240,6 +240,9 @@ impl Document {
                 self.write.retry.remove(&Choice::Palette(dark));
             }
         }
+        if mutation.needs_fresh_snapshot(self.snapshot.as_ref().unwrap_or(&Value::Null)) {
+            self.read.fresh_for_write = false;
+        }
         self.stage_value(
             Choice::PaletteMutation,
             ChoiceValue::Palette(Box::new(mutation)),
@@ -570,6 +573,15 @@ impl Document {
         {
             self.invalidate();
         }
+    }
+
+    pub(super) fn needs_fresh_palette_snapshot(&self) -> bool {
+        self.write.pending.contains(&Choice::PaletteMutation)
+            && matches!(
+                self.write.requested.get(&Choice::PaletteMutation),
+                Some(ChoiceValue::Palette(mutation))
+                    if mutation.needs_fresh_snapshot(self.snapshot.as_ref().unwrap_or(&Value::Null))
+            )
     }
 
     fn has_stale_sensitive_write(&self) -> bool {

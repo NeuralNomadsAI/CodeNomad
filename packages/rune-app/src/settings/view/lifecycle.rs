@@ -8,7 +8,10 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             let mut prefs = s.shared.borrow_mut();
             prefs.window_wake = Some(wake);
             if std::mem::take(&mut prefs.open_providers) {
-                if s.general.dirty() && s.section != Section::Providers {
+                if s.section != Section::Providers && s.general.busy(&prefs) {
+                    s.after_palette_save =
+                        Some(super::AfterPaletteSave::Section(Section::Providers));
+                } else if s.general.dirty() && s.section != Section::Providers {
                     s.pending_section = Some(Section::Providers);
                 } else {
                     s.section = Section::Providers;
@@ -37,7 +40,10 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 let mut prefs = s.shared.borrow_mut();
                 let jump = std::mem::take(&mut prefs.open_providers);
                 if jump && !s.config_files.busy() && s.confirm_close.is_none() && !s.closing {
-                    if s.general.dirty() && s.section != Section::Providers {
+                    if s.section != Section::Providers && s.general.busy(&prefs) {
+                        s.after_palette_save =
+                            Some(super::AfterPaletteSave::Section(Section::Providers));
+                    } else if s.general.dirty() && s.section != Section::Providers {
                         s.pending_section = Some(Section::Providers);
                     } else {
                         s.section = Section::Providers;
@@ -60,6 +66,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     .environment
                     .poll(&mut prefs, s.section == Section::Advanced && !s.closing);
                 let changed = prefs.poll();
+                let palette_settled = s.general.settle_save(&mut prefs);
                 let recording_ended = s.section == Section::Shortcuts
                     && s.shortcut_capture
                         .poll(&mut s.recording_shortcut, &prefs, tx);
@@ -68,6 +75,24 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 }
                 let updated =
                     prefs.revision != std::mem::replace(&mut s.seen_revision, prefs.revision);
+                if !s.general.dirty() {
+                    s.pending_section = None;
+                }
+                if !s.general.busy(&prefs)
+                    && let Some(after) = s.after_palette_save.take()
+                    && !s.general.dirty()
+                {
+                    drop(prefs);
+                    match after {
+                        super::AfterPaletteSave::Close => {
+                            s.request_close(tx);
+                        }
+                        super::AfterPaletteSave::Section(next) => {
+                            s.switch_section(next);
+                        }
+                    }
+                    return true;
+                }
                 if matches!(
                     s.confirm_close,
                     Some(super::CloseConfirm::Palette) if !s.general.dirty()
@@ -152,6 +177,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     false
                 };
                 jump | updated
+                    | palette_settled
                     | status_changed
                     | remote_changed
                     | info_changed

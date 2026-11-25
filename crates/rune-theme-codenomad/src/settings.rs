@@ -237,6 +237,7 @@ pub fn segments<S: 'static>(
 
 const PICKER_WIDTH: f32 = 180.0;
 const COMPACT_PICKER_WIDTH: f32 = 136.0;
+const PALETTE_PICKER_WIDTH: f32 = 160.0;
 
 fn table_width(compact: bool) -> f32 {
     if compact {
@@ -290,6 +291,13 @@ pub fn committing_segments<S: 'static>(
 
 pub fn picker(key: &str, label: &str, options: &[&str]) -> Select {
     table_picker(key, label, options, false)
+}
+
+pub fn palette_picker(key: &str, label: &str, options: &[&str]) -> Select {
+    Select::new(key, options)
+        .label(label)
+        .width(PALETTE_PICKER_WIDTH)
+        .appearance(SelectAppearance::Field)
 }
 
 pub fn table_picker(key: &str, label: &str, options: &[&str], compact: bool) -> Select {
@@ -708,13 +716,33 @@ pub fn color_scheme(
         .children(error)
 }
 
-pub fn startup_state_card(title: &str, info: El, switch: El, clear_button: El) -> El {
+pub fn startup_state_card(
+    title: &str,
+    info: El,
+    switch: El,
+    clear_button: El,
+    feedback: Option<(&str, bool)>,
+) -> El {
+    let t = tokens(layout::dark());
+    let notice = feedback.map(|(message, is_error)| {
+        let color = if is_error {
+            t.color("status-error")
+        } else {
+            t.color("text-muted")
+        };
+        text(message)
+            .role(if is_error { "alert" } else { "status" })
+            .text_role(TextRole::Label)
+            .color(color)
+            .key("startup-state-feedback")
+    });
     col()
         .key("startup-state-settings")
         .full_width()
         .separate(Space::Sm)
         .child(setting_row_with_info(title, Some(info), switch))
         .child(row().full_width().justify_end().child(clear_button))
+        .children(notice)
 }
 
 pub fn contrast_controls<S: 'static>(

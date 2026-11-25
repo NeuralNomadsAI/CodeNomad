@@ -104,7 +104,10 @@ impl Files {
             return Ok(true);
         };
         let value: serde_json::Value = serde_json::from_slice(&bytes)?;
-        Ok(value["restoreEnabled"].as_bool().unwrap_or(true))
+        value
+            .get("restoreEnabled")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| "invalid restore preference".into())
     }
     pub(super) fn save_restore_enabled(&self, enabled: bool) -> Result<()> {
         let bytes = serde_json::to_vec(&serde_json::json!({ "restoreEnabled": enabled }))?;
@@ -253,7 +256,9 @@ impl Store {
     pub async fn open(directory: PathBuf) -> Result<Self> {
         let (files, restore_enabled) = tokio::task::spawn_blocking(move || {
             let files = Files::open(directory)?;
-            let restore_enabled = files.restore_enabled().unwrap_or(true);
+            // Only an absent marker defaults to enabled; unreadable/malformed files block writes
+            // until restore_enabled() or set_restore_enabled() resolves them.
+            let restore_enabled = files.restore_enabled().unwrap_or(false);
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>((files, restore_enabled))
         })
         .await??;
@@ -281,11 +286,11 @@ impl Store {
         let gate = self.gate.clone();
         tokio::task::spawn_blocking(move || {
             let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
-            let enabled = files.restore_enabled()?;
+            let result = files.restore_enabled();
             if let Ok(mut gate) = gate.lock() {
-                gate.restore_enabled = enabled;
+                gate.restore_enabled = matches!(result, Ok(true));
             }
-            Ok(enabled)
+            result
         })
         .await?
     }
@@ -299,6 +304,39 @@ impl Store {
         }
         self.cancel_file_drafts_save();
     }
+    fn remove_startup_files(
+        files: &Files,
+        state_lock: &std::sync::Mutex<()>,
+        file_drafts_lock: &std::sync::Mutex<()>,
+        staged: &std::sync::Mutex<Option<Vec<u8>>>,
+        queue: &std::sync::Mutex<FileDraftQueue>,
+    ) -> ClearOutcome {
+        let (state_ok, outlines_ok) = match state_lock.lock() {
+            Ok(_guard) => {
+                if let Ok(mut staged) = staged.lock() {
+                    *staged = None;
+                }
+                let state_ok = files.remove_file("state.json").is_ok();
+                let outlines_ok = files.remove_file("outlines-v1.json").is_ok();
+                (state_ok, outlines_ok)
+            }
+            Err(_) => (false, false),
+        };
+        // Release state_lock before waiting for file_drafts_lock so Preferences placement I/O
+        // on the UI thread is never blocked behind a slow file-draft sync.
+        if let Ok(mut state) = queue.lock() {
+            state.cancel_all();
+        }
+        let drafts_ok = match file_drafts_lock.lock() {
+            Ok(_drafts) => files.remove_file("workspace-file-drafts.json").is_ok(),
+            Err(_) => false,
+        };
+        ClearOutcome {
+            state_ok,
+            outlines_ok,
+            drafts_ok,
+        }
+    }
     pub async fn set_restore_enabled(&self, enabled: bool) -> Result<bool> {
         let files = self.files.clone();
         let state_lock = self.state_lock.clone();
@@ -307,45 +345,72 @@ impl Store {
         let queue = self.file_drafts_queue.clone();
         let gate = self.gate.clone();
         tokio::task::spawn_blocking(move || {
-            if !enabled && let Ok(mut state) = queue.lock() {
+            let was_enabled = if let Ok(mut gate) = gate.lock() {
+                gate.frozen = true;
+                gate.generation = gate.generation.wrapping_add(1);
+                gate.restore_enabled
+            } else {
+                return Err("state store unavailable".into());
+            };
+            if let Ok(mut state) = queue.lock() {
                 state.cancel_all();
             }
-            let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
-            if let Err(err) = files.save_restore_enabled(enabled) {
+            if enabled {
+                if !was_enabled {
+                    // Purge any leftover files from a prior partial Disable before publishing
+                    // restoreEnabled = true so stale data cannot be restored on next launch.
+                    let cleaned = Self::remove_startup_files(
+                        &files,
+                        &state_lock,
+                        &file_drafts_lock,
+                        &staged,
+                        &queue,
+                    );
+                    if !cleaned.all_ok() {
+                        if let Ok(mut gate) = gate.lock() {
+                            gate.frozen = false;
+                        }
+                        return Err("startup state cleanup failed".into());
+                    }
+                }
+                let saved = match state_lock.lock() {
+                    Ok(_guard) => files.save_restore_enabled(true),
+                    Err(_) => Err("state store unavailable".into()),
+                };
+                if let Ok(mut gate) = gate.lock() {
+                    if saved.is_ok() {
+                        gate.restore_enabled = true;
+                        gate.generation = gate.generation.wrapping_add(1);
+                    }
+                    gate.frozen = false;
+                }
+                saved?;
+                return Ok(true);
+            }
+            let saved = match state_lock.lock() {
+                Ok(_guard) => files.save_restore_enabled(false),
+                Err(_) => Err("state store unavailable".into()),
+            };
+            if let Err(err) = saved {
                 if let Ok(mut gate) = gate.lock() {
                     gate.frozen = false;
                 }
                 return Err(err);
             }
             if let Ok(mut gate) = gate.lock() {
-                gate.restore_enabled = enabled;
+                gate.restore_enabled = false;
                 gate.generation = gate.generation.wrapping_add(1);
             }
-            let mut cleanup_ok = true;
-            if !enabled {
-                if let Ok(mut staged) = staged.lock() {
-                    *staged = None;
-                }
-                if let Ok(mut state) = queue.lock() {
-                    state.cancel_all();
-                }
-                cleanup_ok &= files.remove_file("state.json").is_ok();
-                cleanup_ok &= files.remove_file("outlines-v1.json").is_ok();
-                match file_drafts_lock.lock() {
-                    Ok(_drafts) => {
-                        cleanup_ok &= files.remove_file("workspace-file-drafts.json").is_ok();
-                    }
-                    Err(_) => cleanup_ok = false,
-                }
-            }
+            let cleaned =
+                Self::remove_startup_files(&files, &state_lock, &file_drafts_lock, &staged, &queue);
             if let Ok(mut gate) = gate.lock() {
                 gate.frozen = false;
             }
-            Ok(cleanup_ok)
+            Ok(cleaned.all_ok())
         })
         .await?
     }
-    pub async fn clear_startup_state(&self) -> Result<()> {
+    pub async fn clear_startup_state(&self) -> Result<ClearOutcome> {
         let files = self.files.clone();
         let state_lock = self.state_lock.clone();
         let file_drafts_lock = self.file_drafts_lock.clone();
@@ -360,25 +425,12 @@ impl Store {
             if let Ok(mut state) = queue.lock() {
                 state.cancel_all();
             }
-            let result = (|| {
-                let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
-                if let Ok(mut staged) = staged.lock() {
-                    *staged = None;
-                }
-                if let Ok(mut state) = queue.lock() {
-                    state.cancel_all();
-                }
-                files.remove_file("state.json")?;
-                files.remove_file("outlines-v1.json")?;
-                let _drafts = file_drafts_lock
-                    .lock()
-                    .map_err(|_| "state store unavailable")?;
-                files.remove_file("workspace-file-drafts.json")
-            })();
+            let outcome =
+                Self::remove_startup_files(&files, &state_lock, &file_drafts_lock, &staged, &queue);
             if let Ok(mut gate) = gate.lock() {
                 gate.frozen = false;
             }
-            result
+            Ok(outcome)
         })
         .await?
     }
@@ -391,54 +443,74 @@ impl Store {
         })
         .await?
     }
-    pub async fn save_outlines(&self, bytes: Vec<u8>) -> Result<()> {
-        let Some(generation) = self.gate.lock().ok().and_then(|g| g.admit()) else {
-            return Ok(());
-        };
+    pub fn start_save_outlines(
+        &self,
+        bytes: Vec<u8>,
+    ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
+        // Capture generation synchronously at admission so a task polled after Clear cannot pass.
+        let generation = self.gate.lock().ok().and_then(|g| g.admit());
         let files = self.files.clone();
         let state_lock = self.state_lock.clone();
         let gate = self.gate.clone();
-        tokio::task::spawn_blocking(move || {
-            let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
-            if !gate
-                .lock()
-                .map_err(|_| "state store unavailable")?
-                .allows(generation)
-            {
+        async move {
+            let Some(generation) = generation else {
                 return Ok(());
-            }
-            files.save_file("outlines-v1.json", OUTLINE_BYTES, &bytes)
-        })
-        .await?
+            };
+            tokio::task::spawn_blocking(move || {
+                let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
+                if !gate
+                    .lock()
+                    .map_err(|_| "state store unavailable")?
+                    .allows(generation)
+                {
+                    return Ok(());
+                }
+                files.save_file("outlines-v1.json", OUTLINE_BYTES, &bytes)
+            })
+            .await?
+        }
     }
-    pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
-        let Some(generation) = self.gate.lock().ok().and_then(|g| g.admit()) else {
-            return Ok(());
-        };
+    pub async fn save_outlines(&self, bytes: Vec<u8>) -> Result<()> {
+        self.start_save_outlines(bytes).await
+    }
+    pub fn start_save(
+        &self,
+        bytes: Vec<u8>,
+    ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
+        // Capture generation synchronously at admission so a task polled after Clear cannot pass.
+        let generation = self.gate.lock().ok().and_then(|g| g.admit());
         let files = self.files.clone();
         let state_lock = self.state_lock.clone();
         let staged = self.staged.clone();
         let gate = self.gate.clone();
-        tokio::task::spawn_blocking(move || {
-            let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
-            if !gate
-                .lock()
-                .map_err(|_| "state store unavailable")?
-                .allows(generation)
-            {
+        async move {
+            let Some(generation) = generation else {
                 return Ok(());
-            }
-            if staged
-                .lock()
-                .map_err(|_| "state store unavailable")?
-                .as_ref()
-                .is_some_and(|latest| *latest != bytes)
-            {
-                return Ok(());
-            }
-            files.save(&bytes)
-        })
-        .await?
+            };
+            tokio::task::spawn_blocking(move || {
+                let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
+                if !gate
+                    .lock()
+                    .map_err(|_| "state store unavailable")?
+                    .allows(generation)
+                {
+                    return Ok(());
+                }
+                if staged
+                    .lock()
+                    .map_err(|_| "state store unavailable")?
+                    .as_ref()
+                    .is_some_and(|latest| *latest != bytes)
+                {
+                    return Ok(());
+                }
+                files.save(&bytes)
+            })
+            .await?
+        }
+    }
+    pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
+        self.start_save(bytes).await
     }
     pub fn stage(&self, bytes: &[u8], _: &[(String, String)]) {
         if let Ok(mut staged) = self.staged.lock() {

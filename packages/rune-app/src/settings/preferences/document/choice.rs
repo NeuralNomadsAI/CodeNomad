@@ -93,7 +93,7 @@ impl Choice {
             return;
         }
         if let (Self::PaletteMutation, ChoiceValue::Palette(mutation)) = (self, value) {
-            mutation.put(patch);
+            mutation.put(patch, snapshot);
             return;
         }
         let ChoiceValue::Text(value) = *value else {

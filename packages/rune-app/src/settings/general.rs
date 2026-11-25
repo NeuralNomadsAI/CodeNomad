@@ -51,6 +51,13 @@ enum SavedTarget {
     Delete,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct ActiveSwatch {
+    field: ColorField,
+    dark: bool,
+    key: String,
+}
+
 #[derive(Default)]
 struct Draft {
     binding_epoch: u64,
@@ -61,7 +68,7 @@ struct Draft {
     creating: bool,
     dirty: bool,
     pending_create_id: Option<String>,
-    active_swatch: Option<ColorField>,
+    active_swatch: Option<ActiveSwatch>,
     local_error: bool,
     pending_delete: Option<(String, String)>,
     pending_discard: Option<PendingDiscard>,
@@ -181,6 +188,16 @@ impl Controls {
         if self.picker.get() == Some(Picker::Palette(!dark)) {
             self.picker.set(None);
         }
+        let mut draft = self.draft.borrow_mut();
+        if !draft.dirty
+            && draft.awaiting_save.is_none()
+            && draft
+                .active_swatch
+                .as_ref()
+                .is_some_and(|swatch| swatch.dark != dark)
+        {
+            draft.active_swatch = None;
+        }
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -213,11 +230,15 @@ impl Controls {
             }
             return;
         }
+        if self.draft.borrow().editing_key == option.key {
+            return;
+        }
         self.apply_option_selection(&mut prefs, option);
     }
 
-    fn settle_and_sync(&self, prefs: &mut Preferences, dark: bool) {
+    pub(super) fn settle_save(&self, prefs: &mut Preferences) -> bool {
         let mut draft = self.draft.borrow_mut();
+        let mut settled = false;
         let epoch = prefs.binding_epoch();
         if draft.binding_epoch != epoch {
             draft.binding_epoch = epoch;
@@ -230,11 +251,13 @@ impl Controls {
             draft.pending_discard = None;
             draft.awaiting_save = None;
             prefs.set_palette_preview(None);
+            settled = true;
         }
         if let Some(target) = draft.awaiting_save.clone()
             && !prefs.palette_saving()
         {
             draft.awaiting_save = None;
+            settled = true;
             if !prefs.palette_save_failed() {
                 draft.dirty = false;
                 draft.creating = false;
@@ -258,6 +281,12 @@ impl Controls {
                 }
             }
         }
+        settled
+    }
+
+    fn settle_and_sync(&self, prefs: &mut Preferences, dark: bool) {
+        self.settle_save(prefs);
+        let mut draft = self.draft.borrow_mut();
         if draft.dirty || draft.awaiting_save.is_some() || prefs.palette_saving() {
             return;
         }
@@ -268,15 +297,15 @@ impl Controls {
         let Some(option) = options.iter().find(|candidate| candidate.key == active.key) else {
             return;
         };
-        if draft.editing_key != option.key
-            || draft.dark != option.dark
-            || draft.colors != option.colors
-            || draft.source_name != option.name
-        {
+        let target_changed = draft.editing_key != option.key || draft.dark != option.dark;
+        if target_changed || draft.colors != option.colors || draft.source_name != option.name {
             draft.editing_key = option.key.clone();
             draft.source_name = option.name.clone();
             draft.dark = option.dark;
             draft.colors = option.colors.clone();
+            if target_changed {
+                draft.active_swatch = None;
+            }
         }
     }
 
@@ -355,7 +384,7 @@ impl Controls {
         prefs.clear_palette_save_failed();
     }
 
-    fn save_draft(&self, prefs: &mut Preferences, _dark: bool) {
+    fn save_draft(&mut self, prefs: &mut Preferences, _dark: bool) {
         let (editing_key, creating, dirty, draft_dark, colors, source_name, pending_create_id) = {
             let draft = self.draft.borrow();
             (
@@ -372,29 +401,45 @@ impl Controls {
         if !dirty {
             return;
         }
+        if creating {
+            let name = name_text.trim().to_owned();
+            if name.is_empty() {
+                return;
+            }
+            if let Some(saved_id) =
+                prefs.save_palette_preset(&name, draft_dark, colors, pending_create_id, true)
+            {
+                let mut draft = self.draft.borrow_mut();
+                draft.local_error = false;
+                draft.pending_create_id = Some(saved_id.clone());
+                draft.awaiting_save = Some(SavedTarget::Preset {
+                    key: format!("preset:{saved_id}"),
+                    name,
+                });
+                wake_all(prefs);
+            } else {
+                self.draft.borrow_mut().local_error = true;
+            }
+            return;
+        }
         let options = prefs.palette_options(draft_dark);
         let Some(option) = options
             .iter()
             .find(|candidate| candidate.key == editing_key)
         else {
+            if editing_key.starts_with("preset:") {
+                // The preset disappeared externally; offer explicit creation as a new preset.
+                let suggested = clamp_preset_name(TextEdit::new(&source_name));
+                self.name_input = suggested;
+                let mut draft = self.draft.borrow_mut();
+                draft.creating = true;
+                draft.pending_create_id = None;
+                draft.local_error = true;
+                wake_all(prefs);
+            }
             return;
         };
-        let preset_id = if creating {
-            pending_create_id
-        } else {
-            option.preset_id.clone()
-        };
-        let name = if creating {
-            name_text.trim().to_owned()
-        } else if preset_id.is_some() {
-            option.name.clone()
-        } else {
-            palettes::next_preset_name(&source_name, &prefs.preset_names())
-        };
-        if name.is_empty() {
-            return;
-        }
-        if !creating && let Some(id) = option.builtin_id {
+        if let Some(id) = option.builtin_id {
             if prefs.save_palette_override(id, option.dark, colors) {
                 let mut draft = self.draft.borrow_mut();
                 draft.local_error = false;
@@ -405,14 +450,19 @@ impl Controls {
             }
             return;
         }
+        let name = if option.preset_id.is_some() {
+            option.name.clone()
+        } else {
+            palettes::next_preset_name(&source_name, &prefs.preset_names())
+        };
+        if name.is_empty() {
+            return;
+        }
         if let Some(saved_id) =
-            prefs.save_palette_preset(&name, draft_dark, colors, preset_id, creating)
+            prefs.save_palette_preset(&name, draft_dark, colors, option.preset_id.clone(), false)
         {
             let mut draft = self.draft.borrow_mut();
             draft.local_error = false;
-            if creating {
-                draft.pending_create_id = Some(saved_id.clone());
-            }
             draft.awaiting_save = Some(SavedTarget::Preset {
                 key: format!("preset:{saved_id}"),
                 name,
@@ -545,11 +595,29 @@ impl Controls {
             layout::dark()
         };
         let options = prefs.palette_options(dark);
-        let editing_option = options
+        let found_option = options
             .iter()
             .find(|option| option.key == draft.editing_key)
-            .cloned()
-            .or_else(|| options.first().cloned());
+            .cloned();
+        let missing_target = draft.dirty
+            && !draft.creating
+            && draft.editing_key.starts_with("preset:")
+            && found_option.is_none();
+        let editing_option = found_option.or_else(|| {
+            if missing_target || (draft.dirty && draft.creating) {
+                Some(PaletteOption {
+                    key: draft.editing_key.clone(),
+                    builtin_id: None,
+                    preset_id: None,
+                    name: draft.source_name.clone(),
+                    dark: draft.dark,
+                    colors: draft.colors.clone(),
+                    original_colors: draft.colors.clone(),
+                })
+            } else {
+                options.first().cloned()
+            }
+        });
         let option_pairs = unique_picker_pairs(&options);
         let option_labels: Vec<&str> = option_pairs
             .iter()
@@ -560,6 +628,7 @@ impl Controls {
                 .iter()
                 .find(|(_, key)| *key == opt.key)
                 .map(|(label, _)| label.as_str())
+                .or_else(|| (missing_target || draft.creating).then_some(opt.name.as_str()))
         });
         let choose_pairs = option_pairs.clone();
         let palette_title = t("settings.appearance.colorScheme.title");
@@ -597,6 +666,7 @@ impl Controls {
                 .map_or_else(|| draft.colors.clone(), |opt| opt.colors.clone())
         };
         let swatches = editing_option.as_ref().map(|option| {
+            let option_key = option.key.clone();
             let items: Vec<palette_ui::SwatchItem<'_>> = ColorField::ALL
                 .into_iter()
                 .map(|field| {
@@ -607,7 +677,9 @@ impl Controls {
                         hex,
                         label,
                         accessible_label: format!("{} · {} · {}", option.name, label, hex),
-                        selected: draft.active_swatch == Some(field),
+                        selected: draft.active_swatch.as_ref().is_some_and(|swatch| {
+                            swatch.field == field && swatch.dark == dark && swatch.key == option_key
+                        }),
                         disabled: !prefs.palette_ready() || saving,
                     }
                 })
@@ -618,7 +690,10 @@ impl Controls {
                     let controls = access(s);
                     let next_hex = {
                         let mut draft = controls.draft.borrow_mut();
-                        if draft.active_swatch == Some(field) {
+                        let same = draft.active_swatch.as_ref().is_some_and(|swatch| {
+                            swatch.field == field && swatch.dark == dark && swatch.key == option_key
+                        });
+                        if same {
                             draft.active_swatch = None;
                             None
                         } else {
@@ -627,7 +702,11 @@ impl Controls {
                             } else {
                                 colors_for_pick.get(field).to_owned()
                             };
-                            draft.active_swatch = Some(field);
+                            draft.active_swatch = Some(ActiveSwatch {
+                                field,
+                                dark,
+                                key: option_key.clone(),
+                            });
                             Some(hex)
                         }
                     };
@@ -718,12 +797,15 @@ impl Controls {
                 },
             )
         });
-        let error = (draft.local_error || prefs.palette_save_failed())
+        let error = (missing_target || draft.local_error || prefs.palette_save_failed())
             .then(|| palette_ui::save_error(t("settings.appearance.colorScheme.custom.saveError")));
 
-        if let Some(field) = draft.active_swatch
+        if let Some(ref swatch) = draft.active_swatch
             && let Some(option) = editing_option.as_ref()
+            && swatch.dark == dark
+            && swatch.key == option.key
         {
+            let field = swatch.field;
             let hex = display_colors.get(field);
             let channels = display_colors.channels(field);
             let hex_shared = shared.clone();
@@ -829,7 +911,10 @@ impl Controls {
                             access(s).toggle_picker(Picker::Locale);
                             return true;
                         }
-                        Some("palette-trigger") if key_shared.borrow().palette_ready() => {
+                        Some("palette-trigger")
+                            if key_shared.borrow().palette_ready()
+                                && !access(s).busy(&key_shared.borrow()) =>
+                        {
                             access(s).toggle_picker(Picker::Palette(dark));
                             return true;
                         }
@@ -896,18 +981,21 @@ impl Controls {
         }
         // Pick callbacks run outside the scoped render.
         let locale = crate::strings::locale();
-        let control = chrome::picker(picker.key(), label, options)
-            .current(current)
-            .disabled(disabled)
-            .open(self.picker.get() == Some(picker))
-            .on_toggle(move |s: &mut S| access(s).toggle_picker(picker))
-            .on_close(move |s: &mut S| access(s).picker.set(None))
-            .on_choose(move |s: &mut S, value, _| {
-                if access(s).picker.get() == Some(picker) {
-                    access(s).picker.set(None);
-                    crate::strings::with_locale(locale, || choose.clone()(s, value));
-                }
-            });
+        let control = match picker {
+            Picker::Locale => chrome::picker(picker.key(), label, options),
+            Picker::Palette(_) => chrome::palette_picker(picker.key(), label, options),
+        }
+        .current(current)
+        .disabled(disabled)
+        .open(self.picker.get() == Some(picker))
+        .on_toggle(move |s: &mut S| access(s).toggle_picker(picker))
+        .on_close(move |s: &mut S| access(s).picker.set(None))
+        .on_choose(move |s: &mut S, value, _| {
+            if access(s).picker.get() == Some(picker) {
+                access(s).picker.set(None);
+                crate::strings::with_locale(locale, || choose.clone()(s, value));
+            }
+        });
         let trigger = chrome::build_picker(control, layers);
         // The browser mirror exposes the select trigger as a button without its native value.
         #[cfg(target_arch = "wasm32")]

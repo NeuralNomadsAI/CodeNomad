@@ -149,6 +149,11 @@ fn startup_state_card_renders_and_controls_native_persistence() {
     assert!(!root.join("state.json").exists());
     assert!(!root.join("workspace-file-drafts.json").exists());
     assert!(!root.join("outlines-v1.json").exists());
+    pref_rt.frame(0.02);
+    assert!(
+        node(&pref_rt.accessibility_json(), "startup-state-feedback").is_some(),
+        "Clear feedback must render directly inside the Preferences window"
+    );
 
     // Disable restore via switch -> writes restore-enabled.json = false and suppresses future saves.
     pref_rt.frame(0.02);
@@ -200,14 +205,53 @@ fn startup_state_card_renders_and_controls_native_persistence() {
         "normal quit after Clear must not rewrite cleared snapshot"
     );
 
-    // Pre-Clear in-flight save cannot recreate deleted files once clear_startup_state bumps generation.
-    store.begin_startup_mutation();
-    crate::platform::block_on(store.save(b"{\"revision\":9,\"savedAt\":9,\"tabs\":[]}".to_vec()))
-        .unwrap();
-    crate::platform::block_on(store.save_outlines(b"{}".to_vec())).unwrap();
-    crate::platform::block_on(store.clear_startup_state()).unwrap();
+    // Pre-Clear save future admitted BEFORE Clear and polled AFTER Clear cannot recreate files.
+    let stale_state_write =
+        store.start_save(b"{\"revision\":9,\"savedAt\":9,\"tabs\":[]}".to_vec());
+    let stale_outlines_write = store.start_save_outlines(b"{}".to_vec());
+    let outcome = crate::platform::block_on(store.clear_startup_state()).unwrap();
+    assert!(outcome.all_ok());
+    crate::platform::block_on(stale_state_write).unwrap();
+    crate::platform::block_on(stale_outlines_write).unwrap();
     assert!(!root.join("state.json").exists());
     assert!(!root.join("outlines-v1.json").exists());
+
+    // Re-enabling Restore purges leftover files left on disk while disabled before publishing true.
+    assert!(crate::platform::block_on(store.set_restore_enabled(false)).unwrap());
+    std::fs::write(root.join("workspace-file-drafts.json"), b"[[\"stale\"]]").unwrap();
+    assert!(crate::platform::block_on(store.set_restore_enabled(true)).unwrap());
+    assert!(
+        !root.join("workspace-file-drafts.json").exists(),
+        "re-enabling Restore must purge leftover files before publishing true"
+    );
+
+    // Malformed restore-enabled.json is treated as read error rather than silently enabled.
+    std::fs::write(root.join("restore-enabled.json"), b"{bad json").unwrap();
+    assert!(crate::platform::block_on(store.restore_enabled()).is_err());
+
+    // Unopened restored file drafts are dropped on Clear without altering active editors.
+    let docs = crate::files::document::store::Store::default();
+    let hydrated = serde_json::json!([[
+        "installation",
+        "/project",
+        "/project",
+        "unopened.rs",
+        null,
+        "stale restored text",
+        null
+    ]])
+    .to_string();
+    assert!(docs.hydrate_file_drafts(hydrated.as_bytes()));
+    assert!(docs.file_draft_snapshot(0).is_none());
+    docs.discard_unopened_saved_drafts();
+    docs.insert_test_file_draft("active.rs", "live edit");
+    let (_, bytes) = docs.file_draft_snapshot(0).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("active.rs"));
+    assert!(
+        !text.contains("unopened.rs"),
+        "cleared unopened restored draft must not be re-encoded: {text}"
+    );
 
     drop(pref_rt);
     drop(rt);

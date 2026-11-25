@@ -406,6 +406,7 @@ impl Document {
             changed = true;
         }
         let sse_stale = backend.client.preferences_revision(owner) != self.snapshot_rev;
+        let palette_needs_fresh = self.needs_fresh_palette_snapshot();
         let needs_fresh_on_stale = !atomic && self.has_stale_sensitive_write();
         let needs_fresh_on_disk = !atomic && self.needs_fresh_snapshot();
         let operation = if !self.write.retry.is_empty() {
@@ -421,7 +422,8 @@ impl Document {
             }
         } else if writes_allowed
             && ((needs_fresh_on_stale && (self.read.queued || sse_stale))
-                || (needs_fresh_on_disk && !self.read.fresh_for_write)
+                || ((needs_fresh_on_disk || palette_needs_fresh) && !self.read.fresh_for_write)
+                || (palette_needs_fresh && (self.read.queued || sse_stale))
                 || (!self.write.uncertain.is_empty() && self.read.queued))
         {
             self.read.queued = false;
@@ -430,6 +432,21 @@ impl Document {
             }
         } else if writes_allowed && !self.write.pending.is_empty() {
             self.read.fresh_for_write = false;
+            if self.write.pending.contains(&Choice::PaletteMutation)
+                && matches!(
+                    self.write.requested.get(&Choice::PaletteMutation),
+                    Some(ChoiceValue::Palette(mutation))
+                        if mutation
+                            .reject_before_send(self.snapshot.as_ref().unwrap_or(&Value::Null))
+                )
+            {
+                self.write.pending.remove(&Choice::PaletteMutation);
+                self.write.failed.insert(Choice::PaletteMutation);
+                changed = true;
+                if self.write.pending.is_empty() {
+                    return (changed, settled);
+                }
+            }
             let pending = std::mem::take(&mut self.write.pending);
             Operation::Write(
                 pending

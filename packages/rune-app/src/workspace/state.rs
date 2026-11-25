@@ -268,8 +268,8 @@ impl Ui {
         self.staged_revision = None;
         self.stage();
     }
-    pub(crate) fn cancel_startup_mutation(&mut self) {
-        self.persistence.cancel_startup_mutation();
+    pub(crate) fn cancel_startup_mutation(&mut self, outlines: &mut super::outlines::Cache) {
+        self.persistence.cancel_startup_mutation(outlines);
         self.staged_revision = None;
         self.stage();
     }
@@ -289,11 +289,12 @@ impl Ui {
     }
     pub(crate) fn apply_startup_cleared(
         &mut self,
+        outcome: platform::storage::ClearOutcome,
         documents: &crate::files::document::store::Store,
         outlines: &mut super::outlines::Cache,
     ) {
         self.persistence
-            .apply_cleared(self.revision, documents, outlines);
+            .apply_cleared(outcome, self.revision, documents, outlines);
         self.staged_revision = None;
         self.stage();
     }

@@ -1,7 +1,8 @@
 //! User palette presets, built-in overrides, legacy custom schemes, and Owner::State patches.
 use crate::strings::t;
 use rune_theme_codenomad::palettes::{
-    ColorSchemeColors, Palette, ResolvedPalette, built_in, custom, increased_contrast,
+    ColorField, ColorSchemeColors, Palette, ResolvedPalette, built_in, custom, increased_contrast,
+    luminance, parse_rgb,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -136,17 +137,13 @@ pub(super) enum PaletteOp {
     },
     DeletePreset {
         preset_id: String,
-        fallback_light: Option<Value>,
-        fallback_dark: Option<Value>,
-        clear_active: bool,
     },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct PaletteMutation {
     pub op: PaletteOp,
-    pub preserve_mode: Option<&'static str>,
-    pub preserve_sibling: Option<(bool, Value)>,
+    pub legacy_config: Value,
 }
 
 impl PaletteOp {
@@ -169,12 +166,48 @@ impl PaletteMutation {
         self.op.target_dark()
     }
 
-    pub(super) fn put(&self, patch: &mut Value) {
-        if let Some(mode) = self.preserve_mode {
+    pub(super) fn needs_fresh_snapshot(&self, snapshot: &Value) -> bool {
+        match &self.op {
+            PaletteOp::DeletePreset { .. } => true,
+            PaletteOp::SavePreset { preset_id, .. } => {
+                !snapshot["colorSchemePresets"][preset_id].is_object()
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn reject_before_send(&self, snapshot: &Value) -> bool {
+        if let PaletteOp::SavePreset { preset_id, .. } = &self.op {
+            let existing = normalize_presets(snapshot)
+                .iter()
+                .any(|p| p.id == *preset_id);
+            if !existing && normalize_presets(snapshot).len() >= MAX_PRESETS {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(super) fn put(&self, patch: &mut Value, snapshot: &Value) {
+        let legacy = legacy_scheme(snapshot, &self.legacy_config);
+        if !snapshot["appearancePreferences"]["mode"].is_string()
+            && !patch["appearancePreferences"]["mode"].is_string()
+        {
+            let mode = legacy
+                .as_ref()
+                .map_or("system", |scheme| mode_str(scheme.dark));
             patch["appearancePreferences"]["mode"] = json!(mode);
         }
-        if let Some((sibling_dark, slot)) = &self.preserve_sibling {
-            patch["appearancePreferences"][mode_str(*sibling_dark)] = slot.clone();
+        if let Some(target_dark) = self.op.target_dark() {
+            let sibling_dark = !target_dark;
+            let sibling_mode = mode_str(sibling_dark);
+            if snapshot["appearancePreferences"][sibling_mode].is_null()
+                && legacy.as_ref().is_some_and(|l| l.dark == sibling_dark)
+            {
+                let resolved =
+                    resolve_slot(snapshot, &self.legacy_config, legacy.as_ref(), sibling_dark);
+                patch["appearancePreferences"][sibling_mode] = resolved.to_slot_json();
+            }
         }
         match &self.op {
             PaletteOp::SelectBuiltIn { id, dark, colors } => {
@@ -290,20 +323,27 @@ impl PaletteMutation {
                     "presetId": preset_id,
                 });
             }
-            PaletteOp::DeletePreset {
-                preset_id,
-                fallback_light,
-                fallback_dark,
-                clear_active,
-            } => {
+            PaletteOp::DeletePreset { preset_id } => {
                 patch["colorSchemePresets"][preset_id] = Value::Null;
-                if let Some(light) = fallback_light {
-                    patch["appearancePreferences"]["light"] = light.clone();
+                if let Some(light) = delete_slot_patch(
+                    snapshot,
+                    &self.legacy_config,
+                    legacy.as_ref(),
+                    false,
+                    preset_id,
+                ) {
+                    patch["appearancePreferences"]["light"] = light;
                 }
-                if let Some(dark) = fallback_dark {
-                    patch["appearancePreferences"]["dark"] = dark.clone();
+                if let Some(dark) = delete_slot_patch(
+                    snapshot,
+                    &self.legacy_config,
+                    legacy.as_ref(),
+                    true,
+                    preset_id,
+                ) {
+                    patch["appearancePreferences"]["dark"] = dark;
                 }
-                if *clear_active {
+                if snapshot["activeColorSchemePresetId"].as_str() == Some(preset_id.as_str()) {
                     patch["activeColorSchemePresetId"] = Value::Null;
                 }
             }
@@ -312,16 +352,6 @@ impl PaletteMutation {
 
     pub(super) fn confirmed(&self, snapshot: &Value) -> bool {
         let appearance = &snapshot["appearancePreferences"];
-        if let Some(mode) = self.preserve_mode
-            && appearance["mode"].as_str() != Some(mode)
-        {
-            return false;
-        }
-        if let Some((sibling_dark, expected_slot)) = &self.preserve_sibling
-            && !slot_matches(&appearance[mode_str(*sibling_dark)], expected_slot)
-        {
-            return false;
-        }
         match &self.op {
             PaletteOp::SelectBuiltIn { id, dark, colors } => {
                 let mode = mode_str(*dark);
@@ -410,39 +440,90 @@ impl PaletteMutation {
                     && ColorSchemeColors::from_json(&slot["scheme"]["colors"]).as_ref()
                         == Some(colors)
             }
-            PaletteOp::DeletePreset {
-                preset_id,
-                fallback_light,
-                fallback_dark,
-                clear_active,
-            } => {
+            PaletteOp::DeletePreset { preset_id } => {
                 let deleted = snapshot["colorSchemePresets"][preset_id].is_null();
-                let light_ok = fallback_light
-                    .as_ref()
-                    .is_none_or(|expected| slot_matches(&appearance["light"], expected));
-                let dark_ok = fallback_dark
-                    .as_ref()
-                    .is_none_or(|expected| slot_matches(&appearance["dark"], expected));
-                let active_ok = !*clear_active
-                    || snapshot["activeColorSchemePresetId"].as_str() != Some(preset_id.as_str());
+                let light_ok = appearance["light"]["presetId"].as_str() != Some(preset_id.as_str());
+                let dark_ok = appearance["dark"]["presetId"].as_str() != Some(preset_id.as_str());
+                let active_ok =
+                    snapshot["activeColorSchemePresetId"].as_str() != Some(preset_id.as_str());
                 deleted && light_ok && dark_ok && active_ok
             }
         }
     }
 }
 
-fn slot_matches(actual: &Value, expected: &Value) -> bool {
-    let id_ok = actual["scheme"]["id"] == expected["scheme"]["id"];
-    let appearance_ok = actual["scheme"]["appearance"] == expected["scheme"]["appearance"];
-    let preset_ok = actual["presetId"] == expected["presetId"];
-    let colors_ok = match ColorSchemeColors::from_json(&expected["scheme"]["colors"]) {
-        Some(expected_colors) => {
-            ColorSchemeColors::from_json(&actual["scheme"]["colors"]).as_ref()
-                == Some(&expected_colors)
+pub(super) fn legacy_scheme(state: &Value, config: &Value) -> Option<LegacyScheme> {
+    let scheme = state
+        .get("colorScheme")
+        .filter(|v| !v.is_null())
+        .or_else(|| config.get("colorScheme").filter(|v| !v.is_null()));
+    if let Some(scheme) = scheme {
+        let id = scheme.as_str().or_else(|| scheme["id"].as_str());
+        if id == Some("system") {
+            if let Some(colors) = ColorSchemeColors::from_legacy_json(&scheme["colors"]) {
+                let dark = match scheme["appearance"].as_str() {
+                    Some("light") => false,
+                    Some("dark") => true,
+                    _ => {
+                        luminance(
+                            parse_rgb(colors.get(ColorField::SurfaceBase)).unwrap_or([0, 0, 0]),
+                        ) <= 0.4
+                    }
+                };
+                return Some(LegacyScheme {
+                    dark,
+                    id: "custom",
+                    colors: Some(colors),
+                });
+            }
+            return None;
         }
-        None => actual["scheme"]["colors"].is_null(),
+        if id == Some("custom") {
+            let dark = scheme["appearance"].as_str() != Some("light");
+            let colors = ColorSchemeColors::from_legacy_json(&scheme["colors"]);
+            return Some(LegacyScheme {
+                dark,
+                id: "custom",
+                colors,
+            });
+        }
+        if let Some(palette) = built_in().iter().find(|p| Some(p.id) == id) {
+            let colors = ColorSchemeColors::from_legacy_json(&scheme["colors"]);
+            return Some(LegacyScheme {
+                dark: palette.dark,
+                id: palette.id,
+                colors,
+            });
+        }
+    }
+    let (dark, id) = match state
+        .get("theme")
+        .or_else(|| config.get("theme"))
+        .and_then(Value::as_str)
+    {
+        Some("light") => (false, "light"),
+        Some("dark") => (true, "classic"),
+        _ => return None,
     };
-    id_ok && appearance_ok && preset_ok && colors_ok
+    Some(LegacyScheme {
+        dark,
+        id,
+        colors: None,
+    })
+}
+
+pub(super) fn legacy_config_fields(config: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    for key in ["colorScheme", "customColorScheme", "theme"] {
+        if let Some(val) = config.get(key).filter(|v| !v.is_null()) {
+            out.insert(key.to_owned(), val.clone());
+        }
+    }
+    if out.is_empty() {
+        Value::Null
+    } else {
+        Value::Object(out)
+    }
 }
 
 pub(super) fn mode_str(dark: bool) -> &'static str {
@@ -691,21 +772,39 @@ pub(super) fn next_preset_name(source_name: &str, existing_names: &[String]) -> 
         .iter()
         .map(|name| name.trim().to_lowercase())
         .collect();
-    while used.contains(&format!("{base} {suffix}").to_lowercase()) {
-        suffix += 1;
+    let mut candidate = format_suffixed_name(base, suffix);
+    while used.contains(&candidate.to_lowercase()) {
+        let Some(next) = suffix.checked_add(1) else {
+            break;
+        };
+        suffix = next;
+        candidate = format_suffixed_name(base, suffix);
     }
-    format!("{base} {suffix}")
+    candidate
 }
 
-fn split_numeric_suffix(source: &str) -> (&str, u32) {
+fn format_suffixed_name(base: &str, suffix: u64) -> String {
+    let suffix_text = format!(" {suffix}");
+    let budget = MAX_PRESET_NAME_LEN.saturating_sub(suffix_text.chars().count());
+    let prefix: String = base.chars().take(budget).collect();
+    let prefix = prefix.trim_end();
+    if prefix.is_empty() {
+        suffix.to_string()
+    } else {
+        format!("{prefix}{suffix_text}")
+    }
+}
+
+fn split_numeric_suffix(source: &str) -> (&str, u64) {
     if let Some((prefix, tail)) = source.rsplit_once(char::is_whitespace) {
         let base = prefix.trim_end();
         if !base.is_empty()
             && !tail.is_empty()
             && tail.bytes().all(|b| b.is_ascii_digit())
-            && let Ok(num) = tail.parse::<u32>()
+            && let Ok(num) = tail.parse::<u64>()
+            && let Some(next) = num.checked_add(1)
         {
-            return (base, num.saturating_add(1));
+            return (base, next);
         }
     }
     (source, 2)
@@ -751,6 +850,15 @@ mod tests {
         assert_eq!(next_preset_name("Mist 2", &existing), "Mist 4");
         assert_eq!(next_preset_name("Slate 5", &[]), "Slate 6");
         assert_eq!(next_preset_name("   ", &[]), "Custom 2");
+        let long = "a".repeat(MAX_PRESET_NAME_LEN);
+        let copied = next_preset_name(&long, &[long.clone()]);
+        assert!(copied.chars().count() <= MAX_PRESET_NAME_LEN);
+        assert!(copied.ends_with(" 2"), "{copied}");
+        assert_eq!(next_preset_name("Mist 4294967295", &[]), "Mist 4294967296");
+        assert_eq!(
+            next_preset_name("Mist 18446744073709551615", &[]),
+            "Mist 18446744073709551615 2"
+        );
     }
 
     #[test]

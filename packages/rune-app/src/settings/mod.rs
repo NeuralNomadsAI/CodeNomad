@@ -15,7 +15,7 @@ mod palettes;
 mod preferences;
 mod providers;
 mod remote;
-mod startup_state;
+pub(crate) mod startup_state;
 mod stats;
 pub(crate) mod transcript_filters;
 mod transcript_preset;

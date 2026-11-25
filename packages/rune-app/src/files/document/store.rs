@@ -313,6 +313,26 @@ impl Store {
             store.revision = store.revision.wrapping_add(1);
         }
     }
+    pub(crate) fn discard_unopened_saved_drafts(&self) {
+        let live: Vec<(SavedKey, Shared)> = {
+            let mut store = lock(&self.0);
+            store.live.retain(|_, pointer| pointer.strong_count() > 0);
+            store
+                .live
+                .iter()
+                .filter_map(|(key, pointer)| pointer.upgrade().map(|shared| (key.clone(), shared)))
+                .collect()
+        };
+        let active: std::collections::HashSet<SavedKey> = live
+            .into_iter()
+            .filter_map(|(key, shared)| {
+                let draft = lock(&shared);
+                (draft.owns_saved && draft.retained()).then_some(key)
+            })
+            .collect();
+        let mut store = lock(&self.0);
+        store.saved.retain(|row| active.contains(&row.key));
+    }
     pub(crate) fn file_draft_snapshot(&self, saved_revision: u64) -> Option<(u64, Vec<u8>)> {
         let store = lock(&self.0);
         (saved_revision != store.revision).then(|| (store.revision, Self::encode(&store.saved)))

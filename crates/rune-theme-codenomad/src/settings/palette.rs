@@ -8,8 +8,7 @@ use crate::{
 use rune::{Color, El, TextEdit, col, el, row, text};
 use rune_kit::{Slider, TextInput};
 
-const PICKER_MIN_WIDTH: f32 = 96.0;
-const PICKER_MAX_WIDTH: f32 = 160.0;
+const PICKER_WIDTH: f32 = 160.0;
 const SWATCH_COUNT: f32 = 13.0;
 const SWATCH_TARGET_DESKTOP: f32 = 24.0;
 const SWATCH_TARGET_TOUCH: f32 = 40.0;
@@ -42,7 +41,7 @@ pub fn workbench_stacked(workbench_width: f32, actions_width: f32, coarse: bool)
         SWATCH_TARGET_DESKTOP
     };
     let strip = SWATCH_COUNT * target + (SWATCH_COUNT - 1.0) * SWATCH_GAP + SWATCH_PAD;
-    PICKER_MIN_WIDTH + strip + actions_width + 2.0 * gap > workbench_width
+    PICKER_WIDTH + strip + actions_width + 2.0 * gap > workbench_width
 }
 
 pub fn workbench(picker: El, swatches: Option<El>, actions: El, stacked: bool) -> El {
@@ -56,12 +55,7 @@ pub fn workbench(picker: El, swatches: Option<El>, actions: El, stacked: bool) -
                     .full_width()
                     .center_y()
                     .separate(Space::Sm)
-                    .child(
-                        el().min_w(PICKER_MIN_WIDTH)
-                            .grow(1.0)
-                            .shrink()
-                            .child(picker),
-                    )
+                    .child(el().min_w(PICKER_WIDTH).grow(1.0).shrink().child(picker))
                     .child(actions),
             )
             .children(swatches)
@@ -70,13 +64,7 @@ pub fn workbench(picker: El, swatches: Option<El>, actions: El, stacked: bool) -
             .full_width()
             .center_y()
             .separate(Space::Sm)
-            .child(
-                el().min_w(PICKER_MIN_WIDTH)
-                    .max_w(PICKER_MAX_WIDTH)
-                    .grow(1.0)
-                    .shrink()
-                    .child(picker),
-            )
+            .child(el().w(PICKER_WIDTH).child(picker))
             .children(swatches.map(|strip| el().grow(1.0).shrink().child(strip)))
             .child(actions)
     };
