@@ -798,3 +798,101 @@ fn transient_managed_renewal_retries_once_and_recovers() {
         server.abort();
     });
 }
+
+#[test]
+fn stale_connected_reply_after_renewal_does_not_reinstall_expired_backend() {
+    crate::platform::block_on(async {
+        let cookie_name = "codenomad_session_test";
+        let renewed_value = "renewed_session_token_012345678901234567890";
+        let (base, server) = spawn_renewal_server(
+            "srv-managed",
+            "codenomad_session_test=renewed_session_token_012345678901234567890",
+        )
+        .await;
+        let expired = Backend::unauthenticated(&base).unwrap();
+        let base_ref = base.clone();
+        let host =
+            crate::platform::LocalHost::fixture(
+                move || match Backend::connect_with_session_cookie(
+                    &base_ref,
+                    cookie_name,
+                    renewed_value,
+                ) {
+                    Ok(backend) => crate::platform::ManagedRenewal::Renewed(backend),
+                    Err(_) => crate::platform::ManagedRenewal::Denied,
+                },
+            );
+
+        let mut s = crate::init();
+        let mut l = Launcher::fixture();
+        l.connection = Some(expired.clone());
+        l.server_id = Some("srv-managed".into());
+        l.host = Some(host);
+        let (boot_tx, boot_rx) = bounded(1);
+        l.pending = true;
+        l.pending_connection_generation = l.connection_generation;
+        l.result = Some(boot_rx);
+        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        let mut rt =
+            rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+
+        assert!(crate::settings::authentication_required(
+            &mut rt.state,
+            &expired
+        ));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while rt
+            .state
+            .screen
+            .launcher()
+            .unwrap()
+            .managed_renewal
+            .is_some()
+        {
+            assert!(std::time::Instant::now() < deadline, "renewal timed out");
+            rt.update(|s, tx| {
+                let _ = poll(s, tx);
+            });
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let renewed_client = rt
+            .state
+            .screen
+            .launcher()
+            .unwrap()
+            .connection
+            .as_ref()
+            .unwrap()
+            .client
+            .clone();
+        assert!(!renewed_client.same_connection(&expired.client));
+
+        // Deliver the late bootstrap Reply::Connected carrying the expired client.
+        boot_tx
+            .send(Ok(Reply::Connected(
+                expired.clone(),
+                vec![Project {
+                    id: "ws-stale".into(),
+                    path: "/stale".into(),
+                }],
+                "srv-managed".into(),
+            )))
+            .await
+            .unwrap();
+        rt.update(|s, tx| {
+            let _ = poll(s, tx);
+        });
+        let l = rt.state.screen.launcher().unwrap();
+        assert!(
+            l.connection
+                .as_ref()
+                .unwrap()
+                .client
+                .same_connection(&renewed_client),
+            "late Reply::Connected from an older generation must not reinstall the expired client"
+        );
+        assert_eq!(l.projects.len(), 1);
+        assert_eq!(l.projects[0].id, "ws-1");
+        server.abort();
+    });
+}

@@ -622,7 +622,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
-            apply_connected(s, b, Some(projects), server_id, selected, tx);
+            if !stale_connection {
+                apply_connected(s, b, Some(projects), server_id, selected, tx);
+            }
         }
         Ok(Reply::AuthenticationExpired(expired)) => {
             crate::settings::authentication_required(s, &expired);
@@ -763,7 +765,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     );
                 }
                 l.rebind_after_send = None;
-                choose_destination(s, session_id, dismiss, tx);
+                dismiss_origin_panel(s, dismiss, tx);
+                choose_destination(s, session_id, ticket, tx);
             } else {
                 dismiss_origin_panel(s, dismiss, tx);
                 bind(s, b, title, None, &slug, tx);
@@ -861,7 +864,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }) {
                 l.show_title = false;
                 if stale_connection {
-                    choose_destination(s, b.session, dismiss, tx);
+                    dismiss_origin_panel(s, dismiss, tx);
+                    choose_destination(s, b.session, None, tx);
                 } else {
                     dismiss_origin_panel(s, dismiss, tx);
                     bind(s, b, title, visit, &slug, tx);
