@@ -1,6 +1,6 @@
 {
   "valid": [
-    {"op":"tree"}, {"op":"viewport"}, {"op":"checkpoint"}, {"op":"release-handles"},
+    {"op":"tree"}, {"op":"viewport"}, {"op":"checkpoint"}, {"op":"history"}, {"op":"release-handles"},
     {"op":"resolve","node":42}, {"op":"geometry","node":42}, {"op":"scroll-into-view","node":42},
     {"op":"hit-test","x":1,"y":2},
     {"op":"call","function":"select","handle":"h","args":[["é漢🙂"]]},
@@ -18,7 +18,7 @@
   ],
   "invalid": [
     null, [], "tree", {}, {"op":"evaluate","source":"alert(1)"},
-    {"op":"tree","extra":true}, {"op":"viewport","extra":true}, {"op":"checkpoint","extra":true}, {"op":"release-handles","extra":true},
+    {"op":"tree","extra":true}, {"op":"history","extra":true}, {"op":"viewport","extra":true}, {"op":"checkpoint","extra":true}, {"op":"release-handles","extra":true},
     {"op":"resolve","node":0}, {"op":"resolve","node":1.5}, {"op":"resolve","node":1,"extra":true},
     {"op":"call","function":"mark-input","args":[]}, {"op":"call","function":"unmark-input","args":[]},
     {"op":"call","function":"__proto__","args":[]}, {"op":"call","function":"constructor","args":[]},

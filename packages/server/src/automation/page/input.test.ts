@@ -66,7 +66,7 @@ test("invalid geometry, invalid layout, and a clipped box never authorize a clic
     assert.deepEqual(fixture.inputs, [])
   }
   const missingLayout = clickFixture([], undefined, false, {})
-  await assert.rejects(performAction(missingLayout.session, { kind: "scroll", direction: "down", amount: 1 }), /invalid/i)
+  await assert.rejects(performAction(missingLayout.session, { kind: "scroll", delta: { x: 0, y: 1 } }), /invalid/i)
   assert.deepEqual(missingLayout.inputs, [])
 })
 

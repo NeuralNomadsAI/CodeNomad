@@ -164,6 +164,25 @@ fn controller_with_registration() -> (BrowserController, Registration) {
 }
 
 #[test]
+fn a_probe_serves_only_previews_in_the_verified_project_tabs() {
+    let (controller, registration) = controller_with_registration();
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut(&registration.registration_id)
+        .unwrap()
+        .instance_id = Some("ws-a".into());
+    let resolve = |workspaces: Option<&[String]>| {
+        controller.resolve_with_visibility_in("session", workspaces, |_| Ok(true))
+    };
+    assert_eq!(resolve(Some(&["ws-b".to_string()])).err(), Some(no_browser_target_error()));
+    assert!(resolve(Some(&["ws-a".to_string()])).is_ok());
+    assert!(workspace_filter(Some(&json!(["ok", ""]))).is_err());
+}
+#[test]
 fn a_window_visibility_read_failure_makes_the_preview_inventory_incomplete() {
     let (controller, mut registration) = controller_with_registration();
     let resolve = || {
@@ -207,7 +226,7 @@ fn probe_issues_a_bounded_witness_for_the_current_registration_and_document() {
     let fence = crate::native_request::RequestFence::new(expires, || true);
     let probe = || {
         controller
-            .probe(app.handle(), "session", deadline, &fence, |_, _| {
+            .probe(app.handle(), "session", None, deadline, &fence, |_, _| {
                 Ok(if cfg!(windows) {
                     ""
                 } else {
@@ -351,7 +370,7 @@ fn webview2_same_url_reopen_revokes_only_the_exact_guest_document() {
     );
     let probe = || {
         controller
-            .probe(app.handle(), "session", deadline, &fence, |_, _| Ok(String::new()))
+            .probe(app.handle(), "session", None, deadline, &fence, |_, _| Ok(String::new()))
             .unwrap()
     };
     let first = probe();

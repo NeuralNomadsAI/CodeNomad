@@ -50,6 +50,7 @@ interface OpenClaim {
 type BrowserCommand =
   | { action: "open"; url: string }
   | { action: "navigate"; url: string }
+  | { action: "back" | "forward" | "reload" }
   | { action: "screenshot" }
 
 const noTarget = "No visible local browser target for this session"
@@ -387,17 +388,19 @@ export class BrowserController {
     for (const [requestID, claim] of this.openClaims) if (claim.owner === owner) this.releaseOpen(owner, requestID)
   }
 
-  async probe(sessionID: string, deadline = Number.POSITIVE_INFINITY, checkAdmission: () => void = () => {}): Promise<{ available: true; target: string }> {
+  /** `workspaceIDs` are the project tabs whose views may serve the session: another tab's preview is no target. */
+  async probe(sessionID: string, deadline = Number.POSITIVE_INFINITY, checkAdmission: () => void = () => {},
+    workspaceIDs?: readonly string[]): Promise<{ available: true; target: string; loading: boolean; registration: string }> {
     ensureDeadline(deadline)
     checkAdmission()
-    const registration = this.resolve(sessionID)
+    const registration = this.resolve(sessionID, workspaceIDs)
     const { guest } = registration
     const generation = this.pageGeneration(registration)
     const target = await this.enqueue(guest, async () => {
       const check = () => {
         ensureDeadline(deadline)
         checkAdmission()
-        if (this.resolveWitness(sessionID) !== registration || this.pageGeneration(registration) !== generation) throw new Error(staleTarget)
+        if (this.resolveWitness(sessionID, undefined, workspaceIDs) !== registration || this.pageGeneration(registration) !== generation) throw new Error(staleTarget)
       }
       check()
       if (!this.documentWatches.has(guest)) {
@@ -420,11 +423,11 @@ export class BrowserController {
     ensureDeadline(deadline)
     checkAdmission()
     this.resolveWitness(sessionID, target)
-    return { available: true, target }
+    return { available: true, target, loading: guest.isLoading(), registration: registration.generation }
   }
 
   async execute(sessionID: string, command: Exclude<BrowserCommand, { action: "open" }>, deadline = Number.POSITIVE_INFINITY, target?: unknown, checkAdmission: () => void = () => {}): Promise<unknown> {
-    if (command.action !== "navigate" && command.action !== "screenshot") throw new Error("Invalid browser command")
+    if (!["navigate", "back", "forward", "reload", "screenshot"].includes(command.action)) throw new Error("Invalid browser command")
     const registration = this.resolveWitness(sessionID, requireWitness(target))
     const { guest, visibilityVersion } = registration
     const document = this.pageGeneration(registration)
@@ -441,7 +444,28 @@ export class BrowserController {
       switch (command.action) {
         case "navigate": {
           if (!isBrowserUrlAllowed(command.url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
-          return loadNavigation(guest, command.url, deadline, () => check(false))
+          return { ...await loadNavigation(guest, command.url, deadline, () => check(false)), registration: registration.generation }
+        }
+        case "back":
+        case "forward": {
+          const history = await withDeadline(() => guest.debugger.sendCommand("Page.getNavigationHistory"), deadline) as {
+            currentIndex?: number
+            entries?: Array<{ id: number; url: string }>
+          }
+          checkDocument()
+          const index = typeof history.currentIndex === "number" ? history.currentIndex : -1
+          const entries = Array.isArray(history.entries) ? history.entries : []
+          const next = entries[command.action === "back" ? index - 1 : index + 1]
+          if (!next) throw new Error(command.action === "back" ? "No previous page in browser history" : "No next page in browser history")
+          if (!isBrowserUrlAllowed(next.url)) throw new Error("Browser history entry requires a credential-free HTTP(S) URL")
+          return { registration: registration.generation, ...await loadTriggeredNavigation(guest, next.url, deadline, () => check(false),
+            () => guest.debugger.sendCommand("Page.navigateToHistoryEntry", { entryId: next.id }).then(() => undefined)) }
+        }
+        case "reload": {
+          const currentUrl = guest.getURL()
+          if (!isBrowserUrlAllowed(currentUrl)) throw new Error("Browser reload requires a credential-free HTTP(S) URL")
+          return { registration: registration.generation, ...await loadTriggeredNavigation(guest, currentUrl, deadline, () => check(false),
+            () => guest.debugger.sendCommand("Page.reload", {}).then(() => undefined)) }
         }
         case "screenshot": {
           const result = await withDeadline(() => guest.debugger.sendCommand("Page.captureScreenshot", {
@@ -458,7 +482,7 @@ export class BrowserController {
     }, deadline)
   }
 
-  async open(sessionID: string, url: string, deadline: number, workspaceIDs: readonly string[], checkAdmission: () => void = () => {}): Promise<{ url: string }> {
+  async open(sessionID: string, url: string, deadline: number, workspaceIDs: readonly string[], checkAdmission: () => void = () => {}): Promise<{ url: string; registration?: string }> {
     if (!isBrowserUrlAllowed(url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
     const registrationDeadline = Math.min(deadline, Date.now() + 10_000)
     const existingOwner = this.previewOwners.get(sessionID)
@@ -513,7 +537,7 @@ export class BrowserController {
               })
               checkRegistration()
               this.releaseOpen(owner, requestID, committed.url)
-              return committed
+              return { ...committed, registration: expected.generation }
             }, deadline, claim.retirement.signal)
           }
           await new Promise(resolve => setTimeout(resolve, 25))
@@ -537,16 +561,17 @@ export class BrowserController {
       && this.openWindowVisible(owner)
   }
 
-  private resolve(sessionID: string): Registration {
-    const matches = [...this.registrations.values()].filter(registration => registration.sessionId === sessionID && this.registrationVisible(registration))
+  private resolve(sessionID: string, workspaceIDs?: readonly string[]): Registration {
+    const matches = [...this.registrations.values()].filter(registration => registration.sessionId === sessionID && this.registrationVisible(registration)
+      && (!workspaceIDs || (registration.instanceId !== undefined && workspaceIDs.includes(registration.instanceId))))
     if (matches.length === 0) throw new Error(noTarget)
     if (matches.length > 1) throw new Error("Multiple visible browser targets exist for this session")
     return matches[0]
   }
 
-  private resolveWitness(sessionID: string, target?: string): Registration {
+  private resolveWitness(sessionID: string, target?: string, workspaceIDs?: readonly string[]): Registration {
     try {
-      const registration = this.resolve(sessionID)
+      const registration = this.resolve(sessionID, workspaceIDs)
       if (target !== undefined && (target !== this.pageGeneration(registration)
         || !this.documentWatches.has(registration.guest) || !registration.guest.debugger.isAttached())) throw new Error(staleTarget)
       return registration
@@ -594,6 +619,11 @@ export class BrowserController {
             this.resolveWitness(sessionID, target)
           }
           await this.refreshDocument(registration.guest, Math.min(deadline, lease.expires), check)
+          check()
+          // Agent page operations never open a native file picker on the person's screen.
+          const intercept = (params: Record<string, unknown>) => withDeadline(
+            () => registration.guest.debugger.sendCommand("Page.setInterceptFileChooserDialog", params), Math.min(deadline, lease.expires))
+          await intercept({ enabled: true, cancel: true }).catch(() => intercept({ enabled: true }))
           check()
           const url = this.checkLease(lease, deadline, checkAdmission)
           return { generation: lease.generation, url, driver: "cdp", contractVersion: PAGE_DRIVER_VERSION }
@@ -696,6 +726,9 @@ export class BrowserController {
     if (this.pageLeases.get(lease.operationID) !== lease) return
     this.pageLeases.delete(lease.operationID)
     clearTimeout(lease.timer)
+    const { guest } = lease.registration
+    if (!guest.isDestroyed() && guest.debugger.isAttached())
+      void guest.debugger.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => undefined)
   }
 
   private detachDebugger(guest: WebContents): void {
@@ -736,7 +769,13 @@ export class BrowserController {
 export async function handleNativeBrowserRequest(controller: BrowserController, method: string, params: unknown, deadline = Number.POSITIVE_INFINITY, checkAdmission?: () => void): Promise<unknown> {
   const input = params as { sessionID?: unknown; command?: unknown; target?: unknown; workspaceIDs?: unknown } | undefined
   if (!input || typeof input.sessionID !== "string") throw new Error("Invalid browser request")
-  if (method === "browser.probe") return controller.probe(input.sessionID, deadline, checkAdmission)
+  if (method === "browser.probe") {
+    const workspaces = input.workspaceIDs
+    if (workspaces !== undefined && (!Array.isArray(workspaces) || workspaces.length > 1024 || !workspaces.every(id => validId(id, 256)))) {
+      throw new Error("Invalid browser request")
+    }
+    return controller.probe(input.sessionID, deadline, checkAdmission, workspaces as string[] | undefined)
+  }
   if (["browser.page.begin", "browser.page.send", "browser.page.check", "browser.page.end"].includes(method)) {
     return controller.page(method, input as Record<string, unknown>, deadline, checkAdmission)
   }
@@ -820,6 +859,17 @@ class MainNavigationSuperseded extends Error {
 
 async function loadNavigation(guest: WebContents, url: string, deadline: number, check: () => void): Promise<{ url: string }> {
   const expected = new URL(url).href
+  return loadTriggeredNavigation(guest, expected, deadline, check, () => guest.loadURL(expected))
+}
+
+async function loadTriggeredNavigation(
+  guest: WebContents,
+  url: string,
+  deadline: number,
+  check: () => void,
+  trigger: () => Promise<void>,
+): Promise<{ url: string }> {
+  const expected = new URL(url).href
   let started = false
   let sameDocument = false
   let committed: string | undefined
@@ -873,7 +923,7 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
   guest.on("did-finish-load", finished)
   guest.on("did-fail-load", failed)
   try {
-    await Promise.race([Promise.all([guest.loadURL(expected), completed]), revoked])
+    await Promise.race([Promise.all([trigger(), completed]), revoked])
     validate()
     if (!started || superseded) throw new Error("Browser navigation changed")
     if (!committed || !isBrowserUrlAllowed(committed)) throw new Error("Browser document is unavailable")

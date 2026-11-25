@@ -130,9 +130,14 @@ struct Inner {
     published_generations: HashMap<String, (String, u64)>,
     renderer_versions: HashMap<String, u64>,
     page_leases: HashMap<String, page::PageLease>,
+    /// The webview whose file pickers each page operation intercepts, kept until its end even if the lease goes.
+    #[cfg(any(windows, target_os = "macos"))]
+    file_picker_intercepts: HashMap<String, String>,
     navigation_versions: HashMap<String, u64>,
     page_load_sequence: u64,
     page_load_expectations: HashMap<String, PageLoadExpectation>,
+    /// The main-frame navigation each registration is loading, from its start to its completion.
+    page_loading: HashMap<String, u64>,
     open_claims: HashMap<String, OpenClaim>,
     preview_owners: preview_owners::BrowserPreviewOwners,
 }
@@ -682,6 +687,7 @@ impl BrowserController {
             .retain(|_, lease| lease.registration.registration_id != registration_id);
         inner.navigation_versions.remove(registration_id);
         inner.page_load_expectations.remove(registration_id);
+        inner.page_loading.remove(registration_id);
         drop(inner);
         ready.notify_all();
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -767,6 +773,7 @@ impl BrowserController {
                     .retain(|_, lease| lease.registration.registration_id != id);
                 inner.navigation_versions.remove(&id);
                 inner.page_load_expectations.remove(&id);
+                inner.page_loading.remove(&id);
                 inner.registrations.remove(&id);
                 inner.emulation_profiles.remove(&id);
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -820,6 +827,7 @@ impl BrowserController {
                 "browser.probe" => self.probe(
                     app,
                     session_id,
+                    workspace_filter(input.get("workspaceIDs"))?,
                     deadline,
                     &fence,
                     |registration, version| {
@@ -854,11 +862,15 @@ impl BrowserController {
         &self,
         app: &AppHandle<R>,
         session_id: &str,
+        workspaces: Option<Vec<String>>,
         deadline: Instant,
         fence: &crate::native_request::RequestFence,
         read_document: impl FnOnce(&Registration, u64) -> Result<String, String>,
     ) -> Result<Value, String> {
-        let registration = self.resolve(app, session_id)?;
+        // Only a view in one of these project tabs serves the session to its agents.
+        let registration = self.resolve_with_visibility_in(session_id, workspaces.as_deref(), |label| {
+            window_visible(app, label)
+        })?;
         let document = self.document_version(&registration)?;
         self.check_target(app, &registration, deadline, fence)?;
         let token = read_document(&registration, document)?;
@@ -872,7 +884,19 @@ impl BrowserController {
         }
         self.check_witness_state(app, &registration, document)?;
         fence.check()?;
-        Ok(json!({ "available": true, "target": target }))
+        let loading = self
+            .inner
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .page_loading
+            .contains_key(&registration.registration_id);
+        Ok(json!({
+            "available": true,
+            "target": target,
+            "loading": loading,
+            "registration": registration_identity(&registration),
+        }))
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -912,7 +936,90 @@ impl BrowserController {
                     None,
                     || Ok(()),
                 )?;
-                Ok(json!({ "url": url }))
+                Ok(json!({ "url": url, "registration": registration_identity(&registration) }))
+            }
+            "back" | "forward" | "reload" => {
+                let nav_deadline = deadline.min(Instant::now() + Duration::from_secs(15));
+                #[cfg(windows)]
+                let url = if action == "reload" {
+                    let current = allowed_url(
+                        webview.url().map_err(|error| error.to_string())?.as_str(),
+                    )?;
+                    self.navigate_with_dispatch(
+                        &registration,
+                        &webview,
+                        &current,
+                        nav_deadline,
+                        fence,
+                        Some((document, token)),
+                        None,
+                        || Ok(()),
+                        open_navigation::NavigationDispatch::Reload,
+                    )?
+                } else {
+                    let controller = self.clone();
+                    let expected = registration.clone();
+                    let queued_app = app.clone();
+                    let queued_fence = fence.clone();
+                    let history = cdp_guarded(
+                        &webview,
+                        "Page.getNavigationHistory",
+                        json!({}),
+                        nav_deadline,
+                        move || {
+                            controller.check_capture(
+                                &queued_app,
+                                &expected,
+                                document,
+                                nav_deadline,
+                                &queued_fence,
+                            )
+                        },
+                        2 * 1024 * 1024,
+                    )?;
+                    let index = history["currentIndex"]
+                        .as_i64()
+                        .ok_or("Browser history is unavailable")?;
+                    let target_index = if action == "back" { index - 1 } else { index + 1 };
+                    let entry = usize::try_from(target_index)
+                        .ok()
+                        .and_then(|idx| history["entries"].as_array().and_then(|e| e.get(idx)))
+                        .ok_or_else(|| {
+                            if action == "back" {
+                                "No previous page in browser history"
+                            } else {
+                                "No next page in browser history"
+                            }
+                        })?;
+                    let entry_id = entry["id"]
+                        .as_i64()
+                        .ok_or("Invalid browser history entry")?;
+                    let entry_url = allowed_url(
+                        entry["url"]
+                            .as_str()
+                            .ok_or("Invalid browser history URL")?,
+                    )?;
+                    self.navigate_with_dispatch(
+                        &registration,
+                        &webview,
+                        &entry_url,
+                        nav_deadline,
+                        fence,
+                        Some((document, token)),
+                        None,
+                        || Ok(()),
+                        open_navigation::NavigationDispatch::HistoryEntry(entry_id),
+                    )?
+                };
+                #[cfg(windows)]
+                return Ok(json!({ "url": url, "registration": registration_identity(&registration) }));
+                // WebKit previews do not report a load receipt for history traversal or reload.
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                {
+                    let _ = (nav_deadline, document, token);
+                    Err("Browser history and reload are unavailable in WebKit previews; use navigate"
+                        .into())
+                }
             }
             "screenshot" => {
                 #[cfg(windows)]
@@ -996,6 +1103,16 @@ impl BrowserController {
         session_id: &str,
         read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
     ) -> Result<Registration, String> {
+        self.resolve_with_visibility_in(session_id, None, read_visibility)
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn resolve_with_visibility_in(
+        &self,
+        session_id: &str,
+        workspaces: Option<&[String]>,
+        read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
+    ) -> Result<Registration, String> {
         validate_id(session_id, 256)?;
         let registrations = self
             .inner
@@ -1004,7 +1121,16 @@ impl BrowserController {
             .map_err(|error| error.to_string())?
             .registrations
             .values()
-            .filter(|registration| registration.session_id == session_id && registration.visible)
+            .filter(|registration| {
+                registration.session_id == session_id
+                    && registration.visible
+                    && workspaces.is_none_or(|workspaces| {
+                        registration
+                            .instance_id
+                            .as_ref()
+                            .is_some_and(|id| workspaces.contains(id))
+                    })
+            })
             .cloned()
             .collect::<Vec<_>>();
         resolve_visible_registration(registrations.iter(), read_visibility).cloned()
@@ -1317,6 +1443,9 @@ impl BrowserController {
                 .map(|item| item.generation)
                 == Some(generation)
             {
+                inner
+                    .page_loading
+                    .insert(registration_id.to_string(), navigation_id);
                 if url != "about:blank" {
                     open::retire_open_for_navigation(
                         &mut inner,
@@ -1373,6 +1502,9 @@ impl BrowserController {
                 != Some(generation)
             {
                 return;
+            }
+            if inner.page_loading.get(registration_id) == Some(&navigation_id) {
+                inner.page_loading.remove(registration_id);
             }
             if let Some(expectation) = inner.page_load_expectations.get_mut(registration_id) {
                 if expectation.navigation_id == Some(navigation_id) && expectation.result.is_none()
@@ -1503,6 +1635,31 @@ fn allowed_url(raw: &str) -> Result<tauri::Url, String> {
 
 fn navigation_error() -> String {
     "Browser navigation requires a credential-free HTTP(S) URL".to_string()
+}
+
+/// The preview a probe or a load used: a load that ends in another registration is no receipt for the agent's tab.
+fn registration_identity(registration: &Registration) -> String {
+    format!("{}:{}", registration.registration_id, registration.generation)
+}
+
+/// The project tabs a probe may use, from the backend's verified owners.
+fn workspace_filter(value: Option<&Value>) -> Result<Option<Vec<String>>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let ids = value
+        .as_array()
+        .filter(|ids| ids.len() <= 1024)
+        .ok_or("Invalid browser request")?
+        .iter()
+        .map(|id| {
+            id.as_str()
+                .filter(|id| validate_id(id, 256).is_ok())
+                .map(str::to_string)
+                .ok_or("Invalid browser request")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(ids))
 }
 
 fn resolve_visible_registration<'a>(

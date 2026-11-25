@@ -239,7 +239,27 @@ impl BrowserController {
         if method == "browser.page.end" {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             self.webkit_cleanup(app, session_id, operation_id, deadline, fence);
+            #[cfg(any(windows, target_os = "macos"))]
+            let label = self
+                .inner
+                .0
+                .lock()
+                .ok()
+                .and_then(|mut inner| inner.file_picker_intercepts.remove(operation_id));
             self.end_page(session_id, operation_id);
+            #[cfg(target_os = "macos")]
+            if let Some(label) = &label {
+                refuse_file_panels(app, label, false);
+            }
+            #[cfg(windows)]
+            if let Some(webview) = label.and_then(|label| app.get_webview(&label)) {
+                let _ = cdp(
+                    &webview,
+                    "Page.setInterceptFileChooserDialog",
+                    json!({ "enabled": false }),
+                    deadline,
+                );
+            }
             return Ok(json!({}));
         }
         let begin = method == "browser.page.begin";
@@ -321,6 +341,34 @@ impl BrowserController {
             } else {
                 json!({})
             };
+            // Agent page operations never open a native file picker on the person's screen.
+            #[cfg(windows)]
+            if begin {
+                if let Some(webview) = app.get_webview(&lease.registration.webview_label) {
+                    let intercept = |params| {
+                        cdp(&webview, "Page.setInterceptFileChooserDialog", params, deadline.min(lease.expires))
+                    };
+                    if let Ok(mut inner) = self.inner.0.lock() {
+                        inner.file_picker_intercepts.insert(
+                            operation_id.to_string(),
+                            lease.registration.webview_label.clone(),
+                        );
+                    }
+                    if intercept(json!({ "enabled": true, "cancel": true })).is_err() {
+                        intercept(json!({ "enabled": true }))?;
+                    }
+                }
+            }
+            #[cfg(target_os = "macos")]
+            if begin {
+                if let Ok(mut inner) = self.inner.0.lock() {
+                    inner.file_picker_intercepts.insert(
+                        operation_id.to_string(),
+                        lease.registration.webview_label.clone(),
+                    );
+                }
+                refuse_file_panels(app, &lease.registration.webview_label, true);
+            }
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             let response = if let Some(_) = &operation {
                 let response =
@@ -360,12 +408,43 @@ impl BrowserController {
                 );
             }
             #[cfg(windows)]
-            self.release_page(&lease);
+            {
+                self.release_page(&lease);
+                // The person's own file pickers return now, not only at the operation's end.
+                if let Ok(mut inner) = self.inner.0.lock() {
+                    inner.file_picker_intercepts.remove(operation_id);
+                }
+                if let Some(webview) = app.get_webview(&lease.registration.webview_label) {
+                    let _ = cdp(
+                        &webview,
+                        "Page.setInterceptFileChooserDialog",
+                        json!({ "enabled": false }),
+                        Instant::now() + Duration::from_secs(2),
+                    );
+                }
+            }
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             if lease.held.lock().is_ok_and(|held| held.is_empty()) {
                 self.release_page(&lease);
             }
+            // The person's own file panels return now, not only at the operation's end.
+            #[cfg(target_os = "macos")]
+            {
+                if let Ok(mut inner) = self.inner.0.lock() {
+                    inner.file_picker_intercepts.remove(operation_id);
+                }
+                refuse_file_panels(app, &lease.registration.webview_label, false);
+            }
         }
         result
+    }
+}
+
+/// Agent page operations never open a native file panel on the person's screen: the vendored Wry cancels the
+/// panels this preview's page opens while the operation holds its lease.
+#[cfg(target_os = "macos")]
+fn refuse_file_panels(app: &AppHandle, label: &str, refused: bool) {
+    if let Some(webview) = app.get_webview(label) {
+        let _ = webview.with_webview(move |native| wry::set_file_panels_refused(native.inner(), refused));
     }
 }

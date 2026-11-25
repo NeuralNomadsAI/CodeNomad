@@ -28,6 +28,7 @@ import type { PromptDelivery, PromptInputApi, PromptInsertMode } from "../prompt
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
 import { useConfig } from "../../stores/preferences"
 import { getSessionPreview, previewBlockedByOwner } from "../../stores/session-previews"
+import { holdNativeBrowser } from "../../lib/native-browser-hold"
 import { SessionPreviewSlot } from "../session-preview-view"
 import { FilesPreviewView } from "../files-preview-view"
 import { closeFilePreview } from "../../stores/files-preview"
@@ -108,6 +109,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
   const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceId))
+  holdNativeBrowser(() => props.instanceId, () => props.sessionId, () => props.isActive !== false)
   const surface = createMemo(() => getSessionSurface({ instanceId: props.instanceId, sessionId: props.sessionId }))
   const missionReader = () => {
     const current = surface()

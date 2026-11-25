@@ -74,7 +74,7 @@ test("WebKit affine frame aiming agrees with native input, including reflected a
       await performAction(session, { kind: "hover", ref: "target", backendNodeId: target })
       await performAction(session, { kind: "drag", ref: "target", backendNodeId: target, to: { ref: "other", backendNodeId: other } })
       assert.equal((await state()).up, "other", transform)
-      await performAction(session, { kind: "scroll", target: { ref: "target", backendNodeId: target }, direction: "down", amount: 20 })
+      await performAction(session, { kind: "scroll", target: { ref: "target", backendNodeId: target }, delta: { x: 0, y: 20 } })
       await page.waitForTimeout(100)
       assert.equal((await state()).wheel, "true", transform)
       console.log(JSON.stringify({ transform, reportedHit: "target", receives: null, clicked, drag: "other", wheel: "trusted" }))
@@ -86,7 +86,7 @@ test("WebKit affine frame aiming agrees with native input, including reflected a
       const target = (await read({ op: "tree" })).nodes.find((n: any) => n.name === "Target").node
       const before = inputs
       for (const kind of ["click", "hover", "scroll", "drag"] as const) {
-        const action = kind === "scroll" ? { kind, target: { ref: "target", backendNodeId: target }, direction: "down" as const, amount: 20 }
+        const action = kind === "scroll" ? { kind, target: { ref: "target", backendNodeId: target }, delta: { x: 0, y: 20 } }
           : kind === "drag" ? { kind, ref: "target", backendNodeId: target, to: { ref: "target", backendNodeId: target } }
           : { kind, ref: "target", backendNodeId: target }
         await assert.rejects(performAction(session, action), PageDriverUnsupportedError)
