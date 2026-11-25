@@ -161,6 +161,15 @@ describe("Git ownership preflight admission", () => {
     assert.equal(events(trace).filter(event => event.event === "start").length, 1)
   })
 
+  it("rejects a folder outside any checkout without a Git process", async () => {
+    const plain = path.join(temp, "plain folder")
+    mkdirSync(plain)
+    writeFileSync(trace, "")
+    await assert.rejects(readGitCommonDirectory(plain))
+    assert.equal(await sharesGitCommonDirectory(repo, plain), false)
+    assert.equal(events(trace).filter(event => event.event === "start").length, 0)
+  })
+
   it("coalesces a concurrent Git fallback fan into one command per directory", async () => {
     forceGit()
     const reads = Array.from({ length: 48 }, () => sharesGitCommonDirectory(repo, linked))
