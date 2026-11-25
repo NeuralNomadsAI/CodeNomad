@@ -29,9 +29,29 @@ pub(super) fn duration_ms(part: &Reasoning) -> u64 {
 }
 
 pub(super) struct Summary<'a> {
-    pub title: Option<String>,
+    pub title: Option<&'a str>,
     pub body: &'a str,
     stripped_units: usize,
+}
+
+fn strip_blank_line(rest: &str) -> Option<&str> {
+    let rest = rest
+        .strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))?;
+    rest.strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))
+}
+
+fn bounded_prefix(text: &str, max_units: usize) -> &str {
+    let mut units = 0;
+    for (index, ch) in text.char_indices() {
+        let next = units + ch.len_utf16();
+        if next > max_units {
+            return &text[..index];
+        }
+        units = next;
+    }
+    text
 }
 
 pub(super) fn parse_summary(text: &str) -> Summary<'_> {
@@ -46,12 +66,8 @@ pub(super) fn parse_summary(text: &str) -> Summary<'_> {
         let trimmed = title.trim();
         let body = if rest.is_empty() {
             Some("")
-        } else if let Some(rest) = rest.strip_prefix("\n\n") {
-            Some(rest.trim_end())
-        } else if let Some(rest) = rest.strip_prefix("\r\n\r\n") {
-            Some(rest.trim_end())
         } else {
-            None
+            strip_blank_line(rest).map(str::trim_end)
         };
         if !trimmed.is_empty()
             && !title.contains(['*', '\n', '\r'])
@@ -60,7 +76,7 @@ pub(super) fn parse_summary(text: &str) -> Summary<'_> {
             let prefix_len = content.len() - body.len();
             let stripped_units = trim_units + content[..prefix_len].encode_utf16().count();
             return Summary {
-                title: Some(trimmed.chars().take(250).collect()),
+                title: Some(trimmed),
                 body,
                 stripped_units,
             };
@@ -74,7 +90,9 @@ pub(super) fn parse_summary(text: &str) -> Summary<'_> {
 }
 
 pub(super) fn extract_title(text: &str) -> Option<String> {
-    parse_summary(text).title
+    parse_summary(text)
+        .title
+        .map(|title| bounded_prefix(title, document::TOOL_LIMIT).to_owned())
 }
 
 fn body_totals(part: &Reasoning, summary: &Summary<'_>) -> (usize, usize) {
@@ -343,24 +361,34 @@ fn reasoning_card(
     expanded: bool,
     toggle: impl Fn(&mut State) + 'static,
 ) -> El {
+    let claimed = std::cell::Cell::new(false);
     let query = super::search_hit::query(
         s,
         message,
         codenomad_client::search::Kind::Reasoning,
         part.part_index,
-    );
+    )
+    .map(|q| Query {
+        claimed: Some(&claimed),
+        ..q
+    });
     let summary = parse_summary(&part.text);
     let (retained, total) = body_totals(part, &summary);
     let has_body = !summary.body.is_empty() || total > retained;
     let open = has_body && expanded;
-    let title_el = match summary.title.as_deref() {
-        Some(title) => rune_theme_codenomad::timeline::search::ink(text(title), title, query),
+    let title_el = match summary.title {
+        Some(title) => {
+            let shown = bounded_prefix(title, document::search_limit_for(s, fragment, query));
+            rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
+        }
         None => text(t("messageBlock.reasoning.thoughtsFallback")),
     };
     let timing = part
         .created
         .map(|start| (start, part.completed))
-        .filter(|(_, end)| end.is_some() || !message_completed);
+        .filter(|(_, end)| {
+            end.is_some() || (!message_completed && s.phase == crate::Phase::Streaming)
+        });
     let meta = super::tools::duration::view(s, fragment, timing, title_el);
     let header = layout::action_row()
         .child(
@@ -431,6 +459,7 @@ fn body(
                             s.transcript_display.stream_version(),
                             s.transcript_display.steps(&format!("{key}-body")),
                             std::rc::Rc::as_ptr(&s.input_scope) as usize,
+                            query.is_some_and(|q| q.claimed.is_some_and(|c| c.get())),
                             s.transcript_display
                                 .search_highlight
                                 .as_ref()

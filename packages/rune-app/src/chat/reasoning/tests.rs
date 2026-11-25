@@ -684,20 +684,30 @@ fn standalone_and_title_only_reasoning_cards_match_solid_summary_rules() {
     use serde_json::json;
 
     let still = parse_summary("**Still thinking**");
-    assert_eq!(
-        (still.title.as_deref(), still.body),
-        (Some("Still thinking"), "")
-    );
+    assert_eq!((still.title, still.body), (Some("Still thinking"), ""));
     let inspecting = parse_summary("**Inspecting**\n\nChecking timeline.");
     assert_eq!(
-        (inspecting.title.as_deref(), inspecting.body),
+        (inspecting.title, inspecting.body),
         (Some("Inspecting"), "Checking timeline.")
     );
-    let plain = parse_summary("Plain reasoning");
+    let mixed_crlf = parse_summary("**Mixed**\r\n\nBody after crlf-lf");
     assert_eq!(
-        (plain.title.as_deref(), plain.body),
-        (None, "Plain reasoning")
+        (mixed_crlf.title, mixed_crlf.body),
+        (Some("Mixed"), "Body after crlf-lf")
     );
+    let mixed_lf_crlf = parse_summary("**Mixed2**\n\r\nBody after lf-crlf");
+    assert_eq!(
+        (mixed_lf_crlf.title, mixed_lf_crlf.body),
+        (Some("Mixed2"), "Body after lf-crlf")
+    );
+    let plain = parse_summary("Plain reasoning");
+    assert_eq!((plain.title, plain.body), (None, "Plain reasoning"));
+
+    // Titles longer than 250 chars stay intact so suffixes remain visible and searchable.
+    let long_title_text = format!("**{} TAIL_NEEDLE**", "a".repeat(280));
+    let long_title = parse_summary(&long_title_text);
+    assert!(long_title.title.unwrap().ends_with("TAIL_NEEDLE"));
+    assert_eq!(long_title.body, "");
 
     // Truncated reasoning with a stripped title preserves the exact unretained tail count.
     let truncated = Reasoning {
@@ -762,4 +772,114 @@ fn standalone_and_title_only_reasoning_cards_match_solid_summary_rules() {
     assert!(!only_toggle.focusable);
     assert_eq!(only_toggle.expanded, Some(false));
     assert!(tree.contains("\"disabled\""));
+}
+
+#[test]
+fn reasoning_card_claims_single_search_anchor_and_stops_live_timer_when_ready() {
+    use codenomad_client::search::{Hit, Kind as SearchKind};
+    use rune::{Env, Runtime};
+    use serde_json::json;
+
+    let msg = crate::history::decode_message(&json!({
+        "id":"m1","type":"assistant","content":[
+            {"type":"reasoning","text":"**Plan**\n\nPlan details","time":{"created":1_000}}
+        ]
+    }))
+    .unwrap();
+    let mut s = crate::init();
+    crate::settings::fixture_transcript(
+        &mut s,
+        json!({"showThinkingBlocks":true,"thinkingBlocksExpansion":"expanded"}),
+    );
+    s.messages = vec![msg.into()];
+    s.phase = crate::Phase::Ready;
+    s.transcript_display.search_highlight = Some(crate::chat::search_hit::SearchHit::new(
+        &Hit {
+            session: "s1".into(),
+            message: "m1".into(),
+            role: "assistant".into(),
+            kind: SearchKind::Reasoning,
+            part: 0,
+            excerpt: "Plan".into(),
+        },
+        "Plan",
+        false,
+    ));
+
+    let mut rt = Runtime::new(
+        s,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (960.0, 820.0),
+        Env::new(false, 1.0),
+    );
+    settle(&mut rt);
+
+    // When both title and body match, the title claims the single active search anchor and the
+    // body receives claimed=true so it cannot emit a duplicate `history-search-match` key.
+    let (_, match_y) = rt.find("history-search-match").unwrap();
+    let body_top = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some("reasoning-m1:0-body-content"))
+        .unwrap()
+        .rect[1];
+    assert!(match_y < body_top);
+
+    let mut body_rt = Runtime::new(
+        crate::init(),
+        |s, _| {
+            let claimed = std::cell::Cell::new(true);
+            let part = Reasoning {
+                part_index: Some(0),
+                ordinal: 0,
+                text: "**Plan**\n\nPlan details".into(),
+                units: 22,
+                retained_units: 22,
+                provenance: TextProvenance::Closed,
+                created: None,
+                completed: None,
+            };
+            let terms = vec!["Plan".to_owned()];
+            let q = Query {
+                terms: &terms,
+                ranked: false,
+                active: true,
+                claimed: Some(&claimed),
+            };
+            body(
+                s,
+                "m1",
+                "reasoning-m1:0",
+                &part,
+                "Plan details",
+                (12, 12),
+                Some(q),
+            )
+        },
+        (960.0, 200.0),
+        Env::new(false, 1.0),
+    );
+    settle(&mut body_rt);
+    assert!(body_rt.find("history-search-match").is_none());
+
+    // On a Ready session, an interrupted incomplete reasoning fragment must not register a live timer.
+    let has_duration_observer = rt.elements().into_iter().any(|el| {
+        el.key
+            .as_deref()
+            .is_some_and(|key| key.starts_with("reasoning-m1:0-duration-"))
+    });
+    assert!(!has_duration_observer);
+
+    // While Streaming, the same incomplete fragment does register its live timer.
+    rt.update(|s, _| {
+        s.phase = crate::Phase::Streaming;
+        s.revision += 1;
+    });
+    settle(&mut rt);
+    let has_duration_observer = rt.elements().into_iter().any(|el| {
+        el.key
+            .as_deref()
+            .is_some_and(|key| key.starts_with("reasoning-m1:0-duration-"))
+    });
+    assert!(has_duration_observer);
 }
