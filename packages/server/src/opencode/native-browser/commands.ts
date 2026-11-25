@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { setTimeout as sleep } from "node:timers/promises"
-import type { BrowserPageAction } from "../../automation/browser-page"
+import { pageMoved, type BrowserPageAction } from "../../automation/browser-page"
 import type { DiagnosticRead } from "../../automation/page/diagnostic-events"
 import { keyChord } from "../../automation/page/keys"
 import { PreviewDiagnostics } from "./diagnostics"
@@ -190,7 +190,14 @@ export class PreviewTab {
       this.noteURL(target, result.url)
       return result
     }
-    const act = async (step: BrowserPageAction) => { await page(step); return this.success(this.tab()) }
+    const act = async (step: BrowserPageAction) => {
+      // Input that moved the page on (a followed link, a submitted form) succeeded: the tab reports where it went.
+      if ((await page(step)).pageChanged) {
+        await this.refresh(deadline, signal)
+        if (!this.target) return failure("operation_failed", "This tab is no longer shown. Call browser.tabs.list({}).")
+      }
+      return this.success(this.tab())
+    }
     switch (action.type) {
       case "tabs.focus": return this.success(this.tab())
       case "navigate": return this.loaded(await this.host.navigate(String(action.url), target, deadline, signal), deadline, signal)
@@ -350,7 +357,7 @@ export class PreviewTab {
         return this.success(this.tab())
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        const moved = /stale; probe again|document changed|lease is no longer current/i.test(message)
+        const moved = pageMoved(error)
         if (!moved && !/did not appear within|is still shown after/.test(message)) return failed(error)
         if (Date.now() - started >= timeout) return failure("condition_unmet", moved ? "The page changed and the text did not appear in time." : message)
         if (moved) {

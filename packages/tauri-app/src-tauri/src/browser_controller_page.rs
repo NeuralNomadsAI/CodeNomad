@@ -324,7 +324,7 @@ impl BrowserController {
                     lease.registration.generation,
                     *after,
                 )?
-            } else if let Some((command, params)) = command {
+            } else if let Some((command, mut params)) = command {
                 let webview = app
                     .get_webview(&lease.registration.webview_label)
                     .ok_or("Browser preview is no longer available")?;
@@ -332,17 +332,30 @@ impl BrowserController {
                 let guard_lease = lease.clone();
                 let guard_app = app.clone();
                 let guard_fence = fence.clone();
+                let guard = move || {
+                    controller
+                        .check_page(&guard_app, &guard_lease, deadline, &guard_fence)
+                        .map(|_| ())
+                };
+                if matches!(&operation, Some(operations::Operation::HitTest { .. })) {
+                    let metrics = cdp_guarded_in(
+                        &webview,
+                        None,
+                        "Page.getLayoutMetrics",
+                        json!({}),
+                        deadline.min(lease.expires),
+                        guard.clone(),
+                        4 * 1024 * 1024,
+                    )?;
+                    operations::document_point(&mut params, &metrics);
+                }
                 cdp_guarded_in(
                     &webview,
                     operation.as_ref().and_then(operations::Operation::session),
                     command,
                     params,
                     deadline.min(lease.expires),
-                    move || {
-                        controller
-                            .check_page(&guard_app, &guard_lease, deadline, &guard_fence)
-                            .map(|_| ())
-                    },
+                    guard,
                     4 * 1024 * 1024,
                 )?
             } else {

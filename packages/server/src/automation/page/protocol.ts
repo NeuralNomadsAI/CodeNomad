@@ -67,6 +67,8 @@ export interface PageSession {
   markAutomation: boolean
   /** Expected ref for the current native dispatch, scoped to the serialized page operation. */
   inputTarget?: InputTarget
+  /** The current input sequence handed the host a press, wheel or text event that it accepted. */
+  inputDelivered?: boolean
 }
 export class Handle { constructor(readonly objectId: string) {} }
 export function gone(ref: string): Error { return new Error(`${ref} is no longer in the page; inspect again`) }
@@ -211,8 +213,10 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
     if (down) held.set(id, { kind, target, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0,
       ...(timestamp === undefined ? {} : { timestamp }) } })
     if (failure) throw failure.error
+    if (params.type !== "mouseMoved") session.inputDelivered = true
     await session.checkpoint()
   }
+  session.inputDelivered = false
   await awaitInputAcceptance(session)
   try { return await run(dispatch) }
   catch (error) {

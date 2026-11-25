@@ -377,10 +377,7 @@ impl Operation {
                 }
             }
             Self::Viewport => {
-                let viewport = raw
-                    .get("cssLayoutViewport")
-                    .filter(|value| !value.is_null())
-                    .unwrap_or(&raw["layoutViewport"]);
+                let viewport = layout_viewport(&raw);
                 let mut result = optional("width", viewport.get("clientWidth"));
                 if let Some(height) = viewport.get("clientHeight") {
                     result["height"] = height.clone();
@@ -404,6 +401,20 @@ impl Operation {
             }
             _ => raw,
         }
+    }
+}
+fn layout_viewport(metrics: &Value) -> &Value {
+    metrics
+        .get("cssLayoutViewport")
+        .filter(|value| !value.is_null())
+        .unwrap_or(&metrics["layoutViewport"])
+}
+/// `DOM.getNodeForLocation` takes document coordinates; a hit test carries viewport ones.
+pub(super) fn document_point(params: &mut Value, metrics: &Value) {
+    let viewport = layout_viewport(metrics);
+    for (key, scroll) in [("x", "pageX"), ("y", "pageY")] {
+        let offset = viewport[scroll].as_f64().unwrap_or(0.0).floor() as i64;
+        params[key] = json!(params[key].as_i64().unwrap_or(0) + offset);
     }
 }
 fn optional(key: &str, value: Option<&Value>) -> Value {
@@ -492,5 +503,11 @@ mod tests {
             .unwrap()
             .contains("evil()"));
         assert!(parse(json!({"op":"checkpoint"})).unwrap().cdp().is_none());
+    }
+    #[test]
+    fn a_hit_test_looks_where_the_scrolled_document_shows_the_point() {
+        let (_, mut params) = parse(json!({"op":"hit-test","x":25,"y":20})).unwrap().cdp().unwrap();
+        document_point(&mut params, &json!({"cssLayoutViewport":{"pageX":5,"pageY":2900.5}}));
+        assert_eq!((params["x"].as_i64(), params["y"].as_i64()), (Some(30), Some(2920)));
     }
 }

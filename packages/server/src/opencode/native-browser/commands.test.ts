@@ -39,6 +39,7 @@ function fixture() {
         return { url: "", snapshot: '- button "Go" [e1]', collapsed: false }
       }
       if (action.action === "click" && action.ref === "e2") { if (!state.locked) state.checked = !state.checked; return { url: "" } }
+      if (action.action === "click" && action.ref === "e7") { state.target = `doc-${++state.document}`; state.url = "http://127.0.0.1/next"; return { url: "", pageChanged: true } }
       if (action.action === "wait") throw new Error('"Saved" did not appear within 0 ms')
       if (action.action === "click" && action.ref === "e9") throw new Error("Unknown or stale ref e9; take a new snapshot")
       return { url: "" }
@@ -61,6 +62,15 @@ test("one preview tab: absent until opened, then a stable ID whose generation fo
   await tab.run({ type: "navigate", tabID: tab.id, url: "http://127.0.0.1/next" }, generation, signal)
   assert.equal((await tab.run({ type: "hover", tabID: tab.id, ref: "e1" }, generation, signal) as any).code, "document_changed",
     "a command selected for the previous document is refused")
+})
+
+test("a click that follows a link succeeds and reports the document it led to", async () => {
+  const { tab } = fixture()
+  const opened = await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal) as any
+  const clicked = await tab.run({ type: "click", tabID: tab.id, ref: "e7" }, opened.result.value.generation, signal) as any
+  assert.equal(clicked.type, "success")
+  assert.equal(clicked.result.value.url, "http://127.0.0.1/next")
+  assert.equal(clicked.result.value.generation, opened.result.value.generation + 1)
 })
 
 test("every step of one command stays on the document it started on", async () => {
