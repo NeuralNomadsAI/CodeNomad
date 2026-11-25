@@ -770,8 +770,8 @@ visibility; only a changed owner returns Scheduling to its first-read state. Sho
 editor and Retry read both. Config, plugin and reconnection events revalidate the visible
 editor's capability with one read in flight and at most one trailing read. Task revisions
 and transcript releases read nothing. During a successful revalidation the shown fields,
-values, focus and open picker stay unchanged, and the panel's existing update icon is the
-only indicator; a failed document read shows its error with Retry and locks the form.
+values, focus and open picker stay unchanged, with no indicator; a failed document read
+shows its error with Retry and locks the form.
 Save rereads the document before dispatch.
 Create stores a paused immediate Mission or a paused calendar-owned document.
 **Start automatically** defaults off, outside Scheduling. When selected, only the direct positive creation
@@ -1130,7 +1130,7 @@ Display labels use bounded excerpts: objectives at 502 code points, report summa
 
 The tree's header counts every task (`taskPage.total`). Rows and pins form one continuous virtualized list in display order. A single end sentinel (`li.mission-tree-more`) observes the active scroller, loading the earliest unread position as it approaches view through pointer or keyboard scrolling. Collapsed trees and failed reads suspend automatic continuation; failures expose explicit Retry. The header's info tooltip states the supplied whole-mission attention counts by kind; ordinary windows reach every attention task and recovery action. Keep these counts scoped to the whole mission: window coverage alone cannot establish which attention members remain unread. A row's title and assistive text name its unread dependencies and dependents. The graph uses cached virtual offsets for offscreen rows and measures mounted anchors, with a dashed stub (`path.mission-graph-omitted[data-omitted]`) for unread endpoints. Reader links load their target task by key (`openMissionTask`), and restored task/report targets load by ID once per display order. Readers show Loading, a failure with Try again, or confirmed absence according to the actual read outcome. Show all reads a task's whole report history and stays open across refreshes, rereading when its descriptor changes. Questions come from actors and the observed family.
 
-`MissionPanelPaging` keeps coverage/search explanations in info tooltips and stable continuation labels. A lane that has shown a continuation retains its info slot across refresh cycles. Loading alone never mounts a body block. `missionStore.reading` includes inventory lanes, selected headers and task reads; the existing top-right refresh indicator presents that background activity. `mission-panel-inventory.test.ts` holds real event-triggered reads and checks geometry, labels, DOM identity and screenshots before, during and after refresh.
+`MissionPanelPaging` keeps coverage/search explanations in info tooltips and stable continuation labels. A lane that has shown a continuation retains its info slot across refresh cycles. Loading alone never mounts a body block. `missionStore.reading` includes inventory lanes, selected headers and task reads. The top-right refresh icon spins, and is disabled, only during the panel's first journal read and an explicit refresh; passive revalidation shows no indicator. `mission-panel-inventory.test.ts` holds real event-triggered reads and checks geometry, labels, DOM identity and screenshots before, during and after refresh.
 
 Project mutation and journal-append exclusion is shared by all bundle incarnations in the native host. An in-flight mutation keeps its lock across registration disposal: a content-addressed replacement waits before reading its CAS revision. `missions-reload.test.ts` loads two independent compiled bundles and races updates across dispose/setup to verify that only one can succeed.
 

@@ -254,7 +254,8 @@ serverEvents.on("instance.event", event => {
   for (const entry of cache.values()) {
     if (entry.instanceId !== event.instanceId) continue
     if (plugin || schedule && (!entry.scheduleID || entry.scheduleID === schedule.scheduleID) || changedJournal && entry.scheduleID) scheduleRefresh(entry)
-    else if (passage && entry.scheduleID) scheduleRefresh(entry, "activity")
+    // Activity matters only to a running passage, or to a read that has not shown one yet.
+    else if (passage && entry.scheduleID && (!entry.currentSnapshot || entry.currentSnapshot.passageID || entry.error)) scheduleRefresh(entry, "activity")
   }
 })
 serverEvents.on("instance.eventStatus", event => {
