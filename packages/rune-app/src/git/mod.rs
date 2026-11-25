@@ -16,13 +16,14 @@ pub(crate) use binding::{
     Binding, PlacementHold, SessionDirectory, can_place, close_preview, connected,
     connected_placed, detach_session, diff_preferences, dismiss_panel_overlays, event,
     file_link_scope, files_checkout, has_preview, hold_placement, is_composing, mode, online,
-    overlay_open, placeable, placement, placement_hold, placement_unconfirmed, poll,
-    project_opened, release_placement, session_directory, set_diff_preferences, set_mode, show,
+    overlay_open, panel_overlay_open, placeable, placement, placement_hold, placement_unconfirmed,
+    poll, project_opened, release_placement, session_directory, set_diff_preferences, set_mode,
+    show,
 };
 #[cfg(test)]
 pub(crate) use binding::{
     fixture_commit_draft, fixture_commit_preedit, fixture_online, fixture_open_picker,
-    fixture_worktrees,
+    fixture_open_placement_picker, fixture_unstaged_change, fixture_worktrees,
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};
@@ -285,8 +286,6 @@ impl Ui {
             }
         } else {
             self.picker = false;
-            self.open_menu = None;
-            self.placement_picker = None;
         }
         self.demand();
     }

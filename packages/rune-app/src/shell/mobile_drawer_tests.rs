@@ -609,3 +609,211 @@ fn rotating_from_portrait_floating_right_to_landscape_docked_closes_git_picker()
         "closing the floating drawer on rotation must return focus to right-panel-toggle"
     );
 }
+
+#[test]
+fn git_changes_row_action_menu_closes_on_floating_to_docked_rotation_and_offline() {
+    let path = "packages/rune-app/src/shell/mobile_drawers/very_long_nested_directory_name_to_trigger_compact_overflow_menu_on_tablet.rs";
+    let trigger = format!("git-row-unstaged:menu:{path}:trigger");
+    let item = format!("git-row-unstaged:menu:{path}:item:stage");
+
+    // Sub-case 1: floating right panel -> open row action menu -> rotate to landscape docked.
+    let mut state = project_state_with_git();
+    crate::git::fixture_unstaged_change(&mut state, path);
+    crate::git::set_mode(&mut state, crate::git::Mode::Changes);
+    let mut rt = Runtime::new(state, english_touch, (1024.0, 768.0), Env::new(false, 1.0));
+    rt.on_key = Some(crate::shell::keys);
+    settle(&mut rt);
+
+    rt.set_viewport((768.0, 1024.0), 1.0);
+    settle(&mut rt);
+    click(&mut rt, "sessions-panel-toggle");
+    click(&mut rt, "right-panel-toggle");
+    assert!(rt.state.shell.has_floating() && rt.state.shell.visible(1));
+    click(&mut rt, &trigger);
+    assert!(crate::git::overlay_open(&rt.state));
+    assert!(
+        rt.find(&item).is_some(),
+        "precondition: row action menu item must be mounted while open"
+    );
+
+    rt.set_viewport((1024.0, 768.0), 1.0);
+    rt.update(|s, tx| {
+        crate::git::poll(s, 1.0, tx);
+    });
+    settle(&mut rt);
+    assert!(
+        !crate::git::overlay_open(&rt.state) && rt.find(&item).is_none(),
+        "rotating from floating right panel to docked landscape must clear the rendered action_menu"
+    );
+
+    // Sub-case 2: floating right panel -> open row action menu -> connection drops offline.
+    let mut state = project_state_with_git();
+    crate::git::fixture_unstaged_change(&mut state, path);
+    crate::git::set_mode(&mut state, crate::git::Mode::Changes);
+    let mut rt = Runtime::new(state, english_touch, (390.0, 844.0), Env::new(false, 1.0));
+    rt.on_key = Some(crate::shell::keys);
+    settle(&mut rt);
+    click(&mut rt, "right-panel-toggle");
+    click(&mut rt, &trigger);
+    assert!(crate::git::overlay_open(&rt.state) && rt.find(&item).is_some());
+
+    rt.update(|s, tx| {
+        crate::git::online(s, false);
+        crate::git::poll(s, 1.0, tx);
+    });
+    settle(&mut rt);
+    assert!(
+        !crate::git::overlay_open(&rt.state) && rt.find(&item).is_none(),
+        "going offline must clear the rendered Git row action_menu"
+    );
+}
+
+#[test]
+fn delayed_screen_orientation_change_event_remeasures_without_resize() {
+    let mut tablet = touch_init();
+    fixture(&mut tablet);
+    let mut rt = Runtime::new(tablet, english_touch, (1366.0, 1024.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    assert!(rt.state.shell.visible(0) && rt.state.shell.visible(1));
+
+    // IME shrinks landscape height, then viewport narrows to 1024x600 while orientation still reads landscape.
+    rt.update(|s, tx| {
+        s.shell
+            .measure_with_screen(1366.0, 600.0, true, Some(false), tx);
+    });
+    rt.update(|s, tx| {
+        s.shell
+            .measure_with_screen(1024.0, 600.0, true, Some(false), tx);
+    });
+    assert!(rt.state.shell.visible(0) && rt.state.shell.visible(1));
+
+    // Delayed screen.orientation.change fires portrait with no viewport resize; shell::poll must remeasure.
+    rt.update(|s, tx| {
+        s.shell.test_orientation_pending = Some(Some(true));
+        crate::shell::poll(s, tx);
+    });
+    settle(&mut rt);
+    assert!(
+        !rt.state.shell.visible(0) && !rt.state.shell.visible(1),
+        "screen.orientation change event without viewport resize must recover portrait drawers"
+    );
+}
+
+#[test]
+fn portrait_start_memory_survives_pointer_round_trip_without_resize() {
+    let mut state = touch_init();
+    fixture(&mut state);
+    let mut rt = Runtime::new(state, english_touch, (768.0, 1024.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    assert!(!rt.state.shell.visible(0) && !rt.state.shell.visible(1));
+
+    // Rotate to landscape in touch mode: stays closed because session started in portrait.
+    rt.set_viewport((1024.0, 768.0), 1.0);
+    settle(&mut rt);
+    assert!(!rt.state.shell.visible(0) && !rt.state.shell.visible(1));
+
+    // Switch to pointer (mouse) at constant 1024x768: desktop mouse mode docks panels.
+    rt.update(|s, _| s.shell.touch_override = false);
+    settle(&mut rt);
+    assert!(
+        rt.state.shell.visible(0) && rt.state.shell.visible(1),
+        "mouse mode at 1024x768 should dock panels normally"
+    );
+
+    // Switch back to touch at constant 1024x768: portrait-start memory must keep landscape drawers closed.
+    rt.update(|s, _| s.shell.touch_override = true);
+    settle(&mut rt);
+    assert!(
+        !rt.state.shell.visible(0) && !rt.state.shell.visible(1),
+        "returning to touch in landscape after a mouse round trip must preserve portrait-start memory"
+    );
+}
+
+#[test]
+fn rotating_while_notification_bubble_has_focus_keeps_bubble_focus() {
+    let mut state = touch_init();
+    fixture(&mut state);
+    let mut rt = Runtime::new(state, english_touch, (390.0, 844.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    click(&mut rt, "sessions-panel-toggle");
+    assert!(rt.state.shell.has_floating());
+    rt.update(|s, tx| {
+        crate::settings::notification_fixture(s);
+        crate::settings::notification_test_config(
+            s,
+            serde_json::json!({"settings":{"notificationRouting":{
+                "settings":{"screen":true,"history":true,"system":false}
+            }}}),
+        );
+        s.notifications.record();
+        crate::shell::notifications::emit_outcome(
+            s,
+            crate::shell::notifications::Category::Settings,
+            None,
+            "Background notice",
+            true,
+        );
+        crate::shell::notifications::poll(s, tx);
+    });
+    settle(&mut rt);
+    assert!(
+        rt.find("notification-text").is_some(),
+        "precondition: notification bubble scroll area must be mounted"
+    );
+    click(&mut rt, "notification-text");
+    assert_eq!(focused_key(&rt).as_deref(), Some("notification-text"));
+
+    // Rotate phone to landscape: floating drawer closes, but focus must remain on the still-open bubble.
+    rt.set_viewport((844.0, 390.0), 1.0);
+    settle(&mut rt);
+    assert!(!rt.state.shell.has_floating());
+    assert_eq!(
+        focused_key(&rt).as_deref(),
+        Some("notification-text"),
+        "closing a floating drawer on rotation must not steal focus from a notification bubble"
+    );
+}
+
+#[test]
+fn offline_during_session_placement_picker_returns_focus_to_composer() {
+    let mut state = project_state_with_git();
+    workspace::connected(&mut state);
+    state.phase = crate::Phase::Ready;
+    let project = state.screen.launcher().unwrap().project.clone().unwrap();
+    let backend = Backend {
+        workspace: project.id,
+        session: "session".into(),
+        ..Backend::unauthenticated("http://127.0.0.1:9/").unwrap()
+    };
+    workspace::bound(&mut state, &backend);
+    let mut agent = crate::agent::Ui::new(crate::agent::start(backend.clone(), state.wake.clone()));
+    agent.reading = false;
+    agent.pending_known = true;
+    agent.online = true;
+    state.agent = Some(agent);
+    crate::git::connected(&mut state, &backend);
+    crate::git::fixture_worktrees(&mut state);
+    let mut rt = Runtime::new(state, english_touch, (390.0, 844.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    assert!(
+        crate::git::can_place(&rt.state),
+        "precondition: session placement must be enabled before going offline"
+    );
+    rt.update(|s, _| crate::git::fixture_open_placement_picker(s));
+    settle(&mut rt);
+    assert!(crate::git::overlay_open(&rt.state));
+    assert_ne!(focused_key(&rt).as_deref(), Some("composer"));
+
+    // Going offline disables placement; git::poll must close placement_picker and return focus to composer.
+    rt.update(|s, tx| {
+        crate::git::online(s, false);
+        crate::git::poll(s, 1.0, tx);
+    });
+    settle(&mut rt);
+    assert!(!crate::git::overlay_open(&rt.state));
+    assert_eq!(
+        focused_key(&rt).as_deref(),
+        Some("composer"),
+        "going offline while placement_picker is open must let git::poll return focus to composer"
+    );
+}

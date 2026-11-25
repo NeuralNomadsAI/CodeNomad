@@ -79,15 +79,17 @@ export async function mobileDrawersBrowser({values, m, out, storage, url, root})
         const [, nativeId, nativeTail] = p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(location|worktree)$/) ?? []
         if (req.method() === 'GET' && policy.workspaces.has(id)) {
           if (tail === 'files') {
-            allowed = ownedDirectory(u.searchParams.get('directory')) && ['.', ''].includes(u.searchParams.get('path') ?? '')
+            const keys = [...u.searchParams.keys()]
+            allowed = keys.every(k => k === 'directory' || k === 'path') && ownedDirectory(u.searchParams.get('directory')) && ['.', ''].includes(u.searchParams.get('path') ?? '')
           } else {
-            allowed = true
+            allowed = u.search === ''
           }
         } else if (req.method() === 'GET' && policy.workspaces.has(nativeId)) {
           if (nativeTail === 'location') {
-            allowed = ownedDirectory(u.searchParams.get('location[directory]') ?? values.project)
+            const keys = [...u.searchParams.keys()]
+            allowed = keys.length === 1 && keys[0] === 'location[directory]' && ownedDirectory(u.searchParams.get('location[directory]'))
           } else if (nativeTail === 'worktree') {
-            allowed = true
+            allowed = u.search === ''
           }
         }
       }
@@ -250,7 +252,7 @@ export async function mobileDrawersBrowser({values, m, out, storage, url, root})
     await waitExpanded(right, true)
     proof.phone.escapeReturnedFocusToToggle = true
 
-    // Verify full Tab wrap inside floating Files drawer: never escapes to top bar and wraps back to left toggle.
+    // Verify full Tab wrap + F6 containment inside floating Files drawer: every stop stays in right panel or panel toggles.
     const activeDescendant = () => page.evaluate(() => {
       const active = document.activeElement
       const id = active?.getAttribute('aria-activedescendant')
@@ -260,19 +262,27 @@ export async function mobileDrawersBrowser({values, m, out, storage, url, root})
         label: el?.getAttribute('aria-label') || el?.textContent?.trim(),
       }
     })
+    const isInsideFloatingRight = async cur => {
+      if (cur.label === m['window.menu.leftPanel'] || cur.label === m['window.menu.rightPanel']) return true
+      if (!cur.role || !cur.label) return false
+      return (await rightRegion.getByRole(cur.role, {name: cur.label, exact: true}).count()) > 0
+    }
     let wrappedToLeft = false
     for (let step = 0; step < 24; step++) {
       await page.keyboard.press('Tab')
       await flush(page)
       const cur = await activeDescendant()
-      assert.notEqual(cur.label, m['instanceTabs.new.ariaLabel'], 'Tab must not escape floating Files drawer to project tab bar')
-      assert.notEqual(cur.label, m['toastHistory.title'], 'Tab must not escape floating Files drawer to Notifications bell')
+      assert(await isInsideFloatingRight(cur), `Tab escaped floating Files drawer to ${JSON.stringify(cur)}`)
       if (cur.label === m['window.menu.leftPanel']) {
         wrappedToLeft = true
         break
       }
     }
     assert(wrappedToLeft, 'Tab inside floating Files drawer must wrap back to left panel toggle')
+    await page.keyboard.press('F6')
+    await flush(page)
+    const afterF6 = await activeDescendant()
+    assert(await isInsideFloatingRight(afterF6), `F6 escaped floating Files drawer to ${JSON.stringify(afterF6)}`)
     await page.keyboard.press('Shift+Tab')
     await flush(page)
     const wrappedBack = await activeDescendant()

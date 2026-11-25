@@ -7,6 +7,8 @@ pub(crate) use shortcuts::global_blocked as shortcut_blocked;
 mod sidebar;
 pub(crate) mod status_permissions;
 pub(crate) mod status_usage;
+#[cfg(target_arch = "wasm32")]
+mod web_orientation;
 
 use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};
 use rune::{Cx, El, Tx, col, text};
@@ -41,8 +43,9 @@ pub fn view(
         .child(rune_theme_codenomad::shell::viewport_probe(
             touch,
             move |s: &mut State, [_, _, width, height], tx| {
-                if s.shell.measure(width, height, touch, tx) == Some(1) {
-                    crate::git::dismiss_panel_overlays(s);
+                let overlay = crate::git::panel_overlay_open(s);
+                if s.shell.measure(width, height, touch, overlay, tx) == Some(1) {
+                    crate::git::dismiss_panel_overlays(s, tx);
                 }
             },
         ));
@@ -140,6 +143,16 @@ pub fn reader(s: &State, history: impl FnOnce() -> El) -> El {
 
 pub fn sync(s: &mut State) {
     crate::git::show(s, s.shell.visible(1) && workspace::files_tab(s));
+}
+
+pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
+    let overlay = crate::git::panel_overlay_open(s);
+    let wake = s.wake.clone();
+    let (changed, dismissed) = s.shell.poll(&wake, overlay, tx);
+    if dismissed == Some(1) {
+        crate::git::dismiss_panel_overlays(s, tx);
+    }
+    changed
 }
 
 fn connection(s: &State) -> &'static str {

@@ -18,6 +18,7 @@ pub struct Panels {
     right_width_initialized: bool,
     pub wanted: [Option<[bool; 2]>; 2],
     pub(crate) file_wrap: bool,
+    touch: bool,
     portrait: bool,
     touch_initialized: bool,
     started_portrait: bool,
@@ -27,8 +28,14 @@ pub struct Panels {
     floating: Option<usize>,
     floating_epoch: u64,
     resizing: Option<usize>,
+    #[cfg(target_arch = "wasm32")]
+    orientation_watch: Option<super::web_orientation::Watch>,
+    #[cfg(target_arch = "wasm32")]
+    orientation_watch_attempted: bool,
     #[cfg(test)]
     pub(super) touch_override: bool,
+    #[cfg(test)]
+    pub(super) test_orientation_pending: Option<Option<bool>>,
 }
 impl Default for Panels {
     fn default() -> Self {
@@ -38,6 +45,7 @@ impl Default for Panels {
             right_width_initialized: false,
             wanted: [None; 2],
             file_wrap: false,
+            touch: false,
             portrait: false,
             touch_initialized: false,
             started_portrait: false,
@@ -47,8 +55,14 @@ impl Default for Panels {
             floating: None,
             floating_epoch: 0,
             resizing: None,
+            #[cfg(target_arch = "wasm32")]
+            orientation_watch: None,
+            #[cfg(target_arch = "wasm32")]
+            orientation_watch_attempted: false,
             #[cfg(test)]
             touch_override: false,
+            #[cfg(test)]
+            test_orientation_pending: None,
         }
     }
 }
@@ -66,7 +80,7 @@ impl Panels {
         }
     }
     fn wanted(&self) -> [bool; 2] {
-        let default = !self.portrait && !self.started_portrait;
+        let default = !self.portrait && !(self.touch && self.started_portrait);
         self.wanted[usize::from(self.portrait)].unwrap_or([default; 2])
     }
     fn set_wanted(&mut self, index: usize, open: bool) {
@@ -139,15 +153,73 @@ impl Panels {
         width: f32,
         height: f32,
         touch: bool,
+        panel_overlay_open: bool,
         tx: &mut Tx,
     ) -> Option<usize> {
         #[cfg(target_arch = "wasm32")]
         let screen_portrait = web_screen_portrait();
         #[cfg(not(target_arch = "wasm32"))]
         let screen_portrait = None;
-        self.measure_with_screen(width, height, touch, screen_portrait, tx)
+        self.measure_with_screen_and_overlay(
+            width,
+            height,
+            touch,
+            screen_portrait,
+            panel_overlay_open,
+            tx,
+        )
     }
 
+    pub(super) fn poll(
+        &mut self,
+        wake: &rune::Waker,
+        panel_overlay_open: bool,
+        tx: &mut Tx,
+    ) -> (bool, Option<usize>) {
+        let _ = wake;
+        #[cfg(target_arch = "wasm32")]
+        {
+            if !self.orientation_watch_attempted {
+                self.orientation_watch_attempted = true;
+                self.orientation_watch = super::web_orientation::Watch::new(wake.clone());
+            }
+            if self
+                .orientation_watch
+                .as_ref()
+                .is_some_and(super::web_orientation::Watch::take_changed)
+                && self.touch
+                && let Some((width, height)) = self.touch_viewport
+            {
+                let dismissed = self.measure_with_screen_and_overlay(
+                    width,
+                    height,
+                    true,
+                    web_screen_portrait(),
+                    panel_overlay_open,
+                    tx,
+                );
+                return (true, dismissed);
+            }
+        }
+        #[cfg(test)]
+        if let Some(screen_portrait) = self.test_orientation_pending.take()
+            && self.touch
+            && let Some((width, height)) = self.touch_viewport
+        {
+            let dismissed = self.measure_with_screen_and_overlay(
+                width,
+                height,
+                true,
+                screen_portrait,
+                panel_overlay_open,
+                tx,
+            );
+            return (true, dismissed);
+        }
+        (false, None)
+    }
+
+    #[cfg(test)]
     pub(super) fn measure_with_screen(
         &mut self,
         width: f32,
@@ -156,12 +228,25 @@ impl Panels {
         screen_portrait: Option<bool>,
         tx: &mut Tx,
     ) -> Option<usize> {
+        self.measure_with_screen_and_overlay(width, height, touch, screen_portrait, false, tx)
+    }
+
+    fn measure_with_screen_and_overlay(
+        &mut self,
+        width: f32,
+        height: f32,
+        touch: bool,
+        screen_portrait: Option<bool>,
+        panel_overlay_open: bool,
+        tx: &mut Tx,
+    ) -> Option<usize> {
         if width > 0.0 && !self.right_width_initialized {
             self.preferred[1] = shell::default_right_panel(width);
             self.right_width_initialized = true;
         }
         let prev_floating = self.floating;
         self.width = width;
+        self.touch = touch;
         let portrait = self.resolve_portrait(width, height, touch, screen_portrait);
         if touch && width > 0.0 && height > 0.0 && !self.touch_initialized {
             self.touch_initialized = true;
@@ -175,7 +260,9 @@ impl Panels {
             if touch && portrait {
                 self.portrait_width = Some(width);
             }
-            if let Some(index) = self.floating.take() {
+            if let Some(index) = self.floating.take()
+                && (tx.focus_within(REGIONS[index]) || (index == 1 && panel_overlay_open))
+            {
                 tx.focus_when_shown(KEYS[index], tx.focus_visible());
             }
             self.resizing = None;
@@ -183,8 +270,6 @@ impl Panels {
             self.portrait_width = Some(width);
         }
         if !touch {
-            self.touch_initialized = false;
-            self.started_portrait = false;
             self.portrait_width = None;
             self.screen_portrait = None;
         }

@@ -268,6 +268,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         changed |= platform::pairing::poll(s, tx);
     }
+    changed |= shell::poll(s, tx);
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
     let transcript_revision = s.revision;
