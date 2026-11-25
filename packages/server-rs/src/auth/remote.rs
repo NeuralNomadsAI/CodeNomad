@@ -152,14 +152,23 @@ pub async fn admit(
     mut req: Request,
     next: Next,
 ) -> Response {
-    let Some(channel) = tls::https_only(&req).cloned() else { return reply(Status::FORBIDDEN, "TLS required") };
+    let Some(mut channel) = tls::https_only(&req).cloned() else { return reply(Status::FORBIDDEN, "TLS required") };
     let Some(path) = route_path(req.uri()) else { return reply(Status::BAD_REQUEST, "Invalid request path") };
-    let authority = channel.origin.strip_prefix("https://").unwrap_or_default();
     let h = req.headers();
     let only = |name: axum::http::HeaderName| h.get_all(name).iter().count() <= 1;
-    if h.get(header::HOST).and_then(|v| v.to_str().ok()) != Some(authority) || !only(header::HOST) {
+    let matched = h
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .filter(|_| only(header::HOST))
+        .and_then(|host| channel.origins.iter().find(|o| o.strip_prefix("https://") == Some(host)))
+        .cloned();
+    let Some(matched_origin) = matched else {
         return reply(Status::MISDIRECTED_REQUEST, "Misdirected request");
-    }
+    };
+    channel.origin = matched_origin;
+    req.extensions_mut().insert(channel.clone());
+    let h = req.headers();
+    let only = |name: axum::http::HeaderName| h.get_all(name).iter().count() <= 1;
     if path.starts_with("/previews/") {
         return crate::previews::admit_remote(&app, req).await;
     }
@@ -371,4 +380,154 @@ fn preview_control(path: &str, method: &Method) -> bool {
                 .is_some_and(|id| id.len() == 36 && uuid::Uuid::parse_str(id).is_ok()),
             _ => false,
         }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{App, auth, files, opencode, settings};
+    use axum::{Extension, middleware::from_fn_with_state};
+    use std::{path::PathBuf, sync::Arc, time::Duration};
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn multi_origin_pairing_binds_cookie_to_selected_origin_and_refuses_foreign_host_or_origin() {
+        let dir = crate::shared::test_dir("multi-origin-remote");
+        let first = "https://192.168.1.20:9898";
+        let second = "https://10.0.0.5:9898";
+        let origins = vec![first.to_owned(), second.to_owned(), "https://127.0.0.1:9898".to_owned()];
+        let devices = devices::open_for_test(&dir, first.to_owned(), origins.clone());
+        let auth = auth::Auth::new(auth::Settings {
+            username: "fixture".into(),
+            password: None,
+            file: None,
+            cookie: "fixture".into(),
+            token: false,
+            skip: true,
+            idle: Duration::from_secs(60),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let settings =
+            settings::Settings::new(settings::document::Location::resolve(dir.join("config.yaml").to_str().unwrap()));
+        let native = opencode::Native::test_connection(([127, 0, 0, 1], 9).into());
+        let app = Arc::new(App::new(
+            auth,
+            0,
+            dir.clone(),
+            dir.clone(),
+            false,
+            settings,
+            serde_json::Value::Null,
+            native,
+            PathBuf::new(),
+            Some(devices),
+            files::watch::Watches::new(tx),
+            None,
+        ));
+
+        // 1. Local status lists both non-loopback directOrigins and excludes loopback.
+        let status = devices::status(State(app.clone()), None).await.0;
+        assert_eq!(status["directOrigins"], json!([first, second]));
+
+        // 2. Local pairing link issued for the second origin targets that exact origin.
+        let issued =
+            devices::issue(State(app.clone()), axum::body::Bytes::from(format!(r#"{{"origin":"{second}"}}"#))).await;
+        assert_eq!(issued.status(), Status::OK);
+        let body = axum::body::to_bytes(issued.into_body(), 4096).await.unwrap();
+        let link: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let url = link["url"].as_str().unwrap();
+        let code = url.strip_prefix(&format!("{second}/remote-pair#")).expect(url);
+
+        // 3. Spin up the real `admit` + `auth::remote_routes` stack over a loopback socket.
+        let channel = tls::Channel {
+            origin: first.to_owned(),
+            origins: Arc::from(origins),
+            ingress: false,
+            socket: CancellationToken::new(),
+            principal: Arc::new(std::sync::Mutex::new(None)),
+        };
+        let router = auth::remote_routes()
+            .layer(from_fn_with_state((app.clone(), None), admit))
+            .layer(Extension(channel))
+            .with_state(app);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let base = format!("http://{addr}");
+
+        // Unknown Host -> 421 Misdirected Request.
+        let rogue = client
+            .get(format!("{base}/api/auth/status"))
+            .header(header::HOST, "evil.invalid:9898")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rogue.status(), Status::MISDIRECTED_REQUEST);
+
+        // Foreign Origin on the second Host -> 403 Cross-origin request rejected.
+        let cross = client
+            .post(format!("{base}/api/remote-control/pair"))
+            .header(header::HOST, "10.0.0.5:9898")
+            .header(header::ORIGIN, first)
+            .json(&json!({"code": code}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cross.status(), Status::FORBIDDEN);
+
+        // Exchanging the code issued for `second` on `first` fails (401).
+        let wrong_iface = client
+            .post(format!("{base}/api/remote-control/pair"))
+            .header(header::HOST, "192.168.1.20:9898")
+            .header(header::ORIGIN, first)
+            .json(&json!({"code": code}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(wrong_iface.status(), Status::UNAUTHORIZED);
+
+        // Exchanging on `second` succeeds and binds the device cookie to `second`.
+        let paired = client
+            .post(format!("{base}/api/remote-control/pair"))
+            .header(header::HOST, "10.0.0.5:9898")
+            .header(header::ORIGIN, second)
+            .json(&json!({"code": code}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(paired.status(), Status::OK);
+        let cookie = paired.headers()[header::SET_COOKIE].to_str().unwrap().split(';').next().unwrap().to_owned();
+
+        // Cookie authenticates on `second`...
+        let ok_status: serde_json::Value = client
+            .get(format!("{base}/api/auth/status"))
+            .header(header::HOST, "10.0.0.5:9898")
+            .header(header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(ok_status["authenticated"], true);
+
+        // ...but is rejected on `first`!
+        let rejected_status: serde_json::Value = client
+            .get(format!("{base}/api/auth/status"))
+            .header(header::HOST, "192.168.1.20:9898")
+            .header(header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(rejected_status["authenticated"], false);
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
