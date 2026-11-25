@@ -38,6 +38,11 @@ static SLOTS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
 pub(crate) async fn slot() -> tokio::sync::SemaphorePermit<'static> {
     SLOTS.acquire().await.unwrap()
 }
+#[cfg(test)]
+pub(crate) async fn test_git_serial() -> tokio::sync::MutexGuard<'static, ()> {
+    static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+    SERIAL.lock().await
+}
 pub fn bad(s: &str) -> Error {
     error(Status::BAD_REQUEST, s)
 }

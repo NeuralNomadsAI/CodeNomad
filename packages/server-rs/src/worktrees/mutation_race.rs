@@ -80,7 +80,7 @@ async fn fake(State(f): State<Arc<Fixture>>, request: Request) -> Response {
 }
 
 async fn bounded<T>(trace: &Trace, phase: &str, future: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(20), future).await.unwrap_or_else(|_| {
+    tokio::time::timeout(Duration::from_secs(60), future).await.unwrap_or_else(|_| {
         panic!("{phase} timed out:\n{}", trace.lock().unwrap_or_else(|e| e.into_inner()).join("\n"))
     })
 }
@@ -226,7 +226,7 @@ impl Harness {
         pause: &Pause,
         prompt: &mut tokio::task::JoinHandle<Result<Response, Error>>,
     ) {
-        let result = tokio::time::timeout(Duration::from_secs(20), async {
+        let result = tokio::time::timeout(Duration::from_secs(60), async {
             tokio::select! {
                 reached = pause.reached.acquire() => reached.unwrap().forget(),
                 result = &mut *prompt => panic!(
@@ -259,6 +259,7 @@ fn new_pause() -> Arc<Pause> {
 
 #[tokio::test]
 async fn deletion_finishes_while_a_prospective_prompt_is_held_before_admission() {
+    let _git = crate::git::test_git_serial().await;
     let h = Harness::new("mutation-race").await;
     let principal = Principal(CancellationToken::new());
     let request = h.prompt_request(&principal, h.checkout.join("future").join("nested"));
@@ -291,6 +292,7 @@ async fn deletion_finishes_while_a_prospective_prompt_is_held_before_admission()
 
 #[tokio::test]
 async fn deletion_during_initial_prospective_resolution_is_rejected() {
+    let _git = crate::git::test_git_serial().await;
     let h = Harness::new("mutation-race-initial").await;
     let principal = Principal(CancellationToken::new());
     let request = h.prompt_request(&principal, h.checkout.join("future").join("nested"));
@@ -313,6 +315,7 @@ async fn deletion_during_initial_prospective_resolution_is_rejected() {
 
 #[tokio::test]
 async fn unrelated_deletion_does_not_reject_a_live_root_prompt() {
+    let _git = crate::git::test_git_serial().await;
     let h = Harness::new("mutation-race-root-live").await;
     let principal = Principal(CancellationToken::new());
     let request = h.prompt_request(&principal, h.root.join("future").join("nested"));
@@ -336,6 +339,7 @@ async fn unrelated_deletion_does_not_reject_a_live_root_prompt() {
 
 #[tokio::test]
 async fn deletion_still_holding_fence_returns_409_for_prospective_prompt() {
+    let _git = crate::git::test_git_serial().await;
     let h = Harness::new("mutation-race-409").await;
     let principal = Principal(CancellationToken::new());
     let request = h.prompt_request(&principal, h.checkout.join("future").join("nested"));
@@ -360,6 +364,7 @@ async fn deletion_still_holding_fence_returns_409_for_prospective_prompt() {
 
 #[tokio::test]
 async fn deletion_between_recheck_and_admit_rejects_prospective_prompt() {
+    let _git = crate::git::test_git_serial().await;
     let h = Harness::new("mutation-race-aba").await;
     let principal = Principal(CancellationToken::new());
     let request = h.prompt_request(&principal, h.checkout.join("future").join("nested"));
@@ -381,6 +386,7 @@ async fn deletion_between_recheck_and_admit_rejects_prospective_prompt() {
 
 #[tokio::test]
 async fn subfolder_sessions_and_nested_workspace_sources_are_resolved() {
+    let _git = crate::git::test_git_serial().await;
     let h = Harness::new("mutation-race-nested").await;
     let nested_sub = h.checkout.join("apps").join("web");
     let root_sub = h.root.join("apps").join("web");
@@ -464,6 +470,7 @@ async fn subfolder_sessions_and_nested_workspace_sources_are_resolved() {
 
 #[tokio::test]
 async fn managed_worktree_prospective_prompt_returns_409_during_deletion_and_200_after_git_remove() {
+    let _git = crate::git::test_git_serial().await;
     let h = Harness::with_managed_checkout("mutation-race-managed-409").await;
     let principal = Principal(CancellationToken::new());
     let request = h.prompt_request(&principal, h.checkout.join("future").join("nested"));
