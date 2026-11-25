@@ -65,7 +65,7 @@ impl Native {
     #[cfg(test)]
     pub(crate) fn test_connection(address: std::net::SocketAddr) -> Self {
         let url = Url::parse(&format!("http://{address}")).unwrap();
-        let client = Client::builder().no_proxy().build().unwrap();
+        let client = Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build().unwrap();
         let inner = Arc::new(NativeInner {
             client: client.clone(),
             endpoint: RwLock::new(Some(Arc::new(Endpoint {
@@ -80,6 +80,12 @@ impl Native {
             retired: tokio::sync::Notify::new(),
         });
         Self { client, inner }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retire_test_endpoint(&self) {
+        *self.inner.validated.lock().unwrap() = None;
+        self.inner.retired.notify_waiters();
     }
 
     /// The bench's fixture daemon when the positional launch injects it, else the CLI lifecycle of `binary`.

@@ -2,6 +2,7 @@
 mod accounts;
 mod google;
 mod plans;
+mod plugin;
 mod shared;
 mod special;
 mod subscriptions;
@@ -20,7 +21,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use serde_json::{Value, json};
+use serde_json::{Value, json, value::RawValue};
 use tokio::{sync::Mutex as AsyncMutex, time::Instant};
 
 use self::shared::*;
@@ -32,11 +33,18 @@ use crate::{
     shared::{js_trim, now_ms},
 };
 
+type CodexFlight = futures_util::future::Shared<futures_util::future::BoxFuture<'static, (Quota, u64)>>;
+#[cfg(test)]
+type CodexOverride = Arc<dyn Fn(&str, &str) -> futures_util::future::BoxFuture<'static, Quota> + Send + Sync>;
+
 pub struct State {
     http: LazyLock<Http>,
     cache: Mutex<VecDeque<Cached>>,
     flights: Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
     codex: Mutex<VecDeque<Cached>>,
+    codex_flights: Mutex<HashMap<String, CodexFlight>>,
+    #[cfg(test)]
+    codex_override: Mutex<Option<CodexOverride>>,
     google: Mutex<VecDeque<google::Token>>,
     claude: Mutex<HashMap<&'static str, subscriptions::ClaudeRead>>,
 }
@@ -47,6 +55,9 @@ impl Default for State {
             cache: Default::default(),
             flights: Default::default(),
             codex: Default::default(),
+            codex_flights: Default::default(),
+            #[cfg(test)]
+            codex_override: Default::default(),
             google: Default::default(),
             claude: Default::default(),
         }
@@ -156,6 +167,7 @@ pub fn routes() -> Router<Shared> {
         .route("/api/workspaces/{id}/provider-accounts/{integration}", get(accounts::route))
 }
 
+#[derive(Clone)]
 struct Query {
     instance: String,
     session: String,
@@ -174,7 +186,10 @@ fn query(raw: Option<&str>) -> Option<Query> {
         }
         let val = crate::search::query::part(val);
         let val = js_trim(&val);
-        if val.chars().count() > 256 || val.is_empty() && key != "modelId" || fields.insert(key, json!(val)).is_some() {
+        if val.encode_utf16().count() > 256
+            || val.is_empty() && key != "modelId"
+            || fields.insert(key, json!(val)).is_some()
+        {
             return None;
         }
     }
@@ -184,7 +199,7 @@ fn query(raw: Option<&str>) -> Option<Query> {
         model: fields.get("modelId").and_then(Value::as_str).map(str::to_owned),
     })
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Refusal {
     Unavailable,
     Session,
@@ -236,7 +251,7 @@ struct Owned<'a> {
 }
 impl Owned<'_> {
     fn current(&self) -> Result<(), Refusal> {
-        if !self.app.native.endpoint().is_some_and(|e| Arc::ptr_eq(&e, &self.endpoint)) {
+        if !self.app.native.current(&self.endpoint) {
             return Err(Refusal::Unavailable);
         }
         if !self.app.workspace(&self.query.instance).is_ok_and(|w| {
@@ -287,6 +302,19 @@ impl Owned<'_> {
         }
         self.current()?;
         Ok(directory.to_owned())
+    }
+    async fn session_location(&self) -> Result<(), Refusal> {
+        if matches!(self.query.session.as_str(), "." | "..") {
+            return Err(Refusal::Unavailable);
+        }
+        let p = self.native(&format!("/api/session/{}", plans::encode(&self.query.session)), false).await?;
+        let s = &p["data"];
+        let directory = s["location"]["directory"].as_str().ok_or(Refusal::Unavailable)?;
+        if s["id"] != self.query.session || directory != self.directory || s["location"].get("workspaceID").is_some() {
+            return Err(Refusal::Foreign);
+        }
+        self.current()?;
+        Ok(())
     }
     async fn credentials(&self) -> Result<Value, Refusal> {
         let p = self.native("/api/credential", false).await?;
@@ -387,16 +415,79 @@ fn settings(p: Option<&Value>, requested: &str, provider: &Provider) -> Context 
     out
 }
 
-async fn owned_read(app: &App, q: &Query, requested: &str, until: Instant) -> Result<Value, Refusal> {
+async fn owned_read(app: &Shared, q: &Query, requested: &str, until: Instant) -> Result<Box<RawValue>, Refusal> {
+    owned_read_with_deadlines(app, q, requested, until, until - Duration::from_secs(3)).await
+}
+
+async fn owned_read_with_deadlines(
+    app: &Shared,
+    q: &Query,
+    requested: &str,
+    until: Instant,
+    quota_until: Instant,
+) -> Result<Box<RawValue>, Refusal> {
     let workspace = app.workspace(&q.instance).map_err(|_| Refusal::Workspace)?;
     let endpoint = app.native.acquire(until).await.map_err(|_| Refusal::Unavailable)?;
     let mut owned = Owned { app, query: q, endpoint, workspace, directory: String::new() };
     owned.directory = tokio::time::timeout_at(until, owned.session()).await.map_err(|_| Refusal::Unavailable)??;
     let free = special::free_model(requested, q.model.as_deref());
     let provider = if free { Some(&FREE) } else { resolve(requested) };
+    let plugin = if !free
+        && provider.is_none()
+        && let Some(rpc_id) = plugin::rpc_id(requested)
+    {
+        // Plugin code receives the Location: confirm the session did not move during the ownership check.
+        let now = Instant::now();
+        if now >= until {
+            return Err(Refusal::Unavailable);
+        }
+        let confirmed = if now >= quota_until {
+            false
+        } else {
+            tokio::select! {
+                biased;
+                _ = owned.app.native.wait_retired(&owned.endpoint) => return Err(Refusal::Unavailable),
+                res = tokio::time::timeout_at(quota_until, owned.session_location()) => match res {
+                    Ok(Ok(())) => true,
+                    Ok(Err(err)) => return Err(err),
+                    Err(_) => {
+                        if Instant::now() >= until {
+                            return Err(Refusal::Unavailable);
+                        }
+                        false
+                    }
+                },
+            }
+        };
+        // The quota deadline also bounds the re-read; past it, publish an unavailable quota without dispatching.
+        let result = if confirmed {
+            plugin::read_rpc(&owned, &rpc_id, requested, q.model.as_deref(), until, quota_until).await?
+        } else {
+            Some(plugin::unavailable_raw(requested, q.model.as_deref()))
+        };
+        if result.is_none() {
+            let current = tokio::time::timeout_at(until, owned.session()).await.map_err(|_| Refusal::Unavailable)??;
+            if current != owned.directory {
+                return Err(Refusal::Foreign);
+            }
+        }
+        result
+    } else {
+        None
+    };
+    if let Some(body) = plugin {
+        let current = tokio::time::timeout_at(until, owned.session()).await.map_err(|_| Refusal::Unavailable)??;
+        if current != owned.directory {
+            return Err(Refusal::Foreign);
+        }
+        return Ok(body);
+    }
     let state = &app.provider_usage;
-    let native =
-        if !free && provider.is_none_or(|p| p.id == "codex") { codex(state, &owned, requested).await } else { None };
+    let native = if !free && provider.is_none_or(|p| p.id == "codex") {
+        codex(app, state, &owned, requested).await
+    } else {
+        None
+    };
     let (provider, name, reading, stamp) = if let Some((reading, stamp)) = native {
         (resolve("codex"), "Codex", reading, stamp)
     } else if let Some(p) = provider {
@@ -410,14 +501,15 @@ async fn owned_read(app: &App, q: &Query, requested: &str, until: Instant) -> Re
                         if owned.session().await? != owned.directory {
                             return Err(Refusal::Foreign);
                         }
-                        return Ok(public(
+                        return serde_json::value::to_raw_value(&public(
                             requested,
                             q.model.as_deref(),
                             Some(p),
                             p.name,
                             special::free_unavailable(),
                             now_ms(),
-                        ));
+                        ))
+                        .map_err(|_| Refusal::Unavailable);
                     }
                 }
             }
@@ -465,7 +557,8 @@ async fn owned_read(app: &App, q: &Query, requested: &str, until: Instant) -> Re
     if owned.session().await? != owned.directory {
         return Err(Refusal::Foreign);
     }
-    Ok(public(requested, q.model.as_deref(), provider, name, reading, stamp))
+    serde_json::value::to_raw_value(&public(requested, q.model.as_deref(), provider, name, reading, stamp))
+        .map_err(|_| Refusal::Unavailable)
 }
 
 async fn reading(state: &State, p: &Provider, ctx: Context, auth: Value, until: Instant) -> (Quota, u64) {
@@ -572,7 +665,7 @@ async fn codex_selected(owned: &Owned<'_>, requested: &str, recognized: &mut boo
     Ok(Some(Codex { identity, key: access.into(), account: account.into() }))
 }
 
-async fn codex(state: &State, scope: &Owned<'_>, requested: &str) -> Option<(Quota, u64)> {
+async fn codex(app: &Shared, state: &Arc<State>, scope: &Owned<'_>, requested: &str) -> Option<(Quota, u64)> {
     let mut recognized = matches!(requested.to_ascii_lowercase().as_str(), "openai" | "codex" | "chatgpt");
     let slot = hash(&json!([
         scope.endpoint.url.as_str(),
@@ -593,33 +686,106 @@ async fn codex(state: &State, scope: &Owned<'_>, requested: &str) -> Option<(Quo
             };
         }
     };
-    let flight = state.flight(&format!("codex:{slot}:{}", selected.identity));
-    let _lock = flight.lock().await;
-    let (result, stamp) = match load(&state.codex, &slot, &selected.identity) {
-        Some(cached) => cached,
-        None => (subscriptions::codex(state.http(), &selected.key, &selected.account).await, now_ms()),
+    if let Some((mut cached, stamp)) = load(&state.codex, &slot, &selected.identity) {
+        if cached.is_ok() {
+            match codex_selected(scope, requested, &mut recognized).await {
+                Ok(Some(now)) if now.identity == selected.identity => {}
+                _ => {
+                    state.codex.lock().unwrap().retain(|c| c.slot != slot || c.identity != selected.identity);
+                    cached = Err(FAILED);
+                }
+            }
+        }
+        return Some((cached, stamp));
+    }
+    let flight_key = format!("{slot}:{}", selected.identity);
+    // Keep the detached upstream read shared through revalidation and cache write so neither a
+    // disconnecting caller nor a peer joining before caching triggers a duplicate upstream call.
+    let flight = {
+        let mut flights = state.codex_flights.lock().unwrap();
+        if let Some(existing) = flights.get(&flight_key) {
+            existing.clone()
+        } else {
+            use futures_util::FutureExt;
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let shared: CodexFlight =
+                async move { rx.await.unwrap_or_else(|_| (Err(FAILED), now_ms())) }.boxed().shared();
+            flights.insert(flight_key.clone(), shared.clone());
+            let app = app.clone();
+            let state = state.clone();
+            let query = scope.query.clone();
+            let endpoint = scope.endpoint.clone();
+            let workspace = scope.workspace.clone();
+            let directory = scope.directory.clone();
+            let requested = requested.to_owned();
+            let slot = slot.clone();
+            let identity = selected.identity.clone();
+            let key = selected.key.clone();
+            let account = selected.account.clone();
+            tokio::spawn(async move {
+                struct FlightGuard {
+                    state: Arc<State>,
+                    key: String,
+                }
+                impl Drop for FlightGuard {
+                    fn drop(&mut self) {
+                        self.state.codex_flights.lock().unwrap().remove(&self.key);
+                    }
+                }
+                let _guard = FlightGuard { state: state.clone(), key: flight_key };
+                let deadline = Instant::now() + Duration::from_secs(15);
+                let read = async {
+                    #[cfg(test)]
+                    {
+                        let override_fn = state.codex_override.lock().unwrap().clone();
+                        if let Some(override_fn) = override_fn {
+                            return override_fn(&key, &account).await;
+                        }
+                    }
+                    subscriptions::codex(state.http(), &key, &account).await
+                };
+                let mut result = tokio::time::timeout_at(deadline, read).await.unwrap_or(Err(FAILED));
+                let stamp = now_ms();
+                if result.is_ok() {
+                    let owned = Owned { app: &app, query: &query, endpoint, workspace, directory };
+                    let mut task_recognized = recognized;
+                    match tokio::time::timeout_at(deadline, codex_selected(&owned, &requested, &mut task_recognized))
+                        .await
+                    {
+                        Ok(Ok(Some(now))) if now.identity == identity => {
+                            save(
+                                &mut state.codex.lock().unwrap(),
+                                Cached {
+                                    slot: slot.clone(),
+                                    identity: identity.clone(),
+                                    expires: stamp + 60_000,
+                                    stamp,
+                                    reading: result.clone(),
+                                },
+                                128,
+                            );
+                        }
+                        _ => result = Err(FAILED),
+                    }
+                }
+                if result.is_err() {
+                    state.codex.lock().unwrap().retain(|c| c.slot != slot || c.identity != identity);
+                }
+                drop(_guard);
+                let _ = tx.send((result, stamp));
+            });
+            shared
+        }
     };
-    let mut result = result;
+    let (mut result, stamp) = flight.await;
     if result.is_ok() {
         match codex_selected(scope, requested, &mut recognized).await {
-            Ok(Some(now)) if now.identity == selected.identity => {
-                save(
-                    &mut state.codex.lock().unwrap(),
-                    Cached {
-                        slot: slot.clone(),
-                        identity: selected.identity,
-                        expires: stamp + 60_000,
-                        stamp,
-                        reading: result.clone(),
-                    },
-                    128,
-                );
+            Ok(Some(now)) if now.identity == selected.identity => {}
+            _ => {
+                state.codex.lock().unwrap().retain(|c| c.slot != slot || c.identity != selected.identity);
+                result = Err(FAILED);
             }
-            _ => result = Err(FAILED),
         }
-    }
-    if result.is_err() {
-        state.codex.lock().unwrap().retain(|c| c.slot != slot);
     }
     Some((result, stamp))
 }
