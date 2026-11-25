@@ -517,7 +517,7 @@ test("pre-handler 400/413/426 keep Fastify error envelopes and carry x-codenomad
     const refusedBadMediaType = await f.app.inject({
       method: "POST",
       url: doubleSlash,
-      headers: { "content-type": "invalid/type; ;" },
+      headers: { "content-type": "not-a-media-type" },
       payload: "{invalid",
     })
     assert.equal(refusedBadMediaType.statusCode, 403, refusedBadMediaType.body)
