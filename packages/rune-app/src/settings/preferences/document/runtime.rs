@@ -621,7 +621,8 @@ impl Document {
                         || (backend.attest_server().await.is_ok()
                             && !backend.client.needs_capability_recheck()
                             && !backend.client.has_unattested_stream_drop());
-                    let still_current = epoch_guard.load(Ordering::Acquire) == transport_epoch
+                    let still_current = !sender.is_closed()
+                        && epoch_guard.load(Ordering::Acquire) == transport_epoch
                         && backend.client.transport_drops_sum(&active_client_ids) == seen_drops;
                     if attested && still_current {
                         read_rev = backend.client.preferences_revision(owner);

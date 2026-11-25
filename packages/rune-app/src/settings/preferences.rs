@@ -939,8 +939,10 @@ impl Preferences {
     fn poll_documents_inner(
         &mut self,
         revalidate_idle: bool,
-        mut dispatch_budget: u32,
+        dispatch_budget: u32,
     ) -> (bool, bool, u32) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut dispatch_budget = dispatch_budget;
         let install = self.opencode_install.poll();
         if self.authentication_required {
             return (install, false, 0);
@@ -993,7 +995,10 @@ impl Preferences {
             (false, false)
         };
         #[cfg(not(target_arch = "wasm32"))]
-        if config_unconfirmed && !config_was_in_flight && self.config.in_flight() {
+        if config_unconfirmed
+            && (!config_was_in_flight || config_settled)
+            && self.config.in_flight()
+        {
             dispatch_budget = dispatch_budget.saturating_sub(1);
         }
         if self.transport_lost && self.config.transport_revalidated() {
@@ -1028,7 +1033,7 @@ impl Preferences {
             (false, false)
         };
         #[cfg(not(target_arch = "wasm32"))]
-        if state_unconfirmed && !state_was_in_flight && self.state.in_flight() {
+        if state_unconfirmed && (!state_was_in_flight || state_settled) && self.state.in_flight() {
             dispatch_budget = dispatch_budget.saturating_sub(1);
         }
         #[cfg(not(target_arch = "wasm32"))]
