@@ -224,7 +224,7 @@ export function useWorkspaceFileEditor(options: {
         const code = error instanceof Error ? (error as { code?: unknown }).code : undefined
         if (status === 409 && error instanceof Error && error.message === "File changed on disk") {
           options.onError(options.t("filesPanel.saveConflict"))
-        } else if (code === "file_too_large" || (status === 400 && error instanceof Error && error.message === "Selected file is too large to attach")) {
+        } else if (code === "file_too_large" || status === 413 || (status === 400 && error instanceof Error && error.message === "Selected file is too large to attach")) {
           options.onError(options.t("filesPanel.saveTooLarge"))
         } else {
           options.onError(error instanceof Error ? error.message : options.t("instanceShell.rightPanel.toast.saveError"))

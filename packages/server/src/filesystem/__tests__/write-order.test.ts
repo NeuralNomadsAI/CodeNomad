@@ -6,7 +6,7 @@ import { test } from "node:test"
 import { FileSystemBrowser } from "../browser"
 
 test("concurrent saves through distinct browsers cannot interleave file contents", async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-write-order-"))
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-write-order-")))
   const target = path.join(root, "file.txt")
   fs.writeFileSync(target, "initial", "utf8")
   const originalRename = fs.promises.rename.bind(fs.promises)

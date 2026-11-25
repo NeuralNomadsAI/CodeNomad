@@ -6,7 +6,12 @@ const pending = new Map<string, Promise<unknown>>()
 
 export function pathAccessKey(file: string): string {
   const resolved = path.resolve(file)
-  return `path:${process.platform === "win32" ? resolved.toLowerCase() : resolved}`
+  return `lex:${process.platform === "win32" ? resolved.toLowerCase() : resolved}`
+}
+
+export function canonicalAccessKey(file: string): string {
+  const resolved = path.resolve(file)
+  return `canon:${process.platform === "win32" ? resolved.toLowerCase() : resolved}`
 }
 
 export function identityAccessKey(dev: bigint | number, ino: bigint | number): string {

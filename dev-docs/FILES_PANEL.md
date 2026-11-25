@@ -213,12 +213,16 @@ opaque device/inode identity distinct from mtime.
   verify the current file handle's bytes before writing and return
   `409 { error: "File changed on disk" }` when missing or different. Existing
   single-link files stage to a sibling temporary file, re-verify target and parent
-  identity, and publish via `rename`; hardlinks (`nlink > 1`), rename limitations,
-  and unpreservable POSIX ownership fall back to a verified in-place write on the
-  open handle. New files publish atomically with no-clobber `link` (or exclusive
-  `wx` fallback). Successful saves return `204` with the new `ETag`. The Solid
-  editor forwards `expectedVersion` and maps save-time `409` and `file_too_large`
-  rejections to localized alerts while keeping the draft.
+  identity, and publish via `rename` (preserving POSIX mode and ownership where
+  permitted; ACLs, xattrs and NTFS alternate streams are preserved only by the
+  Rust server); hardlinks (`nlink > 1`), non-writable parent directories, rename
+  limitations, and unpreservable POSIX ownership fall back to a verified in-place
+  write on the open handle. New files stage to a temporary file and publish
+  atomically with no-clobber `link` (or an exclusive `wx` create-and-write
+  fallback when hard links are unavailable). Successful saves return `204` with
+  the new `ETag`. The Solid editor forwards `expectedVersion` and maps save-time
+  `409` and `file_too_large`/`413` rejections to localized alerts while keeping
+  the draft.
 - `/git-history/:commit` returns the message and files; an optional `path` returns
   before/after text against the first parent (empty for a root commit).
 - Commit IDs are full SHA-1/SHA-256 hashes. Files must belong to the commit's

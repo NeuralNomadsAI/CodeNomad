@@ -142,7 +142,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
       <button class="files-header-icon-button" aria-label={t("gitPanel.backChat")} title={t("gitPanel.backChat")} onClick={props.onClose}><X size={16} /></button>
     </header>
     <Show when={error()}><div class="p-3 text-error" role="alert">{error()} <button onClick={() => void explicitRefresh()}>{t("instanceShell.rightPanel.actions.refresh")}</button></div></Show>
-    <Show when={editor.conflict() && !error()}><div class="p-3 text-error" role="alert">{t("filesPanel.draftConflict")}</div></Show>
+    <Show when={editor.conflict() && error() !== t("filesPanel.saveConflict")}><div class="p-3 text-error" role="alert">{t("filesPanel.draftConflict")}</div></Show>
     <Show when={editor.limited()}><div class="p-3 text-error" role="alert">{t("filesPanel.draftLimit")}</div></Show>
     <Show when={(recovering() || loading()) && !content()}><p class="p-3 text-secondary">{t("instanceInfo.loading")}</p></Show>
     <Show when={content()}>{value => <>

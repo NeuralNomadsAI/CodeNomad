@@ -236,15 +236,19 @@ test("save forwards snapshot.version and shows localized errors on 409 and file_
     assert.equal(h.editor.saving(), false)
     assert.equal(h.editor.conflict(), true, "known draft conflict stays set until save or refresh resolves it")
 
-    // Oversized save reports a localized save-specific message.
+    // Oversized save reports a localized save-specific message (both 400 file_too_large and 413).
     fixture.fail = Object.assign(new Error("Selected file is too large to attach"), { status: 400, code: "file_too_large" })
     await h.editor.save()
     assert.equal(errors[1], "filesPanel.saveTooLarge")
 
+    fixture.fail = Object.assign(new Error("Request body is too large"), { status: 413 })
+    await h.editor.save()
+    assert.equal(errors[2], "filesPanel.saveTooLarge")
+
     // A non-file 409 keeps its own message rather than claiming a file edit conflict.
     fixture.fail = Object.assign(new Error("Worktree deletion is in progress"), { status: 409 })
     await h.editor.save()
-    assert.equal(errors[2], "Worktree deletion is in progress")
+    assert.equal(errors[3], "Worktree deletion is in progress")
     h.editor.discard()
   } finally { fixture.fail = false; fixture.version = undefined; h.close() }
 })

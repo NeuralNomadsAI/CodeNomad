@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
-import { identityAccessKey, pathAccessKey, withFileAccessKeys } from "./file-access"
+import { canonicalAccessKey, identityAccessKey, pathAccessKey, withFileAccessKeys } from "./file-access"
 
 export const MAX_READABLE_FILE_BYTES = 5 * 1024 * 1024
 const READ_CHUNK_BYTES = 64 * 1024
 const RENAME_FALLBACK_CODES = new Set(["EACCES", "EPERM", "EBUSY", "EXDEV", "ENOSYS", "ENOTSUP"])
+const STAGE_CREATE_FALLBACK_CODES = new Set(["EACCES", "EPERM", "EROFS", "ENOSYS", "ENOTSUP"])
 const LINK_FALLBACK_CODES = new Set(["EPERM", "ENOTSUP", "ENOSYS", "EXDEV", "EACCES"])
 
 export function fileVersion(bytes: Uint8Array): string {
@@ -48,6 +49,11 @@ function isRenameFallbackError(error: unknown): boolean {
   return typeof code === "string" && RENAME_FALLBACK_CODES.has(code)
 }
 
+function isStageCreateFallbackError(error: unknown): boolean {
+  const code = errnoCode(error)
+  return typeof code === "string" && STAGE_CREATE_FALLBACK_CODES.has(code)
+}
+
 function isLinkFallbackError(error: unknown): boolean {
   const code = errnoCode(error)
   return typeof code === "string" && LINK_FALLBACK_CODES.has(code)
@@ -80,65 +86,95 @@ async function writeAllToHandle(handle: fs.promises.FileHandle, bytes: Buffer): 
   await handle.sync()
 }
 
-async function resolveTarget(lexicalPath: string, isWindows: boolean): Promise<ResolvedTarget> {
-  let current = path.resolve(lexicalPath)
+function rawJoin(baseDir: string, target: string): string {
+  if (path.isAbsolute(target)) return target
+  const sep = baseDir.endsWith("/") || baseDir.endsWith("\\") ? "" : path.sep
+  return `${baseDir}${sep}${target}`
+}
+
+/**
+ * Resolve symlinks using OS `realpath` semantics (never collapsing `..` before intermediate symlinks),
+ * falling back to hop-by-hop link walking only for missing or dangling targets.
+ */
+async function resolveTarget(lexicalPath: string, isWindows: boolean, conditional = false): Promise<ResolvedTarget> {
+  let current = lexicalPath
   for (let hops = 0; hops < 40; hops++) {
-    let stats: fs.BigIntStats
     try {
-      stats = await fs.promises.lstat(current, { bigint: true })
+      const real = await fs.promises.realpath(current)
+      const stats = await fs.promises.lstat(real, { bigint: true })
+      return { targetPath: real, parentPath: path.dirname(real), existing: true, stats }
     } catch (error) {
-      if (errnoCode(error) === "ENOENT") {
-        const parentPath = await fs.promises.realpath(path.dirname(current))
-        return { targetPath: path.join(parentPath, path.basename(current)), parentPath, existing: false }
-      }
-      throw error
+      if (errnoCode(error) !== "ENOENT") throw error
     }
-    if (stats.isSymbolicLink()) {
+
+    let linkStats: fs.BigIntStats | undefined
+    try {
+      linkStats = await fs.promises.lstat(current, { bigint: true })
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") throw error
+    }
+
+    if (linkStats?.isSymbolicLink()) {
       const linkTarget = await fs.promises.readlink(current)
       if (linkTarget.endsWith("/") || (isWindows && linkTarget.endsWith("\\"))) {
+        if (conditional) throw new FileChangedError()
         throw new Error("Selected path is not a file")
       }
-      const parentPath = await fs.promises.realpath(path.dirname(current))
-      current = path.resolve(parentPath, linkTarget)
+      current = rawJoin(path.dirname(current), linkTarget)
       continue
     }
-    const parentPath = await fs.promises.realpath(path.dirname(current))
-    return { targetPath: path.join(parentPath, path.basename(current)), parentPath, existing: true, stats }
+
+    const leaf = path.basename(current)
+    if (!leaf || leaf === "." || leaf === "..") {
+      if (conditional) throw new FileChangedError()
+      throw new Error("Selected path is unavailable")
+    }
+    try {
+      const parentPath = await fs.promises.realpath(path.dirname(current))
+      return { targetPath: path.join(parentPath, leaf), parentPath, existing: false }
+    } catch (error) {
+      if (conditional && errnoCode(error) === "ENOENT") throw new FileChangedError()
+      throw error
+    }
   }
   throw new Error("Selected path is unavailable")
 }
 
-function accessKeysFor(lexicalPath: string, target: ResolvedTarget): string[] {
-  const keys = [pathAccessKey(lexicalPath), pathAccessKey(target.targetPath)]
+function physicalKeysFor(target: ResolvedTarget): string[] {
+  const keys = [canonicalAccessKey(target.targetPath)]
   if (target.stats) keys.push(identityAccessKey(target.stats.dev, target.stats.ino))
   return keys
 }
 
-export async function withResolvedFileAccess<T>(
+/**
+ * Two-tier lock order: synchronously enqueue on the lexical path (`lex:*`) to preserve
+ * same-path FIFO order, then acquire sorted physical keys (`canon:*`, `id:*`) to serialize
+ * symlinks and hardlink aliases without deadlock.
+ */
+export function withResolvedFileAccess<T>(
   lexicalPath: string,
   isWindows: boolean,
   operation: (target: ResolvedTarget) => Promise<T>,
+  options?: { conditional?: boolean },
 ): Promise<T> {
-  let heldKeys = [pathAccessKey(lexicalPath)]
-  try {
-    heldKeys = accessKeysFor(lexicalPath, await resolveTarget(lexicalPath, isWindows))
-  } catch {
-    // Let the locked operation surface path resolution errors consistently.
-  }
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const retryKeys = await withFileAccessKeys(heldKeys, async () => {
-      const target = await resolveTarget(lexicalPath, isWindows)
-      const needed = accessKeysFor(lexicalPath, target)
-      const heldSet = new Set(heldKeys)
-      if (needed.some((key) => !heldSet.has(key))) {
-        return [...new Set([...heldKeys, ...needed])]
-      }
-      return { value: await operation(target) }
-    })
-    if (!Array.isArray(retryKeys)) return retryKeys.value
-    heldKeys = retryKeys
-  }
-  throw new FileChangedError()
+  const conditional = options?.conditional ?? false
+  return withFileAccessKeys([pathAccessKey(lexicalPath)], async () => {
+    let heldKeys = physicalKeysFor(await resolveTarget(lexicalPath, isWindows, conditional))
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const result = await withFileAccessKeys(heldKeys, async () => {
+        const target = await resolveTarget(lexicalPath, isWindows, conditional)
+        const needed = physicalKeysFor(target)
+        const heldSet = new Set(heldKeys)
+        if (needed.some((key) => !heldSet.has(key))) {
+          return [...new Set([...heldKeys, ...needed])]
+        }
+        return { value: await operation(target) }
+      })
+      if (!Array.isArray(result)) return result.value
+      heldKeys = result
+    }
+    throw new FileChangedError()
+  })
 }
 
 export async function readBoundedFile(
@@ -147,7 +183,11 @@ export async function readBoundedFile(
   isWindows: boolean,
 ): Promise<{ contents: string; version: string }> {
   return withResolvedFileAccess(lexicalPath, isWindows, async (target) => {
-    const handle = await fs.promises.open(target.targetPath, "r")
+    if (target.existing && target.stats && !target.stats.isFile()) {
+      throw new Error("Selected path is not a file")
+    }
+    const flags = isWindows ? "r" : fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0)
+    const handle = await fs.promises.open(target.targetPath, flags)
     try {
       const stats = await handle.stat({ bigint: true })
       if (!stats.isFile()) {
@@ -169,9 +209,10 @@ async function openOriginalWritable(
   conditional: boolean,
   isWindows: boolean,
 ): Promise<{ handle: fs.promises.FileHandle; stats: fs.BigIntStats } | null> {
+  const accessFlag = conditional ? fs.constants.O_RDWR : fs.constants.O_WRONLY
   const flags = isWindows
-    ? "r+"
-    : fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | (fs.constants.O_NONBLOCK ?? 0)
+    ? accessFlag
+    : accessFlag | fs.constants.O_NOFOLLOW | (fs.constants.O_NONBLOCK ?? 0)
   let handle: fs.promises.FileHandle
   try {
     handle = await fs.promises.open(targetPath, flags)
@@ -251,32 +292,43 @@ export async function writeVersionedFile(
     }
 
     const parentStats = await fs.promises.stat(target.parentPath, { bigint: true })
-    const assertParentUnchanged = async () => {
+    const assertDestinationCurrent = async () => {
       const currentParent = await fs.promises.stat(target.parentPath, { bigint: true }).catch(() => undefined)
       if (!currentParent || currentParent.dev !== parentStats.dev || currentParent.ino !== parentStats.ino) {
         throw new FileChangedError()
       }
+      const latest = await resolveTarget(lexicalPath, options.isWindows, conditional)
+      if (latest.targetPath !== target.targetPath) {
+        throw new FileChangedError()
+      }
+      return latest
     }
 
-    const opened = await openOriginalWritable(target.targetPath, conditional, options.isWindows)
-
-    if (!opened) {
+    if (!target.existing) {
       if (conditional) throw new FileChangedError()
       const tempPath = path.join(target.parentPath, `.codenomad-tmp-${process.pid}-${randomUUID()}`)
       let tempCreated = false
       try {
-        const tempHandle = await fs.promises.open(tempPath, "wx")
-        tempCreated = true
+        let tempHandle: fs.promises.FileHandle
+        try {
+          tempHandle = await fs.promises.open(tempPath, "wx")
+          tempCreated = true
+        } catch (error) {
+          if (isStageCreateFallbackError(error)) {
+            const latest = await assertDestinationCurrent()
+            if (latest.existing) throw new FileChangedError()
+            await createExclusiveFile(target.targetPath, bytes)
+            return nextVersion
+          }
+          throw error
+        }
         try {
           await writeAllToHandle(tempHandle, bytes)
         } finally {
           await tempHandle.close()
         }
-        await assertParentUnchanged()
-        const latest = await resolveTarget(lexicalPath, options.isWindows)
-        if (latest.targetPath !== target.targetPath || latest.existing) {
-          throw new FileChangedError()
-        }
+        const latest = await assertDestinationCurrent()
+        if (latest.existing) throw new FileChangedError()
         try {
           await fs.promises.link(tempPath, target.targetPath)
         } catch (error) {
@@ -298,10 +350,17 @@ export async function writeVersionedFile(
       }
     }
 
+    const lockedStats = target.stats!
+    const opened = await openOriginalWritable(target.targetPath, conditional, options.isWindows)
+    if (!opened) throw new FileChangedError()
     const originalStats = opened.stats
     try {
+      if (originalStats.dev !== lockedStats.dev || originalStats.ino !== lockedStats.ino) {
+        throw new FileChangedError()
+      }
       await verifyHandleVersion(opened.handle, expectedVersion)
       if (originalStats.nlink > 1n) {
+        await assertDestinationCurrent()
         await writeAllToHandle(opened.handle, bytes)
         return nextVersion
       }
@@ -310,13 +369,13 @@ export async function writeVersionedFile(
     }
 
     const writeInPlaceVerified = async () => {
-      const current = await openOriginalWritable(target.targetPath, true, options.isWindows)
+      const current = await openOriginalWritable(target.targetPath, conditional, options.isWindows)
       if (!current) throw new FileChangedError()
       try {
         if (current.stats.dev !== originalStats.dev || current.stats.ino !== originalStats.ino) {
           throw new FileChangedError()
         }
-        await assertParentUnchanged()
+        await assertDestinationCurrent()
         await verifyHandleVersion(current.handle, expectedVersion)
         await writeAllToHandle(current.handle, bytes)
       } finally {
@@ -325,21 +384,28 @@ export async function writeVersionedFile(
     }
 
     const tempPath = path.join(target.parentPath, `.codenomad-tmp-${process.pid}-${randomUUID()}`)
-    const mode = !options.isWindows ? Number(originalStats.mode) & 0o777 : undefined
-    let tempCreated = false
+    // Node.js fs cannot copy POSIX ACLs, xattrs or NTFS alternate streams across rename;
+    // the Rust server preserves them via native platform APIs.
+    const mode = !options.isWindows ? Number(originalStats.mode) & 0o1777 : undefined
+    let tempHandle: fs.promises.FileHandle
     try {
-      const tempHandle = await fs.promises.open(tempPath, "wx", mode)
-      tempCreated = true
+      tempHandle = await fs.promises.open(tempPath, "wx", mode)
+    } catch (error) {
+      if (isStageCreateFallbackError(error)) {
+        await writeInPlaceVerified()
+        return nextVersion
+      }
+      throw error
+    }
+
+    let tempCreated = true
+    try {
       try {
-        if (mode !== undefined) {
-          await tempHandle.chmod(mode)
-        }
-        if (!options.isWindows && typeof process.getuid === "function" && typeof process.getgid === "function") {
-          const uid = Number(originalStats.uid)
-          const gid = Number(originalStats.gid)
-          if (uid !== process.getuid() || gid !== process.getgid()) {
+        if (!options.isWindows) {
+          const tempStats = await tempHandle.stat({ bigint: true })
+          if (tempStats.uid !== originalStats.uid || tempStats.gid !== originalStats.gid) {
             try {
-              await tempHandle.chown(uid, gid)
+              await tempHandle.chown(Number(originalStats.uid), Number(originalStats.gid))
             } catch (error) {
               const code = errnoCode(error)
               if (code === "EPERM" || code === "EACCES") {
@@ -352,18 +418,17 @@ export async function writeVersionedFile(
               throw error
             }
           }
+          if (mode !== undefined) {
+            await tempHandle.chmod(mode)
+          }
         }
         await writeAllToHandle(tempHandle, bytes)
       } finally {
         await tempHandle.close().catch(() => {})
       }
 
-      await assertParentUnchanged()
-      const latest = await resolveTarget(lexicalPath, options.isWindows)
-      if (latest.targetPath !== target.targetPath) {
-        throw new FileChangedError()
-      }
-      const check = await openOriginalWritable(target.targetPath, true, options.isWindows)
+      await assertDestinationCurrent()
+      const check = await openOriginalWritable(target.targetPath, conditional, options.isWindows)
       if (!check) throw new FileChangedError()
       try {
         if (
@@ -393,5 +458,5 @@ export async function writeVersionedFile(
       throw error
     }
     return nextVersion
-  })
+  }, { conditional })
 }

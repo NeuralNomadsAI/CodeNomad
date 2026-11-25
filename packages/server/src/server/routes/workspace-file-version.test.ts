@@ -247,8 +247,48 @@ describe("workspace file version & optimistic concurrency", () => {
       const tooLarge = await f.put("big.txt", { contents: "a".repeat(5 * 1024 * 1024 + 1) })
       assert.equal(tooLarge.statusCode, 400)
       assert.equal(tooLarge.json().code, "file_too_large")
+
+      // A valid <= 5 MiB file whose JSON-escaped body exceeds 8 MiB still succeeds.
+      const newlineHeavy = "\n".repeat(4_500_000)
+      const savedHeavy = await f.put("newlines.txt", { contents: newlineHeavy })
+      assert.equal(savedHeavy.statusCode, 204)
+      assert.equal(savedHeavy.headers.etag, shaTag(newlineHeavy))
     } finally {
       await chmod(readonlyFile, 0o666).catch(() => {})
+      await f.close()
+    }
+  })
+
+  it("returns 409 when a file's parent directory was deleted and falls back in place when staging cannot create a temp file", async (t) => {
+    const f = await createFixture()
+    try {
+      const subDir = path.join(f.root, "sub")
+      const nested = path.join(subDir, "note.txt")
+      fs.mkdirSync(subDir)
+      await writeFile(nested, "v1", "utf-8")
+      const v1 = (await f.preview("sub/note.txt")).json().version as string
+      await rm(subDir, { recursive: true, force: true })
+
+      const missingParent = await f.put("sub/note.txt", { contents: "v2", expectedVersion: v1 })
+      assert.equal(missingParent.statusCode, 409)
+      assert.deepEqual(missingParent.json(), { error: "File changed on disk" })
+
+      const target = path.join(f.root, "fallback.txt")
+      await writeFile(target, "before", "utf-8")
+      const originalOpen = fs.promises.open.bind(fs.promises)
+      t.mock.method(fs.promises, "open", async (...args: Parameters<typeof fs.promises.open>) => {
+        if (String(args[0]).includes(".codenomad-tmp-")) {
+          throw Object.assign(new Error("parent dir not writable"), { code: "EACCES" })
+        }
+        return originalOpen(...args)
+      })
+      const saved = await f.put("fallback.txt", { contents: "after", expectedVersion: shaTag("before") })
+      t.mock.restoreAll()
+      assert.equal(saved.statusCode, 204)
+      assert.equal(saved.headers.etag, shaTag("after"))
+      assert.equal(await readFile(target, "utf-8"), "after")
+    } finally {
+      t.mock.restoreAll()
       await f.close()
     }
   })
