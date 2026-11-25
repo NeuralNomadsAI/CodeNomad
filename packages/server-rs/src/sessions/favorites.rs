@@ -232,10 +232,11 @@ fn state_yaml_stamp(state_path: &std::path::Path) -> Result<String, ()> {
         Err(_) => return Err(()),
     };
     let meta = if link.file_type().is_symlink() { std::fs::metadata(state_path).map_err(|_| ())? } else { link };
+    let identity = crate::files::host_identity(state_path).map_err(|_| ())?;
     let modified =
         meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
     let created = meta.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
-    Ok(format!("{}:{:?}:{:?}", meta.len(), modified, created))
+    Ok(format!("{identity}:{}:{:?}:{:?}", meta.len(), modified, created))
 }
 
 fn state_yaml_protects(state_path: &std::path::Path, session_id: &str) -> bool {
