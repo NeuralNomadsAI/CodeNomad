@@ -10,9 +10,10 @@ use crate::{
 };
 
 mod apply_patch;
-pub(super) mod children;
+pub(crate) mod children;
 mod clipboard;
 mod diagnostics;
+pub(super) mod duration;
 mod edit;
 mod execute;
 mod format;
@@ -21,7 +22,7 @@ mod read;
 mod render;
 mod search;
 mod shell;
-mod task;
+pub(super) mod task;
 mod todo;
 mod write;
 

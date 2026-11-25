@@ -16,7 +16,7 @@ mod mermaid;
 pub(super) const PROSE_LIMIT: usize = 50_000;
 pub(super) const TOOL_LIMIT: usize = 10_000;
 pub(super) const HIGHLIGHT_LIMIT: usize = 100_000;
-const STEP: usize = 250_000;
+pub(super) const STEP: usize = 250_000;
 
 pub(super) fn search_limit(
     query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
@@ -29,12 +29,113 @@ pub(super) fn search_limit(
         }
 }
 
-pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
-    prose_for(s, message, key, source, streaming, PROSE_LIMIT)
+pub(super) fn search_limit_for(
+    s: &State,
+    card_key: &str,
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+) -> usize {
+    let revealed =
+        query.is_some_and(|query| query.active) || s.transcript_display.search_revealed(card_key);
+    TOOL_LIMIT + if revealed { STEP } else { 0 }
 }
 
+pub(super) fn bounded_prose_matches(
+    s: &State,
+    key: &str,
+    source: &str,
+    limit: usize,
+    query: rune_theme_codenomad::timeline::search::Query<'_>,
+) -> bool {
+    let budget = limit.saturating_add(STEP.saturating_mul(s.transcript_display.steps(key)));
+    let (shown, _, _, _) = prefix_measured(&[source], budget, units(source));
+    markdown::prose_has_match(&shown, query)
+}
+
+pub(super) fn skill_prose_matches(
+    s: &State,
+    card_key: &str,
+    key: &str,
+    source: &str,
+    query: rune_theme_codenomad::timeline::search::Query<'_>,
+) -> bool {
+    let revealed = query.active || s.transcript_display.search_revealed(card_key);
+    let limit = PROSE_LIMIT + if revealed { STEP } else { 0 };
+    bounded_prose_matches(s, key, source, limit, query)
+}
+
+pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
+    prose_claimed(s, message, key, source, streaming, None, None)
+}
+
+pub(super) fn prose_claimed(
+    s: &State,
+    message: &str,
+    key: String,
+    source: &str,
+    streaming: bool,
+    part_index: Option<usize>,
+    claimed: Option<&std::cell::Cell<bool>>,
+) -> El {
+    let query = s
+        .transcript_display
+        .search_highlight
+        .as_ref()
+        .filter(|hit| hit.message == message)
+        .map(|hit| rune_theme_codenomad::timeline::search::Query {
+            claimed,
+            ..hit.text_query(part_index)
+        });
+    let revealed = query.is_some_and(|q| q.active)
+        || s.transcript_display.search_revealed(&key)
+        || s.transcript_display.search_revealed(message);
+    let limit = PROSE_LIMIT + if revealed { STEP } else { 0 };
+    prose_for(s, message, key, source, streaming, limit, query)
+}
+
+pub(super) fn prose_search(
+    s: &State,
+    message: &str,
+    card_key: &str,
+    key: String,
+    source: &str,
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+) -> El {
+    prose_pane_search(s, message, card_key, key, source, false, PROSE_LIMIT, query)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prose_pane_search(
+    s: &State,
+    message: &str,
+    card_key: &str,
+    key: String,
+    source: &str,
+    streaming: bool,
+    base_limit: usize,
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+) -> El {
+    let revealed =
+        query.is_some_and(|q| q.active) || s.transcript_display.search_revealed(card_key);
+    let limit = base_limit + if revealed { STEP } else { 0 };
+    prose_for(s, message, key, source, streaming, limit, query)
+}
+
+pub(super) fn bounded_prose_matches_for(
+    s: &State,
+    card_key: &str,
+    key: &str,
+    source: &str,
+    base_limit: usize,
+    query: rune_theme_codenomad::timeline::search::Query<'_>,
+) -> bool {
+    let revealed = query.active || s.transcript_display.search_revealed(card_key);
+    let limit = base_limit + if revealed { STEP } else { 0 };
+    bounded_prose_matches(s, key, source, limit, query)
+}
+
+#[cfg(test)]
 pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, limit: usize) -> El {
-    prose_for(s, "", key, source, streaming, limit)
+    prose_for(s, "", key, source, streaming, limit, None)
 }
 
 fn prose_for(
@@ -44,6 +145,7 @@ fn prose_for(
     source: &str,
     streaming: bool,
     limit: usize,
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
 ) -> El {
     let group = key.clone();
     let scope = s.input_scope.clone();
@@ -53,38 +155,74 @@ fn prose_for(
     let steps = s.transcript_display.steps(&key);
     let version = s.transcript_display.stream_version();
     let memo_key = format!("{group}-markdown");
-    let terms = s
-        .transcript_display
-        .search_highlight
-        .as_ref()
-        .filter(|hit| hit.message == message)
-        .map(|hit| {
-            let q = hit.query(None);
-            (q.terms, q.ranked)
-        });
+    let query = query.or_else(|| {
+        s.transcript_display
+            .search_highlight
+            .as_ref()
+            .filter(|hit| hit.message == message)
+            .map(|hit| hit.text_query(None))
+    });
     window(s, key, &[source], limit, |shown, units| {
+        let claim_active =
+            query.is_some_and(|q| q.active && q.claimed.is_none_or(|claimed| !claimed.get()));
+        let prose_query = query.map(|q| rune_theme_codenomad::timeline::search::Query {
+            active: claim_active,
+            claimed: None,
+            ..q
+        });
+        if claim_active
+            && let Some(q) = query
+            && let Some(claimed) = q.claimed
+            && let Some(pq) = prose_query
+            && markdown::prose_has_match(shown, pq)
+        {
+            claimed.set(true);
+        }
         let active_locale = locale();
+        let search_id = query
+            .filter(|q| q.active)
+            .and_then(|_| {
+                s.transcript_display
+                    .search_highlight
+                    .as_ref()
+                    .filter(|hit| hit.message == message)
+                    .map(|hit| hit.id)
+            })
+            .unwrap_or(0);
+        let search_overrides = s
+            .transcript_display
+            .diagram_search_overrides(search_id, &group);
         let stamp = (
             version,
             steps,
             std::rc::Rc::as_ptr(&scope) as usize,
             active_locale,
+            layout::dark(),
             &unwrapped,
-            terms,
+            search_id,
+            prose_query.map(|q| (q.terms, q.ranked, q.active)),
             &diagram_sources,
+            &search_overrides,
+            (!streaming).then_some(shown),
         );
         let build = || {
             let diagram_sources = diagram_sources.clone();
+            let search_overrides = search_overrides.clone();
+            let search_terms = query
+                .filter(|q| q.active)
+                .map(|q| (q.terms.to_vec(), q.ranked));
+            let truncated = shown.len() < source.len();
             markdown::prose(
                 shown,
                 streaming,
+                truncated,
                 units
                     <= if streaming {
                         TOOL_LIMIT
                     } else {
                         HIGHLIGHT_LIMIT
                     },
-                terms,
+                prose_query,
                 links::on_open(link_scope.clone()),
                 links::on_menu(link_scope, active_locale),
                 links::help,
@@ -95,14 +233,21 @@ fn prose_for(
                 move |card, frame| {
                     let index = frame.index;
                     let group = group.clone();
-                    let diagram = frame
+                    let diagram_open = frame
                         .language
-                        .is_some_and(|language| language.eq_ignore_ascii_case("mmd"));
+                        .is_some_and(|language| language.eq_ignore_ascii_case("mmd-open"));
+                    let diagram = diagram_open
+                        || frame
+                            .language
+                            .is_some_and(|language| language.eq_ignore_ascii_case("mmd"));
                     let copy = markdown::copy_button(
                         t("markdown.codeBlock.copy.label"),
                         screen::action_tx(&scope, {
                             let source = frame.source.to_owned();
-                            move |_, tx| tx.copy(source.as_str())
+                            move |s, tx| {
+                                s.transcript_display.children.cancel_copy();
+                                tx.copy(source.as_str());
+                            }
                         }),
                     )
                     .key(format!("{group}-code-{index}-copy"));
@@ -121,13 +266,37 @@ fn prose_for(
                     .key(format!("{group}-code-{index}-wrap"))
                     .checked(frame.wrapped);
                     if diagram {
+                        let search_hit = search_terms.as_ref().is_some_and(|(terms, ranked)| {
+                            rune_theme_codenomad::timeline::search::Query {
+                                terms,
+                                ranked: *ranked,
+                                active: true,
+                                claimed: None,
+                            }
+                            .matches(frame.source)
+                        });
+                        let source_only = if search_hit {
+                            search_overrides.get(&index).copied().unwrap_or(true)
+                        } else {
+                            diagram_sources.contains(&index)
+                        };
                         return mermaid::frame(
-                            frame.open || streaming,
-                            diagram_sources.contains(&index),
+                            frame.open || diagram_open || streaming,
+                            source_only,
                             frame.source,
                             format!("{group}-code-{index}"),
                             screen::action(&scope, move |s| {
-                                Display::toggle_diagram_source(s, &group, index)
+                                if search_hit {
+                                    Display::set_diagram_search_override(
+                                        s,
+                                        search_id,
+                                        &group,
+                                        index,
+                                        !source_only,
+                                    );
+                                } else {
+                                    Display::toggle_diagram_source(s, &group, index);
+                                }
                             }),
                             card,
                             wrap,
@@ -145,7 +314,7 @@ fn prose_for(
                 },
             )
         };
-        if streaming && units > TOOL_LIMIT {
+        if units > TOOL_LIMIT {
             markdown::hold_frame(memo_key, stamp, build)
         } else {
             build()

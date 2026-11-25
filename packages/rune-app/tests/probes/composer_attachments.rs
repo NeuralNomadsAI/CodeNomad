@@ -104,8 +104,12 @@ pub fn run() {
         rt.frame(1.0 / 60.0);
     }
     let here = std::env::current_dir().expect("private fixture directory");
+    let (menu_x, menu_y) = rt.find("composer-more:trigger").expect("composer actions");
+    rt.pointer_down(menu_x, menu_y);
+    rt.pointer_up(menu_x, menu_y);
+    rt.frame(1.0 / 60.0);
     let (button_x, button_y) = rt
-        .find("attach-device-files")
+        .find("composer-more:item:attach")
         .expect("enabled device chooser");
     rt.pointer_down(button_x, button_y);
     rt.pointer_up(button_x, button_y);

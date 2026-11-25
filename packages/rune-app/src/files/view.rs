@@ -415,6 +415,7 @@ fn code_controls(
         t("markdown.codeBlock.copy.label"),
         screen::action_tx(input_scope, move |s, tx| {
             if current_markdown(s, scope, revision).is_some() {
+                crate::chat::tools::children::note_clipboard_write();
                 tx.copy(text.clone());
             }
         }),

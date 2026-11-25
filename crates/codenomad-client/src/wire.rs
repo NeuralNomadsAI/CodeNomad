@@ -72,6 +72,31 @@ pub fn decode_native(e: &Value) -> Option<Event> {
             };
             Some(Event::Reasoning(id.into(), event))
         }
+        "session.synthetic" => {
+            let id = data["messageID"]
+                .as_str()
+                .or_else(|| e["id"].as_str())
+                .filter(|id| crate::history::valid_id(id))?;
+            let text = data["text"].as_str()?;
+            if text.len() > 256 * 1024 {
+                return None;
+            }
+            let created = e["created"]
+                .as_u64()
+                .or_else(|| data["time"]["created"].as_u64())?;
+            let report = crate::content::decode_subagent_report(&serde_json::json!({
+                "text": text,
+                "time": { "created": created },
+            }))?;
+            Some(Event::Message(Message {
+                id: id.into(),
+                role: "synthetic".into(),
+                completed: true,
+                body: String::new(),
+                usage: None,
+                parts: vec![crate::content::Part::SubagentReport(report)],
+            }))
+        }
         "session.execution.succeeded" | "session.execution.interrupted" => Some(Event::Done),
         "session.execution.failed" | "session.deleted" | "session.revert.committed" => {
             Some(Event::Failed)

@@ -242,6 +242,11 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.messages = page.rows;
                 crate::timeline::restore_search(s);
                 s.history_detached = s.reader.is_some() && page.newer.is_some();
+                if s.history_detached {
+                    s.transcript_display.tool_clock.pause();
+                } else {
+                    s.transcript_display.tool_clock.resume();
+                }
                 composer::reconcile(s);
                 s.can_older = page.older.is_some();
                 // An earlier snapshot may already have been queued before the gesture.
@@ -279,6 +284,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     s.conversation_stream_connected = false;
                 }
                 s.transcript_display.messages.offline();
+                s.transcript_display.tool_clock.pause();
                 s.status_permissions.online(false);
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::reconnecting(s);
@@ -321,6 +327,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 chat::reader::cancel_page(s);
                 s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
+                s.transcript_display.tool_clock.reset();
                 s.transcript_display.pictures.clear();
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
@@ -337,6 +344,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.status_permissions.online(false);
                 s.status_usage.disconnect();
                 s.transcript_display.children.clear();
+                s.transcript_display.tool_clock.reset();
                 s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
@@ -349,6 +357,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 }
             }
             Event::History(messages) => {
+                s.transcript_display.tool_clock.resume();
                 s.conversation_stream_connected = true;
                 s.messages = messages;
                 s.phase = Phase::Ready;
@@ -401,11 +410,22 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 }
             }
             Event::Tool(id, tool) => {
-                if let Some(row) = s
-                    .messages
-                    .iter_mut()
-                    .find(|row| row.id == id && !row.completed)
-                {
+                if let Some(row) = s.messages.iter_mut().find(|row| {
+                    row.id == id
+                        && (!row.completed
+                            || (tool.ended.is_some()
+                                && row.parts.iter().any(|part| {
+                                    matches!(
+                                        part,
+                                        content::Part::Tool(existing)
+                                            if existing.id == tool.id
+                                                && matches!(
+                                                    existing.status.as_str(),
+                                                    "streaming" | "running"
+                                                )
+                                    )
+                                })))
+                }) {
                     let inserted = !row.parts.iter().any(|part| matches!(part, content::Part::Tool(existing) if existing.id == tool.id));
                     content::install_tool(std::sync::Arc::make_mut(row), tool);
                     if inserted {
@@ -423,6 +443,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.history_error = true;
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
+                s.transcript_display.tool_clock.pause();
                 if matches!(&event, Event::AuthenticationRequired(..)) {
                     s.conversation_stream_connected = false;
                 }
@@ -463,12 +484,13 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
     {
         s.conversation_stream_connected = false;
         if s.composer.pending() || s.phase == Phase::Reconnecting {
+            s.transcript_display.tool_clock.pause();
             composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
             s.phase = Phase::Failed;
             changed = true;
         }
     }
-    if s.transcript_display.children.poll()
+    if super::tools::children::Children::poll_and_promote(s)
         | s.transcript_display.pictures.poll(&s.reads, &s.wake)
         | super::receipts::Receipts::poll(s, visible)
     {

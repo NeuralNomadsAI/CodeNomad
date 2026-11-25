@@ -220,12 +220,37 @@ pub async fn unstage(
 ) -> Result<Json<Value>, Error> {
     paths(app, id, slug, body.paths, false).await
 }
+async fn apply_paths_with(
+    dir: &Path,
+    stage: bool,
+    validated: &[String],
+    verify_live: impl Fn() -> Result<(), Error>,
+    configure: impl Fn(&mut Command),
+) -> Result<(), Error> {
+    let mut args = if stage {
+        vec!["add", "--"]
+    } else {
+        let mut head_cmd = user_command::literal_command(dir, &["rev-parse", "--verify", "HEAD"]);
+        configure(&mut head_cmd);
+        if user_command::execute(head_cmd).await?.code == 0 {
+            vec!["restore", "--staged", "--"]
+        } else {
+            vec!["rm", "--cached", "--quiet", "--"]
+        }
+    };
+    verify_live()?;
+    args.extend(validated.iter().map(String::as_str));
+    let mut cmd = user_command::literal_command(dir, &args);
+    configure(&mut cmd);
+    user_command::execute(cmd).await?.mutation()
+}
+
 async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage: bool) -> Result<Json<Value>, Error> {
     if items.is_empty() || items.len() > 256 {
         return Err(bad("Invalid path count"));
     }
     let (w, tree) = repo_target(&app, &id, &slug).await?;
-    let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(tree.registered())])?;
+    let admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(tree.registered())])?;
     app.workspace(&id)?;
     files::root(&w)?;
     let mut validated = Vec::new();
@@ -243,20 +268,35 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
     if validated.iter().map(String::len).sum::<usize>() > 16000 {
         return Err(bad("Git paths exceed limit"));
     }
-    let mut args = if stage {
-        vec!["add", "--"]
-    } else if run(&w.path, &["rev-parse", "--verify", "HEAD"], 1024).await?.code == 0 {
-        vec!["restore", "--staged", "--"]
-    } else {
-        vec!["rm", "--cached", "--quiet", "--"]
-    };
-    if !tree.contains_live(&w.path) || app.workspace(&id).is_err() {
-        return Err(error(Status::CONFLICT, "Worktree changed"));
-    }
-    args.extend(validated.iter().map(String::as_str));
-    run(&w.path, &args, 64 * 1024).await?.mutation()?;
-    notify(&app, &w);
-    Ok(Json(json!({"ok":true})))
+    tokio::spawn(async move {
+        let _admitted = admitted;
+        let root = user_command::run(&w.path, &["rev-parse", "--show-toplevel"]).await?;
+        if root.code != 0
+            || dunce::canonicalize(root.text().trim_end_matches(['\r', '\n'])).as_deref().ok()
+                != Some(tree.registered())
+            || !tree.contains_live(&w.path)
+            || app.workspace(&id).is_err()
+        {
+            return Err(conflict("Worktree changed"));
+        }
+        apply_paths_with(
+            &w.path,
+            stage,
+            &validated,
+            || {
+                if !tree.contains_live(&w.path) || app.workspace(&id).is_err() {
+                    return Err(conflict("Worktree changed"));
+                }
+                Ok(())
+            },
+            |_| {},
+        )
+        .await?;
+        notify(&app, &w);
+        Ok(Json(json!({"ok":true})))
+    })
+    .await
+    .map_err(|_| conflict("Git outcome unavailable"))?
 }
 #[derive(Deserialize)]
 pub struct Commit {

@@ -108,11 +108,20 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
         .separate(Space::Sm)
         .child(header);
     let mut ordinal = 0;
+    let text_claimed = std::cell::Cell::new(false);
     if (m.role == "user" || m.parts.is_empty()) && !m.body.is_empty() {
         let key = format!("body-{}", m.id);
         view = view.child(super::reading::passage(
             s,
-            document::prose(s, &m.id, key.clone(), &m.body, false),
+            document::prose_claimed(
+                s,
+                &m.id,
+                key.clone(),
+                &m.body,
+                false,
+                None,
+                Some(&text_claimed),
+            ),
             &m.id,
             key,
             None,
@@ -124,7 +133,6 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
     let (head, tail) = part_window(m.parts.len(), s.transcript_display.steps(&gap_key));
     let usage_after = super::usage::last_text(m).filter(|&index| index < head || index >= tail);
     let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
-    let mut reasoning_end = 0;
     let mut group_end = 0;
     let mut hidden_continuation = false;
     let mut shows_content = m.role == "user" || m.parts.is_empty();
@@ -179,12 +187,14 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                 if visible && !body.text.trim().is_empty() {
                     Some(super::reading::passage(
                         s,
-                        document::prose(
+                        document::prose_claimed(
                             s,
                             &m.id,
                             key.clone(),
                             &body.text,
                             !m.completed && body.provenance != TextProvenance::Closed,
+                            body.part_index,
+                            Some(&text_claimed),
                         ),
                         &m.id,
                         key,
@@ -218,27 +228,17 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                 }
             }
             Part::Tool(_) => None,
-            Part::Reasoning(_) if visible && index >= reasoning_end => {
-                let limit = if index < head && head < tail {
-                    head
-                } else {
-                    m.parts.len()
-                };
-                reasoning_end = index
-                    + m.parts[index..limit]
-                        .iter()
-                        .take_while(|part| {
-                            matches!(part, Part::Reasoning(_))
-                                || matches!(part, Part::Text(text) if text.text.trim().is_empty())
-                                || matches!(
-                                    part,
-                                    Part::Tool(tool)
-                                        if !tools::visible(s, &m.id, tool)
-                                            && !groups.awaiting(&m.id, &tool.id)
-                                )
-                        })
-                        .count();
-                super::reasoning::view(s, &m.id, &m.parts[index..reasoning_end])
+            Part::Reasoning(fragment) if visible && fragment.visible() => {
+                match groups.get(i, index) {
+                    Some(chunk) => {
+                        group_end = chunk.end;
+                        let body =
+                            chunk.view(s, &m.id, &m.parts[index..group_end], index, &mut marker);
+                        hidden_continuation |= body.is_none();
+                        body
+                    }
+                    None => None,
+                }
             }
             Part::Reasoning(_) => None,
             Part::SubagentReport(_) => None,
@@ -248,17 +248,6 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
         };
         if let Some(body) = body {
             shows_content = true;
-            // The first fragment of a reasoning run can be blank: its rendered group starts
-            // at the first non-blank fragment, though the renderer consumes the full run.
-            let body = if matches!(part, Part::Reasoning(_))
-                && let Some(selected) = (index..reasoning_end)
-                    .find(|&at| matches!(&m.parts[at], Part::Reasoning(p) if p.visible()))
-                && let Some(marker) = marker(Some(selected))
-            {
-                crate::timeline::watch_block(s, marker, body, |_, _, _| {})
-            } else {
-                body
-            };
             if reveal_start.is_some_and(|first| index >= first) {
                 view = view.child(
                     col()

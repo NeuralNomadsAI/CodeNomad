@@ -98,6 +98,18 @@ impl Editor {
     pub fn key(&self) -> Option<&Key> {
         self.key.as_ref()
     }
+    #[cfg(test)]
+    pub(crate) fn fixture_saved_key(&mut self, server: &str, project: &str) {
+        if let Some(key) = &self.key {
+            self.saved_key = Some(SavedKey {
+                server: server.into(),
+                project: project.into(),
+                native_project: None,
+                directory: key.directory.clone(),
+                path: key.path.clone(),
+            });
+        }
+    }
     pub(crate) fn set_project(&mut self, project: Project) {
         self.project = Some(project);
     }

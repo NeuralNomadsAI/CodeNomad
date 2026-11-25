@@ -11,8 +11,95 @@ mod usage;
 mod user;
 pub use reasoning::{Reasoning, ReasoningEvent, apply_window as apply_reasoning};
 pub use subagent::SubagentReport;
+pub(crate) use subagent::decode as decode_subagent_report;
+pub(crate) use tool_live::Fit as ToolFit;
 pub use tool_live::install as install_tool;
-pub(crate) use tool_live::{Fit as ToolFit, apply as apply_tool};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolEventOutcome {
+    Applied,
+    Drop,
+    Pending,
+}
+
+pub fn apply_tool_event(
+    rows: &mut Vec<crate::history::Row>,
+    message_id: Option<&str>,
+    kind: &str,
+    data: &Value,
+    at: Option<u64>,
+) -> ToolEventOutcome {
+    let call_id = data["id"].as_str().unwrap_or_default();
+    let idx = if let Some(msg) = message_id {
+        rows.iter().position(|r| r.id == msg)
+    } else if !call_id.is_empty() {
+        rows.iter().rposition(|r| {
+            r.role == "assistant"
+                && r.parts
+                    .iter()
+                    .any(|p| matches!(p, Part::Tool(t) if t.id == call_id))
+        })
+    } else {
+        None
+    };
+    let idx = match idx {
+        Some(idx) => idx,
+        None if kind == "session.tool.input.started"
+            && rows.len() < crate::history::MAX_ROWS
+            && message_id.is_some_and(crate::history::valid_id) =>
+        {
+            let msg = message_id.unwrap_or_default();
+            rows.push(Arc::new(crate::Message {
+                id: msg.into(),
+                role: "assistant".into(),
+                completed: false,
+                body: String::new(),
+                usage: None,
+                parts: vec![],
+            }));
+            rows.len() - 1
+        }
+        None => return ToolEventOutcome::Pending,
+    };
+    let row = Arc::make_mut(&mut rows[idx]);
+    match tool_live::apply_at(row, kind, data, at) {
+        ToolFit::Applied(_) | ToolFit::Settled(_) => ToolEventOutcome::Applied,
+        ToolFit::Drop => ToolEventOutcome::Drop,
+        ToolFit::Repair => ToolEventOutcome::Pending,
+    }
+}
+
+pub(crate) fn apply_tool_checked(
+    resident: &mut [crate::history::Row],
+    row_idx: usize,
+    kind: &str,
+    data: &Value,
+    at: Option<u64>,
+) -> (ToolFit, bool) {
+    let call_id = data["id"].as_str().unwrap_or_default();
+    let prev_len = resident[row_idx].parts.len();
+    let prev_tool = resident[row_idx]
+        .parts
+        .iter()
+        .enumerate()
+        .find_map(|(j, part)| match part {
+            Part::Tool(tool) if tool.id == call_id => Some((j, tool.clone())),
+            _ => None,
+        });
+    let fit = tool_live::apply_at(Arc::make_mut(&mut resident[row_idx]), kind, data, at);
+    if matches!(fit, ToolFit::Applied(_) | ToolFit::Settled(_))
+        && crate::history::check(resident).is_err()
+    {
+        let row = Arc::make_mut(&mut resident[row_idx]);
+        if let Some((j, tool)) = prev_tool {
+            row.parts[j] = Part::Tool(tool);
+        } else {
+            row.parts.truncate(prev_len);
+        }
+        return (fit, false);
+    }
+    (fit, true)
+}
 pub use usage::{FAMILY_LIMIT, Family, FamilyChange, FamilyMember, FamilySnapshot, Usage};
 pub(crate) use user::digest as attachment_digest;
 pub use user::{File, Reference, Skill};
@@ -33,6 +120,7 @@ pub enum TextProvenance {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Text {
+    pub part_index: Option<usize>,
     pub text: String,
     pub provenance: TextProvenance,
 }
@@ -114,6 +202,7 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
             return Err("live text budget reached".into());
         }
         row.parts.push(Part::Text(Text {
+            part_index: None,
             text: String::new(),
             provenance: TextProvenance::Live,
         }));
@@ -166,7 +255,12 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
     if bytes > 256 * 1024 {
         return Err("live text budget reached".into());
     }
-    row.parts[index] = Part::Text(Text { text, provenance });
+    let part_index = prior.part_index;
+    row.parts[index] = Part::Text(Text {
+        part_index,
+        text,
+        provenance,
+    });
     row.body = text_body(&row.parts);
     Ok(fit)
 }
@@ -175,6 +269,29 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
 pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]) -> Result<()> {
     for row in page.iter_mut().filter(|r| r.role == "assistant") {
         if row.completed {
+            if let Some(prior) = live.iter().find(|r| r.id == row.id)
+                && row.parts.iter().any(|p| {
+                    matches!(p, Part::Tool(t) if matches!(t.status.as_str(), "streaming" | "running"))
+                })
+            {
+                let live_tools: std::collections::HashMap<&str, &std::sync::Arc<Tool>> = prior
+                    .parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        Part::Tool(t) => Some((t.id.as_str(), t)),
+                        _ => None,
+                    })
+                    .collect();
+                let row = std::sync::Arc::make_mut(row);
+                for part in &mut row.parts {
+                    if let Part::Tool(fetched) = part
+                        && matches!(fetched.status.as_str(), "streaming" | "running")
+                        && let Some(live_tool) = live_tools.get(fetched.id.as_str())
+                    {
+                        tool_live::merge(live_tool, fetched);
+                    }
+                }
+            }
             continue;
         }
         let Some(prior) = live.iter().find(|r| r.id == row.id) else {
@@ -198,7 +315,9 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
                     && live.text.starts_with(&fetched.text)
                     && live.text != fetched.text
                 {
+                    let index = fetched.part_index;
                     *fetched = (*live).clone();
+                    fetched.part_index = index;
                 }
             }
             ordinal += 1;
@@ -223,8 +342,12 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
                 }
                 continue;
             }
-            if matches!(part, Part::Tool(tool) if !matches!(tool.status.as_str(), "streaming" | "running"))
-            {
+            if matches!(
+                part,
+                Part::Tool(tool)
+                    if !matches!(tool.status.as_str(), "streaming" | "running")
+                        && tool.part_index.is_some()
+            ) {
                 continue;
             }
             let after = source_keys[..i]
@@ -274,6 +397,8 @@ pub struct Tool {
     pub output: String,
     pub error: String,
     pub started: Option<u64>,
+    pub message_created: Option<u64>,
+    pub ended: Option<u64>,
     pub pictures: Vec<Picture>,
     bytes: usize,
     output_bytes: usize,
@@ -281,6 +406,67 @@ pub struct Tool {
 impl Tool {
     pub fn retained_bytes(&self) -> usize {
         self.bytes + self.output_bytes + self.media_bytes()
+    }
+
+    pub fn with_budget(&self, budget: usize) -> Self {
+        if self.retained_bytes() <= budget {
+            return self.clone();
+        }
+        let status = if self.status.len() <= 64 {
+            self.status.clone()
+        } else {
+            "unknown".into()
+        };
+        let base_bytes = self.id.len() + self.name.len() + status.len() + size_of::<Tool>();
+        let mut rem = budget.saturating_sub(base_bytes);
+
+        let take_str = |src: &str, rem: &mut usize| -> String {
+            if src.is_empty() || *rem == 0 {
+                return String::new();
+            }
+            let keep = src.len().min(*rem);
+            let end = src.floor_char_boundary(keep);
+            *rem -= end;
+            src[..end].to_owned()
+        };
+
+        let (in_n, in_b) = resident_json(&self.input);
+        let input = if in_n.saturating_add(in_b) <= rem {
+            rem -= in_n + in_b;
+            self.input.clone()
+        } else {
+            Value::Null
+        };
+
+        let (md_n, md_b) = resident_json(&self.metadata);
+        let metadata = if md_n.saturating_add(md_b) <= rem {
+            rem -= md_n + md_b;
+            self.metadata.clone()
+        } else {
+            Value::Null
+        };
+
+        let error = take_str(&self.error, &mut rem);
+        let output = take_str(&self.output, &mut rem);
+
+        let (in_n, in_b) = resident_json(&input);
+        let (md_n, md_b) = resident_json(&metadata);
+        Self {
+            part_index: self.part_index,
+            id: self.id.clone(),
+            name: self.name.clone(),
+            status,
+            input,
+            metadata,
+            output_bytes: md_b + error.len() + output.len(),
+            output,
+            error,
+            started: self.started,
+            message_created: self.message_created,
+            ended: self.ended,
+            pictures: Vec::new(),
+            bytes: base_bytes + in_n + in_b + md_n,
+        }
     }
 
     fn media_bytes(&self) -> usize {
@@ -324,6 +510,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                     || !part["native"].is_null()
                     || !part["state"].is_null();
                 result.push(Part::Text(Text {
+                    part_index: Some(index),
                     text: text.into(),
                     provenance: if closed {
                         TextProvenance::Closed
@@ -355,7 +542,11 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 .filter(|s| s.len() <= 256)
                 .ok_or("invalid tool name")?;
             let state = &part["state"];
-            let status = state["status"].as_str().unwrap_or("streaming");
+            let status = match state["status"].as_str() {
+                None => "streaming",
+                Some(s) if s.len() <= 64 => s,
+                Some(_) => "unknown",
+            };
             let text_parts = state["content"]
                 .as_array()
                 .into_iter()
@@ -401,8 +592,11 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 ),
                 started: part["time"]["ran"]
                     .as_u64()
+                    .filter(|at| *at > 0)
                     .or_else(|| part["time"]["created"].as_u64())
-                    .or_else(|| v["time"]["created"].as_u64()),
+                    .filter(|at| *at > 0),
+                message_created: v["time"]["created"].as_u64().filter(|at| *at > 0),
+                ended: part["time"]["completed"].as_u64().filter(|at| *at > 0),
                 bytes,
                 output_bytes,
             })));
@@ -416,6 +610,11 @@ fn charge(resident: &mut usize, added: usize) -> Result<()> {
         return Err("resident history limit reached".into());
     }
     Ok(())
+}
+
+pub(crate) fn json_bytes(v: &Value) -> usize {
+    let (nodes, text) = resident_json(v);
+    nodes.saturating_add(text)
 }
 
 fn resident_json(v: &Value) -> (usize, usize) {

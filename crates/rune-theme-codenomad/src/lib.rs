@@ -6,6 +6,7 @@ pub mod action_menu_scene;
 pub mod ansi;
 pub mod attachment;
 pub mod catalogue;
+pub mod clipboard;
 pub mod document_reader;
 pub mod file_row_actions;
 mod generated_catalogues;

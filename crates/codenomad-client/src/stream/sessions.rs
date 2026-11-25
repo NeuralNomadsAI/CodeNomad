@@ -48,7 +48,7 @@ pub(super) async fn relay(
             .await?;
         }
     } else if own && value["type"] == "instance.eventStatus" && value["status"] == "connected" {
-        b.client.children().invalidate(b, None);
+        b.client.children().invalidate_all(b);
     }
     // A conversation move revokes its reader before any send and relays SessionMoved itself.
     if !(own && native["type"] == "session.moved" && native["data"]["sessionID"] == b.session)
@@ -118,16 +118,21 @@ pub(super) async fn relay(
             Input::Unavailable(epoch)
         })
         .await?;
-    } else if own && value["type"] == "instance.dataChanged" {
-        let version = state.version.fetch_add(1, SeqCst) + 1;
-        out.send(Input::Hint(epoch, version)).await?;
     } else if own
         && value["type"] == "instance.event"
         && native["type"] == "session.synthetic"
         && native["data"]["sessionID"] == b.session
     {
         let version = state.version.fetch_add(1, SeqCst) + 1;
-        out.send(Input::Hint(epoch, version)).await?;
+        if native["data"]["text"]
+            .as_str()
+            .is_some_and(|t| t.len() <= 256 * 1024)
+        {
+            out.send(Input::Native(epoch, version, native.clone()))
+                .await?;
+        } else {
+            out.send(Input::Hint(epoch, version)).await?;
+        }
     } else if own
         && value["type"] == "instance.event"
         && !matches!(
@@ -174,4 +179,53 @@ pub(super) async fn relay(
         out.send(Input::Native(epoch, 0, native.clone())).await?;
     }
     Ok(())
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn instance_storage_updates_leave_the_window_valid_but_native_hints_do_not() {
+    use serde_json::json;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            backend.workspace = "project".into();
+            backend.session = "session".into();
+            let (out, inbox) = crate::bounded(2);
+            let state = State::default();
+            super::opened(1, &out, &state).await.unwrap();
+            assert!(matches!(inbox.try_recv().unwrap(), Input::Opened(1)));
+            let stamp = state.version.load(SeqCst);
+            relay(
+                &backend,
+                1,
+                &out,
+                &state,
+                &json!({
+                    "type":"instance.dataChanged", "instanceId":"project",
+                    "data":{"messageHistory":["attempt"],"agentModelSelections":{}}
+                }),
+            )
+            .await
+            .unwrap();
+            assert!(state.valid(stamp));
+            assert!(inbox.is_empty());
+
+            relay(
+                &backend,
+                1,
+                &out,
+                &state,
+                &json!({
+                    "type":"instance.event", "instanceId":"project",
+                    "event":{"type":"session.synthetic","data":{"sessionID":"session"}}
+                }),
+            )
+            .await
+            .unwrap();
+            assert!(!state.valid(stamp));
+            assert!(matches!(inbox.try_recv().unwrap(), Input::Hint(1, _)));
+        });
 }
