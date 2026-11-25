@@ -111,7 +111,12 @@ async fn run(app: &App, wid: &str, id: &str, p: &Principal, request: Request) ->
             && paths.iter().all(|(path, identity)| files::host_identity(path).as_ref().ok() == Some(identity))
     };
     let root = chain.last().unwrap();
-    let _permit = if write.is_some() {
+    let (_permit, _cleanup_guards) = if write.is_some() {
+        let mut cleanup_guards = Vec::with_capacity(chain.len());
+        for session in &chain {
+            let sid = session["id"].as_str().ok_or_else(family)?;
+            cleanup_guards.push(app.session_cleanup.enter_mutation(sid).ok_or_else(family)?);
+        }
         let permit = fence::enter(&checkouts).ok_or_else(family)?;
         timeout_at(
             deadline,
@@ -130,9 +135,9 @@ async fn run(app: &App, wid: &str, id: &str, p: &Principal, request: Request) ->
                 return Err(family());
             }
         }
-        Some(permit)
+        (Some(permit), cleanup_guards)
     } else {
-        None
+        (None, Vec::new())
     };
     let target = Target { app, endpoint: &endpoint, session: root, authority: &authority };
     let mode = mode(&target, write).await?;

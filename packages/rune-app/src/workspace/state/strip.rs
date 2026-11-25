@@ -2,6 +2,21 @@ use super::{State, Tab, busy, close, close_blocked, new_tab, select};
 use crate::strings;
 use rune::{Cx, El};
 
+fn fallback_status(
+    entry: &super::Entry,
+    clock: f64,
+    keep_unseen: bool,
+) -> Option<rune_theme_codenomad::tabs::Status> {
+    if entry.idle_markers.any_working() {
+        Some(rune_theme_codenomad::tabs::Status::Working)
+    } else {
+        entry
+            .idle_markers
+            .tab_idle_visible(clock, keep_unseen)
+            .then_some(rune_theme_codenomad::tabs::Status::Idle)
+    }
+}
+
 pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
     let Some(ui) = &s.workspace else {
         return rune::el();
@@ -25,26 +40,16 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
                 id: &entry.key,
                 title,
                 status: if index == ui.active && !s.screen.is_launcher() {
-                    super::super::cache::status(&s.phase, s.agent.as_ref()).or_else(|| {
-                        entry
-                            .idle_markers
-                            .tab_idle_visible(ui.clock, keep_unseen)
-                            .then_some(rune_theme_codenomad::tabs::Status::Idle)
-                    })
+                    super::super::cache::status(&s.phase, s.agent.as_ref())
+                        .or_else(|| fallback_status(entry, ui.clock, keep_unseen))
                 } else if let Some(cache) = &entry.cache {
-                    cache.status().or_else(|| {
-                        entry
-                            .idle_markers
-                            .tab_idle_visible(ui.clock, keep_unseen)
-                            .then_some(rune_theme_codenomad::tabs::Status::Idle)
-                    })
+                    cache
+                        .status()
+                        .or_else(|| fallback_status(entry, ui.clock, keep_unseen))
                 } else if entry.project.is_none() && matches!(entry.saved, Tab::Workspace(_)) {
                     Some(rune_theme_codenomad::tabs::Status::Unavailable)
                 } else {
-                    entry
-                        .idle_markers
-                        .tab_idle_visible(ui.clock, keep_unseen)
-                        .then_some(rune_theme_codenomad::tabs::Status::Idle)
+                    fallback_status(entry, ui.clock, keep_unseen)
                 },
                 closable: !busy(s) && !close_blocked(s, index),
             },

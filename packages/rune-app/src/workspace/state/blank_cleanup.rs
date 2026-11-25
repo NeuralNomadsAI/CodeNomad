@@ -1,6 +1,6 @@
 //! Automatic blank-session cleanup sweep (`autoCleanupBlankSessions`), matching Solid
 //! `stores/blank-session-cleanup.ts` and `stores/session-state.ts:cleanupBlankSessions`.
-use super::{Entry, State, Tab, Tx, Ui, same_project};
+use super::{Entry, State, Tab, Tx, Ui};
 use crate::{
     backend::Backend,
     catalog::Project,
@@ -28,6 +28,7 @@ struct Sweep {
     backend: Backend,
     project: Project,
     generation: u64,
+    watch_generation: Option<u64>,
     exclude: String,
     candidates: VecDeque<String>,
     in_flight: Option<InFlight>,
@@ -64,6 +65,7 @@ pub(crate) fn schedule(s: &mut State, exclude_session_id: &str) {
         return;
     };
     let generation = l.catalogue_generation;
+    let watch_generation = l.catalogue_watch.as_ref().map(|w| w.generation());
     let mut seen = HashSet::new();
     let mut candidates = VecDeque::new();
     for row in l.sessions.iter().chain(l.linked.rows.iter()) {
@@ -87,6 +89,7 @@ pub(crate) fn schedule(s: &mut State, exclude_session_id: &str) {
     if let Some(existing) = &entry.blank_cleanup.sweep
         && existing.project.id == project.id
         && existing.generation == generation
+        && existing.watch_generation == watch_generation
         && existing.backend.client.same_connection(&backend.client)
     {
         // One bounded sweep per connection generation, matching Solid `automaticCleanupRequests`.
@@ -96,6 +99,7 @@ pub(crate) fn schedule(s: &mut State, exclude_session_id: &str) {
         backend,
         project,
         generation,
+        watch_generation,
         exclude: exclude_session_id.to_owned(),
         candidates,
         in_flight: None,
@@ -121,24 +125,30 @@ fn locally_protected(ui: &Ui, owner_index: usize, s: &State, session_id: &str) -
     if !entry_has_session(owner, owner_index == ui.active, s, session_id) {
         return true;
     }
-    let owner_saved = match &owner.saved {
-        Tab::Workspace(saved) => saved,
-        Tab::Blank => return true,
-    };
-    if owner.idle_markers.is_working(session_id) {
+    if !matches!(owner.saved, Tab::Workspace(_)) {
         return true;
     }
     for entry in &ui.entries {
-        let Tab::Workspace(saved) = &entry.saved else {
-            continue;
-        };
-        if !same_project(owner_saved, saved) {
-            continue;
+        if entry.idle_markers.is_working(session_id) {
+            return true;
         }
-        if saved.active_session_id.as_deref() == Some(session_id) {
+        if let Tab::Workspace(saved) = &entry.saved
+            && saved.active_session_id.as_deref() == Some(session_id)
+        {
             return true;
         }
         if entry.has_local_draft(session_id) {
+            return true;
+        }
+    }
+    for closed in &ui.closed {
+        if closed
+            .drafts
+            .get(session_id)
+            .is_some_and(|text| !text.is_empty())
+            || closed.attachment_drafts.contains(session_id)
+            || closed.attachment_parts.contains_key(session_id)
+        {
             return true;
         }
     }
@@ -146,6 +156,9 @@ fn locally_protected(ui: &Ui, owner_index: usize, s: &State, session_id: &str) -
 }
 
 fn sweep_current(ui: &Ui, index: usize, s: &State, sweep: &Sweep) -> bool {
+    if !settings::auto_cleanup_blank_sessions(s) {
+        return false;
+    }
     let entry = &ui.entries[index];
     if entry.project.as_ref().map(|p| p.id.as_str()) != Some(sweep.project.id.as_str()) {
         return false;
@@ -153,7 +166,10 @@ fn sweep_current(ui: &Ui, index: usize, s: &State, sweep: &Sweep) -> bool {
     let Some(l) = s.screen.launcher() else {
         return false;
     };
-    if l.authentication_required || l.catalogue_generation != sweep.generation {
+    if l.authentication_required
+        || l.catalogue_generation != sweep.generation
+        || l.catalogue_watch.as_ref().map(|w| w.generation()) != sweep.watch_generation
+    {
         return false;
     }
     l.connection
@@ -161,19 +177,8 @@ fn sweep_current(ui: &Ui, index: usize, s: &State, sweep: &Sweep) -> bool {
         .is_some_and(|conn| conn.client.same_connection(&sweep.backend.client))
 }
 
-fn remove_deleted_session(ui: &mut Ui, owner_index: usize, s: &mut State, session_id: &str) {
-    let owner_saved = match &ui.entries[owner_index].saved {
-        Tab::Workspace(saved) => saved.clone(),
-        Tab::Blank => return,
-    };
+fn remove_deleted_session(ui: &mut Ui, _owner_index: usize, s: &mut State, session_id: &str) {
     for (index, entry) in ui.entries.iter_mut().enumerate() {
-        let matches = match &entry.saved {
-            Tab::Workspace(saved) => same_project(&owner_saved, saved),
-            Tab::Blank => false,
-        };
-        if !matches {
-            continue;
-        }
         entry.idle_markers.remove(session_id);
         if index == ui.active {
             if let Some(l) = s.screen.launcher_mut() {
@@ -534,6 +539,149 @@ mod tests {
         schedule(&mut state, "ses_new");
         assert!(
             !state.workspace.as_ref().unwrap().entries[0]
+                .blank_cleanup
+                .active()
+        );
+    }
+
+    #[test]
+    fn closed_tab_and_linked_tab_drafts_protect_blank_sessions() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        let mut ui = workspace::Ui::new();
+        ui.fixture_hydrate(workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![
+                Tab::Workspace(workspace::Workspace {
+                    backend_id: None,
+                    server_id: None,
+                    folder: "/repo".into(),
+                    occurrence: 0,
+                    workspace_id: Some("ws1".into()),
+                    active_session_id: Some("ses_new".into()),
+                    drafts: Default::default(),
+                    attachment_drafts: Default::default(),
+                    attachment_parts: Default::default(),
+                    view: Default::default(),
+                }),
+                Tab::Workspace(workspace::Workspace {
+                    backend_id: None,
+                    server_id: None,
+                    folder: "/repo-wt".into(),
+                    occurrence: 0,
+                    workspace_id: Some("ws2".into()),
+                    active_session_id: Some("ses_linked_open".into()),
+                    drafts: [("ses_linked_draft".into(), "wip".into())].into(),
+                    attachment_drafts: Default::default(),
+                    attachment_parts: Default::default(),
+                    view: Default::default(),
+                }),
+            ],
+            active: Some(0),
+        });
+        ui.fixture_ready();
+        ui.closed.push(workspace::Workspace {
+            backend_id: None,
+            server_id: None,
+            folder: "/repo".into(),
+            occurrence: 1,
+            workspace_id: Some("ws1".into()),
+            active_session_id: None,
+            drafts: [("ses_closed_draft".into(), "saved draft".into())].into(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        });
+        state.workspace = Some(ui);
+        if let Some(l) = state.screen.launcher_mut() {
+            l.sessions = vec![
+                Session {
+                    id: "ses_new".into(),
+                    title: "New".into(),
+                },
+                Session {
+                    id: "ses_closed_draft".into(),
+                    title: "Closed".into(),
+                },
+                Session {
+                    id: "ses_free".into(),
+                    title: "Free".into(),
+                },
+            ];
+            l.linked.rows = vec![
+                Session {
+                    id: "ses_linked_open".into(),
+                    title: "Linked Open".into(),
+                },
+                Session {
+                    id: "ses_linked_draft".into(),
+                    title: "Linked Draft".into(),
+                },
+            ];
+        }
+        let ui_ref = state.workspace.as_ref().unwrap();
+        assert!(locally_protected(ui_ref, 0, &state, "ses_closed_draft"));
+        assert!(locally_protected(ui_ref, 0, &state, "ses_linked_open"));
+        assert!(locally_protected(ui_ref, 0, &state, "ses_linked_draft"));
+        assert!(!locally_protected(ui_ref, 0, &state, "ses_free"));
+    }
+
+    #[test]
+    fn disabling_auto_cleanup_mid_sweep_aborts_sweep() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        state.workspace = Some(workspace::Ui::new());
+        workspace::connected(&mut state);
+        crate::settings::fixture_config(
+            &mut state,
+            json!({"settings": {"autoCleanupBlankSessions": true}}),
+        );
+        let project = Project {
+            id: "ws1".into(),
+            path: "/repo".into(),
+        };
+        {
+            let l = state.screen.launcher_mut().unwrap();
+            l.connection = Some(Backend::unauthenticated("http://127.0.0.1:1/").unwrap());
+            l.project = Some(project.clone());
+            l.sessions = vec![
+                Session {
+                    id: "ses_new".into(),
+                    title: "New".into(),
+                },
+                Session {
+                    id: "ses_blank".into(),
+                    title: "Blank".into(),
+                },
+            ];
+        }
+        workspace::opened(&mut state, &project);
+        schedule(&mut state, "ses_new");
+        assert!(
+            state.workspace.as_ref().unwrap().entries[0]
+                .blank_cleanup
+                .active()
+        );
+        crate::settings::fixture_config(
+            &mut state,
+            json!({"settings": {"autoCleanupBlankSessions": false}}),
+        );
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1000.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(|s, tx| {
+            let mut ui = s.workspace.take().unwrap();
+            let _ = poll(s, &mut ui, tx);
+            s.workspace = Some(ui);
+        });
+        assert!(
+            !rt.state.workspace.as_ref().unwrap().entries[0]
                 .blank_cleanup
                 .active()
         );

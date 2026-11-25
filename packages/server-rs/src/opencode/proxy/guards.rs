@@ -81,7 +81,7 @@ pub(super) fn same_target(initial: &Value, current: &Value) -> bool {
     ["id", "location", "projectID", "parentID", "fork"].iter().all(|key| current[*key] == initial[*key])
         && current["time"]["created"] == initial["time"]["created"]
 }
-pub(super) fn schedule_input(data: &serde_json::Map<String, Value>) -> bool {
+pub(crate) fn schedule_input(data: &serde_json::Map<String, Value>) -> bool {
     data.get("metadata").and_then(Value::as_object).is_some_and(|metadata| {
         ["schedule", "automation", "codenomad.schedule-carrier"].iter().any(|key| metadata.contains_key(*key))
     })
@@ -91,7 +91,7 @@ pub async fn verify_mutation(app: &App, id: &str, directory: &str, record: &Valu
     verify_mutation_at(app, &endpoint, id, directory, record).await
 }
 
-pub(super) async fn verify_mutation_at(
+pub(crate) async fn verify_mutation_at(
     app: &App,
     endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
     id: &str,

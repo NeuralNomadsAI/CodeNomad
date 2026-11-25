@@ -55,7 +55,6 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         rules_lock,
         session_cleanup_guard,
     } = ctx;
-    let _session_cleanup_guard = session_cleanup_guard;
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
     let dispatch = move |detached: tokio_util::sync::CancellationToken| async move {
@@ -370,8 +369,9 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         builder.extension(NativeBody).body(Body::from_stream(bytes)).map_err(|_| upstream_error())
     };
     if let Some(permit) = mutation {
-        crate::opencode::proxy_write::forward(permit, rules_lock, observer, dispatch).await
+        crate::opencode::proxy_write::forward(permit, rules_lock, session_cleanup_guard, observer, dispatch).await
     } else {
+        let _cleanup_guard = session_cleanup_guard;
         dispatch(tokio_util::sync::CancellationToken::new()).await
     }
 }

@@ -44,7 +44,6 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("POST",r"^/api/storage/binaries/validate$"),
     ("POST",r"^/api/(?:client-connections/pong|workspaces(?:/creation/cancel|/[^/]+/creation/release)?)$"),
     ("POST",r"^/api/workspaces/[^/]+/session-history/(?:outline|outlinePreview|window|query|ranked)$"),
-    ("POST",r"^/api/workspaces/[^/]+/session-cleanup/[^/]+$"),
     ("GET",r"^/api/workspaces/[^/]+/session-attachment/[^/]+/[^/]+/[0-9]+/[a-f0-9]{64}$"),
     ("GET",r"^/api/workspaces/[^/]+/session-media/[^/]+/[^/]+/[^/]+/[^/]+/[^/]+$"),
     ("DELETE",r"^/api/workspaces/[^/]+$"),
@@ -67,6 +66,10 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
 
 #[derive(Clone)]
 pub(crate) struct BrowserDevice(pub uuid::Uuid);
+
+// Browser-only workspace routes omitted from TS `SERVER_DEVICE_ROUTES`.
+static BROWSER_ONLY_SESSION_CLEANUP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^/api/workspaces/[^/]+/session-cleanup/[^/]+$").unwrap());
 
 fn reply(code: Status, text: &str) -> Response {
     (code, [(header::CONNECTION, "close")], Json(json!({"error":text}))).into_response()
@@ -276,9 +279,11 @@ pub async fn admit(
     if !server && !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
+    let browser_only_cleanup = !server && method == Method::POST && BROWSER_ONLY_SESSION_CLEANUP.is_match(&path);
     if !entry
         && !backend_ui
         && !form_reply
+        && !browser_only_cleanup
         && ui.is_none()
         && !CATALOG.iter().any(|(methods, pat)| {
             methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })

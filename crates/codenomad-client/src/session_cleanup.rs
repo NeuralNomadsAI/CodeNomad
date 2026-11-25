@@ -71,11 +71,14 @@ impl Backend {
         let Some(project_id) = info["projectID"].as_str().filter(|id| !id.is_empty()) else {
             return Ok(false);
         };
+        let Some(directory) = info["location"]["directory"]
+            .as_str()
+            .filter(|dir| crate::absolute_server_path(dir))
+        else {
+            return Ok(false);
+        };
         if info["id"].as_str() != Some(session_id)
             || info["location"].get("workspaceID").is_some()
-            || !info["location"]["directory"]
-                .as_str()
-                .is_some_and(crate::absolute_server_path)
             || info["time"].get("archived").is_some_and(|v| !v.is_null())
             || info.get("revert").is_some_and(|v| !v.is_null())
             || info.get("fork").is_some_and(|v| !v.is_null())
@@ -98,6 +101,19 @@ impl Backend {
                 unwrap_data(&body).as_array().is_some_and(Vec::is_empty),
             )
         };
+        let children_query: [(&str, &str); 3] = if project_id == "global" {
+            [
+                ("parentID", session_id),
+                ("directory", directory),
+                ("limit", "1"),
+            ]
+        } else {
+            [
+                ("parentID", session_id),
+                ("project", project_id),
+                ("limit", "1"),
+            ]
+        };
         let children_req = async {
             let resp = self
                 .client
@@ -105,11 +121,7 @@ impl Backend {
                     "{}workspaces/{}/instance/api/session",
                     self.base, project.id
                 ))
-                .query(&[
-                    ("parentID", session_id),
-                    ("project", project_id),
-                    ("limit", "1"),
-                ])
+                .query(&children_query)
                 .send()
                 .await?
                 .error_for_status()?;
@@ -298,6 +310,67 @@ mod tests {
                 "POST /api/workspaces/ws1/session-cleanup/ses_old HTTP/1.1"
             );
             assert!(task.await.unwrap().unwrap());
+        });
+    }
+
+    #[test]
+    fn preflight_uses_directory_for_global_project() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+            let project = Project {
+                id: "ws1".into(),
+                path: "/plain".into(),
+            };
+            let client = tokio::spawn({
+                let backend = backend.clone();
+                let project = project.clone();
+                async move { backend.preflight_blank_session(&project, "ses_plain").await }
+            });
+            let mut saw_directory_query = false;
+            for _ in 0..6 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 4096];
+                let n = socket.read(&mut buf).await.unwrap();
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let first = req.lines().next().unwrap_or("");
+                let body = if first.contains("/api/session/ses_plain/message?") {
+                    json!({"data": [], "cursor": {}})
+                } else if first.starts_with("GET /workspaces/ws1/instance/api/session/ses_plain HTTP/")
+                {
+                    json!({"data": {"id": "ses_plain", "projectID": "global", "location": {"directory": "/plain"}, "time": {"updated": 1}}})
+                } else if first.contains("/inbox") {
+                    json!({"data": []})
+                } else if first.contains("parentID=ses_plain") {
+                    assert!(
+                        !first.contains("project=global"),
+                        "non-Git preflight must not query project=global: {first}"
+                    );
+                    assert!(
+                        first.contains("directory=%2Fplain"),
+                        "non-Git preflight must query directory: {first}"
+                    );
+                    saw_directory_query = true;
+                    json!({"data": [], "cursor": {}})
+                } else if first.contains("/api/session/active") {
+                    json!({"data": {}})
+                } else {
+                    panic!("unexpected request: {first}");
+                };
+                let payload = body.to_string();
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                    payload.len()
+                );
+                socket.write_all(resp.as_bytes()).await.unwrap();
+            }
+            assert!(client.await.unwrap().unwrap());
+            assert!(saw_directory_query);
         });
     }
 }

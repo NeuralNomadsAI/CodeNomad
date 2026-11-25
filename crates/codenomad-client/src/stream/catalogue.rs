@@ -473,6 +473,10 @@ impl CatalogueWatch {
         )
     }
 
+    pub fn generation(&self) -> u64 {
+        self.signals.generation.load(SeqCst)
+    }
+
     pub fn take_session_activity(&self) -> (u64, VecDeque<SessionActivityHint>) {
         (
             self.signals.generation.load(SeqCst),

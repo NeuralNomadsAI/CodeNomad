@@ -72,8 +72,20 @@ impl Tracker {
             .is_some_and(|marker| marker.working)
     }
 
-    pub(super) fn observe_working(&mut self, session_id: &str, known_parent: Option<Option<&str>>) {
-        self.evict_if_full(session_id);
+    pub(super) fn any_working(&self) -> bool {
+        self.sessions.values().any(|marker| marker.working)
+    }
+
+    pub(super) fn observe_working(
+        &mut self,
+        session_id: &str,
+        known_parent: Option<Option<&str>>,
+        now: f64,
+        keep_unseen_subagent_idle_status: bool,
+    ) {
+        if !self.ensure_capacity(session_id, now, keep_unseen_subagent_idle_status) {
+            return;
+        }
         let entry = self.sessions.entry(session_id.to_owned()).or_default();
         if let Some(parent) = known_parent {
             entry.parent_id = parent.map(str::to_owned);
@@ -214,17 +226,49 @@ impl Tracker {
         self.pending_parents.push_back(session_id.to_owned());
     }
 
-    fn evict_if_full(&mut self, incoming: &str) {
+    fn ensure_capacity(
+        &mut self,
+        incoming: &str,
+        now: f64,
+        keep_unseen_subagent_idle_status: bool,
+    ) -> bool {
         if self.sessions.contains_key(incoming) || self.sessions.len() < MAX_TRACKED_SESSIONS {
-            return;
+            return true;
         }
-        if let Some(stale) = self
+        let victim = self
             .sessions
             .iter()
-            .find(|(_, marker)| !marker.working && marker.idle_since.is_none())
+            .find(|(_, m)| !m.working && m.idle_since.is_none())
             .map(|(id, _)| id.clone())
-        {
-            self.sessions.remove(&stale);
+            .or_else(|| {
+                self.sessions
+                    .iter()
+                    .find(|(_, m)| {
+                        !m.working
+                            && m.parent_known
+                            && m.parent_id.is_some()
+                            && !keep_unseen_subagent_idle_status
+                            && m.idle_since
+                                .is_some_and(|t| t + IDLE_STATUS_VISIBILITY_SECS <= now)
+                    })
+                    .map(|(id, _)| id.clone())
+            })
+            .or_else(|| {
+                self.sessions
+                    .iter()
+                    .filter(|(_, m)| !m.working)
+                    .min_by(|(_, a), (_, b)| {
+                        a.idle_since
+                            .unwrap_or(f64::INFINITY)
+                            .total_cmp(&b.idle_since.unwrap_or(f64::INFINITY))
+                    })
+                    .map(|(id, _)| id.clone())
+            });
+        if let Some(id) = victim {
+            self.sessions.remove(&id);
+            true
+        } else {
+            false
         }
     }
 
@@ -253,12 +297,10 @@ fn entry_knows_root(entry: &Entry, active: bool, s: &State, session_id: &str) ->
     if active {
         s.screen.launcher().is_some_and(|l| {
             l.listed_sessions.contains(session_id)
-                || l.sessions.iter().any(|row| row.id == session_id)
                 || l.linked.rows.iter().any(|row| row.id == session_id)
         })
     } else {
         entry.listed_sessions.contains(session_id)
-            || entry.sessions.iter().any(|row| row.id == session_id)
             || entry.linked.rows.iter().any(|row| row.id == session_id)
     }
 }
@@ -294,7 +336,7 @@ fn spawn_parent_lookup(
     }
 }
 
-fn observe_bound_tab(entry: &mut Entry, active: bool, s: &State, now: f64) {
+fn observe_bound_tab(entry: &mut Entry, active: bool, s: &State, now: f64, keep_unseen: bool) {
     let Tab::Workspace(saved) = &entry.saved else {
         return;
     };
@@ -323,7 +365,9 @@ fn observe_bound_tab(entry: &mut Entry, active: bool, s: &State, now: f64) {
     entry.idle_markers.bound_working = Some((session_id.to_owned(), working));
     let known_parent = entry_knows_root(entry, active, s, session_id).then_some(None);
     if working {
-        entry.idle_markers.observe_working(session_id, known_parent);
+        entry
+            .idle_markers
+            .observe_working(session_id, known_parent, now, keep_unseen);
     } else if previous == Some(true) {
         entry
             .idle_markers
@@ -337,6 +381,7 @@ fn apply_hints(
     generation: u64,
     hints: VecDeque<SessionActivityHint>,
     now: f64,
+    keep_unseen: bool,
 ) {
     let active = ui.active;
     for (index, entry) in ui.entries.iter_mut().enumerate() {
@@ -361,9 +406,12 @@ fn apply_hints(
                 entry_knows_root(entry, index == active, s, &hint.session).then_some(None);
             match hint.kind {
                 SessionActivityKind::Working => {
-                    entry
-                        .idle_markers
-                        .observe_working(&hint.session, known_parent);
+                    entry.idle_markers.observe_working(
+                        &hint.session,
+                        known_parent,
+                        now,
+                        keep_unseen,
+                    );
                 }
                 SessionActivityKind::Idle => {
                     entry
@@ -386,18 +434,19 @@ pub(super) fn poll(s: &mut State, ui: &mut Ui, now: f64, tx: &mut Tx) -> bool {
         .and_then(|l| l.catalogue_watch.as_ref())
         .map(|watch| watch.take_session_activity())
     {
-        apply_hints(ui, s, generation, hints, now);
+        apply_hints(ui, s, generation, hints, now, keep_unseen);
     }
 
     let mut changed = false;
     let active_index = ui.active;
     let window_focused = s.notifications.main_window_focused();
-    let viewing_chat = window_focused && !s.screen.is_launcher();
+    let has_pending_interruption = s.agent.as_ref().is_some_and(|a| !a.ids().is_empty());
+    let viewing_chat = window_focused && !s.screen.is_launcher() && !has_pending_interruption;
     let shared_conn = s.screen.launcher().and_then(|l| l.connection.clone());
 
     for index in 0..ui.entries.len() {
         let is_active = index == active_index;
-        observe_bound_tab(&mut ui.entries[index], is_active, s, now);
+        observe_bound_tab(&mut ui.entries[index], is_active, s, now, keep_unseen);
 
         // Drain parent lookup completion and launch next queued lookup if needed.
         if let Some(lookup) = ui.entries[index].idle_markers.parent_lookup.take() {
@@ -483,7 +532,7 @@ mod tests {
         assert!(!tracker.tab_idle_visible(1.0, true));
 
         // Subagent finishes work at t = 10.0s.
-        tracker.observe_working("ses_child", Some(Some("ses_root")));
+        tracker.observe_working("ses_child", Some(Some("ses_root")), 9.0, true);
         tracker.observe_idle("ses_child", Some(Some("ses_root")), 10.0);
 
         // With keepUnseenSubagentIdleStatus = true, marker persists past 5s without wake timer.
@@ -499,15 +548,15 @@ mod tests {
         assert_eq!(tracker.idle_presentation(15.0, false), (false, None));
 
         // Viewing the parent clears descendant subagents when keep = false.
-        tracker.observe_working("ses_child", Some(Some("ses_root")));
+        tracker.observe_working("ses_child", Some(Some("ses_root")), 19.0, false);
         tracker.observe_idle("ses_child", Some(Some("ses_root")), 20.0);
-        tracker.observe_working("ses_grand", Some(Some("ses_child")));
+        tracker.observe_working("ses_grand", Some(Some("ses_child")), 19.0, false);
         tracker.observe_idle("ses_grand", Some(Some("ses_child")), 20.0);
         tracker.mark_viewed("ses_root", false, true);
         assert_eq!(tracker.idle_presentation(21.0, false), (false, None));
 
         // Viewing the subagent itself clears its marker even when keep = true.
-        tracker.observe_working("ses_child", Some(Some("ses_root")));
+        tracker.observe_working("ses_child", Some(Some("ses_root")), 24.0, true);
         tracker.observe_idle("ses_child", Some(Some("ses_root")), 25.0);
         tracker.mark_viewed("ses_child", true, false);
         assert_eq!(tracker.idle_presentation(26.0, true), (false, None));
@@ -516,12 +565,55 @@ mod tests {
     #[test]
     fn resuming_work_clears_idle_marker_until_next_completion() {
         let mut tracker = Tracker::default();
-        tracker.observe_working("ses_child", Some(Some("ses_root")));
+        tracker.observe_working("ses_child", Some(Some("ses_root")), 0.5, true);
         tracker.observe_idle("ses_child", Some(Some("ses_root")), 1.0);
         assert!(tracker.tab_idle_visible(2.0, true));
 
-        tracker.observe_working("ses_child", Some(Some("ses_root")));
+        tracker.observe_working("ses_child", Some(Some("ses_root")), 2.5, true);
         assert!(!tracker.tab_idle_visible(3.0, true));
+    }
+
+    #[test]
+    fn subagent_in_sessions_list_only_is_not_misclassified_as_root() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        let ui = workspace::Ui::new();
+        if let Some(l) = state.screen.launcher_mut() {
+            l.sessions.push(crate::catalog::Session {
+                id: "ses_child_opened".into(),
+                title: "Child".into(),
+            });
+            l.listed_sessions.insert("ses_listed_root".into());
+        }
+        assert!(!entry_knows_root(
+            &ui.entries[0],
+            true,
+            &state,
+            "ses_child_opened"
+        ));
+        assert!(entry_knows_root(
+            &ui.entries[0],
+            true,
+            &state,
+            "ses_listed_root"
+        ));
+    }
+
+    #[test]
+    fn tracker_enforces_max_tracked_sessions_cap() {
+        let mut tracker = Tracker::default();
+        for i in 0..(MAX_TRACKED_SESSIONS + 20) {
+            let id = format!("ses_idle_{i}");
+            tracker.observe_working(&id, Some(Some("ses_root")), i as f64, false);
+            tracker.observe_idle(&id, Some(Some("ses_root")), i as f64 + 1.0);
+        }
+        assert!(tracker.sessions.len() <= MAX_TRACKED_SESSIONS);
+
+        let mut busy_tracker = Tracker::default();
+        for i in 0..(MAX_TRACKED_SESSIONS + 10) {
+            busy_tracker.observe_working(&format!("ses_busy_{i}"), Some(None), 1.0, true);
+        }
+        assert_eq!(busy_tracker.sessions.len(), MAX_TRACKED_SESSIONS);
     }
 
     #[test]
@@ -552,7 +644,7 @@ mod tests {
         ui.fixture_ready();
         ui.entries[0]
             .idle_markers
-            .observe_working("ses_child", Some(Some("ses_root")));
+            .observe_working("ses_child", Some(Some("ses_root")), 9.0, true);
         ui.entries[0]
             .idle_markers
             .observe_idle("ses_child", Some(Some("ses_root")), 10.0);
@@ -573,17 +665,32 @@ mod tests {
         crate::strings::with_locale("en", || {
             rt.frame(12.0);
             let idle_label = crate::strings::t("instanceTab.status.idle");
-            let has_idle = |rt: &rune::Runtime<State>| {
-                rt.elements().iter().any(|el| {
-                    el.description
-                        .as_deref()
-                        .is_some_and(|d| d.contains(idle_label))
-                })
+            let working_label = crate::strings::t("instanceTab.status.working");
+            let has_label = |rt: &rune::Runtime<State>, label: &str| {
+                rt.elements()
+                    .iter()
+                    .any(|el| el.description.as_deref().is_some_and(|d| d.contains(label)))
             };
             assert!(
-                has_idle(&rt),
+                has_label(&rt, idle_label),
                 "kept subagent idle marker must remain visible on the project tab while viewing parent"
             );
+
+            // While another subagent in the same tab is actively working, Working takes priority over Idle.
+            rt.update(|s, _tx| {
+                s.workspace.as_mut().unwrap().entries[0]
+                    .idle_markers
+                    .observe_working("ses_child_2", Some(Some("ses_root")), 12.1, true);
+            });
+            rt.frame(0.1);
+            assert!(has_label(&rt, working_label));
+            assert!(!has_label(&rt, idle_label));
+            rt.update(|s, _tx| {
+                s.workspace.as_mut().unwrap().entries[0]
+                    .idle_markers
+                    .remove("ses_child_2");
+            });
+
             // Toggle off keepUnseenSubagentIdleStatus while unfocused: tab keeps Idle until 15.0s, arms wake_at(15.0).
             rt.update(|s, _tx| {
                 crate::shell::notifications::set_focus_for_test(s, false);
@@ -592,8 +699,8 @@ mod tests {
                     json!({"settings": {"keepUnseenSubagentIdleStatus": false}}),
                 );
             });
-            rt.frame(0.5); // clock = 12.5
-            assert!(has_idle(&rt));
+            rt.frame(0.4); // clock = 12.5
+            assert!(has_label(&rt, idle_label));
             let due = rt
                 .wake_deadline()
                 .expect("expiring subagent idle marker must arm tx.wake_at");
@@ -604,7 +711,7 @@ mod tests {
 
             rt.frame(2.6); // clock = 15.1 > 15.0
             assert!(
-                !has_idle(&rt),
+                !has_label(&rt, idle_label),
                 "subagent idle marker must expire after 5 seconds when keepUnseenSubagentIdleStatus is false"
             );
         });

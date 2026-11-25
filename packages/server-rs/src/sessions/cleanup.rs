@@ -95,7 +95,6 @@ impl Fence {
 
 fn id_ok(id: &str) -> bool {
     id.starts_with("ses")
-        && !id.starts_with("ses_cn_schedule_")
         && (4..=514).contains(&id.len())
         && id.bytes().all(|v| v.is_ascii_alphanumeric() || matches!(v, b'_' | b'-'))
 }
@@ -210,12 +209,15 @@ pub async fn route(
         if session["id"].as_str() != Some(session_id.as_str())
             || session["projectID"].as_str() != Some(initial_project)
             || session_dir != initial_dir
-            || guards::marker(&session)
         {
             return None;
         }
         let owned = crate::worktrees::ownership::resolve(&app, &workspace, &session_dir).await?;
-        let worktree_guard = crate::worktrees::fence::enter(&[crate::worktrees::fence::identity(&owned.checkout)])?;
+        let worktree_guard = crate::worktrees::fence::enter(&[
+            crate::worktrees::fence::identity(&owned.checkout),
+            crate::worktrees::fence::session(&session_id),
+        ])?;
+        guards::verify_mutation_at(&app, &endpoint, &session_id, &session_dir, &session).await.ok()?;
         let children = native_get(
             &app,
             &endpoint,
@@ -240,7 +242,7 @@ pub async fn route(
             || latest["time"].get("archived").is_some_and(|v| !v.is_null())
             || latest.get("revert").is_some_and(|v| !v.is_null())
             || latest.get("fork").is_some_and(|v| !v.is_null())
-            || guards::marker(&latest)
+            || latest.as_object().is_some_and(guards::schedule_input)
         {
             return None;
         }
@@ -255,7 +257,7 @@ pub async fn route(
             &app,
             &endpoint,
             &["api", "permission", "request"],
-            &[("directory", &latest_dir)],
+            &[("location[directory]", &latest_dir)],
             Duration::from_secs(4),
         )
         .await
@@ -305,36 +307,62 @@ pub async fn route(
             _ => return skipped(),
         }
     };
-    let (_cleanup_guard, _worktree_guard) = guards;
-    let mut url = match endpoint.url.clone() {
-        mut url => {
-            if url
-                .path_segments_mut()
-                .map(|mut s| {
-                    s.clear().extend(["api", "session", &session_id]);
-                })
-                .is_err()
-            {
-                return skipped();
+    let mut url = endpoint.url.clone();
+    if url
+        .path_segments_mut()
+        .map(|mut s| {
+            s.clear().extend(["api", "session", &session_id]);
+        })
+        .is_err()
+    {
+        return skipped();
+    }
+    settle_delete(
+        app.native.client.clone(),
+        app.session_cleanup.clone(),
+        endpoint.password.clone(),
+        session_id,
+        url,
+        guards,
+        &principal,
+    )
+    .await
+}
+
+async fn settle_delete(
+    client: reqwest::Client,
+    fence: Fence,
+    password: String,
+    session_id: String,
+    url: reqwest::Url,
+    guards: (CleanupGuard, crate::worktrees::fence::Entered),
+    principal: &Principal,
+) -> Response {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let (_cleanup_guard, _worktree_guard) = guards;
+        let response = client
+            .request(Method::DELETE, url)
+            .basic_auth("opencode", Some(&password))
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await;
+        let deleted = match response {
+            Ok(resp) if resp.status().is_success() => true,
+            _ => {
+                fence.mark_uncertain(&session_id);
+                false
             }
-            url
-        }
-    };
-    let _ = &mut url;
-    let response = app
-        .native
-        .client
-        .request(Method::DELETE, url)
-        .basic_auth("opencode", Some(&endpoint.password))
-        .timeout(Duration::from_secs(60))
-        .send()
-        .await;
-    match response {
-        Ok(resp) if resp.status().is_success() => Json(json!({"deleted": true})).into_response(),
-        _ => {
-            app.session_cleanup.mark_uncertain(&session_id);
-            Status::SERVICE_UNAVAILABLE.into_response()
-        }
+        };
+        let _ = tx.send(deleted);
+    });
+    tokio::select! {
+        biased;
+        _ = principal.0.cancelled() => Status::UNAUTHORIZED.into_response(),
+        outcome = rx => match outcome {
+            Ok(true) => Json(json!({"deleted": true})).into_response(),
+            _ => Status::SERVICE_UNAVAILABLE.into_response(),
+        },
     }
 }
 
@@ -364,6 +392,71 @@ mod tests {
         fence.observe_absent("ses_a");
         assert!(!fence.has_uncertain("ses_a"));
         assert!(fence.enter_cleanup("ses_a").is_some());
+    }
+
+    #[test]
+    fn id_ok_matches_ts_session_id_pattern_including_schedule_ids() {
+        assert!(id_ok("ses_abc123"));
+        assert!(id_ok("ses_cn_schedule_abc"));
+        assert!(!id_ok("bad_id"));
+        assert!(!id_ok("ses"));
+    }
+
+    #[tokio::test]
+    async fn detached_delete_holds_guards_and_marks_uncertain_after_observer_cancels() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+            sync::oneshot,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (received_tx, received_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 512];
+            let _ = socket.read(&mut buf).await;
+            let _ = received_tx.send(());
+            let _ = release_rx.await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await;
+        });
+
+        let fence = Fence::default();
+        let sid = "ses_detach_test".to_owned();
+        let keys = ["/cleanup-detach-test/checkout".to_owned(), crate::worktrees::fence::session(&sid)];
+        let cleanup_guard = fence.enter_cleanup(&sid).unwrap();
+        let worktree_guard = crate::worktrees::fence::enter(&keys).unwrap();
+        let token = tokio_util::sync::CancellationToken::new();
+        let principal = Principal(token.clone());
+        let url = reqwest::Url::parse(&format!("http://{addr}/api/session/{sid}")).unwrap();
+        let client = reqwest::Client::new();
+
+        let call = tokio::spawn({
+            let fence = fence.clone();
+            async move {
+                settle_delete(client, fence, "pw".into(), sid, url, (cleanup_guard, worktree_guard), &principal).await
+            }
+        });
+        received_rx.await.unwrap();
+        token.cancel();
+        let response = call.await.unwrap();
+        assert_eq!(response.status(), Status::UNAUTHORIZED);
+
+        // Both guards remain held until OpenCode settles the detached DELETE.
+        assert!(crate::worktrees::fence::try_block(&[crate::worktrees::fence::session("ses_detach_test")]).is_none());
+        let _ = release_tx.send(());
+        server.await.unwrap();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while crate::worktrees::fence::try_block(&[crate::worktrees::fence::session("ses_detach_test")]).is_none() {
+            assert!(tokio::time::Instant::now() < deadline, "worktree guard was not released");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(fence.has_uncertain("ses_detach_test"));
+        assert!(fence.enter_mutation("ses_detach_test").is_none());
     }
 
     #[test]
