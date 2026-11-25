@@ -20,6 +20,8 @@ fn advanced_persists_only_supported_options_and_one_server_environment_variable(
         let req = request(&listener).await;
         assert_eq!(req.first, "PATCH /api/storage/config/ui HTTP/1.1");
         let expected = json!({"settings":{
+            "autoCleanupBlankSessions": false,
+            "keepUnseenSubagentIdleStatus": false,
             "hideDiffWhitespaceChanges": false
         }});
         assert_eq!(req.body, expected);

@@ -74,7 +74,7 @@ pub(super) fn foreign() -> Error {
 pub(super) fn carrier_denied() -> Error {
     error(Status::FORBIDDEN, "Mission schedule carriers and metadata require owned schedule controls")
 }
-pub(super) fn marker(record: &Value) -> bool {
+pub(crate) fn marker(record: &Value) -> bool {
     record["metadata"].get("codenomad.schedule-carrier").is_some()
 }
 pub(super) fn same_target(initial: &Value, current: &Value) -> bool {

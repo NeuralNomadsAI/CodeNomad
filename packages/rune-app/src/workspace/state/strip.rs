@@ -14,6 +14,7 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
             Tab::Workspace(w) => w.folder.as_str(),
         })
         .collect();
+    let keep_unseen = crate::settings::keep_unseen_subagent_idle_status(s);
     let tabs: Vec<_> = ui
         .entries
         .iter()
@@ -24,13 +25,26 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
                 id: &entry.key,
                 title,
                 status: if index == ui.active && !s.screen.is_launcher() {
-                    super::super::cache::status(&s.phase, s.agent.as_ref())
+                    super::super::cache::status(&s.phase, s.agent.as_ref()).or_else(|| {
+                        entry
+                            .idle_markers
+                            .tab_idle_visible(ui.clock, keep_unseen)
+                            .then_some(rune_theme_codenomad::tabs::Status::Idle)
+                    })
                 } else if let Some(cache) = &entry.cache {
-                    cache.status()
+                    cache.status().or_else(|| {
+                        entry
+                            .idle_markers
+                            .tab_idle_visible(ui.clock, keep_unseen)
+                            .then_some(rune_theme_codenomad::tabs::Status::Idle)
+                    })
                 } else if entry.project.is_none() && matches!(entry.saved, Tab::Workspace(_)) {
                     Some(rune_theme_codenomad::tabs::Status::Unavailable)
                 } else {
-                    None
+                    entry
+                        .idle_markers
+                        .tab_idle_visible(ui.clock, keep_unseen)
+                        .then_some(rune_theme_codenomad::tabs::Status::Idle)
                 },
                 closable: !busy(s) && !close_blocked(s, index),
             },

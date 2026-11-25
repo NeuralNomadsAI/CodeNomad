@@ -40,7 +40,10 @@ impl Toggle {
     }
 
     pub fn supported(self) -> bool {
-        self == Self::Whitespace
+        matches!(
+            self,
+            Self::EmptySessions | Self::UnseenSubagents | Self::Whitespace
+        )
     }
 
     fn labels(self) -> (&'static str, &'static str) {

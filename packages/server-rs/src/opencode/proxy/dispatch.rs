@@ -31,6 +31,7 @@ pub(super) struct DispatchContext {
     pub receipt: Option<crate::sessions::receipts::Prepared>,
     pub mutation: Option<crate::worktrees::fence::Entered>,
     pub rules_lock: Option<tokio::sync::OwnedMutexGuard<()>>,
+    pub session_cleanup_guard: Option<crate::sessions::cleanup::MutationGuard>,
 }
 
 pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, Error> {
@@ -52,7 +53,9 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         receipt,
         mutation,
         rules_lock,
+        session_cleanup_guard,
     } = ctx;
+    let _session_cleanup_guard = session_cleanup_guard;
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
     let dispatch = move |detached: tokio_util::sync::CancellationToken| async move {

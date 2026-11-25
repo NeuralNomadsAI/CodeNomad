@@ -12,6 +12,20 @@ pub struct AttentionHint {
     pub event: WorkspaceEvent,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionActivityKind {
+    Working,
+    Idle,
+    Deleted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionActivityHint {
+    pub workspace: String,
+    pub session: String,
+    pub kind: SessionActivityKind,
+}
+
 #[derive(Default)]
 pub enum CatalogueChanges {
     #[default]
@@ -84,6 +98,7 @@ pub(super) struct Signals {
     stopped: Mutex<CatalogueChanges>,
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
+    session_activity: Mutex<VecDeque<SessionActivityHint>>,
     workspace_events: Mutex<WorkspaceEventQueue>,
     workspace_stopped: Mutex<HashSet<String>>,
     workspace_overflow: std::sync::atomic::AtomicBool,
@@ -126,6 +141,7 @@ impl Signals {
 
     fn disconnected(&self) {
         self.attention.lock().unwrap().clear();
+        self.session_activity.lock().unwrap().clear();
         self.workspace_events.lock().unwrap().clear();
         *self.stats.lock().unwrap() = StatsChanges::default();
         let gen_changed = self
@@ -238,6 +254,8 @@ impl Signals {
         };
         let attention =
             kind == Some("instance.event") && self.observe_attention(id, &frame["event"]);
+        let activity =
+            kind == Some("instance.event") && self.observe_session_activity(id, &frame["event"]);
         let invalidates = match kind {
             Some("workspace.worktreesChanged" | "workspace.stopped") => true,
             Some("instance.eventStatus") => frame["status"] == "connected",
@@ -262,10 +280,42 @@ impl Signals {
             | workspace_event
             | stopped
             | attention
+            | activity
             | stats
         {
             (self.wake)();
         }
+    }
+
+    fn observe_session_activity(&self, workspace: &str, event: &Value) -> bool {
+        let kind = match event["type"].as_str() {
+            Some(
+                "session.execution.started" | "session.step.started" | "session.compaction.started",
+            ) => SessionActivityKind::Working,
+            Some(
+                "session.execution.succeeded"
+                | "session.execution.failed"
+                | "session.execution.interrupted",
+            ) => SessionActivityKind::Idle,
+            Some("session.deleted") => SessionActivityKind::Deleted,
+            _ => return false,
+        };
+        let Some(session) = event["data"]["sessionID"]
+            .as_str()
+            .filter(|id| valid_id(id))
+        else {
+            return false;
+        };
+        let mut queue = self.session_activity.lock().unwrap();
+        if queue.len() >= 256 {
+            queue.pop_front();
+        }
+        queue.push_back(SessionActivityHint {
+            workspace: workspace.into(),
+            session: session.into(),
+            kind,
+        });
+        true
     }
 
     fn observe_attention(&self, workspace: &str, event: &Value) -> bool {
@@ -329,6 +379,7 @@ impl CatalogueWatch {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            session_activity: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
@@ -419,6 +470,13 @@ impl CatalogueWatch {
         (
             self.signals.generation.load(SeqCst),
             std::mem::take(&mut *self.signals.attention.lock().unwrap()),
+        )
+    }
+
+    pub fn take_session_activity(&self) -> (u64, VecDeque<SessionActivityHint>) {
+        (
+            self.signals.generation.load(SeqCst),
+            std::mem::take(&mut *self.signals.session_activity.lock().unwrap()),
         )
     }
 
@@ -605,6 +663,7 @@ mod tests {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            session_activity: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
@@ -680,6 +739,7 @@ mod tests {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            session_activity: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
@@ -712,6 +772,7 @@ mod tests {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            session_activity: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
@@ -751,6 +812,7 @@ mod tests {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            session_activity: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),

@@ -4,7 +4,7 @@
 mod background_tests;
 mod defer_media;
 mod dispatch;
-mod guards;
+pub(crate) mod guards;
 mod mutation;
 
 pub use guards::verify_mutation;
@@ -593,6 +593,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if session_path.is_some_and(|path| path.split('/').next() == Some("global")) {
         return Ok(unavailable());
     }
+    let mut session_cleanup_guard = None;
     if let Some(session) = session {
         let record = actual.as_ref().ok_or_else(upstream_error)?;
         if (!message_list && record["location"]["directory"] != directory)
@@ -603,6 +604,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         if head.method != Method::GET {
             if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
                 return Ok(unavailable());
+            }
+            if head.method != Method::HEAD {
+                session_cleanup_guard = Some(
+                    app.session_cleanup
+                        .enter_mutation(session)
+                        .ok_or_else(|| error(Status::CONFLICT, "Session cleanup is in progress"))?,
+                );
             }
             verify_mutation_at(&app, &endpoint, session, directory, record).await?;
         } else if route.strip_prefix("/api/session/").is_some_and(|rest| !rest.contains('/'))
@@ -744,6 +752,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         receipt,
         mutation,
         rules_lock,
+        session_cleanup_guard,
     })
     .await
 }

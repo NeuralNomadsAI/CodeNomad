@@ -2,13 +2,16 @@ mod tabs;
 use tabs::{activate, close_blocked};
 pub use tabs::{can_new, close, new_tab, select, select_index, select_relative};
 
+mod blank_cleanup;
 mod drafts;
+mod idle_markers;
 mod notification;
 mod observation;
 mod panel_state;
 mod polling;
 mod strip;
 
+pub(crate) use blank_cleanup::schedule as schedule_blank_cleanup;
 pub use drafts::{
     attachment_draft_admissible, bound, capture, draft_changed, unconfirmed_drafts_full,
 };
@@ -62,6 +65,8 @@ pub(super) struct Entry {
     consumed_cursors: HashSet<u64>,
     visits: crate::launcher::Visits,
     catalogue: catalogue::Refresh,
+    blank_cleanup: blank_cleanup::Runner,
+    idle_markers: idle_markers::Tracker,
     wanted_panels: [Option<[bool; 2]>; 2],
     sidebar_edits: Option<(TextEdit, bool, TextEdit, bool)>,
     binding: Option<Backend>,
@@ -278,6 +283,8 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         consumed_cursors: HashSet::new(),
         visits: Default::default(),
         catalogue: Default::default(),
+        blank_cleanup: Default::default(),
+        idle_markers: Default::default(),
         wanted_panels: [None; 2],
         sidebar_edits: None,
         binding: None,
@@ -454,6 +461,8 @@ pub fn opened(s: &mut State, project: &Project) {
             w.workspace_id = Some(project.id.clone());
         }
     } else {
+        item.blank_cleanup.clear();
+        item.idle_markers.clear();
         let mut drafts = std::collections::BTreeMap::new();
         let mut attachment_drafts = std::collections::BTreeSet::new();
         let mut attachment_parts = std::collections::BTreeMap::new();

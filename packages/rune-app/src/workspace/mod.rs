@@ -27,8 +27,8 @@ pub(crate) use state::{
     close, connected, conversation_stream_clients, draft_changed, file_draft_status, file_wrap,
     files_tab, has_conversation_stream, input_ready, new_tab, opened, panel_width, poll,
     poll_file_drafts, prepare_open, renew_connection, restore_files_mode, resume, retry,
-    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative, status,
-    strip, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
+    schedule_blank_cleanup, schedule_catalogue, schedule_catalogue_refresh, select, select_index,
+    select_relative, status, strip, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,

@@ -743,6 +743,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             let superseded = ticket.is_some_and(|t| t != s.notifications.navigation_ticket());
             let stopped_in_flight =
                 stopped_during_pending_overflow || stopped_during_pending.contains(&b.workspace);
+            let created_id = b.session.clone();
             if blocked || superseded || l.authentication_required || stopped_in_flight {
                 if !stopped_in_flight {
                     l.sessions.insert(
@@ -771,6 +772,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 dismiss_origin_panel(s, dismiss, tx);
                 bind(s, b, title, None, &slug, tx);
             }
+            if !stopped_in_flight {
+                crate::workspace::schedule_blank_cleanup(s, &created_id);
+            }
         }
         Ok(Reply::CreatedUnbound(session, submitted)) => {
             if !submitted.is_empty() && l.title.text == submitted {
@@ -781,6 +785,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 || l.project
                     .as_ref()
                     .is_some_and(|p| stopped_during_pending.contains(&p.id));
+            let created_id = session.id.clone();
             if !stopped_in_flight && !l.sessions.iter().any(|row| row.id == session.id) {
                 l.sessions.insert(0, session);
             }
@@ -792,6 +797,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 crate::strings::t("sessionList.reload.error"),
                 true,
             );
+            if !stopped_in_flight {
+                crate::workspace::schedule_blank_cleanup(s, &created_id);
+            }
         }
         Ok(Reply::CreatePrecheckFailed) => {
             l.error = Some("sessionList.reload.error");

@@ -146,6 +146,7 @@ pub async fn update(
     let key = key(&workspace);
     let operation = async {
         if input.favorite {
+            let _cleanup_guard = app.session_cleanup.enter_mutation(&target).ok_or(Status::CONFLICT)?;
             let session = crate::opencode::session_record(&app, &target).await.map_err(|(status, _)| status)?;
             if session["id"] != target || !belonging(&session, &workspace) {
                 return Err(Status::FORBIDDEN);
@@ -192,6 +193,14 @@ pub async fn update(
         _=principal.0.cancelled()=>Err(Status::UNAUTHORIZED),
         output=tokio::time::timeout(Duration::from_secs(8),operation)=>output.unwrap_or(Err(Status::SERVICE_UNAVAILABLE)),
     }
+}
+
+pub fn is_protected(app: &App, session_id: &str) -> bool {
+    let Ok(state) = read(app) else { return true };
+    state.values().any(|entries| {
+        entries.contains_key(session_id)
+            || entries.values().any(|parents| parents.iter().any(|parent| parent == session_id))
+    })
 }
 
 pub fn deleted(app: &App, event: &Value) {

@@ -27,6 +27,20 @@ impl super::Entry {
     pub(super) fn has_unsaved_large_drafts(&self) -> bool {
         self.live_drafts.values().any(|draft| draft.text.is_some())
     }
+
+    pub(super) fn has_local_draft(&self, id: &str) -> bool {
+        if self.live_drafts.contains_key(id) {
+            return true;
+        }
+        match &self.saved {
+            Tab::Workspace(saved) => {
+                saved.drafts.get(id).is_some_and(|text| !text.is_empty())
+                    || saved.attachment_drafts.contains(id)
+                    || saved.attachment_parts.contains_key(id)
+            }
+            Tab::Blank => false,
+        }
+    }
 }
 
 fn oversized(text: &str) -> bool {
