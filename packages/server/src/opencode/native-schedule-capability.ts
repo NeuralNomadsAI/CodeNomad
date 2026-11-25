@@ -54,9 +54,8 @@ export function nativeScheduleCapability(document: ObjectValue): { available: tr
       && type(properties.sessionID, "string") && type(properties.name, "string") && type(properties.expires, "string")
       && when(properties.trigger) && code(properties.action)
   }
-  // The on/off setting is top-level `automations`, or `experimental.automations` on runtimes that read that block.
-  const config = fields(document.components?.schemas?.["Config.InfoEncoded"])
-  let valid = type(config.automations, "boolean") || type(fields(config.experimental).automations, "boolean")
+  // The on/off setting is top-level `automations`.
+  let valid = type(fields(document.components?.schemas?.["Config.InfoEncoded"]).automations, "boolean")
   for (const [path, method, name] of routes) {
     const operation = document.paths[path][method]
     valid &&= operation.operationId === `experimental.automation.${name}`
@@ -90,6 +89,6 @@ export class NativeScheduleCapabilityReader {
     connection.assertCurrent()
     const flag = await readNativeScheduleFlag(connection, location)
     return { location: snapshot.location, api: nativeScheduleCapability(contract), enabled: flag.enabled,
-      provenance: flag.provenance, origin: nativeScheduleFlagOrigin(snapshot.entries, flag) }
+      provenance: flag.provenance, origin: nativeScheduleFlagOrigin(flag) }
   }
 }

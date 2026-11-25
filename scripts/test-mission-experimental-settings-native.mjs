@@ -68,11 +68,9 @@ await withProductRuntime(cli, async ({ configDirectory }) => {
     { api: { available: true }, enabled: true, provenance: "channel-default", origin: null })
   const globalBefore = await readFile(globalFile, "utf8")
   const ready = []
-  const journal = { prepared: async () => {}, attempting: async () => assert.fail("no configuration write"),
-    acknowledged: async () => assert.fail("no configuration write"), ready: async origin => { ready.push(origin) } }
+  const journal = { prepared: async () => {}, ready: async origin => { ready.push(origin) } }
   const plan = await activate().prepare("fixture", location)
-  assert.deepEqual(plan.targets, [])
-  await activate().apply("fixture", location, { ...plan, targets: [] }, journal)
+  await activate().apply("fixture", location, plan, journal)
   assert.deepEqual(ready, [null])
   await activate().verify("fixture", location, plan.authority)
   assert.equal(await readFile(globalFile, "utf8"), globalBefore)
@@ -126,7 +124,7 @@ await withProductRuntime(cli, async ({ configDirectory }) => {
     refused({ reason: "explicit-off", provenance: "experimental-block", layer: "project", path: file }))
   await writeFile(file, "{}\n")
   await setting({ enabled: true, provenance: "channel-default", hiddenOff: [] }, "default after clearing every OFF")
-  assert.deepEqual((await activate().prepare("fixture", location)).targets, [])
+  await activate().verify("fixture", location, plan.authority)
   assert.equal(await readFile(globalFile, "utf8"), globalBefore)
   assert.equal(requests.length, 0)
   console.log(`PASS native ${version} automations setting: default ON with a zero-write ready plan, project/global/legacy OFF with exact refusals, hidden OFF under a higher ON; zero provider HTTP`)

@@ -77,13 +77,7 @@ await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
     } finally { db.close() }
     const fence = new WorktreeDeletionFence(), controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: fence, logger: pino({ level: "silent" }) })
     const executor = new NativeScheduleSettingsActivation(controls, manager)
-    let writes = 0
-    registerMissionRoutes(app, { workspaceManager: manager, worktreeDeletionFence: fence, scheduleSettingsActivation: {
-      prepare: (...args) => executor.prepare(...args), verify: (...args) => executor.verify(...args),
-      apply: (id, loc, intent, journal) => executor.apply(id, loc, intent, {
-        ...journal, attempting: async (scope, digest) => { writes++; await journal.attempting(scope, digest) },
-      }),
-    } })
+    registerMissionRoutes(app, { workspaceManager: manager, worktreeDeletionFence: fence, scheduleSettingsActivation: executor })
     const url = `/api/workspaces/${workspace.id}/missions/msn_activation_native/schedule-settings`
     const payload = { requestID: "activate-original", expectedDocumentRevision: 0 }
     const globalFile = path.join(paths.config, "opencode.jsonc"), projectFile = path.join(root, ".opencode", "opencode.jsonc")
@@ -107,7 +101,6 @@ await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
     assert.deepEqual(fresh.json().document, receipt.ready)
     assert.equal(await readFile(globalFile, "utf8"), globalBefore)
     assert.equal(await readFile(projectFile, "utf8"), projectBefore)
-    assert.equal(writes, 0)
     // An explicit OFF refuses a fresh preparation, names its document and proves nothing was written.
     await writeFile(projectFile, '{"automations":false,"experimental":{"subagent_depth":8}}\n')
     const off = Date.now() + 15_000
@@ -123,7 +116,7 @@ await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
     assert.deepEqual({ ...receipt.refused.refusal, configFileID: undefined, openable: undefined },
       { reason: "explicit-off", provenance: "automations-setting", layer: "project", path: projectFile, configFileID: undefined, openable: undefined })
     assert.deepEqual(receipt.refused.notApplied, { requestID: "activate-refused", expectedRevision: 0 })
-    assert.equal(writes, 0)
+    assert.equal(await readFile(globalFile, "utf8"), globalBefore)
     assert.equal(requests.length, 0)
     assert.ok(!JSON.stringify(receipt).includes("DO-NOT-PERSIST"))
     receipt.status = "passed"

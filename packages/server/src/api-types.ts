@@ -21,10 +21,11 @@ export interface MissionScheduleCapability {
   api: { available: true } | { available: false; reason: "missing-api" | "incompatible-contract" }
   enabled: boolean
   origin: string | null
-  provenance?: "environment" | "experimental-block" | "all-flags" | "channel-default" | "automations-setting"
-  activation: { available: true; targets: Array<{ path: string; scope: "global" | "project" }> }
+  provenance?: "environment" | "experimental-block" | "channel-default" | "automations-setting"
+  /** `targets` is always empty: activation reads the effective setting and writes no configuration. */
+  activation: { available: true; targets: [] }
     | { available: false; reason: string; targets: []; code?: "schedule-activation-refused";
-      refusal?: { reason: "explicit-off" | "masked"; provenance: "environment" | "experimental-block" | "all-flags" | "channel-default" | "automations-setting";
+      refusal?: { reason: "explicit-off"; provenance: "environment" | "experimental-block" | "channel-default" | "automations-setting";
         layer: "environment" | "global" | "project" | "inherited" | "imposed"; path?: string; openable: boolean; configFileID?: string } }
 }
 

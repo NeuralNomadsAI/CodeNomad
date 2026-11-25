@@ -3,8 +3,8 @@ import type { PluginControlLocation, SubagentDepthCapability, SubagentDepthSnaps
 import type { WorkspaceManager } from "../workspaces/manager"
 import { PluginControlsError, type PluginControls } from "./plugin-controls"
 import type { PluginControlDocument } from "./plugin-control-document"
-import { readNativeSetting, removeEmptyNativeObject, withEditedText } from "./native-setting-document"
-import { editMissionExperimental, inheritedMissionExperimental, nativeSettingExpectation } from "./native-experimental-settings"
+import { editNativeSetting, readNativeSetting, removeEmptyNativeObject, withEditedText } from "./native-setting-document"
+import { nativeSettingExpectation, readMissionExperimental } from "./native-experimental-settings"
 import { readRuntimeContract } from "./compatibility/negotiate"
 import { imageSettingsCapability } from "./image-settings"
 import { maskedBy, samePath } from "./experimental-layers"
@@ -119,14 +119,16 @@ export class SubagentDepthSettings {
     if (value !== null && (validated === null || validated < capability.minimum
       || capability.maximum !== undefined && validated > capability.maximum))
       throw new PluginControlsError("Subagent depth is outside the native contract", "invalid")
-    await this.documents.editConfigDocument(workspaceId, location, "project", (document, current) => {
+    await this.documents.editConfigDocument(workspaceId, location, "project", document => {
       context.connection.assertCurrent()
       if (nativeSettingExpectation(document) !== expected) throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
       // An emptied project `experimental` object would still hide every inherited experimental setting,
       // so it goes in one edit that keeps the comments written inside it.
       const cleaned = value === null ? withoutRedundantExperimental(document, exposed, keys[1]) : undefined
-      const text = cleaned ?? editMissionExperimental(document, "subagent_depth", value ?? undefined,
-        inheritedMissionExperimental(current.entries, current.path, current.location.directory))
+      // The read refuses a block whose Missions settings are malformed or duplicated.
+      readMissionExperimental(document)
+      const saved = cleaned ?? editNativeSetting(document, keys, value ?? undefined)
+      const text = removeEmptyNativeObject(withEditedText(document, saved), ["experimental"]) ?? saved
       // A project override is the user's consent to subagents nesting up to it, so the marked rule
       // follows the override: written with any depth, removed by Inherit only.
       const edited = withEditedText(document, text)

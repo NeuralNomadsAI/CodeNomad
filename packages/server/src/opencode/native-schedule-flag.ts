@@ -1,12 +1,10 @@
 import { z } from "zod"
-import type { ConfigEntry } from "@opencode/client"
 import type { ServiceConnection } from "../workspaces/opencode-service"
 import type { PluginControlLocation } from "../api-types"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
-import { effectiveMissionExperimental } from "./native-experimental-settings"
 import { INLINE_CONFIG_SOURCE, REMOTE_CONFIG_SOURCE } from "./missions/native-automations-setting"
 
-const provenance = z.enum(["environment", "experimental-block", "all-flags", "channel-default", "automations-setting"])
+const provenance = z.enum(["environment", "experimental-block", "channel-default", "automations-setting"])
 export const nativeScheduleFlagSchema = z.object({ enabled: z.boolean(), provenance,
   path: z.string().min(1).max(4096).optional(), hiddenOff: z.array(z.string().min(1).max(4096)).max(256).default([]) }).strict()
 export type NativeScheduleFlag = z.infer<typeof nativeScheduleFlagSchema>
@@ -29,12 +27,7 @@ export async function readNativeScheduleFlag(connection: ServiceConnection, loca
   return result
 }
 
-export function nativeScheduleFlagOrigin(entries: readonly ConfigEntry[], flag: NativeScheduleFlag): string | null {
-  // Runtimes with the top-level setting name the deciding source themselves; pathless config has no file.
-  if (flag.path) return flag.path === INLINE_CONFIG_SOURCE || flag.path === REMOTE_CONFIG_SOURCE ? null : flag.path
-  if (flag.provenance === "automations-setting") return null
-  if (flag.provenance === "experimental-block") return effectiveMissionExperimental(entries).origin
-  if (flag.provenance !== "all-flags") return null
-  const entry = [...entries].reverse().find(entry => entry.type === "document" && entry.info.experimental?.all_flags !== undefined)
-  return entry?.type === "document" ? entry.path ?? null : null
+/** The document that decides the setting, as the daemon names it; pathless configuration has no file. */
+export function nativeScheduleFlagOrigin(flag: NativeScheduleFlag): string | null {
+  return flag.path && flag.path !== INLINE_CONFIG_SOURCE && flag.path !== REMOTE_CONFIG_SOURCE ? flag.path : null
 }

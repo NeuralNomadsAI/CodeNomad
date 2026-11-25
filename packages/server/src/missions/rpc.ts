@@ -315,9 +315,9 @@ export const CODENOMAD_MISSIONS_RPC = {
     },
     documentActivation: {
       input: { type: "object", properties: { missionID: { type: "string", minLength: 3, maxLength: 100 }, requestID,
-        expectedRevision: { type: "integer", minimum: 0 }, action: { type: "string", enum: ["read", "prepare", "attempting", "acknowledged", "ready", "failed"] },
-        authority: { type: "string" }, targets: missionScheduleActivationWire.properties.targets, scope: { type: "string", enum: ["global", "project"] },
-        resultDigest: { type: "string" }, effectiveOrigin: { type: ["string", "null"] }, errorCode: { type: "string" } },
+        expectedRevision: { type: "integer", minimum: 0 }, action: { type: "string", enum: ["read", "prepare", "ready", "failed"] },
+        authority: { type: "string" }, targets: missionScheduleActivationWire.properties.targets,
+        effectiveOrigin: { type: ["string", "null"] }, errorCode: { type: "string" } },
         required: ["missionID", "requestID", "expectedRevision", "action"], additionalProperties: false },
       output: { type: "object", properties: { document: missionDocumentSummaryWire }, required: ["document"], additionalProperties: false },
     },

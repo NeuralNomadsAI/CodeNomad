@@ -19,10 +19,8 @@ export function missionScheduleActivationJournal(rpc: Rpc, options: Parameters<R
     return result.document
   }
   const journal: NativeScheduleActivationJournal = {
-    prepared: async plan => { await send({ action: "prepare", authority: plan.authority,
-      targets: plan.targets.map(target => ({ ...target, attempted: false, acknowledged: false })) }) },
-    attempting: async (scope, resultDigest) => { await send({ action: "attempting", scope, resultDigest }) },
-    acknowledged: async (scope, resultDigest) => { await send({ action: "acknowledged", scope, resultDigest }) },
+    // The document keeps a list of configuration targets; this executor writes none.
+    prepared: async plan => { await send({ action: "prepare", authority: plan.authority, targets: [] }) },
     ready: async effectiveOrigin => { await send({ action: "ready", effectiveOrigin }) },
   }
   return { journal, read: () => send({ action: "read" }), failed: (errorCode: string) => send({ action: "failed", errorCode }) }

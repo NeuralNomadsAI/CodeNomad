@@ -22,17 +22,14 @@ export async function prepareMissionScheduleSettings(args: {
     if (after.revision !== before.revision) throw new PluginControlsError("Mission activation changed during verification", "conflict")
     return after
   }
-  if (!same && (before.revision !== expectedRevision
-    || previous && (previous.state !== "failed" || previous.targets.some(target => target.attempted))))
+  if (!same && (before.revision !== expectedRevision || previous?.state === "prepared"))
     throw new PluginControlsError("Original Mission activation remains unresolved", "conflict")
   let noEffect = !same
   try {
-    const plan = same ? { authority: previous!.authority, targets: previous!.targets } : await activation.prepare(workspaceID, location)
+    const plan = same ? { authority: previous!.authority } : await activation.prepare(workspaceID, location)
     await args.refresh()
     noEffect = false
-    await activation.apply(workspaceID, location, { authority: plan.authority,
-      targets: plan.targets.map(target => ({ ...target, attempted: "attempted" in target ? Boolean(target.attempted) : false,
-        acknowledged: "acknowledged" in target ? Boolean(target.acknowledged) : false })) }, adapter.journal)
+    await activation.apply(workspaceID, location, plan, adapter.journal)
     return await adapter.read()
   } catch (error) {
     if ((args.isNoEffect?.() ?? noEffect) && missionScheduleActivationRefusal(error)) throw error

@@ -44,16 +44,21 @@ async function fixture(run: (f: any) => Promise<void>) {
       config: { get: async () => [{ type: "document", path: globalFile, info: parse(await readFile(globalFile, "utf8")) },
         { type: "directory", path: global }, { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) }] },
       rpc: () => ({ documentCapabilities: async () => ({ version: 1 }),
-        scheduleFlag: async () => {
-          const block = parse(await readFile(projectFile, "utf8")).experimental
-          const configured = block?.automations ?? block?.schedules
-          return { enabled: configured === true, provenance: configured === undefined ? "channel-default" : "experimental-block" }
+        // The highest document that sets the top-level setting decides; a block saved for an earlier runtime keeps it off.
+        scheduleSetting: async () => {
+          for (const file of [projectFile, globalFile]) {
+            const info = parse(await readFile(file, "utf8"))
+            if (typeof info.automations === "boolean") return { enabled: info.automations, provenance: "automations-setting", path: file, hiddenOff: [] }
+            if ((info.experimental?.automations ?? info.experimental?.schedules) === false)
+              return { enabled: false, provenance: "experimental-block", path: file, hiddenOff: [] }
+          }
+          return { enabled: true, provenance: "channel-default", hiddenOff: [] }
         },
         documentActivation: async (input: any) => {
         phases.push(input.action)
         const result = await applyMissionDocumentActivation(documents, input, () => true, project)
         await afterPhase?.(input.action)
-        if (lose && input.action === "acknowledged" && input.scope === "project") { lose = false; throw Error("lost native reply") }
+        if (lose && input.action === "ready") { lose = false; throw Error("lost native reply") }
         return result
       } }),
     } }
@@ -75,15 +80,16 @@ async function fixture(run: (f: any) => Promise<void>) {
   finally { await app.close(); await chmod(globalFile, 0o600).catch(() => {}); await rm(root, { recursive: true, force: true }) }
 }
 
-test("HTTP preparation composes durable RPC phases with only the project effect and keeps the mission paused", async () => fixture(async f => {
+test("HTTP preparation composes durable RPC phases, writes no configuration and keeps the mission paused", async () => fixture(async f => {
+  const files = await Promise.all([f.globalFile, f.projectFile].map(file => readFile(file, "utf8")))
   const response = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
   assert.equal(response.statusCode, 200, response.body)
   const doc = response.json().document
   assert.equal(doc.state, "paused"); assert.equal(doc.firstPlayedAt, null); assert.equal(doc.launchedCount, 0)
   assert.equal(doc.scheduleActivation.state, "ready")
-  assert.ok(doc.scheduleActivation.targets.every((target: any) => target.attempted && target.acknowledged))
-  assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).experimental, { subagent_depth: 2 })
-  assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).experimental, { subagent_depth: 8, automations: true })
+  assert.deepEqual(doc.scheduleActivation.targets, [])
+  assert.deepEqual(f.phases, ["read", "prepare", "ready", "read"])
+  assert.deepEqual(await Promise.all([f.globalFile, f.projectFile].map(file => readFile(file, "utf8"))), files)
   assert.ok(!JSON.stringify([...f.values]).includes("must-stay-out-of-document"))
   const repeat = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
   assert.equal(repeat.statusCode, 200, repeat.body)
@@ -94,22 +100,20 @@ test("HTTP preparation composes durable RPC phases with only the project effect 
   assert.equal(JSON.stringify([...f.values]), before, "status is read-only")
 }))
 
-test("lost native acknowledgement retains the original intention and exact reconciliation only observes its project write", async () => fixture(async f => {
+test("a lost readiness reply leaves the request unconfirmed and its exact retry answers the recorded proof", async () => fixture(async f => {
   f.lose()
   const first = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
   assert.equal(first.statusCode, 503)
-  const partial = await f.documents.read("msn_scheduled")
-  assert.equal(partial.state, "paused"); assert.equal(partial.scheduleActivation.state, "failed")
-  assert.equal(partial.scheduleActivation.targets[0].acknowledged, true)
-  assert.equal(partial.scheduleActivation.targets.length, 1)
-  assert.equal(parse(await readFile(f.projectFile, "utf8")).experimental.automations, true)
+  assert.equal(first.json().code, "schedule-activation-pending")
+  const recorded = await f.documents.read("msn_scheduled")
+  assert.equal(recorded.state, "paused"); assert.equal(recorded.scheduleActivation.state, "ready")
   const retry = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
   assert.equal(retry.statusCode, 200, retry.body)
-  assert.equal(retry.json().document.scheduleActivation.state, "ready")
+  assert.deepEqual(retry.json().document.scheduleActivation, recorded.scheduleActivation)
+  assert.equal(retry.json().document.revision, recorded.revision)
 }))
 
-test("already ON creates an empty ready proof and a fresh preparation preserves it read-only", async () => fixture(async f => {
-  await writeFile(f.projectFile, '{"experimental":{"schedules":true,"todo":true}}')
+test("a ready proof is preserved read-only by a fresh preparation, and a later OFF refuses without replacing it", async () => fixture(async f => {
   const original = await readFile(f.projectFile, "utf8")
   const first = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
   assert.equal(first.statusCode, 200, first.body)
@@ -121,7 +125,7 @@ test("already ON creates an empty ready proof and a fresh preparation preserves 
   assert.equal(next.statusCode, 200, next.body)
   assert.deepEqual(next.json().document, before)
   assert.equal(await readFile(f.projectFile, "utf8"), original)
-  await writeFile(f.projectFile, '{"experimental":{"schedules":false}}')
+  await writeFile(f.projectFile, '{"automations":false}')
   const refused = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
   assert.equal(refused.statusCode, 403, refused.body)
   assert.equal(refused.json().code, "schedule-activation-refused")
@@ -131,7 +135,7 @@ test("already ON creates an empty ready proof and a fresh preparation preserves 
 
 test("an explicit hidden global OFF returns its layer/path without editor authorization or writes", async () => fixture(async f => {
   await writeFile(f.globalFile, '{"experimental":{"schedules":false}}')
-  await writeFile(f.projectFile, '{"experimental":{"schedules":true}}')
+  await writeFile(f.projectFile, '{"automations":true}')
   const before = await f.documents.read("msn_scheduled")
   const files = await Promise.all([f.globalFile, f.projectFile].map(file => readFile(file, "utf8")))
   const response = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
@@ -152,7 +156,7 @@ test("an explicit hidden global OFF returns its layer/path without editor author
 
 test("OFF after intent preparation and on its exact retry retains uncertainty without no-effect proof", async () => fixture(async f => {
   f.afterPhase(async (action: string) => {
-    if (action === "prepare") await writeFile(f.projectFile, '{"experimental":{"schedules":false}}')
+    if (action === "prepare") await writeFile(f.projectFile, '{"automations":false}')
   })
   const response = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
   assert.equal(response.statusCode, 403, response.body)
@@ -166,9 +170,7 @@ test("OFF after intent preparation and on its exact retry retains uncertainty wi
   assert.equal(retry.json().notApplied, undefined)
 }))
 
-test("a ready legacy two-target proof retains its original identity and digests on fresh preparation", async () => fixture(async f => {
-  await writeFile(f.globalFile, '{"experimental":{"schedules":true}}')
-  await writeFile(f.projectFile, '{"experimental":{"schedules":true}}')
+test("a ready proof stored with configuration targets retains its original identity and digests on fresh preparation", async () => fixture(async f => {
   const first = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
   assert.equal(first.statusCode, 200, first.body)
   const doc = await f.documents.read("msn_scheduled")
@@ -184,6 +186,25 @@ test("a ready legacy two-target proof retains its original identity and digests 
   assert.deepEqual(refreshed.json().document.scheduleActivation, legacy.scheduleActivation)
   assert.equal(refreshed.json().document.revision, legacy.revision)
   assert.equal(await readFile(f.globalFile, "utf8"), global)
+  assert.equal(await readFile(f.projectFile, "utf8"), project)
+}))
+
+test("an intent stored with an attempted configuration target is replaced by a fresh request", async () => fixture(async f => {
+  const failed = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
+  assert.equal(failed.statusCode, 200, failed.body)
+  const doc = await f.documents.read("msn_scheduled")
+  const stored = await f.documents.change(doc.id, doc.revision, () => true, (next: any) => {
+    delete next.scheduleActivation.effectiveOrigin
+    next.scheduleActivation = { ...next.scheduleActivation, state: "partial", targets: [{ scope: "project", path: f.projectFile,
+      expectation: "a".repeat(64), resultDigest: "b".repeat(64), attempted: true, acknowledged: false }] }
+  })
+  const project = await readFile(f.projectFile, "utf8")
+  const fresh = await f.app.inject({ method: "POST", url: f.url, headers: f.headers,
+    payload: { requestID: "after-stored-target", expectedDocumentRevision: stored.revision } })
+  assert.equal(fresh.statusCode, 200, fresh.body)
+  assert.equal(fresh.json().document.scheduleActivation.state, "ready")
+  assert.equal(fresh.json().document.scheduleActivation.requestID, "after-stored-target")
+  assert.deepEqual(fresh.json().document.scheduleActivation.targets, [])
   assert.equal(await readFile(f.projectFile, "utf8"), project)
 }))
 

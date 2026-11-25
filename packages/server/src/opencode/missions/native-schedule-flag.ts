@@ -4,7 +4,7 @@ import type { ConfigEntry } from "@opencode/client"
 import { nativeAutomationsSetting } from "./native-automations-setting"
 
 /** `scheduleFlag` reply: its original two fields, readable by every backend. */
-export type NativeScheduleFlag = { enabled: boolean; provenance: "environment" | "experimental-block" | "all-flags" | "channel-default" }
+export type NativeScheduleFlag = { enabled: boolean; provenance: "environment" | "experimental-block" | "channel-default" }
 /** `scheduleSetting` reply: also names the deciding source and every hidden OFF. */
 export type NativeScheduleSetting = { enabled: boolean
   provenance: NativeScheduleFlag["provenance"] | "automations-setting"; path?: string; hiddenOff: string[] }
@@ -41,26 +41,14 @@ export const readNativeScheduleFlag = Effect.fn("missions.readScheduleFlag")(fun
   const resolved = flags.resolve(entries)
   if (!resolved || typeof resolved !== "object" || Array.isArray(resolved)) throw new Error("Native schedule flag resolution unavailable")
   const states = Object.values(resolved)
-  // Runtimes with the top-level `automations` setting resolve their other flags but not it.
-  // A resolver with no well-formed flag at all proves nothing.
-  if (!("automations" in resolved)) {
-    if (!states.length || !states.every(state => state && typeof state.enabled === "boolean" && ["env", "config", "default"].includes(state.source)))
-      throw new Error("Native schedule flag resolution unavailable")
-    const setting = yield* Effect.tryPromise({ try: () => nativeAutomationsSetting(entries, location.directory), catch: error => error })
-    current()
-    return { enabled: setting.enabled, provenance: setting.source === "setting" ? "automations-setting"
-      : setting.source === "legacy-off" ? "experimental-block" : setting.source === "environment" ? "environment" : "channel-default",
-      ...(setting.path ? { path: setting.path } : {}), hiddenOff: setting.hiddenOff } satisfies NativeScheduleSetting
-  }
-  const state = resolved.automations
-  if (!state || typeof state.enabled !== "boolean" || !["env", "config", "default"].includes(state.source))
+  // The runtime reads the top-level `automations` setting: its resolver lists its other flags but not that one.
+  // A resolver listing it, or with no well-formed flag at all, is another contract.
+  if ("automations" in resolved || !states.length
+    || !states.every(state => state && typeof state.enabled === "boolean" && ["env", "config", "default"].includes(state.source)))
     throw new Error("Native schedule flag resolution unavailable")
-  const block = [...entries].reverse().find(entry => entry.type === "document" && entry.info.experimental !== undefined)
-  const provenance: NativeScheduleFlag["provenance"] = state.source === "env" ? "environment"
-    : state.source === "default" ? "channel-default"
-    : block?.type === "document" && (block.info.experimental?.automations !== undefined
-      || block.info.experimental?.schedules !== undefined) ? "experimental-block" : "all-flags"
+  const setting = yield* Effect.tryPromise({ try: () => nativeAutomationsSetting(entries, location.directory), catch: error => error })
   current()
-  // Its entries keep every layer's block, so the backend checks hidden OFF itself.
-  return { enabled: state.enabled, provenance, hiddenOff: [] } satisfies NativeScheduleSetting
+  return { enabled: setting.enabled, provenance: setting.source === "setting" ? "automations-setting"
+    : setting.source === "legacy-off" ? "experimental-block" : setting.source === "environment" ? "environment" : "channel-default",
+    ...(setting.path ? { path: setting.path } : {}), hiddenOff: setting.hiddenOff } satisfies NativeScheduleSetting
 })

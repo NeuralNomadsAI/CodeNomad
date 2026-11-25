@@ -383,14 +383,15 @@ calendars; its exact next date/counter is read through the invocation-scoped
 adapter, with zero model requests.
 
 `GET /api/workspaces/:id/missions/scheduled/capabilities` reads the acquired
-connection's consumed API contract, effective schedules flag and origin. Its
-read-only activation plan exposes the project target/path or a refusal category,
-responsible layer and discovered path. Native `scheduleFlag` resolution supplies
-the effective state and provenance. Environment OFF and every discovered explicit
-document OFF refuse preparation, including an OFF hidden by a higher ON.
-The native document preparation endpoint owns authenticated project-only
-configuration writes; an already enabled Location receives a zero-target ready
-proof. Existing ready proofs are retained and revalidated read-only.
+connection's consumed API contract, effective automations setting and origin. Its
+read-only activation check answers available or a refusal category,
+responsible layer and discovered path. The native `scheduleSetting` read supplies
+the effective state, provenance and deciding source. Environment OFF and every
+discovered explicit document OFF refuse preparation, including an OFF hidden by a
+higher ON.
+The native document preparation endpoint records a ready proof for an enabled
+Location and writes no configuration. Existing ready proofs are retained and
+revalidated read-only.
 Play/Resume perform this preparation automatically under the original view fences.
 A structured refusal offers **Open scheduling settings** only for a server-openable
 configuration ID; source/path and environment details use the focusable **i** tip.
@@ -1094,10 +1095,10 @@ and final reports through the journal path, with their stored representation
 preserved. Daily entries remain visible with the controls of their daily contract.
 The authenticated daily controls documented above use `NativeMissionRecurrenceStore`.
 
-The storage-only `documentActivation` RPC retains at most two exact configuration
-targets, a namespace authority digest, original request/revision, attempted barriers
-and acknowledged result digests. `missionScheduleActivationJournal` in the server
-routes adapts those phases to the settings executor. Ready follows that executor's
+The storage-only `documentActivation` RPC retains a namespace authority digest and
+the original request/revision; a stored intent may also list up to two configuration
+targets with their digests. `missionScheduleActivationJournal` in the server
+routes adapts its `prepare` and `ready` phases to the settings executor. Ready follows that executor's
 positive effective read and keeps the Mission paused. Immediate Play leaves this
 field null. Keep credentials and raw configuration out of the document.
 

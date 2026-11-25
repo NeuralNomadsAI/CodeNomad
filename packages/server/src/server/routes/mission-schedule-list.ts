@@ -47,7 +47,7 @@ export function registerMissionScheduleList(app: FastifyInstance, deps: Deps) {
   })
 }
 
-/** UI and agent diagnostics share the same passive activation plan and OFF refusal. */
+/** UI and agent diagnostics share the same passive activation check and OFF refusal. */
 export async function readMissionScheduleCapability(deps: Pick<Deps, "scheduleCapability" | "scheduleSettingsActivation">,
   workspaceID: string, location: { directory: string }, refresh: () => Promise<void>): Promise<MissionScheduleCapability> {
   if (!deps.scheduleCapability) throw new Error("Mission schedule capability unavailable")
@@ -56,8 +56,8 @@ export async function readMissionScheduleCapability(deps: Pick<Deps, "scheduleCa
   let activation: MissionScheduleCapability["activation"] = { available: false, reason: "unavailable", targets: [] }
   if (view.api.available && deps.scheduleSettingsActivation) {
     try {
-      const plan = await deps.scheduleSettingsActivation.prepare(workspaceID, location)
-      activation = { available: true, targets: plan.targets.map(({ path, scope }) => ({ path, scope })) }
+      await deps.scheduleSettingsActivation.prepare(workspaceID, location)
+      activation = { available: true, targets: [] }
     } catch (error) {
       const refusal = missionScheduleActivationRefusal(error)
       activation = { available: false, reason: error instanceof PluginControlsError ? error.kind : "unavailable", targets: [],
