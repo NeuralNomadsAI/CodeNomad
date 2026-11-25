@@ -1,3 +1,4 @@
+pub(crate) mod command_palette;
 pub(crate) mod notifications;
 mod panels;
 pub(crate) mod render;
@@ -152,6 +153,9 @@ pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> 
 
 pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     use rune::{Key, Mods};
+    if command_palette::handle_key(s, event, tx) {
+        return true;
+    }
     if shortcuts::modal_open(s) {
         return false;
     }

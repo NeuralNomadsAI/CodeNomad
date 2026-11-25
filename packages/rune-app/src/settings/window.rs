@@ -34,6 +34,13 @@ fn open(s: &mut State) {
     open_window(s, false);
 }
 
+pub(crate) fn open_preferences(s: &mut State) {
+    #[cfg(not(target_arch = "wasm32"))]
+    open_window(s, false);
+    #[cfg(target_arch = "wasm32")]
+    web::open(s);
+}
+
 pub(crate) fn open_providers(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
     open_window(s, true);

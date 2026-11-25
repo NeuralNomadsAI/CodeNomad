@@ -24,6 +24,7 @@ pub(super) fn modal_open(s: &State) -> bool {
         return true;
     }
     settings::blocks_shell_shortcuts(s)
+        || super::command_palette::is_open(s)
         || notifications::history_open(s)
         || crate::files::modal_open(s)
         || workspace::mission_confirmation(s).is_some()
@@ -45,6 +46,7 @@ fn overlay_open(s: &State) -> bool {
 
 fn any_editor_composing(s: &State) -> bool {
     s.draft.is_composing()
+        || super::command_palette::is_composing(s)
         || s.files
             .as_ref()
             .is_some_and(|ui| ui.document.edit().is_composing())
@@ -101,11 +103,11 @@ fn authentication_required(s: &State) -> bool {
         .is_some_and(|l| l.authentication_required)
 }
 
-fn has_project(s: &State) -> bool {
+pub(super) fn has_project(s: &State) -> bool {
     !launcher_replaces_project(s) && s.screen.launcher().is_some_and(|l| l.project.is_some())
 }
 
-fn has_active_session(s: &State) -> bool {
+pub(super) fn has_active_session(s: &State) -> bool {
     !s.screen.is_launcher()
         && has_project(s)
         && (s.workspace.is_none() || workspace::active_session(s).is_some())
@@ -130,6 +132,7 @@ fn can_browse_home(s: &State, tx: &Tx) -> bool {
 }
 
 enum Action {
+    OpenCommandPalette,
     BrowseFolder,
     NewInstance,
     CloseInstance,
@@ -164,6 +167,9 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     let project_open = has_project(s);
     let session_open = project_open && has_active_session(s);
     let Some(action) = settings::match_shortcut(s, event, tx, |matches| {
+        if matches("open-command-palette") {
+            return Some(Action::OpenCommandPalette);
+        }
         if browse_home && matches("browse-folder") {
             return Some(Action::BrowseFolder);
         }
@@ -214,6 +220,7 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     match action {
+        Action::OpenCommandPalette => super::command_palette::open(s, tx),
         Action::BrowseFolder => {
             let ready =
                 workspace::input_ready(s) && s.screen.launcher().is_some_and(|l| !l.pending);
@@ -244,7 +251,7 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     true
 }
 
-fn select_relative_session(s: &mut State, next: bool, tx: &mut Tx) {
+pub(super) fn select_relative_session(s: &mut State, next: bool, tx: &mut Tx) {
     if !launcher::can_change_session(s) || s.screen.launcher().is_none_or(|l| l.pending) {
         return;
     }

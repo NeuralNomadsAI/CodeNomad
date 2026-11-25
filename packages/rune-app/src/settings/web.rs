@@ -250,7 +250,7 @@ pub(super) fn entry(touch: bool) -> El {
         .key("open-preferences")
 }
 
-fn open(s: &mut State) {
+pub(super) fn open(s: &mut State) {
     let target = Target::capture(s);
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.provider_target = target;

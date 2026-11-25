@@ -52,3 +52,8 @@ pub static CONVERSATION: Icon = Icon {
     view: 24.0,
     body: r#"<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>"#,
 };
+pub static COMMAND: Icon = Icon {
+    name: "lucide-command",
+    view: 24.0,
+    body: r#"<path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};

@@ -264,6 +264,15 @@ pub(crate) fn close_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     false
 }
 
+pub(crate) fn open(s: &mut State, tx: &mut Tx) {
+    if !visible(s) {
+        return;
+    }
+    state(s).open = true;
+    state(s).query.focused = true;
+    tx.focus_when_shown(FOCUS, true);
+}
+
 pub(crate) fn open_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if crate::shell::shortcut_blocked(s, event, tx) {
         return false;
@@ -282,9 +291,7 @@ pub(crate) fn open_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         && visible(s)
     {
         if !tx.key_repeat() {
-            state(s).open = true;
-            state(s).query.focused = true;
-            tx.focus_when_shown(FOCUS, true);
+            open(s, tx);
         }
         return true;
     }

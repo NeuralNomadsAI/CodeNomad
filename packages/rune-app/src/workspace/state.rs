@@ -128,7 +128,6 @@ impl Ui {
     pub(crate) fn active_index(&self) -> usize {
         self.active
     }
-    #[cfg(test)]
     pub(crate) fn tab_count(&self) -> usize {
         self.entries.len()
     }
