@@ -13,8 +13,12 @@ mod media_path;
 #[cfg(test)]
 mod tests;
 
+pub(in crate::worktrees) use git_discovery::valid_git_admin;
 pub use git_discovery::{common_directory, resolve_directory, within};
-use git_discovery::{head_cannot_name_repository, read_common_directory, repository_root, shares_common_directory};
+use git_discovery::{
+    head_cannot_name_repository, repository_root, shares_common_directory, shares_common_directory_strict,
+    strict_common_directory,
+};
 pub(crate) use media_path::{
     catalogue_owns_event, directory_anchor, media_directory, media_directory_with_slot, resolve_media_path,
     resolve_media_path_checked,
@@ -193,6 +197,40 @@ pub(super) fn existing_directory(path: &Path) -> Option<&Path> {
     None
 }
 
+/// Capture the checkout that authorizes an existing folder on the SSE event path using only the
+/// isolated registered-only SSE inventory cache (never triggering HTTP `worktree.refresh` or
+/// acquiring a new daemon connection, matching TS `manager.ts:485-503`).
+pub(crate) async fn capture_event_directory(
+    app: &crate::Shared,
+    workspace: &Workspace,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    physical: &Path,
+) -> Option<DirectoryProof> {
+    if !physical.starts_with(&app.scope) || !physical.is_dir() {
+        return None;
+    }
+    let external = !physical.starts_with(&workspace.path);
+    if physical == workspace.path || !external && matches!(super::root_only(workspace).await, Ok(Some(true))) {
+        return Some(DirectoryProof { tree: None, source: None, root: None, external, media: false });
+    }
+    if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
+        return None;
+    }
+    let catalogue = super::inventory::receipt_catalogue(app, workspace, endpoint).await?;
+    let opened = workspace.path.clone();
+    let physical_owned = physical.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        if !catalogue.root_live_for(&opened) {
+            return None;
+        }
+        let proof = catalogue_proof(&catalogue, &physical_owned, external, ProofMode::Live)?;
+        proof.live(&physical_owned).then_some(proof)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// Capture the checkout that authorizes an existing folder, for a final
 /// synchronous check alongside the folder's own identity.
 pub(crate) async fn capture_directory(app: &App, workspace: &Workspace, physical: &Path) -> Option<DirectoryProof> {
@@ -215,11 +253,45 @@ pub(crate) async fn capture_directory_with_refresh(
     if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
         return None;
     }
-    for &refresh in if refresh_on_miss { &[false, true][..] } else { &[false] } {
-        let catalogue = super::linked::catalogue(app, workspace, refresh).await.ok()?;
-        if let Some(proof) = catalogue_proof(&catalogue, physical, external, ProofMode::Live) {
-            return proof.live(physical).then_some(proof);
-        }
+    let Ok(hit) = super::linked::http_read(app, workspace, super::linked::ReadMode::Validated).await else {
+        return None;
+    };
+    let catalogue = hit.snapshot.catalogue()?;
+    let (proof, root_live) = {
+        let cat = std::sync::Arc::clone(&catalogue);
+        let opened = workspace.path.clone();
+        let phys = physical.to_path_buf();
+        let check_root = hit.from_cache;
+        tokio::task::spawn_blocking(move || {
+            let root_live = !check_root || cat.root_live_for(&opened);
+            let proof = if root_live {
+                catalogue_proof(&cat, &phys, external, ProofMode::Live).filter(|p| p.live(&phys))
+            } else {
+                None
+            };
+            (proof, root_live)
+        })
+        .await
+        .unwrap_or((None, false))
+    };
+    if proof.is_some() {
+        return proof;
+    }
+    if hit.from_cache && (!root_live || (refresh_on_miss && !hit.refreshed_on_miss)) {
+        let mode = if root_live {
+            super::linked::ReadMode::RefreshOnMiss(hit.generation)
+        } else {
+            super::linked::ReadMode::Fresh
+        };
+        let Ok(refreshed) = super::linked::http_read(app, workspace, mode).await else { return None };
+        let catalogue = refreshed.snapshot.catalogue()?;
+        let phys = physical.to_path_buf();
+        return tokio::task::spawn_blocking(move || {
+            catalogue_proof(&catalogue, &phys, external, ProofMode::Live).filter(|p| p.live(&phys))
+        })
+        .await
+        .ok()
+        .flatten();
     }
     None
 }
@@ -411,28 +483,96 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
     }
     if let Some(t) = &target
         && !t.starts_with(root)
-        && !shares_common_directory(root, t).await?
     {
-        return Ok(None);
+        let shared = if strict {
+            shares_common_directory_strict(root, t).await?
+        } else {
+            shares_common_directory(root, t).await?
+        };
+        if !shared {
+            return Ok(None);
+        }
     }
     let resolved = resolve_directory(directory).ok_or(())?;
     if !resolved.starts_with(&app.scope) {
         return Ok(None);
     }
-    for fresh in [false, true] {
-        // A non-Git folder has no inventory: only the opened folder itself is owned.
-        let catalogue = match crate::worktrees::linked::catalogue(app, w, fresh).await {
-            Ok(catalogue) => catalogue,
-            Err(_) if strict && matches!(read_common_directory(root).await, Ok(None)) => return Ok(None),
+    let hit = match crate::worktrees::linked::http_read(app, w, crate::worktrees::linked::ReadMode::Validated).await {
+        Ok(hit) => hit,
+        Err(_) if strict && matches!(strict_common_directory(root).await, Ok(None)) => return Ok(None),
+        Err(_) => return Err(()),
+    };
+    let catalogue = match hit.snapshot {
+        crate::worktrees::linked::HttpSnapshot::Git(catalogue) => catalogue,
+        // `MissingGit` (`directoryOnly`) is never a strict absence verdict (TS `worktree-directory.ts:233`).
+        crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(()),
+        // `NonGit`: in strict mode, confirm absence directly on disk so an incomplete/broken `.git`
+        // stays an unverifiable `Err(())` (TS `worktree-directory.ts:236`).
+        crate::worktrees::linked::HttpSnapshot::NonGit => {
+            if strict && matches!(strict_common_directory(root).await, Ok(None)) {
+                return Ok(None);
+            }
+            return Err(());
+        }
+    };
+    let (owner, root_live) = {
+        let cat = std::sync::Arc::clone(&catalogue);
+        let opened = root.clone();
+        let res_owned = resolved.clone();
+        let check_root = hit.from_cache;
+        tokio::task::spawn_blocking(move || {
+            let live = !check_root || cat.root_live_for(&opened);
+            let owner = if live {
+                cat.trees
+                    .iter()
+                    .filter(|t| t.contains_live(&res_owned))
+                    .max_by_key(|t| t.path.as_os_str().len())
+                    .map(|t| t.registered().to_path_buf())
+            } else {
+                None
+            };
+            (owner, live)
+        })
+        .await
+        .unwrap_or((None, false))
+    };
+    if let Some(checkout) = owner {
+        return Ok(Some(Owned { directory: resolved.to_string_lossy().into_owned(), checkout }));
+    }
+    if hit.from_cache && (!root_live || !hit.refreshed_on_miss) {
+        let retry_mode = if root_live {
+            crate::worktrees::linked::ReadMode::RefreshOnMiss(hit.generation)
+        } else {
+            crate::worktrees::linked::ReadMode::Fresh
+        };
+        let refreshed = match crate::worktrees::linked::http_read(app, w, retry_mode).await {
+            Ok(hit) => hit,
+            Err(_) if strict && matches!(strict_common_directory(root).await, Ok(None)) => return Ok(None),
             Err(_) => return Err(()),
         };
-        let owner =
-            catalogue.trees.iter().filter(|t| t.contains_live(&resolved)).max_by_key(|t| t.path.as_os_str().len());
-        if let Some(tree) = owner {
-            return Ok(Some(Owned {
-                directory: resolved.to_string_lossy().into_owned(),
-                checkout: tree.registered().to_path_buf(),
-            }));
+        let catalogue = match refreshed.snapshot {
+            crate::worktrees::linked::HttpSnapshot::Git(catalogue) => catalogue,
+            crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(()),
+            crate::worktrees::linked::HttpSnapshot::NonGit => {
+                if strict && matches!(strict_common_directory(root).await, Ok(None)) {
+                    return Ok(None);
+                }
+                return Err(());
+            }
+        };
+        let res_owned = resolved.clone();
+        let owner = tokio::task::spawn_blocking(move || {
+            catalogue
+                .trees
+                .iter()
+                .filter(|t| t.contains_live(&res_owned))
+                .max_by_key(|t| t.path.as_os_str().len())
+                .map(|t| t.registered().to_path_buf())
+        })
+        .await
+        .unwrap_or(None);
+        if let Some(checkout) = owner {
+            return Ok(Some(Owned { directory: resolved.to_string_lossy().into_owned(), checkout }));
         }
     }
     Ok(None)

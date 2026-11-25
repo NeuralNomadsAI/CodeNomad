@@ -639,7 +639,7 @@ async fn deliver(
             if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
                 break;
             }
-            let rev = crate::worktrees::inventory_revision(app);
+            let rev = crate::worktrees::event_inventory_revision(app, workspace.id);
             let source = match directory.as_deref() {
                 Some(dir) if !foreign_workspace && event["location"].get("workspaceID").is_none() => {
                     crate::worktrees::owns_event(app, &workspace, dir).await
@@ -647,7 +647,7 @@ async fn deliver(
                 _ => false,
             };
             let owns_destination = crate::worktrees::owns_event(app, &workspace, &destination).await;
-            if crate::worktrees::inventory_revision(app) != rev {
+            if crate::worktrees::event_inventory_revision(app, workspace.id) != rev {
                 continue;
             }
             if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
@@ -682,7 +682,7 @@ async fn deliver(
             if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
                 break;
             }
-            let rev = crate::worktrees::inventory_revision(app);
+            let rev = crate::worktrees::event_inventory_revision(app, workspace.id);
             let mut inbox_proof = None;
             let owned = if let Some(dir) = directory.as_deref() {
                 if inbox {
@@ -702,7 +702,8 @@ async fn deliver(
                     };
                     if let Some((physical, identity)) = resolved
                         && let Some(proof) =
-                            crate::worktrees::ownership::capture_directory(app, &workspace, &physical).await
+                            crate::worktrees::ownership::capture_event_directory(app, &workspace, &endpoint, &physical)
+                                .await
                     {
                         inbox_proof = Some((physical, identity, proof));
                         true
@@ -717,7 +718,7 @@ async fn deliver(
             } else {
                 true
             };
-            if crate::worktrees::inventory_revision(app) != rev {
+            if crate::worktrees::event_inventory_revision(app, workspace.id) != rev {
                 continue;
             }
             if !owned {
@@ -734,7 +735,7 @@ async fn deliver(
                 })
                 .await
                 .unwrap_or(false);
-                if crate::worktrees::inventory_revision(app) != rev {
+                if crate::worktrees::event_inventory_revision(app, workspace.id) != rev {
                     continue;
                 }
                 if !still_live

@@ -129,7 +129,8 @@ pub fn confirmation<S: 'static>(
             move |s, tx| decide(s, false, tx)
         })
         .build(kit(dark))
-        .key("file-decision-cancel");
+        .key("file-decision-cancel")
+        .autofocus();
     let confirm = rune_kit::Button::new(confirm)
         .variant(ButtonVariant::Submit)
         .on_press_tx({

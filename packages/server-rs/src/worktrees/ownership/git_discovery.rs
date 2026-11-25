@@ -92,11 +92,64 @@ pub(super) async fn shares_common_directory(left: &Path, right: &Path) -> Result
     Ok(a.is_some() && a == b)
 }
 
+fn read_small_text(path: &Path) -> Result<String, ()> {
+    use std::io::Read;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = opts.open(path).map_err(|_| ())?;
+    let meta = file.metadata().map_err(|_| ())?;
+    if !meta.is_file() || meta.len() > 64 * 1024 {
+        return Err(());
+    }
+    let mut buf = Vec::new();
+    file.take(64 * 1024 + 1).read_to_end(&mut buf).map_err(|_| ())?;
+    if buf.len() > 64 * 1024 {
+        return Err(());
+    }
+    String::from_utf8(buf).map_err(|_| ())
+}
+
+fn strip_eol(s: &str) -> &str {
+    s.strip_suffix('\n').map_or(s, |r| r.strip_suffix('\r').unwrap_or(r))
+}
+
+/// Validates that a Git admin/common directory pair still contains `objects`, `refs`, and a
+/// structurally valid `HEAD` (symlink to `refs/...`, `ref: refs/...`, or 40/64-hex OID).
+pub(in crate::worktrees) fn valid_git_admin(admin: &Path, common: &Path) -> bool {
+    if std::fs::metadata(common.join("objects")).is_err() || std::fs::metadata(common.join("refs")).is_err() {
+        return false;
+    }
+    let head_path = admin.join("HEAD");
+    let Ok(head_meta) = std::fs::symlink_metadata(&head_path) else {
+        return false;
+    };
+    if head_meta.file_type().is_symlink() {
+        std::fs::read_link(&head_path)
+            .ok()
+            .and_then(|target| target.to_str().map(|s| !s.contains('\\') && s.starts_with("refs/")))
+            .unwrap_or(false)
+    } else if head_meta.is_file() && head_meta.len() <= 4096 {
+        let Ok(content) = read_small_text(&head_path) else {
+            return false;
+        };
+        let content = strip_eol(&content);
+        content.strip_prefix("ref:").is_some_and(|rest| rest.trim_start().starts_with("refs/"))
+            || (matches!(content.len(), 40 | 64) && content.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    } else {
+        false
+    }
+}
+
 /// Filesystem-only strict Git discovery mirroring TS `discoverCheckoutCommonDirectory`.
 /// Returns `Ok(None)` when absence of a checkout is verified, and `Err(())` on any
 /// ambiguous layout (incomplete `.git`, bare/separate markers, or Git env overrides).
 fn strict_discover_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
-    use std::io::{ErrorKind, Read};
+    use std::io::ErrorKind;
     const DISCOVERY_ENV: &[&str] = &[
         "GIT_DIR",
         "GIT_COMMON_DIR",
@@ -109,29 +162,7 @@ fn strict_discover_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
     if DISCOVERY_ENV.iter().any(|key| std::env::var_os(key).is_some()) {
         return Err(());
     }
-    let read_small = |path: &Path| -> Result<String, ()> {
-        let mut opts = std::fs::OpenOptions::new();
-        opts.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.custom_flags(libc::O_NONBLOCK);
-        }
-        let file = opts.open(path).map_err(|_| ())?;
-        let meta = file.metadata().map_err(|_| ())?;
-        if !meta.is_file() || meta.len() > 64 * 1024 {
-            return Err(());
-        }
-        let mut buf = Vec::new();
-        file.take(64 * 1024 + 1).read_to_end(&mut buf).map_err(|_| ())?;
-        if buf.len() > 64 * 1024 {
-            return Err(());
-        }
-        String::from_utf8(buf).map_err(|_| ())
-    };
-    fn strip_eol(s: &str) -> &str {
-        s.strip_suffix('\n').map_or(s, |r| r.strip_suffix('\r').unwrap_or(r))
-    }
+    let read_small = read_small_text;
     let mut current = dunce::canonicalize(dir).map_err(|_| ())?;
     let info = std::fs::metadata(&current).map_err(|_| ())?;
     if !info.is_dir() {
@@ -205,25 +236,15 @@ fn strict_discover_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
         let back_parent = back_path.parent().ok_or(())?;
         dunce::canonicalize(back_parent).map_err(|_| ())?;
     }
-    std::fs::metadata(resolved_common.join("objects")).map_err(|_| ())?;
-    std::fs::metadata(resolved_common.join("refs")).map_err(|_| ())?;
-    let head_path = resolved_git.join("HEAD");
-    let head_meta = std::fs::symlink_metadata(&head_path).map_err(|_| ())?;
-    let valid_head = if head_meta.file_type().is_symlink() {
-        let target = std::fs::read_link(&head_path).map_err(|_| ())?;
-        target.to_str().is_some_and(|s| !s.contains('\\') && s.starts_with("refs/"))
-    } else if head_meta.is_file() && head_meta.len() <= 4096 {
-        let content = read_small(&head_path)?;
-        let content = strip_eol(&content);
-        content.strip_prefix("ref:").is_some_and(|rest| rest.trim_start().starts_with("refs/"))
-            || (matches!(content.len(), 40 | 64) && content.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
-    } else {
-        false
-    };
-    if !valid_head {
+    if !valid_git_admin(&resolved_git, &resolved_common) {
         return Err(());
     }
     Ok(Some(resolved_common))
+}
+
+pub(super) async fn strict_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
+    let dir = dir.to_path_buf();
+    tokio::task::spawn_blocking(move || strict_discover_common_directory(&dir)).await.map_err(|_| ())?
 }
 
 pub(super) async fn shares_common_directory_strict(left: &Path, right: &Path) -> Result<bool, ()> {
