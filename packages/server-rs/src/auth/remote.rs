@@ -28,6 +28,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("DELETE",r"^/api/workspaces/[^/]+/worktrees/[^/]+$"),
     ("GET",r"^/workspaces/[^/]+/instance/api/vcs/status$"),
     ("GET",r"^/api/(?:missions/playbooks|workspaces/[^/]+/missions(?:/msn_[a-z0-9]+(?:/(?:content|tasks))?)?)$"),
+    ("GET",r"^/api/workspaces/[^/]+/missions/[^/]+/admission$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/creation/[A-Za-z0-9_-]+$"),
     ("GET POST",r"^/api/workspaces/[^/]+/missions/recurrence$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/recurrence/[^/]+/(?:current|run-now/status|passages/[^/]+|current/[^/]+/content)$"),
@@ -413,6 +414,22 @@ mod tests {
     use axum::{Extension, middleware::from_fn_with_state};
     use std::{path::PathBuf, sync::Arc, time::Duration};
     use tokio_util::sync::CancellationToken;
+
+    fn admitted(method: &str, path: &str) -> bool {
+        let effective = if method == "HEAD" { "GET" } else { method };
+        CATALOG.iter().any(|(methods, pat)| methods.split(' ').any(|m| m == effective) && pat.is_match(path))
+    }
+
+    #[test]
+    fn remote_catalog_admits_mission_admission_get_and_head_only() {
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/admission"));
+        assert!(admitted("HEAD", "/api/workspaces/ws-1/missions/msn_abc123/admission"));
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/legacy-1/admission"));
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/tasks"));
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/content"));
+        assert!(!admitted("POST", "/api/workspaces/ws-1/missions/msn_abc123/admission"));
+        assert!(!admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/admission/extra"));
+    }
 
     #[tokio::test]
     async fn multi_origin_pairing_binds_cookie_to_selected_origin_and_refuses_foreign_host_or_origin() {

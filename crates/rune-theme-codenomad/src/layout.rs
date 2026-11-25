@@ -25,11 +25,18 @@ pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
 pub fn dark() -> bool {
     APPEARANCE.get()
 }
-/// Install Rune's inherited ink for every render, including unstyled text and editors.
-pub fn render<S, T>(cx: &mut rune::Cx<S>, build: impl FnOnce(&mut rune::Cx<S>) -> T) -> T {
-    let dark = cx.system_dark();
+pub(crate) fn render_with_dark<S, T>(
+    cx: &mut rune::Cx<S>,
+    dark: bool,
+    build: impl FnOnce(&mut rune::Cx<S>) -> T,
+) -> T {
+    cx.web_focus();
     cx.foreground(tokens(dark).color("text-primary"));
     with_appearance(dark, || build(cx))
+}
+/// Install Rune's inherited ink and shared keyboard focus mode for every render.
+pub fn render<S, T>(cx: &mut rune::Cx<S>, build: impl FnOnce(&mut rune::Cx<S>) -> T) -> T {
+    render_with_dark(cx, cx.system_dark(), build)
 }
 /// Bind one render's adapters to Rune's current system/CLI appearance.
 pub fn with_appearance<T>(dark: bool, render: impl FnOnce() -> T) -> T {

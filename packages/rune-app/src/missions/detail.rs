@@ -186,6 +186,26 @@ impl Detail {
     pub fn take_auth_expired(&mut self) -> Option<Backend> {
         self.auth_expired.take()
     }
+    #[cfg(test)]
+    pub fn fixture_snapshot_and_lookup(
+        &mut self,
+        header: MapHeader,
+        task_id: String,
+        task_key: String,
+    ) {
+        self.id.clone_from(&header.root.id);
+        self.snapshot = Some(Snapshot {
+            header,
+            tasks: Rc::new(TaskRows::new(Vec::new())),
+            reports: HashMap::new(),
+            end: 0,
+            attention_end: 0,
+        });
+        self.pending = Some(Demand::Lookup {
+            task_id: Some(task_id),
+            task_key: Some(task_key),
+        });
+    }
     pub fn more(&mut self) {
         if !self.busy()
             && self
@@ -295,7 +315,7 @@ impl Detail {
                     }
                 }
                 Err(error) => {
-                    if codenomad_client::http::authentication_expired(&error) {
+                    if codenomad_client::missions::is_auth_expired(&error) {
                         self.auth_expired = Some(backend.clone());
                     }
                     if let Some(changed) = error.downcast_ref::<RevisionChanged>() {
