@@ -6,8 +6,10 @@ import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "done" | "prepared" | "waiting" | "unconfirmed" | "idle"
 
 export interface MissionPickerEntry {
-  /** `mission:<id>` or `schedule:<id>`. */
+  /** `mission:<id>`, `schedule:<id>` or `scheduled:<id>`. */
   key: string
+  /** Latest real activity (epoch ms), never a future wake; the shared list is ordered by it. */
+  activityAt: number
   title: string
   /** Full localized state for tooltips and screen readers. */
   status: string
@@ -92,6 +94,22 @@ export function missionMarkStateKey(mark: MissionMark): string | undefined {
   return mark === "waiting" ? "missionsPanel.state.waiting" : mark === "done" ? "missionsPanel.state.unreadSuccess"
     : mark === "unconfirmed" ? "missionsPanel.state.unconfirmed" : mark === "prepared" ? "missions.control.run.prepared"
     : mark === "interrupted" ? "missionsPanel.state.interrupted" : undefined
+}
+
+// A running passage carries no progress time in the schedule data: it sorts first.
+const RUNNING = Number.MAX_SAFE_INTEGER
+
+export function recurrenceActivityAt(schedule: RecurrenceSchedule): number {
+  return schedule.pending ? RUNNING : Math.max(schedule.latestResult?.settledAt ?? 0, schedule.lastError?.at ?? 0)
+}
+
+export function unifiedScheduleActivityAt(doc: UnifiedMissionSchedule): number {
+  return doc.pendingPassage ? RUNNING : Math.max(doc.latestResult?.settledAt ?? 0, doc.firstPlayedAt ?? 0, doc.createdAt)
+}
+
+/** One list for every kind, latest activity first; the key breaks ties stably. */
+export function sortMissionPickerEntries(entries: MissionPickerEntry[]): MissionPickerEntry[] {
+  return entries.sort((a, b) => b.activityAt - a.activityAt || a.key.localeCompare(b.key))
 }
 
 export function filterMissionPickerEntries(entries: readonly MissionPickerEntry[], query: string): MissionPickerEntry[] {

@@ -23,7 +23,7 @@ import { missionQuestionContext, missionQuestions, type MissionQuestionStore } f
 import { currentMissionObservations, missionQuestionOwners } from "../../../../mission-question-owners"
 import { MissionPanelHeader, MissionRows } from "../../../../mission-picker"
 import { MissionActionBar, MissionActionSlot, MissionTaskToolbarActive } from "../../../../mission-action-bar"
-import { missionMark, type MissionPickerEntry } from "../../../../mission-picker-model"
+import { missionMark, sortMissionPickerEntries, type MissionPickerEntry } from "../../../../mission-picker-model"
 import { createDocumentAttention } from "../../../../session/session-idle-attention"
 import { MissionSelectedActions } from "../../../../mission-selected-actions"
 import type { MissionControlRetry } from "../../../../mission-lifecycle-controls"
@@ -554,7 +554,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const map = missionStore.state(props.instanceId).missions.find(item => item.id === value.id)
     const taskCount = map ? map.taskPage?.total ?? map.tasks.length : value.taskCount
     return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark, childActivity, leaf: taskCount === 0,
-      status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
+      activityAt: value.updatedAt, status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
         childActivity === "permission" ? props.t("missionsPanel.row.taskInput") : "",
         missionRelativeTime(value.updatedAt, locale())].filter(Boolean).join(" · ") }
   }))
@@ -617,10 +617,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       updateView({ selected: undefined, selectedRecurrence: undefined, selectedScheduled: id })
     }
   })
-  const pickerEntries = () => {
+  const pickerEntries = createMemo(() => {
     const unified = scheduled.entries(), ids = new Set(unified.map(row => row.key.slice("scheduled:".length)))
-    return [...missionEntries().filter(row => !ids.has(row.key.slice("mission:".length))), ...recurrence.entries(), ...unified]
-  }
+    return sortMissionPickerEntries([...missionEntries().filter(row => !ids.has(row.key.slice("mission:".length))), ...recurrence.entries(), ...unified])
+  })
   const selectedRow = () => selectedSchedule() || selectedScheduled() ? undefined : rows().find(row => row.id === selectedMissionId())
   const selectedKey = () => selectedScheduled() ? `scheduled:${selectedScheduled()}` : selectedSchedule() ? `schedule:${selectedSchedule()}` : selectedRow() ? `mission:${selectedRow()!.id}` : undefined
   const selectedOneTime = () => selectedSchedule() || selectedScheduled() ? undefined : mission()

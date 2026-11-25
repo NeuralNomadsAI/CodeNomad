@@ -108,7 +108,7 @@ Kendi kontrollerini ve saat dilimini korurlar. Hizmet yeniden başlayınca kesin
 
 ## Ağaç ve sonuçlar {#tracking}
 
-Şevron işleri açar; satıra tıklamak Görevi veya işi seçer. Eylemler başlıkta kalır. İşi olmayan Görevde şevron yoktur. Filtre yüklenen kayıtları daraltır.
+Şevron işleri açar; satıra tıklamak Görevi veya işi seçer. Eylemler başlıkta kalır. İşi olmayan Görevde şevron yoktur. Filtre yüklenen kayıtları daraltır. Tek seferlik ve tekrarlanan Görevler tek listede, en son etkinlik önce sıralanır; süren planlı çalıştırma en üsttedir.
 
 Göz, merkezi özeti açar ve seçimi izler. Konuşmayı aç, ilgili koordinatöre veya işe gider. ⋯ menüsü uygun güncelleme, kesinti, yapılandırma ve düzenleme işlemlerini içerir.
 
