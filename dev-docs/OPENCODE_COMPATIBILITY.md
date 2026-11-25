@@ -22,8 +22,11 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 per-version sections here.
 
 Positive shared-service test fixtures declare `MINIMUM_OPENCODE_VERSION` when
-serving the pinned client contract. Version-refusal scenarios supply their
-explicit incompatible identity.
+serving the pinned client contract. Test runtime versions come from
+`opencode/runtime-version-fixture.ts` (`MINIMUM`, `RECOMMENDED`, `newerPatch()`,
+`NEXT_MINOR`, `NEXT_MAJOR`, `BELOW_MINIMUM`), never a literal near the supported
+range, so changing the minimum edits only `runtime-support.ts`. Version-refusal
+scenarios supply their explicit incompatible identity.
 
 Minimum runtime **2.4.0** and recommended **2.4.1** (`runtime-support.ts`), with **2.3.2**
 client/schema/plugin pins and the matching `effect` **4.1.0**. The minimum carries the

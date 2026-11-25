@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { createRuntimeTransport } from "../opencode/compatibility/transport"
+import { RECOMMENDED } from "../opencode/runtime-version-fixture"
 import {
   PLUGIN_USAGE_MAX_RESPONSE_BYTES,
   PLUGIN_USAGE_MAX_WINDOWS,
@@ -417,7 +418,7 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     const endpoint = { url: "http://127.0.0.1:4321" }
     const transportProblem = createRuntimeTransport(endpoint, async (input) => {
       const target = new URL(input instanceof Request ? input.url : String(input))
-      if (target.pathname === "/api/info") return Response.json({ version: "2.4.1" })
+      if (target.pathname === "/api/info") return Response.json({ version: RECOMMENDED })
       return new Response(JSON.stringify({ _tag: "LocationNotFoundError", detail: "private diagnostic" }), {
         status: target.pathname === "/api/location" ? 502 : 404,
         headers: { "content-type": "application/problem+json" },
@@ -437,7 +438,7 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
 
     const transport502 = createRuntimeTransport(endpoint, async (input) => {
       const target = new URL(input instanceof Request ? input.url : String(input))
-      if (target.pathname === "/api/info") return Response.json({ version: "2.4.1" })
+      if (target.pathname === "/api/info") return Response.json({ version: RECOMMENDED })
       const hungCancel = new ReadableStream<Uint8Array>({
         start(controller) { controller.enqueue(new TextEncoder().encode("Bad Gateway")) },
         cancel() { return new Promise<void>(() => {}) },
