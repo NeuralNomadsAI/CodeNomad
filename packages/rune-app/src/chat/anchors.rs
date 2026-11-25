@@ -184,18 +184,19 @@ pub(crate) fn reasoning_key(row: &Row, steps: usize, run: u64, continued: bool) 
     super::reasoning::run_anchor(row, head..tail, run.try_into().ok()?, continued)
 }
 
-pub(crate) fn tool_group(s: &State, row: &Row, steps: usize, index: usize) -> Option<String> {
-    let (head, tail) = super::transcript::part_window(row.parts.len(), steps);
-    let (start, end) = if head >= tail {
-        (0, row.parts.len())
-    } else if index < head {
-        (0, head)
-    } else if index >= tail {
-        (tail, row.parts.len())
-    } else {
-        return None;
-    };
-    super::tool_groups::anchor(s, &row.id, &row.parts[start..end], index - start)
+pub(crate) fn visible_rows(s: &State) -> &[Row] {
+    s.transcript_display.messages.visible(&s.messages)
+}
+
+pub(crate) fn collapsed_group_target(
+    s: &State,
+    rows: &[Row],
+    row_index: usize,
+    shown_steps: usize,
+    part: usize,
+) -> Option<(String, String)> {
+    super::tool_groups::Groups::project_with_steps(s, rows, Some((row_index, shown_steps)))
+        .collapsed_target(s, row_index, part)
 }
 
 pub(super) fn reasoning_changed(

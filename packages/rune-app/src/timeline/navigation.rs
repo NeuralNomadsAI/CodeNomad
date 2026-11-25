@@ -108,14 +108,25 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
     reader::cancel_page(s);
     cancel_jump(s);
     let serial = owner(s).jump.serial;
-    if let Some(row) = s.messages.iter().find(|row| row.id == target.message) {
-        match locate(s, row, &target) {
-            Landing::Visible(key, steps) => {
-                settle(s, &target, (key, steps));
+    let visible = anchors::visible_rows(s);
+    let local = visible
+        .iter()
+        .position(|row| row.id == target.message)
+        .map(|index| (visible, index))
+        .or_else(|| {
+            s.messages
+                .iter()
+                .position(|row| row.id == target.message)
+                .map(|index| (s.messages.as_slice(), index))
+        });
+    if let Some((rows, index)) = local {
+        match locate(s, rows, index, &target) {
+            JumpLanding::Visible(message, key, steps) => {
+                settle(s, &target, (message, key, steps));
                 apply_alignment(s, tx);
             }
-            Landing::Filtered => refuse_filtered(s),
-            Landing::Missing => owner(s).jump.retry = Some(target),
+            JumpLanding::Filtered => refuse_filtered(s),
+            JumpLanding::Missing => owner(s).jump.retry = Some(target),
         }
         return;
     }
@@ -166,13 +177,20 @@ pub(super) fn set_filtered(s: &mut State, filtered: bool) {
     }));
 }
 
-fn locate(s: &State, row: &crate::history::Row, m: &Marker) -> Landing {
+enum JumpLanding {
+    Visible(String, String, usize),
+    Filtered,
+    Missing,
+}
+
+fn locate(s: &State, rows: &[crate::history::Row], row_index: usize, m: &Marker) -> JumpLanding {
+    let row = &rows[row_index];
     if !anchors::context_visible(s, &row.role) {
-        return Landing::Filtered;
+        return JumpLanding::Filtered;
     }
     let steps = anchors::steps(s, &row.id);
     if m.id.is_empty() {
-        return s
+        return match s
             .transcript_display
             .search_highlight
             .as_ref()
@@ -180,39 +198,46 @@ fn locate(s: &State, row: &crate::history::Row, m: &Marker) -> Landing {
             .map_or_else(
                 || Landing::Visible(row.id.clone(), 0),
                 |hit| hit.landing(s, row, steps),
-            );
+            ) {
+            Landing::Visible(key, reveal) => JumpLanding::Visible(row.id.clone(), key, reveal),
+            Landing::Filtered => JumpLanding::Filtered,
+            Landing::Missing => JumpLanding::Missing,
+        };
     }
     let Some(block) = anchors::blocks(row, steps, true).into_iter().find(|b| {
         b.marker.kind == m.kind
             && b.marker.ordinal == m.ordinal
             && b.marker.continued == m.continued
     }) else {
-        return Landing::Missing;
+        return JumpLanding::Missing;
     };
     if block
         .part
         .is_some_and(|i| !anchors::part_visible(s, row, i))
     {
-        return Landing::Filtered;
+        return JumpLanding::Filtered;
     }
     let shown = steps.max(block.reveal);
-    let key = match m.kind {
+    let (message, key) = match m.kind {
         super::MarkerKind::Reasoning => {
             let Some(key) = anchors::reasoning_key(row, shown, m.ordinal, m.continued) else {
-                return Landing::Missing;
+                return JumpLanding::Missing;
             };
-            key
+            block
+                .part
+                .and_then(|index| anchors::collapsed_group_target(s, rows, row_index, shown, index))
+                .unwrap_or_else(|| (row.id.clone(), key))
         }
         super::MarkerKind::Tool => block
             .part
-            .and_then(|index| anchors::tool_group(s, row, shown, index))
-            .unwrap_or(block.key),
-        _ => block.key,
+            .and_then(|index| anchors::collapsed_group_target(s, rows, row_index, shown, index))
+            .unwrap_or_else(|| (row.id.clone(), block.key)),
+        _ => (row.id.clone(), block.key),
     };
-    Landing::Visible(key, block.reveal)
+    JumpLanding::Visible(message, key, block.reveal)
 }
 
-fn settle(s: &mut State, m: &Marker, (key, steps): (String, usize)) {
+fn settle(s: &mut State, m: &Marker, (align_message, key, steps): (String, String, usize)) {
     if steps > 0 {
         anchors::reveal_parts(s, &m.message, steps);
     }
@@ -226,7 +251,7 @@ fn settle(s: &mut State, m: &Marker, (key, steps): (String, usize)) {
     }
     let t = owner(s);
     t.changed = true;
-    t.jump.align = Some((m.message.clone(), key));
+    t.jump.align = Some((align_message, key));
     t.jump.requested_active = (!m.id.is_empty()).then(|| m.id.clone());
     t.jump.locked = true;
     super::filters::reselect(s);
@@ -249,14 +274,16 @@ pub(super) fn admit_window(s: &mut State, serial: u64, page: Page, accept: impl 
     let landing = page
         .rows
         .iter()
-        .find(|row| row.id == target.message)
-        .map_or(Landing::Missing, |row| locate(s, row, &target));
+        .position(|row| row.id == target.message)
+        .map_or(JumpLanding::Missing, |index| {
+            locate(s, &page.rows, index, &target)
+        });
     match landing {
-        Landing::Visible(key, steps) if accept() => {
+        JumpLanding::Visible(message, key, steps) if accept() => {
             reader::install_anchor(s, page);
-            settle(s, &target, (key, steps));
+            settle(s, &target, (message, key, steps));
         }
-        Landing::Filtered => refuse_filtered(s),
+        JumpLanding::Filtered => refuse_filtered(s),
         _ => owner(s).jump.retry = Some(target),
     }
 }

@@ -93,11 +93,14 @@ pub(crate) fn keep_passage(s: &State, tx: &mut Tx) {
             .mode
             .is_none_or(|row| crate::settings::transcript_mode(s, row) != "hidden")
     {
-        let group = matches!(passage.mode, Some(crate::settings::TranscriptRow::Tool(_)))
-            .then(|| {
-                super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key)
-            })
-            .flatten();
+        let group = matches!(
+            passage.mode,
+            Some(
+                crate::settings::TranscriptRow::Tool(_) | crate::settings::TranscriptRow::Thinking
+            )
+        )
+        .then(|| super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key))
+        .flatten();
         tx.scroll_key_to(
             group.unwrap_or_else(|| format!("{message}/{}", passage.key)),
             passage.offset,

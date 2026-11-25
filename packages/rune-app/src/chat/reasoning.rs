@@ -3,7 +3,7 @@ use crate::{
     State,
     content::{Reasoning, TextProvenance},
     screen,
-    settings::{self, TranscriptRow},
+    settings::TranscriptRow,
     strings::{locale, t},
 };
 use rune::{El, col, text};
@@ -12,9 +12,37 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     markdown,
 };
+use std::borrow::Cow;
 
 pub(crate) fn block_key(message: &str, ordinal: usize) -> String {
     format!("reasoning-{message}:{ordinal}")
+}
+
+pub(super) fn duration_ms(part: &Reasoning) -> u64 {
+    part.created
+        .zip(part.completed)
+        .and_then(|(start, end)| end.checked_sub(start))
+        .unwrap_or(0)
+}
+
+pub(super) fn extract_title(text: &str) -> Option<String> {
+    text.trim().strip_prefix("**").and_then(|source| {
+        let (title, rest) = source.split_once("**")?;
+        (!title.is_empty()
+            && !title.contains(['*', '\n'])
+            && (rest.is_empty() || rest.starts_with("\n\n") || rest.starts_with("\r\n\r\n")))
+        .then(|| title.trim().chars().take(250).collect())
+    })
+}
+
+pub(super) struct GroupView<'a> {
+    pub key: &'a str,
+    pub count: usize,
+    pub duration_ms: u64,
+    pub title: Option<&'a str>,
+    pub completed: bool,
+    pub expanded: bool,
+    pub first: bool,
 }
 
 /// Resolve a rail run to the first displayed fragment of its visible segment.
@@ -53,47 +81,64 @@ pub(crate) fn run_anchor(
     None
 }
 
-pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> Option<El> {
-    let mode = settings::transcript_mode(s, TranscriptRow::Thinking);
+pub(super) fn view_chunk<'a>(
+    s: &State,
+    message: &'a str,
+    parts: &[crate::content::Part],
+    start: usize,
+    group: GroupView<'_>,
+    marker: &mut impl FnMut(Option<usize>) -> Option<codenomad_client::timeline::Marker<'a>>,
+) -> Option<El> {
     if !super::anchors::reasoning_visible(s) {
         return None;
     }
-    let mut reasoning = parts.iter().filter_map(|part| match part {
-        crate::content::Part::Reasoning(part) if part.visible() => Some(part),
-        _ => None,
-    });
-    let first = reasoning.next()?;
-    let last = reasoning.clone().next_back().unwrap_or(first);
-    let key = block_key(message, first.ordinal);
-    let expanded = s.transcript_display.expanded(&key, mode == "expanded")
-        || std::iter::once(first).chain(reasoning.clone()).any(|part| {
-            super::search_hit::query(
+    if !group.first && !group.expanded {
+        return None;
+    }
+    let mut first_marker = marker(Some(start));
+    if !group.first {
+        let mut container = col()
+            .full_width()
+            .pad(Space::Sm)
+            .separate(Space::Sm)
+            .inset_surface();
+        let mut any = false;
+        for (offset, part) in parts.iter().enumerate() {
+            let crate::content::Part::Reasoning(part) = part else {
+                continue;
+            };
+            if !part.visible() {
+                continue;
+            }
+            let block_marker = if !any {
+                first_marker.take()
+            } else {
+                marker(Some(start + offset))
+            };
+            any = true;
+            let fragment = block_key(message, part.ordinal);
+            let pane = body(s, message, &fragment, part);
+            container = container.child(super::reading::passage(
                 s,
+                pane,
                 message,
-                codenomad_client::search::Kind::Reasoning,
-                part.part_index,
-            )
-            .is_some_and(|q| q.active)
-        });
-    let title = last.text.trim().strip_prefix("**").and_then(|source| {
-        let (title, rest) = source.split_once("**")?;
-        (!title.is_empty()
-            && !title.contains(['*', '\n'])
-            && (rest.is_empty() || rest.starts_with("\n\n") || rest.starts_with("\r\n\r\n")))
-        .then_some(title.trim())
-    });
-    let duration = std::iter::once(first)
-        .chain(reasoning.clone())
-        .filter_map(|part| part.created.zip(part.completed))
-        .filter_map(|(start, end)| end.checked_sub(start))
-        .fold(0u64, u64::saturating_add);
-    let base = if last.provenance != TextProvenance::Closed {
+                fragment,
+                Some(TranscriptRow::Thinking),
+                block_marker,
+            ));
+        }
+        return any.then_some(container);
+    }
+    let base: Cow<'static, str> = if !group.completed {
         t("messageBlock.reasoning.thinkingLabel").into()
-    } else if duration >= 1_000 {
-        let (unit, count) = match duration {
-            3_600_000.. => ("hours", duration / 3_600_000),
-            60_000.. => ("minutes", duration / 60_000),
-            _ => ("seconds", duration / 1_000),
+    } else if group.duration_ms >= 1_000 {
+        let seconds = (group.duration_ms + 500) / 1_000;
+        let (unit, count) = if seconds >= 3_600 {
+            ("hours", seconds / 3_600)
+        } else if seconds >= 60 {
+            ("minutes", seconds / 60)
+        } else {
+            ("seconds", seconds)
         };
         catalogue::format(
             locale(),
@@ -103,10 +148,23 @@ pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> 
             ),
             &[("count", &count.to_string())],
         )
+        .into()
     } else {
         t("messageBlock.reasoning.thoughtLabel").into()
     };
-    let toggle = key.clone();
+    let steps = (group.count > 1).then(|| {
+        catalogue::format(
+            locale(),
+            if group.count == 1 {
+                "messageBlock.reasoning.steps.one"
+            } else {
+                "messageBlock.reasoning.steps.other"
+            },
+            &[("count", &group.count.to_string())],
+        )
+    });
+    let toggle = group.key.to_owned();
+    let expanded = group.expanded;
     let header = layout::action_row()
         .child(
             layout::button(
@@ -116,29 +174,51 @@ pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> 
                     Display::set_expanded(s, &toggle, !expanded);
                 }),
             )
-            .key(format!("toggle-{key}"))
+            .key(format!("toggle-{}", group.key))
             .expanded(expanded),
         )
-        .children(title.map(|title| text(title.chars().take(250).collect::<String>())));
-    let mut group = col()
-        .key(key.clone())
+        .children(group.title.map(text))
+        .children(steps.map(text));
+    let mut container = col()
         .full_width()
         .pad(Space::Sm)
         .separate(Space::Sm)
         .inset_surface()
         .child(header);
     if expanded {
-        group = group.children(std::iter::once(first).chain(reasoning).map(|part| {
+        let mut is_first_visible = true;
+        for (offset, part) in parts.iter().enumerate() {
+            let crate::content::Part::Reasoning(part) = part else {
+                continue;
+            };
+            if !part.visible() {
+                continue;
+            }
             let fragment = block_key(message, part.ordinal);
             let pane = body(s, message, &fragment, part);
-            if part.ordinal == first.ordinal {
-                pane
+            if is_first_visible {
+                is_first_visible = false;
+                container = container.child(pane);
             } else {
-                pane.key(fragment)
+                container = container.child(super::reading::passage(
+                    s,
+                    pane,
+                    message,
+                    fragment,
+                    Some(TranscriptRow::Thinking),
+                    marker(Some(start + offset)),
+                ));
             }
-        }));
+        }
     }
-    Some(group)
+    Some(super::reading::passage(
+        s,
+        container,
+        message,
+        group.key.to_owned(),
+        Some(TranscriptRow::Thinking),
+        first_marker.take(),
+    ))
 }
 
 fn body(s: &State, message: &str, key: &str, part: &Reasoning) -> El {
@@ -315,5 +395,247 @@ fn live_reasoning_updates_the_counter_and_coalesces_long_revealed_text() {
         rt.accessibility_json()
             .to_string()
             .contains("Settled final reasoning")
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn reasoning_groups_merge_across_adjacent_messages_and_sum_duration() {
+    use rune::{Env, Runtime};
+    use serde_json::json;
+    let first = crate::history::decode_message(&json!({
+        "id":"step1","type":"assistant","time":{"completed":2500},"content":[
+            {"type":"reasoning","text":"**Initial**\n\nFirst step thought","time":{"created":1000,"completed":2500}}
+        ]
+    }))
+    .unwrap();
+    let second_live = crate::history::decode_message(&json!({
+        "id":"step2","type":"assistant","content":[
+            {"type":"reasoning","text":"**Final plan**\n\nSecond step thought","time":{"created":3000}}
+        ]
+    }))
+    .unwrap();
+    let mut s = crate::init();
+    // Reasoning still groups across messages even when tool grouping is disabled.
+    crate::settings::fixture_transcript(
+        &mut s,
+        json!({"showThinkingBlocks":true,"toolGroupVisibility":"hidden"}),
+    );
+    s.messages = vec![first.into(), second_live.into()];
+    s.phase = crate::Phase::Ready;
+    let mut rt = Runtime::new(
+        s,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (960.0, 820.0),
+        Env::new(false, 1.0),
+    );
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("Thinking"));
+    assert!(tree.contains("Final plan"));
+    assert!(tree.contains("2 steps"));
+    assert!(!tree.contains("First step thought"));
+    assert!(!tree.contains("Second step thought"));
+    assert!(rt.find("toggle-reasoning-step1:0").is_some());
+    assert!(rt.find("toggle-reasoning-step2:0").is_none());
+
+    // Settling the second step updates the shared header to the summed duration across both messages.
+    rt.update(|s, _| {
+        let second_done = crate::history::decode_message(&json!({
+            "id":"step2","type":"assistant","time":{"completed":5500},"content":[
+                {"type":"reasoning","text":"**Final plan**\n\nSecond step thought","time":{"created":3000,"completed":5500}}
+            ]
+        }))
+        .unwrap();
+        s.messages[1] = second_done.into();
+        s.revision += 1;
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("Thought for 4 seconds"));
+    assert!(tree.contains("Final plan"));
+    assert!(tree.contains("2 steps"));
+
+    // Expanding the first header reveals both messages' fragments under their native block keys.
+    let (x, y) = rt.find("toggle-reasoning-step1:0").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("First step thought") && tree.contains("Second step thought"));
+    assert!(rt.find(&block_key("step1", 0)).is_some());
+    assert!(rt.find(&block_key("step2", 0)).is_some());
+    assert!(rt.find("toggle-reasoning-step2:0").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn hidden_tools_and_blank_fragments_are_transparent_for_reasoning_groups() {
+    use rune::{Env, Runtime};
+    use serde_json::json;
+    let m1 = crate::history::decode_message(&json!({
+        "id":"m1","type":"assistant","time":{"completed":2000},"content":[
+            {"type":"reasoning","text":"Step one","time":{"created":1000,"completed":2000}},
+            {"type":"tool","id":"r1","name":"read","state":{"status":"completed","input":{}}}
+        ]
+    }))
+    .unwrap();
+    let m2 = crate::history::decode_message(&json!({
+        "id":"m2","type":"assistant","time":{"completed":5000},"content":[
+            {"type":"text","text":"   "},
+            {"type":"reasoning","text":""},
+            {"type":"reasoning","text":"Step two","time":{"created":3000,"completed":5000}}
+        ]
+    }))
+    .unwrap();
+    let mut s = crate::init();
+    crate::settings::fixture_transcript(
+        &mut s,
+        json!({
+            "showThinkingBlocks":true,
+            "toolCallExpansionDefaults":{"tools":{"read":"hidden"}}
+        }),
+    );
+    s.messages = vec![m1.into(), m2.into()];
+    s.phase = crate::Phase::Ready;
+    let mut rt = Runtime::new(
+        s,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (960.0, 820.0),
+        Env::new(false, 1.0),
+    );
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("Thought for 3 seconds"));
+    assert!(tree.contains("2 steps"));
+    assert!(rt.find("toggle-reasoning-m1:0").is_some());
+    assert!(rt.find("toggle-reasoning-m2:1").is_none());
+
+    // Making the intervening tool visible splits the reasoning group into two headers.
+    rt.update(|s, _| {
+        crate::settings::fixture_transcript(
+            s,
+            json!({
+                "showThinkingBlocks":true,
+                "toolCallExpansionDefaults":{"tools":{"read":"collapsed"}}
+            }),
+        );
+        s.revision += 1;
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.find("toggle-reasoning-m1:0").is_some());
+    assert!(rt.find("toggle-reasoning-m2:1").is_some());
+
+    // Conversely, a non-empty reasoning fragment splits exploration tools even when thinking is
+    // hidden, whereas a blank reasoning fragment remains transparent.
+    let s = crate::init();
+    let with_real_thought: crate::history::Row = crate::history::decode_message(&json!({
+        "id":"split","type":"assistant","time":{"completed":1},"content":[
+            {"type":"tool","id":"a","name":"read","state":{"status":"completed","input":{}}},
+            {"type":"reasoning","text":"Non-empty thought"},
+            {"type":"tool","id":"b","name":"grep","state":{"status":"completed","input":{}}}
+        ]
+    }))
+    .unwrap()
+    .into();
+    let with_blank_thought: crate::history::Row = crate::history::decode_message(&json!({
+        "id":"joined","type":"assistant","time":{"completed":1},"content":[
+            {"type":"tool","id":"a","name":"read","state":{"status":"completed","input":{}}},
+            {"type":"reasoning","text":"   "},
+            {"type":"tool","id":"b","name":"grep","state":{"status":"completed","input":{}}}
+        ]
+    }))
+    .unwrap()
+    .into();
+    assert!(
+        super::anchors::collapsed_group_target(
+            &s,
+            std::slice::from_ref(&with_real_thought),
+            0,
+            0,
+            0,
+        )
+        .is_none()
+    );
+    assert_eq!(
+        super::anchors::collapsed_group_target(
+            &s,
+            std::slice::from_ref(&with_blank_thought),
+            0,
+            0,
+            2,
+        ),
+        Some(("joined".into(), "group-tool-joined:1:a".into()))
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn collapsed_cross_message_reasoning_anchors_and_search_expand_the_shared_group() {
+    use codenomad_client::search::{Hit, Kind as SearchKind};
+    use rune::{Env, Runtime};
+    use serde_json::json;
+    let m1 = crate::history::decode_message(&json!({
+        "id":"m1","type":"assistant","time":{"completed":1000},"content":[
+            {"type":"reasoning","text":"First thought","time":{"created":0,"completed":1000}}
+        ]
+    }))
+    .unwrap();
+    let m2 = crate::history::decode_message(&json!({
+        "id":"m2","type":"assistant","time":{"completed":2000},"content":[
+            {"type":"reasoning","text":"Needle in second step","time":{"created":1000,"completed":2000}}
+        ]
+    }))
+    .unwrap();
+    let mut s = crate::init();
+    crate::settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":true}));
+    s.messages = vec![m1.into(), m2.into()];
+    s.phase = crate::Phase::Ready;
+
+    // Collapsed jump targeting the second message's reasoning resolves to the shared group header.
+    assert_eq!(
+        super::anchors::collapsed_group_target(&s, &s.messages, 1, 0, 0),
+        Some(("m1".into(), block_key("m1", 0)))
+    );
+
+    // An active search hit inside the second message expands the shared group and exposes m2's key.
+    s.transcript_display.search_highlight = Some(super::search_hit::SearchHit::new(
+        &Hit {
+            session: "s1".into(),
+            message: "m2".into(),
+            role: "assistant".into(),
+            kind: SearchKind::Reasoning,
+            part: 0,
+            excerpt: "Needle".into(),
+        },
+        "Needle",
+        false,
+    ));
+    assert!(super::anchors::collapsed_group_target(&s, &s.messages, 1, 0, 0).is_none());
+
+    let mut rt = Runtime::new(
+        s,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (960.0, 820.0),
+        Env::new(false, 1.0),
+    );
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.find(&block_key("m2", 0)).is_some());
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("Needle in second step")
     );
 }
