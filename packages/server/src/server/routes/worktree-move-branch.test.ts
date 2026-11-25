@@ -149,7 +149,7 @@ test("a worktree family move blocks concurrent prompts targeting a sibling child
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }) }
 })
 
-test("a child session created while draining the parent is locked before moving the family", async () => {
+test("a family move fails fast while a session mutation is active, widens for a late child, and blocks imports targeting locked members", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "codenomad-move-late-child-")), repo = path.join(root, "main"), childWt = path.join(root, "child")
   const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim()
   git(root, "init", "-q", "-b", "main", repo)
@@ -165,26 +165,20 @@ test("a child session created while draining the parent is locked before moving 
   const inMove = new Promise<void>(resolve => { moveEntered = resolve })
   const forwarded: string[] = []
   const fence = new WorktreeDeletionFence()
-  // Hold an active in-flight prompt on ses_root while the family move starts draining it.
-  const releaseParentPrompt = fence.enterSession("ses_root")!
-  assert.ok(releaseParentPrompt)
-  let drainStarted!: () => void
-  const draining = new Promise<void>(resolve => { drainStarted = resolve })
-  const origRunSessions = fence.runSessions.bind(fence)
-  let runSessionsCalls = 0
-  fence.runSessions = ((ids, op) => {
-    runSessionsCalls += 1
-    if (runSessionsCalls === 1) {
-      drainStarted()
-    }
-    return origRunSessions(ids, op)
-  }) as typeof fence.runSessions
+  let listCalls = 0
+  let injectLateChildOnSecondList = false
   const client = {
     rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
     location: { get: async ({ location }: any) => ({ directory: location.directory, project: { id: "project", canonical: repo, directory: repo } }) },
     session: {
       get: async ({ sessionID }: any) => structuredClone(sessions.get(sessionID)),
-      list: async () => ({ data: Array.from(sessions.values(), s => structuredClone(s)), cursor: {} }),
+      list: async () => {
+        listCalls += 1
+        if (injectLateChildOnSecondList && listCalls === 2) {
+          sessions.set("ses_child_late", lateChild)
+        }
+        return { data: Array.from(sessions.values(), s => structuredClone(s)), cursor: {} }
+      },
       active: async () => ({}),
       environment: async () => { forwarded.push("env") },
       move: async ({ sessionID, directory }: any) => {
@@ -233,6 +227,24 @@ test("a child session created while draining the parent is locked before moving 
     logger: { debug() {}, error() {}, isLevelEnabled: () => false } as any,
   })
   try {
+    // Active mutation on ses_root rejects a move immediately with 409 (parity with Rust fence::try_block).
+    const releaseParentPrompt = fence.enterSession("ses_root")!
+    assert.ok(releaseParentPrompt)
+    try {
+      const blockedMove = await app.inject({
+        method: "POST",
+        url: "/api/workspaces/workspace/sessions/ses_root/worktree",
+        payload: { worktreeSlug: entry.slug, branch: "issue-14" },
+      })
+      assert.equal(blockedMove.statusCode, 409, blockedMove.body)
+      assert.deepEqual(blockedMove.json(), { error: "A session request is in progress" })
+    } finally {
+      releaseParentPrompt()
+    }
+
+    // Now let a late child appear between the first inventory read and the locked re-read.
+    listCalls = 0
+    injectLateChildOnSecondList = true
     const movePromise = app.inject({
       method: "POST",
       url: "/api/workspaces/workspace/sessions/ses_root/worktree",
@@ -245,19 +257,6 @@ test("a child session created while draining the parent is locked before moving 
       releaseMove?.()
     }
     try {
-      await Promise.race([
-        draining,
-        movePromise.then((res) => {
-          throw new Error(`move completed before entering drainage (${res.statusCode}): ${res.body}`)
-        }),
-        new Promise<never>((_, reject) => {
-          const timer = setTimeout(() => reject(new Error("timed out waiting for drainage start")), 25000)
-          timer.unref?.()
-        }),
-      ])
-      // Spawn the child while runSessions is actively draining ses_root, then let the parent finish.
-      sessions.set("ses_child_late", lateChild)
-      releaseParentPrompt()
       await Promise.race([
         inMove,
         movePromise.then((res) => {
@@ -276,6 +275,14 @@ test("a child session created while draining the parent is locked before moving 
       assert.equal(childPrompt.statusCode, 409, childPrompt.body)
       assert.equal(childPrompt.headers["x-codenomad-before-dispatch"], "1")
       assert.deepEqual(childPrompt.json(), { error: "Session move is in progress" })
+
+      const importChild = await app.inject({
+        method: "POST",
+        url: "/workspaces/workspace/instance/api/experimental/session/import",
+        payload: { info: { id: "ses_imported", parentID: "ses_root", directory: repo } },
+      })
+      assert.equal(importChild.statusCode, 409, importChild.body)
+      assert.deepEqual(importChild.json(), { error: "Session move is in progress" })
       assert.deepEqual(forwarded, [])
     } finally {
       releaseMoveOnce()

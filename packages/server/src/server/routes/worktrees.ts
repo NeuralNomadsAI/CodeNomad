@@ -156,7 +156,9 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
           if (!release) throw new ProjectSessionError("A session worktree is being removed", 409)
           try {
             const members = sessionIds?.length ? sessionIds : [request.params.sessionId]
-            return await deps.worktreeDeletionFence.runSessions(members, operation)
+            const placed = await deps.worktreeDeletionFence.tryRunSessions(members, operation)
+            if (!placed.acquired) throw new ProjectSessionError("A session request is in progress", 409)
+            return placed.value
           } finally {
             release()
           }

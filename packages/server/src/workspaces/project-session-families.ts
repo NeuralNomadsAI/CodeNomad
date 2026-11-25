@@ -122,7 +122,7 @@ export async function moveProjectSessionFamily(params: {
   return withProject(params.client, params.projectLocation, async (context) => {
     const familySignature = (members: SessionInfo[]) =>
       members
-        .map((member) => `${member.id}\0${member.location.directory}\0${member.location.workspaceID ?? ""}`)
+        .map((member) => `${member.id}\0${member.location.directory}\0${readLocationRef(member.location).workspaceID ?? ""}`)
         .sort()
         .join("\n")
 
@@ -326,6 +326,7 @@ async function moveWithRollback(context: ProjectContext, family: SessionInfo[], 
     const refreshed = await verifyInventory(context, moved, new Map(moved.map((id) => [id, target])))
     const refreshedFamily = resolveSessionFamilies(refreshed).get(family[0]!.id)
     if (!refreshedFamily
+      || refreshedFamily.length !== family.length
       || !family.every(({ id }) => refreshedFamily.some((session) => session.id === id))
       || !refreshedFamily.every((session) => sameLocation(session.location, target))) {
       throw new ProjectSessionError("Session family changed during the move", 409)

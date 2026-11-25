@@ -223,7 +223,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     s.stream_offline = true;
                     s.status_permissions.online(false);
                     s.status_usage.disconnect();
-                    chat::reader::suspend(s);
+                    suspend_preserving_page_retry(s);
                     s.composer.picker.set_attachments_supported(false);
                     s.attachments.cancel();
                     s.phase = Phase::Failed;
@@ -506,7 +506,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 if let Some(reader) = &mut s.reader {
                     reader.failed();
                 }
-                chat::reader::cancel_page(s);
+                if let Some((_, edge)) = s.transcript_display.timeline.paging.take() {
+                    s.transcript_display.timeline.page_retry = Some(edge);
+                }
                 s.paging = false;
                 s.history_error = true;
             }

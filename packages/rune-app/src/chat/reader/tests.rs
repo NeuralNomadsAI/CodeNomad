@@ -518,4 +518,56 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
             Some(HistoryEdge::Oldest)
         );
     }
+
+    // Reader content-lane Event::Failed preserves the in-flight retry direction instead of wiping it.
+    let mut state = init();
+    let (mut reader, lane) = Reader::open();
+    reader.install(true);
+    state.reader = Some(reader);
+    state.phase = Phase::Ready;
+    state.history_detached = true;
+    state.can_older = true;
+    let (cmd_tx, cmd_rx) = bounded(4);
+    let (_out, incoming) = bounded(4);
+    state.commands = Some(cmd_tx);
+    state.incoming = Some(incoming);
+    assert!(request_page(&mut state, HistoryEdge::After));
+    let _ = cmd_rx.try_recv().unwrap();
+    lane.events.try_send((0, 0, Event::Failed)).unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(!state.paging);
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::After)
+    );
+
+    // WorkspaceEvent::Stopped also preserves an in-flight page retry edge and history_error.
+    let mut state = init();
+    let (mut reader, _lane) = Reader::open();
+    reader.install(true);
+    state.reader = Some(reader);
+    state.phase = Phase::Ready;
+    state.history_detached = true;
+    state.can_older = true;
+    let (cmd_tx, cmd_rx) = bounded(4);
+    let (out, incoming) = bounded(4);
+    state.commands = Some(cmd_tx);
+    state.incoming = Some(incoming);
+    assert!(request_page(&mut state, HistoryEdge::Oldest));
+    let _ = cmd_rx.try_recv().unwrap();
+    out.try_send(Event::Workspace(
+        codenomad_client::transport::WorkspaceEvent::Stopped {
+            workspace_id: "workspace".into(),
+        },
+    ))
+    .unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(matches!(state.phase, Phase::Failed));
+    assert!(!state.paging);
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::Oldest)
+    );
 }

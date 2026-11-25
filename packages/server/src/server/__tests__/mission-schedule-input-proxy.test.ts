@@ -10,6 +10,7 @@ import { markDispatchHookAwareFetch } from "../../opencode/compatibility/transpo
 import { rememberRuntime } from "../../opencode/compatibility/runtime"
 import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
 import { OpenCodeSharedService } from "../../workspaces/opencode-service"
+import { ROUTER_OPTIONS } from "../routed-path"
 import { registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
 
 const apps: FastifyInstance[] = []
@@ -21,6 +22,7 @@ function fixture() {
   const uncertainSessions: string[] = []
   const state = {
     owned: false, metadata: undefined as Record<string, unknown> | undefined, directory: "/repo/worktree",
+    locationWorkspaceID: undefined as string | undefined,
     projectID: "project-a",
     createdAt: 1,
     fork: undefined as Record<string, unknown> | undefined,
@@ -31,7 +33,7 @@ function fixture() {
     afterRead: async () => {},
     beforeFetchCheck: async () => {},
   }
-  const sessions = new Map<string, { id: string; location: { directory: string }; projectID?: string; fork?: Record<string, unknown>; time?: { created: number }; metadata?: Record<string, unknown>;
+  const sessions = new Map<string, { id: string; location: { directory: string; workspaceID?: string }; projectID?: string; fork?: Record<string, unknown>; time?: { created: number }; metadata?: Record<string, unknown>;
     model?: { providerID: string; id: string }; title?: string }>()
   const missing = new Set<string>()
   const session = (id: string) => sessions.get(id) ?? {
@@ -39,7 +41,9 @@ function fixture() {
     projectID: state.projectID,
     fork: state.fork,
     time: { created: state.createdAt },
-    location: { directory: state.directory },
+    location: state.locationWorkspaceID !== undefined
+      ? { directory: state.directory, workspaceID: state.locationWorkspaceID }
+      : { directory: state.directory },
     metadata: state.metadata,
   }
   const client = {
@@ -97,7 +101,7 @@ function fixture() {
     ownsLocation: async (_id, location, pinned) => { assert.equal(pinned, client); return location.directory.startsWith("/repo") },
     ownsDirectory: async (_id, directory) => directory.startsWith("/repo"), ownsPath: async () => true,
   }
-  const app = Fastify(), fence = new WorktreeDeletionFence()
+  const app = Fastify({ routerOptions: ROUTER_OPTIONS }), fence = new WorktreeDeletionFence()
   apps.push(app)
   registerInstanceProxyRoutes(app, {
     workspaceManager: manager,
@@ -426,18 +430,67 @@ test("a session replaced under the same ID and location before dispatch is rejec
   assert.equal(response.headers["x-codenomad-before-dispatch"], "1")
   assert.deepEqual(f.events, ["environment"])
   assert.deepEqual(f.uncertainSessions, [])
+
+  // Changing only a non-directory field of location must also fail closed before dispatch.
+  f.events.length = 0
+  f.state.projectID = "project-a"
+  f.state.createdAt = 1
+  f.state.locationWorkspaceID = "ws-a"
+  f.state.beforeFetchCheck = async () => {
+    f.state.locationWorkspaceID = "ws-b"
+  }
+  const locationChanged = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_location_meta_changed/prompt`,
+    payload: { text: "blocked on non-directory location change" },
+  })
+  assert.equal(locationChanged.statusCode, 403, locationChanged.body)
+  assert.equal(locationChanged.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(f.events, ["environment"])
+  assert.deepEqual(f.uncertainSessions, [])
 })
 
-test("pre-handler invalid JSON 400 and 426 unsupported runtime carry x-codenomad-before-dispatch", async () => {
+test("pre-handler 400/413/426 keep Fastify error envelopes and carry x-codenomad-before-dispatch across routed variants", async () => {
   const f = fixture()
-  const badJson = await f.app.inject({
+  for (const url of [
+    `${prefix}/api/session/ses_bad_json/prompt`,
+    `${prefix}/api/session/ses_bad_json/prompt;v=1`,
+    `${prefix}/api/session/ses_bad_json/%70rompt`,
+  ]) {
+    const badJson = await f.app.inject({
+      method: "POST",
+      url,
+      headers: { "content-type": "application/json" },
+      payload: "{invalid",
+    })
+    assert.equal(badJson.statusCode, 400, badJson.body)
+    assert.equal(badJson.headers["x-codenomad-before-dispatch"], "1")
+    const body = badJson.json() as { statusCode?: number; code?: string; error?: string; message?: string }
+    assert.equal(body.statusCode, 400)
+    assert.equal(body.error, "Bad Request")
+    assert.equal(typeof body.message, "string")
+  }
+
+  const tooLargeCommand = await f.app.inject({
     method: "POST",
-    url: `${prefix}/api/session/ses_bad_json/prompt`,
-    headers: { "content-type": "application/json" },
-    payload: "{invalid",
+    url: `${prefix}/api/session/ses_big_cmd/command`,
+    payload: { name: "build", text: "x".repeat(1024 * 1024) },
   })
-  assert.equal(badJson.statusCode, 400, badJson.body)
-  assert.equal(badJson.headers["x-codenomad-before-dispatch"], "1")
+  assert.equal(tooLargeCommand.statusCode, 413, tooLargeCommand.body)
+  assert.equal(tooLargeCommand.headers["x-codenomad-before-dispatch"], "1")
+  const tooLargeBody = tooLargeCommand.json() as { statusCode?: number; code?: string; error?: string; message?: string }
+  assert.equal(tooLargeBody.statusCode, 413)
+  assert.equal(tooLargeBody.code, "FST_ERR_CTP_BODY_TOO_LARGE")
+  assert.equal(tooLargeBody.error, "Payload Too Large")
+
+  // Multiple trailing slashes must still run attachment budget and file ownership validation.
+  const trailingInvalidData = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_trailing/prompt//`,
+    payload: { text: "bad attachment", files: [{ uri: "data:;base64,abc" }] },
+  })
+  assert.equal(trailingInvalidData.statusCode, 400, trailingInvalidData.body)
+  assert.equal(trailingInvalidData.headers["x-codenomad-before-dispatch"], "1")
 
   f.state.profileError = new UnsupportedOpenCodeError("2.0.0")
   const upgrade = await f.app.inject({
@@ -455,15 +508,6 @@ test("a real OpenCodeSharedService connection passes dispatch-hook validation fo
   const upstream = Fastify()
   apps.push(upstream)
   const upstreamCalls: string[] = []
-  upstream.get("/api/doc", async () => ({
-    paths: {
-      "/api/session/{sessionID}": {},
-      "/api/session/{sessionID}/prompt": {},
-      "/api/session/{sessionID}/environment": {},
-      "/api/permission/request": {},
-      "/api/form": {},
-    },
-  }))
   upstream.post("/api/rpc/codenomad.missions/scheduleCarrierRead", async () => ({ output: { owned: false } }))
   upstream.get("/api/session/:id", async (request) => ({
     data: {
@@ -484,7 +528,7 @@ test("a real OpenCodeSharedService connection passes dispatch-hook validation fo
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const port = (upstream.server.address() as { port: number }).port
   const liveEndpoint = { url: `http://127.0.0.1:${port}` }
-  rememberRuntime(liveEndpoint, { version: "2.3.2" })
+  rememberRuntime(liveEndpoint, { version: "2.3.2", pid: process.pid, discovery: "status" })
   const shared = new OpenCodeSharedService()
   await shared.endpoint({
     kind: "lifecycle",

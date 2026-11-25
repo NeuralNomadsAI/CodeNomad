@@ -19,10 +19,8 @@ export class WorktreeDeletionFence {
   private readonly blocked = new Map<string, number>()
   private readonly active = new Map<string, number>()
   private readonly idleWaiters = new Map<string, Set<() => void>>()
-  private readonly sessionQueues = new Map<string, Promise<unknown>>()
   private readonly sessionBlocked = new Map<string, number>()
   private readonly sessionActive = new Map<string, number>()
-  private readonly sessionIdleWaiters = new Map<string, Set<() => void>>()
   private displayRevision = 0n
 
   constructor(private readonly mutationDrainTimeoutMs = MUTATION_DRAIN_TIMEOUT_MS) {}
@@ -92,69 +90,56 @@ export class WorktreeDeletionFence {
   }
 
   enterSession(sessionId: string): (() => void) | undefined {
-    if (this.sessionBlocked.has(sessionId)) return undefined
-    this.sessionActive.set(sessionId, (this.sessionActive.get(sessionId) ?? 0) + 1)
+    return this.enterSessions([sessionId])
+  }
+
+  enterSessions(sessionIds: readonly string[]): (() => void) | undefined {
+    const ids = [...new Set(sessionIds.filter(Boolean))]
+    if (!ids.length) return () => {}
+    if (ids.some((sessionId) => this.sessionBlocked.has(sessionId))) return undefined
+    for (const sessionId of ids) {
+      this.sessionActive.set(sessionId, (this.sessionActive.get(sessionId) ?? 0) + 1)
+    }
 
     let released = false
     return () => {
       if (released) return
       released = true
-      const count = this.sessionActive.get(sessionId) ?? 0
-      if (count > 1) {
-        this.sessionActive.set(sessionId, count - 1)
-        return
+      for (const sessionId of ids) {
+        const count = this.sessionActive.get(sessionId) ?? 0
+        if (count > 1) this.sessionActive.set(sessionId, count - 1)
+        else this.sessionActive.delete(sessionId)
       }
-      this.sessionActive.delete(sessionId)
-      for (const resolve of this.sessionIdleWaiters.get(sessionId) ?? []) resolve()
-      this.sessionIdleWaiters.delete(sessionId)
     }
   }
 
-  runSession<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
-    return this.runSessions([sessionId], operation)
+  async runSession<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const outcome = await this.tryRunSessions([sessionId], operation)
+    if (!outcome.acquired) throw new Error("A session request is in progress")
+    return outcome.value
   }
 
-  runSessions<T>(sessionIds: readonly string[], operation: () => Promise<T>): Promise<T> {
-    const ids = [...new Set(sessionIds)].sort()
-    if (!ids.length) return operation()
+  async tryRunSessions<T>(
+    sessionIds: readonly string[],
+    operation: () => Promise<T>,
+  ): Promise<{ acquired: true; value: T } | { acquired: false }> {
+    const ids = [...new Set(sessionIds.filter(Boolean))].sort()
+    if (!ids.length) return { acquired: true, value: await operation() }
+    if (ids.some((sessionId) => this.sessionActive.has(sessionId) || this.sessionBlocked.has(sessionId))) {
+      return { acquired: false }
+    }
     for (const sessionId of ids) {
       this.sessionBlocked.set(sessionId, (this.sessionBlocked.get(sessionId) ?? 0) + 1)
     }
-
-    const previous = Promise.all(
-      ids.map((sessionId) => (this.sessionQueues.get(sessionId) ?? Promise.resolve()).catch(() => {})),
-    )
-    const current = previous.then(async () => {
-      await Promise.all(ids.map((sessionId) => this.waitForSessionIdle(sessionId)))
-      return operation()
-    })
-    for (const sessionId of ids) this.sessionQueues.set(sessionId, current)
-    return current.finally(() => {
+    try {
+      return { acquired: true, value: await operation() }
+    } finally {
       for (const sessionId of ids) {
         const count = this.sessionBlocked.get(sessionId) ?? 0
         if (count > 1) this.sessionBlocked.set(sessionId, count - 1)
         else this.sessionBlocked.delete(sessionId)
-        if (this.sessionQueues.get(sessionId) === current) this.sessionQueues.delete(sessionId)
       }
-    })
-  }
-
-  private waitForSessionIdle(sessionId: string): Promise<void> {
-    if (!this.sessionActive.has(sessionId)) return Promise.resolve()
-    return new Promise((resolve, reject) => {
-      const waiters = this.sessionIdleWaiters.get(sessionId) ?? new Set()
-      const done = () => {
-        clearTimeout(timer)
-        resolve()
-      }
-      waiters.add(done)
-      this.sessionIdleWaiters.set(sessionId, waiters)
-      const timer = setTimeout(() => {
-        waiters.delete(done)
-        if (!waiters.size) this.sessionIdleWaiters.delete(sessionId)
-        reject(new Error("Timed out waiting for session mutations to finish"))
-      }, this.mutationDrainTimeoutMs)
-    })
+    }
   }
 
   private waitForIdle(directory: string): Promise<void> {

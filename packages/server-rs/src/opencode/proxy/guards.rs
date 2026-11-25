@@ -224,6 +224,43 @@ pub(super) fn directory_identity(
     Some((resolved, anchor, identity))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::same_target;
+    use serde_json::json;
+
+    #[test]
+    fn same_target_rejects_location_metadata_change_and_accepts_reordered_fork_keys() {
+        let initial = json!({
+            "id": "ses_1",
+            "location": { "directory": "/repo", "workspaceID": "ws_1" },
+            "projectID": "proj_1",
+            "parentID": null,
+            "fork": { "sessionID": "ses_parent", "messageID": "msg_1" },
+            "time": { "created": 100, "updated": 100 }
+        });
+        let reordered_fork = json!({
+            "id": "ses_1",
+            "location": { "directory": "/repo", "workspaceID": "ws_1" },
+            "projectID": "proj_1",
+            "parentID": null,
+            "fork": { "messageID": "msg_1", "sessionID": "ses_parent" },
+            "time": { "created": 100, "updated": 200 }
+        });
+        assert!(same_target(&initial, &reordered_fork));
+
+        let location_changed = json!({
+            "id": "ses_1",
+            "location": { "directory": "/repo", "workspaceID": "ws_2" },
+            "projectID": "proj_1",
+            "parentID": null,
+            "fork": { "sessionID": "ses_parent", "messageID": "msg_1" },
+            "time": { "created": 100, "updated": 100 }
+        });
+        assert!(!same_target(&initial, &location_changed));
+    }
+}
+
 #[test]
 fn ordinary_input_refuses_reserved_metadata_even_with_null_values() {
     for key in ["schedule", "automation", "codenomad.schedule-carrier"] {

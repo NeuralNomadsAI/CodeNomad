@@ -381,6 +381,10 @@ impl Http {
         }
         matched
     }
+    pub(crate) fn record_server_identity_mismatch(&self, generation: u64, seq: u64) {
+        self.6.identity_mismatch.store(true, Ordering::SeqCst);
+        self.revoke_server_attestation_at(generation, seq);
+    }
     pub(crate) fn verify_server_identity_at(
         &self,
         id: &str,
@@ -397,8 +401,7 @@ impl Http {
             .server
             == id;
         if !matched {
-            self.6.identity_mismatch.store(true, Ordering::SeqCst);
-            self.revoke_server_attestation_at(generation, seq);
+            self.record_server_identity_mismatch(generation, seq);
         }
         matched
     }

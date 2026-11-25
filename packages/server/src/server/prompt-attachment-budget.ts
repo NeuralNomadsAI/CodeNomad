@@ -9,7 +9,7 @@ export function validatePromptAttachmentBudget(
   method: string,
   body: unknown,
 ): PromptAttachmentBudgetResult {
-  if (method !== "POST" || !/^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathname)) {
+  if (method !== "POST" || !/^\/api\/session\/[^/]+\/(?:prompt|command)$/.test(pathname.replace(/\/+$/, ""))) {
     return { ok: true }
   }
   if (!isRecord(body) || !Array.isArray(body.files)) return { ok: true }

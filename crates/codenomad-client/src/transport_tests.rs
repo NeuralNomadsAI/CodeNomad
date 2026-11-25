@@ -2063,34 +2063,53 @@ fn unmarked_native_4xx_501_503_are_unconfirmed_while_marked_pre_dispatch_are_rej
 fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
     use crate::prompt::PromptError;
     use crate::transport::{Command, Event, PromptOutcome};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     run(async {
         tokio::time::timeout(Duration::from_secs(5), async {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let mut backend =
-                Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
-                    .await
-                    .unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let mut backend = Backend::connect(&base, "").await.unwrap();
             backend.workspace = "workspace".into();
             backend.session = "session".into();
-            assert!(backend.client.attest("server-original", Vec::new()));
             let posts = Arc::new(AtomicUsize::new(0));
             let server_posts = posts.clone();
+            let serve_replacement = Arc::new(AtomicBool::new(false));
+            let server_replacement = serve_replacement.clone();
+            let (drop_stream_tx, drop_stream_rx) = bounded::<()>(2);
             let (stop_tx, stop_rx) = bounded::<()>(1);
             let server = tokio::spawn(async move {
                 let mut streams = Vec::new();
                 loop {
-                    let accept = futures_lite::future::race(
+                    enum Action {
+                        Stop,
+                        DropStreams,
+                        Accept(Option<tokio::net::TcpStream>),
+                    }
+                    let action = futures_lite::future::race(
                         async {
                             let _ = stop_rx.recv().await;
-                            None
+                            Action::Stop
                         },
-                        async { listener.accept().await.ok() },
+                        futures_lite::future::race(
+                            async {
+                                let _ = drop_stream_rx.recv().await;
+                                Action::DropStreams
+                            },
+                            async { Action::Accept(listener.accept().await.ok().map(|(s, _)| s)) },
+                        ),
                     )
                     .await;
-                    let Some((socket, _)) = accept else { break };
+                    let socket = match action {
+                        Action::Stop => break,
+                        Action::DropStreams => {
+                            streams.clear();
+                            continue;
+                        }
+                        Action::Accept(Some(socket)) => socket,
+                        Action::Accept(None) => break,
+                    };
                     let mut req = BufReader::new(socket);
                     let mut head = String::new();
                     if req.read_line(&mut head).await.unwrap_or(0) == 0 {
@@ -2106,8 +2125,14 @@ fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
                         }
                     }
                     if head.contains("/api/meta") {
-                        let meta =
-                            r#"{"apiContract":1,"serverId":"server-original","capabilities":[]}"#;
+                        let server_id = if server_replacement.load(Ordering::SeqCst) {
+                            "server-replacement"
+                        } else {
+                            "server-original"
+                        };
+                        let meta = format!(
+                            r#"{{"apiContract":1,"serverId":"{server_id}","capabilities":[]}}"#
+                        );
                         let _ = req
                             .get_mut()
                             .write_all(
@@ -2125,7 +2150,7 @@ fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
                                 b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n: ok\n\n",
                             )
                             .await;
-                        // Keep the SSE socket open until the test completes.
+                        // Keep the SSE socket open until explicitly dropped or test ends.
                         streams.push(req);
                     } else if head.contains("/api/history/window") {
                         let body = r#"{"status":"window","messages":[],"older":null,"newer":null,"latest":true}"#;
@@ -2154,6 +2179,7 @@ fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
                     }
                 }
             });
+            assert_eq!(backend.attest_server().await.unwrap(), "server-original");
             let (out, events) = bounded(16);
             let (cmd_tx, cmd_rx) = bounded(4);
             let wake: crate::Wake = Arc::new(|| {});
@@ -2169,10 +2195,30 @@ fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
                     _ => continue,
                 }
             }
-            // Dropping a stream without an identity mismatch must NOT set server_identity_mismatch.
+            // Dropping the SSE stream without changing server identity must NOT set server_identity_mismatch.
+            drop_stream_tx.send(()).await.unwrap();
+            loop {
+                match events.recv().await.unwrap() {
+                    Event::ConnectionLost => break,
+                    _ => continue,
+                }
+            }
             assert!(!backend.client.server_identity_mismatch());
-            // Now simulate a detected replacement server identity mismatch.
-            assert!(!backend.client.attest("server-replacement", Vec::new()));
+            // Wait for the stream to re-establish against the same server identity before simulating replacement.
+            loop {
+                match events.recv().await.unwrap() {
+                    Event::AgentHint(true) => break,
+                    _ => continue,
+                }
+            }
+            assert!(!backend.client.server_identity_mismatch());
+            // Now switch /api/meta to a replacement server and exercise the real production re-attestation path.
+            serve_replacement.store(true, Ordering::SeqCst);
+            let reattest_err = backend.attest_server().await.unwrap_err();
+            assert!(
+                reattest_err.to_string().contains("Server identity changed"),
+                "expected identity mismatch error, got: {reattest_err}"
+            );
             assert!(backend.client.server_identity_mismatch());
             let attempt = "msg_00000000000000000000000000000099".to_owned();
             cmd_tx

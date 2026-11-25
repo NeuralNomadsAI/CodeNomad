@@ -1019,7 +1019,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
     }
 
     instance.setErrorHandler((error, request, reply) => {
-      const pathOnly = (request.raw.url ?? "").split("?", 1)[0] ?? ""
+      const pathOnly = routedPath(request.raw.url ?? "") ?? (request.raw.url ?? "").split(/[?;]/, 1)[0] ?? ""
       const isSendInput = request.method === "POST"
         && /^\/workspaces\/[^/]+\/instance\/api\/session\/[^/]+\/(?:prompt|command)\/*$/.test(pathOnly)
       const statusCode = (error as { statusCode?: unknown } | undefined)?.statusCode
@@ -1034,15 +1034,18 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
             reason: error.reason,
           })
         }
-        return reply.code(statusCode).send({
-          error: error instanceof Error ? error.message : `Pre-dispatch HTTP ${statusCode}`,
-        })
+        return reply.send(error)
       }
       throw error
     })
 
     instance.post(
       "/workspaces/:id/instance/api/session/:sessionId/prompt",
+      { bodyLimit: PROMPT_INLINE_FILE_LIMITS.maxRequestBodyBytes },
+      proxyPromptHandler,
+    )
+    instance.post(
+      "/workspaces/:id/instance/api/session/:sessionId/prompt/",
       { bodyLimit: PROMPT_INLINE_FILE_LIMITS.maxRequestBodyBytes },
       proxyPromptHandler,
     )
@@ -1241,6 +1244,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   if (!targetUrl) {
     sendPreDispatch(400, { error: "Invalid workspace instance path" })
     return
+  }
+  if (isPromptOrCommandPost) {
+    targetUrl.pathname = targetUrl.pathname.replace(/\/+$/, "")
   }
   appendIncomingQuery(targetUrl, request.raw.url ?? "")
   const isPendingList = request.method === "GET" && /^\/api\/(?:permission\/request|form)\/?$/.test(pathname)
@@ -1467,8 +1473,16 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   }
 
   const sessionId = getSessionRouteId(pathname)
-  const sessionInput = promptBody as { id?: unknown; info?: { id?: unknown } } | undefined
-  const suppliedSessionId = pathname.replace(/\/+$/, "") === "/api/session" ? sessionInput?.id : sessionInput?.info?.id
+  const sessionInput = promptBody as {
+    id?: unknown
+    parentID?: unknown
+    info?: { id?: unknown; parentID?: unknown }
+  } | undefined
+  const normalizedRoute = pathname.replace(/\/+$/, "")
+  const suppliedSessionId = normalizedRoute === "/api/session" ? sessionInput?.id : sessionInput?.info?.id
+  const suppliedParentId = normalizedRoute === "/api/experimental/session/import"
+    ? sessionInput?.info?.parentID
+    : normalizedRoute === "/api/session" ? sessionInput?.parentID : undefined
   if (ordinarySessionMutation && (sessionId || typeof suppliedSessionId === "string")) {
     await wait(Promise.resolve(workspaceManager.desktopPluginsReady?.()))
   }
@@ -1595,10 +1609,17 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     sendPreDispatch(409, { error: "Worktree deletion is in progress" })
     return
   }
-  const releaseSessionMove = ordinarySessionMutation && sessionId
-    ? worktreeDeletionFence.enterSession(sessionId)
+  const fencedSessionIds = ordinarySessionMutation
+    ? [
+      ...(sessionId ? [sessionId] : []),
+      ...(typeof suppliedSessionId === "string" && suppliedSessionId ? [suppliedSessionId] : []),
+      ...(typeof suppliedParentId === "string" && suppliedParentId ? [suppliedParentId] : []),
+    ]
+    : []
+  const releaseSessionMove = fencedSessionIds.length > 0
+    ? worktreeDeletionFence.enterSessions(fencedSessionIds)
     : undefined
-  if (ordinarySessionMutation && sessionId && !releaseSessionMove) {
+  if (fencedSessionIds.length > 0 && !releaseSessionMove) {
     releaseFence?.()
     sendPreDispatch(409, { error: "Session move is in progress" })
     return
@@ -1746,14 +1767,15 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     if (connection && kind && kind !== "interrupt") {
       grantPendingReconciliation(connection, workspaceId, authorizedSessionDirectory ?? runtimeLocation.directory)
     }
+    let resolvedRuntimeFetch: Parameters<typeof forwardRuntimeRequest>[0]["fetch"] | undefined
     if (request.method === "POST" && /^\/api\/session\/[^/]+\/(?:prompt|command|shell)\/*$/.test(pathname)) {
       if (isPromptOrCommandPost) {
         if (!connection && !workspaceManager.getSharedServiceFetch) {
           releaseMutation?.()
           return sendPreDispatch(503, { error: "Session mutation transport is unavailable" })
         }
-        const candidateFetch = connection?.fetch ?? await wait(workspaceManager.getSharedServiceFetch!())
-        if (!supportsDispatchHooks(candidateFetch)) {
+        resolvedRuntimeFetch = connection?.fetch ?? await wait(workspaceManager.getSharedServiceFetch!())
+        if (!supportsDispatchHooks(resolvedRuntimeFetch)) {
           releaseMutation?.()
           return sendUnavailableBeforeSend()
         }
@@ -1838,7 +1860,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       delete headers[PENDING_RECONCILIATION_HEADER]
       if (locationContext) Object.assign(headers, locationRequestOptions({ ...locationContext, directory: translatedDirectories.get(locationContext.directory)! }, { includeDirectory: true })?.headers)
       if (globalFormLocation) headers["x-opencode-directory"] = encodeURIComponent(translatedDirectories.get(globalFormLocation.directory)!)
-      const runtimeFetch = connection?.fetch ?? await wait(workspaceManager.getSharedServiceFetch!())
+      const runtimeFetch = resolvedRuntimeFetch
+        ?? connection?.fetch
+        ?? await wait(workspaceManager.getSharedServiceFetch!())
       if (confirmRoot) headers["content-type"] = "application/json"
       signal.throwIfAborted()
       const verifyPromptPlacementBeforeDispatch = isPromptOrCommandPost && sessionId && authorizedSession
@@ -1898,8 +1922,8 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       const forwardFetch = confirmPermission || confirmDeletion || confirmRoot || forkSource
         ? (() => {
           const wrapped = async (
-            input: Parameters<typeof fetch>[0],
-            init?: Parameters<typeof fetch>[1],
+            input: Parameters<typeof runtimeFetch>[0],
+            init?: Parameters<typeof runtimeFetch>[1],
             mediaResponseProcessor?: undefined,
             dispatchHooks?: Parameters<typeof runtimeFetch>[3],
           ) => {
@@ -2408,7 +2432,7 @@ function stripLocationSelectors(targetUrl: URL, body: unknown, workspaceDirector
 
 function readPromptFilePaths(pathname: string, method: string, body: unknown) {
   const result = { paths: [] as string[], invalid: false }
-  if (method !== "POST" || !/^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathname)) return result
+  if (method !== "POST" || !/^\/api\/session\/[^/]+\/(?:prompt|command)$/.test(pathname.replace(/\/+$/, ""))) return result
   if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) return result
   const files = (body as Record<string, unknown>).files
   if (files === undefined) return result
