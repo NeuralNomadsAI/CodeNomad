@@ -63,6 +63,7 @@ struct State {
     screen: Screen,
     settings: settings::Host,
     notifications: shell::notifications::Host,
+    wake_lock: platform::wake_lock::Controller,
     #[cfg(not(target_arch = "wasm32"))]
     direct_authentication: chat::authentication::Recovery,
     input_scope: std::rc::Rc<()>,
@@ -127,6 +128,7 @@ fn init() -> State {
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
         notifications: Default::default(),
+        wake_lock: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
         direct_authentication: Default::default(),
         input_scope: std::rc::Rc::new(()),
@@ -296,6 +298,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= workspace::poll_file_drafts(s, now, tx);
     changed |= shell::notifications::poll(s, tx);
     changed |= shell::notifications::poll_app_notices(s, now, tx);
+    platform::wake_lock::sync(s);
     workspace::capture_files_mode(s);
     timeline::poll_reveal(s, tx, changed);
     if changed {
@@ -345,6 +348,9 @@ fn main() {
         settings::gallery();
         return;
     }
+    if !platform::launch::enter() {
+        return;
+    }
     run_app();
 }
 #[cfg(target_arch = "wasm32")]
@@ -377,6 +383,7 @@ fn run_app() {
             ..layout::app_spec(strings::t("window.title.main"), init, view)
         },
         |s, tx| {
+            platform::wake_lock::release(s);
             settings::close(s);
             workspace::finish(s, tx);
         },

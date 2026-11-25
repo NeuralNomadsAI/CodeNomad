@@ -40,6 +40,45 @@ fn unsupported_advanced_switch_is_disabled_with_keyboard_help() {
     assert!(rt.state.advanced_help == Some(crate::settings::advanced::Toggle::LongReplies));
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_second_launch_advanced_switch_is_enabled_and_stages_change() {
+    fn find_switch(tree: &Value) -> Option<&Value> {
+        if tree["role"] == "switch" && tree["name"] == "Focus existing window on second launch" {
+            return Some(tree);
+        }
+        tree["children"].as_array()?.iter().find_map(find_switch)
+    }
+
+    let state = Window {
+        section: Section::Advanced,
+        ..Window::default()
+    };
+    let mut prefs = state.shared.borrow_mut();
+    prefs.fixture();
+    prefs.fixture_locale("en");
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    drop(prefs);
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    let switch = find_switch(&tree).unwrap();
+    let states = switch["states"].as_array().unwrap();
+    assert!(!states.contains(&Value::from("disabled")));
+    assert!(!states.contains(&Value::from("checked")));
+
+    rt.state
+        .shared
+        .borrow_mut()
+        .set_advanced_toggle(crate::settings::advanced::Toggle::SecondLaunch, true);
+    assert!(
+        rt.state
+            .shared
+            .borrow()
+            .advanced_pending(crate::settings::advanced::Toggle::SecondLaunch)
+    );
+}
+
 #[test]
 fn keyboard_shortcuts_records_the_focused_save_binding() {
     let mut state = Window {

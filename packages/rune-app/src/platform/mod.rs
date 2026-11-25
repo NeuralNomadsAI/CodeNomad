@@ -5,6 +5,8 @@ mod connection;
 mod device_file;
 pub(crate) mod device_picker;
 pub(crate) mod diagnostics;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod launch;
 #[cfg(target_os = "windows")]
 pub(crate) use codenomad_windows_notifications as notifications;
 #[cfg(target_arch = "wasm32")]
@@ -16,6 +18,7 @@ pub(crate) mod pairing;
 pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
+pub(crate) mod wake_lock;
 #[cfg(target_arch = "wasm32")]
 mod web_attachment;
 #[cfg(target_arch = "wasm32")]
@@ -115,7 +118,10 @@ pub fn export_attachment(
 /// Called after Rune releases the event loop; process waits remain outside active UI work.
 pub fn finish() {
     #[cfg(not(target_arch = "wasm32"))]
-    boot::finish();
+    {
+        boot::finish();
+        launch::release();
+    }
 }
 pub fn release_records_on_exit(
     records: Vec<(crate::backend::Backend, String)>,

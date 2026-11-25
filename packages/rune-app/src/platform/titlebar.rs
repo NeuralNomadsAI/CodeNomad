@@ -28,6 +28,7 @@ pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
             let window = window.clone();
             handle.update(move |s, _| s.notifications.window = Some(window));
         })
+        .on_reopen(crate::platform::launch::handle_reopen)
     };
     #[cfg(target_arch = "wasm32")]
     let app = {

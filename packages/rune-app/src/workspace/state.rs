@@ -89,6 +89,26 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
         })
     })
 }
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn has_wake_lock_eligible_work(s: &State) -> bool {
+    use rune_theme_codenomad::tabs::Status;
+    if !s.screen.is_launcher()
+        && matches!(
+            super::cache::status(&s.phase, s.agent.as_ref()),
+            Some(Status::Working)
+        )
+    {
+        return true;
+    }
+    s.workspace.as_ref().is_some_and(|ui| {
+        ui.entries.iter().any(|entry| {
+            entry
+                .cache
+                .as_ref()
+                .is_some_and(|cache| matches!(cache.status(), Some(Status::Working)))
+        })
+    })
+}
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
     mission_lifecycle: crate::missions::Lifecycle,

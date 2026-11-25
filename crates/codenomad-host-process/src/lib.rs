@@ -21,6 +21,7 @@ mod date;
 mod posix_date;
 #[cfg(unix)]
 mod unix;
+mod wake_lock;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
@@ -28,6 +29,7 @@ pub use date::{local_clock, local_month_day};
 pub use date::{local_date_time, local_time_zone};
 #[cfg(unix)]
 use unix::Family;
+pub use wake_lock::WakeLock;
 #[cfg(windows)]
 use windows::Family;
 
