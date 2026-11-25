@@ -116,6 +116,7 @@ jobs:
         run: |
           cargo build --locked -p codenomad-rune-app --bin codenomad-rune --features test-support
           cargo test --locked -p codenomad-rune-app --features test-support only_character_ink
+          cargo test --locked -p codenomad-rune-app --features test-support probes::git_panel::tests::
           cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune --features test-support
       - name: Inspect and interact through Rune offscreen tooling
         run: |

@@ -522,6 +522,10 @@ impl Ui {
             Some(self.index_revision)
         };
     }
+
+    pub(crate) fn fixture_set_history_dirty(&mut self, dirty: bool) {
+        self.requests.slot_mut(Lane::History).dirty = dirty;
+    }
 }
 
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
