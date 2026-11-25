@@ -2,6 +2,7 @@ use super::{State, Tab, Ui};
 use crate::{missions, workspace::RightPanelTab};
 use codenomad_client::transport::WorkspaceEvent;
 use rune::{El, edit::TextEdit};
+use rune_theme_codenomad::layout::Layout;
 
 pub fn file_wrap(s: &State) -> bool {
     s.shell.file_wrap
@@ -90,10 +91,26 @@ pub(crate) fn mission_panel(s: &State) -> El {
     };
     let entry = &ui.entries[ui.active];
     entry.missions.as_ref().map_or_else(rune::el, |panel| {
+        let actions = rune::col()
+            .full_width()
+            .child(missions::controls(
+                panel,
+                &ui.mission_lifecycle,
+                &entry.key,
+                control,
+            ))
+            .child(missions::briefing_controls(
+                panel,
+                &ui.mission_briefing,
+                &entry.key,
+                briefing_act,
+                open_mission_conversation,
+            ));
         missions::panel_body(
             panel,
             mission_edit,
-            missions::controls(panel, &ui.mission_lifecycle, &entry.key, control),
+            actions,
+            Some(std::rc::Rc::new(open_mission_conversation)),
         )
     })
 }
@@ -104,16 +121,27 @@ pub(crate) fn mission_confirmation(s: &State) -> Option<El> {
     }
     let ui = s.workspace.as_ref()?;
     let entry = &ui.entries[ui.active];
-    let (source, _) = entry.missions.as_ref()?.control_source(&entry.key)?;
-    if ui
-        .mission_lifecycle
-        .confirmation
-        .as_ref()
-        .is_none_or(|(key, _)| key != &source)
+    let panel = entry.missions.as_ref()?;
+    if let Some((source, _)) = panel.control_source(&entry.key)
+        && ui
+            .mission_lifecycle
+            .confirmation
+            .as_ref()
+            .is_some_and(|(key, _)| key == &source)
     {
-        return None;
+        return missions::confirmation(&ui.mission_lifecycle, control);
     }
-    missions::confirmation(&ui.mission_lifecycle, control)
+    if let Some((key, header)) = panel.briefing_source()
+        && header.accepts_coordinator_message()
+        && ui
+            .mission_briefing
+            .confirmation
+            .as_ref()
+            .is_some_and(|(occ, expected)| occ == &entry.key && expected == &key)
+    {
+        return missions::briefing_confirmation(&ui.mission_briefing, briefing_act);
+    }
+    None
 }
 
 fn control(s: &mut State, source: &missions::Source, gesture: missions::Gesture) {
@@ -126,7 +154,115 @@ fn control(s: &mut State, source: &missions::Source, gesture: missions::Gesture)
     let entry = &mut ui.entries[ui.active];
     if let Some(panel) = &mut entry.missions {
         panel.control(&entry.key, &mut ui.mission_lifecycle, source, gesture);
+        if ui.mission_lifecycle.confirmation.is_some() {
+            ui.mission_briefing.confirmation = None;
+        }
     }
+}
+
+fn briefing_act(
+    s: &mut State,
+    occurrence: &str,
+    key: &missions::BriefingKey,
+    gesture: missions::BriefingGesture,
+) {
+    if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
+        return;
+    }
+    let launcher_conn = s
+        .screen
+        .launcher()
+        .filter(|l| !l.authentication_required)
+        .and_then(|l| l.connection.clone());
+    let locale = crate::settings::app_locale(s);
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    let entry = &ui.entries[ui.active];
+    if entry.key != occurrence {
+        return;
+    }
+    if let Some(binding) = &entry.binding
+        && launcher_conn
+            .as_ref()
+            .is_some_and(|conn| !binding.client.same_connection(&conn.client))
+    {
+        return;
+    }
+    if let Some(panel) = &entry.missions {
+        panel.briefing_act(occurrence, &mut ui.mission_briefing, key, locale, gesture);
+        if ui.mission_briefing.confirmation.is_some() {
+            ui.mission_lifecycle.confirmation = None;
+        }
+    }
+}
+
+fn open_mission_conversation(s: &mut State, session_id: String, tx: &mut rune::Tx) {
+    if !crate::shell::right_panel_visible(s)
+        || right_panel_tab(s) != RightPanelTab::Missions
+        || !codenomad_client::history::valid_id(&session_id)
+    {
+        return;
+    }
+    if s.files
+        .as_ref()
+        .is_some_and(|files| files.document.confirmation().is_some())
+    {
+        return;
+    }
+    let Some((binding, project_id, owned_target)) = s.workspace.as_ref().and_then(|ui| {
+        let entry = &ui.entries[ui.active];
+        let owned = entry
+            .missions
+            .as_ref()
+            .is_some_and(|panel| panel.owns_conversation_target(&session_id));
+        Some((
+            entry.binding.as_ref()?,
+            entry.project.as_ref()?.id.as_str(),
+            owned,
+        ))
+    }) else {
+        return;
+    };
+    if !owned_target {
+        return;
+    }
+    let Some(launcher) = s.screen.launcher() else {
+        return;
+    };
+    if launcher.authentication_required
+        || launcher
+            .connection
+            .as_ref()
+            .is_none_or(|conn| !binding.client.same_connection(&conn.client))
+        || launcher
+            .project
+            .as_ref()
+            .is_none_or(|project| project.id != project_id)
+    {
+        return;
+    }
+    let already_active = !s.screen.is_launcher()
+        && crate::workspace::active_session(s) == Some(session_id.as_str())
+        && s.phase != crate::Phase::Failed;
+    let can_switch = !already_active
+        && !launcher.pending
+        && (crate::launcher::can_rebind_session(s, &session_id)
+            || crate::launcher::can_open_child_session(s));
+    if !already_active && !can_switch {
+        return;
+    }
+    // Dismiss active previews/drawers immediately only when revealing the already-bound session;
+    // switching sessions lets `bind_at` replace them once the target resolves.
+    if already_active {
+        crate::git::close_preview(s);
+        if let Some(files) = &mut s.files {
+            files.close_reader();
+        }
+        s.shell.close_floating(tx);
+    }
+    crate::launcher::choose_mission_conversation(s, session_id, tx);
+    tx.instant();
 }
 
 fn mission_owner(s: &State) -> Option<&missions::Panel> {
@@ -145,7 +281,11 @@ fn mission_edit(s: &mut State) -> (Option<&mut missions::Panel>, &mut TextEdit) 
     (panel, &mut s.rejected_edit)
 }
 
-pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
+pub(super) fn poll_missions(
+    ui: &mut Ui,
+    s: &State,
+    tx: &mut rune::Tx,
+) -> (bool, Vec<crate::backend::Backend>) {
     let finished = ui.mission_lifecycle.poll();
     let mut changed = !finished.is_empty();
     let mut selection_changed = false;
@@ -236,16 +376,46 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
             }
         }
     }
+    let active_entry = &ui.entries[ui.active];
+    let active_briefing = (mounted
+        && matches!(&active_entry.saved, Tab::Workspace(saved)
+            if saved.view.right_panel == RightPanelTab::Missions))
+    .then(|| {
+        let panel = active_entry.missions.as_ref().filter(|p| p.supported())?;
+        let (key, header) = panel.briefing_source()?;
+        Some((active_entry.key.as_str(), key, header, panel))
+    })
+    .flatten();
+    changed |=
+        ui.mission_briefing
+            .reconcile(active_briefing.as_ref().map(|(occ, key, header, panel)| {
+                missions::ActiveBriefing {
+                    occurrence: occ,
+                    key,
+                    header,
+                    backend: panel.briefing_backend(),
+                    wake: panel.briefing_wake(),
+                    failed: panel.detail_failed(),
+                }
+            }));
+    changed |= ui.mission_briefing.poll();
     if selection_changed {
         ui.changed();
     }
-    changed
+    (changed, ui.mission_briefing.take_auth_expired())
+}
+
+pub(crate) fn suspend_mission_briefing(s: &mut State) {
+    if let Some(ui) = &mut s.workspace {
+        ui.mission_briefing.suspend();
+    }
 }
 
 pub(crate) fn suspend_missions(s: &mut State) {
     if let Some(ui) = &mut s.workspace {
         ui.mission_lifecycle.confirmation = None;
         ui.mission_lifecycle.retain_checks_for(None);
+        ui.mission_briefing.suspend();
         if let Some(panel) = &mut ui.entries[ui.active].missions {
             panel.show(false);
             panel.cancel_probe();
@@ -254,6 +424,22 @@ pub(crate) fn suspend_missions(s: &mut State) {
 }
 
 pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
+    if let Some(ui) = &mut s.workspace {
+        let active_workspace = ui.entries[ui.active]
+            .project
+            .as_ref()
+            .map(|project| project.id.as_str());
+        let reconnected = match event {
+            None => true,
+            Some(WorkspaceEvent::MissionsReconnected { workspace_id }) => {
+                active_workspace == Some(workspace_id.as_str())
+            }
+            _ => false,
+        };
+        if reconnected {
+            ui.mission_briefing.suspend();
+        }
+    }
     // No observer may grant demand; the real mounted occurrence owns it.
     if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
         return;

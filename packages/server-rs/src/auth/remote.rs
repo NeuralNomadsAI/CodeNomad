@@ -28,6 +28,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("DELETE",r"^/api/workspaces/[^/]+/worktrees/[^/]+$"),
     ("GET",r"^/workspaces/[^/]+/instance/api/vcs/status$"),
     ("GET",r"^/api/(?:missions/playbooks|workspaces/[^/]+/missions(?:/msn_[a-z0-9]+(?:/(?:content|tasks))?)?)$"),
+    ("GET",r"^/api/workspaces/[^/]+/missions/[^/]+/admission$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/creation/[A-Za-z0-9_-]+$"),
     ("GET POST",r"^/api/workspaces/[^/]+/missions/recurrence$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/recurrence/[^/]+/(?:current|run-now/status|passages/[^/]+|current/[^/]+/content)$"),
@@ -355,4 +356,25 @@ fn preview_control(path: &str, method: &Method) -> bool {
                 .is_some_and(|id| id.len() == 36 && uuid::Uuid::parse_str(id).is_ok()),
             _ => false,
         }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CATALOG;
+
+    fn admitted(method: &str, path: &str) -> bool {
+        let effective = if method == "HEAD" { "GET" } else { method };
+        CATALOG.iter().any(|(methods, pat)| methods.split(' ').any(|m| m == effective) && pat.is_match(path))
+    }
+
+    #[test]
+    fn remote_catalog_admits_mission_admission_get_and_head_only() {
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/admission"));
+        assert!(admitted("HEAD", "/api/workspaces/ws-1/missions/msn_abc123/admission"));
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/legacy-1/admission"));
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/tasks"));
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/content"));
+        assert!(!admitted("POST", "/api/workspaces/ws-1/missions/msn_abc123/admission"));
+        assert!(!admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/admission/extra"));
+    }
 }

@@ -533,7 +533,77 @@ fn valid_tasks(
         .all(|report| keys.contains(&report.task_key) || named_reports(&report.id))
 }
 
+impl Header {
+    pub fn project_id(&self) -> &str {
+        &self.project
+    }
+
+    pub fn project_canonical(&self) -> &str {
+        &self.project_canonical
+    }
+
+    pub fn coordinator_session_id(&self) -> &str {
+        &self.coordinator_session_id
+    }
+
+    /// Exact match against an accepted briefing carrying this request ID.
+    /// Automatic briefings (`auto:<revision>`) or unrelated request IDs never match.
+    pub fn briefing_response_id(&self, request_id: &str) -> Option<&str> {
+        if let Some(latest) = self.extra.get("briefing").and_then(Value::as_object)
+            && latest.get("requestID").and_then(Value::as_str) == Some(request_id)
+            && let Some(id) = latest
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+        {
+            return Some(id);
+        }
+        self.extra
+            .get("briefingResponses")
+            .and_then(Value::as_array)?
+            .iter()
+            .find_map(|item| {
+                let obj = item.as_object()?;
+                (obj.get("requestID").and_then(Value::as_str) == Some(request_id))
+                    .then(|| {
+                        obj.get("briefingID")
+                            .and_then(Value::as_str)
+                            .filter(|id| !id.is_empty())
+                    })
+                    .flatten()
+            })
+    }
+}
+
+impl MapHeader {
+    pub fn accepts_coordinator_message(&self) -> bool {
+        self.root.status == Status::Active
+            && matches!(self.root.run_state, None | Some(RunState::Running))
+            && self
+                .control
+                .as_ref()
+                .is_none_or(|control| control.pending == 0)
+            && self.root.extra.get("controlUnavailable") != Some(&Value::Bool(true))
+    }
+
+    pub fn briefing_target(&self) -> super::BriefingTarget {
+        super::BriefingTarget {
+            mission: self.root.id.clone(),
+            project: self.root.project.clone(),
+            canonical: self.root.project_canonical.clone(),
+            coordinator: self.root.coordinator_session_id.clone(),
+        }
+    }
+}
+
 impl Task {
+    pub fn actor_session_id(&self) -> Option<&str> {
+        self.extra
+            .get("actorSessionId")
+            .and_then(Value::as_str)
+            .filter(|id| panel_id(id))
+    }
+
     fn missing_report(&self) -> bool {
         let identity = |value: Option<&Value>| {
             value

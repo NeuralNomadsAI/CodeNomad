@@ -35,7 +35,7 @@ pub(crate) use state::{
     has_unopened_detached_panels, mission_confirmation, mission_event, mission_observation_project,
     mission_panel, mission_supported, missions_composing, reconcile_detached_online,
     right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
-    suspend_missions,
+    suspend_mission_briefing, suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;

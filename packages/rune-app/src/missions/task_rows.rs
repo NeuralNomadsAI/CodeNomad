@@ -1,11 +1,50 @@
+#[cfg(test)]
+use super::observation::Observation;
 use crate::strings::{locale, t};
-use codenomad_client::missions::{Task, TaskStatus};
-use rune::{El, col, text};
+#[cfg(test)]
+use codenomad_client::missions::MapHeader;
+use codenomad_client::{
+    history::valid_id,
+    missions::{Task, TaskStatus},
+};
+use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
     Space, TextRole, catalogue,
     layout::{self, Layout},
 };
-use std::{borrow::Cow, collections::HashMap, rc::Rc};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
+
+pub(super) type OpenTask<S> = Rc<dyn Fn(&mut S, String, &mut Tx)>;
+
+/// Exact owned worker conversation for a task. Never falls back to the coordinator.
+pub(super) fn task_conversation_with_actors(
+    coordinator: &str,
+    actors: &HashSet<String>,
+    task: &Task,
+) -> Option<String> {
+    let id = task.actor_session_id()?;
+    if id == coordinator || id == "global" || !valid_id(id) || !actors.contains(id) {
+        return None;
+    }
+    Some(id.to_owned())
+}
+
+#[cfg(test)]
+pub(super) fn task_conversation(
+    header: &MapHeader,
+    observation: &Observation,
+    task: &Task,
+) -> Option<String> {
+    task_conversation_with_actors(
+        header.root.coordinator_session_id(),
+        &observation.current_actors(),
+        task,
+    )
+}
 
 #[derive(Clone)]
 pub(super) struct TaskRows {
@@ -72,19 +111,42 @@ impl TaskRows {
     }
 
     pub fn view<S: 'static>(self: &Rc<Self>) -> El {
+        self.view_rows::<S>(None)
+    }
+
+    pub fn view_with_open<S: 'static>(
+        self: &Rc<Self>,
+        coordinator: String,
+        actors: Rc<HashSet<String>>,
+        open: OpenTask<S>,
+    ) -> El {
+        self.view_rows::<S>(Some((coordinator, actors, open)))
+    }
+
+    fn view_rows<S: 'static>(
+        self: &Rc<Self>,
+        open: Option<(String, Rc<HashSet<String>>, OpenTask<S>)>,
+    ) -> El {
         let keys = self.clone();
         let rows = self.clone();
         let language = locale();
         layout::transcript_rows(
             rows.rows.len(),
             move |_: &S, i| Cow::Owned(format!("mission-task-{}", keys.rows[i].id)),
-            move |_: &S, i| crate::strings::with_locale(language, || rows.row(&rows.rows[i])),
+            move |_: &S, i| {
+                let task = &rows.rows[i];
+                let action = open.as_ref().and_then(|(coordinator, actors, cb)| {
+                    task_conversation_with_actors(coordinator, actors, task)
+                        .map(|session_id| (session_id, cb.clone()))
+                });
+                crate::strings::with_locale(language, || rows.row(task, action))
+            },
         )
         .role("list")
         .label(t("missions.control.profiles.role.specialist"))
     }
 
-    fn row(&self, task: &Task) -> El {
+    fn row<S: 'static>(&self, task: &Task, action: Option<(String, OpenTask<S>)>) -> El {
         let title = title(task);
         let state = t(match task.status {
             TaskStatus::Blocked => "missions.control.task.status.blocked",
@@ -121,6 +183,19 @@ impl TaskRows {
                 ))
                 .text_role(TextRole::Small)
                 .wrap_anywhere(),
+            );
+        }
+        if let Some((session_id, open)) = action {
+            row = row.child(
+                layout::button_tx(
+                    t("missionsPanel.task.openConversation"),
+                    false,
+                    move |s: &mut S, tx| {
+                        open(s, session_id.clone(), tx);
+                        tx.instant();
+                    },
+                )
+                .key(format!("mission-task-open-{}", task.id)),
             );
         }
         row
@@ -190,5 +265,66 @@ mod tests {
         }
         assert!(rt.find("mission-task-tsk-2399").is_some());
         assert!(rt.find("mission-task-tsk-0").is_none());
+    }
+
+    #[test]
+    fn task_conversation_requires_verified_owned_non_coordinator_actor() {
+        let header: MapHeader = serde_json::from_value(json!({
+            "root": {
+                "id": "msn-1", "title": "Mission", "excerpt": "Obj",
+                "status": "active", "runState": "running", "revision": 2,
+                "projectID": "proj-1", "projectCanonical": "/repo",
+                "coordinatorSessionId": "ses_coord", "version": 1,
+                "template": "custom", "createdAt": 1.0, "updatedAt": 2.0,
+                "historyTruncated": false, "bodies": {}
+            },
+            "tasks": {
+                "page": {"order": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "offset": 0, "end": 0, "total": 0, "counts": {}, "reports": 0},
+                "pins": [], "reportPins": [], "version": "1"
+            },
+            "collections": {
+                "actors": {"characters": 2, "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "total": 0, "array": true},
+                "history": {"characters": 2, "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "total": 0, "array": true},
+                "reports": {"characters": 2, "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "total": 0, "array": true}
+            }
+        }))
+        .unwrap();
+        let make_task = |id: &str, actor: Option<&str>| -> Task {
+            let mut val = json!({
+                "id": id, "key": id, "title": id, "role": "specialist",
+                "status": "queued", "blockedBy": [], "order": 0,
+                "createdAt": 1, "updatedAt": 1, "dependents": 0,
+                "reportCount": 0, "outstandingExecution": false,
+            });
+            if let Some(actor) = actor {
+                val["actorSessionId"] = json!(actor);
+            }
+            serde_json::from_value(val).unwrap()
+        };
+        let mut obs = Observation::default();
+        obs.fixture_actor("ses_worker");
+        obs.fixture_actor("ses_coord");
+
+        assert_eq!(
+            task_conversation(&header, &obs, &make_task("t1", Some("ses_worker"))),
+            Some("ses_worker".into())
+        );
+        // Never falls back to coordinator or unowned/unobserved/global actors.
+        assert_eq!(
+            task_conversation(&header, &obs, &make_task("t2", Some("ses_coord"))),
+            None
+        );
+        assert_eq!(
+            task_conversation(&header, &obs, &make_task("t3", Some("ses_unobserved"))),
+            None
+        );
+        assert_eq!(
+            task_conversation(&header, &obs, &make_task("t4", Some("global"))),
+            None
+        );
+        assert_eq!(
+            task_conversation(&header, &obs, &make_task("t5", None)),
+            None
+        );
     }
 }

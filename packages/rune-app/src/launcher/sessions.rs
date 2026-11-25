@@ -311,6 +311,20 @@ pub(crate) fn choose_child_ticket(s: &mut State, id: String, ticket: Option<u64>
     }
 }
 
+pub(crate) fn choose_mission_conversation(s: &mut State, id: String, tx: &mut Tx) {
+    s.notifications.supersede_navigation();
+    if !s.screen.is_launcher()
+        && crate::workspace::active_session(s) == Some(id.as_str())
+        && s.phase != Phase::Failed
+    {
+        if s.shell.floating_panel().is_some() {
+            s.shell.close_floating(tx);
+        }
+    } else {
+        choose_from_inner(s, vec![(id, None)], s.shell.floating_panel(), None, true);
+    }
+}
+
 pub(crate) fn choose_destination(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())
@@ -402,6 +416,10 @@ pub fn can_open_child_session(s: &State) -> bool {
     s.screen.launcher().is_some() && session_switch_allowed(s)
 }
 
+pub(crate) fn can_rebind_session(s: &State, id: &str) -> bool {
+    can_rebind(s, id)
+}
+
 pub(super) fn can_rebind(s: &State, id: &str) -> bool {
     !s.screen.is_launcher()
         && s.phase == Phase::Failed
@@ -431,7 +449,7 @@ fn shown(s: &State) -> Option<&str> {
 }
 
 pub(super) fn dismiss_origin_panel(s: &mut State, origin: Option<u64>, tx: &mut Tx) {
-    if origin.is_some() && origin == s.shell.floating_sessions() {
+    if origin.is_some() && origin == s.shell.floating_panel() {
         s.shell.close_floating(tx);
     }
 }
@@ -588,9 +606,20 @@ fn bind_at(
             // This is the same owned occurrence and session; the in-flight reply guard stays live.
             agent.online = false;
             agent.pending_known = false;
+            if s.phase == Phase::Failed {
+                crate::git::close_preview(s);
+                if let Some(files) = &mut s.files {
+                    files.close_reader();
+                }
+            }
         }
     } else if s.files.as_ref().is_none_or(|ui| !ui.uses_connection(&b)) {
         crate::files::bind(s, &b);
+    } else if s.phase == Phase::Failed {
+        crate::git::close_preview(s);
+        if let Some(files) = &mut s.files {
+            files.close_reader();
+        }
     }
     s.draft = TextEdit::new(draft);
     crate::composer::literal::restore(&mut s.draft, &s.composer.draft.literal_spans);

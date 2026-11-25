@@ -30,7 +30,10 @@ use sessions::attach;
 #[cfg(feature = "test-support")]
 pub use sessions::back;
 use sessions::{bind, dismiss_origin_panel, retire_session};
-pub(crate) use sessions::{bind_search, choose_child_ticket, choose_destination};
+pub(crate) use sessions::{
+    bind_search, can_rebind_session, choose_child_ticket, choose_destination,
+    choose_mission_conversation,
+};
 pub use sessions::{
     can_change_session, can_open_child_session, can_visit, choose, close_session, create,
     create_blank, list, visit,

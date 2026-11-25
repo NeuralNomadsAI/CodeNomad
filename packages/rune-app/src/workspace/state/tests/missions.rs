@@ -365,3 +365,106 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         drop(conversation_a);
     });
 }
+
+#[test]
+fn reconnect_event_abandons_preparing_briefing_without_posting() {
+    crate::platform::block_on(async {
+        let http = test_http::Http::new().await;
+        let backend = http.backend.clone();
+        let identity = tokio::spawn(async move { backend.attest_server().await });
+        let meta = http.accept().await;
+        meta.reply(200, json!({"apiContract":1,"serverId":"fixture-server"}))
+            .await;
+        assert_eq!(
+            test_http::wait(identity).await.unwrap().unwrap(),
+            "fixture-server"
+        );
+        let mut s = init();
+        crate::gallery::shell::fixture(&mut s);
+        let mut ui = Ui::new();
+        ui.ready = true;
+        s.workspace = Some(ui);
+        let launcher = s.screen.launcher_mut().unwrap();
+        launcher.connection = Some(http.backend.clone());
+        launcher.server_id = Some("fixture-server".into());
+        let project = launcher.project.clone().unwrap();
+        let workspace_id = project.id.clone();
+        opened(&mut s, &project);
+        let mut proj_backend = http.backend.clone();
+        proj_backend.workspace.clone_from(&workspace_id);
+        let panel = crate::missions::Panel::new(
+            proj_backend.clone(),
+            None,
+            s.reads.clone(),
+            s.wake.clone(),
+        );
+        {
+            let ui = s.workspace.as_mut().unwrap();
+            if let Tab::Workspace(saved) = &mut ui.entries[0].saved {
+                saved.view.right_panel = RightPanelTab::Missions;
+            }
+            ui.entries[0].missions = Some(panel);
+        }
+        let mut rt =
+            rune::Runtime::new(s, crate::view, (1400.0, 880.0), rune::Env::new(false, 1.0));
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(rt.state.shell.visible(1), "right panel laid out");
+
+        let header: codenomad_client::missions::MapHeader = serde_json::from_str(HEADER).unwrap();
+        let key = crate::missions::BriefingKey::new(&proj_backend, &header).unwrap();
+
+        // 1. MissionsReconnected for the active project abandons Preparing even with an admitted GET buffered.
+        let (out1, cancelled1) = rt
+            .state
+            .workspace
+            .as_mut()
+            .unwrap()
+            .mission_briefing
+            .fixture_preparing(&key, "req-reconn-1", "tab-0", proj_backend.clone(), &header);
+        out1.try_send(codenomad_client::missions::BriefingAdmissionOutcome::Admitted)
+            .unwrap();
+        let reconnected =
+            codenomad_client::transport::WorkspaceEvent::MissionsReconnected { workspace_id };
+        rt.update(|s, _| mission_event(s, Some(&reconnected)));
+        assert!(
+            cancelled1.is_closed(),
+            "MissionsReconnected must immediately cancel Preparing before reconcile can POST"
+        );
+        assert_eq!(
+            rt.state
+                .workspace
+                .as_ref()
+                .unwrap()
+                .mission_briefing
+                .visible_phase(&key, &header),
+            Some(&crate::missions::BriefingPhase::Error)
+        );
+
+        // 2. Shared/chat SSE reconnect (mission_event None) also abandons Preparing immediately.
+        let (out2, cancelled2) = rt
+            .state
+            .workspace
+            .as_mut()
+            .unwrap()
+            .mission_briefing
+            .fixture_preparing(&key, "req-reconn-2", "tab-0", proj_backend, &header);
+        out2.try_send(codenomad_client::missions::BriefingAdmissionOutcome::Admitted)
+            .unwrap();
+        rt.update(|s, _| mission_event(s, None));
+        assert!(
+            cancelled2.is_closed(),
+            "SSE reconnect must immediately cancel Preparing before reconcile can POST"
+        );
+        assert_eq!(
+            rt.state
+                .workspace
+                .as_ref()
+                .unwrap()
+                .mission_briefing
+                .visible_phase(&key, &header),
+            Some(&crate::missions::BriefingPhase::Error)
+        );
+    });
+}

@@ -198,6 +198,14 @@ impl Backend {
         &self,
         input: &crate::prompt::Prompt,
     ) -> Result<crate::prompt::Acknowledgement> {
+        self.prompt_with_401(input, false).await
+    }
+
+    pub(crate) async fn prompt_with_401(
+        &self,
+        input: &crate::prompt::Prompt,
+        report_wasm_401: bool,
+    ) -> Result<crate::prompt::Acknowledgement> {
         let body = crate::prompt::encode(input)?;
         let response = self
             .client
@@ -210,7 +218,7 @@ impl Backend {
             .send()
             .await
             .map_err(|_| crate::prompt::PromptError::Unconfirmed)?;
-        if cfg!(not(target_arch = "wasm32"))
+        if (cfg!(not(target_arch = "wasm32")) || report_wasm_401)
             && response.status() == reqwest::StatusCode::UNAUTHORIZED
         {
             return Err(crate::prompt::PromptError::AuthenticationRequired.into());

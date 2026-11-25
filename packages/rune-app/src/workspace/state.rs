@@ -30,7 +30,7 @@ pub(crate) use panel_state::{
     has_unopened_detached_panels, mission_confirmation, mission_event, mission_observation_project,
     mission_panel, mission_supported, missions_composing, reconcile_detached_online,
     right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
-    suspend_missions,
+    suspend_mission_briefing, suspend_missions,
 };
 pub use polling::{file_draft_status, poll, poll_file_drafts, status};
 pub use strip::strip;
@@ -92,6 +92,7 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
     mission_lifecycle: crate::missions::Lifecycle,
+    mission_briefing: crate::missions::BriefingRequests,
     entries: Vec<Entry>,
     active: usize,
     next_key: u64,
@@ -134,6 +135,7 @@ impl Ui {
         Self {
             openings: Default::default(),
             mission_lifecycle: Default::default(),
+            mission_briefing: Default::default(),
             entries: vec![entry("tab-0".into(), Tab::Blank)],
             active: 0,
             next_key: 1,
