@@ -19,14 +19,16 @@ pub(crate) use state::poll_cached_notifications;
 pub(crate) use state::set_files_tab;
 pub(crate) use state::{
     Activation, can_switch_for_notification, check_notification, notification_target,
-    observes_notification, open_notification, owns_notification, workspace_notification,
+    observes_notification, open_notification, open_session_tab_target, owns_notification,
+    switch_tab_for_child, workspace_notification,
 };
 pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
-    close, connected, draft_changed, file_wrap, files_tab, has_conversation_stream, input_ready,
-    new_tab, opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume,
-    retry, schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative,
-    status, strip, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
+    close, connected, conversation_stream_clients, draft_changed, file_draft_status, file_wrap,
+    files_tab, has_conversation_stream, input_ready, new_tab, opened, panel_width, poll,
+    poll_file_drafts, prepare_open, renew_connection, restore_files_mode, resume, retry,
+    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative, status,
+    strip, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
 };
 pub(crate) use state::{
     deliver_detached_events, detached_workspace_ids, has_detached_panels,

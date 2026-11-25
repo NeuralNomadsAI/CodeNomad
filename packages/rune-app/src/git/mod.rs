@@ -8,6 +8,8 @@ mod preview;
 mod refresh;
 mod request;
 mod view;
+#[cfg(test)]
+pub(crate) use binding::fixture_open_preview;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) use binding::poll_notices;
 pub(crate) use binding::{

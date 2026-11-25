@@ -61,6 +61,11 @@ pub(crate) struct Reader {
 
 impl Reader {
     #[cfg(test)]
+    pub(crate) fn fixture_open() -> (Self, ReadingLane) {
+        Self::open()
+    }
+
+    #[cfg(test)]
     pub(crate) fn open() -> (Self, ReadingLane) {
         Self::open_inner()
     }
@@ -429,9 +434,12 @@ impl Reader {
             self.resume_manual_seq = None;
             *revision += 1;
             reading.apply_restored(&self.bookmark, *revision, width_grew);
-            reading.arm_frame_restore_for(&self.bookmark, had_manual_scroll);
+            let restore = reading
+                .rescue_target_if_evicted(messages, history_bounds)
+                .unwrap_or_else(|| self.bookmark.clone());
+            reading.arm_frame_restore_for(&restore, had_manual_scroll);
             reading.note_programmatic_scroll();
-            Reading::restore(&self.bookmark, tx);
+            Reading::restore(&restore, tx);
             return true;
         }
         false
@@ -1532,9 +1540,12 @@ mod resume_tests {
                 "fast post-rotation resume must wait for history width and rescue huge-fast-resume",
             )
             .rect;
+        // Frame 1 clamps at 844px (~24px visible); frame 2 mounts the 40px timeline rail (804px),
+        // wrapping ~45px more tail below the anchored top offset.
+        let visible = (wide[1] + wide[3]) - history[1];
         assert!(
-            wide[1] < history[1] && ((wide[1] + wide[3]) - (history[1] + 24.0)).abs() <= 4.0,
-            "fast post-rotation resume must clamp huge-fast-resume near 24px visible: wide={wide:?}, history={history:?}"
+            wide[1] < history[1] && (20.0..=80.0).contains(&visible),
+            "fast post-rotation resume must rescue and clamp huge-fast-resume in view: visible={visible}, wide={wide:?}, history={history:?}"
         );
     }
 

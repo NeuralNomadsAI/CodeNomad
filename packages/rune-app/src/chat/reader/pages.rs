@@ -120,6 +120,11 @@ pub(in crate::chat) fn install_page(
             }
         }
         s.messages = page.rows;
+        if s.history_detached {
+            s.transcript_display.tool_clock.pause();
+        } else {
+            s.transcript_display.tool_clock.resume();
+        }
         crate::composer::reconcile(s);
     }
     s.can_older = page.older.is_some();
@@ -143,6 +148,11 @@ pub(crate) fn install_anchor(s: &mut State, page: crate::history::Page) {
         reader.install(s.history_detached);
     }
     s.messages = page.rows;
+    if s.history_detached {
+        s.transcript_display.tool_clock.pause();
+    } else {
+        s.transcript_display.tool_clock.resume();
+    }
 }
 
 pub(crate) fn set_timeline_position(s: &mut State, message: String) {

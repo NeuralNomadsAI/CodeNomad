@@ -51,7 +51,8 @@ fn view(drafts: &Drafts, cx: &mut Cx<Drafts>) -> El {
                                     t("markdown.copy"),
                                     false,
                                     move |drafts: &mut Drafts, tx| {
-                                        tx.copy(drafts[index].1.as_str())
+                                        crate::chat::tools::children::note_clipboard_write();
+                                        tx.copy(drafts[index].1.as_str());
                                     },
                                 )
                                 .label(format!("{}: {path}", t("markdown.copy"))),

@@ -12,24 +12,27 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let editing = s.draft.focused || crate::agent::focused_field_key(s).is_some();
     let reference_height = crate::platform::reference_viewport_height(visible_viewport, editing);
     let layout_viewport_height = crate::platform::layout_viewport_height(shell_height);
+    let mut overlays = Vec::new();
+    let worktree = git::session_worktree(s, &mut overlays);
+    overlays.extend(super::media::preview(s));
+    super::message_actions::overlays(s, &mut overlays);
+    let has_controls = !git::has_preview(s) && !crate::files::has_preview(s);
+    let controls = has_controls.then(|| {
+        layout::action_row().key("transcript-controls").child(
+            crate::settings::transcript_filters::trigger(s, &mut overlays, cx.touch_controls()),
+        )
+    });
+    let restore: Vec<El> = super::message_actions::restore(s).collect();
+    let has_restore = !restore.is_empty();
     let layout = rune_theme_codenomad::interruption::session_layout(
         cx,
         expanded,
         s.agent.is_some(),
         s.attachments.error,
+        has_controls,
+        has_restore,
         reference_height,
     );
-    let mut overlays = Vec::new();
-    let worktree = git::session_worktree(s, &mut overlays);
-    overlays.extend(super::media::preview(s));
-    super::message_actions::overlays(s, &mut overlays);
-    let controls = (!git::has_preview(s) && !crate::files::has_preview(s)).then(|| {
-        layout::action_row().child(crate::settings::transcript_filters::trigger(
-            s,
-            &mut overlays,
-            cx.touch_controls(),
-        ))
-    });
     let (more, menu) = composer::menu::view(s);
     overlays.extend(menu);
     let scroll_stack = layout.scrolls_stack();
@@ -37,6 +40,7 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let (caret_pins, caret_probe) =
         chat::ToolDiffPreferences::composer_caret_plan(s, cx, scroll_stack);
     let surface = rune_theme_codenomad::interruption::session_surface(layout)
+        .drawn_rect_into(s.transcript_display.tool_clock.stack_bounds())
         .on_scroll_offset(move |at| {
             stack_scroll.set((at.offset[1], at.max[1]));
         })
@@ -73,52 +77,59 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     } else {
         surface
     };
-    let body = surface
-        .children(caret_probe)
-        .children(chat::ToolDiffPreferences::agent_focus_probe(
-            s,
-            cx,
-            scroll_stack,
-        ))
-        .children(chat::reading::wheel_restore_probe(s, cx))
-        .children(controls)
-        .children(super::message_actions::restore(s))
-        .child(shell::reader(s, || {
-            let history = rune_theme_codenomad::interruption::history(layout)
-                .role("region")
-                .label(crate::strings::t("settings.voice.conversation.title"))
-                .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
-                .children(super::receipts::session(s))
-                .child(transcript::rows(s));
-            crate::timeline::view(
+    let body = super::tools::duration::observe_clip(
+        s,
+        surface
+            .children(caret_probe)
+            .children(chat::ToolDiffPreferences::agent_focus_probe(
                 s,
-                chat::reading::viewport(s, crate::timeline::watch(s, history), scroll_stack),
-                expanded,
+                cx,
+                scroll_stack,
+            ))
+            .children(chat::reading::wheel_restore_probe(s, cx))
+            .children(controls)
+            .children(restore)
+            .child(shell::reader(s, || {
+                let history = super::tools::duration::observe_clip(
+                    s,
+                    rune_theme_codenomad::interruption::history(layout)
+                        .role("region")
+                        .label(crate::strings::t("settings.voice.conversation.title"))
+                        .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
+                        .children(super::receipts::session(s))
+                        .child(transcript::rows(s)),
+                );
+                crate::timeline::view(s, chat::reading::viewport(s, history, scroll_stack), layout)
+            }))
+            .child(
+                agent_view::view(s, cx, layout_viewport_height).on_layout_tx(
+                    move |s: &mut State, rect, tx| {
+                        if !s.screen.is_launcher() {
+                            chat::ToolDiffPreferences::agent_panel_layout(
+                                s,
+                                rect,
+                                scroll_stack,
+                                tx,
+                            );
+                        } else {
+                            tx.live_only();
+                        }
+                    },
+                ),
             )
-        }))
-        .child(
-            agent_view::view(s, cx, layout_viewport_height).on_layout_tx(
-                move |s: &mut State, rect, tx| {
-                    if !s.screen.is_launcher() {
-                        chat::ToolDiffPreferences::agent_panel_layout(s, rect, scroll_stack, tx);
-                    } else {
-                        tx.live_only();
-                    }
-                },
+            .children(chat::attachments::error(s))
+            .child(
+                composer::view::view(s, layout, caret_pins, Some(worktree), more).on_layout_tx(
+                    move |s: &mut State, _, tx| {
+                        if !s.screen.is_launcher() {
+                            chat::ToolDiffPreferences::composer_layout(s, scroll_stack, tx);
+                        } else {
+                            tx.live_only();
+                        }
+                    },
+                ),
             ),
-        )
-        .children(chat::attachments::error(s))
-        .child(
-            composer::view::view(s, layout, caret_pins, Some(worktree), more).on_layout_tx(
-                move |s: &mut State, _, tx| {
-                    if !s.screen.is_launcher() {
-                        chat::ToolDiffPreferences::composer_layout(s, scroll_stack, tx);
-                    } else {
-                        tx.live_only();
-                    }
-                },
-            ),
-        );
+    );
     crate::timeline::search::overlay(s, cx, &mut overlays);
     if s.paging {
         overlays.push(rune_theme_codenomad::timeline::navigation_status(

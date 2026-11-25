@@ -14,7 +14,8 @@ pub use drafts::{
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
-    observes_notification, open_notification, owns_notification, workspace_notification,
+    observes_notification, open_notification, open_session_tab_target, owns_notification,
+    switch_tab_for_child, workspace_notification,
 };
 #[cfg(target_arch = "wasm32")]
 pub(crate) use observation::poll_cached_notifications;
@@ -31,7 +32,7 @@ pub(crate) use panel_state::{
     right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
     suspend_missions,
 };
-pub use polling::{poll, status};
+pub use polling::{file_draft_status, poll, poll_file_drafts, status};
 pub use strip::strip;
 
 use super::{Snapshot, Tab, Workspace, cache::Cache, persistence::Persistence};
@@ -124,6 +125,10 @@ impl Ui {
     #[cfg(test)]
     pub(crate) fn fixture_ready(&mut self) {
         self.ready = true;
+    }
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn fixture_store(&mut self, store: crate::platform::storage::Store) {
+        self.persistence.store = Some(store);
     }
     #[cfg(test)]
     pub(crate) fn fixture_hydrate(&mut self, saved: Snapshot) {
@@ -431,6 +436,7 @@ pub fn retry(s: &mut State, tx: &mut Tx) {
         ui.persistence.retry();
         ui.persistence.retry_file_drafts(s.wake.clone());
     }
+    tx.wake_after(std::time::Duration::ZERO);
     connected(s);
     resume(s, tx);
 }
@@ -550,6 +556,29 @@ pub fn has_conversation_stream(s: &State) -> bool {
                     .is_some_and(Cache::has_conversation_stream)
             })
         })
+}
+
+pub fn conversation_stream_clients(s: &State) -> Vec<(String, bool)> {
+    let mut clients = Vec::new();
+    if s.incoming
+        .as_ref()
+        .is_some_and(|incoming| !incoming.is_closed())
+        && let Some(id) = &s.conversation_client_id
+    {
+        clients.push((id.clone(), s.conversation_stream_connected));
+    }
+    if let Some(ui) = &s.workspace {
+        for entry in &ui.entries {
+            if let Some(cache) = &entry.cache
+                && cache.has_conversation_stream()
+                && let Some(id) = cache.conversation_client_id()
+                && !clients.iter().any(|(existing, _)| existing == id)
+            {
+                clients.push((id.to_owned(), cache.has_healthy_conversation_stream()));
+            }
+        }
+    }
+    clients
 }
 
 #[cfg(test)]

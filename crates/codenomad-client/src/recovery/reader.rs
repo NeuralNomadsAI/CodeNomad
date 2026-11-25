@@ -11,7 +11,7 @@ use crate::{
 };
 use serde_json::Value;
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering::SeqCst},
@@ -32,6 +32,11 @@ pub(super) struct Reader {
     pub(super) resident: Vec<history::Row>,
     pub(super) known: HashSet<String>,
     pub(super) owed: HashSet<(String, usize)>,
+    pub(super) owed_tools: HashMap<(String, String), u8>,
+    pub(super) owed_synthetics: HashMap<String, (u8, usize)>,
+    pub(super) frozen_tools: HashMap<(String, String), u64>,
+    pub(super) execution_settlement: u8,
+    pub(super) execution_ended_at: Option<u64>,
     pub(super) seen: Seen,
     first: Option<String>,
     older: Option<Value>,
@@ -57,6 +62,11 @@ impl Reader {
             resident: Vec::new(),
             known: HashSet::new(),
             owed: HashSet::new(),
+            owed_tools: HashMap::new(),
+            owed_synthetics: HashMap::new(),
+            frozen_tools: HashMap::new(),
+            execution_settlement: 0,
+            execution_ended_at: None,
             seen: Seen {
                 entries: VecDeque::new(),
                 bytes: 0,
@@ -88,6 +98,11 @@ impl Reader {
                 self.resident = Vec::new();
                 self.known = HashSet::new();
                 self.owed = HashSet::new();
+                self.owed_tools = HashMap::new();
+                self.owed_synthetics = HashMap::new();
+                self.frozen_tools = HashMap::new();
+                self.execution_settlement = 0;
+                self.execution_ended_at = None;
                 self.seen.entries.clear();
                 self.seen.bytes = 0;
                 self.first = None;
@@ -111,6 +126,10 @@ impl Reader {
         self.resident.clear();
         self.known.clear();
         self.owed.clear();
+        self.owed_tools.clear();
+        self.frozen_tools.clear();
+        self.execution_settlement = 0;
+        self.execution_ended_at = None;
     }
 
     pub(super) fn clear_window_on_revert(&mut self) {
@@ -122,6 +141,10 @@ impl Reader {
         self.newer = None;
         self.known.clear();
         self.owed.clear();
+        self.owed_tools.clear();
+        self.frozen_tools.clear();
+        self.execution_settlement = 0;
+        self.execution_ended_at = None;
     }
 
     pub(super) async fn sync(
@@ -163,7 +186,119 @@ impl Reader {
             };
             match snapshot {
                 Ok(mut page) if wire.valid(stamp) && rx.is_empty() => {
-                    content::merge_page(&self.resident, &mut page.rows)?;
+                    // Check server HTTP settlement on raw rows before merging SSE terminal state.
+                    self.owed_tools
+                        .retain(|(id, call), _| !tool_settled(&page.rows, id, call));
+                    let raw_known: HashSet<&str> =
+                        page.rows.iter().map(|r| r.id.as_str()).collect();
+                    self.frozen_tools.retain(|(id, call), _| {
+                        raw_known.contains(id.as_str()) && !tool_settled(&page.rows, id, call)
+                    });
+                    if self.execution_settlement > 0
+                        && !page.running
+                        && !(self.anchored.is_some() && page.newer.is_some())
+                    {
+                        self.execution_settlement = 0;
+                        let ended_at = self.execution_ended_at.take();
+                        let turn_start = page
+                            .rows
+                            .iter()
+                            .rposition(|r| r.role == "user")
+                            .map_or(0, |idx| idx + 1);
+                        for row in &page.rows[turn_start..] {
+                            for part in &row.parts {
+                                if let Part::Tool(tool) = part
+                                    && matches!(
+                                        tool.status.as_str(),
+                                        "pending" | "streaming" | "running"
+                                    )
+                                {
+                                    let key = (row.id.clone(), tool.id.clone());
+                                    if self.owed_tools.len() < 64 {
+                                        self.owed_tools.entry(key.clone()).or_insert(0);
+                                    }
+                                    if let Some(ts) = ended_at
+                                        .filter(|&ts| tool.started.is_none_or(|start| start <= ts))
+                                        .or_else(|| tool.started)
+                                        && (self.frozen_tools.contains_key(&key)
+                                            || self.frozen_tools.len() < 64)
+                                    {
+                                        self.frozen_tools.entry(key).or_insert(ts);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let mut merged = page.rows.clone();
+                    if content::merge_page(&self.resident, &mut merged).is_ok() {
+                        page.rows = merged;
+                    }
+                    if !self.owed_synthetics.is_empty() && page.newer.is_none() {
+                        self.owed_synthetics.retain(|id, (_, prior_matches)| {
+                            if page.rows.iter().any(|r| &r.id == id) {
+                                return false;
+                            }
+                            if id.starts_with("msg_") {
+                                return true;
+                            }
+                            let Some(resident_row) = self
+                                .resident
+                                .iter()
+                                .find(|r| &r.id == id && r.role == "synthetic")
+                            else {
+                                return true;
+                            };
+                            let page_matches = page
+                                .rows
+                                .iter()
+                                .filter(|p| same_synthetic_report(p, resident_row))
+                                .count();
+                            page_matches <= *prior_matches
+                        });
+                        let pending_rows: Vec<_> = self
+                            .resident
+                            .iter()
+                            .filter(|r| {
+                                r.role == "synthetic"
+                                    && self.owed_synthetics.contains_key(&r.id)
+                                    && !page.rows.iter().any(|p| p.id == r.id)
+                            })
+                            .cloned()
+                            .collect();
+                        for row in pending_rows {
+                            if page.rows.len() < history::MAX_ROWS {
+                                page.rows.push(row);
+                                if history::check(&page.rows).is_err() {
+                                    page.rows.pop();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if !self.frozen_tools.is_empty() {
+                        for row in &mut page.rows {
+                            if !row.parts.iter().any(|p| {
+                                matches!(p, Part::Tool(t)
+                                    if matches!(t.status.as_str(), "streaming" | "running")
+                                        && t.ended.is_none()
+                                        && self.frozen_tools.contains_key(&(row.id.clone(), t.id.clone())))
+                            }) {
+                                continue;
+                            }
+                            let row = Arc::make_mut(row);
+                            for part in &mut row.parts {
+                                if let Part::Tool(tool) = part
+                                    && matches!(tool.status.as_str(), "streaming" | "running")
+                                    && tool.ended.is_none()
+                                    && let Some(&ts) =
+                                        self.frozen_tools.get(&(row.id.clone(), tool.id.clone()))
+                                    && tool.started.is_none_or(|start| start <= ts)
+                                {
+                                    Arc::make_mut(tool).ended = Some(ts);
+                                }
+                            }
+                        }
+                    }
                     self.owed.retain(|(id, ordinal)| {
                         !page
                             .rows
@@ -191,6 +326,54 @@ impl Reader {
                     self.newer = page.newer.clone();
                     self.known = page.rows.iter().map(|r| r.id.clone()).collect();
                     self.resident = page.rows.clone();
+                    if self.historical {
+                        self.execution_settlement = 0;
+                        self.owed_tools.retain(|(id, _), _| self.known.contains(id));
+                        self.owed_synthetics.clear();
+                    } else {
+                        if self.execution_settlement > 0 && page.running {
+                            self.execution_settlement -= 1;
+                            if self.execution_settlement > 0 {
+                                self.dirty = true;
+                                let attempt = u64::from(3 - self.execution_settlement);
+                                self.quiet = Instant::now() + Duration::from_millis(100 * attempt);
+                            }
+                        }
+                        if !self.owed_tools.is_empty() {
+                            let mut max_attempt = 0u8;
+                            self.owed_tools.retain(|_, attempts| {
+                                *attempts = attempts.saturating_add(1);
+                                if *attempts <= 3 {
+                                    max_attempt = max_attempt.max(*attempts);
+                                    true
+                                } else {
+                                    false
+                                }
+                            });
+                            if !self.owed_tools.is_empty() {
+                                self.dirty = true;
+                                self.quiet = Instant::now()
+                                    + Duration::from_millis(100 * u64::from(max_attempt));
+                            }
+                        }
+                        if !self.owed_synthetics.is_empty() {
+                            let mut max_attempt = 0u8;
+                            self.owed_synthetics.retain(|_, (attempts, _)| {
+                                *attempts = attempts.saturating_add(1);
+                                if *attempts <= 3 {
+                                    max_attempt = max_attempt.max(*attempts);
+                                    true
+                                } else {
+                                    false
+                                }
+                            });
+                            if !self.owed_synthetics.is_empty() {
+                                self.dirty = true;
+                                self.quiet = Instant::now()
+                                    + Duration::from_millis(100 * u64::from(max_attempt));
+                            }
+                        }
+                    }
                     let done = (self.terminal || self.busy) && !page.running;
                     if done && !self.historical && !self.owed.is_empty() {
                         self.settlement_reads += 1;
@@ -233,6 +416,9 @@ impl Reader {
                 Ok(_) => {
                     self.quiet = Instant::now() + Duration::from_millis(200);
                 }
+                Err(PageFailure::StreamClosed) => {
+                    return Ok(Turn::Next);
+                }
                 Err(PageFailure::AuthenticationExpired) => {
                     expire_reading(backend, reading, wire, out, wake).await;
                     return Ok(Turn::Stop);
@@ -258,6 +444,18 @@ impl Reader {
         }
         Ok(Turn::Process)
     }
+}
+
+pub(super) fn tool_settled(rows: &[history::Row], id: &str, call: &str) -> bool {
+    rows.iter()
+        .find(|r| r.id == id)
+        .and_then(|r| {
+            r.parts.iter().find_map(|p| match p {
+                Part::Tool(t) if t.id == call => Some(t),
+                _ => None,
+            })
+        })
+        .is_some_and(|t| !matches!(t.status.as_str(), "pending" | "streaming" | "running"))
 }
 
 pub(super) struct Lane<'a> {
@@ -303,6 +501,7 @@ impl ReadingLane {
 
 enum PageFailure {
     AuthenticationExpired,
+    StreamClosed,
     Read(history::Error),
 }
 
@@ -339,10 +538,19 @@ async fn read_page(
             None => Some(page.await),
         }
     };
-    let result = futures_lite::future::race(content, async {
-        wire.placement_changed().await;
-        None
-    })
+    let result = futures_lite::future::race(
+        content,
+        futures_lite::future::race(
+            async {
+                wire.placement_changed().await;
+                None
+            },
+            async {
+                wire.stream_closed().await;
+                Some(Err(PageFailure::StreamClosed))
+            },
+        ),
+    )
     .await;
     result
         .filter(|_| reading.is_none_or(|reading| reading.demand.current().generation == generation))
@@ -383,6 +591,22 @@ pub(super) async fn reader_event(
 pub(super) fn can_restart(row: &crate::Message) -> bool {
     !row.completed && row.body.is_empty() && row.parts.iter().all(|part|
         matches!(part,Part::Text(text) if text.text.is_empty() && text.provenance==TextProvenance::Live))
+}
+
+pub(super) fn same_synthetic_report(a: &crate::Message, b: &crate::Message) -> bool {
+    if a.role != "synthetic" || b.role != "synthetic" {
+        return false;
+    }
+    fn report(row: &crate::Message) -> Option<&crate::content::SubagentReport> {
+        row.parts.iter().find_map(|part| match part {
+            Part::SubagentReport(r) => Some(r),
+            _ => None,
+        })
+    }
+    match (report(a), report(b)) {
+        (Some(ra), Some(rb)) => ra.child == rb.child && ra.state == rb.state && ra.body == rb.body,
+        _ => false,
+    }
 }
 fn read_diagnostic(error: &history::Error) -> String {
     if let Some(http) = error.downcast_ref::<reqwest::Error>() {
@@ -431,6 +655,7 @@ mod diagnostic_tests {
                 .unwrap();
         assert!(super::can_restart(&row));
         row.parts.push(Part::Text(Text {
+            part_index: None,
             text: String::new(),
             provenance: TextProvenance::Live,
         }));
@@ -439,6 +664,7 @@ mod diagnostic_tests {
         assert!(!super::can_restart(&row));
         row.completed = false;
         row.parts[0] = Part::Text(Text {
+            part_index: None,
             text: "already painted".into(),
             provenance: TextProvenance::Live,
         });
@@ -455,6 +681,28 @@ mod diagnostic_tests {
         assert_eq!(super::read_diagnostic(&unknown), "contract validation");
         let anchor: crate::history::Error = "resident anchor missing".into();
         assert_eq!(super::read_diagnostic(&anchor), "resident anchor missing");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn stream_close_aborts_in_flight_page_with_stream_closed_failure() {
+        use super::{PageFailure, read_page};
+        use crate::{backend::Backend, stream};
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            let wire = std::sync::Arc::new(stream::State::default());
+            let closer = wire.clone();
+            tokio::spawn(async move {
+                tokio::task::yield_now().await;
+                closer.close_stream();
+            });
+            let result = read_page(&backend, None, 0, &wire, std::future::pending()).await;
+            assert!(matches!(result, Some(Err(PageFailure::StreamClosed))));
+        });
     }
 }
 

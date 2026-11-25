@@ -272,7 +272,7 @@ impl Reading {
         }
     }
 
-    pub(super) fn note_programmatic_scroll(&self) {
+    pub(crate) fn note_programmatic_scroll(&self) {
         let mut cur = self.scroll_state.get();
         cur.ignore_manual_once = true;
         self.scroll_state.set(cur);
@@ -303,6 +303,8 @@ impl Reading {
         self.following = true;
         self.at_bottom = true;
         self.top = None;
+        self.passage = None;
+        self.jump = None;
         self.top_manual_seq = self.scroll_state.get().manual_seq;
         self.min_record_revision = self.min_record_revision.max(min_revision);
         self.resize_anchor = None;
@@ -314,6 +316,9 @@ impl Reading {
         match bookmark {
             Bookmark::Latest => self.reset_to_latest(revision),
             Bookmark::Message { id, offset } => {
+                if width_grew {
+                    self.passage = None;
+                }
                 let prev_height = self
                     .top
                     .as_ref()
@@ -338,6 +343,57 @@ impl Reading {
                 });
             }
         }
+    }
+
+    // Rune (`1d78d5688`, unchanged in `a1fbe7ff5`) suppresses `on_drawn_layout_tx` when a rebuilt
+    // row keeps the same drawn rect; remove once `on_drawn_layout_tx` can re-fire on revision bumps.
+    pub(super) fn rescue_target_if_evicted(
+        &mut self,
+        messages: &[crate::history::Row],
+        history_bounds: [f32; 4],
+    ) -> Option<Bookmark> {
+        if !(history_bounds[3] > 0.0 && history_bounds[1].is_finite()) {
+            return None;
+        }
+        let anchor = self.resize_anchor.as_mut()?;
+        if !anchor.may_rescue || anchor.offset >= 0.0 || anchor.rescued || anchor.clamped {
+            return None;
+        }
+        let anchor_pos = messages.iter().position(|row| row.id == anchor.id)?;
+        let mut evicted_past_anchor = false;
+        {
+            let rows = self.live_rows.borrow();
+            for (id, (weak, live)) in rows.iter() {
+                if weak.strong_count() == 0 {
+                    continue;
+                }
+                if !Self::hits_probe(history_bounds[1], live.get()) {
+                    continue;
+                }
+                if id == &anchor.id {
+                    return None;
+                }
+                if messages
+                    .iter()
+                    .position(|row| row.id == *id)
+                    .is_some_and(|pos| pos > anchor_pos)
+                {
+                    evicted_past_anchor = true;
+                }
+            }
+        }
+        if !evicted_past_anchor {
+            return None;
+        }
+        anchor.rescued = true;
+        anchor.may_rescue = false;
+        anchor.settling = false;
+        anchor.settle_seq = None;
+        anchor.observed = None;
+        Some(Bookmark::Message {
+            id: anchor.id.clone(),
+            offset: 0.0,
+        })
     }
 
     pub(super) fn hold(&mut self, message: String) {
@@ -614,7 +670,7 @@ impl Reading {
     }
 }
 
-pub(crate) fn keep_passage(s: &State, tx: &mut Tx) {
+pub(crate) fn passage_target(s: &State) -> Option<(String, f32)> {
     let reading = s.transcript_display.reading();
     if !reading.following
         && let (Some((message, _, _)), Some(passage)) = (&reading.top, &reading.passage)
@@ -623,15 +679,44 @@ pub(crate) fn keep_passage(s: &State, tx: &mut Tx) {
             .mode
             .is_none_or(|row| crate::settings::transcript_mode(s, row) != "hidden")
     {
-        let group = matches!(passage.mode, Some(crate::settings::TranscriptRow::Tool(_)))
-            .then(|| {
-                super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key)
-            })
-            .flatten();
-        tx.scroll_key_to(
-            group.unwrap_or_else(|| format!("{message}/{}", passage.key)),
-            passage.offset,
-        );
+        let group = matches!(
+            passage.mode,
+            Some(
+                crate::settings::TranscriptRow::Tool(_)
+                    | crate::settings::TranscriptRow::Thinking
+                    | crate::settings::TranscriptRow::Groups
+            )
+        )
+        .then(|| super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key))
+        .flatten();
+        if let Some(anchor) = group {
+            // Keep small reading offsets (within a header's height) intact so toggling groups
+            // does not jump, but reset deep offsets inside a long collapsed fragment so the
+            // short group header is never pushed off-screen above the viewport.
+            let offset = if passage.offset < -24.0 {
+                0.0
+            } else {
+                passage.offset
+            };
+            Some((anchor, offset))
+        } else {
+            Some((format!("{message}/{}", passage.key), passage.offset))
+        }
+    } else {
+        None
+    }
+}
+
+pub(crate) fn keep_passage(s: &State, tx: &mut Tx) {
+    if s.reader
+        .as_ref()
+        .is_some_and(crate::chat::reader::Reader::defers_scroll)
+    {
+        return;
+    }
+    if let Some((key, offset)) = passage_target(s) {
+        s.transcript_display.reading().note_programmatic_scroll();
+        tx.scroll_key_to(key, offset);
     }
 }
 
@@ -807,7 +892,9 @@ pub(crate) fn poll_jump(s: &mut State, tx: &mut Tx) -> bool {
 pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
     let reading_scope = s.transcript_display.reading().scope();
     let wheel_scope = reading_scope.clone();
+    let wheel_input_scope = s.input_scope.clone();
     let scroll_state = s.transcript_display.reading().scroll_state();
+    let timeline_scroll = crate::timeline::observe_history_scroll(s);
     let layout_scope = s.input_scope.clone();
     let watch_wheel = s.transcript_display.reading().resize_anchor.is_some()
         || s.transcript_display
@@ -835,6 +922,7 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
                 next.manual_seq = prev.manual_seq + 1;
             }
             scroll_state.set(next);
+            timeline_scroll(at);
         })
         .on_layout_tx(move |s: &mut State, rect, tx| {
             if !s.screen.is_launcher() {
@@ -868,81 +956,59 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
             }
             false
         });
-    if !watch_wheel {
-        return history;
-    }
     history.on_wheel(move |s: &mut State, ev, tx| {
-        if s.screen.is_launcher()
-            || !s.transcript_display.reading().same_scope(&wheel_scope)
-            || !ev.dy.is_finite()
-            || ev.dy.abs() <= 0.001
-        {
+        let handled = if watch_wheel {
+            handle_reading_wheel(s, &wheel_scope, &ev, tx)
+        } else {
+            false
+        };
+        crate::timeline::observe_history_wheel(s, &wheel_input_scope, &ev, tx, !handled);
+        handled
+    })
+}
+
+fn handle_reading_wheel(
+    s: &mut State,
+    wheel_scope: &Rc<()>,
+    ev: &rune::WheelEvent,
+    tx: &mut Tx,
+) -> bool {
+    if s.screen.is_launcher()
+        || !s.transcript_display.reading().same_scope(&wheel_scope)
+        || !ev.dy.is_finite()
+        || ev.dy.abs() <= 0.001
+    {
+        return false;
+    }
+    let reading = s.transcript_display.reading_mut();
+    if let Some(fr) = reading.frame_restore.as_mut()
+        && reading.scroll_state.get().seq == fr.obs_seq
+    {
+        let obs_max = fr.obs_max;
+        let obs_seq = fr.obs_seq;
+        let target = (fr.obs_offset - ev.dy).clamp(0.0, obs_max);
+        let delta = fr.obs_offset - target;
+        let moved_history = delta.abs() > 0.5;
+        if !moved_history && matches!(fr.target, FrameRestoreTarget::FromBottom) {
             return false;
         }
-        let reading = s.transcript_display.reading_mut();
-        if let Some(fr) = reading.frame_restore.as_mut()
-            && reading.scroll_state.get().seq == fr.obs_seq
+        let wants_older = ev.dy > 0.0;
+        let wants_newer = ev.dy < 0.0;
+        if moved_history
+            && s.reader
+                .as_ref()
+                .is_some_and(|reader| reader.can_undo_sync(wants_older, wants_newer))
+            && crate::chat::reader::undo_sync_for_manual_scroll(s, obs_seq + 1, tx)
         {
-            let obs_max = fr.obs_max;
-            let obs_seq = fr.obs_seq;
-            let target = (fr.obs_offset - ev.dy).clamp(0.0, obs_max);
-            let delta = fr.obs_offset - target;
-            let moved_history = delta.abs() > 0.5;
-            if !moved_history && matches!(fr.target, FrameRestoreTarget::FromBottom) {
-                return false;
-            }
-            let wants_older = ev.dy > 0.0;
-            let wants_newer = ev.dy < 0.0;
-            if moved_history
-                && s.reader
-                    .as_ref()
-                    .is_some_and(|reader| reader.can_undo_sync(wants_older, wants_newer))
-                && crate::chat::reader::undo_sync_for_manual_scroll(s, obs_seq + 1, tx)
-            {
-                let reading = s.transcript_display.reading_mut();
-                if let Some(fr) = reading.frame_restore.as_mut() {
-                    fr.target = FrameRestoreTarget::Offset;
-                    fr.obs_offset = target;
-                    fr.handled = true;
-                    fr.checked.set(Some(None));
-                }
-                reading.resize_anchor = None;
-                reading.bump_manual_scroll();
-                let at_bottom = obs_max <= 0.5 || target >= obs_max - 0.5;
-                reading.at_bottom = at_bottom;
-                reading.following = at_bottom;
-                s.revision += 1;
-                s.transcript_display
-                    .reading_mut()
-                    .advance_row_guard(s.revision);
-                tx.instant();
-                tx.scroll_to_y("history", target);
-                return true;
-            }
             let reading = s.transcript_display.reading_mut();
-            let fr = reading.frame_restore.as_mut().unwrap();
-            fr.obs_offset = target;
-            if matches!(fr.target, FrameRestoreTarget::FromBottom) {
-                fr.probe_live = true;
-                fr.handled = false;
-                fr.checked.set(Some(Some(target)));
-                reading.resize_anchor = None;
-                reading.bump_manual_scroll();
-                s.revision += 1;
-                return true;
+            if let Some(fr) = reading.frame_restore.as_mut() {
+                fr.target = FrameRestoreTarget::Offset;
+                fr.obs_offset = target;
+                fr.handled = true;
+                fr.checked.set(Some(None));
             }
-            fr.handled = true;
-            let anchor = match &mut fr.target {
-                FrameRestoreTarget::Anchor(id, anchor_offset) => {
-                    *anchor_offset += delta;
-                    Some((id.clone(), *anchor_offset))
-                }
-                FrameRestoreTarget::Offset | FrameRestoreTarget::FromBottom => None,
-            };
             reading.resize_anchor = None;
-            if moved_history {
-                reading.bump_manual_scroll();
-            }
+            reading.bump_manual_scroll();
             let at_bottom = obs_max <= 0.5 || target >= obs_max - 0.5;
             reading.at_bottom = at_bottom;
             reading.following = at_bottom;
@@ -951,22 +1017,56 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
                 .reading_mut()
                 .advance_row_guard(s.revision);
             tx.instant();
-            if let Some((id, anchor_offset)) = anchor {
-                tx.scroll_key_to(id, anchor_offset);
-            } else {
-                tx.scroll_to_y("history", target);
-            }
-            return moved_history;
+            tx.scroll_to_y("history", target);
+            return true;
         }
-        let cur = reading.scroll_state.get();
-        let target = (cur.offset - ev.dy).clamp(0.0, cur.max);
-        if cur.seq > 0 && (target - cur.offset).abs() > 0.5 {
-            reading.note_pending_manual_scroll();
+        let reading = s.transcript_display.reading_mut();
+        let fr = reading.frame_restore.as_mut().unwrap();
+        fr.obs_offset = target;
+        if matches!(fr.target, FrameRestoreTarget::FromBottom) {
+            fr.probe_live = true;
+            fr.handled = false;
+            fr.checked.set(Some(Some(target)));
             reading.resize_anchor = None;
-            reading.frame_restore = None;
+            reading.bump_manual_scroll();
+            s.revision += 1;
+            return true;
         }
-        false
-    })
+        fr.handled = true;
+        let anchor = match &mut fr.target {
+            FrameRestoreTarget::Anchor(id, anchor_offset) => {
+                *anchor_offset += delta;
+                Some((id.clone(), *anchor_offset))
+            }
+            FrameRestoreTarget::Offset | FrameRestoreTarget::FromBottom => None,
+        };
+        reading.resize_anchor = None;
+        if moved_history {
+            reading.bump_manual_scroll();
+        }
+        let at_bottom = obs_max <= 0.5 || target >= obs_max - 0.5;
+        reading.at_bottom = at_bottom;
+        reading.following = at_bottom;
+        s.revision += 1;
+        s.transcript_display
+            .reading_mut()
+            .advance_row_guard(s.revision);
+        tx.instant();
+        if let Some((id, anchor_offset)) = anchor {
+            tx.scroll_key_to(id, anchor_offset);
+        } else {
+            tx.scroll_to_y("history", target);
+        }
+        return moved_history;
+    }
+    let cur = reading.scroll_state.get();
+    let target = (cur.offset - ev.dy).clamp(0.0, cur.max);
+    if cur.seq > 0 && (target - cur.offset).abs() > 0.5 {
+        reading.note_pending_manual_scroll();
+        reading.resize_anchor = None;
+        reading.frame_restore = None;
+    }
+    false
 }
 
 fn live_history_offset(cx: &rune::Cx<State>) -> Option<f32> {
@@ -1599,5 +1699,41 @@ mod tests {
         assert_eq!(user_target(&s, true).as_deref(), Some("a"));
         assert_eq!(user_target(&s, false).as_deref(), Some("c"));
         assert_eq!(s.draft.text, "draft");
+    }
+
+    #[test]
+    fn collapsed_group_passage_target_resets_negative_offset_to_header_top() {
+        use serde_json::json;
+        let m1 = crate::history::decode_message(&json!({
+            "id":"m1","type":"assistant","time":{"completed":1000},"content":[
+                {"type":"reasoning","text":"First long thought"}
+            ]
+        }))
+        .unwrap();
+        let m2 = crate::history::decode_message(&json!({
+            "id":"m2","type":"assistant","time":{"completed":2000},"content":[
+                {"type":"reasoning","text":"Second long thought"}
+            ]
+        }))
+        .unwrap();
+        let mut s = crate::init();
+        crate::settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":true}));
+        s.messages = vec![m1.into(), m2.into()];
+        let reading = s.transcript_display.reading_mut();
+        reading.following = false;
+        reading.top = Some(("m2".into(), -300.0, 0.0));
+        reading.passage = Some(Passage {
+            message: "m2".into(),
+            key: super::super::reasoning::block_key("m2", 0),
+            offset: -300.0,
+            mode: Some(crate::settings::TranscriptRow::Thinking),
+        });
+        assert_eq!(
+            passage_target(&s),
+            Some((
+                format!("m1/{}", super::super::reasoning::block_key("m1", 0)),
+                0.0
+            ))
+        );
     }
 }

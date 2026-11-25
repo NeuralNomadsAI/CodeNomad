@@ -92,48 +92,92 @@ pub struct Sessions {
 }
 
 impl Backend {
-    async fn server_meta(&self) -> Result<Value> {
-        read_json(
-            self.client
-                .get(format!("{}api/meta", self.base))
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await
-    }
-
-    fn observe_service_usage(&self, meta: &Value, id: &str) {
+    async fn probe_server_meta(&self) -> Result<(String, Vec<String>, bool, u64, u64, u64)> {
+        let (generation, seq, drop_epoch) = self.client.begin_meta_probe();
+        let request = self
+            .client
+            .get(format!("{}api/meta", self.base))
+            .header(reqwest::header::CACHE_CONTROL, "no-store");
+        #[cfg(target_arch = "wasm32")]
+        let request = request.fetch_cache_no_store();
+        let response = request.send().await?;
+        let status = response.status();
+        let response = match response.error_for_status() {
+            Ok(response) => response,
+            Err(err) => {
+                if self.client.server_identity().is_some()
+                    && !status.is_server_error()
+                    && status != reqwest::StatusCode::REQUEST_TIMEOUT
+                    && status != reqwest::StatusCode::TOO_MANY_REQUESTS
+                {
+                    self.client.revoke_server_attestation_at(generation, seq);
+                }
+                return Err(err.into());
+            }
+        };
+        let meta = match read_json(response).await {
+            Ok(meta) => meta,
+            Err(err) => {
+                if self.client.server_identity().is_some() {
+                    self.client.revoke_server_attestation_at(generation, seq);
+                }
+                return Err(err);
+            }
+        };
+        let id = match server_id(&meta) {
+            Ok(id) => id,
+            Err(err) => {
+                if self.client.server_identity().is_some() {
+                    self.client.revoke_server_attestation_at(generation, seq);
+                }
+                return Err(err);
+            }
+        };
         if self
             .client
             .server_identity()
-            .is_none_or(|current| current == id)
-            && let Some(capabilities) = meta["capabilities"].as_array()
+            .is_some_and(|current| current != id)
         {
-            self.client
-                .observe_service_usage(capabilities.iter().any(|cap| cap == "service-usage"));
+            self.client.revoke_server_attestation_at(generation, seq);
+            return Ok((id, Vec::new(), false, generation, seq, drop_epoch));
         }
-    }
-
-    pub async fn server_id(&self) -> Result<String> {
-        let meta = self.server_meta().await?;
-        let id = server_id(&meta)?;
-        self.observe_service_usage(&meta, &id);
-        Ok(id)
-    }
-
-    pub async fn attest_server(&self) -> Result<String> {
-        let meta = self.server_meta().await?;
-        let id = server_id(&meta)?;
-        let capabilities = meta["capabilities"]
+        let capabilities: Vec<String> = meta["capabilities"]
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
             .map(str::to_owned)
             .collect();
-        if self.client.attest(&id, capabilities) {
-            self.observe_service_usage(&meta, &id);
+        let same_gen = self.client.drop_generation() == generation;
+        if same_gen {
+            self.client.observe_capabilities_at(
+                generation,
+                seq,
+                capabilities.iter().any(|cap| cap == "service-usage"),
+                capabilities
+                    .iter()
+                    .any(|cap| cap == "settings-atomic-patches"),
+            );
+        }
+        Ok((id, capabilities, same_gen, generation, seq, drop_epoch))
+    }
+
+    pub async fn server_id(&self) -> Result<String> {
+        self.probe_server_meta().await.map(|(id, _, _, _, _, _)| id)
+    }
+
+    pub async fn attest_server(&self) -> Result<String> {
+        self.client.require_attestation();
+        let (id, capabilities, same_gen, generation, seq, drop_epoch) =
+            self.probe_server_meta().await?;
+        if !same_gen {
+            return Err("Transport changed during server attestation".into());
+        }
+        if self
+            .client
+            .verify_server_identity_at(&id, capabilities, generation, seq)
+        {
+            self.client.mark_drop_epoch_attested(drop_epoch);
             Ok(id)
         } else {
             Err("Server identity changed".into())

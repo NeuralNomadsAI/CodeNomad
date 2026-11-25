@@ -542,3 +542,28 @@ pub(crate) fn restore_reading_if_closed(s: &mut State, had_preview: bool, tx: &m
         crate::chat::reading::restore_position(s, tx);
     }
 }
+
+#[cfg(test)]
+pub(crate) fn fixture_open_preview(s: &mut State) {
+    let backend = crate::backend::Backend {
+        client: codenomad_client::http::Http::new().unwrap(),
+        base: "http://127.0.0.1:9/".into(),
+        workspace: "test".into(),
+        session: "s".into(),
+        client_id: "c".into(),
+        session_directory: None,
+        fresh_mode: false,
+    };
+    let mut owner = Ui::new(
+        backend,
+        Some("/synthetic".into()),
+        s.reads.clone(),
+        s.wake.clone(),
+    );
+    owner.replace_preview(super::preview::Preview {
+        source: super::preview::Source::Local(codenomad_client::git::Section::Unstaged),
+        path: "diff.rs".into(),
+        original_path: None,
+    });
+    s.git.owner = Some(owner);
+}

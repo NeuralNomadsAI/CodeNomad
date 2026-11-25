@@ -55,7 +55,7 @@ export function enforceSpeechCredentialPairing(body: unknown, currentSpeech?: un
   if (!isPlainObject(body)) return body
   const patch = { ...(body as Record<string, unknown>) }
   const speech = patch.speech
-  if (!speech || typeof speech !== "object") return patch
+  if (!isPlainObject(speech)) return patch
   const speechPatch = { ...(speech as Record<string, unknown>) }
   const cur = (currentSpeech && typeof currentSpeech === "object") ? currentSpeech as Record<string, unknown> : {}
   const curSpeech = (cur.speech && typeof cur.speech === "object") ? cur.speech as Record<string, unknown> : cur
@@ -66,7 +66,7 @@ export function enforceSpeechCredentialPairing(body: unknown, currentSpeech?: un
     }
   }
   for (const dir of ["stt", "tts"] as const) {
-    if (dir in speechPatch) {
+    if (dir in speechPatch && isPlainObject(speechPatch[dir])) {
       const dirPatch = { ...(speechPatch[dir] as Record<string, unknown>) }
       if ("baseUrl" in dirPatch && !("apiKey" in dirPatch)) {
         const curDir = (curSpeech[dir] && typeof curSpeech[dir] === "object") ? curSpeech[dir] as Record<string, unknown> : {}
@@ -116,12 +116,15 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
   })
 
-  app.get<{ Params: { owner: string } }>("/api/storage/config/:owner", async (request, reply) => {
+  app.get<{ Params: { owner: string }; Querystring: { authoritative?: unknown } }>("/api/storage/config/:owner", async (request, reply) => {
     try {
       const owner = request.params.owner
+      const authoritative = request.query.authoritative === "1"
       return sanitizeConfigOwner(owner, owner === "ui"
         ? deps.settings.getRawConfigOwner(owner)
-        : deps.settings.getOwner("config", owner))
+        : authoritative
+          ? deps.settings.getAuthoritativeConfigOwner(owner)
+          : deps.settings.getOwner("config", owner))
     } catch (error) {
       if (!(error instanceof SettingsReadError)) throw error
       reply.code(503)
@@ -132,11 +135,13 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.patch<{ Params: { owner: string }; Querystring: { conditional?: unknown } }>("/api/storage/config/:owner", configPatchOptions, async (request, reply) => {
     try {
       if (Object.prototype.hasOwnProperty.call(request.query, "conditional")) {
-        if (request.query.conditional !== "missions-v1") throw new Error("Unknown conditional patch mode")
-        return sanitizeConfigOwner(
-          request.params.owner,
-          await withConfigLock(() => applyConditionalMissionPreferences(deps.settings, request.params.owner, request.body)),
-        )
+        if (request.query.conditional === "missions-v1") {
+          return sanitizeConfigOwner(
+            request.params.owner,
+            await withConfigLock(() => applyConditionalMissionPreferences(deps.settings, request.params.owner, request.body)),
+          )
+        }
+        if (request.query.conditional !== "atomic-v1") throw new Error("Unknown conditional patch mode")
       }
       const saved = await withConfigLock(() => {
         const currentOwner = request.params.owner === "server"
@@ -179,14 +184,22 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
       deps.settings.mergePatchDoc("state", request.body ?? {})
       return publicState()
     } catch (error) {
-      reply.code(400)
+      reply.code(error instanceof SettingsReadError ? 503 : 400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
     }
   })
 
-  app.get<{ Params: { owner: string } }>("/api/storage/state/:owner", async (request, reply) => {
+  app.get<{ Params: { owner: string }; Querystring: { authoritative?: unknown } }>("/api/storage/state/:owner", async (request, reply) => {
     if (privateStateOwners.includes(request.params.owner)) return reply.code(403).send()
-    return deps.settings.getOwner("state", request.params.owner)
+    try {
+      return request.query.authoritative === "1"
+        ? deps.settings.getAuthoritativeStateOwner(request.params.owner)
+        : deps.settings.getOwner("state", request.params.owner)
+    } catch (error) {
+      if (!(error instanceof SettingsReadError)) throw error
+      reply.code(503)
+      return { error: error.message }
+    }
   })
 
   app.patch<{ Params: { owner: string } }>("/api/storage/state/:owner", async (request, reply) => {
@@ -197,7 +210,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         && deps.guardServerProfiles?.(request, reply)) return
       return deps.settings.mergePatchOwner("state", request.params.owner, request.body ?? {})
     } catch (error) {
-      reply.code(400)
+      reply.code(error instanceof SettingsReadError ? 503 : 400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
     }
   })

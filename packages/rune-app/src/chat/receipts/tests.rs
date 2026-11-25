@@ -87,7 +87,7 @@ fn hidden_tab_parks_receipt_reads_and_reconnect_replays_the_open_pages() {
             WorkspaceEvent::PermissionReceiptsChanged { message: None },
         ))
         .unwrap();
-        crate::chat::events::poll_hidden_chat(&mut s, 8);
+        crate::chat::events::poll_hidden_chat(&mut s, 8, true);
         assert!(s.incoming.as_ref().unwrap().is_empty());
         let entry = &s.transcript_display.receipts.entries[&None];
         assert!(entry.dirty && entry.job.is_none());

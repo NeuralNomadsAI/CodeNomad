@@ -127,6 +127,7 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             crate::launcher::restore(s, saved);
         }
     }
+    crate::settings::tab_activated(s);
     crate::chat::resume(s, tx);
     tx.instant();
 }

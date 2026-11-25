@@ -24,6 +24,10 @@ impl SessionLayout {
     pub fn scrolls_stack(self) -> bool {
         self.scroll_stack
     }
+
+    pub(crate) fn history_min(self) -> f32 {
+        finite_non_negative(self.history_min).unwrap_or(0.0)
+    }
 }
 
 impl Default for SessionLayout {
@@ -53,24 +57,33 @@ fn composer_minimum_for_viewport(visible: f32) -> f32 {
     })
 }
 
-fn scrolled_history_min(stack_h: f32, touch_handle: f32) -> f32 {
-    TRANSCRIPT_RESERVE.min((stack_h - touch_handle).max(0.0))
+fn scrolled_history_min(stack_h: f32, top_chrome: f32, touch_handle: f32) -> f32 {
+    let avail = (stack_h - top_chrome).max(0.0);
+    if avail > touch_handle {
+        TRANSCRIPT_RESERVE.min(avail - touch_handle)
+    } else if top_chrome >= touch_handle - 4.0 {
+        avail.min(TRANSCRIPT_RESERVE)
+    } else {
+        0.0
+    }
 }
 
 fn non_expanded_layout(
     stack_h: f32,
+    top_chrome: f32,
     viewport_h: f32,
     field_space: f32,
     touch_handle: f32,
 ) -> SessionLayout {
-    let reserve = TRANSCRIPT_RESERVE.min(stack_h);
+    let avail = (stack_h - top_chrome).max(0.0);
+    let reserve = TRANSCRIPT_RESERVE.min(avail);
     let scroll_stack = field_space < MIN_COMPOSER_HEIGHT;
     let composer_max = (field_space - reserve).clamp(MIN_COMPOSER_HEIGHT, MAX_COMPOSER_HEIGHT);
     let default_min = composer_minimum_for_viewport(viewport_h);
     SessionLayout {
         scroll_stack,
         history_min: if scroll_stack {
-            scrolled_history_min(stack_h, touch_handle)
+            scrolled_history_min(stack_h, top_chrome, touch_handle)
         } else {
             (field_space - composer_max).clamp(0.0, reserve)
         },
@@ -84,6 +97,8 @@ pub fn session_layout<S>(
     expanded: bool,
     has_agent: bool,
     has_attachment_error: bool,
+    has_controls: bool,
+    has_restore: bool,
     reference_height: Option<f32>,
 ) -> SessionLayout {
     let t = tokens(layout::dark());
@@ -95,11 +110,24 @@ pub fn session_layout<S>(
         .layout_size("session-shell")
         .and_then(|size| finite_positive(size[1]))
         .or(stack_h);
+    let controls_h = if has_controls {
+        measured(cx, "transcript-controls", control)
+    } else {
+        0.0
+    };
+    let restore_h = if has_restore {
+        measured(cx, "restore-message-history", control)
+    } else {
+        0.0
+    };
+    let top_chrome = controls_h + restore_h;
     if expanded {
         let composer_h = viewport_h.map_or(MIN_COMPOSER_HEIGHT, composer_minimum_for_viewport);
         return SessionLayout {
             scroll_stack: true,
-            history_min: stack_h.map_or(TRANSCRIPT_RESERVE, |h| scrolled_history_min(h, control)),
+            history_min: stack_h.map_or(TRANSCRIPT_RESERVE, |h| {
+                scrolled_history_min(h, top_chrome, control)
+            }),
             composer_min: composer_h,
             composer_max: composer_h,
         };
@@ -128,12 +156,12 @@ pub fn session_layout<S>(
         (Some(outer), Some(field)) if outer > field => outer - field,
         _ => pad * 2.0 + gap + control,
     };
-    let field_space = stack_h - agent_h - error_h - chrome;
+    let field_space = stack_h - top_chrome - agent_h - error_h - chrome;
     let reference_h = reference_height
         .and_then(finite_positive)
         .or(viewport_h)
         .unwrap_or(stack_h);
-    non_expanded_layout(stack_h, reference_h, field_space, control)
+    non_expanded_layout(stack_h, top_chrome, reference_h, field_space, control)
 }
 
 pub fn session_surface(layout: SessionLayout) -> El {
@@ -284,16 +312,18 @@ mod tests {
         // matching Solid min(60% of 410 = 246 px, 45% of 844 = 379.8 px) = 246 px.
         assert!((dock_bound(410.0, 844.0, 120.0) - 246.0).abs() < 0.01);
         assert!((dock_bound(410.0, 514.0, 120.0) - 231.3).abs() < 0.01);
-        assert_eq!(scrolled_history_min(56.0, 27.0), 29.0);
-        assert_eq!(scrolled_history_min(20.0, 27.0), 0.0);
-        assert_eq!(scrolled_history_min(111.0, 27.0), 64.0);
+        assert_eq!(scrolled_history_min(56.0, 0.0, 27.0), 29.0);
+        assert_eq!(scrolled_history_min(20.0, 0.0, 27.0), 0.0);
+        assert_eq!(scrolled_history_min(111.0, 0.0, 27.0), 64.0);
+        assert_eq!(scrolled_history_min(56.0, 24.0, 27.0), 5.0);
+        assert_eq!(scrolled_history_min(40.0, 24.0, 27.0), 16.0);
         // Without an active interruption, Rune applies the same fieldSpace < 44 crowding rule on
         // any tight viewport (including Chrome Android resizes-content and compact desktop windows,
         // whereas Solid limits fieldSpace crowding to coarse-pointer visualViewport occlusion),
         // keeps the empty composer floor at min(minimumForViewport(viewport_h), composer_max), and
         // caps auto-growth at 320px (MAX_COMPOSER_HEIGHT; no manual 60% drag handle).
         assert_eq!(
-            non_expanded_layout(260.0, 500.0, 160.0, 27.0),
+            non_expanded_layout(260.0, 0.0, 500.0, 160.0, 27.0),
             SessionLayout {
                 scroll_stack: false,
                 history_min: 64.0,
@@ -302,7 +332,7 @@ mod tests {
             }
         );
         assert_eq!(
-            non_expanded_layout(200.0, 420.0, 90.0, 27.0),
+            non_expanded_layout(200.0, 0.0, 420.0, 90.0, 27.0),
             SessionLayout {
                 scroll_stack: false,
                 history_min: 46.0,
@@ -311,7 +341,7 @@ mod tests {
             }
         );
         assert_eq!(
-            non_expanded_layout(240.0, 740.0, 110.0, 27.0),
+            non_expanded_layout(240.0, 0.0, 740.0, 110.0, 27.0),
             SessionLayout {
                 scroll_stack: false,
                 history_min: 64.0,
@@ -320,7 +350,7 @@ mod tests {
             }
         );
         assert_eq!(
-            non_expanded_layout(600.0, 740.0, 400.0, 27.0),
+            non_expanded_layout(600.0, 0.0, 740.0, 400.0, 27.0),
             SessionLayout {
                 scroll_stack: false,
                 history_min: 64.0,
@@ -329,7 +359,7 @@ mod tests {
             }
         );
         assert_eq!(
-            non_expanded_layout(160.0, 400.0, 44.0, 27.0),
+            non_expanded_layout(160.0, 0.0, 400.0, 44.0, 27.0),
             SessionLayout {
                 scroll_stack: false,
                 history_min: 0.0,
@@ -338,7 +368,7 @@ mod tests {
             }
         );
         assert_eq!(
-            non_expanded_layout(140.0, 320.0, 30.0, 27.0),
+            non_expanded_layout(140.0, 0.0, 320.0, 30.0, 27.0),
             SessionLayout {
                 scroll_stack: true,
                 history_min: 64.0,
@@ -347,7 +377,7 @@ mod tests {
             }
         );
         assert_eq!(
-            non_expanded_layout(56.0, 160.0, -40.0, 27.0),
+            non_expanded_layout(56.0, 0.0, 160.0, -40.0, 27.0),
             SessionLayout {
                 scroll_stack: true,
                 history_min: 29.0,
@@ -357,7 +387,7 @@ mod tests {
         );
         // Visual-viewport keyboard occlusion with larger unoccluded reference height matches Solid.
         assert_eq!(
-            non_expanded_layout(450.0, 800.0, 350.0, 27.0),
+            non_expanded_layout(450.0, 0.0, 800.0, 350.0, 27.0),
             SessionLayout {
                 scroll_stack: false,
                 history_min: 64.0,
@@ -366,7 +396,7 @@ mod tests {
             }
         );
         assert_eq!(
-            non_expanded_layout(180.0, 800.0, 90.0, 27.0),
+            non_expanded_layout(180.0, 0.0, 800.0, 90.0, 27.0),
             SessionLayout {
                 scroll_stack: false,
                 history_min: 46.0,

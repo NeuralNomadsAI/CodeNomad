@@ -68,7 +68,9 @@ fn view(s: &Scene, cx: &mut Cx<Scene>) -> El {
             |_, _, button| button,
         ) {
             let scroll = s.scroll.clone();
-            conversation = conversation.child(rail.on_scroll_offset(move |pos| scroll.set(pos)));
+            conversation = conversation.child(timeline::rail_slot(
+                rail.on_scroll_offset(move |pos| scroll.set(pos)),
+            ));
         }
         conversation
     })

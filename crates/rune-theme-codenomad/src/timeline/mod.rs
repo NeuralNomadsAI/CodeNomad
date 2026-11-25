@@ -2,12 +2,15 @@
 pub mod icons;
 pub mod preview;
 pub mod search;
+mod wheel;
 use crate::{catalogue, generated_layout::TIMELINE_MIN_WIDTH, layout, palettes, tokens};
 use rune::{El, GrowthSpec, Icon, ScrollSpec, Tx};
 use std::{borrow::Cow, rc::Rc};
 
 pub const VIEWPORT: &str = "timeline";
 pub use rune::ScrollPos as ScrollPosition;
+pub use rune::{GesturePhase, WheelEvent};
+pub use wheel::RailWheelOverride;
 
 pub fn navigation_status(label: &'static str) -> El {
     use crate::{Space, TextRole, layout::Layout};
@@ -36,6 +39,10 @@ pub fn user_scrolled() -> bool {
     hand && !instant
 }
 
+pub fn rail_scrolled() -> bool {
+    rune::scroll_watch_state().0
+}
+
 pub fn fits(width: f32) -> bool {
     width >= TIMELINE_MIN_WIDTH
 }
@@ -44,11 +51,36 @@ pub fn transcript_lane(history: El) -> El {
     rune::col().grow(1.0).min_w(0.0).min_h(0.0).child(history)
 }
 
-pub fn conversation(expanded: bool) -> El {
-    rune::row()
+pub fn conversation(layout: crate::interruption::SessionLayout) -> El {
+    rune::row().w_full().grow(1.0).min_h(layout.history_min())
+}
+
+/// Stable wrapper keeping `conversation` mounted when status banners appear or clear above it.
+pub fn panel(
+    layout: crate::interruption::SessionLayout,
+    notice: Option<El>,
+    conversation: El,
+) -> El {
+    let panel = rune::col()
+        .key("conversation-panel")
         .w_full()
         .grow(1.0)
-        .min_h(crate::interruption::history_minimum(expanded))
+        .children(notice)
+        .child(conversation);
+    if layout.scrolls_stack() {
+        panel
+    } else {
+        panel.min_h(0.0)
+    }
+}
+
+/// Fixed-width slot that isolates the timeline rail's virtualized height from flex min-content sizing.
+pub fn rail_slot(rail: El) -> El {
+    let width = tokens(layout::dark()).metric("timelineRail", "width").px();
+    rune::col()
+        .w(width)
+        .min_h(0.0)
+        .child(rail.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)))
 }
 // Chromium's CSS layout quantum is 1/64 px. Whole bands are integral even
 // though their markers are not, so Rune's f32 prefix sum accumulates no drift.
@@ -66,14 +98,29 @@ pub fn show_marker(index: usize, tx: &mut Tx) {
     tx.scroll_to_instant(VIEWPORT, 0.0, row_top(index));
 }
 
-pub fn reveal_when_outside(index: usize, at: rune::ScrollPos, tx: &mut Tx) {
+pub fn scroll_rail_to(target: f32, tx: &mut Tx) {
+    tx.scroll_to_instant(VIEWPORT, 0.0, target);
+}
+
+pub fn glide_rail_to(target: f32, tx: &mut Tx) {
+    tx.scroll_to(VIEWPORT, 0.0, target);
+}
+
+pub fn reveal_target(index: usize, at: rune::ScrollPos) -> Option<f32> {
+    if at.viewport[1] <= 0.0 {
+        return None;
+    }
     let top = row_top(index);
     let end = top + geometry().0;
-    if top < at.offset[1] {
-        tx.scroll_to_instant(VIEWPORT, 0.0, top);
+    let target = if top < at.offset[1] || end - top > at.viewport[1] {
+        top
     } else if end > at.offset[1] + at.viewport[1] {
-        tx.scroll_to_instant(VIEWPORT, 0.0, end - at.viewport[1]);
-    }
+        end - at.viewport[1]
+    } else {
+        return None;
+    };
+    let clamped = target.clamp(0.0, at.max[1].max(0.0));
+    ((clamped - at.offset[1]).abs() > 0.5).then_some(clamped)
 }
 
 pub fn visible_markers(at: rune::ScrollPos, count: usize) -> std::ops::Range<usize> {
