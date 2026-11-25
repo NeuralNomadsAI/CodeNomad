@@ -1,11 +1,11 @@
 use super::*;
+use crate::files::test_http as http;
 use crate::{files::Ui, platform::reads::Reads};
+use http::{Http, Request};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-mod http;
-use http::{Http, Request};
 
 async fn poll(ui: &mut Ui, done: impl Fn(&Ui) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -52,6 +52,165 @@ fn edit(ui: &mut Ui, text: &str) {
 }
 fn save(ui: &mut Ui) {
     ui.save_document(ui.document.scope());
+}
+
+#[test]
+fn closing_a_peer_reader_keeps_the_save_check_owned_by_the_requesting_reader() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let store = Store::default();
+        let mut first = http.ui(store.clone(), "first");
+        let mut peer = http.ui(store, "peer");
+        open(&mut first, &http, "first.txt", "YQ==", "a").await;
+        peer.document.draft = first.document.draft.clone();
+        edit(&mut first, "edited");
+        save(&mut first);
+        let check = request(&mut first, &http, "GET", "first.txt").await;
+        peer.close_reader();
+        assert!(first.document.pending());
+        check.preview("first.txt", "YQ==", Some("v1")).await;
+        let put = request(&mut first, &http, "PUT", "first.txt").await;
+        assert_eq!(put.body["contents"], "edited");
+        put.reply(204, serde_json::Value::Null).await;
+        poll(&mut first, |ui| {
+            !ui.document.pending() && !ui.document.dirty()
+        })
+        .await;
+    });
+}
+
+#[test]
+fn reopening_requires_a_fresh_native_project_identity_after_git_init() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let mut ui = http.ui(Store::default(), "first");
+        ui.document.set_project(Project {
+            id: "owned".into(),
+            path: "/private".into(),
+        });
+        for (project, expected) in [("global", None), ("initialized", Some("initialized"))] {
+            ui.open("first.txt".into());
+            assert!(!ui.document.editable());
+            for _ in 0..2 {
+                let request = http.accept().await;
+                if request.header.contains("/instance/api/location") {
+                    request.reply(200, serde_json::json!({"data": {"directory": "/private", "project": {"id": project}}})).await;
+                } else {
+                    assert!(request.header.contains("/files/preview"));
+                    request.preview("first.txt", "YQ==", Some("v1")).await;
+                }
+                ui.poll(20.0);
+            }
+            poll(&mut ui, |ui| ui.document.editable()).await;
+            assert_eq!(
+                ui.document.key().unwrap().native_project.as_deref(),
+                expected
+            );
+            ui.close_reader();
+        }
+    });
+}
+
+#[test]
+fn a_detached_save_updates_the_fingerprint_of_edits_made_during_the_put() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let store = Store::default();
+        let mut ui = http.ui(store.clone(), "first");
+        open(&mut ui, &http, "first.txt", "YQ==", "a").await;
+        let key = ui.document.key.clone().unwrap();
+        let durable = SavedKey {
+            server: "installation".into(),
+            project: "/private".into(),
+            native_project: None,
+            directory: key.directory.clone(),
+            path: key.path.clone(),
+        };
+        ui.document.saved_key = Some(durable.clone());
+        edit(&mut ui, "b");
+        save(&mut ui);
+        request(&mut ui, &http, "GET", "first.txt")
+            .await
+            .preview("first.txt", "YQ==", Some("v1"))
+            .await;
+        let put = request(&mut ui, &http, "PUT", "first.txt").await;
+        edit(&mut ui, "c");
+        let shared = ui.document.draft.clone().unwrap();
+        ui.close_reader();
+        let fingerprint = format!("\"{}\"", "b".repeat(64));
+        put.send(
+            &format!("HTTP/1.1 204 No Content\r\nETag: {fingerprint}\r\nConnection: close\r\n\r\n"),
+            b"",
+        )
+        .await;
+        poll(&mut ui, |_| lock(&shared).pending.is_none()).await;
+        let (_, bytes) = store.file_draft_snapshot(0).unwrap();
+        let reopened = Store::default();
+        assert!(reopened.hydrate_file_drafts(&bytes));
+        let draft = reopened.open_saved(&key, Some(&durable));
+        assert_eq!(lock(&draft).version.as_deref(), Some(fingerprint.as_str()));
+        assert_eq!(lock(&draft).text, "c");
+        for (etag, contents, conflict) in
+            [(fingerprint.as_str(), "Yg==", false), ("v1", "YQ==", true)]
+        {
+            let fresh = Store::default();
+            assert!(fresh.hydrate_file_drafts(&bytes));
+            let mut editor = http.ui(fresh.clone(), "reopened");
+            editor.open("first.txt".into());
+            editor.document.draft = Some(fresh.open_saved(&key, Some(&durable)));
+            request(&mut editor, &http, "GET", "first.txt")
+                .await
+                .preview("first.txt", contents, Some(etag))
+                .await;
+            poll(&mut editor, |ui| ui.reader.receipt().1 && !ui.reader.busy()).await;
+            assert_eq!(
+                editor.document.error() == Some(Error::Conflict(None)),
+                conflict
+            );
+            assert!(editor.document.dirty());
+        }
+    });
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn returning_to_sessions_keeps_the_file_draft_and_blocks_closing_its_tab() {
+    use crate::workspace;
+    let (mut s, http) = platform::block_on(async {
+        let http = Http::new().await;
+        let mut s = crate::init();
+        crate::gallery::shell::fixture(&mut s);
+        s.workspace = Some(workspace::Ui::new());
+        workspace::connected(&mut s);
+        let project = s.screen.launcher().unwrap().project.clone().unwrap();
+        workspace::opened(&mut s, &project);
+        let mut files = http.ui(s.documents.clone(), "tab-0");
+        open(&mut files, &http, "first.txt", "YQ==", "a").await;
+        edit(&mut files, "unsaved edit");
+        s.files = Some(files);
+        (s, http)
+    });
+    crate::launcher::back(&mut s);
+    assert!(s.screen.is_launcher() && s.files.is_none());
+    let mut rt = rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+    rt.update(|s, tx| workspace::close(s, "tab-0", tx));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_key(), "tab-0");
+    rt.update(|s, tx| workspace::new_tab(s, tx));
+    rt.update(|s, tx| workspace::close(s, "tab-0", tx));
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().snapshot().tabs.len(),
+        2
+    );
+    platform::block_on(async {
+        let mut files = http.ui(rt.state.documents.clone(), "tab-0");
+        open(&mut files, &http, "first.txt", "YQ==", "unsaved edit").await;
+        edit(&mut files, "a");
+    });
+    rt.update(|s, tx| workspace::close(s, "tab-0", tx));
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().snapshot().tabs.len(),
+        1
+    );
 }
 fn cached_listing(ui: &mut Ui) {
     use codenomad_client::files::{Entry, EntryKind};
@@ -188,6 +347,7 @@ fn save_requires_a_post_gesture_read_and_retains_edits_after_departure() {
             assert!(Instant::now() < deadline);
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
+        assert!(store.has_tab_edits("tab-a"));
         assert_eq!(ui.document.edit().text, "x");
         ui.close_reader();
         let mut another_session = http.backend.clone();
@@ -198,14 +358,15 @@ fn save_requires_a_post_gesture_read_and_retains_edits_after_departure() {
             Reads::default(),
             Arc::new(|| {}),
         )
-        .with_documents(store, "tab-a".into());
+        .with_documents(store.clone(), "tab-a".into());
         resumed.online(true);
         resumed.open("first.txt".into());
         assert_eq!(resumed.document.edit().text, "c");
         assert_eq!(
             lock(resumed.document.draft.as_ref().unwrap())
                 .original
-                .as_deref(),
+                .as_ref()
+                .map(|original| original.text.as_str()),
             Some("b")
         );
         request(&mut resumed, &http, "GET", "first.txt")
@@ -224,6 +385,9 @@ fn save_requires_a_post_gesture_read_and_retains_edits_after_departure() {
         put.reply(204, serde_json::Value::Null).await;
         poll(&mut resumed, |ui| !ui.document.pending()).await;
         assert!(!resumed.document.dirty());
+        // Closing the reader synchronizes the latest clean baseline in the registry.
+        resumed.close_reader();
+        assert!(!store.has_tab_edits("tab-a"));
         http.quiet().await;
     });
 }
@@ -280,7 +444,7 @@ fn overwrite_and_discard_decisions_are_scoped_and_writes_require_versions() {
         assert_eq!(put.body["contents"], "c");
         put.reply(409, serde_json::json!({})).await;
         poll(&mut ui, |ui| !ui.document.pending()).await;
-        assert_eq!(ui.document.error(), Some(Error::Conflict));
+        assert_eq!(ui.document.error(), Some(Error::Conflict(None)));
         http.quiet().await;
         ui.refresh_document(ui.document.scope());
         let discard = ui.document.confirmation().unwrap();
@@ -351,14 +515,26 @@ fn clean_undo_after_a_lost_acknowledgement_can_refresh_without_replaying() {
         assert_eq!(put.body["contents"], "b");
         edit(&mut ui, "a");
         drop(put);
-        poll(&mut ui, |ui| !ui.document.pending()).await;
+        http::wait(async {
+            while ui.document.writing() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        request(&mut ui, &http, "GET", "first.txt")
+            .await
+            .preview("first.txt", "Yg==", Some("v3"))
+            .await;
+        poll(&mut ui, |ui| !ui.reader.busy()).await;
+        assert_eq!(ui.reader.preview().unwrap().bytes.as_slice(), b"b");
+        assert_eq!(ui.document.edit().text, "a");
         assert!(!ui.document.dirty());
         assert_eq!(ui.document.error(), Some(Error::Uncertain));
         http.quiet().await;
         ui.refresh_document(ui.document.scope());
         request(&mut ui, &http, "GET", "first.txt")
             .await
-            .preview("first.txt", "Yg==", Some("v3"))
+            .preview("first.txt", "Yg==", Some("v4"))
             .await;
         poll(&mut ui, |ui| !ui.reader.busy()).await;
         assert_eq!(ui.document.edit().text, "b");

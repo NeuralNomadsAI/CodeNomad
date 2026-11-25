@@ -5,21 +5,38 @@
 #![forbid(unsafe_code)]
 
 pub mod agent_api;
+pub mod attachments;
 pub mod backend;
 pub mod catalog;
 pub mod content;
 pub mod files;
+pub mod git;
 pub mod history;
 pub mod http;
+pub mod interruption_receipts;
+pub mod message_actions;
+pub mod missions;
+pub mod permission_mode;
+pub mod prompt;
+pub mod prompt_catalogue;
+mod prompt_command;
+pub mod prompt_history;
+mod prompt_receipt;
+pub mod provider_usage;
 pub mod recovery;
 pub mod runtime;
+pub mod search;
 mod server_path;
+pub mod settings;
 pub use server_path::absolute as absolute_server_path;
+pub use server_path::basename as server_path_basename;
+pub use server_path::file_uri as server_file_uri;
 pub use server_path::same as same_server_path;
 pub mod stream;
+pub mod timeline;
 pub mod transport;
 pub mod wire;
-pub use async_channel::{Receiver, Sender, bounded};
+pub use async_channel::{Receiver, Sender, TryRecvError, bounded};
 
 /// Notify an owner's event loop after publishing data, without depending on its UI framework.
 pub type Wake = std::sync::Arc<dyn Fn() + Send + Sync>;
@@ -30,6 +47,7 @@ pub struct Message {
     pub role: String,
     pub completed: bool,
     pub body: String,
+    pub usage: Option<content::Usage>,
     pub parts: Vec<content::Part>,
 }
 
@@ -43,5 +61,7 @@ mod files_write_tests;
 mod fragment_tests;
 #[cfg(test)]
 mod history_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod prompt_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod transport_tests;

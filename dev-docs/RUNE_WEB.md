@@ -4,7 +4,19 @@
 
 Le client, l'état et les écrans de `packages/rune-app` ciblent le bureau et `wasm32-unknown-unknown`. Les requêtes et l'attente des événements sont asynchrones. Le navigateur utilise son origine et son magasin de cookies pour retrouver le serveur ; l'accès distant conserve les contrats HTTPS et d'appairage CodeNomad.
 
+`codenomad-rs serve --ui-dir <bundle>` publie le bundle Rune sur son listener HTTPS direct. Un appareil appairé charge la page, le WASM, les scripts et les polices sur la même origine que les API. L'entrée `/` guide les appareils sans cookie vers l'appairage. L'origine directe doit être admissible et le certificat vérifié par le téléphone. Le transport OpenTunnel est porté par le serveur TypeScript.
+
 Les capacités du bureau sont isolées par la plateforme. La sélection d'un dossier serveur conserve un chemin explicite sur le web. Le lancement d'un processus local appartient à l'hôte bureau. Les fonctions de fenêtres multiples, de fichiers, de notifications et de presse-papiers publient leurs capacités disponibles avant d'être proposées.
+
+La page d'appairage embarque le thème et les dix catalogues ; le code à usage unique disparaît du fragment avant l'échange HTTPS. En cas de rupture du flux, le client sonde le statut d'authentification. Une réponse `pairingRequired` présente les étapes d'appairage sans remplacer le document ni le brouillon. Le bouton de vérification ou le retour au premier plan relit le statut ; la confirmation HTTP réutilise `retry_connection` pour relire l'historique sur la même conversation.
+
+La liste de sessions publie la première page du dossier puis enrichit automatiquement la liste en suivant les curseurs des worktrees déclarés. La collecte et ses résultats appartiennent à l'onglet ; « Actualiser » reprend un curseur interrompu sans retirer les pages acquises. La recherche interroge les mêmes dossiers indépendamment des pages affichées ; changer de projet ou de requête annule la recherche précédente.
+
+Après une rupture SSE et un historique indisponible, l'inventaire authentifié confirme l'absence de l'occurrence. Le navigateur revalide l'identité du serveur, ouvre le même dossier dans une nouvelle occurrence et relie la session native exacte. Il garde le document et le brouillon et relit l'historique sans réémettre d'action. Le catalogue ordinaire est rechargé même lorsque la recherche reste ouverte.
+
+**Réglages → Général** écrit le contraste dans les préférences du serveur connecté ; **Auto** suit `prefers-contrast: more`. **Fournisseurs** ouvre le catalogue en lecture seule du projet courant, même sans conversation. La coupure du flux retire les données et annule la lecture ; la reconnexion rafraîchit le même projet. `packages/rune-app/fixtures/providers-web-fixture.mjs` exerce ces comportements dans Chromium sur un bundle WASM.
+
+**Statistiques** lit le cache et l’agrégat du service OpenCode par le backend du projet, dans le fuseau du navigateur. Masquer le document annule la lecture et la demande en attente ; le retour au premier plan revalide. Les nombres d’activité restent lisibles dans le miroir accessible. Le banc `packages/rune-app/fixtures/providers-web-fixture.mjs <bundle> --stats` exerce le panneau sur un bundle WASM.
 
 ## Risques à qualifier
 
@@ -28,14 +40,16 @@ Le miroir web omet aussi le conteneur `menu`, les entrées désactivées du Menu
 
 ## Vérifications reproductibles
 
-Le bundle produit est qualifié en lecture avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, véritable EventSource et refus 401 sans cookie. Six contextes Chromium couvrent bureau/tablette/téléphone et clair/sombre, avec contrôles dans le viewport, captures et contraste. L'accès HTTPS appairé et les appareils physiques demandent leur qualification propre.
+Le bundle produit est qualifié avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, et refus 401 sans cookie. La barre réserve des commandes tactiles d'au moins 44 px ; seule la liste d'onglets défile horizontalement. Le smoke mobile vérifie leurs rectangles distincts à 320, 390 et 430 px, le toucher au centre, l'IME, le redimensionnement, un message visible uniquement via SSE, la récupération d'un message absent pendant la coupure et la conservation du brouillon après révocation et réappairage. Sur l'émulateur Android, `interactive-widget=resizes-content` fait redimensionner le viewport de mise en page à l'ouverture de Gboard. Les commandes et limites du banc sont dans [Coquille web Rune](../scripts/rune/web-README.md).
 
 Depuis le worktree isolé, avec le `CARGO_TARGET_DIR` existant :
 
 ```powershell
 rustup target add --toolchain 1.99.1 wasm32-unknown-unknown
 cargo +1.99.1 build --locked --target wasm32-unknown-unknown -p codenomad-client -p rune-theme-codenomad
-cargo +1.99.1 build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune
+cargo +1.99.1 check --locked --target wasm32-unknown-unknown -p codenomad-rune-app
 ```
 
 La compilation des cibles précède la qualification de la coquille servie par le serveur. Celle-ci couvre connexion, liste des sessions et lecture avec le même code d'état et de vues. Le parcours complet sur téléphone ajoute écriture, permissions, questions et arrêt via l'accès distant, puis les notifications push.
+
+`node scripts/rune/web-loopback-links.mjs <bundle>` vérifie les liens sous Chromium mobile avec la scène `transcript-loopback` d'un bundle WASM construit et empaqueté avec `test-support`. Le banc intercepte l'origine distante et les destinations dans le navigateur.

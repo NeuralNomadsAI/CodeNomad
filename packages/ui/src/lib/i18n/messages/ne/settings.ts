@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "हरफ {line} मा वाक्यविन्यास त्रुटि",
   "settings.nav.servers": "सर्भरहरू",
   "settings.servers.open": "खोल्नुहोस्",
   "settings.servers.dialog.name": "नाम",
@@ -251,6 +252,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "आउटपुट",
   "contextUsagePanel.labels.cost": "लागत",
   "contextUsagePanel.included": "समावेश",
+  "contextUsagePanel.partialTotal": "कुराकानीको आंशिक जम्मा",
+  "contextUsagePanel.totalUnavailable": "कुराकानीको जम्मा उपलब्ध छैन",
   "contextUsagePanel.labels.totalInput": "कुल इनपुट",
   "contextUsagePanel.labels.totalOutput": "कुल आउटपुट",
   "contextUsagePanel.labels.totalCost": "कुल लागत",
@@ -442,7 +445,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "OpenCode संस्करण",
   "settings.opencode.update.subtitle": "कन्फिगर गरिएको OpenCode बाइनरीको स्थापित संस्करण।",
   "settings.opencode.update.checking": "स्थापित संस्करण पढ्दै...",
-  "settings.opencode.update.checkFailed": "स्थापित OpenCode संस्करण पढ्न सकिएन।",
+  "settings.opencode.update.checkFailed": "OpenCode का अपडेटहरू जाँच गर्न सकिएन।",
   "settings.opencode.update.retry": "फेरि प्रयास गर्नुहोस्",
   "settings.opencode.update.installed": "स्थापित संस्करण",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} उपलब्ध छ। OpenCode V2 ले स्वचालित स्थापना समर्थन गर्दैन।",
@@ -748,5 +751,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": ".txt डाउनलोड गर्नुहोस्",
   "settings.info.diagnostics.reportBug": "बग रिपोर्ट गर्नुहोस्",
   "settings.info.diagnostics.copied": "निदान जानकारी प्रतिलिपि गरियो।",
+  "settings.info.actions.failed": "कार्य पूरा हुन सकेन। फेरि प्रयास गर्नुहोस्।",
   "providerUsage.openaiTokenSharingUnsupported": "ChatGPT मा साइन इन गर्ने यस विधिका लागि OpenAI ले प्रयोग विवरण उपलब्ध गराउँदैन। कुराकानी जारी राख्न सकिन्छ।",
 } as const

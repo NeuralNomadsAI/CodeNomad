@@ -78,6 +78,18 @@ test("a stale rename after removal does not recreate the entry; a fresh open doe
     [{ ...row, lastAccessed: 2, projectName: "Reopened" }])
 })
 
+test("removing a legacy-only remoteProjectRecents entry as the first write keeps it removed", t => {
+  const legacyOnly = { policy: first, path: "/legacy-only", lastAccessed: 50 }
+  const key = remoteProjectRecentKey(legacyOnly)
+  const f = fixture(t, { remoteServers, remoteProjectRecents: [legacyOnly] })
+  const settings = f.open()
+  const updated = settings.mergePatchOwner("state", "ui", { remoteProjectHistory: { [key]: null } })
+  assert.deepEqual(updated.remoteProjectHistory, {})
+  assert.equal("remoteProjectRecents" in updated, false)
+  assert.deepEqual(f.disk().ui.remoteProjectHistory, {})
+  assert.equal("remoteProjectRecents" in f.disk().ui, false)
+})
+
 for (const lateWrite of ["owner", "document"] as const) {
   test(`an older explicit open arriving via the ${lateWrite} patch keeps the latest access and folder`, t => {
     const older = { policy: first, path: "/canonical", lastAccessed: 100 }
@@ -113,3 +125,13 @@ for (const lateWrite of ["owner", "document"] as const) {
     })
   })
 }
+
+test("recentProjectName truncates at 256 UTF-16 units without splitting surrogate pairs", t => {
+  const renamed = `${"a".repeat(255)}🚀`
+  const f = fixture(t, { remoteServers })
+  const key = remoteProjectRecentKey({ policy: first, path: "/emoji" })
+  const saved = f.open().mergePatchOwner("state", "ui", {
+    remoteProjectHistory: { [key]: { policy: first, path: "/emoji", lastAccessed: 100, projectName: renamed } },
+  })
+  assert.equal((saved.remoteProjectHistory as Record<string, { projectName?: string }>)[key]?.projectName, "a".repeat(255))
+})

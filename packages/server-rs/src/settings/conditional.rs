@@ -55,7 +55,17 @@ fn holds(settings: &Map<String, Value>, expected: &[Expected]) -> bool {
 }
 
 /// `applyConditionalMissionPreferences`
+#[cfg(test)]
 pub fn apply(settings: &Settings, owner: &str, body: &Value) -> Result<Value, Failure> {
+    apply_committed(settings, owner, body, |_| {})
+}
+
+pub fn apply_committed(
+    settings: &Settings,
+    owner: &str,
+    body: &Value,
+    on_committed: impl FnOnce(&Value),
+) -> Result<Value, Failure> {
     if owner != "ui" {
         return Err(Failure::Invalid("Conditional mission preferences require the ui owner".into()));
     }
@@ -66,17 +76,26 @@ pub fn apply(settings: &Settings, owner: &str, body: &Value) -> Result<Value, Fa
     if !holds(&read, &expected) {
         return Err(Failure::Conflict);
     }
-    settings.patch_checked(Kind::Config, "ui", &patch, |before: &Doc, _| {
-        let ui = before.get("ui");
-        let latest = ui.and_then(|ui| ui.get("settings"));
-        if ui.is_some_and(|ui| !ui.is_object()) || latest.is_some_and(|s| !s.is_object()) {
-            return Err(Failure::Conflict);
-        }
-        match holds(&latest.and_then(Value::as_object).cloned().unwrap_or_default(), &expected) {
-            true => Ok(()),
-            false => Err(Failure::Conflict),
-        }
-    })
+    settings
+        .patch_checked_committed(
+            Kind::Config,
+            "ui",
+            &patch,
+            &[],
+            |before: &Doc, _| {
+                let ui = before.get("ui");
+                let latest = ui.and_then(|ui| ui.get("settings"));
+                if ui.is_some_and(|ui| !ui.is_object()) || latest.is_some_and(|s| !s.is_object()) {
+                    return Err(Failure::Conflict);
+                }
+                match holds(&latest.and_then(Value::as_object).cloned().unwrap_or_default(), &expected) {
+                    true => Ok(()),
+                    false => Err(Failure::Conflict),
+                }
+            },
+            |saved, _| on_committed(saved),
+        )
+        .map(|(saved, _)| saved)
 }
 
 #[cfg(test)]

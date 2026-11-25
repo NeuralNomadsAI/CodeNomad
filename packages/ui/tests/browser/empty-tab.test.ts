@@ -8,7 +8,7 @@ let browser: Browser, url: string
 before(async () => {
   const fixture = await borrowFixture({
     name: "empty-tab",
-    routes: [{ path: "/fixture", html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/empty-tab.tsx"></script></body></html>' }],
+    routes: [{ path: "/fixture", html: '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/empty-tab.tsx"></script></body></html>' }],
   })
   url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
@@ -21,7 +21,7 @@ const profiles = ["Beta", "Alpha"].map(name => ({
   createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
 }))
 
-async function openApp(page: Page, remoteServers = profiles) {
+async function openApp(page: Page, remoteServers = profiles, recentFolders: { path: string; lastAccessed: number }[] = [], configureRoutes?: () => Promise<void>) {
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname
     if (path === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
@@ -29,7 +29,7 @@ async function openApp(page: Page, remoteServers = profiles) {
     const data: Record<string, unknown> = {
       "/api/workspaces": [],
       "/api/storage/config/ui": { settings: { locale: "en" } },
-      "/api/storage/state/ui": { remoteServers },
+      "/api/storage/state/ui": { remoteServers, recentFolders },
       "/api/meta": { serversUsable: true, serversManageable: true, secretEntryAllowed: true },
       "/api/opencode/update": { state: "ready", serviceState: "ready" },
       "/api/opencode/login/start": { state: "off" },
@@ -37,6 +37,7 @@ async function openApp(page: Page, remoteServers = profiles) {
     }
     return route.fulfill({ json: data[path] ?? {} })
   })
+  await configureRoutes?.()
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
   await page.getByRole("heading", { name: "CodeNomad", exact: true }).waitFor()
 }
@@ -75,10 +76,10 @@ for (const mode of ["desktop", "web", "phone"]) {
       }
       const browse = (await blank.getByRole("region", { name: "Browse", exact: true }).boundingBox())!
       const recent = (await blank.getByRole("region", { name: "Recent tabs", exact: true }).boundingBox())!
-      assert.ok(browse.height >= 512)
-      assert.equal(browse.height, recent.height)
       if (mode === "phone") assert.ok(browse.y + browse.height < recent.y)
       else {
+        assert.ok(browse.height >= 256)
+        assert.equal(browse.height, recent.height)
         assert.equal(browse.y, recent.y)
         assert.ok(browse.x + browse.width < recent.x)
       }
@@ -126,6 +127,116 @@ for (const mode of ["desktop", "web", "phone"]) {
   })
 }
 
+test("a short stacked Browse panel leaves room for long recents without expanding with them", async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 850 } })
+  try {
+    const recents = Array.from({ length: 20 }, (_, index) => ({ path: `/project-${index}`, lastAccessed: 20 - index }))
+    await openApp(page, profiles, recents)
+    const root = page.locator(".folder-home-root:visible")
+    const browse = root.getByRole("region", { name: "Browse", exact: true })
+    const recent = root.getByRole("region", { name: "Recent tabs", exact: true })
+    await recent.getByRole("listitem").nth(19).waitFor()
+    let narrowHeight = 0
+    let compactBrowseHeight = 0
+    for (const [width, height] of [[1280, 850], [390, 850], [390, 1319], [390, 620], [639, 620], [640, 620], [1280, 850]]) {
+      await page.setViewportSize({ width, height })
+      const first = (await browse.boundingBox())!
+      const second = (await recent.boundingBox())!
+      assert.ok(second.height >= 256, JSON.stringify({ width, height, second }))
+      if (width <= 639) {
+        assert.ok(first.y + first.height < second.y)
+        assert.ok(first.height < 256, JSON.stringify({ width, height, first }))
+        assert.ok(second.height <= height - first.height, JSON.stringify({ width, height, second }))
+        if (height === 850) {
+          narrowHeight = second.height
+          compactBrowseHeight = first.height
+        }
+        assert.equal(first.height, compactBrowseHeight)
+        if (height === 1319) assert.ok(second.height > narrowHeight, "stacked panels still grow with available height")
+      } else {
+        assert.equal(first.height, second.height)
+        assert.equal(first.y, second.y)
+        assert.ok(first.x + first.width < second.x)
+      }
+      const list = recent.getByRole("list")
+      assert.ok(await list.evaluate(el => el.scrollHeight > el.clientHeight), "recents scroll inside the panel")
+      const footer = (await root.locator(".folder-home-shell > .text-center").last().boundingBox())!
+      assert.ok(footer.y >= second.y + second.height, "the footer follows both panels")
+      assert.ok(await root.evaluate(el => el.scrollWidth <= el.clientWidth), "the page fits horizontally")
+    }
+  } finally { await page.close() }
+})
+
+test("stacked recents collapse to their empty state or one or two rows", async () => {
+  let previousHeight = 0
+  for (const count of [0, 1, 2]) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 850 } })
+    try {
+      const recents = Array.from({ length: count }, (_, index) => ({ path: `/project-${index}`, lastAccessed: 20 - index }))
+      await openApp(page, profiles, recents)
+      const recent = page.getByRole("region", { name: "Recent tabs", exact: true })
+      if (count) await recent.getByRole("listitem").nth(count - 1).waitFor()
+      else await recent.getByRole("status").waitFor()
+      const { height } = (await recent.boundingBox())!
+      assert.ok(height > previousHeight && height < 256, JSON.stringify({ count, height, previousHeight }))
+      previousHeight = height
+    } finally { await page.close() }
+  }
+})
+
+for (const [delayed, touch] of [["recents", false], ["sidecars", false], ["recents", true], ["sidecars", true]] as const) {
+  test(`a stacked Browse submit survives ${delayed} arriving during a ${touch ? "tap" : "click"}`, async () => {
+    const page = await browser.newPage({ viewport: { width: 390, height: 850 }, hasTouch: touch, isMobile: touch })
+    const arrival = Promise.withResolvers<void>()
+    const recents = Array.from({ length: 20 }, (_, i) => ({ path: `/project-${i}`, lastAccessed: 20 - i }))
+    const sidecars = Array.from({ length: 8 }, (_, i) => ({ id: `sidecar-${i}`, name: `SideCar ${i}`, status: "running", kind: "port", port: 7000 + i }))
+    let probes = 0
+    try {
+      await openApp(page, [], recents, async () => {
+        await page.route("**/api/meta", route => route.fulfill({ json: { sidecarsAllowed: true, serversUsable: true, serversManageable: true, secretEntryAllowed: true } }))
+        await page.route("**/api/storage/state/ui", async route => {
+          if (delayed === "recents") await arrival.promise
+          await route.fallback()
+        })
+        await page.route("**/api/sidecars", async route => {
+          if (delayed === "sidecars") await arrival.promise
+          await route.fulfill({ json: { sidecars } })
+        })
+        await page.route("**/api/remote-servers/probe", route => {
+          probes++
+          return route.fulfill({ status: 502, json: { error: "unreachable", code: "unreachable" } })
+        })
+      })
+      const browse = page.getByRole("region", { name: "Browse", exact: true })
+      const lastSidecar = browse.locator('[data-sidecar="sidecar-7"]')
+      const lastRecent = page.getByRole("region", { name: "Recent tabs", exact: true }).getByRole("listitem").nth(19)
+      await (delayed === "recents" ? lastSidecar : lastRecent).waitFor()
+      await browse.locator(".browse-menu-footer input").fill("https://new-server.example")
+      const submit = browse.locator(".browse-menu-footer button[type=submit]")
+      await submit.scrollIntoViewIfNeeded()
+      const { x, y, width, height } = (await submit.boundingBox())!
+      const point = { x: Math.round(x + width / 2), y: Math.round(y + height / 2) }
+      const input = touch ? await page.context().newCDPSession(page) : undefined
+      if (input) await input.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] })
+      else {
+        await page.mouse.move(point.x, point.y)
+        await page.mouse.down()
+      }
+      arrival.resolve()
+      await (delayed === "recents" ? lastRecent : lastSidecar).waitFor()
+      assert.ok(await submit.evaluate((button, point) => button.contains(document.elementFromPoint(point.x, point.y)), point),
+        "the same pointer position still hits Submit")
+      if (input) await input.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+      else await page.mouse.up()
+      await browse.getByRole("alert").waitFor({ timeout: 5000 })
+      assert.equal(probes, 1)
+    } finally {
+      arrival.resolve()
+      await page.close()
+    }
+  })
+}
+
 for (const width of [1280, 390]) {
   test(`direct HTTPS sign-in fits the Browse panel at ${width} pixels`, async () => {
     const page = await browser.newPage({ viewport: { width, height: 850 } })
@@ -134,6 +245,7 @@ for (const width of [1280, 390]) {
       await page.locator('[data-remote-server="alpha"]').click()
       await page.getByRole("textbox", { name: "New pairing link", exact: true }).waitFor()
       const submit = page.getByRole("button", { name: "Sign in", exact: true })
+      await submit.scrollIntoViewIfNeeded()
       const bounds = await page.locator(".browse-menu:visible").boundingBox()
       const button = await submit.boundingBox()
       assert.ok(bounds && button && button.y + button.height <= bounds.y + bounds.height + 1, JSON.stringify({ bounds, button }))

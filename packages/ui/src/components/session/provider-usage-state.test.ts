@@ -1,11 +1,21 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { ProviderUsageResponse } from "../../../../server/src/api-types"
-import { createProviderUsageState, providerUsageKey, type ProviderUsageSource } from "./provider-usage-state"
+import { createProviderUsageState, providerUsageKey, shouldShowProviderUsageWindow, type ProviderUsageSource } from "./provider-usage-state"
 
 const source: ProviderUsageSource = { instanceId: "instance", sessionId: "session", directory: "/repo", providerId: "openai", modelId: "gpt-5" }
 const response = (used: number): ProviderUsageResponse => ({ requestedProviderId: "openai", providerId: "codex", providerName: "Codex",
   supported: true, configured: true, ok: true, fetchedAt: Date.now(), windows: { "5h": { usedPercent: used, remainingPercent: 100 - used, resetAt: null, windowSeconds: 18000 } } })
+
+test("shouldShowProviderUsageWindow applies the credit-balance preference to bare and scoped credits_balance keys", () => {
+  assert.equal(shouldShowProviderUsageWindow("credits_balance", false), false)
+  assert.equal(shouldShowProviderUsageWindow("credits_balance:Team", false), false)
+  assert.equal(shouldShowProviderUsageWindow("credits_balance :Team", false), false)
+  assert.equal(shouldShowProviderUsageWindow("credits_balance", true), true)
+  assert.equal(shouldShowProviderUsageWindow("credits_balance:Team", true), true)
+  assert.equal(shouldShowProviderUsageWindow("5h", false), true)
+  assert.equal(shouldShowProviderUsageWindow("5h:credits_balance", false), true)
+})
 
 test("usage snapshot identity includes instance, session, native directory, provider and model", () => {
   for (const key of Object.keys(source) as Array<keyof ProviderUsageSource>) {

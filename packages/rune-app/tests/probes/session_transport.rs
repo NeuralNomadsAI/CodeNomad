@@ -4,6 +4,13 @@ use crate::{
     transport::{Command, Event},
 };
 use std::time::Duration;
+fn prompt(text: &str) -> Command {
+    Command::Prompt(codenomad_client::prompt::Prompt {
+        id: Some(codenomad_client::prompt::message_id().unwrap()),
+        text: text.into(),
+        ..Default::default()
+    })
+}
 pub fn fresh() {
     let (out, incoming) = std::sync::mpsc::sync_channel(64);
     let (commands, input) = std::sync::mpsc::sync_channel(1);
@@ -20,7 +27,7 @@ pub fn fresh() {
                 if !sent {
                     assert!(page.rows.is_empty());
                     sent = true;
-                    commands.send(Command::Send("Fresh first".into())).unwrap();
+                    commands.send(prompt("Fresh first")).unwrap();
                 }
                 last_rows = page.rows;
             }
@@ -50,11 +57,11 @@ pub fn fresh() {
                 );
                 if completed == 2 {
                     println!(
-                        "fresh-session probe: 2 sends, 4 unique authoritative native rows, no history plugin required"
+                        "fresh-session probe: 2 sends, 4 unique authoritative native rows, using projected history"
                     );
                     return;
                 }
-                commands.send(Command::Send("Fresh second".into())).unwrap();
+                commands.send(prompt("Fresh second")).unwrap();
             }
             Event::Failed => panic!("fresh session failed"),
             _ => {}
@@ -87,7 +94,7 @@ pub fn contract() {
                 let messages = page.rows;
                 assert_eq!(messages.len(), 200);
                 assert_eq!(messages.last().unwrap().body, CODE);
-                commands.send(Command::Send(prompts[0].into())).unwrap();
+                commands.send(prompt(prompts[0])).unwrap();
             }
             Event::Text(id, crate::content::TextEvent::Delta { text: delta, .. }) => {
                 assert_eq!(id, active);
@@ -120,18 +127,34 @@ pub fn contract() {
                 }
                 previous = std::mem::take(&mut body);
                 chunks = 0;
-                commands
-                    .send(Command::Send(prompts[completed].into()))
-                    .unwrap();
+                commands.send(prompt(prompts[completed])).unwrap();
             }
-            Event::Failed => panic!("adapter failed"),
+            Event::AuthenticationRequired(..) | Event::Failed => panic!("adapter failed"),
             Event::Sync(_)
+            | Event::ReaderSync { .. }
             | Event::History(_)
             | Event::Older(_)
+            | Event::PageOffered { .. }
+            | Event::PageFailed(_)
+            | Event::Anchor { .. }
+            | Event::AnchorFailed(_)
             | Event::Reconnecting
+            | Event::HistoryInvalidated
+            | Event::RevertChanged
+            | Event::ConnectionLost
+            | Event::WorkspaceMissing
             | Event::Connected(_)
+            | Event::ProviderUsageWatch(_)
             | Event::AgentHint(_)
+            | Event::ObservedRunning { .. }
             | Event::Workspace(_)
+            | Event::Preferences(_)
+            | Event::Reasoning(..)
+            | Event::StepUsage(..)
+            | Event::SessionUsage(_)
+            | Event::FamilyUsage(_)
+            | Event::PromptAcknowledged { .. }
+            | Event::Tool(..)
             | Event::PagingFailed => {}
             Event::Message(message) => {
                 assert!(

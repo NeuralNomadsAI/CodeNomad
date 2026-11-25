@@ -2,23 +2,36 @@
 // Two isolated daemons, the TS server of this checkout on one and Rust on the other; each mode
 // runs the same sequence on both servers and requires identical observations.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { copyFile, cp, lstat, mkdir, writeFile } from "node:fs/promises"
 import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { chromium } from "playwright"
-import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { dropRegistration, fromDist, installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
-import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
-import { browserFiles, populate } from "./files.mjs"
-import { browserWorktrees } from "./worktrees.mjs"
+import { inspect } from "node:util"
+import { assertPrivateOpenCodeExecutable, assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 
-const MODES = ["http", "files", "contract", "workspace-claims", "agent-controls", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
-const [mode, exe] = process.argv.slice(2)
-assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
+const MODES = ["http", "files", "contract", "history-bytes", "history-search", "attachment-history", "workspace-claims", "agent-controls", "remote-session-controls", "static-assets", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
+const [mode, rawExe] = process.argv.slice(2)
+MODES.push("provider-logins", "receipt-worktree", "receipt-reconnect", "meta-update", "mutation-fence")
+if (["prompt-admission", "command-admission"].includes(mode)) {
+  await (await import("./prompt-admission.mjs")).run(mode === "command-admission")
+  process.exit(process.exitCode ?? 0)
+}
+assert(MODES.includes(mode) && path.isAbsolute(rawExe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
+const exe = await assertPrivateOpenCodeExecutable(rawExe)
+
+const { chromium } = await import("playwright")
+const { fixtureChildPid, spawnFixtureChild, stopFixtureChild } = await import("../../../scripts/native-fixture-guards.mjs")
+const { dropRegistration, fromDist, installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, waitForPruningPlugin, writeJson } = await import("./fixtures.mjs")
+const { browserFiles, populate } = await import("./files.mjs")
+const { browserWorktrees } = await import("./worktrees.mjs")
 const bin = rustBinary()
+if (mode === "attachment-history") {
+  const contract = await fromDist("opencode/session-pruning/navigation-contract.js")
+  assert(contract.sessionAttachmentInputSchema?.safeParse({
+    sessionID: "ses_fixture", messageID: "msg_fixture", fileIndex: 0, sha256: "a".repeat(64), confirm: true,
+  }).success, "The TS build and bundled pruning plugin must support attachment references and confirmation")
+}
 const bench = mode === "solid" ? undefined : await import(`./${mode === "http" ? "worktrees" : mode}.mjs`)
 const missionServe = process.env.CNRS_BENCH_MISSIONS_SERVE === "1" || mode === "missions-wayfinder" && process.platform === "win32"
 assert(!missionServe || process.platform === "win32" && ["missions", "missions-calendar", "missions-wayfinder"].includes(mode))
@@ -43,7 +56,9 @@ const { resolveConfigLocation } = await fromDist("config/location.js")
 const shots = path.join(out, "screenshots", mode)
 await mkdir(shots, { recursive: true })
 
-const { withProductRuntime, remove: removeRuntime } = await productRuntime({ holdProvider: bench?.holdProvider })
+const { withProductRuntime, remove: removeRuntime } = await productRuntime({
+  holdProvider: bench?.holdProvider, gitCeiling: !["history-search", "attachment-history"].includes(mode),
+})
 
 const HTTP_TIMEOUT = 20000
 const STARTUP_TIMEOUT = Number(process.env.CNRS_BENCH_STARTUP_TIMEOUT_MS ?? 25000)
@@ -108,9 +123,14 @@ async function start(label, fixture, folder, password, trustedCA) {
   // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
   if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true", CODENOMAD_REMOTE_CONTROL: "disabled" })
   Object.assign(env, bench?.environment?.(root) ?? {})
-  if (label === "ts" && bench?.remoteIngress) {
-    env.CNRS_PREVIEW_TEST_TUNNEL = "1"
+  if (label === "ts" && (bench?.remoteIngress || bench?.remoteDirect)) {
     delete env.CODENOMAD_REMOTE_CONTROL
+    if (bench.remoteIngress) env.CNRS_PREVIEW_TEST_TUNNEL = "1"
+    else env.CODENOMAD_ALLOWED_ORIGINS = bench.remoteDirect
+  }
+  if (label === "rs" && bench?.remoteDirect) {
+    delete env.CNRS_FIXTURE_INGRESS
+    env.CNRS_HTTPS_NAME = new URL(bench.remoteDirect).hostname
   }
   // Modes that seed `config.yaml` start both servers on equal settings.
   // Keep the Rust settings at their private positional default in modes without a seeded YAML.
@@ -141,25 +161,32 @@ async function start(label, fixture, folder, password, trustedCA) {
   }
   const relay = await bench?.nativeRelay?.(fixture)
   if (relay) env.CNRS_FIXTURE_URL = relay.url
-  const child = label === "ts"
-    ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
-      "--ui-no-update", "--ui-dir", uiDir, "--config", env.CLI_CONFIG, "--workspace-root", folder],
-      { env, cwd: root, windowsHide: true, stdio: [scripted ? "pipe" : "ignore", "pipe", "pipe"] })
-    : spawn(rust, rustArgs, { env, cwd: root, windowsHide: true, stdio: [scripted || serve ? "pipe" : "ignore", "pipe", "pipe"] })
+  let child
+  try {
+    child = label === "ts"
+      ? spawnFixtureChild(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
+        "--ui-no-update", "--ui-dir", uiDir, "--config", env.CLI_CONFIG, "--workspace-root", folder],
+        { env, cwd: root, windowsHide: true, stdio: [scripted ? "pipe" : "ignore", "pipe", "pipe"] })
+      : spawnFixtureChild(rust, rustArgs, { env, cwd: root, windowsHide: true, stdio: [scripted || serve ? "pipe" : "ignore", "pipe", "pipe"] })
+  } catch (error) {
+    await relay?.close()
+    throw error
+  }
   const stopped = new Promise(resolve => child.once("close", resolve))
   let output = "", spawnError
   child.on("error", error => { spawnError = error })
   for (const stream of [child.stdout, child.stderr]) stream.on("data", data => { output += data })
   const native = scripted ? nativeHost(child) : undefined
+  const pid = fixtureChildPid(child)
   const request = (route, init) => fetch(`${listen}${route}`, { signal: AbortSignal.timeout(HTTP_TIMEOUT), redirect: "manual", ...init })
   const close = async () => {
-    if (serve && !spawnError && child.exitCode === null && child.signalCode === null) {
-      child.stdin.end("codenomad:shutdown\n", () => {})
-      await Promise.race([stopped, delay(15_000, undefined, { ref: false })])
+    try {
+      if (!spawnError) await stopFixtureChild(child, stopped, serve ? 15_000 : 1_000, 2_000, {
+        close: serve ? () => child.stdin.end("codenomad:shutdown\n") : undefined,
+      })
+    } finally {
+      try { await relay?.close() } finally { await dropRegistration(fixture.env, await pid) }
     }
-    if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
-    await relay?.close()
-    await dropRegistration(fixture.env, child.pid)
     const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
     const safe = leaked.reduce((text, secret) => text.replaceAll(secret, "<redacted>"), output)
     await writeFile(path.join(out, `${mode}-${label}.log`), safe.replaceAll(password, "<redacted>").replaceAll(env.CNRS_FIXTURE_PASSWORD, "<redacted>"))
@@ -171,7 +198,7 @@ async function start(label, fixture, folder, password, trustedCA) {
       return (await request("/api/auth/status").catch(() => undefined))?.status === 200 && (label !== "ts" || output.includes("Local Connection URL"))
     }, `${label} startup`, STARTUP_TIMEOUT).catch(error => { throw Error(`${error.message}\n${output.slice(-2500)}`, { cause: error }) })
     const ingress = () => /^CNRS_TEST_INGRESS (http:\/\/127\.0\.0\.1:\d+)$/m.exec(output)?.[1]
-    return { request, close, native, origin: listen, secureOrigin: /^HTTPS (https:\/\/\S+)$/m.exec(output)?.[1]?.trim(), ingress, pid: child.pid, status: info.version, daemonPID: info.pid }
+    return { request, close, native, origin: listen, secureOrigin: /^HTTPS (https:\/\/\S+)$/m.exec(output)?.[1]?.trim(), ingress, pid: await pid, status: info.version, daemonPID: info.pid }
   } catch (e) { await close(); throw e }
 }
 
@@ -255,9 +282,50 @@ async function qualify(ts, rs, password, rsRoot) {
   result.tests.push("restricted filesystem, workspace claims, root worktree, instance storage and pending snapshot (RS)")
 }
 
+/** Warm up TS's project folder and pruning plugin with the same budget as `rustPruning.ready`. */
+async function warmTsPruning(tsHost, client, folder, directory) {
+  const opened = await tsHost.call("/api/workspaces", jsonBody({ path: folder }))
+  assert.equal(opened.status, 201)
+  const { id, location } = await opened.json()
+  let failed = false
+  try {
+    await waitForPruningPlugin(client, location?.directory ?? directory)
+  } catch (error) {
+    failed = true
+    throw error
+  } finally {
+    try {
+      const closed = await tsHost.call(`/api/workspaces/${id}`, { method: "DELETE" })
+      if (!failed) assert.equal(closed.status, 204)
+    } catch (cleanupError) {
+      if (!failed) throw cleanupError
+    }
+  }
+}
+
+function formatError(error, depth = 0, seen = new Set()) {
+  if (!error || typeof error !== "object") return String(error)
+  if (seen.has(error)) return "[Circular]"
+  seen.add(error)
+  try {
+    const text = typeof error.stack === "string" && error.stack.length > 0 ? error.stack : inspect(error, { depth: 3 })
+    if (depth >= 4) return text
+    const extras = []
+    if (Array.isArray(error.errors) && error.errors.length) {
+      extras.push(...error.errors.map((item, i) => `Error[${i}]: ${formatError(item, depth + 1, seen)}`))
+    }
+    if (error.cause !== undefined) {
+      extras.push(`Caused by: ${formatError(error.cause, depth + 1, seen)}`)
+    }
+    return extras.length ? `${text}\n${extras.join("\n")}` : text
+  } finally {
+    seen.delete(error)
+  }
+}
+
 /** Both servers through one sequence each; their observations must be identical. */
 async function compareSides(sides) {
-  const settle = run => run.then(value => value, error => ({ error: error?.stack ?? String(error), partial: error?.partial }))
+  const settle = run => run.then(value => value, error => ({ error: formatError(error), partial: error?.partial }))
   const order = mode === "missions-family" && process.env.CNRS_BENCH_RS_FIRST === "1" ? [1, 0] : [0, 1]
   for (const i of order) result[i === 0 ? "typescript" : "rust"] = await settle(bench.run(sides[i]))
   assert(!result.typescript.error && !result.rust.error, "a bench sequence raised")
@@ -471,30 +539,45 @@ try {
     const settings = `server:\n  opencodeBinary: ${JSON.stringify(exe)}\n${seeded}ui:\n  settings:\n    multiBackend: true\n    locale: en\n`
     await writeFile(path.join(local.root, "ts.yaml"), settings)
     if (mode === "host" || bench?.configure) await writeFile(path.join(remote.root, "rust.yaml"), settings)
-    let ts, rs
+    let ts, rs, sequenceFailed = false
     try {
       rs = await start("rs", remote, rsRoot, password)
       ts = await start("ts", local, tsRoot, password, missionServe ? undefined : path.join(remote.root, "rust.data", "tls", "ca-cert.pem"))
       assert.notEqual(ts.daemonPID, rs.daemonPID)
       result.daemons = [ts.status, rs.status]
-      await qualify(ts, rs, password, rsRoot)
+      // Modes that open and authenticate their own workspaces (or run dedicated
+      // mutation-fence scenarios) skip the generic pending-question qualification.
+      if (!["attachment-history", "history-search", "receipt-reconnect", "meta-update", "mutation-fence"].includes(mode)) await qualify(ts, rs, password, rsRoot)
       if (mode === "solid") return await solid({ ts, rs, local, remote, tsRoot, rsRoot, password })
       const hosts = []
       for (const host of [ts, rs]) {
         const cookie = await signIn(host, password)
         hosts.push({ call: (route, init) => host.request(route, withCookie(cookie, init)), origin: host.origin, cookie,
-          ...(bench?.remoteIngress ? { secureOrigin: host.secureOrigin, ingress: host.ingress } : {}) })
+          ...(bench?.remoteIngress || bench?.remoteDirect ? { secureOrigin: host.secureOrigin, ingress: host.ingress } : {}) })
+      }
+      if (!missionServe && ["attachment-history", "history-search", "history-bytes", "contract"].includes(mode)) {
+        await warmTsPruning(hosts[0], local.client, "Local Project", path.join(tsRoot, "Local Project"))
       }
       if (bench.pair) { result[mode] = await bench.pair(...hosts); return }
       await compareSides([
         { ...hosts[0], fixture: local, folder: "Local Project", root: tsRoot, other: path.join(tsRoot, "No Repository"), pid: ts.pid, native: ts.native },
         { ...hosts[1], fixture: remote, folder: "Rust Project", root: rsRoot, other: path.join(rsRoot, "No Repository"), pid: rs.pid, native: rs.native, data: path.join(remote.root, "rust.data") },
       ])
-    } finally { await Promise.all([ts?.close(), rs?.close(), bench?.close?.()]) }
+    } catch (error) {
+      sequenceFailed = true
+      throw error
+    } finally {
+      const closed = await Promise.allSettled([ts?.close(), rs?.close(), bench?.close?.()])
+      const errors = closed.flatMap(item => item.status === "rejected" ? [String(item.reason?.stack ?? item.reason)] : [])
+      if (errors.length) {
+        result.cleanupErrors = errors
+        if (!sequenceFailed) throw new Error(`Bench teardown failed:\n${errors.join("\n")}`)
+      }
+    }
     assert(!result.leaks, "A server logged a synthetic provider credential")
   }, runtime), runtime)
 } catch (error) {
-  result.error = String(error.stack)
+  result.error = formatError(error)
   console.error(result.error)
   process.exitCode = 1
 } finally {

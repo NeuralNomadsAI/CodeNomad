@@ -10,35 +10,42 @@ fn hebrew(s: &State, cx: &mut Cx<State>) -> El {
 fn runtime(render: fn(&State, &mut Cx<State>) -> El) -> Runtime<State> {
     let mut state = init();
     state.phase = Phase::Ready;
-    state.messages = vec![Message {
-        completed: true,
-        id: "rtl-code".into(),
-        role: "assistant".into(),
-        body: CODE.into(),
-        parts: vec![],
-    }];
+    state.messages = vec![
+        Message {
+            usage: None,
+            completed: true,
+            id: "rtl-code".into(),
+            role: "assistant".into(),
+            body: format!("```rust\n{CODE}\n```"),
+            parts: vec![],
+        }
+        .into(),
+    ];
     let mut runtime = Runtime::new(state, render, (1400.0, 900.0), Env::new(false, 1.0));
     for _ in 0..12 {
         runtime.frame(0.02);
     }
     runtime
 }
+
 #[test]
 fn real_chat_controls_follow_the_explicit_catalogue_direction() {
-    let en = runtime(english);
-    let he = runtime(hebrew);
-    assert!(en.find("older").unwrap().0 < en.find("latest").unwrap().0);
-    assert!(he.find("older").unwrap().0 > he.find("latest").unwrap().0);
-    assert!(
-        en.accessibility_json()
-            .to_string()
-            .contains(strings::with_locale("en", || strings::t("rune.latest")))
-    );
-    assert!(
-        he.accessibility_json()
-            .to_string()
-            .contains(strings::with_locale("he", || strings::t("rune.latest")))
-    );
+    for (render, locale) in [
+        (english as fn(&State, &mut Cx<State>) -> El, "en"),
+        (hebrew, "he"),
+    ] {
+        let runtime = runtime(render);
+        assert!(
+            runtime.find("older").is_none(),
+            "complete history has no paging control"
+        );
+        assert!(
+            runtime
+                .accessibility_json()
+                .to_string()
+                .contains(strings::with_locale(locale, || strings::t("rune.latest")),)
+        );
+    }
 }
 #[test]
 fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction() {
@@ -46,7 +53,7 @@ fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction()
     let body = rt
         .elements()
         .into_iter()
-        .find(|e| e.path.ends_with("/body-rtl-code"))
+        .find(|e| e.path.contains("/body-rtl-code/") && e.text.as_deref() == Some(CODE))
         .unwrap();
     let [x, y, width, height] = body.rect;
     rt.pointer_down(x + 1.0, y + 3.0);
@@ -62,6 +69,12 @@ fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction()
     rt.pointer_up(x + width - 1.0, y + height - 2.0);
     rt.frame(0.0);
     assert_eq!(rt.selected_text().as_deref(), Some(CODE));
+    let editor = |rt: &Runtime<State>| {
+        rt.elements()
+            .into_iter()
+            .find(|element| element.path.contains("/composer/") && element.edit_range.is_some())
+            .expect("the text editor inside the composer")
+    };
     for (text, rtl) in [("C:/example/project", false), ("שלום", true)] {
         let mut rt = runtime(hebrew);
         let (x, y) = rt.find("composer").unwrap();
@@ -79,11 +92,7 @@ fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction()
         rt.key(start.clone());
         rt.key_up(start);
         rt.frame(0.0);
-        let first_element = rt
-            .elements()
-            .into_iter()
-            .find(|e| e.key.as_deref() == Some("composer"))
-            .unwrap();
+        let first_element = editor(&rt);
         assert_eq!(first_element.text.as_deref(), Some(text));
         assert_eq!(first_element.edit_range, Some([0, 0]));
         let first = first_element.caret.unwrap()[0];
@@ -97,11 +106,7 @@ fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction()
         rt.key(end.clone());
         rt.key_up(end);
         rt.frame(0.0);
-        let last_element = rt
-            .elements()
-            .into_iter()
-            .find(|e| e.key.as_deref() == Some("composer"))
-            .unwrap();
+        let last_element = editor(&rt);
         assert_eq!(last_element.edit_range, Some([text.len(), text.len()]));
         let last = last_element.caret.unwrap()[0];
         assert_ne!(first, last, "both editor caret endpoints must be measured");

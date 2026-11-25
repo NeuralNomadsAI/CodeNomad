@@ -28,14 +28,14 @@ import type { PermissionRequest } from "../types/permission"
 import { showToastNotification, type ToastHandle, ToastVariant, type ToastPayload } from "../lib/notifications"
 import { uiState } from "./preferences"
 import { getInstanceLabel } from "../lib/instance-label"
-import { batch } from "solid-js"
-import { setActiveSessionFromList } from "./session-state"
+import { batch, createSignal } from "solid-js"
+import { replaceSessionRow, setActiveSessionFromList } from "./session-state"
 import { applySurface, beginGesture } from "./session-surface"
 import {
   instances,
   markPermissionReplied,
   hasRepliedPermission,
-  reconcilePendingSessionIndicators,
+  getSessionPendingIndicators,
   setPendingFormAddedHandler,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
@@ -47,7 +47,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, canRelistReturnedSession, forgetSessionMovedAway, getAuthoritativelyDeletedSessionIdsForInstance, getMovedAwaySessions, invalidateSessionMessageLoad, markSessionMovedAway, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
+import { activeSessionId, canRelistReturnedSession, forgetSessionMovedAway, getAuthoritativelyDeletedSessionIdsForInstance, getMovedAwaySessions, getSessionListIds, getSessionRoot, invalidateSessionMessageLoad, markSessionMovedAway, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
@@ -57,7 +57,7 @@ import { tGlobal } from "../lib/i18n"
 import { excludeMissingMoveFromSearch, fetchSessions, invalidateRestorePlacementRead, loadMessages, refreshSessionCatalog, removeSessionProjection, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
-import { getWorktrees, onWorktreesPublished, reloadWorktrees } from "./worktrees"
+import { getDirectoryOnlyWorktree, getWorktrees, onWorktreesPublished, reloadWorktrees } from "./worktrees"
 import { isWorkspaceSessionDirectory } from "./workspace-session-scope"
 import { isWorkspaceServedDirectory } from "./workspace-served-directory"
 import { locationAuthorityKey } from "./request-locations"
@@ -72,6 +72,7 @@ import { messageStoreBus } from "./message-v2/bus"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 import { createCompactionNoticeClaims, createSessionBubbles } from "./compaction-notice"
+import { TrailingResyncCoordinator } from "../lib/trailing-resync"
 
 const log = getLogger("sse")
 const claimCompactionNotice = createCompactionNoticeClaims()
@@ -80,11 +81,26 @@ const COMPACTION_TOAST_MS = 10000
 const pendingSessionFetches = new Map<string, {
   status: SessionStatus
   retry?: SessionRetryState | null
+  lifecycle: number
   /** Settles once the session's metadata read ends. */
   settled: Promise<void>
   signal: AbortSignal
   current: () => boolean
 }>()
+const sessionInfoReads = new Map<string, {
+  signal: AbortSignal
+  current: () => boolean
+  metadata: SessionInfoObservation
+  result: Promise<Session | null>
+}>()
+type SessionInfoDelta =
+  | { title: { value: string; at: number }; archive?: never }
+  | { archive: { archived: boolean; at: number }; title?: never }
+type SessionInfoObservation = {
+  title?: { value: string; at: number }
+  archive?: { archived: boolean; at: number }
+  projectedArchive?: { time: Session["time"]; snapshotAt: number }
+}
 const nativeLifecycleGenerations = new Map<string, number>()
 // The live backoff countdown of one session; it ends when that session's next
 // attempt starts or its run settles.
@@ -113,13 +129,17 @@ const latestSessionMoves = new Map<string, Map<string, SessionMove>>()
 type SessionPlacement = Pick<Session, "location" | "projectID" | "subpath"> & { listWorktreeSlug?: string }
 type SessionPlacementRead = SessionInfo & { listWorktreeSlug?: string }
 type PlacementEvidence = { placement: SessionPlacement; generation: number; client: ReturnType<typeof getRootClient>; returnFrom?: string | null }
-const confirmedPlacements = new Map<string, Map<string, PlacementEvidence>>()
+const [placementEvidence, setPlacementEvidence] = createSignal(new Map<string, Map<string, PlacementEvidence>>())
 const LOCATED_ELSEWHERE = Symbol("session located elsewhere")
 const SESSION_MISSING = Symbol("session not found")
 
 export function captureSessionPlacementEvidence(instanceId: string, sessionId: string): () => boolean {
-  const evidence = confirmedPlacements.get(instanceId)?.get(sessionId)
-  return () => confirmedPlacements.get(instanceId)?.get(sessionId) === evidence
+  const evidence = placementEvidence().get(instanceId)?.get(sessionId)
+  return () => placementEvidence().get(instanceId)?.get(sessionId) === evidence
+}
+
+export function getSessionPlacementEvidence(instanceId: string): ReadonlyMap<string, unknown> | undefined {
+  return placementEvidence().get(instanceId)
 }
 
 export function matchesSessionPlacement(placement: SessionPlacement | undefined, expected: SessionPlacement): boolean {
@@ -130,14 +150,28 @@ export function matchesSessionPlacement(placement: SessionPlacement | undefined,
 export function confirmSessionPlacement(instanceId: string, sessionId: string, { location, projectID, subpath, listWorktreeSlug }: SessionPlacement, returnFrom?: string | null): void {
   const client = instances().get(instanceId)?.client
   if (!client) return
-  const placements = confirmedPlacements.get(instanceId) ?? new Map<string, PlacementEvidence>()
-  placements.set(sessionId, { placement: { location, projectID, subpath, listWorktreeSlug }, client, generation: getOpenCodeInstanceGeneration(instanceId), returnFrom })
-  confirmedPlacements.set(instanceId, placements)
+  const evidence = { placement: { location, projectID, subpath, listWorktreeSlug }, client, generation: getOpenCodeInstanceGeneration(instanceId), returnFrom }
+  setPlacementEvidence(previous => new Map(previous).set(instanceId, new Map(previous.get(instanceId)).set(sessionId, evidence)))
+}
+
+function clearPlacementEvidence(instanceId: string, sessionId?: string): void {
+  setPlacementEvidence(previous => {
+    const held = previous.get(instanceId)
+    if (!held || (sessionId !== undefined && !held.has(sessionId))) return previous
+    const next = new Map(previous)
+    if (sessionId === undefined || held.size === 1) next.delete(instanceId)
+    else {
+      const placements = new Map(held)
+      placements.delete(sessionId)
+      next.set(instanceId, placements)
+    }
+    return next
+  })
 }
 
 /** Registered checkout identity; execution keeps the native directory. */
 export function confirmedSessionWorktree(instanceId: string, sessionId: string, placement: SessionPlacement) {
-  const confirmed = confirmedPlacements.get(instanceId)?.get(sessionId)
+  const confirmed = placementEvidence().get(instanceId)?.get(sessionId)
   const slug = confirmed?.placement.listWorktreeSlug
   if (slug && confirmed.returnFrom === undefined && confirmed.client === instances().get(instanceId)?.client
     && matchesSessionPlacement(placement, confirmed.placement)) {
@@ -150,7 +184,7 @@ export function confirmedSessionListDirectory(instanceId: string, sessionId: str
 }
 
 export function hasPendingSessionReturn(instanceId: string, sessionId: string): boolean {
-  return confirmedPlacements.get(instanceId)?.get(sessionId)?.returnFrom !== undefined
+  return placementEvidence().get(instanceId)?.get(sessionId)?.returnFrom !== undefined
 }
 
 /** Expired proof or a changed pending return needs a current probe. */
@@ -158,7 +192,7 @@ export function retainConfirmedSessionPlacement(
   instanceId: string, sessionId: string, placement: SessionPlacement | undefined,
   revalidations: Map<string, () => Promise<void>>, isCurrent: () => boolean, signal?: AbortSignal,
 ): boolean {
-  const confirmed = confirmedPlacements.get(instanceId)?.get(sessionId)
+  const confirmed = placementEvidence().get(instanceId)?.get(sessionId)
   if (!confirmed || !placement) return false
   const matching = matchesSessionPlacement(placement, confirmed.placement)
   const pendingReturn = confirmed.returnFrom !== undefined
@@ -172,7 +206,7 @@ export function retainConfirmedSessionPlacement(
   const authority = captureEventAuthority(instanceId)
   revalidations.set(sessionId, async () => {
     const current = () => authority.current() && isCurrent() && !signal?.aborted && !isSessionMovePending(instanceId, sessionId)
-      && confirmedPlacements.get(instanceId)?.get(sessionId) === confirmed
+      && placementEvidence().get(instanceId)?.get(sessionId) === confirmed
       && (confirmed.returnFrom === undefined || getMovedAwaySessions(instanceId).get(sessionId) === confirmed.returnFrom)
       && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), capturedPlacement)
     const readSignal = signal ? AbortSignal.any([signal, authority.signal]) : authority.signal
@@ -262,16 +296,11 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       return
     case "session.archived":
     case "session.unarchived":
-      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
-      withSession(instanceId, event.data.sessionID, session => {
-        const { archived: _archived, ...time } = session.time
-        session.time = { ...time, updated: Math.max(time.updated, event.created),
-          ...(event.type === "session.archived" ? { archived: event.created } : {}) }
-      })
+      applySessionInfoDelta(instanceId, event.data.sessionID,
+        { archive: { archived: event.type === "session.archived", at: event.created } })
       return
     case "session.renamed":
-      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
-      withSession(instanceId, event.data.sessionID, (session) => { session.title = event.data.title })
+      applySessionInfoDelta(instanceId, event.data.sessionID, { title: { value: event.data.title, at: event.created } })
       return
     case "session.agent.selected":
       if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
@@ -433,21 +462,20 @@ function servesSessionDirectory(instanceId: string, directory: string): boolean 
 
 function applySessionMovePlacement(instanceId: string, { sessionID, location, projectID, subpath }: SessionMoved["data"]): void {
   withSession(instanceId, sessionID, (session) => {
+    if (session.location.directory === location.directory && session.location.workspaceID === location.workspaceID
+      && session.projectID === projectID && session.subpath === subpath) return false
     session.location = location
     session.projectID = projectID
     session.subpath = subpath
   })
 }
 
-async function refreshMovedSessions(instanceId: string, authority = captureEventAuthority(instanceId)): Promise<void> {
-  try {
-    if (!authority.current()) return
-    await fetchSessions(instanceId, { reset: true, signal: authority.signal })
-    if (authority.current() && activeSessionId().get(instanceId)) await refreshSessionCatalog(instanceId)
-  } catch (error) {
-    log.warn("Failed to reconcile moved sessions", { instanceId, error })
-  }
-}
+const movedSessionLists = new TrailingResyncCoordinator(async (instanceId, signal) => {
+  const authority = captureEventAuthority(instanceId)
+  if (!authority.current()) return
+  await fetchSessions(instanceId, { reset: true, signal })
+  if (!signal.aborted && authority.current() && activeSessionId().get(instanceId)) await refreshSessionCatalog(instanceId)
+}, (instanceId, error) => log.warn("Failed to reconcile moved sessions", { instanceId, error }))
 
 function refreshSelectedMoveCatalog(instanceId: string, sessionId: string): void {
   if (activeSessionId().get(instanceId) === sessionId) {
@@ -470,7 +498,7 @@ function handleSessionMoved(instanceId: string, data: SessionMoved["data"]): voi
   }
 
   const move: SessionMove = { data, authority }
-  confirmedPlacements.get(instanceId)?.delete(sessionId)
+  clearPlacementEvidence(instanceId, sessionId)
   const latest = latestSessionMoves.get(instanceId) ?? new Map()
   latest.set(sessionId, move)
   latestSessionMoves.set(instanceId, latest)
@@ -488,10 +516,12 @@ function handleSessionMoved(instanceId: string, data: SessionMoved["data"]): voi
     const moves = pendingSessionMoves.get(instanceId) ?? new Map<string, SessionMove>()
     pendingSessionMoves.delete(instanceId)
     if (!authority.current()) return
-    void reloadWorktrees(instanceId, false, authority.signal).catch(error => {
-      log.warn("Failed to refresh moved-session worktrees", { instanceId, error })
-    }).then(() => authority.current() ? Promise.all([...moves].map(([movedId, move]) => settleSessionMove(instanceId, movedId, move))) : undefined)
-      .then(() => refreshMovedSessions(instanceId, authority))
+    const needsInventory = [...moves].some(([id, move]) => !move.data
+      || !getSessionRoot(instanceId, id) || !listsSessionDirectory(instanceId, move.data.location.directory))
+    void Promise.all([...moves].map(([movedId, move]) => settleSessionMove(instanceId, movedId, move)))
+      .then(() => {
+        if (needsInventory && authority.current()) return movedSessionLists.request(instanceId, authority.signal)
+      })
   }, 100)
   movedSessionRefreshTimers.set(instanceId, cancel)
   authority.signal.addEventListener("abort", cancel, { once: true })
@@ -550,7 +580,8 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
       }
     }
     if (!current()) return false
-    if (inventoryKnown && listsSessionDirectory(instanceId, data.location.directory)) {
+    if (inventoryKnown && listsSessionDirectory(instanceId, data.location.directory)
+      && (!getDirectoryOnlyWorktree(instanceId) || sessions().get(instanceId)?.has(sessionId))) {
       return finishSessionMove(instanceId, sessionId, move, data)
     }
   }
@@ -591,10 +622,17 @@ function finishSessionMove(instanceId: string, sessionId: string, move: SessionM
   clearPendingSessionMove(instanceId, sessionId)
   if (typeof placement !== "symbol") {
     if (verified) confirmSessionPlacement(instanceId, sessionId, placement)
+    const listed = confirmedSessionListDirectory(instanceId, sessionId, placement)
+    const inScope = listed || listsSessionDirectory(instanceId, placement.location.directory)
+    const localDisplay = !!getDirectoryOnlyWorktree(instanceId) && inScope
     if (held) applySessionMovePlacement(instanceId, { ...placement, sessionID: sessionId })
-    else if (verified && (confirmedSessionListDirectory(instanceId, sessionId, placement)
+    else if (verified && (localDisplay || listed
       || (!move.data && listsSessionDirectory(instanceId, placement.location.directory)))) {
       publishFetchedSessionInfo(instanceId, verified, undefined, move.authority.current)
+    }
+    if (inScope) {
+      const root = getSessionRoot(instanceId, sessionId)
+      if (root && !getSessionListIds(instanceId).includes(root.id)) prependSessionListId(instanceId, root.id)
     }
     if (!move.data && held) refreshSelectedMoveCatalog(instanceId, sessionId)
     return true
@@ -614,9 +652,7 @@ export function getPendingSessionMove(instanceId: string, sessionId: string): Se
 }
 
 export function clearPendingSessionMove(instanceId: string, sessionId?: string): void {
-  const confirmed = confirmedPlacements.get(instanceId)
-  if (sessionId !== undefined) confirmed?.delete(sessionId)
-  if (sessionId === undefined || !confirmed?.size) confirmedPlacements.delete(instanceId)
+  clearPlacementEvidence(instanceId, sessionId)
   const moves = latestSessionMoves.get(instanceId)
   if (sessionId !== undefined) moves?.delete(sessionId)
   if (sessionId !== undefined) pendingSessionMoves.get(instanceId)?.delete(sessionId)
@@ -632,7 +668,7 @@ export function isSessionMovePending(instanceId: string, sessionId: string): boo
 }
 
 export function settleListedReturn(instanceId: string, id: string): boolean {
-  const evidence = confirmedPlacements.get(instanceId)?.get(id)
+  const evidence = placementEvidence().get(instanceId)?.get(id)
   if (evidence?.returnFrom === undefined || evidence.returnFrom !== getMovedAwaySessions(instanceId).get(id)
     || evidence.client !== instances().get(instanceId)?.client || evidence.generation !== getOpenCodeInstanceGeneration(instanceId)
     || isSessionMovePending(instanceId, id) || !matchesSessionPlacement(sessions().get(instanceId)?.get(id), evidence.placement)) return false
@@ -656,9 +692,7 @@ function relistReturnedSessions(instanceId: string): void {
     }
   }
   if (!returned) return
-  void fetchSessions(instanceId, { reset: true }).catch((error) => {
-    log.warn("Failed to list returned moved sessions", { instanceId, error })
-  })
+  void movedSessionLists.request(instanceId, captureEventAuthority(instanceId).signal)
 }
 
 function isChildSession(instanceId: string, sessionId: string): boolean | null {
@@ -755,7 +789,7 @@ queueMicrotask(() => {
       retries.push(settleSessionMove(instanceId, sessionId, move, fresh))
     }
     if (retries.length) void Promise.all(retries).then(results => {
-      if (results.some(Boolean)) return refreshMovedSessions(instanceId, authority)
+      if (results.some(Boolean) && authority.current()) return movedSessionLists.request(instanceId, authority.signal)
     })
   })
   setPendingFormAddedHandler((instanceId, form) => notifySessionAttention("needsInput", instanceId, form.sessionID))
@@ -768,37 +802,86 @@ function isInstanceGenerationCurrent(instanceId: string, generation: number): bo
   return instances().has(instanceId) && getOpenCodeInstanceGeneration(instanceId) === generation
 }
 
-async function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
-  const authority = captureEventAuthority(instanceId)
-  const instance = instances().get(instanceId)
-  if (!instance?.client) return null
+function applyArchiveDelta(time: Session["time"], delta: NonNullable<SessionInfoObservation["archive"]>): Session["time"] {
+  const { archived: _archived, ...rest } = time
+  return { ...rest, updated: Math.max(time.updated, delta.at), ...(delta.archived ? { archived: delta.at } : {}) }
+}
 
-  const client = getRootClient(instanceId)
-  void directory
-  const generation = getOpenCodeInstanceGeneration(instanceId)
-
-  try {
-    const captured = sessions().get(instanceId)?.get(sessionId)
-    const info = await client.session.get({ sessionID: sessionId }, authority.signal ? { signal: authority.signal } : undefined)
-    // A project closed or a client replaced during the read publishes nothing.
-    if (!authority.current() || !isInstanceGenerationCurrent(instanceId, generation)) return null
-    return publishFetchedSessionInfo(instanceId, info, captured, authority.current)
-  } catch (error) {
-    log.error("Failed to fetch session info", error)
-    return null
+/** Keep events that join cold hydration, including after a list page installs the row. */
+function applySessionInfoDelta(instanceId: string, sessionId: string, delta: SessionInfoDelta): void {
+  const existing = sessions().get(instanceId)?.get(sessionId)
+  if (!existing) {
+    void fetchSessionInfo(instanceId, sessionId, undefined, delta)
+    return
+  }
+  const held = sessionInfoReads.get(`${instanceId}\0${sessionId}`)
+  const metadata = held?.current() ? held.metadata : undefined
+  const snapshotAt = observedSessionInfoTime(existing, metadata)
+  if (metadata) {
+    Object.assign(metadata, delta)
+    if (snapshotAt > (delta.title?.at ?? delta.archive!.at)) return
+  }
+  if (delta.title) {
+    const { value } = delta.title
+    if (existing.title !== value) withSession(instanceId, sessionId, session => { session.title = value })
+  } else {
+    const time = applyArchiveDelta(existing.time, delta.archive)
+    withSession(instanceId, sessionId, session => { session.time = time })
+    if (metadata) {
+      metadata.projectedArchive = { time: sessions().get(instanceId)!.get(sessionId)!.time, snapshotAt }
+    }
   }
 }
 
-function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captured: Session | undefined, current = captureEventAuthority(instanceId).current): Session | null {
+function observedSessionInfoTime(row: Session | undefined, metadata: SessionInfoObservation | undefined): number {
+  if (!row) return 0
+  const projected = metadata?.projectedArchive
+  return projected && projected.time === row.time ? projected.snapshotAt : row.time.updated
+}
+
+function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string, metadata: SessionInfoObservation = {}): Promise<Session | null> {
+  const authority = captureEventAuthority(instanceId)
+  const instance = instances().get(instanceId)
+  if (!instance?.client || !authority.current()
+    || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return Promise.resolve(null)
+  const key = `${instanceId}\0${sessionId}`
+  const held = sessionInfoReads.get(key)
+  if (held?.signal === authority.signal && held.current()) {
+    Object.assign(held.metadata, metadata)
+    return held.result
+  }
+
+  void directory
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  const current = () => authority.current() && isInstanceGenerationCurrent(instanceId, generation)
+  const captured = sessions().get(instanceId)?.get(sessionId)
+  const observation = { ...authority, current, metadata, result: Promise.resolve<Session | null>(null) }
+  const result = (async () => {
+    try {
+      const info = await getRootClient(instanceId).session.get({ sessionID: sessionId }, { signal: authority.signal })
+      // A project closed or a client replaced during the read publishes nothing.
+      if (info.id !== sessionId || !current()) return null
+      return publishFetchedSessionInfo(instanceId, info, captured, current, metadata)
+    } catch (error) {
+      if (authority.current()) log.error("Failed to fetch session info", error)
+      return null
+    }
+  })().finally(() => {
+    if (sessionInfoReads.get(key)?.result === result) sessionInfoReads.delete(key)
+  })
+  observation.result = result
+  sessionInfoReads.set(key, observation)
+  return result
+}
+
+function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captured: Session | undefined, current = captureEventAuthority(instanceId).current, metadata?: SessionInfoObservation): Session | null {
   if (!current()) return null
   const sessionId = info.id
   const fetched = createClientSession(info, instanceId)
-  let updatedInstanceSessions: Map<string, Session> | undefined
+  let publishedRoot = false
 
   setSessions((prev) => {
-    const next = new Map(prev)
-    const instanceSessions = new Map(prev.get(instanceId))
-    const existing = instanceSessions.get(sessionId)
+    const existing = prev.get(instanceId)?.get(sessionId)
     const compacting = existing?.status === "compacting"
     const candidate: Session = {
       ...fetched,
@@ -807,8 +890,7 @@ function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captur
       status: compacting ? "compacting" : fetched.status,
       retry: compacting ? null : fetched.retry,
       idleSince: getIdleSinceForStatusTransition(existing?.status, compacting ? "compacting" : fetched.status, existing?.idleSince),
-      pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
-      pendingForm: existing?.pendingForm ?? false,
+      ...getSessionPendingIndicators(instanceId, sessionId),
       runtimeStatusKnown: compacting || existing?.runtimeStatusKnown || false,
     }
     const merged = mergeFetchedSessionRuntimeState(
@@ -817,18 +899,30 @@ function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captur
       existing,
       getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId),
     )
-    if (!merged) return prev
-    instanceSessions.set(sessionId, merged)
-    next.set(instanceId, instanceSessions)
-    updatedInstanceSessions = instanceSessions
-    return next
+    if (merged && metadata) {
+      // A list page may have installed a row during the point read. Reapply
+      // each event field against its own timestamp, independent of other deltas.
+      const existingAt = observedSessionInfoTime(existing, metadata)
+      const pointAt = fetched.time.updated
+      const newest = existing && existingAt >= pointAt ? existing : fetched
+      const newestAt = Math.max(existingAt, pointAt)
+      if (metadata.title) merged.title = newestAt > metadata.title.at ? newest.title : metadata.title.value
+      if (metadata.archive) {
+        if (newestAt <= metadata.archive.at) {
+          merged.time = applyArchiveDelta(merged.time, metadata.archive)
+        } else if (newest.time !== merged.time) {
+          const { archived: _archived, ...time } = merged.time
+          merged.time = { ...time, updated: Math.max(time.updated, newestAt),
+            ...(newest.time.archived === undefined ? {} : { archived: newest.time.archived }) }
+        }
+      }
+    }
+    publishedRoot = merged?.parentId === null
+    return merged ? replaceSessionRow(prev, instanceId, merged) : prev
   })
 
   if (!current()) return null
-  reconcilePendingSessionIndicators(instanceId)
-
-  const published = updatedInstanceSessions?.get(sessionId)
-  if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
+  if (publishedRoot) prependSessionListId(instanceId, sessionId)
 
   return fetched
 }
@@ -849,18 +943,20 @@ function ensureSessionStatus(
   }
 
   // Reads coalesce within one instance generation: a replaced client reads again.
+  const lifecycle = nativeSessionLifecycleGeneration(instanceId, sessionId)
   const key = `${instanceId}:${getOpenCodeInstanceGeneration(instanceId)}:${sessionId}`
   const existingFetch = pendingSessionFetches.get(key)
   if (existingFetch?.current() && existingFetch.signal === authority.signal) {
     existingFetch.status = status
     existingFetch.retry = retry
+    existingFetch.lifecycle = lifecycle
     return existingFetch.settled
   }
 
-  const pendingState = { status, retry, settled: Promise.resolve(), signal: authority.signal, current: authority.current }
+  const pendingState = { status, retry, lifecycle, settled: Promise.resolve(), signal: authority.signal, current: authority.current }
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
-    if (!fetched || !authority.current()) return
+    if (!fetched || !authority.current() || !isCurrentNativeLifecycle(instanceId, sessionId, pendingState.lifecycle)) return
     setSessionStatus(instanceId, sessionId, pendingState.status, { retry: pendingState.retry })
   })()
 
@@ -926,6 +1022,7 @@ function handleSessionUpdate(
       cost: (info as any).cost ?? 0,
       tokens: (info as any).tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       location: info.location,
+      ...getSessionPendingIndicators(instanceId, info.id),
       time: info.time
         ? { ...info.time }
         : {
@@ -934,16 +1031,7 @@ function handleSessionUpdate(
           },
     } as Session
 
-    let updatedInstanceSessions: Map<string, Session> | undefined
-
-    setSessions((prev) => {
-      const next = new Map(prev)
-      const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
-      instanceSessions.set(newSession.id, newSession)
-      next.set(instanceId, instanceSessions)
-      updatedInstanceSessions = instanceSessions
-      return next
-    })
+    setSessions(previous => replaceSessionRow(previous, instanceId, newSession))
 
     if (!newSession.parentId) {
       prependSessionListId(instanceId, newSession.id)
@@ -951,33 +1039,15 @@ function handleSessionUpdate(
 
     log.info(`[SSE] New session created: ${info.id}`, newSession)
   } else {
-    const mergedTime = {
-      ...existingSession.time,
-      ...(info.time ?? {}),
-    }
-    const updatedSession = {
-      ...existingSession,
-      title: info.title || existingSession.title,
-      parentId: info.parentID ?? existingSession.parentId,
-      metadata: info.metadata ?? existingSession.metadata,
-      status: existingSession.status ?? "idle",
-      retry: existingSession.retry ?? null,
-      time: mergedTime,
-    }
-
-    let updatedInstanceSessions: Map<string, Session> | undefined
-
-    setSessions((prev) => {
-      const next = new Map(prev)
-      const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
-      instanceSessions.set(existingSession.id, updatedSession)
-      next.set(instanceId, instanceSessions)
-      updatedInstanceSessions = instanceSessions
-      return next
+    withSession(instanceId, existingSession.id, session => {
+      session.title = info.title || session.title
+      session.parentId = info.parentID ?? session.parentId
+      session.metadata = info.metadata ?? session.metadata
+      session.status ??= "idle"
+      session.retry ??= null
+      session.time = { ...session.time, ...info.time }
     })
-
   }
-  reconcilePendingSessionIndicators(instanceId)
 }
 
 function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): void {

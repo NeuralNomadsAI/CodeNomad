@@ -4,56 +4,92 @@ pub(crate) use agent::{form_view as agent_form_view, forms as agent_forms, view 
 pub(crate) use codenomad_client::{agent_api, backend, catalog, content, history};
 mod chat;
 pub(crate) use chat::{actions as transcript_state, transcript, transport};
+use chat::{connection::retry_connection, events::poll_chat};
 mod components;
+mod composer;
 mod files;
+mod git;
 pub(crate) use components::window_close_button as window_control;
 #[cfg(any(test, feature = "test-support"))]
 mod gallery;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use platform::host;
 mod launcher;
+mod missions;
 pub(crate) use launcher::view as launcher_view;
 mod platform;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 #[path = "../tests/probes/mod.rs"]
 mod probes;
 mod screen;
+mod settings;
+mod shell;
+use shell::render::view;
 mod strings;
+mod timeline;
 use screen::Screen;
 mod workspace;
-use codenomad_client::{Receiver, Sender, bounded};
+#[cfg(test)]
+use codenomad_client::bounded;
+use codenomad_client::{Receiver, Sender};
 use rune::edit::TextEdit;
-use rune::{AppSpec, Cx, El, Tx, col, text};
-use rune_theme_codenomad::{
-    Space, TextRole,
-    layout::{self, Layout, input},
-};
+use rune::{AppSpec, Tx};
+use rune_theme_codenomad::layout;
 use transport::{Command, Event};
 
 #[cfg(any(test, feature = "test-support"))]
 pub const CODE: &str = "fn main() {\n    println!(\"Rune · Code Nomad\");\n}";
 pub use codenomad_client::Message;
 struct State {
+    #[cfg(target_os = "windows")]
+    native_locale: std::cell::Cell<Option<&'static str>>,
+    #[cfg(target_os = "windows")]
+    native_locale_repaint: std::cell::Cell<bool>,
     wake: codenomad_client::Wake,
     agent: Option<agent::Ui>,
     files: Option<files::Ui>,
+    git: git::Binding,
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
-    expanded_tools: std::collections::HashSet<String>,
+    attachments: chat::attachments::Reader,
+    #[cfg(target_arch = "wasm32")]
+    pairing: platform::pairing::Recovery,
+    transcript_display: transcript_state::Display,
+    rail_excerpts: timeline::ExcerptCache,
+    saved_outlines: workspace::outlines::Cache,
+    rail_filter_revision: u64,
+    window_size: [f32; 2],
+    tool_diff_preferences: chat::ToolDiffPreferences,
     screen: Screen,
+    settings: settings::Host,
+    notifications: shell::notifications::Host,
+    #[cfg(not(target_arch = "wasm32"))]
+    direct_authentication: chat::authentication::Recovery,
     input_scope: std::rc::Rc<()>,
+    #[cfg(target_arch = "wasm32")]
+    web_composer_input_epoch: u64,
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
+    shell: shell::Panels,
+    status_permissions: shell::status_permissions::Permissions,
+    status_usage: shell::status_usage::Panel,
     chat_title: String,
-    messages: Vec<Message>,
+    messages: Vec<history::Row>,
     draft: TextEdit,
+    composer: composer::Owner,
+    prompt_history: composer::recall::History,
+    command_receipts: composer::command_receipts::CommandReceipts,
     incoming: Option<Receiver<Event>>,
+    conversation_client_id: Option<String>,
+    conversation_stream_connected: bool,
+    reader: Option<chat::reader::Reader>,
     commands: Option<Sender<Command>>,
     phase: Phase,
     revision: u64,
     can_older: bool,
     paging: bool,
     history_error: bool,
+    history_detached: bool,
 }
 #[derive(PartialEq)]
 enum Phase {
@@ -62,33 +98,104 @@ enum Phase {
     Streaming,
     Failed,
     Reconnecting,
+    #[cfg(target_arch = "wasm32")]
+    WorkspaceMissing,
+    #[cfg(target_arch = "wasm32")]
+    RestoreFailed,
 }
 fn init() -> State {
     State {
+        #[cfg(target_os = "windows")]
+        native_locale: std::cell::Cell::new(None),
+        #[cfg(target_os = "windows")]
+        native_locale_repaint: std::cell::Cell::new(false),
         wake: std::sync::Arc::new(|| {}),
         agent: None,
         files: None,
+        git: Default::default(),
         documents: Default::default(),
         reads: Default::default(),
-        expanded_tools: Default::default(),
+        attachments: Default::default(),
+        #[cfg(target_arch = "wasm32")]
+        pairing: Default::default(),
+        transcript_display: Default::default(),
+        rail_excerpts: Default::default(),
+        saved_outlines: Default::default(),
+        rail_filter_revision: 0,
+        window_size: [0.0; 2],
+        tool_diff_preferences: Default::default(),
         screen: Screen::Chat { launcher: None },
+        settings: Default::default(),
+        notifications: Default::default(),
+        #[cfg(not(target_arch = "wasm32"))]
+        direct_authentication: Default::default(),
         input_scope: std::rc::Rc::new(()),
+        #[cfg(target_arch = "wasm32")]
+        web_composer_input_epoch: 0,
         rejected_edit: TextEdit::new(""),
         workspace: None,
+        shell: Default::default(),
+        status_permissions: Default::default(),
+        status_usage: Default::default(),
         chat_title: String::new(),
         messages: vec![],
         draft: TextEdit::new(""),
+        composer: Default::default(),
+        prompt_history: Default::default(),
+        command_receipts: Default::default(),
         incoming: None,
+        conversation_client_id: None,
+        conversation_stream_connected: false,
+        reader: None,
         commands: None,
         phase: Phase::Loading,
         revision: 0,
         can_older: false,
         paging: false,
         history_error: false,
+        history_detached: false,
     }
 }
+#[cfg(feature = "test-support")]
+fn load_loopback_scene(s: &mut State) {
+    s.messages.push(
+        Message {
+            id: "loopback-fixture".into(),
+            role: "assistant".into(),
+            completed: true,
+            parts: vec![],
+            usage: None,
+            body: chat::LOOPBACK_LINK_SCENE.into(),
+        }
+        .into(),
+    );
+    s.phase = Phase::Ready;
+}
 fn setup(s: &mut State, wake: rune::Waker) {
+    #[cfg(target_arch = "wasm32")]
+    let wake = shell::notifications::with_background_wake(s, wake);
     s.wake = wake.clone();
+    #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
+    if platform::scene_is("transcript-images") {
+        chat::images_fixture::load(s);
+        return;
+    }
+    #[cfg(feature = "test-support")]
+    if platform::scene_is("transcript-loopback") {
+        #[cfg(target_arch = "wasm32")]
+        load_loopback_scene(s);
+        return;
+    }
+    #[cfg(feature = "test-support")]
+    if platform::scene_is("transcript") {
+        #[cfg(target_arch = "wasm32")]
+        transcript::load_scene(s);
+        return;
+    }
+    #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+    if s.git.scene {
+        return;
+    }
     let scoped = ["RUNE_BACKEND", "RUNE_WORKSPACE", "RUNE_SESSION"]
         .iter()
         .all(|key| platform::setting(key).is_some());
@@ -99,11 +206,7 @@ fn setup(s: &mut State, wake: rune::Waker) {
         workspace::connected(s);
         return;
     }
-    let (out, incoming) = bounded(64);
-    let (commands, input) = bounded(1);
-    s.incoming = Some(incoming);
-    s.commands = Some(commands);
-    platform::spawn(transport::run_async(out, input, wake));
+    transport::start(s, true);
 }
 fn local_stress() -> bool {
     #[cfg(feature = "test-support")]
@@ -117,327 +220,89 @@ fn local_stress() -> bool {
 }
 
 fn send(s: &mut State, tx: &mut Tx) {
-    if s.phase != Phase::Ready
-        || s.draft.text.trim().is_empty()
-        || s.agent.as_ref().is_some_and(|a| a.blocked())
-    {
+    composer::send(s, tx, false);
+}
+fn request_older(s: &mut State, tx: &mut Tx) {
+    if chat::reader::older(s) {
+        chat::reader::announce_paging(tx);
+    }
+}
+fn latest(s: &mut State, tx: &mut Tx) {
+    if s.reader.is_none() && s.history_detached {
+        if s.commands
+            .as_ref()
+            .is_some_and(|c| c.try_send(Command::Latest).is_ok())
+        {
+            s.phase = Phase::Reconnecting;
+            s.can_older = false;
+        }
         return;
     }
-    let body = s.draft.text.clone();
-    if s.commands
-        .as_ref()
-        .is_some_and(|c| c.try_send(Command::Send(body.clone())).is_ok())
+    chat::reader::latest(s, tx);
+}
+pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
+    strings::with_locale(settings::app_locale(s), || poll_window(s, now, tx))
+}
+
+fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
+    let gesture = timeline::poll_edge(s, tx);
+    let chat = !timeline::input_precedes_admission(s, tx) && poll_chat(s, 64);
+    shell::notifications::collect(s, workspace::notification_target);
+    if !s.screen.is_launcher()
+        && !git::has_preview(s)
+        && !files::has_preview(s)
+        && !workspace::mission_has_reader(s)
+        && let Some(reader) = &mut s.reader
     {
-        s.messages.push(Message {
-            completed: true,
-            id: format!("rune-user-{}", s.revision),
-            role: "user".into(),
-            body,
-            parts: vec![],
-        });
-        s.revision += 1;
-        s.draft = TextEdit::new("");
-        s.phase = Phase::Streaming;
-        workspace::draft_changed(s, tx);
+        reader.renderer_ready(tx);
     }
-}
-fn request_older(s: &mut State, _: &mut Tx) {
-    if s.can_older
-        && !s.paging
-        && s.commands
-            .as_ref()
-            .is_some_and(|c| c.try_send(Command::Older).is_ok())
+    let mut changed = gesture | chat | transcript_state::Display::poll(s, chat, now, tx);
+    changed |= platform::titlebar::poll(s);
+    changed |= launcher::poll(s, tx);
+    changed |= s.composer.picker.poll(&s.reads, &s.wake);
+    changed |= composer::recall::poll(s);
+    changed |= composer::menu::poll(s, tx);
+    changed |= composer::device::poll(s, tx);
+    changed |= chat::attachments::poll(s, tx);
+    changed |= chat::message_actions::poll(s, tx);
+    #[cfg(target_arch = "wasm32")]
     {
-        s.paging = true;
+        changed |= platform::pairing::poll(s, tx);
     }
-}
-fn retry(s: &mut State) {
-    let older = s.history_error && s.phase != Phase::Failed;
-    let command = if older {
-        Command::Older
-    } else {
-        Command::Retry
-    };
-    if s.commands
-        .as_ref()
-        .is_some_and(|c| c.try_send(command).is_ok())
-    {
-        if older {
-            s.paging = true;
-        } else {
-            s.phase = Phase::Reconnecting;
-        }
-        s.history_error = false;
-    }
-}
-fn latest(_: &mut State, tx: &mut Tx) {
-    tx.scroll_to_bottom_instant("history");
-}
-fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let mut changed = launcher::poll(s, tx);
-    changed |= poll_chat(s, 64);
+    shell::sync(s);
     changed |= workspace::poll(s, now, tx);
-    changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
+    let transcript_revision = s.revision;
+    changed |= settings::poll(s, tx) | settings::poll_window_actions(s, tx);
+    if s.revision != transcript_revision {
+        timeline::filters_changed(s);
+    }
+    changed |= timeline::search::settle_destination(s, tx);
+    #[cfg(target_arch = "wasm32")]
+    {
+        changed |= settings::poll_stats(s, now, tx);
+    }
+    changed |= shell::status_permissions::poll(s, tx);
+    changed |= shell::status_usage::poll(s, now, tx);
+    #[cfg(target_arch = "wasm32")]
+    if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
+        changed |= launcher::reopen(s);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        changed |= chat::authentication::poll(s);
+    }
+    changed |= files::poll(s, now, tx);
+    changed |= git::poll(s, now, tx);
+    changed |= workspace::poll_file_drafts(s, now, tx);
+    changed |= shell::notifications::poll(s, tx);
+    changed |= shell::notifications::poll_app_notices(s, now, tx);
+    workspace::capture_files_mode(s);
+    timeline::poll_reveal(s, tx, changed);
     if changed {
         tx.instant();
     }
     changed
 }
-fn poll_chat(s: &mut State, limit: usize) -> bool {
-    let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
-    for _ in 0..limit {
-        let Some(event) = s.incoming.as_ref().and_then(|r| r.try_recv().ok()) else {
-            break;
-        };
-        match event {
-            Event::Connected(backend) => {
-                s.renew_scope();
-                s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
-            }
-            Event::AgentHint(catalog) => {
-                if let Some(a) = s.agent.as_mut() {
-                    if catalog {
-                        a.online = true;
-                    }
-                    a.refresh(catalog)
-                }
-            }
-            Event::Workspace(event) => {
-                if let Some(files) = &mut s.files {
-                    files.event(event);
-                }
-            }
-            Event::Sync(page) => {
-                if let Some(files) = &mut s.files {
-                    files.online(true);
-                }
-                if let Some(a) = s.agent.as_mut() {
-                    if !a.online {
-                        a.online = true;
-                        a.refresh(false);
-                    }
-                }
-                s.messages = page.rows;
-                s.can_older = page.older.is_some();
-                s.paging = false;
-                s.history_error = false;
-                s.phase = if page.running {
-                    Phase::Streaming
-                } else {
-                    Phase::Ready
-                };
-            }
-            Event::Older(page) => {
-                match history::join(&page.rows, &s.messages) {
-                    Ok(rows) => {
-                        s.messages = rows;
-                        s.can_older = page.older.is_some();
-                        s.history_error = false;
-                    }
-                    Err(_) => s.history_error = true,
-                }
-                s.paging = false;
-            }
-            Event::Reconnecting => {
-                if let Some(files) = &mut s.files {
-                    files.online(false);
-                }
-                s.phase = Phase::Reconnecting;
-                if let Some(a) = s.agent.as_mut() {
-                    a.online = false;
-                }
-            }
-            Event::PagingFailed => {
-                s.paging = false;
-                s.history_error = true;
-            }
-            Event::History(messages) => {
-                s.messages = messages;
-                s.phase = Phase::Ready;
-            }
-            Event::Message(m) => {
-                if !s.messages.iter().any(|existing| existing.id == m.id) {
-                    s.messages.push(m);
-                }
-            }
-            Event::Text(id, event) => {
-                if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
-                    match content::apply_text(m, &event) {
-                        Ok(content::TextFit::Repair) | Err(_) => s.history_error = true,
-                        _ => {}
-                    }
-                }
-            }
-            Event::Done => s.phase = Phase::Ready,
-            Event::Failed => {
-                if let Some(files) = &mut s.files {
-                    files.online(false);
-                }
-                s.phase = Phase::Failed;
-                if let Some(a) = s.agent.as_mut() {
-                    a.online = false;
-                }
-            }
-        }
-        s.revision += 1;
-        changed = true;
-    }
-    changed
-}
-fn view(s: &State, cx: &mut Cx<State>) -> El {
-    layout::render(cx, |cx| {
-        let scope = s.input_scope.clone();
-        let mut body = match &s.screen {
-            Screen::Launcher(_) => launcher_view::view(s),
-            Screen::Chat { .. } => chat_view(s, cx),
-        };
-        if s.workspace.is_none() {
-            return body;
-        }
-        let tabs = workspace::strip(s, cx);
-        if let Some(ui) = &s.workspace {
-            body = body.key(format!("tab-body-{}", ui.active_key()));
-        }
-        col()
-            .full_width()
-            .full_height()
-            .reading_surface()
-            .child(tabs)
-            .child(if let Some(error) = workspace::status(s) {
-                layout::action_row()
-                    .pad(Space::Sm)
-                    .child(text(strings::t(error)).role("alert"))
-                    .child(launcher_view::button_tx(
-                        "workspace-retry",
-                        strings::t("sessionList.loadError.retry"),
-                        false,
-                        crate::screen::action_tx(&scope, workspace::retry),
-                    ))
-            } else {
-                rune::el()
-            })
-            .child(body.remaining())
-    })
-    .locale_direction(strings::locale())
-}
-fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
-    let scope = s.input_scope.clone();
-    let locale = strings::locale();
-    let rows = layout::transcript_rows(
-        s.messages.len(),
-        |s: &State, i| s.messages[i].id.clone().into(),
-        move |s: &State, i| strings::with_locale(locale, || transcript::message(s, i)),
-    )
-    .key("rows")
-    .virtual_rows_version(s.revision);
-    let status = match s.phase {
-        Phase::Loading => "rune.loading",
-        Phase::Ready => "rune.ready",
-        Phase::Streaming => "rune.streaming",
-        Phase::Failed => "rune.failed",
-        Phase::Reconnecting => "rune.reconnecting",
-    };
-    let expanded = s
-        .agent
-        .as_ref()
-        .is_some_and(|a| a.picker || !a.ids().is_empty());
-    rune_theme_codenomad::interruption::session_surface(expanded)
-        .child(
-            rune_theme_codenomad::layout::action_row()
-                .full_width()
-                .key("session-header")
-                .pad(Space::Md)
-                .separate(Space::Lg)
-                .child(
-                    text(strings::t("window.title.main"))
-                        .key("app-title")
-                        .text_role(TextRole::Title),
-                )
-                .child(if s.screen.launcher().is_some() {
-                    launcher_view::button(
-                        "sessions-back",
-                        strings::t("sessionList.header.title"),
-                        !matches!(s.phase, Phase::Ready | Phase::Failed)
-                            || (!s.draft.text.is_empty() && s.workspace.is_none())
-                            || agent::navigation_blocked(s),
-                        crate::screen::action(&scope, launcher::back),
-                    )
-                } else {
-                    rune::el()
-                })
-                .child(text(strings::t(status)))
-                .child(
-                    text(strings::t(if s.paging {
-                        "rune.loading"
-                    } else {
-                        "rune.older"
-                    }))
-                    .key("older")
-                    .role("button")
-                    .focusable(true)
-                    .disabled(!s.can_older || s.paging || s.phase == Phase::Reconnecting)
-                    .on_press_tx(crate::screen::action_tx(&scope, request_older)),
-                )
-                .child(if s.phase == Phase::Failed || s.history_error {
-                    text(strings::t("sessionList.loadError.retry"))
-                        .key("retry")
-                        .role("button")
-                        .focusable(true)
-                        .on_press(crate::screen::action(&scope, retry))
-                } else {
-                    rune::el()
-                })
-                .child(
-                    text(strings::t("rune.latest"))
-                        .key("latest")
-                        .role("button")
-                        .focusable(true)
-                        .on_press_tx(crate::screen::action_tx(&scope, latest)),
-                ),
-        )
-        .child(if s.chat_title.is_empty() {
-            rune::el()
-        } else {
-            text(&s.chat_title).key("chat-title").pad(Space::Md)
-        })
-        .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
-        .child(agent_view::view(s, cx))
-        .child(
-            col()
-                .key("session-composer")
-                .role("group")
-                .label(strings::t("rune.prompt"))
-                .full_width()
-                .pad(Space::Md)
-                .separate(Space::Sm)
-                .child(
-                    layout::composer(
-                        input(&s.draft)
-                            .key("composer")
-                            .label(strings::t("rune.prompt"))
-                            .full_width()
-                            .pad(Space::Sm)
-                            .field_surface()
-                            .hint(strings::t("rune.prompt"))
-                            .content_direction()
-                            .on_edit(screen::edit(&scope, screen::Editor::Composer))
-                            .on_input_change(crate::screen::action_tx(
-                                &scope,
-                                workspace::draft_changed,
-                            ))
-                            .on_submit(crate::screen::action_tx(&scope, send)),
-                    )
-                    .field_surface(),
-                )
-                .child(launcher_view::button_tx(
-                    "send",
-                    strings::t("promptInput.overlay.send"),
-                    s.phase != Phase::Ready || s.agent.as_ref().is_some_and(|a| a.blocked()),
-                    crate::screen::action_tx(&scope, send),
-                )),
-        )
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
     #[cfg(feature = "test-support")]
@@ -461,8 +326,23 @@ fn main() {
         return;
     }
     #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-reader") {
+        gallery::reader::run();
+        return;
+    }
+    #[cfg(feature = "test-support")]
     if platform::has_flag("--gallery-window-close") {
         gallery::run();
+        return;
+    }
+    #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-shell") {
+        gallery::shell::run();
+        return;
+    }
+    #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-preferences") {
+        settings::gallery();
         return;
     }
     run_app();
@@ -472,18 +352,34 @@ fn main() {
     run_app();
 }
 fn run_app() {
-    layout::run(
+    platform::titlebar::run(
         AppSpec {
             setup: Some(setup),
             poll: Some(poll),
+            on_key: Some(|s, event, tx| {
+                strings::with_locale(settings::app_locale(s), || shell::keys(s, event, tx))
+            }),
             #[cfg(feature = "test-support")]
-            scenes: &[("synthetic", |s| {
-                s.messages = transport::synthetic();
-                s.phase = Phase::Ready;
-            })],
+            scenes: &[
+                ("synthetic", |s| {
+                    s.messages = transport::synthetic();
+                    s.phase = Phase::Ready;
+                }),
+                #[cfg(not(target_arch = "wasm32"))]
+                ("transcript", transcript::load_scene),
+                #[cfg(not(target_arch = "wasm32"))]
+                ("transcript-loopback", load_loopback_scene),
+                #[cfg(not(target_arch = "wasm32"))]
+                ("git-changes", probes::git_scene::changes),
+                #[cfg(not(target_arch = "wasm32"))]
+                ("git-commits", probes::git_scene::commits),
+            ],
             ..layout::app_spec(strings::t("window.title.main"), init, view)
         },
-        workspace::finish,
+        |s, tx| {
+            settings::close(s);
+            workspace::finish(s, tx);
+        },
     );
     platform::finish();
 }

@@ -43,6 +43,10 @@ impl Screen {
 pub enum Editor {
     Address,
     Password,
+    #[cfg(not(target_arch = "wasm32"))]
+    DirectUsername,
+    #[cfg(not(target_arch = "wasm32"))]
+    DirectPassword,
     Folder,
     Title,
     Search,
@@ -60,7 +64,7 @@ pub fn action(scope: &Rc<()>, run: impl Fn(&mut State) + 'static) -> impl Fn(&mu
     let scope = scope.clone();
     move |s| {
         if s.current_scope(&scope) {
-            run(s);
+            crate::strings::with_locale(crate::settings::app_locale(s), || run(s));
         }
     }
 }
@@ -71,13 +75,21 @@ pub fn action_tx(
     let scope = scope.clone();
     move |s, tx| {
         if s.current_scope(&scope) {
-            run(s, tx);
+            crate::strings::with_locale(crate::settings::app_locale(s), || run(s, tx));
         }
     }
 }
 impl State {
     pub fn renew_scope(&mut self) {
         self.input_scope = Rc::new(());
+        self.composer.menu = Default::default();
+        #[cfg(target_arch = "wasm32")]
+        self.rotate_composer_input();
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn rotate_composer_input(&mut self) {
+        // The web clipboard binds deferred images to the focused field's Rune path.
+        self.web_composer_input_epoch = self.web_composer_input_epoch.wrapping_add(1);
     }
     pub fn current_scope(&self, scope: &Rc<()>) -> bool {
         Rc::ptr_eq(&self.input_scope, scope)
@@ -96,12 +108,20 @@ impl State {
             return &mut self.rejected_edit;
         }
         let edit = match target {
+            #[cfg(not(target_arch = "wasm32"))]
+            Editor::DirectUsername => Some(&mut self.direct_authentication.username),
+            #[cfg(not(target_arch = "wasm32"))]
+            Editor::DirectPassword => Some(&mut self.direct_authentication.password),
             Editor::Address
             | Editor::Password
             | Editor::Folder
             | Editor::Title
             | Editor::Search => {
-                if let Screen::Launcher(l) = &mut self.screen {
+                if let Some(l) = self.screen.launcher_mut()
+                    && (matches!(target, Editor::Title | Editor::Search)
+                        || l.project.is_none()
+                        || matches!(target, Editor::Password) && l.authentication_required)
+                {
                     Some(match target {
                         Editor::Address => &mut l.address,
                         Editor::Password => &mut l.password,
@@ -114,7 +134,8 @@ impl State {
                 }
             }
             Editor::Model => self.agent.as_mut().map(|a| &mut a.search),
-            Editor::Composer => (!self.screen.is_launcher()).then_some(&mut self.draft),
+            Editor::Composer => (!self.screen.is_launcher() && !self.composer.editing_locked())
+                .then_some(&mut self.draft),
             Editor::Reason(id) => self.agent.as_mut().and_then(|a| a.reasons.get_mut(&id)),
             Editor::Form(id) => self
                 .agent

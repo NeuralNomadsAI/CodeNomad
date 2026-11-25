@@ -19,6 +19,7 @@ fn backend(base: String) -> Backend {
         workspace: "workspace".into(),
         session: "session".into(),
         client_id: "write-fixture".into(),
+        session_directory: None,
         fresh_mode: false,
     }
 }
@@ -76,13 +77,13 @@ fn conditional_write_preserves_scope_bytes_and_opaque_version_without_retry() {
             b.write_file(r"D:\Projet 日本", "src é&?/空.txt", text, version)
                 .await
                 .unwrap(),
-            WriteResult::Saved
+            WriteResult::Saved(None)
         );
         assert_eq!(
             b.write_file(r"D:\Projet 日本", "src é&?/空.txt", text, version)
                 .await
                 .unwrap(),
-            WriteResult::Conflict
+            WriteResult::Conflict(None)
         );
         assert!(
             b.write_file(r"D:\Projet 日本", "src é&?/空.txt", text, version)

@@ -120,6 +120,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const { t } = useI18n()
   const usageMetricsVisibility = () =>
     preferences().showUsageMetrics ? preferences().usageMetricsExpansion : "hidden"
+  const toolGroupVisibility = createMemo(() => preferences().toolGroupVisibility)
   const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
   const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
   const emptyStateVariant = () => props.emptyStateVariant ?? "messages"
@@ -227,6 +228,7 @@ export default function MessageSection(props: MessageSectionProps) {
     sessionRevision()
     const resolvedStore = store()
     const pendingForms = pendingFormToolTargets()
+    const groupTools = toolGroupVisibility() !== "hidden"
     const items = visibleMessageIds().flatMap((messageId) => {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return []
@@ -237,7 +239,7 @@ export default function MessageSection(props: MessageSectionProps) {
       const projected = display.orderedParts.map((part) => {
         if (!isTechnicalGroupingVisiblePart(part)) return []
         const partId = typeof part.id === "string" ? part.id : ""
-        const kind = getTechnicalGroupKind(part)
+        const kind = getTechnicalGroupKind(part, groupTools)
         const pending = part.type === "tool" && Boolean(
           part.pendingPermission?.active
           || (partId && resolvedStore.getPermissionState(messageId, partId)?.active)
@@ -1280,7 +1282,7 @@ export default function MessageSection(props: MessageSectionProps) {
           // so Solid keeps existing result buttons and their keyboard focus.
           setSearchMatches(previous => page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map((hit, index) => previous[index] ?? ({
             id: `${hit.sessionID}:${hit.messageID}:${hit.partIndex}`,
-            sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind,
+            sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind, partIndex: hit.partIndex,
             role: hit.role === "user" ? "user" : "assistant", start: 0, end: query.length,
             occurrence: 0, preview: hit.excerpt,
           })))
@@ -1652,6 +1654,7 @@ export default function MessageSection(props: MessageSectionProps) {
               systemMessagesVisibility={() => preferences().systemMessagesVisibility}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               usageMetricsVisibility={usageMetricsVisibility}
+              toolGroupVisibility={toolGroupVisibility}
               toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}
               onRevert={props.onRevert}
               onFork={props.onFork}

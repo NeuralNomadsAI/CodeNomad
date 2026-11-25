@@ -11,10 +11,13 @@ import { setSessions, setActiveSession } from "../../../src/stores/session-state
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages } from "../../../src/stores/session-api"
 import { getRenderTextWindow, MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../../../src/lib/render-text-window"
+import transcript from "../../../../rune-app/fixtures/transcript.json"
+import transcriptSettings from "../../../../rune-app/fixtures/transcript-settings.json"
 import "../../../src/index.css"
 
 // Native API records enter through the real load/normalize/store/display path.
 const instanceId = "reveal-instance", model = { providerID: "fixture", id: "fixture" }
+const parity = new URLSearchParams(location.search).get("session") === "transcript"
 const paragraph = (index: number) => `Paragraph ${String(index).padStart(4, "0")}: the subagent reviewed one more rendering path and recorded its evidence.\n\n`
 const text = Array.from({ length: 820 }, (_, index) => paragraph(index)).join("") + "TEXT-TAIL-PROOF"
 const readOutput = Array.from({ length: 900 }, (_, index) => `read line ${String(index).padStart(4, "0")} ok`).join("\n") + "\nREAD-TAIL-PROOF"
@@ -42,6 +45,7 @@ const messages: Record<string, any[]> = {
   // The long text is the latest message, so its reveal line is visible while the list follows the bottom.
   "reveal-c": [filler("c", 0), { id: "msg_c_long", type: "assistant", agent: "build", model, time: { created: 10, completed: 11 }, content: [{ type: "text", text }] }],
 }
+if (parity) messages.transcript = [transcript]
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     get: async ({ sessionID }: any) => ({ id: sessionID, location: { directory: "/fixture" }, time: { created: 1, updated: 2 } }) },
@@ -55,16 +59,18 @@ setSessions(previous => new Map(previous).set(instanceId, new Map(Object.keys(me
   status: "idle", agent: "build", model: { providerId: "fixture", modelId: "fixture" }, time: { created: 1, updated: 2 },
 } as any]))))
 setActiveSession(instanceId, "reveal-a")
-await applyUiSettings({ toolInputsVisibility: "hidden", toolOutputExpansion: "expanded", diagnosticsExpansion: "collapsed",
-  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { read: "expanded", task: "expanded", other: "expanded" } } })
-await loadMessages(instanceId, "reveal-a", { force: true })
-await loadMessages(instanceId, "reveal-b", { force: true })
-await loadMessages(instanceId, "reveal-c", { force: true })
+await applyUiSettings(parity ? transcriptSettings as Parameters<typeof applyUiSettings>[0] : {
+  toolInputsVisibility: "hidden", toolOutputExpansion: "expanded", diagnosticsExpansion: "collapsed",
+  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { read: "expanded", task: "expanded", other: "expanded" } },
+})
+for (const id of parity ? ["transcript"] : ["reveal-a", "reveal-b", "reveal-c"]) {
+  await loadMessages(instanceId, id, { force: true })
+}
 const initialSession = new URLSearchParams(location.search).get("session") ?? "reveal-a"
 setActiveSession(instanceId, initialSession)
 const [session, setSession] = createSignal(initialSession)
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
-  <main style={{ display: "flex", height: "800px", width: "1000px" }}>
+  <main style={{ display: "flex", height: parity ? "1200px" : "800px", width: "1000px" }}>
     <Show when={session()} keyed>{(id) => <MessageSection instanceId={instanceId} sessionId={id} isActive={true} />}</Show>
   </main>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

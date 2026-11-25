@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "שגיאת תחביר בשורה {line}",
   "settings.nav.servers": "שרתים",
   "settings.servers.open": "פתיחה",
   "settings.servers.dialog.name": "שם",
@@ -251,6 +252,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "פלט",
   "contextUsagePanel.labels.cost": "עלות",
   "contextUsagePanel.included": "כלול",
+  "contextUsagePanel.partialTotal": "סכום חלקי של השיחה",
+  "contextUsagePanel.totalUnavailable": "הסכום הכולל של השיחה אינו זמין",
   "contextUsagePanel.labels.totalInput": "קלט כולל",
   "contextUsagePanel.labels.totalOutput": "פלט כולל",
   "contextUsagePanel.labels.totalCost": "עלות כוללת",
@@ -442,7 +445,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "גרסת OpenCode",
   "settings.opencode.update.subtitle": "הגרסה המותקנת של קובץ OpenCode שהוגדר.",
   "settings.opencode.update.checking": "קורא את הגרסה המותקנת...",
-  "settings.opencode.update.checkFailed": "לא ניתן לקרוא את גרסת OpenCode המותקנת.",
+  "settings.opencode.update.checkFailed": "לא ניתן לבדוק אם יש עדכונים ל-OpenCode.",
   "settings.opencode.update.retry": "נסה שוב",
   "settings.opencode.update.installed": "גרסה מותקנת",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} זמין. OpenCode V2 אינו תומך בהתקנה אוטומטית.",
@@ -749,5 +752,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "הורד .txt",
   "settings.info.diagnostics.reportBug": "דווח על באג",
   "settings.info.diagnostics.copied": "נתוני האבחון הועתקו.",
+  "settings.info.actions.failed": "לא ניתן להשלים את הפעולה. נסו שוב.",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI לא מספקת נתוני שימוש בשיטת ההתחברות הזו של ChatGPT. אפשר להמשיך לשוחח.",
 } as const

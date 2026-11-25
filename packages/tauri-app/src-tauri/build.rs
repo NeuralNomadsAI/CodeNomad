@@ -51,6 +51,7 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "cli_get_status",
+            "cli_renew_managed_session",
             "device_speech_request",
             "remote_dictation_request",
             "settle_remote_dictation",
@@ -74,12 +75,15 @@ fn main() {
             "memory_cleanup_result",
             "memory_cleanup_claim",
             "window_control",
+            "start_native_window_drag",
             "owned_webview_zoom",
             "popup_titlebar_menu",
             "open_remote_window",
             "open_external_url",
             "client_state_claim_access",
             "client_state_load",
+            "client_state_load_file_drafts",
+            "client_state_save_file_draft",
             "client_state_save",
             "client_state_commit_partitions",
             "client_state_load_partition",

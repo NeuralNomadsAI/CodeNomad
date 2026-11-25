@@ -71,17 +71,13 @@ pub fn run() {
             .launcher()
             .is_some_and(|l| l.project.is_some() && !l.pending)
     });
-    launcher::choose(
-        &mut rt.state,
-        "ses_existing".into(),
-        "Existing history".into(),
-    );
+    rt.update(|s, tx| launcher::choose(s, "ses_existing".into(), tx));
     wait(&mut rt, "existing session", |s| {
         !s.screen.is_launcher() && s.phase == Phase::Ready && s.files.is_some()
     });
     assert_eq!(rt.state.messages.len(), 2);
     assert_eq!(rt.state.messages[0].body, "Existing project history");
-    rt.state.files.as_mut().unwrap().show(true);
+    rt.update(|s, _| workspace::set_files_tab(s, true));
     wait(&mut rt, "root listing", |s| {
         contains(s, "initial.txt") && contains(s, "src")
     });
@@ -123,7 +119,7 @@ pub fn run() {
         .unwrap()
         .select("src/initial.ts".into(), false);
     let cached = paths(&rt.state);
-    rt.state.files.as_mut().unwrap().show(false);
+    rt.update(|s, _| workspace::set_files_tab(s, false));
     stage(&rt, "hidden");
     settle(&mut rt);
     let hidden = super::files_reader::content(&mut rt, "Reader hidden · 日本語\nthird version");
@@ -137,7 +133,7 @@ pub fn run() {
         rt.state.files.as_ref().unwrap().tree.selected(),
         Some("src/initial.ts")
     );
-    rt.state.files.as_mut().unwrap().show(true);
+    rt.update(|s, _| workspace::set_files_tab(s, true));
     wait(&mut rt, "visible demand catches hidden mutation", |s| {
         contains(s, "hidden.txt")
     });

@@ -21,8 +21,8 @@ export interface RestorableWorkspaceRuntimeAuthority {
   drafts?: ReadonlySet<string>
   attachments?: ReadonlySet<string>
   scrollSnapshots?: ReadonlySet<string>
-  idleMarkers?: ReadonlySet<string>
-  generationRecovery?: ReadonlySet<string>
+  idleMarkers?: Pick<ReadonlySet<string>, "has">
+  generationRecovery?: Pick<ReadonlySet<string>, "has">
   sessionExpansion?: ReadonlySet<string>
   deletedSessions?: ReadonlySet<string>
   sessionSelection?: boolean
@@ -210,9 +210,12 @@ function mergeWorkspaceState(
   preserved: RestorableWorkspaceTabState,
   authority: RestorableWorkspaceRuntimeAuthority = {},
 ): RestorableWorkspaceTabState {
-  const mergeRecords = <T>(currentRecord: Record<string, T>, fallback: Record<string, T>, owned?: ReadonlySet<string>) => {
+  const deleted = authority.deletedSessions
+  const mergeRecords = <T>(currentRecord: Record<string, T>, fallback: Record<string, T>, owned?: Pick<ReadonlySet<string>, "has">) => {
     const preservedRecord = { ...fallback }
-    for (const id of [...(owned ?? []), ...(authority.deletedSessions ?? [])]) delete preservedRecord[id]
+    for (const id of Object.keys(preservedRecord)) {
+      if (owned?.has(id) || deleted?.has(id)) delete preservedRecord[id]
+    }
     return { ...preservedRecord, ...currentRecord }
   }
   const result: RestorableWorkspaceTabState = {
@@ -236,7 +239,8 @@ function mergeWorkspaceState(
     else delete result.seenInterruptions
   }
   const catalog = current.sessionCatalog ?? preserved.sessionCatalog
-  if (catalog) result.sessionCatalog = catalog.filter(row => !authority.deletedSessions?.has(row.id))
+  if (catalog) result.sessionCatalog = deleted?.size && catalog.some(row => deleted.has(row.id))
+    ? catalog.filter(row => !deleted.has(row.id)) : catalog
   if (current.outlineIndexes || preserved.outlineIndexes) {
     result.outlineIndexes = mergeRecords(current.outlineIndexes ?? {}, preserved.outlineIndexes ?? {}, authority.idleMarkers)
     for (const id of authority.deletedSessions ?? []) delete result.outlineIndexes[id]

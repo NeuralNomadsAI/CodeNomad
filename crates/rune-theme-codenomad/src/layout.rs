@@ -2,9 +2,26 @@
 //! Layout assembly remains subject to native/browser screenshot qualification.
 use crate::{Space, TextRole, kit, tokens};
 use rune::{El, GrowthSpec, edit::TextEdit};
-use std::{borrow::Cow, cell::Cell};
+use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 thread_local! { static APPEARANCE: Cell<bool> = const { Cell::new(false) }; }
+pub type DrawnRect = rune::Live<[f32; 4]>;
+
+thread_local! { static SOURCE_PALETTE: Cell<bool> = const { Cell::new(false) }; }
+pub(crate) fn source_palette() -> bool {
+    SOURCE_PALETTE.get()
+}
+/// Use Solid's product defaults where the app hasn't selected a palette.
+pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SOURCE_PALETTE.set(self.0);
+        }
+    }
+    let _restore = Restore(SOURCE_PALETTE.replace(true));
+    render()
+}
 pub fn dark() -> bool {
     APPEARANCE.get()
 }
@@ -34,17 +51,49 @@ pub fn button_tx<S: 'static>(
     disabled: bool,
     press: impl Fn(&mut S, &mut rune::Tx) + 'static,
 ) -> El {
-    rune_kit::Button::new(label)
+    let action = Rc::new(press);
+    let press = action.clone();
+    let button = rune_kit::Button::new(label)
         .disabled(disabled)
-        .on_press_tx(press)
+        .on_press_tx(move |s, tx| press(s, tx))
+        .build(kit(dark()));
+    if disabled {
+        button
+    } else {
+        button.on_key(enter_action(action))
+    }
+}
+/// Disabled kit button visuals that remain keyboard-focusable (`aria-disabled`).
+pub fn focusable_disabled_button(label: &str) -> El {
+    rune_kit::Button::new(label)
+        .disabled(true)
         .build(kit(dark()))
+        .disabled(false)
+        .focusable(true)
+        .aria_disabled(true)
+}
+
+pub(crate) fn enter_action<S: 'static>(
+    action: Rc<impl Fn(&mut S, &mut rune::Tx) + 'static>,
+) -> impl Fn(&mut S, &rune::KeyEvent, &mut rune::Tx) -> bool + 'static {
+    move |s, key, tx| {
+        if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
+            return false;
+        }
+        if !tx.key_repeat() {
+            action(s, tx);
+        }
+        true
+    }
 }
 pub fn input(edit: &TextEdit) -> El {
+    base_editor(edit).fill(tokens(dark()).color("surface-field"))
+}
+fn base_editor(edit: &TextEdit) -> El {
     // Rune's low-level editor retains the application's edit accessor and submit contract.
     rune::text_input(edit, tokens(dark()).text(TextRole::Body))
         .w_full()
         .padding(tokens(dark()).space(Space::Sm).px())
-        .fill(tokens(dark()).color("surface-field"))
         .dir(rune::Direction::Auto)
 }
 pub fn field(edit: &TextEdit) -> rune_kit::TextInput {
@@ -58,6 +107,77 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 }
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
+}
+pub fn composer_input(edit: &TextEdit, placeholder: &str) -> El {
+    base_editor(edit).hint(placeholder)
+}
+pub fn editor_menu<S: 'static>(
+    tx: &mut rune::Tx,
+    point: (f32, f32),
+    selected: bool,
+    pick: impl FnOnce(&mut S, Option<&str>, &mut rune::Tx) + 'static,
+) {
+    use rune::{Label, PopupItem, PopupMenu, labels::label};
+    let mut menu = PopupMenu::new()
+        .item(PopupItem::new("cut", label(Label::Cut)).enabled(selected))
+        .item(PopupItem::new("copy", label(Label::Copy)).enabled(selected))
+        .item(PopupItem::new("paste", label(Label::Paste)));
+    if !cfg!(target_os = "macos") {
+        menu = menu.item(PopupItem::new("select-all", label(Label::SelectAll)));
+    }
+    tx.popup_menu(menu, point, pick);
+}
+pub fn composer_field(editor: El, compact: bool, focused: bool) -> El {
+    let t = tokens(dark());
+    let minimum = if compact {
+        t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0
+    } else {
+        104.0
+    };
+    let field = rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
+        .min_h(minimum)
+        .max_h(320.0);
+    let field = rune::col()
+        .w_full()
+        .child(field)
+        .fill(t.color("surface-field"));
+    if focused {
+        field.outline(1.0, -1.0, t.color("focus-ring-color"))
+    } else {
+        field
+    }
+}
+pub fn announce_polite(tx: &mut rune::Tx, text: impl Into<String>) {
+    tx.announce(text, rune::LiveRegion::Polite);
+}
+
+pub fn announce_alert(tx: &mut rune::Tx, message: &str) {
+    tx.announce(message, rune::LiveRegion::Assertive);
+}
+
+pub fn suggestion_list<S: 'static>(
+    key: &str,
+    anchor: &str,
+    label: &str,
+    empty: &str,
+    active: usize,
+    items: impl IntoIterator<Item = (String, String)>,
+) -> rune_kit::PopupList<S> {
+    rune_kit::PopupList::new(key, anchor)
+        .label(label)
+        .empty_message(empty)
+        .active(Some(active))
+        .items(
+            items
+                .into_iter()
+                .enumerate()
+                .map(|(index, (name, description))| {
+                    rune_kit::PopupItem::new(index.to_string(), name).description(description)
+                }),
+        )
+}
+pub fn with_overlays(base: El, layers: Vec<El>) -> El {
+    rune_kit::root(base, layers)
 }
 /// Shared wrapping action groups follow the available native/browser width.
 pub fn action_row() -> El {
@@ -99,6 +219,7 @@ pub fn transcript_rows<S: 'static>(
     // Solid virtual-follow-measurements.ts uses a 40px first-row fallback;
     // the matching CSS touch-target token keeps this estimate in the shared scale.
     let appearance = dark();
+    let palette = crate::palettes::current();
     rune::col()
         .w_full()
         .growth(GrowthSpec::default())
@@ -106,14 +227,42 @@ pub fn transcript_rows<S: 'static>(
             count,
             tokens(dark()).length(crate::Length::TouchTarget).px(),
             key,
-            move |state, index| with_appearance(appearance, || build(state, index)),
+            move |state, index| {
+                crate::palettes::with_palette(palette, || {
+                    with_appearance(appearance, || build(state, index))
+                })
+            },
         )
 }
-pub fn composer(editor: El) -> El {
-    // Current prompt-input.css editor bounds. A dedicated shared variant preserves them.
+pub fn composer<S>(editor: El, scroll_stack: Option<&rune::Cx<S>>) -> El {
+    composer_bounds(editor, 104.0, scroll_stack)
+}
+pub fn compact_composer<S>(editor: El, scroll_stack: Option<&rune::Cx<S>>) -> El {
+    let t = tokens(dark());
+    composer_bounds(
+        editor,
+        t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0,
+        scroll_stack,
+    )
+}
+fn composer_bounds<S>(editor: El, minimum: f32, scroll_stack: Option<&rune::Cx<S>>) -> El {
+    const MAX_HEIGHT: f32 = 320.0;
+    let editor = editor.min_h(minimum);
+    if scroll_stack.is_some_and(|cx| {
+        cx.layout_size("composer")
+            .is_none_or(|size| size[1] <= MAX_HEIGHT)
+    }) {
+        return rune::col()
+            .key("scroll")
+            .w_full()
+            .min_h(minimum)
+            .max_h(MAX_HEIGHT)
+            .child(editor);
+    }
+    // The editor owns the whole painted space, including blank lines above the minimum.
     rune::auto_grow(editor, 1, usize::MAX)
-        .min_h(104.0)
-        .max_h(320.0)
+        .min_h(minimum)
+        .max_h(MAX_HEIGHT)
 }
 pub trait Layout {
     fn locale_direction(self, locale: &str) -> Self;
@@ -138,6 +287,26 @@ pub trait Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn source_subtrees_inherit_active_contrast_and_keep_the_standalone_fallback() {
+        for dark in [false, true] {
+            let fallback = with_source_palette(|| tokens(dark).color("surface-secondary"));
+            let palette = crate::palettes::increased_contrast(None, dark).unwrap();
+            crate::palettes::with_palette(Some(palette), || {
+                let contrast = tokens(dark).color("surface-secondary");
+                assert_ne!(contrast, fallback);
+                with_source_palette(|| {
+                    assert_eq!(tokens(dark).color("surface-secondary"), contrast);
+                    assert_eq!(kit(dark).c.layer_01, contrast);
+                });
+                assert!(!source_palette());
+            });
+            assert_eq!(
+                with_source_palette(|| tokens(dark).color("surface-secondary")),
+                fallback
+            );
+        }
+    }
     #[test]
     fn shared_button_preserves_kit_geometry_and_disabled_semantics() {
         fn view(&(direct, disabled): &(bool, bool), cx: &mut rune::Cx<(bool, bool)>) -> El {
@@ -180,6 +349,106 @@ mod tests {
                         .collect::<Vec<_>>()
                 };
                 assert_eq!(inspect(false), inspect(true));
+            }
+        }
+    }
+    #[test]
+    fn focusable_disabled_button_keeps_disabled_appearance_and_focus() {
+        fn view(focusable_disabled: &bool, cx: &mut rune::Cx<bool>) -> El {
+            render(cx, |_| {
+                if *focusable_disabled {
+                    focusable_disabled_button("Save").key("save")
+                } else {
+                    button("Save", true, |_: &mut bool| {}).key("save")
+                }
+            })
+        }
+        for dark in [false, true] {
+            let inspect = |focusable_disabled| {
+                let mut rt = rune::Runtime::new(
+                    focusable_disabled,
+                    view,
+                    (320.0, 180.0),
+                    rune::Env::new(dark, 1.0),
+                );
+                rt.frame(1.0);
+                let visuals: Vec<_> = rt
+                    .elements()
+                    .into_iter()
+                    .map(|e| {
+                        (
+                            e.role,
+                            e.label,
+                            e.rect,
+                            e.radius,
+                            e.fill,
+                            e.text_color,
+                            e.opacity,
+                        )
+                    })
+                    .collect();
+                let instances: Vec<_> = rt
+                    .instances
+                    .iter()
+                    .map(|i| (i.rect, i.fill, i.border, i.params))
+                    .collect();
+                let dimmed = rt
+                    .instances
+                    .iter()
+                    .any(|i| i.params[1] == rune::render::KIND_LAYER && i.fill[3] < 1.0);
+                let root = rt
+                    .elements()
+                    .into_iter()
+                    .find(|e| e.key.as_deref() == Some("save"))
+                    .unwrap();
+                (visuals, instances, root.focusable, dimmed, rt)
+            };
+            let (plain_vis, plain_inst, plain_focus, plain_dimmed, _) = inspect(false);
+            let (keep_vis, keep_inst, keep_focus, keep_dimmed, mut rt) = inspect(true);
+            assert_eq!(keep_vis, plain_vis);
+            assert_eq!(keep_inst, plain_inst);
+            assert!(!plain_focus);
+            assert!(keep_focus);
+            assert!(plain_dimmed);
+            assert!(keep_dimmed);
+            rt.update(|_, tx| tx.focus("save", true));
+            rt.frame(1.0 / 60.0);
+            let states = rt.accessibility_json()["children"][0]["states"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            assert!(states.contains(&serde_json::Value::from("disabled")));
+            assert!(states.contains(&serde_json::Value::from("focused")));
+        }
+    }
+    #[test]
+    fn shared_button_responds_once_to_enter_and_space_when_enabled() {
+        fn view(&(disabled, _): &(bool, usize), _: &mut rune::Cx<(bool, usize)>) -> El {
+            button("Save", disabled, |s: &mut (bool, usize)| s.1 += 1).key("save")
+        }
+        for disabled in [false, true] {
+            let mut rt = rune::Runtime::new(
+                (disabled, 0),
+                view,
+                (320.0, 180.0),
+                rune::Env::new(false, 1.0),
+            );
+            rt.frame(0.0);
+            rt.update(|_, tx| tx.focus("save", true));
+            rt.frame(0.01);
+            for (index, key) in [rune::Key::Enter, rune::Key::Text(" ".into())]
+                .into_iter()
+                .enumerate()
+            {
+                let key = rune::KeyEvent {
+                    key,
+                    mods: rune::Mods::default(),
+                };
+                rt.key(key.clone());
+                rt.repeat_key(key.clone());
+                rt.key_up(key);
+                rt.frame(0.02 + index as f64 * 0.01);
+                assert_eq!(rt.state.1, if disabled { 0 } else { index + 1 });
             }
         }
     }

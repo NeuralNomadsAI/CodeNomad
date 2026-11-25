@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "Синтаксическая ошибка в строке {line}",
   "settings.nav.servers": "Серверы",
   "settings.servers.open": "Открыть",
   "settings.servers.dialog.name": "Имя",
@@ -251,6 +252,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "Вывод",
   "contextUsagePanel.labels.cost": "Стоимость",
   "contextUsagePanel.included": "Включено",
+  "contextUsagePanel.partialTotal": "Частичный итог по разговору",
+  "contextUsagePanel.totalUnavailable": "Итог по разговору недоступен",
   "contextUsagePanel.labels.totalInput": "Всего ввод",
   "contextUsagePanel.labels.totalOutput": "Всего вывод",
   "contextUsagePanel.labels.totalCost": "Общая стоимость",
@@ -442,7 +445,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "Версия OpenCode",
   "settings.opencode.update.subtitle": "Установленная версия настроенного бинарного файла OpenCode.",
   "settings.opencode.update.checking": "Чтение установленной версии...",
-  "settings.opencode.update.checkFailed": "Не удалось прочитать установленную версию OpenCode.",
+  "settings.opencode.update.checkFailed": "Не удалось проверить наличие обновлений OpenCode.",
   "settings.opencode.update.retry": "Повторить",
   "settings.opencode.update.installed": "Установленная версия",
   "settings.opencode.update.availableUnsupported": "Доступен OpenCode {version}. OpenCode V2 не поддерживает автоматическую установку.",
@@ -749,5 +752,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "Скачать .txt",
   "settings.info.diagnostics.reportBug": "Сообщить об ошибке",
   "settings.info.diagnostics.copied": "Диагностика скопирована.",
+  "settings.info.actions.failed": "Не удалось завершить действие. Попробуйте ещё раз.",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI не предоставляет данные об использовании для этого способа входа в ChatGPT. Вы можете продолжать общение.",
 } as const

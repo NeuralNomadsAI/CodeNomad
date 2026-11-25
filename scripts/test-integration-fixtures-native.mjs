@@ -4,7 +4,8 @@
 // client advertises a fake host through the fixture's own registration. No host secret reaches an RPC output or
 // the daemon log, and every audited Python access stays inside the fixture and reaches only the fixture daemon.
 import assert from "node:assert/strict"
-import { spawn, spawnSync } from "node:child_process"
+import { spawnSync } from "node:child_process"
+import { spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"

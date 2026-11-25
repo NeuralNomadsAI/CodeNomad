@@ -1,7 +1,7 @@
 // Compile the shared app separately, then package the exact wasm artifact without Cargo.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {createHash, randomUUID} from 'node:crypto'
+import {spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
 import {createReadStream} from 'node:fs'
 import {access, copyFile, mkdir, open, readFile, readdir, rename, rm, stat, writeFile} from 'node:fs/promises'
 import {Writable} from 'node:stream'
@@ -10,7 +10,7 @@ import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import path from 'node:path'
 import {constants, createBrotliCompress, createGzip} from 'node:zlib'
-import {shell, themeCss} from './web-shell.mjs'
+import {pairShell, shell, themeCss} from './web-shell.mjs'
 import {runeSource} from './source.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
@@ -32,10 +32,11 @@ const bindgen = values.bindgen ?? process.env.RUNE_WASM_BINDGEN ?? 'wasm-bindgen
 async function run(binary, args) {
   return await new Promise((resolve, reject) => {
     const child = spawn(binary, args, {cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']})
-    let output = ''
-    for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => {output += chunk; if (output.length > 1024 * 1024) child.kill()})
+    let stdout = '', output = ''
+    child.stdout.on('data', chunk => {stdout += chunk; output += chunk; if (output.length > 1024 * 1024) child.kill()})
+    child.stderr.on('data', chunk => {output += chunk; if (output.length > 1024 * 1024) child.kill()})
     child.once('error', () => reject(Error(`Cannot run ${binary}. Install wasm-bindgen-cli ${version} outside this task or set RUNE_WASM_BINDGEN to the matching executable.`)))
-    child.once('close', code => code === 0 ? resolve(output.trim()) : reject(Error(`${path.basename(binary)} failed (${code}): ${output.slice(-4000)}`)))
+    child.once('close', code => code === 0 ? resolve(stdout.trim()) : reject(Error(`${path.basename(binary)} failed (${code}): ${output.slice(-4000)}`)))
   })
 }
 assert.equal(await run(bindgen, ['--version']), `wasm-bindgen ${version}`, `Use wasm-bindgen-cli ${version} matching Cargo.lock`)
@@ -69,21 +70,32 @@ try {
   const catalogueRoot = path.join(root, 'crates/rune-theme-codenomad/assets/catalogues')
   const index = JSON.parse(await readFile(`${catalogueRoot}.json`, 'utf8'))
   assert.equal(index.locales.length, 10, 'Bundle must preserve all supported catalogues')
-  const messages = {}
+  const messages = {}, pairing = {}
   for (const locale of index.locales) {
     const catalogue = JSON.parse(await readFile(path.join(catalogueRoot, `${locale}.json`), 'utf8'))
     messages[locale] = {direction: index.directions[locale]}
-    for (const [name, key] of Object.entries({title: 'window.title.main', loading: 'rune.loading', failed: 'rune.failed', retry: 'sessionList.loadError.retry'})) {
-      assert.equal(typeof catalogue[key], 'string', `Missing ${locale} boot message ${key}`)
-      messages[locale][name] = catalogue[key]
+    pairing[locale] = {direction: index.directions[locale]}
+    for (const [target, keys] of [[messages, {title: 'window.title.main', loading: 'rune.loading', failed: 'rune.failed', retry: 'sessionList.loadError.retry'}],
+      [pairing, {title: 'window.title.main', heading: 'authRecovery.pairingTitle', guidance: 'rune.pairing_guide',
+        loading: 'rune.loading', failed: 'rune.failed', expired: 'remoteBrowse.pairingExpired', limited: 'remoteBrowse.pairingRateLimited'}]]) {
+      for (const [name, key] of Object.entries(keys)) {
+        assert.equal(typeof catalogue[key], 'string', `Missing ${locale} web message ${key}`)
+        target[locale][name] = catalogue[key]
+      }
     }
   }
   const bootstrap = await readFile(new URL('./web-bootstrap.mjs', import.meta.url), 'utf8')
   assert.equal(bootstrap.split('__RUNE_WEB_MESSAGES__').length, 2)
   await writeFile(path.join(staging, 'boot.js'), bootstrap.replace('__RUNE_WEB_MESSAGES__', JSON.stringify(messages)))
-  await writeFile(path.join(staging, 'theme.css'), themeCss(theme))
-  await copyFile(path.join(root, 'crates/rune-theme-codenomad/assets/web-shell.css'), path.join(staging, 'shell.css'))
+  const css = themeCss(theme)
+  const pageStyle = await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/web-shell.css'), 'utf8')
+  await writeFile(path.join(staging, 'theme.css'), css)
+  await writeFile(path.join(staging, 'shell.css'), pageStyle)
   await writeFile(path.join(staging, 'index.html'), shell(messages.fr, index.directions.fr))
+  const pair = await readFile(new URL('./web-pair.mjs', import.meta.url), 'utf8')
+  assert.equal(pair.split('__RUNE_WEB_PAIR_MESSAGES__').length, 2)
+  await writeFile(path.join(staging, 'remote-pair.html'), pairShell(pairing.en, css + pageStyle,
+    pair.replace('__RUNE_WEB_PAIR_MESSAGES__', JSON.stringify(pairing).replaceAll('<', '\\u003c'))))
   const entries = []
   for (const relative of await files(staging)) {
     const file = path.join(staging, relative)

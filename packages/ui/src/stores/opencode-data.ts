@@ -1,6 +1,6 @@
 import type { OpenCodeEvent, SessionMessageInfo } from "@opencode/client"
 import { createData, type Data } from "@opencode/client/solid"
-import { createRoot, createSignal } from "solid-js"
+import { batch, createRoot, createSignal } from "solid-js"
 import { getRootClient } from "./opencode-client"
 import { seedSessionMessagesV2 } from "./message-v2/bridge"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
@@ -69,6 +69,9 @@ type TranscriptEntry = {
   generation: number
   rotating: boolean
   rotationGeneration: number
+  /** Content deltas admitted but not yet reduced into `entry`; reduced in
+   * admission order by the frame lane or the next read/projection barrier. */
+  contentBatch: OpenCodeEvent[]
   needsAuthoritativeResync: boolean
   /** Reconnect reconciliation: live events keep admitting while one quiet
    * snapshot replaces the seeded page; events are never dropped for it. */
@@ -151,6 +154,23 @@ let nextInstanceGeneration = 0
 function messageRevisionKey(instanceId: string, sessionId: string): string {
   return `${instanceId}\0${sessionId}`
 }
+
+/** Streaming content updates whose reduction can wait for the frame: they
+ * only extend an open fragment or a held tool part, so classifying them at
+ * admission is equivalent to classifying them at reduction (their emit never
+ * changes the fragment counts or part existence the classification reads). */
+const CONTENT_DELTA_EVENTS = new Set<OpenCodeEvent["type"]>([
+  "session.text.delta",
+  "session.reasoning.delta",
+  "session.tool.input.delta",
+  "session.tool.progress",
+])
+
+/** Hidden windows pause animation frames; this timer keeps buffered deltas
+ * bounded-stale instead (mirroring the projection frame's interval). */
+const HIDDEN_CONTENT_BATCH_INTERVAL_MS = 250
+/** A suspended compositor may never deliver a frame; cap the wait. */
+const CONTENT_BATCH_FALLBACK_MS = 32
 
 function mutationRevision(key: string): ReturnType<typeof createSignal<number>> {
   let revision = mutationRevisions.get(key)
@@ -245,6 +265,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   // Reduce it before the row snapshot, never append it again
                   // to a page that was fetched after delta admission.
                   compactionDeltas.flush(instanceId, input.sessionID)
+                  flushBatchedContentForRead(instanceId, input.sessionID)
                   const snapshot = messageSnapshots.get(input.sessionID)
                   if (snapshot) return { data: [...snapshot].reverse(), cursor: {} }
                   const revision = destructiveRevisions.get(input.sessionID) ?? 0
@@ -254,6 +275,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
                   compactionDeltas.flush(instanceId, input.sessionID)
+                  flushBatchedContentForRead(instanceId, input.sessionID)
                   if ((destructiveRevisions.get(input.sessionID) ?? 0) !== revision) continue
                   const live = data.session.message.list(input.sessionID)
                   const merged = mergePageWithSnapshot(live, response.data, since, owedFragmentsOf(instanceId, input.sessionID, data))
@@ -399,6 +421,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     generation: getOpenCodeInstanceGeneration(instanceId),
     rotating: false,
     rotationGeneration: 0,
+    contentBatch: [],
     needsAuthoritativeResync: false,
     reconnectResync: false,
     preserveNativePageOnResync: false,
@@ -427,6 +450,9 @@ function replaceTranscriptEntry(transcript: TranscriptEntry, next: DataEntry): v
   transcript.settlementReadEntry = undefined
   transcript.settlementReadPromise = undefined
   transcript.settlementReadChain = undefined
+  // A replaced reducer never sees the old entry's buffered deltas: reads that
+  // replace it flush first, so anything left here is superseded.
+  transcript.contentBatch = []
   transcript.entry = next
   previous.dispose()
   transcript.entryRevision[1]((value) => value + 1)
@@ -519,6 +545,7 @@ function scheduleAuthoritativeResync(
 
 function collapseTranscriptQueue(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
   transcript.queue = []
+  transcript.contentBatch = []
   // Dropping-mode recovery owns the transcript; a pending reconnect
   // reconciliation must not re-admit events onto a collapsed projection.
   transcript.reconnectResync = false
@@ -538,6 +565,7 @@ const reconnect = createReconnect({
     for (const [key, transcript] of transcriptEntries) {
       if (!key.startsWith(prefix)) continue
       const sessionId = key.substring(prefix.length)
+      flushTranscriptContentBatch(instanceId, sessionId, transcript)
       const messages = transcript.entry.data.session.message.list(sessionId)
       if (messages.length) {
         live.push({
@@ -607,6 +635,7 @@ async function resyncAuthoritativeTranscript(
   if (!isTranscriptCurrent(instanceId, sessionId, transcript)
     || (!transcript.needsAuthoritativeResync && !transcript.reconnectResync)
     || transcript.resyncing) return
+  flushTranscriptContentBatch(instanceId, sessionId, transcript)
   transcript.resyncing = true
   const generation = ++transcript.resyncGeneration
   const fresh = createDataEntry(instanceId, transcript.directory)
@@ -890,6 +919,12 @@ export function applyOpenCodeDataEvent(
     ? ensureTranscript(instanceId, sessionId, directory)
     : undefined
   const entry = transcript?.entry ?? primary
+  // Ordering barrier: buffered deltas are older than this event. A structural
+  // event reduces them first whatever path it now takes; a fellow content
+  // delta joins the batch instead (order preserved, one write per frame).
+  if (transcript && typeof sessionId === "string" && !CONTENT_DELTA_EVENTS.has(event.type)) {
+    flushTranscriptContentBatch(instanceId, sessionId, transcript)
+  }
   if (transcript && typeof sessionId === "string") {
     if (event.type === "session.compaction.started") unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))
     // A new execution must not inherit a preceding settlement's deferred cleanup.
@@ -924,6 +959,8 @@ export function applyOpenCodeDataEvent(
       || (eventMayAppendMessage(event, transcript.entry.data.session.message.list(sessionId)
         .filter((message) => message.type === "compaction" && message.status === "running").length)
         && transcript.entry.data.session.message.list(sessionId).length >= MAX_TRANSCRIPT_MESSAGES)) {
+      // Queued replay must never overtake older buffered deltas.
+      if (CONTENT_DELTA_EVENTS.has(event.type)) flushTranscriptContentBatch(instanceId, sessionId, transcript)
       if (admission) admission.deferred = true
       enqueueTranscriptEvent(instanceId, sessionId, transcript, { event, onApplied: onDeferred, publication: admission?.publication })
       startTranscriptRotation(instanceId, sessionId, transcript)
@@ -931,7 +968,10 @@ export function applyOpenCodeDataEvent(
     }
   }
   const relocatesDelivery = transcript ? deliveryRelocatesRow(entry, event) : false
-  if (transcript && typeof sessionId === "string") emitTranscriptEvent(instanceId, sessionId, transcript, entry, event)
+  if (transcript && typeof sessionId === "string") {
+    if (CONTENT_DELTA_EVENTS.has(event.type)) admitContentDelta(instanceId, sessionId, transcript, entry, event)
+    else emitTranscriptEvent(instanceId, sessionId, transcript, entry, event)
+  }
   else entry.emit(event)
   // A finished round's tool still running or streaming once a later round
   // began lost its terminal event mid-execution: reconcile it at this step
@@ -1013,6 +1053,7 @@ export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: st
 /** The session reducer's rows when a REST load starts its fetch. */
 export function captureOpenCodeRowSnapshot(instanceId: string, sessionId: string): OpenCodeRowSnapshot {
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  if (transcript) flushTranscriptContentBatch(instanceId, sessionId, transcript)
   return snapshotRows(transcript ? transcript.entry.data.session.message.list(sessionId) : [])
 }
 
@@ -1025,6 +1066,7 @@ export function mergeOpenCodeLoadedPage(
   since: OpenCodeRowSnapshot,
 ): SessionMessageInfo[] {
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  if (transcript) flushTranscriptContentBatch(instanceId, sessionId, transcript)
   return transcript ? mergePageWithSnapshot(transcript.entry.data.session.message.list(sessionId), page, since) : page
 }
 
@@ -1048,6 +1090,7 @@ export async function seedOpenCodeSessionMessages(
   // Nothing streams into a known-idle session without a reducer.
   if (!existing && knownIdle) return
   const transcript = existing ?? ensureTranscript(instanceId, sessionId, directory)
+  flushTranscriptContentBatch(instanceId, sessionId, transcript)
   if (transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync || transcript.reconnectResync) return
   const entry = transcript.entry
   // The loaded page (oldest first) gives the SDK's own latest page without another read.
@@ -1099,6 +1142,115 @@ function emitTranscriptEvent(
 }
 
 const REDUCE_FAILED_TARGET = "\0reduce-failed"
+
+/** Admits a content delta: classified now (drop/divergence semantics are
+ * identical to the synchronous path), reduced later in one frame batch. */
+function admitContentDelta(
+  instanceId: string,
+  sessionId: string,
+  transcript: TranscriptEntry,
+  entry: DataEntry,
+  event: OpenCodeEvent,
+): void {
+  const fit = fitLiveEvent(entry.data, entry.pageFragments(sessionId), event)
+  if (fit.kind === "drop") return
+  if (fit.kind === "diverged" && !fit.apply) {
+    noteTranscriptDivergence(instanceId, sessionId, transcript, fit.key, event)
+    return
+  }
+  transcript.contentBatch.push(event)
+  armContentBatchWake()
+  if (fit.kind === "diverged") noteTranscriptDivergence(instanceId, sessionId, transcript, fit.key, event, fit.settlement)
+}
+
+/** Reduces a transcript's buffered content deltas in admission order, in one
+ * Solid batch: subscribers of the reducer store observe a single write. */
+function flushTranscriptContentBatch(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  if (!transcript.contentBatch.length) return
+  const events = transcript.contentBatch
+  transcript.contentBatch = []
+  const entry = transcript.entry
+  batch(() => {
+    for (const event of events) {
+      try {
+        entry.emit(event)
+      } catch (error) {
+        log.warn("Failed to reduce a buffered native transcript event", { instanceId, sessionId, type: event.type, error })
+        noteTranscriptDivergence(instanceId, sessionId, transcript, REDUCE_FAILED_TARGET)
+      }
+    }
+  })
+}
+
+/** A reducer page read merges its page against live rows: buffered content
+ * deltas must reduce before each snapshot so the merge never rewinds or
+ * duplicates them. An early reduction only moves the frame's work forward. */
+function flushBatchedContentForRead(instanceId: string, sessionId: string): void {
+  const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  if (transcript) flushTranscriptContentBatch(instanceId, sessionId, transcript)
+}
+
+let cancelContentBatchWake: (() => void) | undefined
+
+function armContentBatchWake(): void {
+  if (cancelContentBatchWake) return
+  if (typeof document !== "undefined" && document.hidden) {
+    const timer = setTimeout(flushAllContentBatches, HIDDEN_CONTENT_BATCH_INTERVAL_MS)
+    cancelContentBatchWake = () => clearTimeout(timer)
+    return
+  }
+  if (typeof requestAnimationFrame === "function") {
+    let frame: number | undefined
+    let fallback: ReturnType<typeof setTimeout> | undefined
+    let settled = false
+    const settle = () => {
+      if (settled) return
+      settled = true
+      if (frame !== undefined && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame)
+      if (fallback !== undefined) clearTimeout(fallback)
+      cancelContentBatchWake = undefined
+      flushAllContentBatches()
+    }
+    const cancel = () => {
+      if (settled) return
+      settled = true
+      if (frame !== undefined && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame)
+      if (fallback !== undefined) clearTimeout(fallback)
+      cancelContentBatchWake = undefined
+    }
+    frame = requestAnimationFrame(settle)
+    fallback = setTimeout(settle, CONTENT_BATCH_FALLBACK_MS)
+    cancelContentBatchWake = cancel
+    return
+  }
+  // No frame scheduler exists (server-side/unit contexts): a plain timer
+  // keeps the buffered reduction bounded-stale.
+  const timer = setTimeout(flushAllContentBatches, 0)
+  cancelContentBatchWake = () => clearTimeout(timer)
+}
+
+function flushAllContentBatches(): void {
+  cancelContentBatchWake?.()
+  cancelContentBatchWake = undefined
+  for (const [key, transcript] of transcriptEntries) {
+    if (!transcript.contentBatch.length) continue
+    const separator = key.indexOf("\0")
+    const instanceId = key.slice(0, separator)
+    const sessionId = key.slice(separator + 1)
+    try {
+      flushTranscriptContentBatch(instanceId, sessionId, transcript)
+    } catch (error) {
+      log.error("Failed to reduce buffered transcript events", { instanceId, sessionId, error })
+    }
+  }
+  // Deltas admitted while flushing need a wake (a no-op when none remain).
+  for (const transcript of transcriptEntries.values()) {
+    if (transcript.contentBatch.length) {
+      armContentBatchWake()
+      break
+    }
+  }
+}
 
 /** A reducer without rows whose session shows nothing yet: the first page
  * (still loading) seeds it, so it owes no read of its own. */
@@ -1182,6 +1334,7 @@ export function projectOpenCodeMessages(
   if (transcript && (transcript.entry.data !== data
     || transcript.needsAuthoritativeResync
     || (transcript.resyncing && !transcript.reconnectResync))) return
+  if (transcript) flushTranscriptContentBatch(instanceId, sessionId, transcript)
   const source = data.session.message.list(sessionId).slice(-MESSAGE_WINDOW_PAGE_SIZE)
   const store = messageStoreBus.getOrCreate(instanceId)
   // During pruning reconciliation, only loadMessages owns native page
@@ -1287,6 +1440,7 @@ function completeSettlementRead(
   transcript.settlementReadPending = true
   transcript.settlementReadEntry = entry
   transcript.settlementReadEpoch = transcript.executionEpoch
+  flushTranscriptContentBatch(instanceId, sessionId, transcript)
   const promise = entry.data.session.message.sync(sessionId)
   if (transcript.settlementReadPromise === promise) return transcript.settlementReadChain ?? promise
   transcript.settlementReadPromise = promise
@@ -1330,6 +1484,7 @@ function completeSettlementRead(
 export function observeNonEventSettlement(instanceId: string, sessionId: string): void {
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
   if (!transcript || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
+  flushTranscriptContentBatch(instanceId, sessionId, transcript)
   if (!hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) {
     repairDivergedSettlement(instanceId, sessionId, transcript)
     return

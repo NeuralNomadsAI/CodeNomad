@@ -39,14 +39,17 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET PUT DELETE",r"^/api/storage/instances/[^/]+$"),
     ("PATCH",r"^/api/storage/(?:state/ui|config/[^/]+)$"),
     ("GET",r"^/api/(?:remote-control/status|config-files|opencode/update)$"),
+    ("GET",r"^/api/workspaces/[^/]+/provider-accounts/[^/]+$"),
     ("GET PUT",r"^/api/config-files/[^/]+/content$"),
     ("POST",r"^/api/storage/binaries/validate$"),
     ("POST",r"^/api/(?:client-connections/pong|workspaces(?:/creation/cancel|/[^/]+/creation/release)?)$"),
-    ("POST",r"^/api/workspaces/[^/]+/session-history/(?:outline|outlinePreview|window)$"),
+    ("POST",r"^/api/workspaces/[^/]+/session-history/(?:outline|outlinePreview|window|query|ranked)$"),
+    ("GET",r"^/api/workspaces/[^/]+/session-attachment/[^/]+/[^/]+/[0-9]+/[a-f0-9]{64}$"),
+    ("GET",r"^/api/workspaces/[^/]+/session-media/[^/]+/[^/]+/[^/]+/[^/]+/[^/]+$"),
     ("DELETE",r"^/api/workspaces/[^/]+$"),
     ("GET",r"^/api/panel-extensions/[^/]+/panel$"),
-    ("GET",r"^/workspaces/[^/]+/instance/api/(?:agent(?:/[^/]+)?|command|location|mcp|model(?:/default)?|provider|project|session(?:/active|/[^/]+(?:/inbox|/message(?:/[^/]+)?)?)?|experimental/session/[^/]+/log)$"),
-    ("POST",r"^/workspaces/[^/]+/instance/api/session(?:/[^/]+/(?:prompt|agent|model))?$"),
+    ("GET",r"^/workspaces/[^/]+/instance/api/(?:agent(?:/[^/]+)?|command|location|mcp|model(?:/default)?|provider|project|session(?:/active|/[^/]+(?:/(?:inbox|permission|form|message(?:/[^/]+)?))?)?|experimental/session/[^/]+/log)$"),
+    ("POST",r"^/workspaces/[^/]+/instance/api/session(?:/[^/]+/(?:prompt|command|agent|model|interrupt))?$"),
     ("PUT DELETE",r"^/workspaces/[^/]+/instance/api/experimental/session/[^/]+/instructions/entries/[^/]+$"),
     ("GET PUT",r"^/api/workspaces/[^/]+/subagent-depth$"),
     ("GET POST",r"^/api/sidecars$"),
@@ -85,7 +88,17 @@ fn browser_metadata(h: &HeaderMap) -> bool {
 pub(super) fn cors(mut response: Response, origin: Option<HeaderValue>) -> Response {
     let raw = response.extensions().get::<crate::opencode::NativeBody>().is_some();
     let h = response.headers_mut();
-    h.entry(header::VARY).or_insert(HeaderValue::from_static("Origin"));
+    match h.get(header::VARY).and_then(|v| v.to_str().ok()) {
+        None => {
+            h.insert(header::VARY, HeaderValue::from_static("Origin"));
+        }
+        Some(existing) if existing.split(',').any(|part| part.trim().eq_ignore_ascii_case("origin")) => {}
+        Some(existing) => {
+            if let Ok(merged) = HeaderValue::from_str(&format!("{existing}, Origin")) {
+                h.insert(header::VARY, merged);
+            }
+        }
+    }
     if let Some(origin) = origin {
         h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
         h.insert(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
@@ -109,15 +122,20 @@ fn route_path(uri: &axum::http::Uri) -> Option<String> {
         return None;
     }
     let mut output = String::new();
+    let media_route = path.starts_with("/api/workspaces/") && path[1..].split('/').nth(3) == Some("session-media");
     for (index, segment) in path[1..].split('/').enumerate() {
         let decoded = percent_encoding::percent_decode_str(segment).decode_utf8().ok()?;
         // The instance storage route accepts encoded physical paths as its
         // final key, and rechecks them against an open workspace.
         let storage = index == 3 && path.starts_with("/api/storage/instances/");
+        let media_id = media_route && matches!(index, 4 | 5);
         if decoded == "."
             || decoded == ".."
-            || decoded.contains(['\0', ';', '#', '?'])
-            || (!storage && decoded.contains(['/', '\\', '%']))
+            || decoded.contains('\0')
+            || (!media_id && decoded.contains([';', '#', '?']))
+            || (!storage && !media_id && decoded.contains('/'))
+            || (!storage && !media_id && decoded.contains('\\'))
+            || (!storage && !media_id && decoded.contains('%'))
         {
             return None;
         }
@@ -129,15 +147,28 @@ fn route_path(uri: &axum::http::Uri) -> Option<String> {
     Some(output)
 }
 
-pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> Response {
-    let Some(channel) = tls::https_only(&req).cloned() else { return reply(Status::FORBIDDEN, "TLS required") };
+pub async fn admit(
+    State((app, bundle)): State<(Shared, Option<crate::host::ui::RemoteBundle>)>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    let Some(mut channel) = tls::https_only(&req).cloned() else { return reply(Status::FORBIDDEN, "TLS required") };
     let Some(path) = route_path(req.uri()) else { return reply(Status::BAD_REQUEST, "Invalid request path") };
-    let authority = channel.origin.strip_prefix("https://").unwrap_or_default();
     let h = req.headers();
     let only = |name: axum::http::HeaderName| h.get_all(name).iter().count() <= 1;
-    if h.get(header::HOST).and_then(|v| v.to_str().ok()) != Some(authority) || !only(header::HOST) {
+    let matched = h
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .filter(|_| only(header::HOST))
+        .and_then(|host| channel.origins.iter().find(|o| o.strip_prefix("https://") == Some(host)))
+        .cloned();
+    let Some(matched_origin) = matched else {
         return reply(Status::MISDIRECTED_REQUEST, "Misdirected request");
-    }
+    };
+    channel.origin = matched_origin;
+    req.extensions_mut().insert(channel.clone());
+    let h = req.headers();
+    let only = |name: axum::http::HeaderName| h.get_all(name).iter().count() <= 1;
     if path.starts_with("/previews/") {
         return crate::previews::admit_remote(&app, req).await;
     }
@@ -173,13 +204,19 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         }
         return cors(next.run(req).await, None);
     }
+    let direct = channel.ingress || devices::direct_origin(&channel.origin);
+    let entry = direct
+        && !server
+        && matches!(*req.method(), Method::GET | Method::HEAD)
+        && matches!(path.as_str(), "/" | "/remote-pair");
     if supplied.is_some() && !origin_ok
-        || h.get(header::REFERER).is_some_and(|v| {
-            !v.to_str()
-                .ok()
-                .and_then(|s| reqwest::Url::parse(s).ok())
-                .is_some_and(|u| u.origin().ascii_serialization() == channel.origin)
-        })
+        || !entry
+            && h.get(header::REFERER).is_some_and(|v| {
+                !v.to_str()
+                    .ok()
+                    .and_then(|s| reqwest::Url::parse(s).ok())
+                    .is_some_and(|u| u.origin().ascii_serialization() == channel.origin)
+            })
     {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
@@ -190,13 +227,21 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         );
     }
     let method = req.method().clone();
+    let ui = bundle
+        .as_ref()
+        .filter(|_| !server && direct)
+        .and_then(|bundle| bundle.path(&method, &path).map(|asset| (bundle, asset)));
     let form_reply = !server
         && path.strip_prefix("/workspaces/").and_then(|s| s.split_once("/instance")).is_some_and(|(id, route)| {
             !id.is_empty() && !id.contains('/') && crate::missions::human_answer::form_reply(route, &method).is_some()
         });
     let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
-    let direct = channel.ingress || devices::direct_origin(&channel.origin);
-    if path == "/remote-pair" && matches!(method, Method::GET | Method::HEAD) && direct && !server {
+    if entry && path == "/remote-pair" {
+        if let Some(crate::host::ui::RemoteBundle::Rune(dir)) = &bundle
+            && let Some(page) = crate::host::ui::rune_pair_page(dir, method).await
+        {
+            return cors(devices::pairing_page(page), supplied);
+        }
         return cors(next.run(req).await, supplied);
     }
     if path == "/api/remote-control/pair" && method == Method::POST && !server {
@@ -217,8 +262,10 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     if !server && !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
-    if !backend_ui
+    if !entry
+        && !backend_ui
         && !form_reply
+        && ui.is_none()
         && !CATALOG.iter().any(|(methods, pat)| {
             methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
                 && pat.is_match(&path)
@@ -238,6 +285,43 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     });
     if path == "/api/auth/status" && owner.is_none() {
         return cors(status(false), supplied);
+    }
+    if owner.is_none()
+        && let Some((bundle, asset)) = ui
+        && bundle.public(asset)
+    {
+        let response = bundle.serve(req, asset).await;
+        let response = if response.headers().get(header::CACHE_CONTROL).is_some_and(|value| value == "no-store") {
+            reply(Status::UNAUTHORIZED, "This device is not paired")
+        } else {
+            response
+        };
+        return cors(response, supplied);
+    }
+    if owner.is_none()
+        && (entry && path == "/"
+            || channel.ingress
+                && method == Method::GET
+                && ui.is_some_and(|(bundle, asset)| {
+                    matches!(bundle, crate::host::ui::RemoteBundle::Solid(_)) && !bundle.public(asset)
+                }))
+        && h.get(header::ACCEPT).and_then(|v| v.to_str().ok()).is_some_and(|v| {
+            let accept = v.to_ascii_lowercase();
+            accept.contains("text/html") || accept.contains("application/xhtml")
+        })
+    {
+        return cors(
+            (
+                Status::FOUND,
+                [
+                    (header::LOCATION, "/remote-pair"),
+                    (header::CACHE_CONTROL, "no-store"),
+                    (header::CONNECTION, "close"),
+                ],
+            )
+                .into_response(),
+            supplied,
+        );
     }
     let Some((id, principal)) = owner else {
         return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
@@ -267,10 +351,16 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     if !server {
         req.extensions_mut().insert(BrowserDevice(id));
     }
+    let dispatch = async {
+        match ui {
+            Some((bundle, asset)) => bundle.serve(req, asset).await,
+            None => next.run(req).await,
+        }
+    };
     let response = tokio::select! {
         biased;
         _=principal.cancelled()=>return reply(Status::UNAUTHORIZED,"This device is not paired"),
-        response=next.run(req)=>response,
+        response=dispatch=>response,
     };
     let (parts, body) = response.into_parts();
     let body = axum::body::Body::from_stream(body.into_data_stream().take_until(principal.cancelled_owned()));
@@ -290,4 +380,155 @@ fn preview_control(path: &str, method: &Method) -> bool {
                 .is_some_and(|id| id.len() == 36 && uuid::Uuid::parse_str(id).is_ok()),
             _ => false,
         }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{App, auth, files, opencode, settings};
+    use axum::{Extension, middleware::from_fn_with_state};
+    use std::{path::PathBuf, sync::Arc, time::Duration};
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn multi_origin_pairing_binds_cookie_to_selected_origin_and_refuses_foreign_host_or_origin() {
+        let dir = crate::shared::test_dir("multi-origin-remote");
+        let first = "https://192.168.1.20:9898";
+        let second = "https://10.0.0.5:9898";
+        let origins = vec![first.to_owned(), second.to_owned(), "https://127.0.0.1:9898".to_owned()];
+        let devices = devices::open_for_test(&dir, first.to_owned(), origins.clone());
+        let auth = auth::Auth::new(auth::Settings {
+            username: "fixture".into(),
+            password: None,
+            file: None,
+            cookie: "fixture".into(),
+            token: false,
+            managed_local: false,
+            skip: true,
+            idle: Duration::from_secs(60),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let settings =
+            settings::Settings::new(settings::document::Location::resolve(dir.join("config.yaml").to_str().unwrap()));
+        let native = opencode::Native::test_connection(([127, 0, 0, 1], 9).into());
+        let app = Arc::new(App::new(
+            auth,
+            0,
+            dir.clone(),
+            dir.clone(),
+            false,
+            settings,
+            serde_json::Value::Null,
+            native,
+            PathBuf::new(),
+            Some(devices),
+            files::watch::Watches::new(tx),
+            None,
+        ));
+
+        // 1. Local status lists both non-loopback directOrigins and excludes loopback.
+        let status = devices::status(State(app.clone()), None).await.0;
+        assert_eq!(status["directOrigins"], json!([first, second]));
+
+        // 2. Local pairing link issued for the second origin targets that exact origin.
+        let issued =
+            devices::issue(State(app.clone()), axum::body::Bytes::from(format!(r#"{{"origin":"{second}"}}"#))).await;
+        assert_eq!(issued.status(), Status::OK);
+        let body = axum::body::to_bytes(issued.into_body(), 4096).await.unwrap();
+        let link: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let url = link["url"].as_str().unwrap();
+        let code = url.strip_prefix(&format!("{second}/remote-pair#")).expect(url);
+
+        // 3. Spin up the real `admit` + `auth::remote_routes` stack over a loopback socket.
+        let channel = tls::Channel {
+            origin: first.to_owned(),
+            origins: Arc::from(origins),
+            ingress: false,
+            socket: CancellationToken::new(),
+            principal: Arc::new(std::sync::Mutex::new(None)),
+        };
+        let router = auth::remote_routes()
+            .layer(from_fn_with_state((app.clone(), None), admit))
+            .layer(Extension(channel))
+            .with_state(app);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let base = format!("http://{addr}");
+
+        // Unknown Host -> 421 Misdirected Request.
+        let rogue = client
+            .get(format!("{base}/api/auth/status"))
+            .header(header::HOST, "evil.invalid:9898")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rogue.status(), Status::MISDIRECTED_REQUEST);
+
+        // Foreign Origin on the second Host -> 403 Cross-origin request rejected.
+        let cross = client
+            .post(format!("{base}/api/remote-control/pair"))
+            .header(header::HOST, "10.0.0.5:9898")
+            .header(header::ORIGIN, first)
+            .json(&json!({"code": code}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cross.status(), Status::FORBIDDEN);
+
+        // Exchanging the code issued for `second` on `first` fails (401).
+        let wrong_iface = client
+            .post(format!("{base}/api/remote-control/pair"))
+            .header(header::HOST, "192.168.1.20:9898")
+            .header(header::ORIGIN, first)
+            .json(&json!({"code": code}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(wrong_iface.status(), Status::UNAUTHORIZED);
+
+        // Exchanging on `second` succeeds and binds the device cookie to `second`.
+        let paired = client
+            .post(format!("{base}/api/remote-control/pair"))
+            .header(header::HOST, "10.0.0.5:9898")
+            .header(header::ORIGIN, second)
+            .json(&json!({"code": code}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(paired.status(), Status::OK);
+        let cookie = paired.headers()[header::SET_COOKIE].to_str().unwrap().split(';').next().unwrap().to_owned();
+
+        // Cookie authenticates on `second`...
+        let ok_status: serde_json::Value = client
+            .get(format!("{base}/api/auth/status"))
+            .header(header::HOST, "10.0.0.5:9898")
+            .header(header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(ok_status["authenticated"], true);
+
+        // ...but is rejected on `first`!
+        let rejected_status: serde_json::Value = client
+            .get(format!("{base}/api/auth/status"))
+            .header(header::HOST, "192.168.1.20:9898")
+            .header(header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(rejected_status["authenticated"], false);
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

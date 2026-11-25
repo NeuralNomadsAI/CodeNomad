@@ -31,6 +31,8 @@ Bei zu schmaler Unterhaltung (unter 420 CSS-Pixeln) ist die Timeline ausgeblende
 
 ## Richtigen Verlaufsvorgang wählen {#operation-reference}
 
+In Rune klappt die Suche das gewählte Ergebnis auf. Ist es ausgeblendet, blende seinen Typ oder die Tool-Eingaben unter **Nachrichteninhalt** ein und wähle es erneut. Bei einem ausgeblendeten Ergebnis in einer anderen Sitzung bleibt die aktuelle Unterhaltung geöffnet.
+
 | Vorgang | Wo | Umfang und Folgen |
 | --- | --- | --- |
 | Anzeigefilter | **Nachrichteninhalt** oder **Einstellungen → Chat** | Gemeinsame Anzeigeeinstellungen; Inhalte ausblenden/einklappen, ohne sie zu löschen |
@@ -41,6 +43,8 @@ Bei zu schmaler Unterhaltung (unter 420 CSS-Pixeln) ist die Timeline ausgeblende
 | Sitzungen bereinigen | Befehlspalette | Weiter gefasste Sitzungslöschung, keine Anzeige- oder Kontextgrößeneinstellung |
 
 **Nachrichteninhalt** gilt unterhaltungsübergreifend. Wählen Sie oben darin oder in **Einstellungen → Chat** eine Voreinstellung (**Nichts**, **Minimal**, **Ausgewogen** oder **Alles**) und passen Sie dann einzelne Zeilen an; das Voreinstellungsmenü von **Nachrichteninhalt** zeigt dann **Benutzerdefiniert**. Werkzeuge auszublenden deaktiviert sie nicht, ändert keine Berechtigungen und entfernt keine gespeicherten Ausgaben. Damit die Darstellung reaktionsfähig bleibt, zeigen sehr große Nachrichten an einer Auslassung **… weitere anzeigen**, und sehr langer Text oder sehr lange Werkzeugausgabe endet an einer Zeile **… weitere Zeichen ausgeblendet** mit **Alles anzeigen** oder, wenn noch viel übrig ist, **… weitere anzeigen**, was mehrere Schritte erfordern kann. Beides einzublenden betrifft nur die Anzeige und stellt keine gelöschten Inhalte wieder her. Ziehen Sie über die Augen- oder Pfeilschaltflächen, um mehrere Zeilen auf einmal einzustellen: Die erste Schaltfläche, die Sie verlassen, wird umgeschaltet, und jede überstrichene Schaltfläche derselben Spalte übernimmt ihren neuen Zustand. Die Unterhaltung wird aktualisiert, sobald Sie loslassen.
+
+Unter **Werkzeuggruppen** schalten Sie das Auge aus, um jeden Aufruf einzeln anzuzeigen, oder verwenden den Pfeil, um Gruppen standardmäßig zu öffnen. Jeder Werkzeugtyp behält seine eigene Sichtbarkeitseinstellung. **Alles** öffnet Gruppen standardmäßig; bei den anderen Voreinstellungen bleiben sie eingeklappt.
 
 ## Sitzung komprimieren {#compact-session}
 

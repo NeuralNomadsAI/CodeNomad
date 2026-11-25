@@ -80,12 +80,12 @@ Reorder any Status section by dragging or with Up/Down keys. Visibility and orde
 
 Status includes token information, Permissions, provider Usage, background shells, MCP and Plugins. While the conversation has a [goal](conversations.md#goal), a goal line above these sections shows it; that line is not a section and cannot be hidden or moved. Hiding a section does not disable its service or revoke permissions. Narrow layouts close panels that no longer fit instead of squeezing the conversation; a panel opened there floats over it, and opening one floating panel closes the other.
 
-Built-in layout is window layout, not a project mutation. Extension checkboxes are different: they activate code across all projects using the configuration. **Reset** does not change extension consent. See [Panel extensions](extensions.md).
+Built-in layout belongs to the window. The [Missions checkbox](missions.md#activation) also changes Global plugin activation and is skipped when dragging across checkboxes. Extension checkboxes activate code across all projects using the configuration. **Reset** does not change extension consent. See [Panel extensions](extensions.md).
 
 ## Transcript detail and composer size {#transcript-composer}
 
 1. Open **Chat** to choose transcript detail defaults. Presets are **Nothing**, **Minimal**, **Balanced** and **Everything**; individual changes produce **Custom**.
-2. Set each row's **Default state** (**Hidden**, **Collapsed** or **Expanded**) for thinking, diagnostics, tool inputs, tokens, system messages and each tool type, or use the conversation's **Message content** popup, which shares these choices.
+2. Set each row's **Default state** (**Hidden**, **Collapsed** or **Expanded**), or use the conversation's **Message content** popup, which shares these choices. For **Tool groups**, **Disabled** gives each call its own card; **Collapsed** and **Expanded** set how groups open.
 3. In **General**, check **Show the message timeline**, **Put the first/latest message arrows under the timeline**, **Split tool-call diffs** and **Queue sent prompts** (queue prompts sent while a session works instead of steering it) as needed.
 4. Resize the composer using its resize control; long drafts scroll inside the field.
 
@@ -112,6 +112,8 @@ The bell/history unread count, which only counts notifications routed to History
 If your system supports notification actions, clicking a notification opens the conversation if it’s still open. Whether the window comes to the front depends on your desktop environment.
 
 ## Advanced options {#advanced}
+
+In Rune, focus **i** beside an unavailable switch to learn why it is disabled. Config Files reports JSON/JSONC syntax errors by line and still lets you save.
 
 1. Open **Advanced**.
 2. Check or clear only the options you need; each change saves through CodeNomad preferences. To change the session execution environment, expand the folded **Environment Variables** group at the end.

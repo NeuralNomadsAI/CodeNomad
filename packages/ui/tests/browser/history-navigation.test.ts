@@ -590,8 +590,9 @@ const recordScrollWrites = (page: Page) => page.evaluate(() => {
     seen.push(element.getAttribute("data-scroll-write"))
   }).observe(element, { attributeFilter: ["data-scroll-write"], attributeOldValue: true })
 })
-const sawScrollWrite = (page: Page, reason: string) =>
-  page.waitForFunction(reason => (window as any).scrollWrites.includes(reason), reason)
+// The initial reader correction can replace the queued key jump before it writes.
+const sawResidentJumpWrite = (page: Page) =>
+  page.waitForFunction(() => (window as any).scrollWrites.some((reason: string) => reason === "jump-key" || reason === "reader-settle"))
 
 // A resident jump writes its row's offset to the DOM, then holds that row while
 // rows keep mounting. A gesture right after the click, before the jump settles,
@@ -607,7 +608,7 @@ for (const gesture of ["wheel", "PageUp"] as const) test(`a ${gesture} right aft
     await recordScrollWrites(f.page)
     await clickTimeline(f.page, 1350)
     // The click has written its jump; its landing has not settled.
-    await sawScrollWrite(f.page, "jump-key")
+    await sawResidentJumpWrite(f.page)
     await waitFrames(f.page, 2)
     const samples = await sampleRowOffsets(f.page, 1350, 90, async () => {
       if (gesture === "wheel") {
@@ -666,7 +667,7 @@ test("a wheel right after a resident timeline jump during streaming wins for goo
       window.tailStreaming = false
       setTimeout(() => { document.querySelector('.message-timeline-segment[data-message-id="${navigationMessageId(1350)}"]').click(); resolve() }, 100)
     })`)
-    await sawScrollWrite(f.page, "jump-key")
+    await sawResidentJumpWrite(f.page)
     // The wheel comes more than 150 ms after that measurement, within 150 ms of
     // the jump; the stream resumes at once.
     await f.page.waitForTimeout(80)

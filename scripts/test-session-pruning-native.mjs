@@ -1,6 +1,7 @@
 // Explicit opt-in integration test. Never uses service discovery or a user DB.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
+import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { createHash } from "node:crypto"
 import { createServer } from "node:http"
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises"
@@ -126,7 +127,7 @@ env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
   }, models: { fixture: {} } } },
   plugins: [path.join(root, "plugin")],
   // Runtimes with optional blob storage externalize tool files; others ignore the key.
-  experimental: { media_blob: true, ...(splitParts ? { part_rows: true } : {}) },
+  experimental: { media_blob: true, part_rows: splitParts },
 })
 function start() {
   const child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--log-level", "debug", "--print-logs"], { cwd: root, env, windowsHide: true })
@@ -413,7 +414,7 @@ try {
   ;({ child, stopped } = start())
   await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output))
   const restartedEndpoint = { ...connection.endpoint, url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0] }
-  rememberRuntime(restartedEndpoint, { version: runtimeVersion, pid: child.pid, discovery: "info" })
+  rememberRuntime(restartedEndpoint, { version: runtimeVersion, pid: await fixtureChildPid(child), discovery: "info" })
   const restarted = OpenCode.make({ baseUrl: restartedEndpoint.url, fetch: createRuntimeFetch(restartedEndpoint) })
   await ready({ client: restarted, location, locationOptions })
   if (mixed) {

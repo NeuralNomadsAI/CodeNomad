@@ -1,4 +1,4 @@
-use super::window_restore::{tap, type_text, wait};
+use super::window_restore::{tap, type_text, wait, wait_control};
 use crate::{State, backend::Backend, init, platform, poll, view, workspace};
 use rune::{Env, Runtime};
 use std::{
@@ -19,6 +19,7 @@ fn window() -> Runtime<State> {
                 .launcher()
                 .is_some_and(|l| l.connection.is_some() && !l.pending)
     });
+    wait_control(&mut rt, "folder-path");
     type_text(
         &mut rt,
         "folder-path",

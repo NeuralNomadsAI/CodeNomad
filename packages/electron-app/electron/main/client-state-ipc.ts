@@ -53,8 +53,10 @@ export function setupClientStateIPC(
     const record = validate(event)
     return record.persisted === false ? false : clientState.claimClientStateAccess(token, record.id)
   })
-  handle("client-state:load", (_argument, _token, windowId) => clientState.loadClientState(windowId))
+  handle("client-state:load", (_argument, token, windowId) => clientState.loadClientStateForRenderer(windowId, token))
   handle("client-state:save", (snapshot, token, windowId) => clientState.saveClientState(snapshot, token, windowId))
+  handle("client-state:loadFileDrafts", (key, token, windowId) => clientState.loadFileDrafts(token, windowId, key))
+  handle("client-state:saveFileDraft", (change, token, windowId) => clientState.saveFileDraft(change, token, windowId))
   handle("client-state:commitPartitions", (payload, token, windowId) => clientState.commitClientStatePartitions(payload, token, windowId))
   handle("client-state:loadPartition", (key, token, windowId) => clientState.loadClientStatePartition(key, token, windowId))
   handle("client-state:setRestoreEnabled", (enabled, token, windowId) => {
@@ -65,6 +67,7 @@ export function setupClientStateIPC(
 
   return (window: BrowserWindow): void => {
     const webContents = window.webContents
+    const attached = resolveWindow(webContents)
     webContents.on("did-navigate", (_event, url) => {
       const record = resolveWindow(webContents)
       if (record && record.persisted !== false && shouldResetRendererAccessTokenForNavigation(
@@ -77,8 +80,7 @@ export function setupClientStateIPC(
       }
     })
     const resetDestroyedRenderer = () => {
-      const record = resolveWindow(webContents)
-      if (record && record.persisted !== false) clientState.resetRendererAccessToken(record.id)
+      if (attached && attached.persisted !== false) clientState.resetRendererAccessToken(attached.id)
     }
     webContents.on("render-process-gone", resetDestroyedRenderer)
     webContents.on("destroyed", resetDestroyedRenderer)

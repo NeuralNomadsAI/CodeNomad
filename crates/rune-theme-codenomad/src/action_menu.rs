@@ -239,20 +239,10 @@ pub fn view<S: 'static>(
     let t = tokens(layout::dark());
     let k = kit(layout::dark());
     let trigger_key = format!("{}:trigger", menu.key);
-    let disabled = menu.items.iter().all(|item| item.disabled);
     let items = unique_items(&menu);
     let key_action = menu.clone();
-    let first = items
-        .iter()
-        .find(|item| !item.disabled)
-        .map(|item| item.key.clone());
-    let last = items
-        .iter()
-        .rev()
-        .find(|item| !item.disabled)
-        .map(|item| item.key.clone());
-    let menu_first = first.clone();
-    let menu_last = last.clone();
+    let first = items.first().map(|item| item.key.clone());
+    let last = items.last().map(|item| item.key.clone());
     let action = menu.clone();
     let pressed_first = first.clone();
     let control = trigger
@@ -260,11 +250,7 @@ pub fn view<S: 'static>(
         .label(&menu.label)
         .help(&menu.label)
         .expanded(state.is_open(&menu.key))
-        .disabled(disabled)
         .on_press_tx(move |s, tx| {
-            if disabled {
-                return;
-            }
             let Some(state) = at(s) else { return };
             if state.is_open(&action.key) {
                 close(s, at, &action, None, None, tx);
@@ -283,7 +269,7 @@ pub fn view<S: 'static>(
                 rune::Key::Up => &last,
                 _ => return false,
             };
-            if disabled || event.mods != rune::Mods::default() {
+            if event.mods != rune::Mods::default() {
                 return false;
             }
             open(s, at, &key_action, tx);
@@ -326,8 +312,8 @@ pub fn view<S: 'static>(
             .radius(metric("borderRadius"))
             .role("menuitem")
             .label(&item.label)
-            .focusable(!item.disabled)
-            .disabled(item.disabled)
+            .aria_disabled(item.disabled)
+            .focusable(true)
             .no_focus_ring()
             .focus_highlight(t.color("menu-item-hover-bg"))
             .child(slot)
@@ -373,30 +359,14 @@ pub fn view<S: 'static>(
         })
     });
     let dismiss = menu.clone();
-    let menu_key = format!("{}:menu", menu.key);
-    let focus_menu = menu.key.clone();
     let surface = rune::col()
-        .key(menu_key.clone())
+        .key(format!("{}:menu", menu.key))
         .role("menu")
         .label(&menu.label)
         .focus_group()
         .focusable(true)
         .tab_index(-1)
         .focus_return(&trigger_key)
-        .on_key(move |_: &mut S, event, tx| {
-            if tx.focused() != Some(menu_key.as_str()) || event.mods != rune::Mods::default() {
-                return false;
-            }
-            let target = match event.key {
-                rune::Key::Down => &menu_first,
-                rune::Key::Up => &menu_last,
-                _ => return false,
-            };
-            if let Some(target) = target {
-                tx.focus(format!("{focus_menu}:item:{target}"), true);
-            }
-            true
-        })
         .modal_tx(true, move |s, tx| close(s, at, &dismiss, None, None, tx))
         .min_w(t.metric("actionMenu", "minWidth").px())
         .max_w((viewport_width - t.metric("actionMenu", "viewportInset").px()).max(0.0))

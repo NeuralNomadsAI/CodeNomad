@@ -36,22 +36,16 @@ type InstanceSessionContextState = {
 }
 
 type SessionFamilyMember = ReturnType<typeof getSessionFamily>[number]
+const EMPTY_INSTANCE_SESSIONS = new Map<string, Session>()
 
 export function useInstanceSessionContext(options: InstanceSessionContextOptions): InstanceSessionContextState {
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(options.instanceId()))
 
   const allInstanceSessions = createMemo<Map<string, Session>>(() => {
-    return sessions().get(options.instanceId()) ?? new Map()
+    return sessions().get(options.instanceId()) ?? EMPTY_INSTANCE_SESSIONS
   })
 
   const sessionThreads = createMemo(() => getSessionThreads(options.instanceId()))
-
-  const activeSessions = createMemo(() => {
-    const parentId = activeParentSessionId().get(options.instanceId())
-    if (!parentId) return new Map<string, ReturnType<typeof getSessionFamily>[number]>()
-    const sessionFamily = getSessionFamily(options.instanceId(), parentId)
-    return new Map(sessionFamily.map((s) => [s.id, s]))
-  })
 
   const activeSessionIdForInstance = createMemo(() => {
     return activeSessionMap().get(options.instanceId()) || null
@@ -60,6 +54,12 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
   const parentSessionIdForInstance = createMemo(() => {
     return activeParentSessionId().get(options.instanceId()) || null
   })
+
+  const activeFamily = createMemo(() => {
+    const parentId = parentSessionIdForInstance()
+    return parentId ? getSessionFamily(options.instanceId(), parentId, allInstanceSessions()) : []
+  }, [], { equals: (a, b) => a.length === b.length && a.every((row, i) => row === b[i]) })
+  const activeSessions = createMemo(() => new Map(activeFamily().map(session => [session.id, session])))
 
   const activeSessionForInstance = createMemo(() => {
     const sessionId = activeSessionIdForInstance()

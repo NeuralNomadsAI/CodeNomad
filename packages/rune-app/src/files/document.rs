@@ -33,17 +33,25 @@ pub fn content<'a>(path: &str, bytes: &'a [u8]) -> Content<'a> {
     if text.contains('\0') {
         return Content::Binary;
     }
-    let format = match extension.as_str() {
-        "md" | "markdown" if path.contains('.') => Format::Markdown,
-        "mmd" if path.contains('.') => Format::Mermaid,
-        _ => Format::Source,
-    };
     Content::Text {
         text: text.strip_prefix('\u{feff}').unwrap_or(text),
-        format,
+        format: text_format(path),
     }
 }
 
+pub fn text_format(path: &str) -> Format {
+    match path
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("md" | "markdown") => Format::Markdown,
+        Some("mmd") => Format::Mermaid,
+        _ => Format::Source,
+    }
+}
+
+mod source_text;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,4 +116,6 @@ mod tests {
 }
 
 pub mod editor;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod recovery;
 pub mod store;

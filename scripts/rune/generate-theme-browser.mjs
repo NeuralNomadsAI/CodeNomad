@@ -9,6 +9,16 @@ export async function collectTheme(names){
     return '#'+[...context.getImageData(0,0,1,1).data].map(v=>v.toString(16).padStart(2,'0')).join('')
   }
   const colors={},numbers={},strings={},shadows={},unresolved=[]
+  probe.className='session-search-match'
+  colors['transcript-search-mark']=hex(getComputedStyle(probe).backgroundColor)
+  probe.classList.add('session-search-match-active')
+  colors['transcript-search-active']=hex(getComputedStyle(probe).backgroundColor)
+  colors['transcript-search-active-ink']=hex(getComputedStyle(probe).color)
+  probe.removeAttribute('class')
+  const rail=document.createElement('div')
+  rail.className='message-timeline-sidebar'
+  rail.innerHTML='<section class="message-timeline"><div class="timeline-measure"><button class="message-timeline-segment" tabindex="-1"></button><div style="height:var(--message-timeline-segment-gap)"></div></div><svg class="message-timeline-icon"></svg></section>'
+  document.body.append(rail)
   for(const name of names){
     const raw=root.getPropertyValue('--'+name).trim()
     if(!raw){unresolved.push(name);continue}
@@ -32,6 +42,10 @@ export async function collectTheme(names){
     input:['.selector-input',['fontSize','fontWeight','lineHeight','outlineWidth','outlineOffset']],
     title:['.window-title',['fontSize','fontWeight','lineHeight']],
     disclosure:['.disclosure-chevron',['transitionDuration','transitionTimingFunction']],
+    timelineRail:['.message-timeline-sidebar',['width']],
+    timelineMarker:['.message-timeline-segment',['minHeight','borderTopWidth','opacity']],
+    timelineGap:['.timeline-measure > div',['height']],
+    timelineGlyph:['.message-timeline-icon',['width']],
     transition:['.transition-colors',['transitionDuration','transitionTimingFunction']],
     windowIcon:['.window-icon-button',['width','height','borderRadius']],
     windowIconGlyph:['.window-icon-button svg',['width','height']],
@@ -48,6 +62,23 @@ export async function collectTheme(names){
     fileRowAction:['.file-row-icon-button',['minWidth','minHeight','paddingLeft','opacity']],
     fileRowActionGlyph:['.file-row-icon-button svg',['width','height']],
     workspaceRow:['.workspace-tree-row',['minHeight','paddingTop','paddingBottom','paddingInlineEnd','columnGap','fontSize','fontWeight','lineHeight']],
+    gitContext:['.git-panel-context',['paddingLeft','paddingTop','borderBottomWidth']],
+    gitTools:['.git-panel-tools',['paddingLeft','paddingTop','borderBottomWidth']],
+    gitModes:['.git-panel-switch',['borderTopWidth']],
+    gitModeButton:['.git-panel-switch button',['paddingLeft','paddingTop','fontSize','fontWeight','lineHeight']],
+    gitModeDivider:['.git-panel-switch button + button',['borderInlineStartWidth']],
+    gitHistoryRow:['.git-history-row',['paddingLeft','paddingTop','columnGap','borderBottomWidth']],
+    gitCommitSummary:['.git-commit-summary',['paddingLeft','paddingTop','borderBottomWidth']],
+    gitCount:['.git-panel-count',['opacity']],
+    gitSection:['.git-change-section-header',['columnGap']],
+    gitSectionTitle:['.git-change-section-title',['fontSize','fontWeight','lineHeight']],
+    gitSectionCount:['.git-change-section-count',['fontSize','lineHeight','paddingLeft','paddingTop','borderTopWidth','opacity']],
+    readerHeader:['.workspace-file-view header',['paddingTop','borderBottomWidth','columnGap']],
+    readerHeading:['.workspace-file-view .git-diff-heading',['minWidth','rowGap']],
+    readerTitle:['.workspace-file-view .git-diff-heading strong',['fontSize','fontWeight','lineHeight']],
+    readerDirectory:['.workspace-file-view .git-diff-heading span',['fontSize','fontWeight','lineHeight']],
+    readerMarkdown:['.workspace-markdown .markdown-body',['fontSize','fontWeight','lineHeight']],
+    ...Object.fromEntries([1,2,3,4].map(level=>[`readerHeading${level}`,[`.workspace-markdown h${level}`,['fontSize','fontWeight','lineHeight']]])),
   }
   const metrics={}
   for(const [name,[selector,properties]] of Object.entries(contracts)){
@@ -59,7 +90,21 @@ export async function collectTheme(names){
       metrics[name][key]=numeric?Number.parseFloat(value):value
     }
   }
+  const sample=rail.querySelector('.message-timeline-segment')
+  const edge=/(-?[\d.]+)px 0px 0px 0px inset/.exec(getComputedStyle(rail).boxShadow)
+  if(!edge||!(Number(edge[1])>0))throw Error('Missing timeline rail edge')
+  metrics.timelineRail.edgeWidth=Number(edge[1])
+  sample.style.width='1002px'
+  const separator=getComputedStyle(sample,'::after')
+  metrics.timelineMarker.separatorHeight=parseFloat(separator.height)
+  metrics.timelineMarker.separatorFraction=parseFloat(separator.width)/sample.clientWidth
+  if(!(metrics.timelineMarker.separatorHeight>0)||!(metrics.timelineMarker.separatorFraction>0&&metrics.timelineMarker.separatorFraction<=1))
+    throw Error('Missing timeline marker separator')
+  sample.style.visibility='visible'
   const sourceGutter=document.querySelector('.action-overflow-content').dataset.sourceGutter
+  const toggle=document.querySelector('.workspace-file-view [aria-pressed=true]')
+  toggle.style.transition='none'
+  colors['icon-toggle-active-bg']=hex(getComputedStyle(toggle).backgroundColor)
   if(!/^\d+(?:\.\d+)?$/.test(sourceGutter))throw Error('Missing numeric ActionOverflowMenu source gutter')
   metrics.actionMenu.gutter=Number(sourceGutter)
   const workspace=document.querySelector('.workspace-tree-row')
@@ -102,21 +147,57 @@ export async function collectTheme(names){
     return '#'+[...channels,alpha*255].map(n=>Math.round(n).toString(16).padStart(2,'0')).join('')
   }
   try{
-  for(const [name,selector] of [['tabFocus','.tab-base'],['tabCloseFocus','.tab-close']]){
+  for(const [name,selector] of [['tabFocus','.tab-base'],['tabCloseFocus','.tab-close'],['timelineFocus','.message-timeline-segment']]){
     const element=document.querySelector(selector)
     element.focus()
     if(!element.matches(':focus-visible'))throw Error(`${selector} requires actual keyboard focus`)
     await Promise.all(element.getAnimations().map(animation=>animation.finished))
     const shadow=getComputedStyle(element).boxShadow
-    const layers=[...shadow.matchAll(/(rgba?\([^)]+\)) ((?:-?[\d.]+px\s*){4})/g)].map(m=>({color:m[1],lengths:m[2].trim().split(/\s+/).map(parseFloat)}))
+    const layers=[...shadow.matchAll(/((?:rgba?|oklab|oklch|color)\([^)]+\)) ((?:-?[\d.]+px\s*){4})/g)].map(m=>({color:m[1],lengths:m[2].trim().split(/\s+/).map(parseFloat)}))
     if(layers.length<2||layers.slice(0,2).some(l=>l.lengths.slice(0,3).some(n=>n!==0)))throw Error(`Unsupported ${selector} focus shadow ${shadow}`)
     const offset=layers[0].lengths[3],spread=layers[1].lengths[3]
     if(!(spread>offset&&offset>=0))throw Error(`Invalid ${selector} focus ring`)
     metrics[name]={ringWidth:spread-offset,ringOffset:offset,extent:spread}
-    colors[`${name}-ring`]=focusHex(layers[1].color)
-    colors[`${name}-offset`]=focusHex(layers[0].color)
+    if(name!=='timelineFocus'){
+      colors[`${name}-ring`]=focusHex(layers[1].color)
+      colors[`${name}-offset`]=focusHex(layers[0].color)
+    }
   }
-  }finally{focused?.focus()}
+  }finally{focused?.focus();rail.remove()}
+  const actions=document.getElementById('file-actions-contract'),button=actions.querySelector('.file-row-inline-actions button')
+  const metric=(el,key)=>{const n=parseFloat(getComputedStyle(el)[key]);if(!Number.isFinite(n))throw Error(`Non-numeric file actions ${key}`);return n}
+  metrics.fileRowActions={gap:metric(actions,'columnGap'),pinnedGap:metric(actions.firstElementChild,'columnGap'),inlineGap:metric(actions.lastElementChild,'columnGap'),overflowSlop:Number(actions.dataset.slop)}
+  button.focus()
+  if(!button.matches(':focus-visible'))throw Error('File action requires actual keyboard focus')
+  metrics.fileRowActionFocus={outlineWidth:metric(button,'outlineWidth'),outlineOffset:metric(button,'outlineOffset')}
+  focused?.focus()
   probe.remove()
   return {colors,numbers,strings,shadows,metrics,unresolved}
+}
+
+export async function applyDefaultPalette(appearance){
+  const {applyColorScheme,normalizeColorScheme}=await import('/src/lib/theme-scheme.ts')
+  const {normalizeAppearancePreferences}=await import('/src/lib/appearance-preferences.ts')
+  const {scheme}=normalizeAppearancePreferences(undefined,normalizeColorScheme('system'))[appearance]
+  applyColorScheme(scheme)
+  return scheme.id
+}
+
+export async function collectFileActionColors(page){
+  const toggle=page.locator('#file-actions-contract .icon-toggle')
+  const previous=await page.evaluateHandle(()=>document.activeElement)
+  const outside=async()=>{const v=page.viewportSize();await page.mouse.move(v.width-1,v.height-1)}
+  const color=()=>toggle.evaluate(element=>{
+    const canvas=document.createElement('canvas');canvas.width=canvas.height=1
+    const ctx=canvas.getContext('2d',{willReadFrequently:true})
+    ctx.fillStyle=getComputedStyle(element).backgroundColor;ctx.fillRect(0,0,1,1)
+    return '#'+[...ctx.getImageData(0,0,1,1).data].map(v=>v.toString(16).padStart(2,'0')).join('')
+  })
+  try{
+    await toggle.scrollIntoViewIfNeeded();await outside()
+    if(await toggle.evaluate(el=>el.matches(':hover')))throw Error('File action rest requires a real non-hover state')
+    const rest=await color();await toggle.hover()
+    if(!await toggle.evaluate(el=>el.matches(':hover')))throw Error('File action requires real Chromium hover')
+    return {'file-row-active-bg':rest,'file-row-active-hover-bg':await color()}
+  }finally{await outside();await previous.evaluate(el=>el?.focus());await previous.dispose()}
 }

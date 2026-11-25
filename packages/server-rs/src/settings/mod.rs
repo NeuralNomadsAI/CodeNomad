@@ -3,7 +3,10 @@
 mod conditional;
 pub mod config_files;
 pub mod document;
+mod normalize;
+mod patches;
 pub mod profile;
+mod remote_project_history;
 
 use std::sync::Mutex;
 
@@ -20,10 +23,14 @@ use uuid::Uuid;
 
 use crate::{App, Error, Shared, error, shared::fastify, unavailable};
 use document::{Doc, Location, Unreadable, merge, owner};
+use normalize::{
+    assert_voice_conversation_patch, check_conversation_default, host_only, normalize_config, normalize_server,
+    sanitize_server, speech_pairing,
+};
+use patches::{apply_secure_env_vars_mask, preserve_legacy_transcript_defaults, strip_new_object_nulls};
 
-/// Multi-backend profiles and their history: not served by this host, never rewritten here.
-const SERVER_PROFILES: &[&str] =
-    &["remoteServers", "remoteProjectHistory", "remoteProjectRecents", "remoteProjectHistoryExplicitOnly"];
+/// Multi-backend server profiles: guarded like `routes/settings.ts`'s `guardServerProfiles`.
+const SERVER_PROFILES: &[&str] = &["remoteServers"];
 
 pub struct Settings {
     pub location: Location,
@@ -68,47 +75,6 @@ impl From<Unreadable> for Failure {
     }
 }
 
-/// `normalizeServerConfigOwner`.
-fn normalize_server(mut server: Doc) -> Doc {
-    if let Some(level) = server.get("logLevel") {
-        let canonical = level.as_str().map(|s| s.trim().to_uppercase());
-        let valid = canonical.filter(|s| ["DEBUG", "INFO", "WARN", "ERROR"].contains(&s.as_str()));
-        server.insert("logLevel".into(), json!(valid.unwrap_or_else(|| "DEBUG".into())));
-    }
-    if server.get("updateFeed").is_some_and(|feed| feed != "stable" && feed != "preview") {
-        server.remove("updateFeed");
-    }
-    if server.get("opencodeBinary").is_some_and(|binary| binary == "opencode") {
-        server.insert("opencodeBinary".into(), json!("opencode2"));
-    }
-    server
-}
-fn normalize_config(mut doc: Doc) -> Doc {
-    if let Some(Value::Object(server)) = doc.get_mut("server") {
-        *server = normalize_server(std::mem::take(server));
-    }
-    doc
-}
-
-/// `sanitizeServerOwner`: speech keys are replaced by `hasApiKey`.
-fn sanitize_server(mut server: Doc) -> Doc {
-    let Some(Value::Object(speech)) = server.get_mut("speech") else { return server };
-    let hide = |owner: &mut Doc| {
-        let key = owner.remove("apiKey");
-        owner.insert(
-            "hasApiKey".into(),
-            json!(key.as_ref().and_then(Value::as_str).is_some_and(|s| !s.trim().is_empty())),
-        );
-    };
-    hide(speech);
-    for direction in ["stt", "tts"] {
-        if let Some(Value::Object(sub)) = speech.get_mut(direction) {
-            hide(sub);
-        }
-    }
-    server
-}
-
 impl Settings {
     pub fn new(location: Location) -> Self {
         Settings { location, write: Mutex::new(()) }
@@ -145,10 +111,13 @@ impl Settings {
     /// `getDoc`: the display document (an unreadable one is empty); config is normalized,
     /// and repaired on disk only when it is read authoritatively.
     fn doc(&self, kind: Kind) -> Doc {
-        let current = document::read(self.file(kind)).unwrap_or_default();
+        let file = self.file(kind);
         if kind == Kind::State {
+            let (mut current, order) = document::read_with_history_order(file).unwrap_or_default();
+            remote_project_history::compact_doc(&mut current, None, &order);
             return current;
         }
+        let current = document::read(file).unwrap_or_default();
         let normalized = normalize_config(current.clone());
         if normalized != current {
             let _write = self.write.lock().unwrap();
@@ -169,6 +138,30 @@ impl Settings {
         if kind == Kind::Config && name == "server" { normalize_server(value) } else { value }
     }
 
+    /// Reads the normalized `server` config owner under the settings write lock so derived state
+    /// (such as the release feed monitor) updates strictly in commit order without inverting locks.
+    pub fn with_server_owner_locked<T>(&self, f: impl FnOnce(&Doc) -> T) -> T {
+        let _write = self.write.lock().unwrap();
+        let current = document::read(&self.location.config).unwrap_or_default();
+        let normalized = normalize_config(current.clone());
+        if normalized != current {
+            let _ = document::write(&self.location.config, &normalized);
+        }
+        let server = normalize_server(owner(normalized.get("server")));
+        f(&server)
+    }
+
+    fn state_owner_with_order(&self, name: &str) -> (Doc, Vec<String>) {
+        let file = self.file(Kind::State);
+        let (mut current, mut order) = document::read_with_history_order(file).unwrap_or_default();
+        if name == "ui"
+            && let Some(compacted_order) = remote_project_history::compact_doc(&mut current, None, &order)
+        {
+            order = compacted_order;
+        }
+        (owner(current.get(name)), order)
+    }
+
     /// `getRawConfigOwner`: fresh authority, without normalization or fallbacks.
     pub fn raw_config_owner(&self, name: &str) -> Result<Doc, Unreadable> {
         let value = owner_strict(&document::read(&self.location.config)?, name)?;
@@ -179,7 +172,18 @@ impl Settings {
     }
 
     pub(crate) fn private_state_owner(&self, name: &str) -> Result<Doc, Unreadable> {
-        owner_strict(&document::read(&self.location.state)?, name)
+        self.private_state_owner_with_order(name).map(|(doc, _)| doc)
+    }
+
+    fn private_state_owner_with_order(&self, name: &str) -> Result<(Doc, Vec<String>), Unreadable> {
+        let (mut doc, mut order) = document::read_with_history_order(&self.location.state)?;
+        let _ = owner_strict(&doc, name)?;
+        if name == "ui"
+            && let Some(compacted_order) = remote_project_history::compact_doc(&mut doc, None, &order)
+        {
+            order = compacted_order;
+        }
+        Ok((owner_strict(&doc, name)?, order))
     }
 
     pub(crate) fn replace_private_state(
@@ -190,7 +194,11 @@ impl Settings {
         value: Option<Value>,
     ) -> Result<bool, Unreadable> {
         let _write = self.write.lock().unwrap();
-        let mut doc = document::read(&self.location.state)?;
+        let (mut doc, mut order) = document::read_with_history_order(&self.location.state)?;
+        let history_order = remote_project_history::compact_doc(&mut doc, None, &order);
+        if let Some(compacted) = &history_order {
+            order = compacted.clone();
+        }
         let mut owner = owner_strict(&doc, name)?;
         if owner.get(key) != expected {
             return Ok(false);
@@ -200,36 +208,85 @@ impl Settings {
             None => owner.remove(key),
         };
         doc.insert(name.to_owned(), Value::Object(owner));
-        document::write(&self.location.state, &doc).map_err(|_| Unreadable)?;
+        let final_order = if !order.is_empty() { Some(order.as_slice()) } else { None };
+        document::write_with_history_order(&self.location.state, &doc, final_order).map_err(|_| Unreadable)?;
         Ok(true)
     }
 
     /// `mergePatchOwner`: the merge starts from the document on disk now (an unreadable state
     /// document is refused rather than overwritten). Returns the saved owner.
+    #[cfg(test)]
     pub fn patch(&self, kind: Kind, name: &str, patch: &Value) -> Result<Value, Failure> {
-        self.patch_checked(kind, name, patch, |_, _| Ok(()))
+        self.patch_checked_with_order(kind, name, patch, &[], |_, _| Ok(())).map(|(saved, _)| saved)
     }
-    /// `mergePatchOwner` with its `ConfigWriteCheck`: `check` sees the document on disk and the result.
-    pub fn patch_checked(
+    pub(crate) fn patch_checked_committed(
         &self,
         kind: Kind,
         name: &str,
         patch: &Value,
+        patch_history_order: &[String],
         check: impl FnOnce(&Doc, &Doc) -> Result<(), Failure>,
-    ) -> Result<Value, Failure> {
+        on_committed: impl FnOnce(&Value, &[String]),
+    ) -> Result<(Value, Vec<String>), Failure> {
         if !patch.is_object() {
             return Err(Failure::Invalid("Patch must be a JSON object".into()));
         }
         let _write = self.write.lock().unwrap();
         let file = self.file(kind);
-        let before = document::read(file)?;
-        let merged = owner(Some(&merge(&Value::Object(owner(before.get(name))), patch)));
+        let (mut before, mut combined_order) = if kind == Kind::State {
+            document::read_with_history_order(file)?
+        } else {
+            (document::read(file)?, Vec::new())
+        };
+        if kind == Kind::State
+            && let Some(before_order) = remote_project_history::compact_doc(&mut before, None, &combined_order)
+        {
+            combined_order = before_order;
+        }
+        let effective = if kind == Kind::Config && name == "ui" {
+            preserve_legacy_transcript_defaults(before.get("ui"), patch)
+        } else if kind == Kind::Config && name == "server" {
+            let current = owner_strict(&before, "server")?;
+            let paired = speech_pairing(patch, &current);
+            std::borrow::Cow::Owned(apply_secure_env_vars_mask(before.get("server"), &paired)?.into_owned())
+        } else if kind == Kind::State && name != "sessionPermissionBlocks" {
+            strip_new_object_nulls(before.get(name), patch)
+        } else {
+            std::borrow::Cow::Borrowed(patch)
+        };
+        let merged = owner(Some(&merge(&Value::Object(owner(before.get(name))), effective.as_ref())));
         let merged = if kind == Kind::Config && name == "server" { normalize_server(merged) } else { merged };
         let mut doc = before.clone();
-        doc.insert(name.into(), Value::Object(merged.clone()));
+        doc.insert(name.into(), Value::Object(merged));
+        let history_order = if kind == Kind::State {
+            let mut seen: std::collections::HashSet<String> = combined_order.iter().cloned().collect();
+            for key in patch_history_order {
+                if seen.insert(key.clone()) {
+                    combined_order.push(key.clone());
+                }
+            }
+            remote_project_history::compact_doc(&mut doc, Some(&before), &combined_order)
+        } else {
+            None
+        };
         check(&before, &doc)?;
-        document::write(file, &doc).map_err(|e| Failure::Invalid(e.to_string()))?;
-        Ok(Value::Object(merged))
+        document::write_with_history_order(file, &doc, history_order.as_deref())
+            .map_err(|e| Failure::Invalid(e.to_string()))?;
+        let final_order = history_order.unwrap_or(combined_order);
+        let saved = Value::Object(owner(doc.get(name)));
+        on_committed(&saved, &final_order);
+        Ok((saved, final_order))
+    }
+    #[cfg(test)]
+    fn patch_checked_with_order(
+        &self,
+        kind: Kind,
+        name: &str,
+        patch: &Value,
+        patch_history_order: &[String],
+        check: impl FnOnce(&Doc, &Doc) -> Result<(), Failure>,
+    ) -> Result<(Value, Vec<String>), Failure> {
+        self.patch_checked_committed(kind, name, patch, patch_history_order, check, |_, _| {})
     }
 }
 
@@ -244,11 +301,43 @@ fn owner_strict(doc: &Doc, name: &str) -> Result<Doc, Unreadable> {
 
 /// `SettingsService.publish` for an owner write.
 fn publish(app: &App, kind: Kind, name: &str, value: Value) {
-    let (kind, value) = match kind {
+    publish_with_order(app, kind, name, value, &[]);
+}
+
+fn publish_with_order(app: &App, kind: Kind, name: &str, value: Value, history_order: &[String]) {
+    if kind == Kind::Config
+        && name == "server"
+        && let Some(map) = value.as_object()
+    {
+        app.releases.set_feed(crate::meta::update_feed(map));
+    }
+    let (event_type, value) = match kind {
         Kind::Config => ("storage.configChanged", sanitized(name, value)),
         Kind::State => ("storage.stateChanged", value),
     };
-    app.emit(json!({"type": kind, "owner": name, "value": value}));
+    let event = json!({"type": event_type, "owner": name, "value": value});
+    if kind == Kind::State
+        && name == "ui"
+        && !history_order.is_empty()
+        && let Some(map) = event["value"].as_object()
+    {
+        #[derive(serde::Serialize)]
+        struct OrderedEvent<'a> {
+            #[serde(rename = "type")]
+            event_type: &'a str,
+            owner: &'a str,
+            value: remote_project_history::OrderedStateOwner<'a>,
+        }
+        if let Ok(text) = serde_json::to_string(&OrderedEvent {
+            event_type,
+            owner: name,
+            value: remote_project_history::OrderedStateOwner(map, history_order),
+        }) {
+            app.emit_serialized(event, text);
+            return;
+        }
+    }
+    app.emit(event);
 }
 fn sanitized(name: &str, value: Value) -> Value {
     match value {
@@ -259,8 +348,14 @@ fn sanitized(name: &str, value: Value) -> Value {
 
 /// `mergePatchOwner` for other domains (memory, SideCars, Stats), published like the reference's.
 pub fn patch_owner(app: &App, kind: Kind, name: &str, patch: Value) -> Result<Value, Failure> {
-    let saved = app.settings.patch(kind, name, &patch)?;
-    publish(app, kind, name, saved.clone());
+    let (saved, _) = app.settings.patch_checked_committed(
+        kind,
+        name,
+        &patch,
+        &[],
+        |_, _| Ok(()),
+        |saved, order| publish_with_order(app, kind, name, saved.clone(), order),
+    )?;
     Ok(saved)
 }
 
@@ -272,48 +367,24 @@ pub fn routes() -> Router<Shared> {
         .merge(config_files::routes())
 }
 
-async fn read_config(State(app): State<Shared>, Path(name): Path<String>) -> Result<Response, Error> {
+async fn read_config(
+    State(app): State<Shared>,
+    Path(name): Path<String>,
+    Query(query): Query<Vec<(String, String)>>,
+) -> Result<Response, Error> {
+    let authoritative = query.iter().any(|(key, value)| key == "authoritative" && value == "1");
     Ok(match name.as_str() {
         "ui" => Json(app.settings.raw_config_owner("ui").map_err(|e| Failure::from(e).response())?).into_response(),
-        "server" => Json(sanitize_server(app.settings.owner(Kind::Config, "server"))).into_response(),
+        "server" => {
+            let server = if authoritative {
+                normalize_server(app.settings.raw_config_owner("server").map_err(|e| Failure::from(e).response())?)
+            } else {
+                app.settings.owner(Kind::Config, "server")
+            };
+            Json(sanitize_server(server)).into_response()
+        }
         _ => unavailable(),
     })
-}
-/// `HOST_ONLY_SERVER_KEYS` and `hostOnlyServerCheck`: a non-local request may not flip them.
-const HOST_ONLY: &[&str] = &["sidecarsOverDirectHttps"];
-fn host_only(before: &Doc, after: &Doc) -> Result<(), Failure> {
-    let enabled = |doc: &Doc, key: &str| doc.get("server").and_then(|s| s.get(key)) == Some(&json!(true));
-    match HOST_ONLY.iter().all(|key| enabled(before, key) == enabled(after, key)) {
-        true => Ok(()),
-        false => Err(Failure::HostOnly),
-    }
-}
-
-/// `enforceSpeechCredentialPairing`: a changed base URL saved without its key clears the stored key.
-fn speech_pairing(patch: &Value, current: &Doc) -> Value {
-    let mut patch = patch.clone();
-    let Some(Value::Object(speech)) = patch.get_mut("speech") else { return patch };
-    let current = current.get("speech").and_then(Value::as_object);
-    let current = current.and_then(|c| c.get("speech").and_then(Value::as_object)).or(current);
-    let url = |o: Option<&Doc>| o.and_then(|o| o.get("baseUrl")).filter(|v| !v.is_null()).cloned().unwrap_or(json!(""));
-    let unpaired = |patch: &Doc, current: Option<&Doc>| {
-        patch.contains_key("baseUrl") && !patch.contains_key("apiKey") && url(Some(patch)) != url(current)
-    };
-    if unpaired(speech, current) {
-        speech.insert("apiKey".into(), Value::Null);
-    }
-    for direction in ["stt", "tts"] {
-        if let Some(sub) = speech.get_mut(direction) {
-            let mut fields = sub.as_object().cloned().unwrap_or_default();
-            if fields.contains_key("baseUrl") && !fields.contains_key("apiKey") {
-                if unpaired(&fields, current.and_then(|c| c.get(direction)).and_then(Value::as_object)) {
-                    fields.insert("apiKey".into(), Value::Null);
-                }
-                *sub = Value::Object(fields);
-            }
-        }
-    }
-    patch
 }
 
 /// `PATCH /api/storage/config/:owner`, or `?conditional=missions-v1` for the Missions preferences.
@@ -325,41 +396,71 @@ async fn patch_config(
     headers: HeaderMap,
     bytes: Bytes,
 ) -> Result<Response, Error> {
-    let mut patch = match fastify::body(&headers, &bytes)? {
+    let patch = match fastify::body(&headers, &bytes)? {
         None => json!({}),
         Some(fastify::Body::Json(value)) => value,
         Some(fastify::Body::Text(text)) => Value::String(text),
     };
-    let conditional = query.into_iter().find(|(key, _)| key == "conditional").map(|(_, mode)| mode);
+    let mut conditionals = query.into_iter().filter_map(|(key, mode)| (key == "conditional").then_some(mode));
+    let conditional = match (conditionals.next(), conditionals.next()) {
+        (None, _) => None,
+        (Some(mode), None) => Some(mode),
+        (Some(_), Some(_)) => return Err(Failure::Invalid("Unknown conditional patch mode".into()).response()),
+    };
     let mut refresh_login = false;
-    let saved = match conditional {
-        Some(mode) if mode != "missions-v1" => Err(Failure::Invalid("Unknown conditional patch mode".into())),
-        Some(_) => conditional::apply(&app.settings, &name, &patch),
-        None => {
+    let saved = match conditional.as_deref() {
+        Some("missions-v1") => conditional::apply_committed(&app.settings, &name, &patch, |saved| {
+            publish(&app, Kind::Config, &name, saved.clone());
+        }),
+        Some(mode) if mode != "atomic-v1" => Err(Failure::Invalid("Unknown conditional patch mode".into())),
+        None | Some(_) => {
+            let patch = if patch.is_null() { json!({}) } else { patch };
             if name == "server" {
-                let current = app.settings.raw_config_owner("server").map_err(|e| Failure::from(e).response())?;
-                refresh_login =
-                    patch.get("opencodeBinary").is_some_and(|binary| Some(binary) != current.get("opencodeBinary"));
-                patch = speech_pairing(&patch, &current);
+                assert_voice_conversation_patch(&patch).map_err(Failure::response)?;
             }
             // Requests through the HTTPS listener are never local.
             let remote = channel.is_some();
-            app.settings.patch_checked(Kind::Config, &name, &patch, |before, after| match remote {
-                true => host_only(before, after),
-                false => Ok(()),
-            })
+            app.settings
+                .patch_checked_committed(
+                    Kind::Config,
+                    &name,
+                    &patch,
+                    &[],
+                    |before, after| {
+                        if remote {
+                            host_only(before, after)?;
+                        }
+                        if name == "ui" {
+                            check_conversation_default(before, after)?;
+                        }
+                        if name == "server" {
+                            let before_bin = before.get("server").and_then(|s| s.get("opencodeBinary"));
+                            refresh_login =
+                                patch.get("opencodeBinary").is_some_and(|binary| Some(binary) != before_bin);
+                        }
+                        Ok(())
+                    },
+                    |saved, _| publish(&app, Kind::Config, &name, saved.clone()),
+                )
+                .map(|(saved, _)| saved)
         }
     };
     let saved = saved.map_err(Failure::response)?;
-    publish(&app, Kind::Config, &name, saved.clone());
     if refresh_login {
         crate::opencode::login_start::refresh(&app);
     }
     Ok(Json(sanitized(&name, saved)).into_response())
 }
 
-async fn read_state(State(app): State<Shared>) -> Json<Doc> {
-    Json(app.settings.owner(Kind::State, "ui"))
+async fn read_state(State(app): State<Shared>, Query(query): Query<Vec<(String, String)>>) -> Result<Response, Error> {
+    let authoritative = query.iter().any(|(key, value)| key == "authoritative" && value == "1");
+    let (doc, order) = if authoritative {
+        let _write = app.settings.write.lock().unwrap();
+        app.settings.private_state_owner_with_order("ui").map_err(|e| Failure::from(e).response())?
+    } else {
+        app.settings.state_owner_with_order("ui")
+    };
+    Ok(Json(remote_project_history::OrderedStateOwner(&doc, &order)).into_response())
 }
 async fn patch_state(State(app): State<Shared>, request: axum::extract::Request) -> Result<Response, Error> {
     let allow_profiles = crate::previews::backend::enabled(&app)
@@ -371,7 +472,7 @@ async fn patch_state(State(app): State<Shared>, request: axum::extract::Request)
         .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request body is too large"))?;
     // Fastify's parsers, then `request.body ?? {}`.
     let patch = match fastify::body(&head.headers, &bytes)? {
-        None => json!({}),
+        None | Some(fastify::Body::Json(Value::Null)) => json!({}),
         Some(fastify::Body::Json(value)) => value,
         Some(fastify::Body::Text(text)) => Value::String(text),
     };
@@ -379,79 +480,26 @@ async fn patch_state(State(app): State<Shared>, request: axum::extract::Request)
     if patch.as_object().is_some_and(|ui| SERVER_PROFILES.iter().any(|key| ui.contains_key(*key))) && !allow_profiles {
         return Ok(unavailable());
     }
-    let saved = app.settings.patch(Kind::State, "ui", &patch).map_err(Failure::response)?;
+    let history_order = remote_project_history::json_history_key_order(&bytes);
+    let (saved, final_order) = app
+        .settings
+        .patch_checked_committed(
+            Kind::State,
+            "ui",
+            &patch,
+            &history_order,
+            |_, _| Ok(()),
+            |saved, order| publish_with_order(&app, Kind::State, "ui", saved.clone(), order),
+        )
+        .map_err(Failure::response)?;
     if profiles {
         app.previews.owners.reconcile(&app);
     }
-    publish(&app, Kind::State, "ui", saved.clone());
-    Ok(Json(saved).into_response())
+    Ok(match saved.as_object() {
+        Some(map) => Json(remote_project_history::OrderedStateOwner(map, &final_order)).into_response(),
+        None => Json(saved).into_response(),
+    })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn server_owner_is_normalized_and_sanitized() {
-        let server = json!({"logLevel": " info ", "updateFeed": "dev", "opencodeBinary": "opencode",
-            "speech": {"apiKey": " k ", "stt": {"apiKey": ""}, "tts": {"hasApiKey": true}}});
-        let normalized = normalize_server(owner(Some(&server)));
-        assert_eq!(
-            Value::Object(normalized.clone()),
-            json!({"logLevel": "INFO", "opencodeBinary": "opencode2",
-            "speech": {"apiKey": " k ", "stt": {"apiKey": ""}, "tts": {"hasApiKey": true}}})
-        );
-        assert_eq!(normalize_server(owner(Some(&json!({"logLevel": 3}))))["logLevel"], "DEBUG");
-        assert_eq!(
-            Value::Object(sanitize_server(normalized))["speech"],
-            json!({"hasApiKey": true,
-            "stt": {"hasApiKey": false}, "tts": {"hasApiKey": false}})
-        );
-    }
-
-    #[test]
-    fn speech_keys_follow_their_base_url() {
-        let current = owner(Some(&json!({"speech": {"baseUrl": "a", "stt": {"baseUrl": "s"}}})));
-        let patch = json!({"speech": {"baseUrl": "b", "stt": {"baseUrl": "s"}, "tts": {"baseUrl": "t"}}});
-        assert_eq!(
-            speech_pairing(&patch, &current),
-            json!({"speech": {"baseUrl": "b", "apiKey": null,
-            "stt": {"baseUrl": "s"}, "tts": {"baseUrl": "t", "apiKey": null}}})
-        );
-        let kept = json!({"speech": {"baseUrl": "a", "apiKey": "new"}});
-        assert_eq!(speech_pairing(&kept, &current), kept);
-    }
-
-    #[test]
-    fn remote_writes_cannot_flip_host_only_settings() {
-        let doc = |value: Value| owner(Some(&value));
-        let (off, on) = (doc(json!({"server": {}})), doc(json!({"server": {"sidecarsOverDirectHttps": true}})));
-        assert!(matches!(host_only(&off, &on), Err(Failure::HostOnly)));
-        assert!(matches!(host_only(&on, &doc(json!({}))), Err(Failure::HostOnly)));
-        assert!(host_only(&on, &doc(json!({"server": {"sidecarsOverDirectHttps": true, "x": 1}}))).is_ok());
-    }
-
-    #[test]
-    fn owners_follow_the_reference_documents() {
-        let dir = crate::shared::test_dir("settings-patch");
-        let settings = Settings::new(Location::resolve(dir.join("config.yaml").to_str().unwrap()));
-        let id = settings.server_id().unwrap();
-        assert_eq!(settings.server_id().unwrap(), id);
-        let saved = settings.patch(Kind::Config, "server", &json!({"logLevel": "warn", "x": null})).ok();
-        assert_eq!(saved, Some(json!({"serverId": id, "logLevel": "WARN"})));
-        assert!(matches!(settings.patch(Kind::Config, "ui", &json!([1])), Err(Failure::Invalid(_))));
-        settings.patch(Kind::State, "ui", &json!({"recentFolders": [{"path": "p"}]})).ok().unwrap();
-        assert_eq!(settings.owner(Kind::State, "ui")["recentFolders"][0]["path"], "p");
-        // An unreadable document is displayed empty and never overwritten.
-        std::fs::write(&settings.location.state, "a: [\n").unwrap();
-        assert!(settings.owner(Kind::State, "ui").is_empty());
-        assert!(matches!(settings.patch(Kind::State, "ui", &json!({"a": 1})), Err(Failure::Unreadable)));
-        assert_eq!(std::fs::read_to_string(&settings.location.state).unwrap(), "a: [\n");
-        // A legacy binary name is repaired on read; a malformed UI owner is unreadable.
-        std::fs::write(&settings.location.config, "server:\n  opencodeBinary: opencode\nui:\n  settings: 1\n").unwrap();
-        assert_eq!(Value::Object(settings.owner(Kind::Config, "server")), json!({"opencodeBinary": "opencode2"}));
-        assert!(std::fs::read_to_string(&settings.location.config).unwrap().contains("opencode2"));
-        assert_eq!(settings.raw_config_owner("ui"), Err(Unreadable));
-        let _ = std::fs::remove_dir_all(dir);
-    }
-}
+mod tests;

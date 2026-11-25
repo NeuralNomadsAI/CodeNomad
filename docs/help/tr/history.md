@@ -31,6 +31,8 @@ Konuşma çok dar olduğunda (420 CSS pikselinin altında) zaman çizelgesi gizl
 
 ## Doğru geçmiş işlemini seçin {#operation-reference}
 
+Rune'da arama, seçilen daraltılmış sonucu açar. Sonuç gizliyse **Mesaj içeriği** bölümünde türünü veya araç girdilerini gösterip sonucu yeniden seçin. Başka bir oturumdaki gizli sonuç, geçerli konuşmayı açık bırakır.
+
 | Operasyon | Nerede | Kapsam ve sonuç |
 | --- | --- | --- |
 | Görüntü filtreleme | **Mesaj içeriği** veya **Ayarlar → Sohbet** | Paylaşılan konuşma dökümü görüntüleme tercihleri; içeriği silmeden gizler / daraltır |
@@ -41,6 +43,8 @@ Konuşma çok dar olduğunda (420 CSS pikselinin altında) zaman çizelgesi gizl
 | Session'ları Temizle | Komut paleti | Görüntüleme veya bağlam boyutu ayarı değil, daha kapsamlı oturum silme |
 
 **Mesaj içeriği** konuşmalar genelinde geçerlidir. Üst kısmından veya **Ayarlar → Sohbet** bölümünden bir hazır ayar (**Hiçbir şey**, **Minimal**, **Dengeli** veya **Her şey**) seçin, ardından satırları tek tek ayarlayın; **Mesaj içeriği** hazır ayar menüsü bundan sonra **Özel** gösterir. Araçları gizlemek araçları devre dışı bırakmaz, izinleri değiştirmez veya saklanan çıktıyı kaldırmaz. Arayüzün akıcı kalması için çok büyük mesajlar atlanan bölümün yerinde **… tane daha göster** kontrolünü gösterir; çok uzun metin veya araç çıktısı ise **Tümünü göster** ile birlikte **Bu mesajın akıcı kalması için … karakter daha gizlendi** satırında durur; çok fazla içerik kaldığında **Tümünü göster** yerine **… tane daha göster** görünür ve bu birkaç adım gerektirebilir. İkisini de açmak yalnızca görüntülemeyi etkiler ve silinmiş içeriği kurtarmaz. Birden fazla satırı tek seferde ayarlamak için göz veya ok düğmelerinin üzerinde sürükleyin: ilk ayrıldığınız düğme değişir ve aynı sütunda üzerinden geçtiğiniz her düğme onun yeni durumunu alır. Konuşma, düğmeyi bıraktığınızda güncellenir.
+
+**Araç grupları** satırında her çağrıyı ayrı göstermek için göz düğmesini kapatın veya grupları varsayılan olarak açmak için ok düğmesini kullanın. Her araç türünün kendi görünürlük ayarı geçerliliğini korur. **Her şey** grupları varsayılan olarak açar; diğer hazır ayarlarda gruplar daraltılmış kalır.
 
 ## Bir oturumu sıkıştırın {#compact-session}
 

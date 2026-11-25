@@ -31,6 +31,8 @@ The timeline is hidden when the conversation is too narrow (below 420 CSS pixels
 
 ## Choose the right history operation {#operation-reference}
 
+In Rune, search opens a collapsed result. If the result is hidden, show its type or tool inputs in **Message content**, then select it again. A hidden result in another session leaves you in the current conversation.
+
 | Operation | Where | Scope and consequence |
 | --- | --- | --- |
 | Display filtering | **Message content**, or **Settings → Chat** | Shared transcript display preferences; hides/collapses content without deleting it |
@@ -41,6 +43,8 @@ The timeline is hidden when the conversation is too narrow (below 420 CSS pixels
 | Scrub Sessions | Command palette | Broader session deletion, not a display or context-size setting |
 
 **Message content** applies across conversations. Choose a preset (**Nothing**, **Minimal**, **Balanced** or **Everything**) at its top or in **Settings → Chat**, then adjust individual rows; the **Message content** preset menu then shows **Custom**. Hiding tools does not disable tools, change permissions or remove stored output. To keep rendering responsive, very large messages show **Show … more** at an omitted gap, and very long text or tool output stops at a **… more characters hidden** line with **Show all**, or **Show … more** when much remains, which may take several steps. Revealing either is display-only and does not recover deleted content. Drag across its eye or chevron buttons to set several rows at once: the first button you drag out of toggles, and every button you cross in the same column takes its new state. The conversation updates when you release the button.
+
+In **Tool groups**, turn off the eye to show each call on its own, or use the chevron to open groups by default. Each tool type still has its own visibility setting. **Everything** opens groups by default; the other presets keep them collapsed.
 
 ## Compact a session {#compact-session}
 

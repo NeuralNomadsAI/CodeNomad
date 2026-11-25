@@ -31,6 +31,8 @@ La línea de tiempo se oculta cuando la conversación es demasiado estrecha (men
 
 ## Elegir la operación de historial adecuada {#operation-reference}
 
+En Rune, la búsqueda despliega el resultado seleccionado. Si está oculto, muestra su tipo o las entradas de herramientas en **Contenido de los mensajes** y vuelve a seleccionarlo. Un resultado oculto de otra sesión te deja en la conversación actual.
+
 | Operación | Dónde | Ámbito y consecuencia |
 | --- | --- | --- |
 | Filtrado de visualización | **Contenido de los mensajes**, o **Configuración → Chat** | Preferencias compartidas de visualización de la transcripción; oculta/contrae contenido sin eliminarlo |
@@ -41,6 +43,8 @@ La línea de tiempo se oculta cuando la conversación es demasiado estrecha (men
 | Depurar sesiones | Paleta de comandos | Eliminación más amplia de sesiones, no un ajuste de visualización ni de tamaño del contexto |
 
 **Contenido de los mensajes** se aplica a todas las conversaciones. Elige un preajuste (**Nada**, **Mínimo**, **Equilibrado** o **Todo**) en su parte superior o en **Configuración → Chat** y después ajusta filas individuales; el menú de preajustes de **Contenido de los mensajes** muestra entonces **Personalizado**. Ocultar herramientas no las desactiva, no cambia permisos ni elimina la salida almacenada. Para mantener la fluidez de representación, los mensajes muy grandes muestran **Mostrar … más** en un hueco omitido, y los textos o salidas de herramientas muy largos se detienen en una línea **… caracteres más ocultos** con **Mostrar todo**, o **Mostrar … más** cuando queda mucho, lo que puede requerir varios pasos. Revelar cualquiera de ellos solo afecta a la visualización y no recupera contenido eliminado. Arrastra sobre sus botones de ojo o de flecha para ajustar varias filas a la vez: el primer botón del que sales cambia, y cada botón que cruzas en la misma columna toma su nuevo estado. La conversación se actualiza al soltar el botón.
+
+En **Grupos de herramientas**, desactiva el ojo para mostrar cada llamada por separado o usa la flecha para abrir los grupos de forma predeterminada. Cada tipo de herramienta conserva su propio ajuste de visibilidad. **Todo** abre los grupos de forma predeterminada; los demás preajustes los dejan colapsados.
 
 ## Compactar una sesión {#compact-session}
 

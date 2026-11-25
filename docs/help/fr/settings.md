@@ -80,12 +80,12 @@ Réordonnez toute section Statut par glisser-déposer ou avec les touches Haut/B
 
 Statut inclut les informations de tokens, Permissions, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Tant que la conversation a un [objectif](conversations.md#goal), une ligne d’objectif au-dessus de ces sections l’affiche ; cette ligne n’est pas une section et ne peut être ni masquée ni déplacée. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
 
-La disposition intégrée est propre à la fenêtre, pas une modification du projet. Les cases d’extension sont différentes : elles activent du code dans tous les projets utilisant la configuration. **Réinitialiser** ne change pas le consentement aux extensions. Voir [Extensions de panneau](extensions.md).
+La disposition intégrée est propre à la fenêtre. La [case Missions](missions.md#activation) change aussi l’activation globale du plugin ; le balayage des cases l’ignore. Les cases d’extension activent du code dans tous les projets utilisant la configuration. **Réinitialiser** ne change pas le consentement aux extensions. Voir [Extensions de panneau](extensions.md).
 
 ## Détail de transcription et taille de saisie {#transcript-composer}
 
 1. Ouvrez **Chat** pour choisir les niveaux de détail par défaut. Les préréglages sont **Rien**, **Minimal**, **Équilibré** et **Tout** ; les changements individuels produisent **Personnalisé**.
-2. Réglez l’**État par défaut** de chaque ligne (**Masqué**, **Réduit** ou **Développé**) pour la réflexion, les diagnostics, les entrées d’outils, les tokens, les messages système et chaque type d’outil, ou utilisez le menu **Contenu des messages** de la conversation, qui partage ces choix.
+2. Réglez l’**État par défaut** de chaque ligne (**Masqué**, **Réduit** ou **Développé**), ou utilisez le menu **Contenu des messages** de la conversation, qui partage ces choix. Pour **Groupes d’outils**, **Désactivé** affiche une carte par appel ; **Réduit** et **Développé** règlent l’ouverture des groupes.
 3. Dans **Général**, cochez au besoin **Afficher la chronologie des messages**, **Placer les flèches premier/dernier message sous la chronologie**, **Scinder les diffs des appels d’outils** et **Mettre les prompts envoyés en file d’attente** (mettre en file les prompts envoyés pendant qu’une session travaille au lieu de l’orienter).
 4. Redimensionnez la zone de saisie avec sa commande ; les longs brouillons défilent dans le champ.
 
@@ -112,6 +112,8 @@ Le nombre de non-lus de la cloche/de l’historique, qui ne compte que les notif
 Si le système prend en charge les actions de notification, un clic affiche la conversation si elle est toujours ouverte. Le passage de la fenêtre au premier plan dépend de l’environnement de bureau.
 
 ## Options avancées {#advanced}
+
+Dans Rune, placez le focus sur le **i** à côté d’un réglage désactivé pour connaître la raison. L’éditeur de configuration indique la ligne des erreurs JSON/JSONC et laisse l’enregistrement disponible.
 
 1. Ouvrez **Avancé**.
 2. Cochez ou décochez seulement les options nécessaires ; chaque changement est enregistré via les préférences CodeNomad. Pour changer l’environnement d’exécution des sessions, dépliez le groupe replié **Variables d'environnement** à la fin.

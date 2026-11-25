@@ -33,6 +33,25 @@ Keep domain-specific implementations where authority, lifetime or runtime differ
 
 ## Implementations and limits
 
+Session list placement is cached by topology (parent and native location), independently
+of row metadata. Single-row publications retain unaffected descendant indexes and
+family trees; bulk inventory publication rebuilds the affected workspace's indexes
+on demand. Catalog-only changes may wait for 500 ms of quiet. Draft and
+attachment edits and other restore state (such as selection, expansion and
+scroll) arm a 2 s capture timer from the first dirty change; execution depends
+on browser scheduling. A deadline capture reads current runtime markers and
+membership/deletion authority, reusing the prior captured catalog when present
+or building it on the first capture. Persistence waits for 250 ms of quiet or
+the 500 ms save timer, whichever comes first. One native commit runs at a time;
+unsent autosaves coalesce into the latest state. Explicit flushes capture fresh
+data and bypass the autosave timers after any in-flight commit settles.
+Draft and attachment signals schedule capture without materializing their saved
+maps on each edit; serialization reads the current maps at the checkpoint.
+Session rename events publish their title directly in the catalog; unseen IDs
+share one metadata read carrying the latest title and archive changes observed
+during that read, fenced by newer snapshots.
+Single-row event publications read interruption flags by session ID.
+
 Current daily/native-scheduled passages acquire a source identity before slices and reuse
 the bounded selected-mission inventory owner without directory or finish-counter reads.
 Body keys include that exact passage source. Owner revision fences publication separately
@@ -62,7 +81,7 @@ content before promoting it, and retain the last good display on expiry.
 | Worktree authority | Validated reads await stale-inventory revalidation; family transactions force scans. Ownership misses can bypass a warm inventory once per directory-cache lifetime. Create/remove requires a validated next display read. | server `workspaces/worktree-directory.ts`, `manager.ts` |
 | Session-media authority | Request-private native inventory and strict physical directory/Git reads retain the captured occurrence, root, client and signal. Guards fence each dependent step; occurrence revisions use `WORKTREE_OWNERSHIP_RESTART_LIMIT`. Private reads bypass shared directory/inventory flights, publish no shared snapshot and perform no refresh-on-miss. | server `workspaces/manager.ts`, `native-worktrees.ts`, `worktree-directory.ts` |
 | Git ownership preflight | Common-directory reads resolve the enclosing checkout's administrative files (`.git`, `commondir`, `HEAD`/`objects`) directly on every call; concurrent reads share one pending read per directory. Environment overrides, paths inside `.git` and invalid layouts defer to Git, whose commands run with two process slots in a lazy worker, keeping Windows process creation off the HTTP/SSE thread. Completed/failed reads are removed immediately; a matching identity still requires native inventory validation. | server `workspaces/git-common-directory.ts`, `git-process.ts`, `git-worktrees.ts` |
-| Transcript pages | Session reducer reads and first latest-window loads merge their page with the rows streamed during the fetch; only destructive events (deletion, revert commit, inbox cancellation, compaction boundaries) restart a reducer read. Reloads and history windows keep revision checks. Committed latest pages reseed a reducer that diverged or lacks an open step; live events for rows the reducer lacks owe one coalesced, budgeted repair read in watched sessions only. Event-driven projections coalesce to one pass per animation frame. Rules in [TRANSCRIPT.md](TRANSCRIPT.md). | UI `stores/opencode-data.ts`, `opencode-data-divergence.ts`, `opencode-projection-frame.ts`, `opencode-data-read-merge.ts`, `session-api.ts` |
+| Transcript pages | Session reducer reads and first latest-window loads merge their page with the rows streamed during the fetch; only destructive events (deletion, revert commit, inbox cancellation, compaction boundaries) restart a reducer read. Reloads and history windows keep revision checks. Committed latest pages reseed a reducer that diverged or lacks an open step; live events for rows the reducer lacks owe one coalesced, budgeted repair read in watched sessions only. Event-driven projections coalesce to one pass per animation frame, and pure content deltas (text/reasoning/tool input/progress) reduce behind the same frame boundary in one batched reducer write per session, flushed ahead of any structural event, reducer read or projection. REST/history hydrations larger than one chunk commit progressively across yield boundaries, fenced by newer writers. Rules in [TRANSCRIPT.md](TRANSCRIPT.md). | UI `stores/opencode-data.ts`, `opencode-data-divergence.ts`, `opencode-projection-frame.ts`, `opencode-data-read-merge.ts`, `session-api.ts` |
 | Mission bodies | Display-only content-route reads keyed by workspace, project, mission and selector; continuations pinned to their first slice's digest, read only as far as the shown page needs. One read at a time per body with coalesced demand. The panel's maps are compact: a descriptor in place of each body. A shown body is read again when its map's descriptor names another digest (a map naming no descriptor expects nothing); a plugin update, reconnect or new stream advances the entry's invalidation epoch, so a request sent before it neither settles nor parks the body and one fresh read follows. The last good body stays shown until the newer one covers it; failures (a plugin without content reads included) show beside it and park until demand, an invalidation or Retry. Intents copying inputs (edit prefill, Save configuration) accept only bodies whose digests are their snapshot's descriptors. Unshown bodies stay within 4 MiB / 128 bodies, LRU. Never authority. Rules in [MISSIONS.md](MISSIONS.md) (Body display, Compact maps). | UI `stores/mission-content-store.ts`, `stores/mission-content.ts`, `components/mission-target-bodies.ts` |
 | Mission task pages | A compact map holds a page of its tasks; reads further (`loadTasks`: a window of 50 or tasks by name) name the map's display order and run in turn per mission, an identical waiting read coalesced and a running one followed by one trailing read. Each read is recorded before it is sent; rows, reports and reads each keep the revision of the page that answered them, so a page vouches only for what it answered. An answer in the shown order merges into the list read's own map (a row it holds stays unless a page answered it later), a refusal or another order reads the list again. List publications keep the rows of the same order (last good display), drop caches of maps no longer listed, and read again each read last answered before the map's revision, from scratch in another order. A failure keeps the rows with Try again and parks its read until a later revision or an explicit retry; it stays shown until a read answers it, whatever else succeeds. Attention windows count as covered only for the attention sequence they answered. A body a row read further describes is expected at that page's revision; an older plugin's undescribed history is read again when its report metadata changes. `clear` fences reads in flight (epoch and cache identity). Reads share the secondary background budget. Never authority. Rules in [MISSIONS.md](MISSIONS.md) (Task pages). | UI `stores/mission-store.ts`, `stores/mission-task-pages.ts` |
 | Mission panel inventory | Live picker/cleanup discovery uses explicit 50-row logical windows through `panelPage`. Content digests verify that window; a separate order digest covers the collection's row values and fences further selections. Only selected/reader-wanted missions load bounded headers and task windows; root collection/extension descriptors permit exact field reads. Every window retains its own revision and failed selector. A failed middle window stays failed through unrelated successes; changed cursors park for explicit restart/Retry. Passive refresh reads first windows and wanted headers, preserving expanded displays without replaying every read after unrelated revisions. Initial discovery point-reads the durable finish counter before hints; completion seeding happens once, independently of partial summary maxima. Exact cleanup reconciliation keeps its existing single-mission path. Every transfer retains the shared secondary slot through bounded stream cleanup, with one 30-second logical deadline and source-specific preallocation limits. Hints serialization/order work remains in the append lane and linear in the whole chosen collection per transfer. Event-driven panel refreshes start at least 5 s (native activity) or 1.5 s (journal changes) after the previous read settled; publications keep every unchanged map, row and activity entry. | UI `stores/mission-panel-inventory.ts`, `stores/missions.ts`, `lib/structural-share.ts`, `lib/mission-task-page-read.ts`; server `missions/mission-panel-page.ts`, `mission-panel-header.ts`, `MissionControl.panelPage` |
@@ -90,18 +109,19 @@ recovery later succeeds.
 
 ### Client-state capture checkpoints
 
-`use-app-session-capture.ts` shares a value-diffed scalar session projection between
-capture scheduling and preserved-prompt hydration. It snapshots catalog fields and
-runtime/attention inputs even when instance Maps or nested metadata mutate in place.
+`use-app-session-capture.ts` tracks per-workspace checkpoint tokens for capture
+and topology tokens for preserved-prompt hydration. Session writes preserve
+unchanged nested field identities and invalidate the relevant token when a field
+changes or a publisher replaces the workspace map.
 Only cost/token changes while a session is working or compacting are deferred.
 Session membership, metadata, runtime transitions and idle usage still invalidate;
 drafts, attachments, selection, expansion, scrolls and outlines retain their triggers.
-Capture and explicit flush always read the fresh stores, including deferred counters.
+Quiet captures and explicit flushes encode fresh catalog data, including deferred counters.
 
 The accepted crash-freshness limit for these display-cache counters is the last
 successful checkpoint: an uninterrupted run with only usage changes can leave them
-at its starting checkpoint for the whole run. The next draft/metadata/view checkpoint,
-runtime transition or explicit navigation/shutdown flush includes the latest counters.
+at its starting checkpoint for the whole run. The next quiet capture or
+explicit navigation/shutdown flush includes the latest counters.
 Native hydration revalidates restored display data. Persistence retains its complete
 partition payloads, atomic publication, write-failure dirty state, ownership fences
 and native shutdown generation/cancellation rules.
@@ -171,6 +191,9 @@ every 15 s (`server/routes/events.ts`): keep the threshold at several ping
 intervals.
 
 ## Initial session hydration
+
+Publish a fresh session map only for the affected tab. Sidebar scope, tree and
+activity reuse unchanged tab snapshots when another tab publishes a session update.
 
 App-tab records retain identity across metadata refreshes, reordering and restoration
 of sibling projects. Their payload getters stay reactive; Solid's identity-keyed

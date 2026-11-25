@@ -4,6 +4,10 @@ Bir Görev; hedefi, koordinatör konuşmasını, işleri ve sonuçlarını birli
 
 Görevler kullanılamıyorsa **OpenCode ayarları**, eksik veya başarısız bir eklenti için hizmet kurtarmayı açar. Sunucunun yerel Görevler köprüsü kullanılamıyorsa **Sunucu tanılaması**, Ayarlar → Bilgi bölümündeki tanılama raporunu açar.
 
+## Görevleri gösterme veya gizleme {#activation}
+
+**Sağ paneli özelleştir** menüsünde **Görevler** kutusunu işaretleyerek sekmeyi gösterin veya işareti kaldırıp onaylayarak gizleyin. Bu işlem, bağlı OpenCode sunucusunun genel yapılandırmasına `codenomad.missions` ya da `-codenomad.missions` kuralını da yazar. Proje kuralları genel kuralın önüne geçebilir. Kapatma hiçbir şeyi silmez veya duraklatmaz, ancak zamanlanan çalıştırmalar atlanabilir. Yazma başarısız olursa sekme için seçtiğiniz görünürlük korunur. **Sıfırla** yalnızca düzeni değiştirir. **Durum → Eklentiler** bu tam eşleşen genel devre dışı bırakma kuralı için uyarı göstermez; diğer durumlarda **Yeniden etkinleştir** kullanılabilir.
+
 ## Görev oluşturma {#create}
 
 Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak için HTTPS tercih edin.
@@ -23,6 +27,8 @@ Ajanlar ayrıca zamanlamayı tanılayabilir, açık OFF durumunu koruyarak ayarl
 Ajanlar yapılandırmaları okuyabilir, kaydedebilir, değiştirebilir veya yeniden adlandırabilir, kaldırabilir ve onarabilir; mevcut bir Görevin talimatlarını da kaydedebilir. Ayrıca genel veya rehbere özel profil ve görev oturumu varsayılanlarını değiştirebilir, devralmayı geri getirebilir, geçersiz tercihleri sıfırlayabilir ve görev konuşmalarını silme tercihini değiştirebilir. Kitaplık ve bu tercihler CodeNomad profilinin tüm projelerinde geçerlidir. Projenin alt ajan derinliği, boş yapılandırma bloğunun onarımı dahil 1–10 veya **Devral** seçeneğini destekler. Her değişiklik son okunan değeri denetler ve sonradan yapılan insan düzenlemelerini korur.
 
 Altta İptal ve Oluştur yanındaki **Yapılandırmayı kaydet**, yeniden kullanılabilir bir yapılandırma saklar; Görev oluşturmaz veya başlatmaz. Zamanlama ve otomatik başlatma ayrı seçilir. Dişli, Tercihler ve kitaplığı açar; yapılandırmayı silmek mevcut görevleri ve konuşmaları korur.
+
+Kayıtlı bir yapılandırmayı değiştirmek için adını kullanıp **Değiştir**’i seçin. Aynı adı taşıyan birden fazla yapılandırma varsa önce değiştirmek istediğinizi yükleyin. Kitaplıkta yer olduğu sürece yeni ad ayrı bir kopya kaydeder.
 
 ### Hedef, Başlık ve Notlar {#mission-instructions}
 

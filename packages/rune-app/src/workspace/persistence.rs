@@ -1,16 +1,43 @@
-use super::{Snapshot, decode, encode};
-use crate::{history::Result, platform::storage::Store};
+use super::{Snapshot, decode, encode_for_save};
+use crate::{
+    files::document::store::Store as Documents, history::Result, platform::storage::Store,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use codenomad_client::TryRecvError;
 use codenomad_client::{Receiver, bounded};
 use std::path::PathBuf;
+
+type Loaded = (Store, Result<Option<Snapshot>>, Result<Option<Vec<u8>>>);
+
+#[cfg(not(target_arch = "wasm32"))]
+const FILE_DRAFT_DEBOUNCE_SECS: f64 = 0.25;
+#[cfg(not(target_arch = "wasm32"))]
+const FILE_DRAFT_MAX_WAIT_SECS: f64 = 2.0;
 
 pub(super) struct Persistence {
     pub loading: bool,
     pub read_error: bool,
     pub write_error: bool,
+    pub file_draft_error: bool,
+    pub file_draft_read_error: bool,
+    pub partial: bool,
     pub store: Option<Store>,
-    loaded: Option<Receiver<Result<(Store, Option<Snapshot>)>>>,
+    loaded: Option<Receiver<Result<Loaded>>>,
+    retrying_file_drafts: Option<Receiver<Result<Option<Vec<u8>>>>>,
     saving: Option<Receiver<(u64, bool)>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    saving_file_drafts: Option<(u64, Receiver<(u64, bool)>)>,
     saved: u64,
+    saved_file_drafts: u64,
+    attempted_file_drafts: u64,
+    #[cfg(not(target_arch = "wasm32"))]
+    file_drafts_dirty_revision: u64,
+    #[cfg(not(target_arch = "wasm32"))]
+    file_drafts_first_dirty: Option<f64>,
+    #[cfg(not(target_arch = "wasm32"))]
+    file_drafts_due: f64,
+    #[cfg(not(target_arch = "wasm32"))]
+    file_draft_retry_requested: bool,
     due: f64,
 }
 impl Persistence {
@@ -19,14 +46,34 @@ impl Persistence {
             loading: false,
             read_error: false,
             write_error: false,
+            file_draft_error: false,
+            file_draft_read_error: false,
+            partial: false,
             store: None,
             loaded: None,
+            retrying_file_drafts: None,
             saving: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            saving_file_drafts: None,
             saved: 0,
+            saved_file_drafts: 0,
+            attempted_file_drafts: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            file_drafts_dirty_revision: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            file_drafts_first_dirty: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            file_drafts_due: 0.0,
+            #[cfg(not(target_arch = "wasm32"))]
+            file_draft_retry_requested: false,
             due: 0.0,
         }
     }
-    pub fn start(&mut self, directory: Option<PathBuf>, wake: rune::Waker) {
+    pub fn start(&mut self, directory: Option<PathBuf>, documents: &Documents, wake: rune::Waker) {
+        if self.store.is_none() {
+            // An unopened store may already contain drafts, even if its lock cannot be acquired.
+            documents.block_file_draft_updates(true);
+        }
         if self.loading || self.store.is_some() || self.read_error {
             return;
         }
@@ -45,31 +92,30 @@ impl Persistence {
                 let store = Store::open(directory).await?;
                 #[cfg(target_arch = "wasm32")]
                 let store = Store::open().await?;
-                let snapshot = store
-                    .load()
-                    .await?
-                    .map(|bytes| {
-                        decode(&bytes).map_err(|_| -> crate::history::Error {
-                            "invalid saved workspace".into()
-                        })
-                    })
-                    .transpose()?;
-                Ok((store, snapshot))
+                let snapshot = store.load().await.and_then(|bytes| {
+                    bytes
+                        .map(|bytes| decode(&bytes).map_err(|_| "invalid saved workspace".into()))
+                        .transpose()
+                });
+                let drafts = store.load_file_drafts().await;
+                Ok((store, snapshot, drafts))
             }
             .await;
             let _ = out.send(result).await;
             wake();
         });
     }
-    pub fn poll_load(&mut self) -> Option<Snapshot> {
+    pub fn poll_load(&mut self) -> Option<(Option<Snapshot>, Result<Option<Vec<u8>>>)> {
         let result = self.loaded.as_ref()?.try_recv().ok()?;
         self.loaded = None;
         self.loading = false;
         match result {
-            Ok((store, snapshot)) => {
+            Ok((store, snapshot, drafts)) => {
+                self.read_error = snapshot.is_err();
+                let snapshot = snapshot.ok().flatten();
                 self.saved = snapshot.as_ref().map_or(0, |s| s.revision);
                 self.store = Some(store);
-                snapshot
+                Some((snapshot, drafts))
             }
             Err(_) => {
                 self.read_error = true;
@@ -108,8 +154,11 @@ impl Persistence {
             tx.wake_at(self.due);
             return;
         }
-        let bytes = match encode(snapshot) {
-            Ok(bytes) => bytes,
+        let bytes = match encode_for_save(snapshot) {
+            Ok((bytes, partial)) => {
+                self.partial = partial;
+                bytes
+            }
             Err(_) => {
                 self.write_error = true;
                 return;
@@ -125,9 +174,55 @@ impl Persistence {
         });
     }
     pub fn retry(&mut self) {
-        self.read_error = false;
+        if self.store.is_none() {
+            self.read_error = false;
+        }
         self.write_error = false;
         self.due = 0.0;
+        self.attempted_file_drafts = self.saved_file_drafts;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.file_drafts_due = 0.0;
+            self.file_draft_retry_requested = true;
+        }
+    }
+    pub fn retry_file_drafts(&mut self, wake: rune::Waker) {
+        if !self.file_draft_read_error || self.retrying_file_drafts.is_some() {
+            return;
+        }
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        let (out, input) = bounded(1);
+        self.retrying_file_drafts = Some(input);
+        crate::platform::spawn(async move {
+            let _ = out.send(store.load_file_drafts().await).await;
+            wake();
+        });
+    }
+    pub fn poll_file_draft_retry(
+        &mut self,
+        documents: &crate::files::document::store::Store,
+    ) -> bool {
+        let Some(Ok(result)) = self.retrying_file_drafts.as_ref().map(Receiver::try_recv) else {
+            return false;
+        };
+        self.retrying_file_drafts = None;
+        self.file_draft_read_error = match result {
+            Ok(Some(bytes)) => !documents.hydrate_file_drafts(&bytes),
+            Ok(None) => false,
+            Err(_) => true,
+        };
+        documents.block_file_draft_updates(self.file_draft_read_error);
+        self.attempted_file_drafts = self.saved_file_drafts;
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.file_draft_read_error {
+            self.file_drafts_dirty_revision = documents.file_draft_revision();
+            self.file_drafts_first_dirty = None;
+            self.file_drafts_due = 0.0;
+            self.file_draft_retry_requested = true;
+        }
+        true
     }
     pub fn flush(&mut self, snapshot: &Snapshot) -> bool {
         if self.read_error || self.loading {
@@ -136,24 +231,195 @@ impl Persistence {
         let Some(store) = &self.store else {
             return true;
         };
-        let Ok(bytes) = encode(snapshot) else {
+        let Ok((bytes, partial)) = encode_for_save(snapshot) else {
             self.write_error = true;
             return false;
         };
+        self.partial = partial;
         let ok = store.save_exit(bytes).is_ok();
         self.write_error = !ok;
         if ok {
             self.saved = snapshot.revision;
         }
-        ok
+        ok && !partial
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    fn drain_file_draft_save(&mut self) {
+        let Some((_, rx)) = &self.saving_file_drafts else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok((revision, ok)) => {
+                self.saving_file_drafts = None;
+                self.file_draft_error = !ok;
+                if ok {
+                    self.saved_file_drafts = self.saved_file_drafts.max(revision);
+                    self.file_draft_retry_requested = false;
+                }
+            }
+            Err(TryRecvError::Closed) => {
+                self.saving_file_drafts = None;
+                self.file_draft_error = true;
+            }
+            Err(TryRecvError::Empty) => {}
+        }
+    }
+    pub fn flush_file_drafts(&mut self, documents: &Documents) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.save_file_drafts_since(documents, self.saved_file_drafts)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.drain_file_draft_save();
+            self.file_draft_retry_requested = false;
+            self.file_drafts_first_dirty = None;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            if let Some((in_flight_revision, rx)) = self.saving_file_drafts.take() {
+                if !self.file_draft_read_error
+                    && in_flight_revision == documents.file_draft_revision()
+                {
+                    if let Some(remaining) =
+                        deadline.checked_duration_since(std::time::Instant::now())
+                    {
+                        match crate::platform::block_on(async {
+                            tokio::time::timeout(remaining, rx.recv()).await
+                        }) {
+                            Ok(Ok((revision, true))) => {
+                                self.saved_file_drafts = self.saved_file_drafts.max(revision);
+                                self.file_draft_error = false;
+                            }
+                            Ok(Ok((_, false))) | Ok(Err(_)) => {
+                                self.file_draft_error = true;
+                            }
+                            Err(_) => {
+                                if let Some(store) = &self.store {
+                                    store.cancel_file_drafts_save();
+                                }
+                                self.file_draft_error = true;
+                            }
+                        }
+                    }
+                }
+            }
+            loop {
+                let Some((revision, bytes)) = documents.file_draft_snapshot(self.saved_file_drafts)
+                else {
+                    return !self.file_draft_error;
+                };
+                self.attempted_file_drafts = revision;
+                let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now())
+                else {
+                    self.file_draft_error = true;
+                    return false;
+                };
+                if self.file_draft_read_error
+                    || self.store.as_ref().is_none_or(|store| {
+                        store
+                            .save_file_drafts_exit_within(bytes, remaining)
+                            .is_err()
+                    })
+                {
+                    self.file_draft_error = true;
+                    return false;
+                }
+                self.saved_file_drafts = revision;
+                self.file_draft_error = false;
+            }
+        }
+    }
+    pub fn poll_file_drafts(
+        &mut self,
+        documents: &Documents,
+        now: f64,
+        tx: &mut rune::Tx,
+        wake: rune::Waker,
+    ) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (now, tx, wake);
+            self.save_file_drafts_since(documents, self.attempted_file_drafts);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.drain_file_draft_save();
+            let current = documents.file_draft_revision();
+            if current <= self.saved_file_drafts {
+                self.file_drafts_first_dirty = None;
+                self.file_draft_retry_requested = false;
+            } else if current != self.file_drafts_dirty_revision {
+                let first = *self.file_drafts_first_dirty.get_or_insert(now);
+                self.file_drafts_dirty_revision = current;
+                if !self.file_draft_retry_requested {
+                    self.file_drafts_due =
+                        (now + FILE_DRAFT_DEBOUNCE_SECS).min(first + FILE_DRAFT_MAX_WAIT_SECS);
+                }
+            }
+            let Some(store) = self.store.clone() else {
+                return;
+            };
+            if self.file_draft_read_error
+                || (self.file_draft_error && !self.file_draft_retry_requested)
+                || self.saving_file_drafts.is_some()
+                || self.attempted_file_drafts >= current
+                || self.saved_file_drafts >= current
+            {
+                return;
+            }
+            if now < self.file_drafts_due {
+                tx.wake_at(self.file_drafts_due);
+                return;
+            }
+            let Some((revision, bytes)) = documents.file_draft_snapshot(self.saved_file_drafts)
+            else {
+                return;
+            };
+            self.file_draft_retry_requested = false;
+            self.file_drafts_first_dirty = None;
+            self.attempted_file_drafts = revision;
+            let (out, input) = bounded(1);
+            self.saving_file_drafts = Some((revision, input));
+            let write = store.start_file_drafts_save(bytes);
+            crate::platform::spawn(async move {
+                let ok = matches!(write.await, Ok(true));
+                let _ = out.send((revision, ok)).await;
+                wake();
+            });
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn save_file_drafts_since(&mut self, documents: &Documents, revision: u64) -> bool {
+        let Some((revision, bytes)) = documents.file_draft_snapshot(revision) else {
+            return !self.file_draft_error;
+        };
+        self.attempted_file_drafts = revision;
+        if self.file_draft_read_error
+            || self
+                .store
+                .as_ref()
+                .is_none_or(|store| store.save_file_drafts(&bytes).is_err())
+        {
+            self.file_draft_error = true;
+            return false;
+        }
+        self.saved_file_drafts = revision;
+        self.file_draft_error = false;
+        true
     }
 }
 pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
+    super::capture_files_mode(s);
     super::capture(s);
     if let Some(mut ui) = s.workspace.take() {
         ui.openings.close();
         let snapshot = ui.snapshot();
-        if ui.persistence.flush(&snapshot) {
+        let drafts_saved = ui.persistence.flush_file_drafts(&s.documents);
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::files::document::recovery::show(
+            s.documents.closing_drafts(!drafts_saved),
+            !drafts_saved,
+        );
+        if ui.persistence.flush(&snapshot) && drafts_saved && !ui.has_unsaved_large_drafts() {
             ui.release_all();
         } else {
             crate::platform::release_records_on_exit(Vec::new(), ui.openings.clone());
@@ -163,75 +429,4 @@ pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {
-    use super::*;
-    use std::{
-        fs,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
-        time::Duration,
-    };
-    #[test]
-    fn write_failure_stays_dirty_without_automatic_retries() {
-        let parent =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/rune-state-tests");
-        fs::create_dir_all(&parent).unwrap();
-        let root = parent.join(codenomad_client::http::client_id().unwrap());
-        fs::create_dir(&root).unwrap();
-        let store = crate::platform::block_on(Store::open(root.join("rune"))).unwrap();
-        fs::create_dir(root.join("rune/state.json")).unwrap();
-        let snapshot = Snapshot {
-            revision: 1,
-            saved_at: 1,
-            tabs: vec![super::super::Tab::Blank],
-            active: Some(0),
-        };
-        store.stage(&encode(&snapshot).unwrap(), &[]);
-        let mut persistence = Persistence::new();
-        persistence.store = Some(store);
-        let wakes = Arc::new(AtomicUsize::new(0));
-        let count = wakes.clone();
-        let wake: rune::Waker = Arc::new(move || {
-            count.fetch_add(1, Ordering::SeqCst);
-        });
-        let mut rt = rune::Runtime::new(
-            (persistence, snapshot),
-            |_, _| rune::el(),
-            (100.0, 100.0),
-            rune::Env::new(false, 1.0),
-        );
-        for _ in 0..100 {
-            let wake = wake.clone();
-            rt.update(move |(p, snapshot), tx| p.poll_save(snapshot, 1.0, tx, wake));
-            if rt.state.0.write_error && wakes.load(Ordering::SeqCst) == 1 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert!(rt.state.0.write_error);
-        assert_eq!(rt.state.0.saved, 0);
-        assert_eq!(wakes.load(Ordering::SeqCst), 1);
-        for _ in 0..10 {
-            let wake = wake.clone();
-            rt.update(move |(p, snapshot), tx| p.poll_save(snapshot, 2.0, tx, wake));
-        }
-        assert!(rt.state.0.saving.is_none());
-        assert_eq!(wakes.load(Ordering::SeqCst), 1);
-        fs::remove_dir(root.join("rune/state.json")).unwrap();
-        rt.state.0.retry();
-        for _ in 0..100 {
-            let wake = wake.clone();
-            rt.update(move |(p, snapshot), tx| p.poll_save(snapshot, 3.0, tx, wake));
-            if rt.state.0.saved == 1 && wakes.load(Ordering::SeqCst) == 2 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert_eq!(rt.state.0.saved, 1);
-        assert_eq!(wakes.load(Ordering::SeqCst), 2);
-        drop(rt);
-        fs::remove_dir_all(root).unwrap();
-    }
-}
+mod tests;

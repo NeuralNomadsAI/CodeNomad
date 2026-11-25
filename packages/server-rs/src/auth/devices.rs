@@ -10,7 +10,7 @@ use axum::{
     body::Bytes,
     extract::{Path as RoutePath, Request, State},
     http::{StatusCode as Status, header},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
@@ -80,6 +80,7 @@ pub struct Devices {
     doc: Document,
     pairing: Option<Pairing>,
     pub origin: String,
+    pub origins: Vec<String>,
     pub ingress: bool,
     pub disabled: bool,
     tokens: HashMap<Uuid, CancellationToken>,
@@ -113,7 +114,12 @@ pub fn open(data: &Path, tls: &tls::Listener) -> Result<Lock<Devices>, Fail> {
     if !file.exists() && earlier.is_file() {
         fs::rename(&earlier, &file)?;
     }
-    Ok(Lock::new(Devices::open(file, tls.origin.clone(), tls.ingress)?))
+    Ok(Lock::new(Devices::open(file, tls.origin.clone(), tls.direct_origins.clone(), tls.ingress)?))
+}
+
+#[cfg(test)]
+pub(crate) fn open_for_test(data: &Path, origin: String, origins: Vec<String>) -> Lock<Devices> {
+    Lock::new(Devices::open(data.join("remote-control-devices.json"), origin, origins, false).unwrap())
 }
 /// Expired pairings and sessions leave the registry within 250 ms.
 pub async fn sweep(app: Shared, stop: CancellationToken) {
@@ -132,7 +138,7 @@ impl Devices {
     pub fn previews_allowed(&self) -> bool {
         !self.disabled && self.doc.previews != Some(false)
     }
-    fn open(file: PathBuf, origin: String, ingress: bool) -> Result<Self, Fail> {
+    fn open(file: PathBuf, origin: String, origins: Vec<String>, ingress: bool) -> Result<Self, Fail> {
         let doc = match fs::File::open(&file) {
             Ok(f) => {
                 let mut data = Vec::new();
@@ -168,11 +174,11 @@ impl Devices {
             "disabled" => true,
             _ => return Err("Unknown remote control policy".into()),
         };
-        Ok(Self::new(file, doc, origin, ingress, disabled))
+        Ok(Self::new(file, doc, origin, origins, ingress, disabled))
     }
-    fn new(file: PathBuf, doc: Document, origin: String, ingress: bool, disabled: bool) -> Self {
+    fn new(file: PathBuf, doc: Document, origin: String, origins: Vec<String>, ingress: bool, disabled: bool) -> Self {
         let (tokens, written, reset) = (HashMap::new(), HashMap::new(), Instant::now());
-        Self { file, doc, pairing: None, origin, ingress, disabled, tokens, written, failures: 0, reset }
+        Self { file, doc, pairing: None, origin, origins, ingress, disabled, tokens, written, failures: 0, reset }
     }
     fn persist(&self, doc: &Document) -> Result<(), Fail> {
         Ok(write_private(&self.file, format!("{}\n", serde_json::to_string_pretty(doc)?).as_bytes())?)
@@ -209,7 +215,8 @@ impl Devices {
         let code = URL_SAFE_NO_PAD.encode(entropy::<24>()?);
         let expires_at =
             (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let url = format!("{}/remote-pair#{code}", self.origin);
+        let base = origin.as_deref().unwrap_or(&self.origin);
+        let url = format!("{base}/remote-pair#{code}");
         self.pairing = Some(Pairing { hash: hash(&code), until: Instant::now() + Duration::from_secs(300), origin });
         Ok(json!({"url":url,"expiresAt":expires_at}))
     }
@@ -302,7 +309,9 @@ pub async fn issue(State(app): State<Shared>, body: Bytes) -> Response {
     let input = if body.is_empty() { Ok(None) } else { serde_json::from_slice::<Option<Direct>>(&body) };
     let origin = match input {
         Ok(None) if d.ingress => None,
-        Ok(Some(body)) if !d.ingress && body.origin == d.origin && direct_origin(&d.origin) => Some(body.origin),
+        Ok(Some(body)) if !d.ingress && d.origins.contains(&body.origin) && direct_origin(&body.origin) => {
+            Some(body.origin)
+        }
         Ok(_) => return reply(Status::CONFLICT, "This origin cannot pair devices"),
         Err(_) => return reply(Status::BAD_REQUEST, "Invalid direct pairing body"),
     };
@@ -312,24 +321,25 @@ pub async fn issue(State(app): State<Shared>, body: Bytes) -> Response {
     }
 }
 /// `GET /api/remote-control/status`: this server has no tunnel, so Remote Control is always stopped
-/// and never resumes; paired devices and the direct HTTPS origin come from this registry.
+/// and never resumes; paired devices and the direct HTTPS origins come from this registry.
 pub async fn status(State(app): State<Shared>, channel: Option<Extension<Channel>>) -> Json<Value> {
     let local = channel.is_none();
-    let (paired, origin) = match &app.devices {
+    let (paired, origins) = match &app.devices {
         Some(d) => {
             let d = d.lock().unwrap();
-            let origin = (!d.ingress && direct_origin(&d.origin)).then(|| d.origin.clone());
-            (d.doc.devices.iter().filter(|d| d.live()).count(), origin)
+            let origins: Vec<String> =
+                if d.ingress { Vec::new() } else { d.origins.iter().filter(|o| direct_origin(o)).cloned().collect() };
+            (d.doc.devices.iter().filter(|d| d.live()).count(), origins)
         }
-        None => (0, None),
+        None => (0, Vec::new()),
     };
     let mut status = json!({"manageable": local, "enabled": false, "startsOnLaunch": false,
         "previews": false, "state": "stopped", "pairedDevices": paired});
     if crate::config::remote_control().trim().eq_ignore_ascii_case("disabled") {
         status["disabledByAdministrator"] = json!(true);
     }
-    if let Some(origin) = origin.filter(|_| local) {
-        status["directOrigins"] = json!([origin]);
+    if local && !origins.is_empty() {
+        status["directOrigins"] = json!(origins);
     }
     Json(status)
 }
@@ -430,16 +440,17 @@ fn device_name(agent: &str) -> String {
     format!("{os} · {browser}")
 }
 pub async fn page() -> Response {
-    (
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-store"),
-            (header::REFERRER_POLICY, "no-referrer"),
-            (header::X_FRAME_OPTIONS, "DENY"),
-        ],
-        include_str!("../../../server/src/server/routes/auth-pages/remote-pair.html"),
-    )
-        .into_response()
+    pairing_page(Html(include_str!("../../../server/src/server/routes/auth-pages/remote-pair.html")).into_response())
+}
+pub(super) fn pairing_page(mut response: Response) -> Response {
+    for (name, value) in [
+        (header::CACHE_CONTROL, "no-store"),
+        (header::REFERRER_POLICY, "no-referrer"),
+        (header::X_FRAME_OPTIONS, "DENY"),
+    ] {
+        response.headers_mut().insert(name, axum::http::HeaderValue::from_static(value));
+    }
+    response
 }
 
 #[cfg(test)]
@@ -448,7 +459,14 @@ mod tests {
     #[test]
     fn expired_and_wrong_channel_codes_never_persist() {
         let doc = Document { version: 1, route: "test".into(), ..Default::default() };
-        let mut devices = Devices::new("not-used".into(), doc, "https://localhost:1234".into(), true, false);
+        let mut devices = Devices::new(
+            "not-used".into(),
+            doc,
+            "https://localhost:1234".into(),
+            vec!["https://localhost:1234".into()],
+            true,
+            false,
+        );
         let until = Instant::now() - Duration::from_secs(1);
         devices.pairing = Some(Pairing { hash: hash("fixture"), until, origin: None });
         assert!(devices.exchange("fixture", "Device".into(), None).unwrap().is_none());

@@ -1,6 +1,6 @@
 // Explicit isolated native regression: no service discovery or real provider.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { createServer } from "node:http"
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
 import os from "node:os"

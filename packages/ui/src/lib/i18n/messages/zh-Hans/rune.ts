@@ -1,4 +1,8 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "此服务器不支持附件历史记录。",
+  "rune.attachments_missing": "草稿中的附件未恢复。",
+  "rune.attachments_keep_text": "仅保留文本",
+  "rune.pairing_guide": "在 CodeNomad 主机上运行 admin.sh 或 admin.ps1，创建配对链接。然后在此设备的另一个标签页中打开链接。",
   "rune.loading": "加载中",
   "rune.ready": "就绪",
   "rune.streaming": "正在回复",

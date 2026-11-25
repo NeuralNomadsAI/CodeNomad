@@ -107,7 +107,7 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: {
           target = authority.target
           const headers = new Headers()
           for (const name of ["content-type", "accept", "accept-language", "if-none-match", "if-modified-since", "range", "last-event-id",
-            "x-codenomad-media", "x-codenomad-location", "x-codenomad-pending-reconciliation", "x-codenomad-human-answer", "x-opencode-directory", "x-opencode-workspace"]) {
+            "x-codenomad-media", "x-codenomad-user-files", "x-codenomad-location", "x-codenomad-pending-reconciliation", "x-codenomad-human-answer", "x-opencode-directory", "x-opencode-workspace"]) {
             const value = request.headers[name]
             if (typeof value === "string") headers.set(name, value)
           }

@@ -1,6 +1,6 @@
 // Exercise default artifacts before the qualification feature overwrites their paths.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
 import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
@@ -32,6 +32,7 @@ for(const [name,args]of [
   ['native-probe',['--probe-contract']],
   ['gallery',['--gallery-window-close']],
   ['action-menu-gallery',['--gallery-action-menu']],
+  ['reader-gallery',['--gallery-reader']],
   ['synthetic',['--scene','synthetic']],
 ]){
   // --tree guarantees an accidentally permissive CLI still avoids a native window.
@@ -46,7 +47,7 @@ assert(inspection.accessibility,'Product --tree must expose the actual accessibi
 assert(!JSON.stringify(inspection).includes('Synthetic message '),'Default inspector must render the product launcher')
 for(const kind of ['binary','wasm']){
   const artifact=await readFile(values[kind])
-  for(const marker of ['Synthetic message ','nativeProbes','real history operation failed:','action-menu-event:','Rune web focus fixture']){
+  for(const marker of ['Synthetic message ','nativeProbes','real history operation failed:','action-menu-event:','reader-gallery-scene','Rune web focus fixture']){
     assert(!artifact.includes(Buffer.from(marker)),`${kind} default artifact retains qualification marker ${marker}`)
   }
 }

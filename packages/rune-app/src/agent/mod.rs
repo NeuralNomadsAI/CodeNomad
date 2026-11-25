@@ -14,18 +14,21 @@ use crate::{
 use codenomad_client::{Receiver, Sender, bounded};
 use rune::edit::TextEdit;
 enum Job {
-    Read(bool),
-    Act(Action),
+    Read(bool, u64),
+    Act(Action, u64),
+    VerifyIdle(String, String),
 }
 enum Result {
-    Read(Snapshot, bool),
-    Act(bool, Snapshot),
+    Read(Snapshot, bool, u64),
+    Act(bool, Snapshot, u64),
     Stop(bool),
+    VerifiedIdle(String, bool),
 }
 pub fn navigation_blocked(s: &crate::State) -> bool {
     s.agent.as_ref().is_some_and(Ui::navigation_blocked)
 }
 pub struct Handle {
+    connection: Option<codenomad_client::http::Http>,
     jobs: Sender<Job>,
     stop: Sender<()>,
     results: Receiver<Result>,
@@ -39,6 +42,10 @@ pub struct Ui {
     handle: Handle,
     pub models: Vec<Model>,
     pub current: Option<serde_json::Value>,
+    pub usage: Option<crate::content::Usage>,
+    pub directory: Option<String>,
+    model_generation: u64,
+    confirmed_model_generation: u64,
     pub permissions: Vec<Permission>,
     pub forms: Vec<Form>,
     pub drafts: Drafts,
@@ -53,13 +60,18 @@ pub struct Ui {
     pub running: bool,
     pub pending_known: bool,
     pub online: bool,
+    pub(crate) attention: crate::shell::notifications::Attention,
     reading: bool,
+    activity_during_job: bool,
+    request_during_job: bool,
+    usage_during_job: bool,
     trailing: Option<bool>,
 }
 pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     let (jobs, rx) = bounded(1);
     let (stop, srx) = bounded(1);
     let (out, results) = bounded(8);
+    let connection = Some(backend.client.clone());
     let b = backend.clone();
     let w = wake.clone();
     let o = out.clone();
@@ -77,10 +89,15 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     crate::platform::spawn(async move {
         while let Ok(job) = rx.recv().await {
             let result = match job {
-                Job::Read(catalog) => Result::Read(backend.agent_snapshot(catalog).await, catalog),
-                Job::Act(action) => {
+                Job::Read(catalog, generation) => {
+                    Result::Read(backend.agent_snapshot(catalog).await, catalog, generation)
+                }
+                Job::Act(action, generation) => {
                     let ok = backend.agent_action(&action).await.is_ok();
-                    Result::Act(ok, backend.agent_snapshot(false).await)
+                    Result::Act(ok, backend.agent_snapshot(false).await, generation)
+                }
+                Job::VerifyIdle(id, directory) => {
+                    Result::VerifiedIdle(id, backend.session_inactive_at(&directory).await)
                 }
             };
             if out.send(result).await.is_err() {
@@ -90,12 +107,52 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
         }
     });
     Handle {
+        connection,
         jobs,
         stop,
         results,
     }
 }
 impl Ui {
+    pub(crate) fn includes_cost(&self, provider: &str, id: &str) -> bool {
+        self.models.iter().any(|model| {
+            model.included
+                && model.reference["providerID"] == provider
+                && model.reference["id"] == id
+        })
+    }
+
+    pub fn rebind(&mut self, handle: Handle) {
+        self.handle = handle;
+        self.reading = false;
+        self.activity_during_job = false;
+        self.request_during_job = false;
+        self.usage_during_job = false;
+        self.trailing = None;
+        self.busy = false;
+        self.stopping = false;
+        self.error = false;
+        self.running = false;
+        self.known = false;
+        self.pending_known = false;
+        self.online = false;
+        self.refresh(true);
+    }
+    pub(crate) fn uses_connection(&self, backend: &Backend) -> bool {
+        self.handle
+            .connection
+            .as_ref()
+            .is_none_or(|previous| previous.same_connection(&backend.client))
+    }
+
+    pub(crate) fn reauthenticate(&mut self, handle: Handle) {
+        let mut replacement = Self::new(handle);
+        replacement.drafts = std::mem::take(&mut self.drafts);
+        replacement.reasons = std::mem::take(&mut self.reasons);
+        replacement.attention = std::mem::take(&mut self.attention);
+        *self = replacement;
+    }
+
     pub fn navigation_blocked(&self) -> bool {
         self.busy
             || self.stopping
@@ -155,6 +212,10 @@ impl Ui {
             handle,
             models: vec![],
             current: None,
+            usage: None,
+            directory: None,
+            model_generation: 0,
+            confirmed_model_generation: 0,
             permissions: vec![],
             forms: vec![],
             drafts: Default::default(),
@@ -169,7 +230,11 @@ impl Ui {
             running: false,
             pending_known: false,
             online: false,
+            attention: Default::default(),
             reading: false,
+            activity_during_job: false,
+            request_during_job: false,
+            usage_during_job: false,
             trailing: None,
         };
         ui.refresh(true);
@@ -180,15 +245,51 @@ impl Ui {
             self.trailing = Some(self.trailing.unwrap_or(false) || catalog);
             return;
         }
-        if self.handle.jobs.try_send(Job::Read(catalog)).is_ok() {
+        if self
+            .handle
+            .jobs
+            .try_send(Job::Read(catalog, self.model_generation))
+            .is_ok()
+        {
             self.reading = true
         }
+    }
+
+    pub(crate) fn refresh_usage_model(&mut self, generation: u64) {
+        if generation != self.model_generation {
+            self.model_generation = generation;
+            self.refresh(false);
+        }
+    }
+
+    pub(crate) fn usage_model(&self, generation: u64) -> Option<(&str, &serde_json::Value)> {
+        (generation == self.confirmed_model_generation).then_some(())?;
+        self.directory.as_deref().zip(self.current.as_ref())
+    }
+
+    pub(crate) fn observe_running(&mut self, running: bool) {
+        let refresh = !self.known || self.running != running;
+        self.running = running;
+        self.activity_during_job |= self.reading || self.busy;
+        if refresh {
+            self.refresh(false);
+        }
+    }
+
+    pub(crate) fn observe_usage(&mut self, usage: crate::content::Usage) {
+        self.usage = Some(usage);
+        self.usage_during_job |= self.reading || self.busy;
     }
     pub fn act(&mut self, action: Action) {
         if self.locked() {
             return;
         }
-        if self.handle.jobs.try_send(Job::Act(action)).is_ok() {
+        if self
+            .handle
+            .jobs
+            .try_send(Job::Act(action, self.model_generation))
+            .is_ok()
+        {
             self.busy = true;
             self.error = false
         }
@@ -212,11 +313,34 @@ impl Ui {
             .chain(self.forms.iter().map(|p| p.id.clone()))
             .collect()
     }
-    fn snapshot(&mut self, s: Snapshot) {
+    pub(crate) fn notice_request(&mut self, form: bool, id: String) {
+        self.attention.request(form, id);
+        self.request_during_job |= self.reading || self.busy;
+        self.refresh(false);
+    }
+
+    fn snapshot(&mut self, s: Snapshot, generation: u64) {
+        let current_activity = !std::mem::take(&mut self.activity_during_job);
+        let current_requests = !std::mem::take(&mut self.request_during_job);
+        if self.online {
+            self.attention.observe(&s, current_requests);
+        }
+        let current_usage = !std::mem::take(&mut self.usage_during_job);
         self.known = s.session_known;
+        if generation == self.model_generation {
+            self.directory = s.directory;
+            if s.session_known {
+                self.current = s.current;
+                self.confirmed_model_generation = generation;
+            }
+        }
         if s.session_known {
-            self.current = s.current;
-            self.running = s.running
+            if current_usage {
+                self.usage = s.usage;
+            }
+            if current_activity {
+                self.running = s.running;
+            }
         }
         if let Some(models) = s.models {
             self.models = models
@@ -245,24 +369,28 @@ impl Ui {
         let mut changed = false;
         while let Ok(result) = self.handle.results.try_recv() {
             match result {
-                Result::Read(s, catalog) => {
+                Result::Read(s, catalog, generation) => {
                     self.reading = false;
                     self.error |= !s.session_known
                         || s.permissions.is_none()
                         || s.forms.is_none()
                         || (catalog && s.models.is_none());
-                    self.snapshot(s)
+                    self.snapshot(s, generation)
                 }
-                Result::Act(ok, s) => {
+                Result::Act(ok, s, generation) => {
                     self.busy = false;
                     self.error =
                         !ok || !s.session_known || s.permissions.is_none() || s.forms.is_none();
-                    self.snapshot(s)
+                    self.snapshot(s, generation)
                 }
                 Result::Stop(ok) => {
                     self.stopping = false;
                     self.error = !ok;
                     self.refresh(false)
+                }
+                Result::VerifiedIdle(idle, inactive) => {
+                    self.attention
+                        .confirm_idle(idle, inactive && self.online && !self.running);
                 }
             }
             changed = true;
@@ -270,6 +398,8 @@ impl Ui {
         if !self.reading && !self.busy {
             if let Some(catalog) = self.trailing.take() {
                 self.refresh(catalog)
+            } else if let Some((id, directory)) = self.attention.verify_idle() {
+                let _ = self.handle.jobs.try_send(Job::VerifyIdle(id, directory));
             }
         }
         changed

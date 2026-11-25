@@ -80,12 +80,12 @@ Tüm Durum bölümlerini sürükleyerek veya Yukarı/Aşağı tuşlarıyla sıra
 
 Durum; belirteç bilgilerini, **İzinler** bölümünü, sağlayıcı Kullanımı, arka plan kabuklarını, MCP ve Eklentileri içerir. Görüşmenin bir [hedefi](conversations.md#goal) olduğu sürece bu bölümlerin üzerindeki bir hedef satırı onu gösterir; bu satır bir bölüm değildir, gizlenemez ve taşınamaz. Bir bölümün gizlenmesi, o bölümün hizmetini devre dışı bırakmaz veya izinleri iptal etmez. Dar düzenler, konuşmayı sıkıştırmak yerine artık sığmayan panelleri kapatır; orada açılan bir panel konuşmanın üzerinde yüzer ve bir yüzer panelin açılması diğerini kapatır.
 
-Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı onay kutuları farklıdır: yapılandırmayı kullanan tüm projelerde kodu etkinleştirir. **Sıfırla** uzantı onayını değiştirmez. Bkz. [Panel uzantıları](extensions.md).
+Yerleşik düzen pencereye aittir. [Görevler onay kutusu](missions.md#activation) eklentinin genel etkinliğini de değiştirir ve kutular üzerinde sürüklerken atlanır. Uzantı onay kutuları, yapılandırmayı kullanan tüm projelerde kodu etkinleştirir. **Sıfırla** uzantı onayını değiştirmez. Bkz. [Panel uzantıları](extensions.md).
 
 ## Konuşma dökümü ayrıntıları ve ileti düzenleyicisi boyutu {#transcript-composer}
 
 1. Konuşma dökümü ayrıntısı varsayılanlarını seçmek için **Sohbet** öğesini açın. Ön ayarlar **Hiçbir şey**, **Minimal**, **Dengeli** ve **Her şey**'dir; bireysel değişiklikler **Özel** öğesini üretir.
-2. Düşünme, tanılama, araç girdileri, tokenlar, sistem mesajları ve her araç türü için her satırın **Varsayılan durum** ayarını (**Gizli**, **Daraltılmış** veya **Genişletilmiş**) belirleyin ya da bu seçimleri paylaşan, konuşmanın **Mesaj içeriği** açılır penceresini kullanın.
+2. Her satırın **Varsayılan durum** ayarını (**Gizli**, **Daraltılmış** veya **Genişletilmiş**) belirleyin ya da aynı ayarları kullanan **Mesaj içeriği** açılır penceresini kullanın. **Araç grupları** için **Devre dışı** her çağrıyı ayrı kartta gösterir; **Daraltılmış** ve **Genişletilmiş** grupların başlangıç durumunu belirler.
 3. **Genel** bölümünde gerektiği gibi **Mesaj zaman çizelgesini göster**, **İlk/en son mesaj oklarını zaman çizelgesinin altına yerleştir**, **Araç çağrısı diff'lerini böl** ve **Gönderilen istemleri kuyruğa al** (oturum çalışırken gönderilen istemleri yönlendirmek yerine kuyruğa alır) seçeneklerini işaretleyin.
 4. Yeniden boyutlandırma kontrolünü kullanarak ileti düzenleyicisini yeniden boyutlandırın; uzun taslaklar alanın içinde kayar.
 
@@ -112,6 +112,8 @@ Yalnızca Geçmiş'e yönlendirilen bildirimleri sayan zil/okunmamış geçmiş 
 Sistem bildirim eylemlerini destekliyorsa, bildirime tıkladığınızda konuşma hâlâ açıksa gösterilir. Pencerenin öne gelip gelmemesi masaüstü ortamına bağlıdır.
 
 ## Gelişmiş seçenekler {#advanced}
+
+Rune’da bir anahtarın neden devre dışı olduğunu görmek için yanındaki **i** simgesine odaklanın. Yapılandırma düzenleyicisi JSON/JSONC söz dizimi hatalarının satırını gösterir ve kaydetmeye izin verir.
 
 1. **Gelişmiş** öğesini açın.
 2. Yalnızca ihtiyacınız olan seçenekleri işaretleyin veya işaretini kaldırın; her değişiklik CodeNomad tercihleri aracılığıyla kaydedilir. Oturum yürütme ortamını değiştirmek için sondaki katlanmış **Ortam Değişkenleri** grubunu genişletin.

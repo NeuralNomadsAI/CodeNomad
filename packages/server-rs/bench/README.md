@@ -11,6 +11,7 @@ npm ci
 npm run build --workspace @neuralnomads/codenomad                       # TS server dist and bundled plugins
 node --max-old-space-size=8192 packages/server-rs/bench/build-ui.mjs    # Solid UI of this checkout → bench/out/ui
 cargo build --release --locked --manifest-path packages/server-rs/Cargo.toml
+cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
 npx playwright install chromium                                         # or CODENOMAD_BROWSER_PATH
 ```
 
@@ -18,10 +19,15 @@ Only the `solid` mode uses that UI. It hides the features of route families a ba
 
 Rust binary: `CODENOMAD_RS_BINARY` or `CNRS_RUST_BINARY`, else `$CARGO_TARGET_DIR/release/codenomad-rs.exe`, else `packages/server-rs/target/release/`. OpenCode: absolute path of a native OpenCode 2 executable (not an npm shim), passed as an argument.
 
+On Windows, `compare.mjs` creates both backends and their OpenCode fixtures directly in kill-on-close jobs. `service.mjs` uses one enclosing job so the daemon can outlive an individual backend restart. The runner resolves `codenomad-fixture-job.exe` under `$CARGO_TARGET_DIR/debug/` or `target/debug/`; `CODENOMAD_FIXTURE_JOB_EXE` overrides it with an absolute path.
+
+For `static-assets`, build the TypeScript checkout with precompression support instead of building the local TypeScript checkout in step 2. In the Rust checkout, where `packages/server/dist` is absent, run `New-Item -ItemType Junction -Path packages/server/dist -Target <absolute-reference-dist>` and then `node compare.mjs static-assets $OpenCode` from `bench/`.
+
 ```powershell
 $OpenCode = "<absolute path>\opencode.exe"
 cd packages/server-rs/bench
 node compare.mjs http $OpenCode           # one mode
+node compare.mjs prompt-admission         # simulated OpenCode, no native CLI/model
 pwsh -NoProfile -File run-all.ps1 -OpenCode $OpenCode [-Only http,contract]   # all modes, summary and CPU load in out\summary.txt
 node security.mjs $OpenCode
 node hardening.mjs $OpenCode
@@ -33,12 +39,23 @@ node roundtrip.mjs $OpenCode
 
 | Mode | Covers |
 |---|---|
-| (every mode) | Sign-in on both servers, then the Rust local admission surface (device, authority and server-pairing refusals; workspace claims, instance storage, `pending-requests`). |
+| (native-daemon modes) | Sign-in on both servers, then the Rust local admission surface (device, authority and server-pairing refusals; workspace claims, instance storage, `pending-requests`). |
 | `http` | Linked worktrees: creation, session move, evacuation on deletion, refusal of a modified checkout; owned locations and VCS reads. |
+| `receipt-worktree` | Anchored receipts in linked checkouts, including outside the browse root. Covers missing and file-valued project projections, refusal in an unrelated workspace, and inventory calls and elapsed time for repeated reads. |
+| `receipt-reconnect` | Reconnect snapshots across two projects. A native reply during a held snapshot retains its original source and resources; the other project recovers before the hold is released. |
+| `meta-update` | Isolated release listing: preview offers through `/api/meta`, readiness and installed-release lookup, feed changes, and stale-offer suppression. |
+| `mutation-fence` | Project-B writes during a held project-A POST; worktree creation concurrent with a session move and refused during deletion; client disconnect after the first response bytes draining before deletion while a non-overlapping sibling checkout in the same project stays writable; prospective prompt selectors blocked during deletion, rejected after CodeNomad deletion, and preserved on external Git removal. |
 | `files` | Files and Git on a rich repository (rename, gitlink, conflict, CRLF, large and binary files), mutations, refusals, watches. |
 | `contract` | Session placement header, foreign sessions, outline in a worktree, `pending-requests`. |
+| `history-bytes` | Validated history JSON across the HTTP broker with a native RPC response at exactly 24 MiB, including numbers that expand when serialized again. |
+| `history-search` | Literal and ranked history across registered checkouts, foreign-directory exclusion, and cursor continuation without admitting rows beyond its original horizon. |
+| `attachment-history` | Reference-only history of large user files; digest-bound downloads and queued SSE projection. Mixed small and large (200 KiB) tool images qualify inline and deferred history windows and `message.list`, combined opt-ins, raster bytes and headers, and digest, ownership, moved-session and undo refusals with no leaked bytes. Build the TypeScript reference with the attachment RPC plugin. |
+| `prompt-admission` | Real TS/Rust HTTP servers, each on its own recording OpenCode substitute and `trial-*` profile. Two distinct prompt receipts, native fields forwarded intact, project file paths versus inline and remote URI, data validation, 5 MiB/file, 10 inline files, 20 MiB total and 32 MiB JSON boundaries, foreign Location/session and Mission-carrier refusals, environment-before-send, interruption controls and the ordinary 1 MiB mutation bound. Reports lengths and canonical JSON hash checks; no provider, native CLI, UI or account data. |
+| `command-admission` | The same recording fixture for slash commands: transparent native fields and validation, environment before dispatch, owned attachments, Mission/foreign-session refusals and the ordinary 1 MiB body limit. |
 | `workspace-claims` | Cancellation before creation, JavaScript-trimmed request IDs capped at 128 Unicode scalars across create/cancel/release, independent occurrences, released ownership and exact record cleanup; no model request. |
 | `agent-controls` | Native permission decisions and durable reasons, typed stale and cross-session refusals, Form reply/cancellation, and interrupt query options against a held synthetic response and an idle session. |
+| `remote-session-controls` | Local and directly paired permission/Form reads and session interruption, including native settlement and the cookie and Origin requirements. Rust terminates TLS with its fixture CA; TypeScript's direct listener verifies the configured origin behind TLS termination. |
+| `static-assets` | HTML, JavaScript, style sheets, manifest and WASM served from an isolated static bundle. Negotiation, lengths, decoded bytes, HEAD and cache revalidation on the original URLs. Run explicitly with a TypeScript reference that supports static precompression. |
 | `depth` | `subagent-depth` on subfolders, linked worktree, junctions, written documents, worktree deletion fence. |
 | `mission-permissions` | Supervised creation and exact receipt recovery; direct child and fork provenance, additive background refresh, owned fork removal and unowned fork refusal. |
 | `worktree-gone` | Registered worktree whose `.git` or administrative folder is gone. |
@@ -55,6 +72,7 @@ node roundtrip.mjs $OpenCode
 | `usage` | Settings › Stats: the native service aggregate, its display cache in `state.yaml`, the restored period, query refusals, an unknown workspace. |
 | `host` | Both servers with `--unrestricted-root` on equal `config.yaml`: the `config` owners read at start-up (normalization and repair, speech keys) and the `/api/meta` feed, `config/:owner` merge patches (normalization, speech key pairing, refusals, Missions conditions), the OpenCode config file editor, binary validation, the OpenCode update status and the Remote Control status (install, restart, reload and preview flags excepted), `state/ui` merge patches and refusals, the folder browser over the home and drives, folder creation and its refusals, a workspace outside the root and its files. Rust alone: lexical refusals (network, device, verbatim paths) with and without the option. |
 | `providers` | Conversation Status usage against an isolated daemon with synthetic credentials. A local recorder substitutes for every provider; compares the route results and outgoing requests for each adapter. |
+| `provider-logins` | Owned-workspace account display metadata: fallback emails, explicit aliases, invalid emails and location refusal, with isolated synthetic credentials. |
 | `previews` | Local source previews against a loopback fixture: token creation/deletion, HTTP/WS, HTML/CSS/module rewriting, redirects, cookie and credential isolation, partial and compressed documents. |
 | `remote-previews` | Remote preview generations and isolated content origins; paired browser path capabilities; HTTP and WebSocket relay, credential and origin isolation, and revocation of live streams. The TS tunnel terminates on a local fixture; no browser or desktop host starts. |
 | `solid` | Real UI served by TS: HTTPS pairing of Rust, two prompts, two isolated tabs, worktree, Files, Rust memory under 48 MiB, no error toast. |
@@ -68,6 +86,7 @@ node roundtrip.mjs $OpenCode
 `node host-survey.mjs $OpenCode` records every request the Solid UI makes to a TS local host (start-up, folder picker, conversation, Files, Git, worktree, recents, Settings) in `out/host-survey.json`; [HOST_ROUTES.md](HOST_ROUTES.md) classifies them. The local-host fixtures require explicit private profile and config paths outside the user's home. The `host` comparison checks the served `homePath` before navigating there.
 
 `sidecars` serves a private static UI fixture on both servers to check the SPA fallback for unmatched paths. Set `CNRS_SIDECARS_NO_UI=1` to compare the same paths with no UI bundle. Neither run launches a window.
+`prompt-admission` compares the Source `application/json` contract, including exact error envelopes and combined budget/foreign-Location priority. It also checks a real disposable Git worktree, native carrier ownership and uncertain-read refusals, relocation during admission, malformed small JSON, `Content-Length` and chunked boundaries. `outsideJson` retains plain-stream observations separately: TypeScript's `text/plain` serialization failure returns 500 and Rust returns 400. `--transport-only` selects framing/guard probes; `--admission-order-only` selects combined budget/Location probes. Full admission uses the mode without either option. This mode writes its proof and redacted child logs under a fresh `out/trial-prompt-admission-*` directory.
 `CNRS_BENCH_STARTUP_TIMEOUT_MS` changes the readiness budget for `compare.mjs` when the machine is busy.
 Set `CNRS_BENCH_MISSIONS_SERVE=1` on Windows to compare `missions` or `missions-calendar` with Rust's production `serve` contract. `missions-wayfinder` uses it by default. The packaged plugins and CLI shim are bound to the owned fixture daemon, with no Tauri window.
 

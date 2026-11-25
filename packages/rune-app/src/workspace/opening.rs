@@ -311,6 +311,15 @@ impl Pending {
             pending: self,
         })
     }
+    #[cfg(test)]
+    pub(crate) fn fixture_opening(self, project: Project) -> Opening {
+        let _ = self.owner.confirmed(&self.request, &project.id);
+        Opening {
+            backend: self.backend.clone(),
+            project,
+            pending: self,
+        }
+    }
 }
 impl Drop for Pending {
     fn drop(&mut self) {
@@ -347,6 +356,7 @@ mod tests {
             workspace: String::new(),
             session: String::new(),
             client_id: "fixture".into(),
+            session_directory: None,
             fresh_mode: false,
         }
     }

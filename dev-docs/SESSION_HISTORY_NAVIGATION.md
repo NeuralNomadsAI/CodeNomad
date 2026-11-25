@@ -46,8 +46,21 @@ challenge as history queries. Never expose generic RPC or SQL access through the
   isolated OpenCode fixture compares their complete payloads with native export
   and single-message reads, with media refs inlined as native reads return them
   (`session-pruning/media-blob.ts`). Budgets are 16 MiB per message and 24 MiB per
-  window of that native form; oversized windows fail explicitly instead of silently
-  omitting content.
+   window of that native form; oversized windows fail explicitly instead of silently
+   omitting content.
+- `X-CodeNomad-User-Files: reference-v1` requests user attachment labels and
+  content digests without inline bytes. The accepted window identifies the
+   projection with `userFiles: "reference-v1"` and applies the same response
+   budgets, with shorter pages when the raw projection input reaches 64 MiB.
+   `/api/events?userFiles=reference-v1` applies the projection to queued user
+   input. Native inbox frames beyond the shared reader's 16 Mi-unit limit use
+   references before routing; streams without the opt-in reconnect for an
+   authoritative queue read. The raw inbox frame bound is 32 MiB. Clients fetch
+   an attachment by session, message, ordinal and digest from
+   `session-attachment`, up to 8 MiB. The plugin reads the stored message and
+   its owned blobs, then confirms that the requested digest is current before
+   publication. Queued files are readable once the message is stored; external
+   files remain unavailable.
 - Ownership includes directory, project and legacy workspace identity. Staged
   undo hides the same message-ID tail as the transcript. Missing/deleted targets
   return `anchor_missing` (distinct from ownership/revert conflicts); the broker rechecks location, project, revert and workspace
@@ -202,8 +215,13 @@ account for off-window messages as well as the local scroll offset.
 
 ### Transcript scroll ownership and trace
 
-`VirtualFollowList.writeScroll(reason, op)` opens the programmatic window and records synchronous targets. Every write
-is a DOM write: the list never issues Virtua's imperative operations
+`VirtualFollowList.writeScroll(reason, op)` opens the programmatic window and records synchronous targets. Write intents
+merge: intents issued in one task coalesce into a single DOM write per microtask (a navigation or correction keeps the
+slot over a pin re-issue in the same task), the follow writers (`content-grew`, `observe`, `explicit-pin`) apply at most
+once per frame through a next-frame marker, and reactive effect re-runs never write `scrollTop` synchronously. An
+observation applies a merged pending write before reading, a user gesture or positioning teardown drops it, and a state
+capture forces it. Every write is
+a DOM write: the list never issues Virtua's imperative operations
 (`scrollTo`/`scrollBy`/`scrollToIndex`). In Virtua 0.53 such an operation reapplies
 its fixed target on every item or viewport measurement until 150 ms after the last
 one; the rows a gesture mounts, or a streaming tail, keep re-arming it, and nothing
@@ -302,6 +320,12 @@ the claim. A tap arms nothing.
 List positions are read from the DOM, never from Virtua's `scrollOffset`, which lags a write
 until its scroll event; a following list is captured at the bottom (without an
 anchor) wherever its pin's latest write stands.
+Scroll metrics share one per-epoch measurement (`scrollElementMetrics`, advanced by
+each observation, scroll event, row resize and follow-scroll write): the offset is
+read live and the layout-forcing extents are measured once, shared by the list, the
+nested follow-scroll helpers, the scroll-edge tests and gesture routing;
+`findNestedScroller` caches its walk per event target and revalidates the ancestor
+chain and the consulted geometry instead of probing every ancestor per wheel event.
 
 A search navigation reveals its occurrence once, after placing its message. Inside
 nested code/tool scrollers the reveal writes them directly and emits

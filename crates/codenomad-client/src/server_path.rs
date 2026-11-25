@@ -40,6 +40,47 @@ pub fn absolute(path: &str) -> bool {
     style(path).is_some()
 }
 
+pub fn basename(path: &str) -> &str {
+    let separators = if style(path) == Some(Style::Windows) {
+        &['/', '\\'][..]
+    } else {
+        &['/'][..]
+    };
+    path.trim_end_matches(separators)
+        .rsplit(separators)
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(path)
+}
+
+pub fn file_uri(path: &str) -> crate::history::Result<String> {
+    let style = style(path).ok_or("absolute server path required")?;
+    if path.starts_with("\\\\") {
+        return Err("local file URI authority required".into());
+    }
+    let path = if style == Style::Windows {
+        path.replace('\\', "/")
+    } else {
+        path.into()
+    };
+    let relative = path.trim_start_matches('/');
+    let segments = relative.split('/');
+    if segments.clone().any(|part| part == "..") {
+        return Err("normalized server path required".into());
+    }
+    let mut uri = reqwest::Url::parse("file:///")?;
+    uri.path_segments_mut()
+        .map_err(|_| "file URI path unavailable")?
+        .clear()
+        .extend(segments);
+    let additional_slashes = (path.len() - relative.len()).saturating_sub(1);
+    Ok(format!(
+        "file://{}{}",
+        "/".repeat(additional_slashes),
+        uri.path()
+    ))
+}
+
 pub fn same(left: &str, right: &str) -> bool {
     match (style(left), style(right)) {
         (Some(Style::Windows), Some(Style::Windows)) => {
@@ -57,6 +98,13 @@ pub fn same(left: &str, right: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn basename_preserves_literal_posix_backslashes_and_windows_separators() {
+        assert_eq!(basename(r"/work/project\sub"), r"project\sub");
+        assert_eq!(basename(r"D:\work\project\"), "project");
+        assert_eq!(basename(r"\\host\share\project\"), "project");
+        assert_eq!(basename("/"), "/");
+    }
     #[test]
     fn windows_drive_and_unc_match_on_every_client_target() {
         assert!(absolute(r"D:\CodeNomad"));
@@ -100,5 +148,32 @@ mod tests {
             );
         }
         assert!(!absolute(&format!("/{}", "a".repeat(32768))));
+    }
+
+    #[test]
+    fn files_escape_literal_segments_on_the_server_os() {
+        for (path, expected) in [
+            (
+                r"/project/a b#%🦀\file",
+                "file:///project/a%20b%23%25%F0%9F%A6%80%5Cfile",
+            ),
+            (
+                r"D:\Projet\é #%.txt",
+                "file:///D:/Projet/%C3%A9%20%23%25.txt",
+            ),
+            ("/project/%2e%2e", "file:///project/%252e%252e"),
+            ("//Server/Share", "file:////Server/Share"),
+            ("/", "file:///"),
+        ] {
+            let actual = file_uri(path).unwrap();
+            assert_eq!(actual, expected);
+            let parsed = reqwest::Url::parse(&actual).unwrap();
+            assert_eq!(parsed.host_str(), None);
+            assert_eq!(parsed.fragment(), None);
+            assert_eq!(parsed.query(), None);
+        }
+        assert!(file_uri(r"\\Server\Share").is_err());
+        assert!(file_uri("relative").is_err());
+        assert!(file_uri("/project/a/../b").is_err());
     }
 }

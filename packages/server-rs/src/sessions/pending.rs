@@ -37,14 +37,27 @@ pub async fn await_plugin(
     directory: &str,
     deadline: tokio::time::Instant,
 ) -> Result<(), PluginWait> {
+    await_plugin_with(plugin, directory, deadline, || Some(app.native.get("/api/plugin"))).await
+}
+
+pub(super) async fn await_plugin_with(
+    plugin: &str,
+    directory: &str,
+    deadline: tokio::time::Instant,
+    request: impl Fn() -> Option<reqwest::RequestBuilder>,
+) -> Result<(), PluginWait> {
     let ready = tokio::time::Instant::now() + READINESS_WAIT;
     loop {
         let left = ready.min(deadline).saturating_duration_since(tokio::time::Instant::now());
         if left.is_zero() {
             return Err(PluginWait::TimedOut);
         }
-        let listed =
-            app.native.get("/api/plugin").query(&[("location[directory]", directory)]).timeout(left).send().await;
+        let listed = request()
+            .ok_or(PluginWait::Failed)?
+            .query(&[("location[directory]", directory)])
+            .timeout(left)
+            .send()
+            .await;
         let catalogue: Value = match listed {
             Err(e) if e.is_timeout() => return Err(PluginWait::TimedOut),
             Err(_) => return Err(PluginWait::Failed),

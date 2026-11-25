@@ -20,6 +20,14 @@ pub(super) fn wait(rt: &mut Runtime<State>, label: &str, condition: impl Fn(&Sta
         rt.frame(1.0 / 60.0);
     }
 }
+pub(super) fn wait_control(rt: &mut Runtime<State>, key: &str) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while rt.find(key).is_none() {
+        assert!(Instant::now() < deadline, "restore timeout: {key}");
+        rt.frame(1.0 / 60.0);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 pub(super) fn tap(rt: &mut Runtime<State>, key: &str) {
     rt.update(|_, tx| {
         tx.scroll_into_view(key);
@@ -62,13 +70,17 @@ fn ready(s: &State, id: &str) -> bool {
     workspace::input_ready(s)
         && !s.screen.is_launcher()
         && s.phase == Phase::Ready
+        && s.reader.as_ref().is_none_or(|reader| !reader.blocks_send())
         && active_session(s).as_deref() == Some(id)
 }
 fn select(rt: &mut Runtime<State>, index: usize, id: &str) {
-    tap(rt, &format!("t-tab-{index}"));
+    let tab = format!("t-tab-{index}");
+    wait_control(rt, &tab);
+    tap(rt, &tab);
     wait(rt, "selected conversation", |s| ready(s, id));
 }
 fn open(rt: &mut Runtime<State>, title: &str, id: &str) {
+    wait_control(rt, "folder-path");
     type_text(
         rt,
         "folder-path",
@@ -108,7 +120,7 @@ fn send(rt: &mut Runtime<State>, id: &str, turn: usize, prompt: &str) {
     tap(rt, "send");
     assert!(rt.state.draft.text.is_empty(), "submitted composer clears");
     let reply = format!("reply-{id}-{turn}");
-    let key = format!("body-{reply}");
+    let path = super::fragment_path(&reply, 0);
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut visible = false;
     while rt.state.phase != Phase::Ready {
@@ -123,8 +135,9 @@ fn send(rt: &mut Runtime<State>, id: &str, turn: usize, prompt: &str) {
                 .any(|m| m.id == reply && !m.completed)
         {
             if let Some(element) = rt.elements().into_iter().find(|e| {
-                e.key.as_deref() == Some(key.as_str())
+                e.path.contains(&path)
                     && e.text.as_deref().is_some_and(|s| {
+                        let s = super::rendered_text(s);
                         s.starts_with("fn main") && s.contains(&format!("tour {turn}"))
                     })
                     && !e.exiting
@@ -170,6 +183,60 @@ pub(super) fn finish(mut rt: Runtime<State>) {
         "snapshot must flush successfully"
     );
     drop(rt);
+    finish_backend();
+}
+
+#[cfg(target_os = "windows")]
+fn finish_native(rt: Runtime<State>) {
+    close_hidden_window(rt, |state, tx| {
+        finish_window_state(state, tx);
+        report(
+            &std::env::var("RUNE_TEST_RESTORE_STAGE").unwrap(),
+            true,
+            true,
+        );
+    });
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn close_hidden_window(rt: Runtime<State>, closed: fn(&mut State, &mut rune::Tx)) {
+    let state = rt.state;
+    rune::run_windows_with_args(Default::default(), [], move |_| {
+        [rune::WindowSpec::new(
+            "file-draft-restart",
+            crate::layout::app_spec("Rune", init, view),
+        )
+        .options(rune::WindowOptions {
+            visible: false,
+            ..Default::default()
+        })
+        .state(state)
+        .inactive()
+        .on_created(|handle| handle.close())
+        .on_close(closed)]
+    });
+    finish_backend();
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn finish_window_state(state: &mut State, tx: &mut rune::Tx) {
+    workspace::finish(state, tx);
+    assert!(
+        workspace::status(state).is_none(),
+        "native close must flush the snapshot"
+    );
+}
+
+fn report(stage: &str, native_window: bool, file_drafts: bool) {
+    println!(
+        "{}",
+        json!({"type":"window-restore-stage","stage":stage,"occurrences":2,
+        "selectedSession":"ses_created_2","draftsDistinct":true,"flushAndRelease":true,"nativeWindow":native_window,
+        "fileDrafts":file_drafts})
+    );
+}
+
+fn finish_backend() {
     platform::finish();
     platform::block_on(async {
         let backend = crate::backend::Backend::connect(
@@ -196,7 +263,7 @@ pub fn run() {
     assert!(matches!(stage.as_str(), "prepare" | "resume" | "verify"));
     let mut state = init();
     crate::setup(&mut state, std::sync::Arc::new(|| {}));
-    let mut rt = Runtime::new(state, view, (1100.0, 1200.0), Env::new(true, 1.0));
+    let mut rt = Runtime::new(state, view, (1400.0, 1200.0), Env::new(true, 1.0));
     rt.poll = Some(poll);
     rt.frame(0.0);
     tap(&mut rt, "connect");
@@ -219,6 +286,13 @@ pub fn run() {
             assert_eq!(rt.state.draft.text, ALPHA);
             select(&mut rt, 1, "ses_created_2");
             assert_eq!(rt.state.draft.text, BETA);
+            let (x, y) = rt.find("sessions-panel-resize").unwrap();
+            rt.pointer_down(x, y);
+            rt.frame(1.0 / 60.0);
+            rt.pointer_move(x + 50.0, y);
+            rt.frame(1.0 / 60.0);
+            rt.pointer_up(x + 50.0, y);
+            rt.frame(1.0 / 60.0);
         }
         "resume" => {
             wait(&mut rt, "automatic selected Beta", |s| {
@@ -252,16 +326,62 @@ pub fn run() {
         _ => unreachable!(),
     }
     occurrences(&mut rt);
+    let shown_width = rt
+        .elements()
+        .into_iter()
+        .find(|element| element.key.as_deref() == Some("sessions-panel"))
+        .expect("restored docked sessions panel")
+        .rect[2];
+    assert_eq!(shown_width, 390.0);
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().snapshot().panel_widths[0],
+        Some(390)
+    );
     if stage != "prepare" {
         let saved = rt.state.workspace.as_ref().unwrap().snapshot();
         assert!(saved.tabs.iter().all(
             |tab| matches!(tab, Tab::Workspace(w) if w.drafts.values().all(String::is_empty))
         ));
     }
+    let file_drafts = std::env::var("RUNE_TEST_FILE_DRAFTS").as_deref() == Ok("1");
+    if file_drafts {
+        rt.update(|state, _| state.files.as_mut().unwrap().open("draft.txt".into()));
+        wait(&mut rt, "file draft baseline verified", |state| {
+            state.files.as_ref().is_some_and(|files| {
+                files.reader.receipt().1 && files.document.editable() && !files.reader.busy()
+            })
+        });
+        const TEXT: &str = "retained · été 日本語 🦀";
+        if stage == "prepare" {
+            assert!(!workspace::file_wrap(&rt.state));
+            tap(&mut rt, "file-wrap");
+            super::files_document::edit(&mut rt, TEXT);
+        }
+        assert!(
+            workspace::file_wrap(&rt.state),
+            "source wrap survives relaunch"
+        );
+        let doc = &rt.state.files.as_ref().unwrap().document;
+        assert!(doc.dirty());
+        assert!(!doc.not_retained());
+        assert_eq!(doc.edit().text, TEXT);
+        assert_eq!(
+            matches!(
+                doc.error(),
+                Some(crate::files::document::store::Error::Conflict(_))
+            ),
+            stage == "verify"
+        );
+    }
+    let native_window = cfg!(target_os = "windows") && file_drafts;
+    #[cfg(target_os = "windows")]
+    if native_window {
+        finish_native(rt);
+        return;
+    } else {
+        finish(rt);
+    }
+    #[cfg(not(target_os = "windows"))]
     finish(rt);
-    println!(
-        "{}",
-        json!({"type":"window-restore-stage","stage":stage,"occurrences":2,
-        "selectedSession":"ses_created_2","draftsDistinct":true,"flushAndRelease":true,"nativeWindow":false})
-    );
+    report(&stage, native_window, file_drafts);
 }

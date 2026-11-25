@@ -1,7 +1,7 @@
 // Synthetic loopback backend with CodeNomad's HTTP/SSE wire shapes.
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {randomUUID} from 'node:crypto'
 import path from 'node:path'
 import {responseFor,textStream} from './fixture-response.mjs'
@@ -27,6 +27,9 @@ const server = createServer(async (req, res) => {
     streams.add(res); req.on('close', () => streams.delete(res)); return
   }
   res.setHeader('content-type', 'application/json')
+  if (req.method === 'GET' && req.url === '/api/meta') {
+    res.end(JSON.stringify({apiContract:1,serverId:'rune-synthetic'})); return
+  }
   if (req.method === 'POST' && req.url === `${base}/session-history/window`) {
     assert.equal(JSON.parse(raw).sessionID,session)
     res.end(JSON.stringify(store.window(JSON.parse(raw).target)));return

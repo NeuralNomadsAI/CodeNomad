@@ -155,10 +155,18 @@ pub fn run() {
     });
     assert!(!rt.state.agent.as_ref().unwrap().error);
     signal("done", "cancel-question", Some(&form));
+    wait(&mut rt, "confirmed receipts reached the transcript", |s| {
+        s.transcript_display.receipts.session_count() == 3
+    });
+    tap(&mut rt, "session-permission-receipts");
+    let receipt_tree = rt.accessibility_json().to_string();
+    for decision in ["once", "always", "reject"] {
+        assert!(receipt_tree.contains(&format!("Motif réel Rune {decision} 🦀")));
+    }
     assert!(rt.state.messages.is_empty());
     assert!(rt.state.agent.as_ref().unwrap().ids().is_empty());
     println!(
         "{}",
-        json!({"type":"pending-live-complete","nativeWindow":false,"modelCalls":0,"toolCalls":0,"cases":5})
+        json!({"type":"pending-live-complete","nativeWindow":false,"modelCalls":0,"toolCalls":0,"cases":5,"transcriptReceipts":3})
     );
 }

@@ -56,6 +56,9 @@ impl Reader {
             due: 0.0,
         }
     }
+    pub fn rebind_session(&mut self, backend: &Backend) {
+        self.backend = backend.clone();
+    }
     pub fn target(&self) -> Option<&Target> {
         self.target.as_ref()
     }
@@ -189,6 +192,26 @@ impl Reader {
 impl Drop for Reader {
     fn drop(&mut self) {
         self.cancel();
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Reader {
+    pub fn scene(&mut self, preview: Result<Preview>) {
+        self.cancel();
+        self.dirty = false;
+        self.sequence += 1;
+        self.settled = (self.sequence, preview.is_ok());
+        match preview {
+            Ok(preview) => {
+                self.preview = Some(preview);
+                self.error = None;
+            }
+            Err(error) => {
+                self.preview = None;
+                self.error = Some(error.to_string());
+            }
+        }
     }
 }
 

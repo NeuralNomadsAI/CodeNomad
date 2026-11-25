@@ -1,4 +1,8 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "Этот сервер не поддерживает историю вложений.",
+  "rune.attachments_missing": "Вложения черновика не восстановлены.",
+  "rune.attachments_keep_text": "Оставить только текст",
+  "rune.pairing_guide": "На хосте CodeNomad запустите admin.sh или admin.ps1, чтобы создать ссылку сопряжения. Откройте её в другой вкладке на этом устройстве.",
   "rune.loading": "Загрузка",
   "rune.ready": "Готово",
   "rune.streaming": "Ответ поступает",

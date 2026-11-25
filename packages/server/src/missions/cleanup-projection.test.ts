@@ -3,7 +3,7 @@ import test from "node:test"
 import { cleanupReceiptID, documentCleanupReceiptID, hasInvalidCleanupHistory, projectMissionCleanups } from "./cleanup-projection"
 import { parseMissionEvent } from "./journal"
 import type { MissionEvent } from "./model"
-import { planDeletionPurge } from "./journal-purge"
+import { deletionRecordCleanup, planDeletionPurge, type MissionDeletionRecord } from "./journal-purge"
 
 function events(id: string, time: number): MissionEvent[] {
   const base = { version: 1 as const, missionID: id, projectID: "project", createdAt: time }
@@ -25,6 +25,17 @@ test("cleanup projection retains exact request and pending target counts outside
   history.push({ version: 1, id: cleanupReceiptID("pending-delete", "ses_actor"), missionID: "pending", projectID: "project", createdAt: 2,
     type: "mission.session-cleaned", deletionID: "pending-delete", sessionID: "ses_actor", outcome: "retained", reason: "children" })
   assert.deepEqual(projectMissionCleanups(history)[0], { ...entry, pending: 0, retained: 1, reasons: ["children"] })
+})
+
+test("a compacted deletion record drops a dangling high surrogate from its cleanup label", () => {
+  const ascii = "a".repeat(239)
+  const record: MissionDeletionRecord = { version: 1, projectID: "project", missionID: "msn_removed", deletionID: "evt_delete",
+    requestID: "delete", expectedRevision: 1, deleteManagedSessions: false, objective: ascii + "\ud83d",
+    createdAt: 1, removed: 0, retained: 0, reasons: [] }
+  const cleanup = deletionRecordCleanup(record)
+  assert.equal(cleanup.objective, ascii)
+  assert.doesNotMatch(JSON.stringify(cleanup), /\\ud83d/i)
+  assert.equal(deletionRecordCleanup({ ...record, objective: "A\ud83d…\u{1f600}" }).objective, "A…\u{1f600}")
 })
 
 test("newer completed summaries cannot evict an older pending deletion", () => {

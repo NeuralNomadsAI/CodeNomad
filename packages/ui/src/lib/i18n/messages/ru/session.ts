@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.filter.includeSubsessions": "Подсессии",
   "session.pruning.maintenance_required": "Дождитесь завершения текущей операции и повторите очистку.",
   "session.pruning.unavailable": "Откройте CodeNomad заново и повторите попытку.",
+  "session.messageActions.serverUnavailable": "Этот сервер не поддерживает данное действие.",
   "session.pruning.conflict": "Перезагрузите сообщение и выберите содержимое снова.",
   "session.pruning.not_deletable": "Можно удалять только завершённые инструменты и рассуждения этой сессии.",
   "session.pruning.unsupported_storage": "Плагин очистки не смог проверить хранилище этой сессии. В очистке отказано.",

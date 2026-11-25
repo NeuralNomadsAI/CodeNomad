@@ -1,15 +1,17 @@
 import { createSignal } from "solid-js"
 import { clearNativeClientState, commitNativeClientStatePartitions, loadNativeClientState, loadNativeClientStatePartition,
-  saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
+  loadNativeFileDrafts, saveNativeFileDraft, saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
 import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState } from "./client-state-codec"
-import { canCommitClientSnapshotV2, decodeClientSnapshotV2, encodeClientSnapshotV2, isClientSnapshotV2 } from "./client-state-partitions"
-import type { ClientSnapshotV2 } from "./client-state-partitions"
+import { canCommitClientSnapshotV2, createClientSnapshotV2Encoder, decodeClientSnapshotV2, isClientSnapshotV2 } from "./client-state-partitions"
+import type { ClientSnapshotV2, EncodedClientSnapshotV2 } from "./client-state-partitions"
 import { LEGACY_SESSION_PREVIEWS_KEY, SESSION_BROWSER_STATE_KEY, mergeSessionBrowsers, tabPreviewModes } from "./tab-view-state-codec"
 import { migrateLegacyTabPreviews } from "./tab-view-state-migration"
+import { changeWorkspaceFileDrafts, MAX_FILE_DRAFT_BYTES, normalizeWorkspaceFileDrafts, type WorkspaceFileDraft } from "./workspace-file-drafts-codec"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
 export type { ClientSnapshotV2 }
 const SAVE_DEBOUNCE_MS = 250
+const SAVE_MAX_WAIT_MS = 500
 const FLUSH_MAX_ATTEMPTS = 3
 const MAX_V1_SNAPSHOT_BYTES = 1024 * 1024
 const MAX_LAYOUT_ENTRIES = 64
@@ -24,14 +26,56 @@ const [loadedRestorableSession, setLoadedRestorableSession] = createSignal<Resto
 let initialized = false
 let initialization: Promise<void> | null = null
 let layout: Record<string, string> = Object.create(null)
+let fileDrafts: WorkspaceFileDraft[] = []
+const FILE_DRAFTS_KEY = "codenomad.workspace-file-drafts.v1"
+export class WorkspaceDraftFlushError extends Error {}
+type DraftValue = Omit<WorkspaceFileDraft, "key"> | null
+type DraftWrite = { value: DraftValue; base: { value: DraftValue }; finish: (ok: boolean) => void }
+const nativeDraftBase = new Map<string, { value: DraftValue }>()
+const nativeDraftReads = new Map<string, Promise<WorkspaceFileDraft | undefined>>()
+const pendingFileDrafts = new Map<string, DraftWrite>()
+const inflightFileDrafts = new Map<string, DraftWrite>()
+const keptFileDrafts = new Map<string, DraftWrite>()
+const refusedFileDrafts = new Set<string>()
+let draftTimer: ReturnType<typeof setTimeout> | undefined
+let draftWrites = Promise.resolve()
 let revision = 0
 let dirty = false
 let writeBlock: false | "snapshot" | "transaction" = false
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+let saveDeadline: number | undefined
+let saveDue = false
+let snapshotWritePending = false
 let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
 let partitionProtocolVersion: 1 | undefined
+let encodeSnapshot = createClientSnapshotV2Encoder()
+// Only the last root's keys stay confirmed: publication may sweep older keys.
+let confirmedPartitionKeys: ReadonlySet<string> | undefined
+async function commitSnapshot(snapshot: EncodedClientSnapshotV2): Promise<boolean> {
+  const known = confirmedPartitionKeys
+  confirmedPartitionKeys = undefined
+  const send = (partitions: Record<string, string>) => commitNativeClientStatePartitions({
+    protocolVersion: 1, snapshot: snapshot.root, partitions, partitionKeys: snapshot.partitionKeys,
+  })
+  if (known) {
+    const missing = snapshot.partitionKeys.filter(key => !known.has(key))
+    if (missing.length < snapshot.partitionKeys.length) {
+      try {
+        if (await send(Object.fromEntries(missing.map(key => [key, snapshot.partitions[key]!])))) {
+          confirmedPartitionKeys = new Set(snapshot.partitionKeys)
+          return true
+        }
+      } catch {
+        // The host may have lost or swept a key, or may require full commits.
+      }
+    }
+  }
+  const accepted = await send(snapshot.partitions)
+  if (accepted) confirmedPartitionKeys = new Set(snapshot.partitionKeys)
+  return accepted
+}
 // Content of the last accepted partitioned commit (root without revision/savedAt):
 // status-only captures re-encode to the same graph and need no native write.
 let committedContent: string | null = null
@@ -93,10 +137,12 @@ function canWriteSnapshot(): boolean {
 const cancelSaveTimer = () => {
   if (saveTimer !== null) clearTimeout(saveTimer)
   saveTimer = null
+  saveDeadline = undefined
+  saveDue = false
 }
 
-// Explicit flushes (navigation, close, host requests) always republish, so a graph
-// lost on the host side is rewritten; debounced saves skip an unchanged graph.
+// Explicit flushes (navigation, close, host requests) verify even unchanged
+// graphs on the host; debounced saves can skip them.
 function enqueuePendingSave(republish = false): Promise<void> {
   cancelSaveTimer()
   if (!dirty || !canWriteSnapshot()) return writeQueue
@@ -108,12 +154,15 @@ function enqueuePendingSave(republish = false): Promise<void> {
     session: partitionProtocolVersion === 1 ? loadedRestorableSession() : withoutPartitionCaches(loadedRestorableSession()),
   }
   const normalizedSnapshot = decodeClientSnapshot(snapshot)
-  if (!normalizedSnapshot) return Promise.reject(new Error("Client snapshot normalization failed"))
+  if (!normalizedSnapshot) {
+    lastSaveError = new Error("Client snapshot normalization failed")
+    return Promise.reject(lastSaveError)
+  }
   layout = { ...normalizedSnapshot.layout }
   dirty = false
   const save = async () => {
     try {
-      const partitioned = partitionProtocolVersion === 1 ? await encodeClientSnapshotV2(normalizedSnapshot) : null
+      const partitioned = partitionProtocolVersion === 1 ? await encodeSnapshot(normalizedSnapshot) : null
       const content = partitioned && JSON.stringify({ ...partitioned.root, revision: 0, savedAt: 0 })
       if (!republish && content && content === committedContent) {
         lastSaveError = undefined
@@ -128,12 +177,7 @@ function enqueuePendingSave(republish = false): Promise<void> {
       }
       committedContent = null
       const accepted = partitioned
-        ? await commitNativeClientStatePartitions({
-          protocolVersion: 1,
-          snapshot: partitioned.root,
-          partitions: partitioned.partitions,
-          partitionKeys: partitioned.partitionKeys,
-        })
+        ? await commitSnapshot(partitioned)
         : await saveNativeClientState(normalizedSnapshot)
       if (!accepted) {
         setClientStateIsPrimary(false)
@@ -158,10 +202,17 @@ function enqueuePendingSave(republish = false): Promise<void> {
       dirty = true
       lastSaveError = error
       throw error
+    } finally {
+      snapshotWritePending = false
+      if (saveDue) {
+        saveDue = false
+        if (dirty) scheduleSave()
+      }
     }
   }
   // Web saves write sessionStorage before the first await, including during pagehide.
-  const saveAttempt = snapshotOwnsLayout ? writeQueue.then(save) : save()
+  if (snapshotOwnsLayout) snapshotWritePending = true
+  const saveAttempt = snapshotOwnsLayout ? Promise.resolve().then(save) : save()
   writeQueue = saveAttempt.catch(() => undefined)
   return saveAttempt
 }
@@ -176,12 +227,23 @@ function withoutPartitionCaches(state: RestorableSessionState | null): Restorabl
 
 function scheduleSave() {
   dirty = true
-  if (!canWriteSnapshot()) return
-  cancelSaveTimer()
-  saveTimer = setTimeout(() => void enqueuePendingSave()
-    .catch((error) => console.warn("[client-state] failed to save client snapshot", error)), SAVE_DEBOUNCE_MS)
+  if (!canWriteSnapshot() || saveDue) return
+  const now = performance.now()
+  saveDeadline ??= now + SAVE_MAX_WAIT_MS
+  if (saveTimer !== null) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    // Keep the deadline, but capture only the latest state once the write settles.
+    if (snapshotWritePending) {
+      saveDue = true
+      return
+    }
+    void enqueuePendingSave().catch((error) => console.warn("[client-state] failed to save client snapshot", error))
+  }, Math.min(SAVE_DEBOUNCE_MS, saveDeadline - now))
 }
 function resetLoadedState(snapshot: ClientSnapshotV1 | null = null, resetRevision = false) {
+  confirmedPartitionKeys = undefined
+  encodeSnapshot = createClientSnapshotV2Encoder()
   committedContent = null
   republishOnFlush = false
   layout = snapshot ? { ...snapshot.layout } : Object.create(null)
@@ -224,6 +286,7 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
     // The host copy is unknown after a failed operation, even if a save that was in
     // flight recorded a commit meanwhile: the next save or flush rewrites it.
     committedContent = null
+    confirmedPartitionKeys = undefined
     republishOnFlush = true
     if (dirty) scheduleSave()
     throw error
@@ -245,6 +308,136 @@ export function updateRestorableSession(state: RestorableSessionState | null): v
   if (writeBlock || !clientStateIsPrimary() || !restorePreviousStateEnabled()) return
   setLoadedRestorableSession(normalized)
   scheduleSave()
+}
+
+export function restoredWorkspaceFileDraft(key: string) {
+  if (!restorePreviousStateEnabled()) return
+  const queued = pendingFileDrafts.get(key) ?? inflightFileDrafts.get(key)
+  if (queued) return queued.value ? { key, ...queued.value } : undefined
+  if (!snapshotOwnsLayout) return fileDrafts.find(draft => draft.key === key)
+}
+
+export async function refreshWorkspaceFileDraft(key: string) {
+  if (!snapshotOwnsLayout || !clientStateIsPrimary() || !restorePreviousStateEnabled()) return restoredWorkspaceFileDraft(key)
+  const existing = nativeDraftReads.get(key)
+  if (existing) return existing
+  const base = nativeDraftBase.get(key)
+  const expected = base?.value
+  const reading = (async () => {
+    const fresh = await loadNativeFileDrafts(key)?.catch(() => undefined)
+    const pending = pendingFileDrafts.has(key) || inflightFileDrafts.has(key)
+    if (fresh && !pending && !refusedFileDrafts.has(key) && nativeDraftBase.get(key) === base && base?.value === expected) {
+      const next = normalizeWorkspaceFileDrafts(fresh).find(entry => entry.key === key)
+      if (next) nativeDraftBase.set(key, { value: { fingerprint: next.fingerprint, text: next.text } })
+      else nativeDraftBase.delete(key)
+      return next
+    }
+    return restoredWorkspaceFileDraft(key)
+  })().finally(() => nativeDraftReads.delete(key))
+  nativeDraftReads.set(key, reading)
+  return reading
+}
+
+export function keepRecoveredWorkspaceFileDraft({ key, fingerprint, text }: WorkspaceFileDraft) {
+  const base = nativeDraftBase.get(key)
+  if (!base || keptFileDrafts.has(key) || pendingFileDrafts.has(key) || inflightFileDrafts.has(key)
+    || base.value?.fingerprint !== fingerprint || base.value.text !== text) return
+  keptFileDrafts.set(key, { base, value: { fingerprint, text }, finish: () => {} })
+}
+
+/** Keep admitted drafts intact if a new or larger draft exceeds the storage budget. */
+export function updateWorkspaceFileDraft(key: string, value: DraftValue, finish: (ok: boolean) => void): boolean {
+  if (!initialized || !clientStateIsPrimary()) return false
+  if (value && !changeWorkspaceFileDrafts([], key, value)) {
+    keptFileDrafts.delete(key)
+    pendingFileDrafts.delete(key)
+    inflightFileDrafts.delete(key)
+    refusedFileDrafts.add(key)
+    return false
+  }
+  const base = nativeDraftBase.get(key) ?? { value: null }
+  if (!restorePreviousStateEnabled() && value) {
+    if (pendingFileDrafts.size >= 32 && !pendingFileDrafts.has(key)) {
+      inflightFileDrafts.delete(key)
+      refusedFileDrafts.add(key)
+      return false
+    }
+    refusedFileDrafts.delete(key)
+    keptFileDrafts.delete(key)
+    pendingFileDrafts.set(key, { value, base, finish })
+    return true
+  }
+  const queued = pendingFileDrafts.get(key) ?? inflightFileDrafts.get(key)
+  const previous = queued ? queued.value : base.value
+  if (!snapshotOwnsLayout) {
+    pendingFileDrafts.delete(key)
+    const next = changeWorkspaceFileDrafts(fileDrafts, key, value)
+    try {
+      if (!next) throw new Error("Draft budget exceeded")
+      window.sessionStorage.setItem(FILE_DRAFTS_KEY, JSON.stringify(next))
+      fileDrafts = next
+      refusedFileDrafts.delete(key)
+      return true
+    } catch { refusedFileDrafts.add(key); return false }
+  }
+  // The host decides the shared profile limit under its ownership lock.
+  if (!refusedFileDrafts.has(key)
+    && previous?.text === value?.text && previous?.fingerprint === value?.fingerprint) return true
+  keptFileDrafts.delete(key)
+  nativeDraftBase.set(key, base)
+  pendingFileDrafts.set(key, { value, base, finish })
+  clearTimeout(draftTimer)
+  draftTimer = setTimeout(flushWorkspaceFileDrafts, SAVE_DEBOUNCE_MS)
+  return true
+}
+
+function flushWorkspaceFileDrafts() {
+  clearTimeout(draftTimer)
+  const changes = [...pendingFileDrafts].filter(([, change]) => restorePreviousStateEnabled() || !change.value)
+  if (!snapshotOwnsLayout) {
+    pendingFileDrafts.clear()
+    for (const [key, { value, finish }] of changes) finish(updateWorkspaceFileDraft(key, value, finish))
+    return draftWrites
+  }
+  for (const [key] of changes) pendingFileDrafts.delete(key)
+  if (!changes.length) return draftWrites
+  for (const [key, change] of changes) {
+    inflightFileDrafts.set(key, change)
+    nativeDraftBase.set(key, change.base)
+  }
+  draftWrites = draftWrites.then(async () => {
+    for (const [key, change] of changes) {
+      const { value, base, finish } = change
+      const accepted = await (saveNativeFileDraft({ key, draft: value, expected: base.value })?.catch(() => false) ?? false)
+      if (accepted) base.value = value
+      if (inflightFileDrafts.get(key) === change) {
+        inflightFileDrafts.delete(key)
+        if (!pendingFileDrafts.has(key)) {
+          if (accepted) {
+            refusedFileDrafts.delete(key)
+            if (value) keptFileDrafts.set(key, change)
+            if (!value && nativeDraftBase.get(key) === base) nativeDraftBase.delete(key)
+          } else if (value && !restorePreviousStateEnabled()) {
+            pendingFileDrafts.set(key, change)
+            continue
+          } else {
+            refusedFileDrafts.add(key)
+            if (!value) pendingFileDrafts.set(key, change)
+          }
+          finish(accepted)
+        }
+      }
+    }
+  })
+  return draftWrites
+}
+
+async function loadWorkspaceFileDrafts() {
+  if (snapshotOwnsLayout) return
+  try {
+    const raw = window.sessionStorage.getItem(FILE_DRAFTS_KEY)
+    fileDrafts = raw && raw.length <= MAX_FILE_DRAFT_BYTES ? normalizeWorkspaceFileDrafts(JSON.parse(raw)) : []
+  } catch { fileDrafts = [] }
 }
 
 export function readClientLayoutValue(key: string): string | null {
@@ -294,36 +487,52 @@ export function removeClientLayoutValue(key: string): void {
   scheduleSave()
 }
 
+export async function flushWorkspaceFileDraftsForClose(): Promise<void> {
+  if (!snapshotOwnsLayout) return
+  await flushWorkspaceFileDrafts()
+  if (!restorePreviousStateEnabled()) return
+  if (refusedFileDrafts.size) throw new WorkspaceDraftFlushError("Workspace file drafts could not be retained")
+  if (!keptFileDrafts.size && !pendingFileDrafts.size && !inflightFileDrafts.size) return
+  const fresh = await loadNativeFileDrafts()?.catch(() => undefined)
+  if (!fresh) throw new WorkspaceDraftFlushError("Workspace file drafts could not be checked")
+  const latest = new Map(normalizeWorkspaceFileDrafts(fresh).map(draft => [draft.key, draft]))
+  for (const [key, change] of keptFileDrafts) {
+    const stored = latest.get(key)
+    const { value } = change
+    if (stored?.fingerprint === value?.fingerprint && stored?.text === value?.text) continue
+    if (!stored && keptFileDrafts.get(key) === change
+      && await saveNativeFileDraft({ key, draft: value, expected: null })?.catch(() => false)) continue
+    change.finish(false)
+    throw new WorkspaceDraftFlushError("A workspace file draft changed in another window")
+  }
+  if (refusedFileDrafts.size || pendingFileDrafts.size || inflightFileDrafts.size) {
+    throw new WorkspaceDraftFlushError("A newer workspace file draft is not confirmed")
+  }
+}
+
 export async function flushClientState(): Promise<void> {
   cancelSaveTimer()
   if (!snapshotOwnsLayout) return enqueuePendingSave(true)
-  let lastError = lastSaveError
-  for (let attempts = 0; attempts < FLUSH_MAX_ATTEMPTS; attempts += 1) {
+  for (let attempts = 0; ; attempts += 1) {
     while (true) {
       const pending = writeQueue
       await pending
       if (pending === writeQueue) break
     }
     if (republishOnFlush && canWriteSnapshot()) dirty = true
-    if (!dirty) {
-      if (lastError !== undefined) throw lastError
+    if (!dirty || !canWriteSnapshot()) {
+      if (lastSaveError !== undefined) throw lastSaveError
       return
     }
-    if (!canWriteSnapshot()) {
-      const writeError = lastSaveError ?? lastError
-      if (writeError !== undefined) throw writeError
-      return
+    if (attempts === FLUSH_MAX_ATTEMPTS) {
+      throw lastSaveError ?? new Error("Client state remained dirty after the final flush attempt")
     }
     try {
       await enqueuePendingSave(true)
-      lastError = undefined
-    } catch (error) {
-      lastError = error
+    } catch {
+      // Re-read the outcome after the queue settles: a newer write can supersede this attempt.
     }
   }
-  await writeQueue
-  if (!dirty) return
-  throw lastError ?? new Error("Client state remained dirty after the final flush attempt")
 }
 
 export async function clearRestoredClientState(): Promise<void> {
@@ -341,6 +550,7 @@ export async function setRestorePreviousStateEnabled(enabled: boolean): Promise<
       if (!await setNativeRestoreEnabled(true)) throw new Error("Native restore preference update was rejected")
       writeBlock = false
       setRestorePreviousStateEnabledSignal(true)
+      await flushWorkspaceFileDrafts()
       return
     }
     setRestorePreviousStateEnabledSignal(false)
@@ -369,8 +579,10 @@ export function initializeClientState(): Promise<void> {
       transactionLayoutWrites.clear()
       layoutMigrations.clear()
       initialized = true
+      if (loaded.isPrimary) await loadWorkspaceFileDrafts()
       if (!loaded.isPrimary || !loaded.restoreEnabled) return
       let snapshot: ClientSnapshotV1 | null
+      const verified = new Set<string>()
       if (isClientSnapshotV2(loaded.snapshot)) {
         writeBlock = "snapshot"
         try {
@@ -378,6 +590,7 @@ export function initializeClientState(): Promise<void> {
             loaded.snapshot,
             loaded.partitionProtocolVersion,
             loadNativeClientStatePartition,
+            key => verified.add(key),
           )
         } catch (error) {
           snapshot = null
@@ -392,6 +605,7 @@ export function initializeClientState(): Promise<void> {
         for (const tab of snapshot?.session?.tabs ?? []) if (tab.kind === "workspace") delete tab.workspaceId
       }
       resetLoadedState(snapshot && !snapshotOwnsLayout ? { ...snapshot, layout: {} } : snapshot, true)
+      if (snapshot && verified.size) confirmedPartitionKeys = verified
       if (!writeBlock) {
         const migratedLayout = snapshotOwnsLayout && migrateLegacyLayoutValues()
         const source = readClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY)

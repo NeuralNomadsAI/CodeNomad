@@ -12,6 +12,8 @@ Tauri (`cli_manager.rs`, `Runner::Rust`) runs the binary directly with the TypeS
 
 `serve` reads `server.opencodeBinary` from the selected profile at startup. A saved custom executable takes precedence over automatic discovery; an empty selection, `opencode` or `opencode2` uses discovery.
 
+The HTTPS listener serves the selected static UI bundle (Solid or Rune) to paired browsers. Solid’s non-HTML assets, including the PWA manifest, can be fetched without a device cookie. Both bundles use the same static encoding negotiation as the local listener.
+
 The positional launch `codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>` (bench and user service, `src/bench.rs`) keeps its data beside the identity file, its settings there or at `CLI_CONFIG`, and reads `CLI_UNRESTRICTED_ROOT`, `CNRS_SERVER_PASSWORD`, `CNRS_HTTPS_*` and `CNRS_TLS_*`.
 
 ## Architecture
@@ -65,4 +67,14 @@ Workspace agent controls relay native model changes, session permission replies,
 
 Conversation permission modes share the private `sessionPermissionBlocks` state with TypeScript. Native creation and fork evidence can record copied rules; only an owned root block is rewritable, with additive deny refresh for verified copies from subagents. Sends, native events and reconnects refresh known targets; exact native deletion clears their records.
 
+Prompt forwarding keeps native fields (`text`, `files`, `agents`, `skills`, `metadata`, `resume`, `id`, `delivery`) and their native validation. Prompt bodies admit 32 MiB JSON; inline `files[].uri` data admits 5 MiB per file, ten files and 20 MiB total decoded bytes. The inline budget precedes Location and file-path ownership. Known body selectors and `x-codenomad-location` retain their ownership checks; conflicting explicit directories and context return 400. Project file URI/path ownership is checked before forwarding; HTTP(S) and data URI keep their native meaning. Other relayed mutations keep their 1 MiB bound. Rejected bodies drain up to 64 KiB beyond their admission bound, for at most two seconds, to preserve the HTTP 413 response under both declared and chunked framing. `bench/compare.mjs prompt-admission` compares these admissions against TypeScript on separate simulated native services.
+
+Slash commands retain native `name`, `text`, delivery and attachment fields inside the 1 MiB mutation bound. Sends read the profile environment at admission, preserve native session ownership and use the same validated connection for the environment and input writes. `bench/compare.mjs command-admission` exercises these checks without a model or OpenCode process.
+
+Prompt and command sends accept sessions in existing subfolders of the opened workspace or a live linked checkout. The proxy verifies the physical directory and native checkout registration before updating the environment and forwarding the input.
+
+Instance storage accepts workspace IDs and directory keys. A verified linked checkout of an open project uses its supplied directory spelling as the document key. The shared GET and PUT carry the same document as the TypeScript server.
+
 Known divergence: when a platform package does not match its registry integrity, the TypeScript server installs it anyway through `@opencode/cli`'s postinstall fallback; Rust refuses it (`bench/opencode-install.mjs`). OpenCode 1.x npm replacement is not ported: such an installation is refused.
+
+The Source prompt client uses `application/json`. For a `text/plain` prompt, Rust refuses the non-JSON content with HTTP 400; TypeScript fails to serialize its error and returns HTTP 500. `prompt-admission` keeps this observation and both error bodies in `outsideJson`.

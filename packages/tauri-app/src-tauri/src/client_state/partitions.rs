@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 #[cfg(not(windows))]
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 pub(super) const PROTOCOL_VERSION: u64 = 1;
@@ -28,6 +28,7 @@ pub(super) struct ValidatedCommit {
     pub(super) snapshot: Value,
     partitions: HashMap<String, String>,
     pub(super) partition_keys: Vec<String>,
+    supplied_bytes: usize,
 }
 
 pub(super) fn valid_key(key: &str) -> bool {
@@ -97,13 +98,10 @@ impl PartitionCommit {
         if root_keys != payload_keys {
             return Err("Client state root partition keys do not match the commit".to_string());
         }
-        let mut supplied_keys = self.partitions.keys().collect::<Vec<_>>();
-        supplied_keys.sort();
-        if supplied_keys.len() != root_keys.len()
-            || supplied_keys
-                .iter()
-                .zip(&root_keys)
-                .any(|(supplied, expected)| supplied.as_str() != expected)
+        if self
+            .partitions
+            .keys()
+            .any(|key| root_keys.binary_search(key).is_err())
         {
             return Err("Client state partitions do not match the root".to_string());
         }
@@ -135,6 +133,7 @@ impl PartitionCommit {
             snapshot: self.snapshot,
             partitions: self.partitions,
             partition_keys: root_keys,
+            supplied_bytes: commit_size,
         })
     }
 }
@@ -157,6 +156,24 @@ impl PartitionStore {
     ) -> Result<(), String> {
         fs::create_dir_all(&self.directory).map_err(|err| err.to_string())?;
         self.validate_directory(false)?;
+        // The manager holds the publication lock through verification, root replacement
+        // and sweep. Omitted partitions must be verified before they become reachable.
+        let mut total_bytes = commit.supplied_bytes;
+        for key in commit
+            .partition_keys
+            .iter()
+            .filter(|key| !commit.partitions.contains_key(*key))
+        {
+            let content = self.read_verified(key)?;
+            authority(authority_valid)?;
+            let Some(content) = content else {
+                return Err(format!("Missing or invalid client state partition {key}"));
+            };
+            total_bytes += content.len();
+            if total_bytes > MAX_COMMIT_BYTES {
+                return Err("Client state partition commit exceeds the 256 MiB limit".to_string());
+            }
+        }
         let mut published = false;
         for (key, content) in &commit.partitions {
             published |= self.write_immutable(key, content.as_bytes(), authority_valid)?;
@@ -165,13 +182,6 @@ impl PartitionStore {
             self.validate_directory(false)?;
             sync_directory(&self.directory)?;
             authority(authority_valid)?;
-        }
-        for key in &commit.partition_keys {
-            let content = self.read_verified(key)?;
-            authority(authority_valid)?;
-            if content.is_none() {
-                return Err(format!("Missing client state partition {key}"));
-            }
         }
         Ok(())
     }
@@ -245,14 +255,22 @@ impl PartitionStore {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err.to_string()),
         }
-        match fs::read(path) {
-            Ok(bytes) if bytes.len() <= MAX_PARTITION_BYTES && hex_digest(&bytes) == key => {
+        let file = match fs::File::open(path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err.to_string()),
+        };
+        let mut bytes = Vec::new();
+        match file
+            .take((MAX_PARTITION_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+        {
+            Ok(_) if bytes.len() <= MAX_PARTITION_BYTES && hex_digest(&bytes) == key => {
                 String::from_utf8(bytes)
                     .map(Some)
                     .map_err(|err| err.to_string())
             }
             Ok(_) => Ok(None),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(err.to_string()),
         }
     }

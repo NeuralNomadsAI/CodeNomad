@@ -4,6 +4,7 @@ import replyFrom from "@fastify/reply-from"
 import fs from "fs"
 import { isIP, type Socket } from "net"
 import path from "path"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { finished } from "node:stream/promises"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
@@ -105,14 +106,14 @@ import { guardProxyListener, proxyConnector, ProxyDestinationDenied } from "./pr
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { guardServerPairRequest, isServerPairExchange, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
-import { gateRemoteRequest, isHostOnlyPath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { gateRemoteRequest, isHostOnlyPath, isHtmlBundlePath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
 import { createRelayPrincipalBinding } from "../codenomad-servers/relay-principal"
-import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
+import { isLocalRequest, isRemoteRequest, isRemoteSocket } from "../remote-control/request-origin"
 import type { RemotePreviewCapabilities } from "../codenomad-servers/preview-capabilities"
 import { PreviewBodyBudget, previewBodyKind, previewDocumentStream, rewritePreviewText } from "../codenomad-servers/preview-body"
 import { registerDirectOriginPolicy } from "./direct-origin"
-import { verifiedDirectHttpsOrigin } from "../remote-control/direct-https"
+import { verifiedDirectHttpsOrigin, verifiedDirectServerOrigin } from "../remote-control/direct-https"
 import { createSideCarDirectHttpsAccess, isSideCarContentPath, sidecarsOverDirectHttpsEnabled } from "./sidecar-direct-https"
 import { framesNoBody } from "./bodiless-request"
 import { addProxiedHttpMethods } from "./proxied-http-methods"
@@ -440,7 +441,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       return
     }
 
-    if (!session && wantsHtml(request)) {
+    if (!session && (wantsHtml(request) || isHtmlBundlePath(pathname))) {
       reply.redirect("/login")
       return
     }
@@ -448,6 +449,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     done()
   })
 
+  const uiEntry = findUiEntry(deps.uiStaticDir)
   app.get("/", async (request, reply) => {
     const session = deps.authManager.getSessionFromRequest(request)
     if (!session) {
@@ -461,8 +463,10 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
 
     const uiDir = deps.uiStaticDir
-    const indexPath = path.join(uiDir, "index.html")
+    const indexPath = path.join(uiDir, uiEntry)
     if (uiDir && fs.existsSync(indexPath)) {
+      reply.header("cache-control", "no-store")
+      if (reply.sendFile) return reply.sendFile(uiEntry, { cacheControl: false })
       reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
       return
     }
@@ -628,7 +632,9 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.uiDevServerUrl) {
     setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
   } else {
-    setupStaticUi(app, deps.uiStaticDir, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
+    setupStaticUi(app, deps.uiStaticDir, uiEntry, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed,
+      request => isRemoteSocket(request.raw.socket) || request.protocol === "https" ? "https"
+        : verifiedDirectServerOrigin(request, remoteGate.directHttpsOrigins?.() ?? []) ? "either" : "http")
   }
 
   return {
@@ -2230,13 +2236,24 @@ function normalizeInstanceSuffix(pathSuffix: string | undefined) {
   return trimmed.length === 0 ? "/" : `/${trimmed}`
 }
 
+function findUiEntry(dir: string): string {
+  const name = "index.html"
+  if (!dir || !fs.existsSync(path.join(dir, name))) return name
+  try {
+    const entries = fs.readdirSync(dir)
+    return entries.includes(name) ? name : entries.find(entry => entry.toLowerCase() === name) ?? name
+  } catch { return name }
+}
+
 function setupStaticUi(
   app: FastifyInstance,
   uiDir: string,
+  uiEntry: string,
   authManager: AuthManager,
   previewManager: PreviewManager,
   logger: Logger,
   remotePreviewsAllowed: () => boolean,
+  entryScheme: (request: FastifyRequest) => "http" | "https" | "either",
 ) {
   if (!uiDir) {
     app.log.warn("UI static directory not provided; API endpoints only")
@@ -2248,21 +2265,66 @@ function setupStaticUi(
     return
   }
 
+  const identityRefused = new AsyncLocalStorage<{ original?: string }>()
+  const negotiate = (request: FastifyRequest) => {
+    // Only GET applies Range; Fastify's sender also sees the raw HEAD headers.
+    if (request.method === "HEAD") delete request.raw.headers.range
+    // Expand the wildcard for fastify-static, which maps it to gzip alone.
+    const encodings = request.headers["accept-encoding"]?.toLowerCase().split(",") ?? []
+    const explicit = new Map(encodings.map(entry => [entry.split(";", 1)[0]!.trim(), entry]))
+    const quality = (entry: string) => Number(/;\s*q\s*=\s*([01](?:\.\d{0,3})?)\s*$/.exec(entry)?.[1] ?? 1)
+    const identity = explicit.get("identity"), wildcard = explicit.get("*")
+    const identityQuality = identity === undefined ? undefined : quality(identity)
+    if (wildcard || identityQuality !== undefined) {
+      request.headers["accept-encoding"] = ["br", "gzip", "deflate"]
+        .map(coding => explicit.get(coding) ?? wildcard?.replace("*", coding))
+        .filter(entry => entry !== undefined && quality(entry) >= (identityQuality ?? 0)).join(",")
+    }
+    return (identityQuality ?? (wildcard && quality(wildcard))) === 0
+  }
   app.addHook("preHandler", (request, reply, done) => {
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed, entryScheme)) {
       return
     }
+    if (!("previewCapability" in request.routeOptions.config)
+      && (request.routeOptions.url === "/" || request.routeOptions.url === "/*") && negotiate(request)) {
+      return identityRefused.run({}, done)
+    }
     done()
+  })
+
+  app.addHook("onSend", (request, reply, payload, done) => {
+    if (identityRefused.getStore() !== undefined && reply.statusCode === 406) {
+      reply.header("vary", "Origin, Accept-Encoding").removeHeader("content-length").removeHeader("content-type")
+      return done(null, "")
+    }
+    done(null, payload)
   })
 
   app.register(fastifyStatic, {
     root: uiDir,
     prefix: "/",
-    decorateReply: false,
+    preCompressed: true,
+    allowedPath: (file, _root, request) => {
+      // Both authorization checks use logical paths, including a selected index.
+      const refused = identityRefused.getStore()
+      if (refused) refused.original = path.basename(file)
+      return !isHtmlBundlePath(file) || Boolean(authManager.getSessionFromRequest(request))
+    },
+    onFile: (file) => {
+      const refused = identityRefused.getStore()
+      if (!refused) return
+      const selected = path.basename(file)
+      if (/\.(?:br|gz|deflate)$/.test(selected) && selected !== refused.original) return
+      throw Object.assign(new Error("No acceptable static representation"), { statusCode: 406 })
+    },
+    setHeaders: (reply, file) => {
+      if (isHtmlBundlePath(file)) reply.header("cache-control", "no-store")
+    },
   })
 
-  const indexPath = path.join(uiDir, "index.html")
+  const indexPath = path.join(uiDir, uiEntry)
 
   app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
     const url = request.raw.url ?? ""
@@ -2272,17 +2334,22 @@ function setupStaticUi(
     }
 
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed, entryScheme)) {
       return
     }
 
-    if (!session && wantsHtml(request)) {
-      reply.redirect("/login")
+    if (!session) {
+      if (wantsHtml(request)) reply.redirect("/login")
+      else reply.header("cache-control", "no-store").code(404).send({ message: "Not Found" })
       return
     }
 
     if (fs.existsSync(indexPath)) {
-      reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        return reply.header("cache-control", "no-store").type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
+      }
+      const rejectIdentity = identityRefused.getStore() !== undefined || negotiate(request)
+      return rejectIdentity ? identityRefused.run({}, () => reply.sendFile(uiEntry)) : reply.sendFile(uiEntry)
     } else {
       reply.code(404).send({ message: "UI bundle missing" })
     }
@@ -2325,12 +2392,14 @@ function proxyPreviewFallbackFromReferer(
   previewManager: PreviewManager,
   logger: Logger,
   remotePreviewsAllowed: () => boolean,
+  entryScheme?: (request: FastifyRequest) => "http" | "https" | "either",
 ): boolean {
   // Remote Control serves preview content only while its host allows it.
   if (isRemoteRequest(request) && !remotePreviewsAllowed()) {
     return false
   }
   const rawUrl = request.raw.url ?? request.url ?? ""
+  const entry = request.method === "GET" || request.method === "HEAD" ? routedPath(rawUrl) : null
   const pathname = rawUrl.split("?")[0] ?? ""
   if (!isPreviewFallbackPath(pathname)) {
     return false
@@ -2341,10 +2410,26 @@ function proxyPreviewFallbackFromReferer(
   if (!referer) {
     return false
   }
-
   const parsed = parsePreviewUpgradePath(referer)
-  if (!parsed) {
-    return false
+  if (!parsed) return false
+
+  if (entryScheme && (entry === "/" || entry === PAIR_PAGE_PATH)) {
+    // A preview's same-origin resource may use this path; an external link is an app navigation.
+    const host = request.headers.host
+    if (!host || /[\s/\\@?#]/.test(host)) return false
+    try {
+      const scheme = entryScheme(request)
+      if (scheme === "either") {
+        // A shared HTTP listener cannot distinguish direct HTTP from a TLS terminator by Host.
+        if (request.headers["sec-fetch-site"] === "cross-site") return false
+        const source = new URL(referer, `https://${host}`)
+        if (!/^https?:$/.test(source.protocol) || source.host !== new URL(`${source.protocol}//${host}`).host
+          || !previewManager.get(parsed.token)) return false
+      } else {
+        const target = new URL(`${scheme}://${host}`)
+        if (new URL(referer, target).origin !== target.origin) return false
+      }
+    } catch { return false }
   }
 
   void proxyPreviewAssetRequest({

@@ -1,4 +1,8 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "Este servidor no admite el historial de archivos adjuntos.",
+  "rune.attachments_missing": "No se restauraron los archivos adjuntos del borrador.",
+  "rune.attachments_keep_text": "Conservar solo el texto",
+  "rune.pairing_guide": "En el equipo que ejecuta CodeNomad, usa admin.sh o admin.ps1 para crear un enlace de emparejamiento. Ábrelo en otra pestaña de este dispositivo.",
   "rune.loading": "Cargando",
   "rune.ready": "Listo",
   "rune.streaming": "Respondiendo",

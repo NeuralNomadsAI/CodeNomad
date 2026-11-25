@@ -33,6 +33,7 @@ import {
 import { COMPLETED_FINAL_ONLY, buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
 import { assignmentInput, reportInput } from "./inputs"
 import { reportNotificationID } from "./receipt-identity"
+import { displayMissionText, truncateMissionText } from "./truncate-text"
 import { isMissionTaskSession, missionCoordinatorSessionID, missionTaskSessionID } from "./session-identity"
 import { nativeDecisionProvenance, resolveDebuggingImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
 import type { HumanDecisionDiscovery, NativeHumanAnswerGate } from "./human-answer"
@@ -1297,7 +1298,7 @@ export class MissionControl {
       do {
         const page = await readMissionSchedulePage(this.options.storage, this.options.project, { after })
         for (const doc of page.schedules) if (!missions.some(item => item.missionID === doc.id))
-          missions.push({ missionID: doc.id, title: doc.configuration.title,
+          missions.push({ missionID: doc.id, title: displayMissionText(doc.configuration.title),
             relation: doc.creation?.author?.coordinatorSessionID === sessionID ? "prepared" : "project", kind: doc.kind,
             template: doc.configuration.template, status: doc.state, revision: doc.revision, createdAt: doc.createdAt })
         after = page.next
@@ -1997,7 +1998,7 @@ export class MissionControl {
     }
     return {
       sessionID: missionTaskSessionID(mission.id, task.id, this.options.now?.() ?? Date.now()),
-      title: `Mission · ${task.role}: ${task.title}`.slice(0, 160),
+      title: truncateMissionText(`Mission · ${task.role}: ${task.title}`, 160),
       location: (await this.ownedRootSession(coordinatorID)).location,
       managed: true,
     }

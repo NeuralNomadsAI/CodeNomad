@@ -1,4 +1,5 @@
 //! Scoped workspace files; directory ownership and physical paths stay with the server.
+pub mod images;
 use crate::{
     backend::{Backend, read_json, read_json_limited},
     history::{Result, valid_id},
@@ -12,6 +13,15 @@ pub const MAX_FILE_BYTES: usize = 5 * 1024 * 1024;
 pub const MAX_ENTRIES: usize = 4096;
 const MAX_CONTENTS: usize = MAX_FILE_BYTES.div_ceil(3) * 4;
 const MAX_PREVIEW_JSON: usize = MAX_CONTENTS + 64 * 1024;
+
+#[derive(Debug)]
+pub struct ListingTooLarge;
+impl std::fmt::Display for ListingTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Directory listing too large")
+    }
+}
+impl std::error::Error for ListingTooLarge {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
@@ -36,13 +46,22 @@ pub struct Preview {
     pub version: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WriteResult {
-    Saved,
-    Conflict,
+    Saved(Option<String>),
+    Conflict(Option<String>),
 }
 
 impl Backend {
+    /// Workspace Markdown uses the application URL as its base, rather than a checkout path.
+    pub fn file_link(&self, destination: &str) -> Option<String> {
+        #[cfg(target_arch = "wasm32")]
+        let page = web_sys::window().and_then(|window| window.location().href().ok());
+        #[cfg(not(target_arch = "wasm32"))]
+        let page: Option<String> = None;
+        file_link(page.as_deref().unwrap_or(&self.base), destination)
+    }
+
     pub async fn write_file(
         &self,
         directory: &str,
@@ -72,33 +91,52 @@ impl Backend {
             .send()
             .await?;
         if response.status() == reqwest::StatusCode::CONFLICT {
-            return Ok(WriteResult::Conflict);
+            let reason = read_json_limited(response, 4096)
+                .await
+                .ok()
+                .and_then(|body| {
+                    let reason = body["error"].as_str()?.trim();
+                    (!reason.is_empty()).then(|| reason.to_owned())
+                });
+            return Ok(WriteResult::Conflict(reason));
         }
         let response = response.error_for_status()?;
         if !response.status().is_success() {
             return Err("unexpected file write response".into());
         }
-        Ok(WriteResult::Saved)
+        let version = response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| value.len() <= 128)
+            .map(str::to_owned);
+        Ok(WriteResult::Saved(version))
     }
     /// One listing, with the shared 2 MiB JSON budget; an oversized folder fails intact.
     pub async fn files(&self, directory: &str, path: &str) -> Result<Vec<Entry>> {
         self.file_scope(directory, path, true)?;
-        let data = read_json(
-            self.client
-                .get(format!(
-                    "{}api/workspaces/{}/files",
-                    self.base, self.workspace
-                ))
-                .query(&[("path", path), ("directory", directory)])
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await?;
-        let rows = data
-            .as_array()
-            .filter(|r| r.len() <= MAX_ENTRIES)
-            .ok_or("invalid file listing")?;
+        let response = self
+            .client
+            .get(format!(
+                "{}api/workspaces/{}/files",
+                self.base, self.workspace
+            ))
+            .query(&[("path", path), ("directory", directory)])
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::BAD_REQUEST {
+            let error = response.error_for_status_ref().err();
+            let body = read_json_limited(response, 4096).await;
+            if body.is_ok_and(|body| body["error"] == "Directory listing too large") {
+                return Err(ListingTooLarge.into());
+            }
+            return Err(error.ok_or("invalid file listing response")?.into());
+        }
+        let data = read_json(response.error_for_status()?).await?;
+        let rows = data.as_array().ok_or("invalid file listing")?;
+        if rows.len() > MAX_ENTRIES {
+            return Err(ListingTooLarge.into());
+        }
         let mut seen = HashSet::new();
         rows.iter()
             .map(|row| {
@@ -180,6 +218,29 @@ impl Backend {
         relative(path, listing, directory)
     }
 }
+fn file_link(base: &str, destination: &str) -> Option<String> {
+    if destination.trim().is_empty() {
+        return None;
+    }
+    let url = reqwest::Url::parse(base).ok()?.join(destination).ok()?;
+    matches!(url.scheme(), "http" | "https" | "mailto").then(|| url.into())
+}
+
+#[cfg(test)]
+#[test]
+fn reader_links_preserve_the_base_page_context() {
+    let base = "https://example.invalid/app/?locale=he";
+    assert_eq!(
+        file_link(base, "#reader").as_deref(),
+        Some("https://example.invalid/app/?locale=he#reader")
+    );
+    assert_eq!(
+        file_link(base, "./notes.md").as_deref(),
+        Some("https://example.invalid/app/notes.md")
+    );
+    assert!(file_link(base, "file:///C:/secret.md").is_none());
+}
+
 // The listing contract emits relative slash paths. The server owns OS-specific admission.
 pub(crate) fn relative(path: &str, listing: bool, directory: &str) -> Result<()> {
     if listing && path == "." {

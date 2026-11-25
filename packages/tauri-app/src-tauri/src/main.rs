@@ -108,6 +108,8 @@ pub struct AppState {
     pub(crate) window_automation: automation::window::WindowAutomation,
     pub(crate) browser_controller: browser_controller::BrowserController,
     pub wake_lock: Mutex<WakeLockState>,
+    #[cfg(not(windows))]
+    wake_lock_worker: client_state::IpcQueue,
     remote_navigation: Mutex<HashMap<String, RemoteWindowMetadata>>,
     remote_navigation_generation: AtomicU64,
     remote_profiles: Mutex<HashMap<String, RemoteProfileIdentity>>,
@@ -366,7 +368,7 @@ fn set_workspace_menu_enabled(
     }
     let config = state
         .manager
-        .local_cli_access()
+        .ready_local_access()
         .ok_or("Local CodeNomad server is unavailable")?;
     let expected = Url::parse(&config.base_url).map_err(|error| error.to_string())?;
     let current = webview.url().map_err(|error| error.to_string())?;
@@ -427,7 +429,7 @@ fn claim_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) -> bool
 }
 
 #[tauri::command]
-fn window_control(
+async fn window_control(
     webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
@@ -447,16 +449,25 @@ fn window_control(
                 window.maximize()
             }
         }
-        "drag" => window.start_dragging(),
         "close" => {
-            if webview.label() == preferences_window::LABEL {
-                preferences_window::approve_close(&app)?;
+            if webview.label() == preferences_window::LABEL && !preferences_window::approve_close(&app).await? {
+                return Ok(());
             }
             window.close()
         }
         _ => return Err("Invalid window control action".to_string()),
     }
     .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn start_native_window_drag(
+    webview: tauri::Webview,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    require_preferences_or_local_app_webview(&webview, &state)?;
+    // AppKit needs the mouse event still being dispatched when the IPC arrives.
+    webview.window().start_dragging().map_err(|error| error.to_string())
 }
 
 fn titlebar_menu_id(menu: &str) -> Option<&'static str> {
@@ -588,7 +599,7 @@ async fn browser_target_action(
         .map_err(|error| embedded_view::diagnostics::preview_error("target action", error))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn browser_target_unregister(
     webview: tauri::Webview,
     app: AppHandle,
@@ -741,7 +752,13 @@ struct WakeLockConfig {
     sleep: bool,
 }
 
-#[tauri::command]
+const DEFAULT_WAKE_LOCK_CONFIG: WakeLockConfig = WakeLockConfig {
+    display: false,
+    idle: true,
+    sleep: false,
+};
+
+#[tauri::command(async)]
 fn cli_get_status(
     webview: tauri::Webview,
     state: tauri::State<AppState>,
@@ -751,27 +768,47 @@ fn cli_get_status(
 }
 
 #[tauri::command]
-fn cli_restart(
+async fn cli_renew_managed_session(
     webview: tauri::Webview,
     app: AppHandle,
-    state: tauri::State<AppState>,
-) -> Result<CliStatus, String> {
+) -> Result<bool, String> {
+    let state = app.state::<AppState>();
     require_preferences_or_local_app_webview(&webview, &state)?;
-    shutdown::with_navigation_authority(&app, || {
-        let dev_mode = is_dev_mode();
-        state
-            .manager
-            .stop_until(Instant::now() + Duration::from_secs(2))
-            .map_err(|e| e.to_string())?;
-        state
-            .manager
-            .start(app.clone(), dev_mode)
-            .map_err(|e| e.to_string())?;
-        Ok(state.manager.status())
-    })
-    .unwrap_or_else(|| Err("Application shutdown is in progress".to_string()))
+    let manager = state.manager.clone();
+    tauri::async_runtime::spawn_blocking(move || manager.renew_managed_session(&app))
+        .await
+        .map_err(|_| "Session renewal unavailable".to_string())?
+        .map_err(|_| "Session renewal unavailable".to_string())
 }
 
+#[tauri::command]
+async fn cli_restart(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<CliStatus, String> {
+    require_preferences_or_local_app_webview(&webview, &state)?;
+    let manager = state.manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // Admit before stopping, without holding the coordinator across the
+        // wait. start_checked rechecks admission before starting a replacement.
+        shutdown::with_navigation_authority(&app, || ())
+            .ok_or("Application shutdown is in progress")?;
+        let generation = manager
+            .stop_until_generation(Instant::now() + Duration::from_secs(2))
+            .map_err(|error| error.to_string())?;
+        manager
+            .start_checked(app, is_dev_mode(), Some(generation))
+            .map_err(|error| error.to_string())?;
+        Ok(manager.status())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+// Windows keepawake uses SetThreadExecutionState: acquire, release and window
+// destruction must use the same thread. Unix uses OS service requests instead.
+#[cfg(windows)]
 #[tauri::command]
 fn wake_lock_start(
     webview: tauri::Webview,
@@ -779,12 +816,21 @@ fn wake_lock_start(
     config: Option<WakeLockConfig>,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    let config = config.unwrap_or(WakeLockConfig {
-        display: false,
-        idle: true,
-        sleep: false,
-    });
+    apply_wake_lock(webview.app_handle(), webview.label(), Some(config.unwrap_or(DEFAULT_WAKE_LOCK_CONFIG)))
+}
 
+#[cfg(not(windows))]
+#[tauri::command]
+async fn wake_lock_start(
+    webview: tauri::Webview,
+    state: tauri::State<'_, AppState>,
+    config: Option<WakeLockConfig>,
+) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    change_wake_lock(webview.app_handle(), webview.label(), Some(config.unwrap_or(DEFAULT_WAKE_LOCK_CONFIG))).await
+}
+
+fn acquire_wake_lock(state: &mut WakeLockState, label: &str, config: WakeLockConfig) -> Result<(), String> {
     let mut builder = keepawake::Builder::default();
     builder
         .display(config.display)
@@ -794,23 +840,65 @@ fn wake_lock_start(
         .app_name("CodeNomad")
         .app_reverse_domain("ai.neuralnomads.codenomad.client");
 
-    let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
-    state_lock.labels.insert(webview.label().to_string());
-    if state_lock.handle.is_none() {
-        state_lock.handle = Some(builder.create().map_err(|err| err.to_string())?);
+    if state.handle.is_none() {
+        state.handle = Some(builder.create().map_err(|err| err.to_string())?);
+    }
+    state.labels.insert(label.to_string());
+    Ok(())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<AppState>) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    apply_wake_lock(webview.app_handle(), webview.label(), None)
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+async fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    change_wake_lock(webview.app_handle(), webview.label(), None).await
+}
+
+fn apply_wake_lock(app: &AppHandle, label: &str, config: Option<WakeLockConfig>) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut wake = state.wake_lock.lock().map_err(|err| err.to_string())?;
+    if let Some(config) = config {
+        if app.state::<local_windows::LocalWindows>().record(label).is_none() {
+            return Err("Window is no longer available".into());
+        }
+        return acquire_wake_lock(&mut wake, label, config);
+    }
+    wake.labels.remove(label);
+    if wake.labels.is_empty() {
+        wake.handle.take();
     }
     Ok(())
 }
 
-#[tauri::command]
-fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<AppState>) -> Result<(), String> {
-    require_local_app_webview(&webview, &state)?;
-    let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
-    state_lock.labels.remove(webview.label());
-    if state_lock.labels.is_empty() {
-        state_lock.handle.take();
+#[cfg(not(windows))]
+async fn change_wake_lock(app: &AppHandle, label: &str, config: Option<WakeLockConfig>) -> Result<(), String> {
+    let worker = app.clone();
+    let label = label.to_owned();
+    let (done, reply) = tokio::sync::oneshot::channel();
+    app.state::<AppState>().wake_lock_worker.enqueue(Box::new(move || {
+        let _ = done.send(apply_wake_lock(&worker, &label, config));
+    }))?;
+    reply.await.map_err(|err| err.to_string())?
+}
+
+fn release_destroyed_window_wake_lock(app: &AppHandle, label: &str) {
+    #[cfg(windows)]
+    let _ = apply_wake_lock(app, label, None);
+    #[cfg(not(windows))]
+    {
+        let worker = app.clone();
+        let label = label.to_owned();
+        let _ = app.state::<AppState>().wake_lock_worker.enqueue(Box::new(move || {
+            let _ = apply_wake_lock(&worker, &label, None);
+        }));
     }
-    Ok(())
 }
 
 fn is_dev_mode() -> bool {
@@ -857,7 +945,7 @@ fn should_open_external_url(url: &Url) -> bool {
 }
 
 /// The renderer's system opener (application and Preferences windows).
-#[tauri::command]
+#[tauri::command(async)]
 fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
     let url = Url::parse(&url).map_err(|error| error.to_string())?;
     if !should_open_external_url(&url) {
@@ -1417,7 +1505,7 @@ fn clear_remote_window_metadata(
     true
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn needs_local_certificate_install(
     webview: tauri::Webview,
     state: tauri::State<AppState>,
@@ -1456,16 +1544,20 @@ async fn open_remote_window(
         require_http_url(&payload.base_url, "baseUrl")?;
         let parsed = require_http_url(entry_url, "entryUrl")?;
         if payload.proxy_session_id.is_some() && parsed.scheme() == "https" {
-            let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
-                format!(
-                    "Failed to load the local HTTPS certificate for the remote proxy window: {err}"
-                )
-            })?;
-            if let Err(err) = cert_manager::trust_cert_in_store(&local_cert.ca_cert_der) {
-                return Err(format!(
-                    "Failed to trust the local CodeNomad CA certificate. Accept the certificate installation prompt and try again: {err}"
-                ));
-            }
+            tauri::async_runtime::spawn_blocking(|| {
+                let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
+                    format!(
+                        "Failed to load the local HTTPS certificate for the remote proxy window: {err}"
+                    )
+                })?;
+                cert_manager::trust_cert_in_store(&local_cert.ca_cert_der).map_err(|err| {
+                    format!(
+                        "Failed to trust the local CodeNomad CA certificate. Accept the certificate installation prompt and try again: {err}"
+                    )
+                })
+            })
+            .await
+            .map_err(|error| error.to_string())??;
         }
     }
 
@@ -1482,26 +1574,32 @@ fn collect_directory_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
         .collect()
 }
 
-fn emit_window_event(app_handle: &AppHandle, window_label: &str, event_name: &str) {
-    if let Some(webview) = app_handle.get_webview(window_label) {
-        let _ = webview.emit(event_name, ());
+type FolderDropEvent = (tauri::Webview, &'static str, Option<Vec<std::path::PathBuf>>);
+
+struct FolderDropEvents(std::sync::mpsc::Sender<FolderDropEvent>);
+
+impl FolderDropEvents {
+    fn new() -> Self {
+        let (sender, queue) = std::sync::mpsc::channel::<FolderDropEvent>();
+        std::thread::spawn(move || {
+            for (webview, event, paths) in queue {
+                if let Some(paths) = paths {
+                    let directories = collect_directory_paths(&paths);
+                    if !directories.is_empty() {
+                        let _ = webview.emit(event, json!({ "paths": directories }));
+                    }
+                } else {
+                    let _ = webview.emit(event, ());
+                }
+            }
+        });
+        Self(sender)
     }
-}
 
-fn emit_folder_drop_event(
-    app_handle: &AppHandle,
-    window_label: &str,
-    event_name: &str,
-    paths: &[std::path::PathBuf],
-) {
-    let directories = collect_directory_paths(paths);
-
-    if directories.is_empty() {
-        return;
-    }
-
-    if let Some(webview) = app_handle.get_webview(window_label) {
-        let _ = webview.emit(event_name, json!({ "paths": directories }));
+    fn send(app: &AppHandle, label: &str, event: &'static str, paths: Option<Vec<std::path::PathBuf>>) {
+        if let Some(webview) = app.get_webview(label) {
+            let _ = app.state::<Self>().0.send((webview, event, paths));
+        }
     }
 }
 
@@ -1726,11 +1824,7 @@ fn configure_developer_environment() {
 fn schedule_launch_drain(app: AppHandle, queue: Arc<launch::LaunchQueue>) {
     let dispatch = app.clone();
     let _ = app.run_on_main_thread(move || {
-        for intent in queue.drain() {
-            if let Err(error) = local_windows::handle_intent(&dispatch, intent) {
-                eprintln!("[tauri-startup] launch intent failed: {error}");
-            }
-        }
+        local_windows::handle_intents(&dispatch, queue.drain());
     });
 }
 
@@ -1809,17 +1903,15 @@ enum LocalCloseEventAction {
 /// A hidden `--connect-server` launch window holds no user state: it closes at once, without the
 /// renderer flush whose acknowledgement a renderer that never started cannot send.
 fn local_close_event_action(
-    consumed: Option<bool>,
-    in_flight: bool,
+    approved: Option<bool>,
     launch_window: bool,
 ) -> LocalCloseEventAction {
     if launch_window {
         return LocalCloseEventAction::Allow;
     }
-    match consumed {
+    match approved {
         Some(true) => LocalCloseEventAction::Allow,
         Some(false) => LocalCloseEventAction::Prevent,
-        None if in_flight => LocalCloseEventAction::Prevent,
         None => LocalCloseEventAction::Continue,
     }
 }
@@ -1986,7 +2078,9 @@ fn main() {
     let browser_controller = browser_controller::BrowserController::new(
         setup_scope.webview_data_directory.join("browser"),
     );
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().append_invoke_initialization_script(
+        "window.__CODENOMAD_CLIENT_STATE_DOCUMENT__ = new Promise(resolve => { window.__CODENOMAD_RESOLVE_CLIENT_STATE_DOCUMENT__ = resolve; });",
+    );
     #[cfg(target_os = "macos")]
     let builder = builder.append_invoke_initialization_script(
         "window.__CODENOMAD_NOTIFICATION_PERMISSION__ = true;",
@@ -2080,6 +2174,8 @@ fn main() {
             window_automation: Default::default(),
             browser_controller,
             wake_lock: Mutex::new(WakeLockState::default()),
+            #[cfg(not(windows))]
+            wake_lock_worker: client_state::IpcQueue::named("wake-lock"),
             remote_navigation: Mutex::new(HashMap::new()),
             remote_navigation_generation: AtomicU64::new(0),
             remote_profiles: Mutex::new(HashMap::new()),
@@ -2096,8 +2192,31 @@ fn main() {
             developer_browser_arguments,
             scoped_profile: setup_scope.scoped,
         })
+        .manage(client_state::IpcQueue::new())
+        .manage(FolderDropEvents::new())
         .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                let app = webview.app_handle();
+                if let (Ok(window_id), Some(state)) = (
+                    identity::local_window_id(webview.label()),
+                    app.try_state::<client_state::ClientState>(),
+                ) {
+                    let managed_backend = app.state::<AppState>().manager.status().url;
+                    if is_allowed_local_origin(payload.url(), managed_backend.as_deref()) {
+                        state.renderer_page_finished(&window_id, webview, payload.url());
+                    }
+                }
+            }
             if payload.event() == PageLoadEvent::Started {
+                let app = webview.app_handle();
+                if let (Ok(window_id), Some(state)) = (
+                    identity::local_window_id(webview.label()),
+                    app.try_state::<client_state::ClientState>(),
+                ) {
+                    let managed_backend = app.state::<AppState>().manager.status().url;
+                    let allowed = is_allowed_local_origin(payload.url(), managed_backend.as_deref());
+                    state.renderer_page_started(&window_id, allowed.then_some(payload.url()));
+                }
                 webview.app_handle().state::<notification_click::NotificationClicks>()
                     .forget_window(webview.label());
                 if !webview.label().starts_with("remote-") {
@@ -2112,20 +2231,6 @@ fn main() {
             if identity::local_window_id(webview.label()).is_ok()
                 && payload.event() == PageLoadEvent::Started
             {
-                let app = webview.app_handle();
-                let managed_backend = app.state::<AppState>().manager.status().url;
-                if is_allowed_local_origin(payload.url(), managed_backend.as_deref()) {
-                    if let (Ok(window_id), Some(state)) = (
-                        identity::local_window_id(webview.label()),
-                        app.try_state::<client_state::ClientState>(),
-                    ) {
-                        if let Err(error) =
-                            state.stage_renderer_page_load(&window_id, payload.url())
-                        {
-                            eprintln!("[client-state] failed to stage renderer page load: {error}");
-                        }
-                    }
-                }
                 let _ = webview
                     .app_handle()
                     .state::<local_windows::LocalWindows>()
@@ -2191,10 +2296,10 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(remote_dictation::with_relay(tauri::generate_handler![
+        .invoke_handler(remote_dictation::with_relay(client_state::with_ordered_ipc(device_speech_ipc::with_document_ingress(tauri::generate_handler![
             clipboard_attachments::read_clipboard_attachments,
             cli_get_status,
-            device_speech_ipc::device_speech_request,
+            cli_renew_managed_session,
             cli_restart,
             wake_lock_start,
             wake_lock_stop,
@@ -2205,7 +2310,6 @@ fn main() {
             preferences_window::open_preferences_window,
             preferences_window::preferences_window_ready,
             preferences_window::preferences_get_request,
-            preferences_window::preferences_accept_request,
             preferences_window::preferences_resolve_transition,
             preferences_window::preferences_opener_startup_state,
             preferences_window::memory_cleanup::preferences_memory_cleanup,
@@ -2214,20 +2318,11 @@ fn main() {
             preferences_window::memory_cleanup::memory_cleanup_result,
             preferences_window::memory_cleanup::memory_cleanup_claim,
             window_control,
+            start_native_window_drag,
             window_zoom::owned_webview_zoom,
             popup_titlebar_menu,
             open_remote_window,
             open_external_url,
-            client_state::client_state_claim_access,
-            client_state::client_state_load,
-            client_state::client_state_save,
-            client_state::client_state_commit_partitions,
-            client_state::client_state_load_partition,
-            client_state::client_state_set_restore_enabled,
-            client_state::client_state_clear,
-            client_state::client_state_renderer_flushed,
-            client_state::client_state_navigation_flushed,
-            client_state::client_state_startup_command_result,
             data_profile_cleanup::data_profiles_list_others,
             data_profile_cleanup::data_profiles_delete_others,
             data_profile_cleanup::data_profiles_set_next_launch,
@@ -2249,7 +2344,7 @@ fn main() {
             browser_target_claim_open,
             browser_target_ownership,
             browser_target_release_open
-        ]))
+        ]))))
         .on_menu_event(|app_handle, event| {
             if embedded_view::zoom::focused(app_handle, event.id().0.as_str()) {
                 return;
@@ -2359,7 +2454,7 @@ fn main() {
                     }
                 }
                 "open-about" | "help_open_about" => {
-                    // About opens Settings ÔåÆ Info ÔåÆ About from the most recently used
+                    // About opens Settings → Info → About from the most recently used
                     // application window, which brings the Preferences window forward.
                     let delivered = local_windows::update_flow_window(app_handle)
                         .is_some_and(|window| emit_menu_action_to(app_handle, &window, "open-about"));
@@ -2434,21 +2529,21 @@ fn main() {
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { paths, .. }),
                 ..
             } => {
-                emit_folder_drop_event(&app_handle, &label, "desktop:folder-drag-enter", &paths);
+                FolderDropEvents::send(&app_handle, &label, "desktop:folder-drag-enter", Some(paths));
             }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }),
                 ..
             } => {
-                emit_folder_drop_event(&app_handle, &label, "desktop:folder-drop", &paths);
+                FolderDropEvents::send(&app_handle, &label, "desktop:folder-drop", Some(paths));
             }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Leave),
                 ..
             } => {
-                emit_window_event(&app_handle, &label, "desktop:folder-drag-leave");
+                FolderDropEvents::send(&app_handle, &label, "desktop:folder-drag-leave", None);
             }
             tauri::RunEvent::WindowEvent {
                 label,
@@ -2476,19 +2571,10 @@ fn main() {
                     remote_dictation::remote_navigation_pending(&app_handle, &label, None);
                 }
                 if label == preferences_window::LABEL {
-                    client_state::capture_and_flush_window(&app_handle, &label);
                     if shutdown::exit_allowed(&app_handle) {
                         return;
                     }
                     if preferences_window::intercept_close(&app_handle) {
-                        api.prevent_close();
-                        return;
-                    }
-                    if let Err(error) = app_handle
-                        .state::<client_state::ClientState>()
-                        .set_preferences(None)
-                    {
-                        eprintln!("[client-state] failed to close Preferences: {error}");
                         api.prevent_close();
                     }
                     return;
@@ -2498,12 +2584,11 @@ fn main() {
                 }
                 let local_window = identity::local_window_id(&label).is_ok();
                 if local_window || label.starts_with("remote-") {
-                    let consumed = shutdown::consume_local_window_close(&app_handle, &label);
-                    let in_flight = shutdown::local_window_close_in_flight(&app_handle, &label);
+                    let approved = shutdown::local_window_close_status(&app_handle, &label);
                     let launch_window = local_window && app_handle
                         .state::<local_windows::LocalWindows>()
                         .is_connect_only(&label);
-                    match local_close_event_action(consumed, in_flight, launch_window) {
+                    match local_close_event_action(approved, launch_window) {
                         LocalCloseEventAction::Allow => return,
                         LocalCloseEventAction::Prevent => {
                             api.prevent_close();
@@ -2546,7 +2631,6 @@ fn main() {
                 if !label.starts_with("remote-") {
                     app_handle.state::<device_speech::DeviceSpeech>().revoke(Some(&label));
                 }
-                shutdown::local_window_destroyed(&app_handle, &label);
                 let _ = consume_approved_auxiliary_close(&app_handle, &label);
                 app_handle
                     .state::<AppState>()
@@ -2560,12 +2644,8 @@ fn main() {
                         state.unregister_window(&window_id);
                     }
                 }
-                if let Ok(mut wake) = app_handle.state::<AppState>().wake_lock.lock() {
-                    wake.labels.remove(&label);
-                    if wake.labels.is_empty() {
-                        wake.handle.take();
-                    }
-                }
+                shutdown::local_window_destroyed(&app_handle, &label);
+                release_destroyed_window_wake_lock(&app_handle, &label);
                 if let Ok(mut zoom) = app_handle.state::<AppState>().remote_zoom_levels.lock() {
                     zoom.remove(&label);
                 }
@@ -2859,7 +2939,9 @@ fn emit_menu_action_to(app_handle: &AppHandle, window: &tauri::Webview, action: 
 /// Native loading page and the server's non-application pages; the server
 /// serves the application for every other path.
 fn is_listenerless_document(url: &url::Url) -> bool {
-    matches!(url.path(), "/loading.html" | "/login" | "/remote-pair") || url.path().starts_with("/auth/")
+    url.as_str() == "about:blank"
+        || matches!(url.path(), "/loading.html" | "/login" | "/remote-pair")
+        || url.path().starts_with("/auth/")
 }
 
 /// The latest-release page omits prereleases. Without access to the saved feed,
@@ -2878,7 +2960,7 @@ fn open_releases_page(app_handle: &AppHandle) {
     }
 }
 
-/// Text of the native fallback when no application window can open Settings ÔåÆ Info.
+/// Text of the native fallback when no application window can open Settings → Info.
 fn about_fallback_text(version: &str) -> String {
     format!("CodeNomad {version}\nA desktop workspace for OpenCode.")
 }
@@ -3006,17 +3088,17 @@ mod menu_tests {
     }
 
     #[test]
-    fn approved_local_close_wins_over_its_in_flight_marker() {
+    fn local_close_only_allows_an_approved_request() {
         assert_eq!(
-            local_close_event_action(Some(true), true, false),
+            local_close_event_action(Some(true), false),
             LocalCloseEventAction::Allow
         );
         assert_eq!(
-            local_close_event_action(None, true, false),
+            local_close_event_action(Some(false), false),
             LocalCloseEventAction::Prevent
         );
         assert_eq!(
-            local_close_event_action(None, false, false),
+            local_close_event_action(None, false),
             LocalCloseEventAction::Continue
         );
     }
@@ -3024,9 +3106,9 @@ mod menu_tests {
     #[test]
     fn hidden_launch_windows_close_without_a_renderer_flush() {
         // Continue would request the flush that a launch window still on loading.html never acknowledges.
-        for (consumed, in_flight) in [(None, false), (None, true), (Some(false), false)] {
+        for approved in [None, Some(false), Some(true)] {
             assert_eq!(
-                local_close_event_action(consumed, in_flight, true),
+                local_close_event_action(approved, true),
                 LocalCloseEventAction::Allow
             );
         }

@@ -24,11 +24,17 @@ fn tap(rt: &mut Runtime<State>, key: &str) {
 fn opens_ten_thousand_rows_with_bounded_mounts_and_scrolls() {
     let mut rt = runtime();
     assert_eq!(rt.state.messages.len(), 10_000);
-    assert!(
-        rt.elements().len() < 250,
-        "only visible rows mount: {}",
-        rt.elements().len()
-    );
+    let mounted = rt.elements();
+    let rows = mounted
+        .iter()
+        .filter(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("synthetic-"))
+        })
+        .count();
+    assert!(rows < 64, "only visible rows mount: {rows}");
+    assert!(mounted.len() < 500, "bounded markup: {}", mounted.len());
     assert_eq!(rt.scroll_at_bottom("history"), Some(true));
     rt.wheel(400.0, 300.0, 1200.0);
     for _ in 0..90 {
@@ -39,6 +45,7 @@ fn opens_ten_thousand_rows_with_bounded_mounts_and_scrolls() {
     rt.state.incoming = Some(incoming);
     rt.poll = Some(poll);
     out.send_blocking(Event::Message(Message {
+        usage: None,
         id: "streaming-reading".into(),
         role: "assistant".into(),
         body: String::new(),
@@ -74,13 +81,18 @@ fn opens_ten_thousand_rows_with_bounded_mounts_and_scrolls() {
 #[test]
 fn long_realistic_paragraph_occupies_multiple_lines_in_the_transcript() {
     let mut state = init();
-    state.messages = vec![Message {
-        completed: true,
-        parts: vec![],
-        id: "long-paragraph".into(),
-        role: "assistant".into(),
-        body: "Un historique réel contient des paragraphes longs à lire intégralement. ".repeat(80),
-    }];
+    state.messages = vec![
+        Message {
+            usage: None,
+            completed: true,
+            parts: vec![],
+            id: "long-paragraph".into(),
+            role: "assistant".into(),
+            body: "Un historique réel contient des paragraphes longs à lire intégralement. "
+                .repeat(80),
+        }
+        .into(),
+    ];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 760.0), Env::new(true, 1.0));
     for _ in 0..12 {
@@ -108,7 +120,7 @@ fn multiline_input_submits_once_and_stream_preserves_unicode() {
     assert_eq!(rt.state.draft.text, "Bonjour 🦀\nDeuxième ligne");
     tap(&mut rt, "send");
     assert!(
-        matches!(commands.try_recv(), Ok(Command::Send(body)) if body == "Bonjour 🦀\nDeuxième ligne")
+        matches!(commands.try_recv(), Ok(Command::Prompt(body)) if body.text == "Bonjour 🦀\nDeuxième ligne")
     );
     tap(&mut rt, "send");
     assert!(commands.try_recv().is_err());
@@ -116,6 +128,7 @@ fn multiline_input_submits_once_and_stream_preserves_unicode() {
     rt.state.incoming = Some(incoming);
     rt.poll = Some(poll);
     out.send_blocking(Event::Message(Message {
+        usage: None,
         completed: false,
         parts: vec![],
         id: "live".into(),
@@ -155,7 +168,15 @@ fn consecutive_sends_keep_distinct_responses_and_reenable_send() {
         rt.paste(prompt.clone());
         rt.frame(0.0);
         tap(&mut rt, "send");
-        assert!(matches!(commands.try_recv(), Ok(Command::Send(body)) if body == prompt));
+        let Ok(Command::Prompt(body)) = commands.try_recv() else {
+            panic!("missing prompt")
+        };
+        assert_eq!(body.text, prompt);
+        out.send_blocking(Event::PromptAcknowledged {
+            attempted: body.id.unwrap(),
+            outcome: crate::transport::PromptOutcome::Confirmed(format!("confirmed-{turn}")),
+        })
+        .unwrap();
         assert!(rt.state.phase == Phase::Streaming);
         for (kind, fields) in [
             (
@@ -208,7 +229,7 @@ fn selects_code_and_routes_copy_to_memory_clipboard() {
     let body = rt
         .elements()
         .into_iter()
-        .find(|e| e.path.ends_with("/body-synthetic-9999"))
+        .find(|e| e.path.contains("/body-synthetic-9999/") && e.text.as_deref() == Some(CODE))
         .expect("last code visible");
     let [x, y, _, h] = body.rect;
     rt.pointer_down(x + 1.0, y + 3.0);

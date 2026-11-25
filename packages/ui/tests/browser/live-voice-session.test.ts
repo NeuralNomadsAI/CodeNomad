@@ -482,14 +482,25 @@ test("starting dictation aborts a pending Classic summary and suppresses its lat
     await page.evaluate(() => (window as any).fixture.holdClassicSummary())
     const more = page.locator(".prompt-actions-menu-trigger")
     await more.click()
-    await page.getByRole("menuitemcheckbox", { name: "Enable conversation mode" }).click()
+    const conversation = page.getByRole("menuitemcheckbox", { name: "Conversation mode", exact: true })
+    const dictation = page.getByRole("menuitemcheckbox", { name: "Dictation mode", exact: true })
+    await conversation.click()
     await more.click()
-    await page.getByRole("menuitemcheckbox", { name: "Disable conversation mode" }).waitFor()
+    assert.equal(await conversation.getAttribute("aria-checked"), "true")
+    assert.equal(await dictation.isDisabled(), true)
     await page.keyboard.press("Escape")
     await page.evaluate(() => (window as any).classic.emitSummary())
     await page.waitForFunction(() => (window as any).classic.probe.requested)
     await more.click()
-    await page.getByRole("menuitem", { name: "Dictate", exact: true }).click()
+    await conversation.click()
+    await more.click()
+    await dictation.click()
+    await more.click()
+    assert.equal(await dictation.getAttribute("aria-checked"), "true")
+    assert.equal(await conversation.isDisabled(), true)
+    await page.keyboard.press("Escape")
+    await page.locator(".voice-button").hover()
+    await page.mouse.down()
     await page.waitForFunction(() => (window as any).fixture.info.capture === 1)
     const result = await page.evaluate(async () => {
       const probe = (window as any).classic.probe
@@ -501,62 +512,44 @@ test("starting dictation aborts a pending Classic summary and suppresses its lat
   } finally { await context.close() }
 })
 
-for (const input of ["dictation", "API input test"] as const) {
-  test(`Classic holds new summaries until ${input} releases the microphone`, async () => {
-    const { page, context } = await fixture("gemini", true)
-    try {
-      const recording = input === "dictation" ? page : await context.newPage()
-      if (recording !== page) {
-        await recording.addInitScript(() => {
-          window.__CODENOMAD_WINDOW_CONTEXT__ = "preferences"
-          Object.assign(window, { electronAPI: { deviceSpeech: async ({ action }: { action: string }) => ({
-            ok: true, value: action === "claimMicrophone" ? { busy: null } : { engine: "api" },
-          }) } })
-        })
-        await recording.goto(page.url(), { waitUntil: "domcontentloaded" })
-        await recording.waitForFunction(() => Boolean((window as any).fixture?.openVoiceSettings))
-        await recording.evaluate(() => (window as any).fixture.openVoiceSettings())
-      }
+test("Classic holds new summaries until the API input test releases the microphone", async () => {
+  const { page, context } = await fixture("gemini", true)
+  try {
+    const recording = await context.newPage()
+    await recording.addInitScript(() => {
+      window.__CODENOMAD_WINDOW_CONTEXT__ = "preferences"
+      Object.assign(window, { electronAPI: { deviceSpeech: async ({ action }: { action: string }) => ({
+        ok: true, value: action === "claimMicrophone" ? { busy: null } : { engine: "api" },
+      }) } })
+    })
+    await recording.goto(page.url(), { waitUntil: "domcontentloaded" })
+    await recording.waitForFunction(() => Boolean((window as any).fixture?.openVoiceSettings))
+    await recording.evaluate(() => (window as any).fixture.openVoiceSettings())
 
-      await page.waitForFunction(() => Boolean((window as any).fixture?.holdClassicSummary))
-      await page.evaluate(() => (window as any).fixture.holdClassicSummary())
-      const more = page.locator(".prompt-actions-menu-trigger")
-      await more.click()
-      await page.getByRole("menuitemcheckbox", { name: "Enable conversation mode" }).click()
+    await page.waitForFunction(() => Boolean((window as any).fixture?.holdClassicSummary))
+    await page.evaluate(() => (window as any).fixture.holdClassicSummary())
+    const more = page.locator(".prompt-actions-menu-trigger")
+    await more.click()
+    await page.getByRole("menuitemcheckbox", { name: "Conversation mode", exact: true }).click()
+    await recording.getByRole("button", { name: "Test API input", exact: true }).click()
+    await recording.getByRole("button", { name: "Stop recording", exact: true }).waitFor()
 
-      if (input === "dictation") {
-        await more.click()
-        await page.getByRole("menuitem", { name: "Dictate", exact: true }).click()
-        await more.click()
-        await page.getByRole("menuitem", { name: "Stop recording and transcribe", exact: true }).waitFor()
-        await page.keyboard.press("Escape")
-      } else {
-        await recording.getByRole("button", { name: "Test API input", exact: true }).click()
-        await recording.getByRole("button", { name: "Stop recording", exact: true }).waitFor()
-      }
+    const probe = await page.evaluate(async () => {
+      const { classic } = window as any
+      classic.emitSummary()
+      await new Promise(requestAnimationFrame)
+      return { requested: classic.probe.requested, played: classic.probe.played }
+    })
+    assert.deepEqual(probe, { requested: false, played: 0 })
+    assert.equal(await recording.evaluate(() => (window as any).fixture.info.released), 0)
 
-      const probe = await page.evaluate(async () => {
-        const { classic } = window as any
-        classic.emitSummary()
-        await new Promise(requestAnimationFrame)
-        return { requested: classic.probe.requested, played: classic.probe.played }
-      })
-      assert.deepEqual(probe, { requested: false, played: 0 })
-      assert.equal(await recording.evaluate(() => (window as any).fixture.info.released), 0)
-
-      if (input === "dictation") {
-        await more.click()
-        await page.getByRole("menuitem", { name: "Cancel dictation", exact: true }).click()
-      } else {
-        await recording.getByRole("button", { name: "Stop recording", exact: true }).click()
-      }
-      await recording.waitForFunction(() => (window as any).fixture.info.released === 1)
-      await page.waitForFunction(() => (window as any).classic.probe.requested)
-      await page.evaluate(() => (window as any).classic.probe.release())
-      await page.waitForFunction(() => (window as any).classic.probe.played === 1)
-    } finally { await context.close() }
-  })
-}
+    await recording.getByRole("button", { name: "Stop recording", exact: true }).click()
+    await recording.waitForFunction(() => (window as any).fixture.info.released === 1)
+    await page.waitForFunction(() => (window as any).classic.probe.requested)
+    await page.evaluate(() => (window as any).classic.probe.release())
+    await page.waitForFunction(() => (window as any).classic.probe.played === 1)
+  } finally { await context.close() }
+})
 
 test("OpenAI final text replaces deltas; unknown tools fail closed", async () => {
   const { page, context, start, closed, snapshot, waitForSent } = await fixture("openai")
@@ -644,12 +637,14 @@ test("the composer opens consent, retains stopped turns, and keeps native input 
     assert.equal(await page.evaluate(() => (window as any).fixture.microphoneEnabled()), true)
 
     await menu().press("Enter")
-    await page.getByRole("menuitem", { name: "Dictate — Live conversation is using the microphone." }).waitFor()
+    const dictation = page.getByRole("menuitemcheckbox", { name: "Dictation mode", exact: true })
+    await dictation.waitFor()
+    assert.equal(await dictation.isDisabled(), true)
     await page.keyboard.press("Escape")
 
     const second = await context.newPage()
     try {
-      const unavailable = second.getByRole("menuitem", { name: "Dictate — Live conversation is using the microphone." })
+      const unavailable = second.getByRole("menuitemcheckbox", { name: "Dictation mode — Live conversation is using the microphone." })
       await second.goto(page.url(), { waitUntil: "domcontentloaded" })
       await second.getByRole("button", { name: "More actions", exact: true }).click()
       await unavailable.click()
@@ -676,7 +671,7 @@ test("the composer opens consent, retains stopped turns, and keeps native input 
     await page.waitForFunction(() => (window as any).fixture.info.released === 1)
     await live.getByText("Continued answer", { exact: true }).waitFor()
     await menu().press("Enter")
-    await page.getByRole("menuitem", { name: "Conversation mode", exact: true }).press("Enter")
+    await page.getByRole("menuitemcheckbox", { name: "Conversation mode", exact: true }).press("Enter")
     await page.waitForFunction(() => document.activeElement?.matches("#live-voice-conversation .window-close-button"))
     assert.equal(opens(), 1)
     await live.getByRole("button", { name: "Close", exact: true }).click()
@@ -989,7 +984,7 @@ test("reopening a consented conversation by keyboard leaves focus on the live wi
     await page.waitForFunction(() => (window as any).fixture.info.released === 1)
     const more = page.getByRole("button", { name: "More actions", exact: true })
     await more.press("Enter")
-    const conversation = page.getByRole("menuitem", { name: "Conversation mode", exact: true })
+    const conversation = page.getByRole("menuitemcheckbox", { name: "Conversation mode", exact: true })
     await conversation.focus()
     await page.evaluate(() => {
       const focus: string[] = []

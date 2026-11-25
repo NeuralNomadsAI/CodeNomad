@@ -7,7 +7,7 @@ use rune::Runtime;
 use serde_json::{Value, json};
 
 const DRAFT: &str = "Rune saved · été 🦀\nsecond line";
-fn edit(rt: &mut Runtime<State>, value: &str) {
+pub(super) fn edit(rt: &mut Runtime<State>, value: &str) {
     let files = rt.state.files.as_mut().unwrap();
     let scope = files.document.scope();
     files.document.input(scope).replace_text(value);
@@ -57,7 +57,10 @@ pub(super) fn run(rt: &mut Runtime<State>) -> Value {
     stage(rt, "document-race");
     confirm(rt, stale, true);
     wait(rt, "write version conflict", |s| {
-        s.files.as_ref().unwrap().document.error() == Some(Error::Conflict)
+        matches!(
+            s.files.as_ref().unwrap().document.error(),
+            Some(Error::Conflict(_))
+        )
     });
     assert_eq!(rt.state.files.as_ref().unwrap().document.edit().text, DRAFT);
     stage(rt, "document-conflict");

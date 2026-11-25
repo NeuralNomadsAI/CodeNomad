@@ -130,6 +130,9 @@ async fn create(
     let Some(path) = dunce::canonicalize(candidate).ok().filter(authorized) else {
         return bad_request("Workspace directory is not authorized".into());
     };
+    if crate::worktrees::fence::is_deleting_root(&crate::worktrees::fence::identity(&path)) {
+        return bad_request("Workspace directory is being removed".into());
+    }
     let validation = async {
         let deadline = tokio::time::Instant::now() + daemon::TIMEOUT;
         let endpoint = app.native.acquire(deadline).await?;
@@ -172,7 +175,6 @@ async fn create(
         }
     };
     let Some(location) = location else { return bad_request("OpenCode location is unavailable".into()) };
-    let _publish = app.project_mutation.lock().await;
     if let Err(e) = principal.live() {
         return e.into_response();
     }
@@ -180,6 +182,9 @@ async fn create(
         return bad_request("Workspace folder changed during opening".into());
     }
     let mut store = app.inner.lock().unwrap();
+    if crate::worktrees::fence::is_deleting_root(&crate::worktrees::fence::identity(&path)) {
+        return bad_request("Workspace directory is being removed".into());
+    }
     if store.workspaces.len() >= 128 {
         return bad_request("Too many open workspaces".into());
     }
@@ -213,7 +218,6 @@ async fn create(
 }
 
 async fn delete(State(app): State<Shared>, Path(id): Path<String>) -> Status {
-    let _mutation = app.project_mutation.lock().await;
     let mut store = app.inner.lock().unwrap();
     if let Some(index) = store.workspaces.iter().position(|w| w.id.to_string() == id) {
         app.remove(&mut store, index);
@@ -234,7 +238,6 @@ async fn cancel(
     input: Result<Json<Claim>, JsonRejection>,
 ) -> Result<Status, (Status, &'static str)> {
     let key = read_claim(input)?;
-    let _mutation = app.project_mutation.lock().await;
     let mut store = app.inner.lock().unwrap();
     if let Some(pending) = store.pending.get(&key) {
         pending.cancel();
@@ -325,5 +328,6 @@ impl App {
         store.released.remove(&workspace.id);
         self.emit_status(workspace.id, "disconnected", store.generation, Some("workspace stopped"));
         self.emit(json!({"type":"workspace.stopped","workspaceId":workspace.id,"reason":"deleted"}));
+        self.workspace_closed.notify_waiters();
     }
 }

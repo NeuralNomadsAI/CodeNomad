@@ -80,12 +80,12 @@ Reordena cualquier sección de Estado arrastrando o con las teclas Arriba/Abajo.
 
 Estado incluye información de tokens, Permisos, Uso del proveedor, shells en segundo plano, MCP y Plugins. Mientras la conversación tiene un [objetivo](conversations.md#goal), una línea de objetivo encima de estas secciones lo muestra; esa línea no es una sección y no se puede ocultar ni mover. Ocultar una sección no desactiva su servicio ni revoca permisos. Las disposiciones estrechas cierran los paneles que ya no caben en lugar de estrechar la conversación; un panel abierto en ellas flota sobre la conversación, y abrir un panel flotante cierra el otro.
 
-La disposición integrada es disposición de ventana, no una modificación del proyecto. Las casillas de extensiones son distintas: activan código en todos los proyectos que usan la configuración. **Restablecer** no cambia el consentimiento de extensiones. Consulta [Extensiones de panel](extensions.md).
+La disposición integrada pertenece a la ventana. La [casilla Misiones](missions.md#activation) también cambia la activación global del plugin y se omite al arrastrar sobre varias casillas. Las casillas de extensiones activan código en todos los proyectos que usan la configuración. **Restablecer** no cambia el consentimiento de extensiones. Consulta [Extensiones de panel](extensions.md).
 
 ## Detalle de la transcripción y tamaño del editor {#transcript-composer}
 
 1. Abre **Chat** para elegir los valores de detalle de la transcripción. Los preajustes son **Nada**, **Mínimo**, **Equilibrado** y **Todo**; los cambios individuales producen **Personalizado**.
-2. Establece el **Estado predeterminado** de cada fila (**Oculto**, **Colapsado** o **Expandido**) para el razonamiento, los diagnósticos, las entradas de herramientas, los tokens, los mensajes del sistema y cada tipo de herramienta, o usa el popup **Contenido de los mensajes** de la conversación, que comparte estas elecciones.
+2. Establece el **Estado predeterminado** de cada fila (**Oculto**, **Colapsado** o **Expandido**) o usa el popup **Contenido de los mensajes** de la conversación, que comparte estas opciones. En **Grupos de herramientas**, **Desactivado** muestra una tarjeta por llamada; **Colapsado** y **Expandido** determinan el estado inicial de los grupos.
 3. En **General**, marca **Mostrar la cronología de mensajes**, **Colocar las flechas de primer/último mensaje bajo la cronología**, **Dividir los diffs de las llamadas a herramientas** y **Poner en cola los prompts enviados** (pone en cola los prompts enviados mientras una sesión trabaja en lugar de dirigirla) según necesites.
 4. Cambia el tamaño del editor con su control; los borradores largos se desplazan dentro del campo.
 
@@ -112,6 +112,8 @@ El recuento de no leídos de la campana/historial, que solo cuenta las notificac
 Si el sistema admite acciones de notificación, al hacer clic en una notificación se muestra la conversación si sigue abierta. Que la ventana pase al primer plano depende del entorno de escritorio.
 
 ## Opciones avanzadas {#advanced}
+
+En Rune, enfoca la **i** junto a un interruptor desactivado para saber por qué no está disponible. El editor de configuración indica la línea de los errores de sintaxis JSON/JSONC y permite guardar.
 
 1. Abre **Avanzado**.
 2. Marca o desmarca solo las opciones que necesites; cada cambio se guarda mediante las preferencias de CodeNomad. Para cambiar el entorno de ejecución de las sesiones, expande el grupo plegado **Variables de entorno** al final.

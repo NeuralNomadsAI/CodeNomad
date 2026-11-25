@@ -4,6 +4,10 @@ A Mission keeps an objective, a coordinator conversation, tasks and their result
 
 If Missions is unavailable, **OpenCode settings** opens runtime recovery for a missing or failed plugin. **Server diagnostics** opens the diagnostic report in Settings → Info when the server's local Missions bridge is unavailable.
 
+## Show or hide Missions {#activation}
+
+In **Customize right panel**, check **Missions** to show the tab or uncheck it and confirm to hide it. This also writes `codenomad.missions` or `-codenomad.missions` in the connected OpenCode server’s Global configuration. Project rules can override Global. Turning it off deletes and pauses nothing, but scheduled runs can be missed. If the write fails, the tab keeps your visibility choice. **Reset** only resets the layout. **Status → Plugins** skips the warning for the exact Global disable; other disables still offer **Re-enable**.
+
 ## Create a Mission {#create}
 
 Remote connections use the same form and controls. Prefer HTTPS to protect network traffic.
@@ -25,6 +29,8 @@ For one-time Missions, agents can start, resume, pause gracefully, interrupt imm
 Agents can read, save, replace or rename, remove and repair saved configurations, including saving an existing Mission's instructions. They can also change global or playbook-specific profile and task-session defaults, restore inheritance, reset invalid preferences, and change the task-conversation deletion preference. The library and these preferences apply across the CodeNomad profile's projects. Project subagent depth supports 1–10 or **Inherit**, including repair of an empty configuration block. Each change checks the last-read value and preserves intervening human edits.
 
 **Save configuration**, in the footer beside Cancel and Create, names and saves a reusable configuration. It does not create or start a Mission. Scheduling and **Start automatically** are separate choices. The Missions gear opens Preferences, including the saved-configuration library; removing a configuration keeps existing missions and conversations.
+
+To replace a saved configuration, use its name and choose **Replace**. If several share that name, load the one you want to replace first. A new name saves a separate copy while the library has room.
 
 ### Objective, Title and Notes {#mission-instructions}
 

@@ -21,7 +21,7 @@ Wenn der Tunnel blockiert ist, das Backend aber über vertrauenswürdiges HTTPS 
 
 1. Öffnen Sie auf dem Host **Einstellungen → Remote-Zugriff → Fernsteuerung**.
 2. Wählen Sie unter **Direkte HTTPS-Kopplung** bei mehreren Einträgen die **HTTPS-Adresse** und dann **HTTPS-Kopplungslink erstellen**.
-3. Öffnen Sie den Link auf dem Gerät wie einen Tunnel-Link.
+3. Öffnen Sie den Link auf dem Gerät wie einen Tunnel-Link. Sie können ihn auf einer anderen Seite anklicken.
 
 Für den Link gelten dieselben Regeln (fünf Minuten, einmalig); er ersetzt jeden ungenutzten Link, und wiederholte falsche Codes werden gedrosselt. Ein Reverse-Proxy muss vertrauenswürdiges TLS terminieren, die ursprünglichen Header `Host` und `Origin` weitergeben und das Backend über Loopback oder ein geschütztes Netz erreichen.
 

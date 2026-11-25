@@ -6,7 +6,8 @@
 // then Rust's rollback; every layout is read by the TS functions and by Rust alike. Neither the account's npm
 // prefix nor its user PATH may change. `node opencode-install.mjs`
 import assert from "node:assert/strict"
-import { execFile, spawn } from "node:child_process"
+import { execFile } from "node:child_process"
+import { spawnFixtureChild as spawn } from "../../../scripts/native-fixture-guards.mjs"
 import { createHash } from "node:crypto"
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { createServer, request as httpRequest } from "node:http"

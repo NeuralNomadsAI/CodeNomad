@@ -80,12 +80,12 @@ Ordnen Sie jeden Statusabschnitt per Ziehen oder mit den Tasten Auf/Ab um. Sicht
 
 Status enthält Tokeninformationen, Berechtigungen, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Solange die Unterhaltung ein [Ziel](conversations.md#goal) hat, zeigt eine Zielzeile über diesen Abschnitten es an; diese Zeile ist kein Abschnitt und lässt sich weder ausblenden noch verschieben. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
 
-Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskästchen sind anders: Sie aktivieren Code über alle Projekte dieser Konfiguration. **Zurücksetzen** ändert keine Erweiterungszustimmung. Siehe [Panel-Erweiterungen](extensions.md).
+Das integrierte Layout gilt für das Fenster. Das [Kästchen Missionen](missions.md#activation) ändert auch die globale Plugin-Aktivierung und wird beim Ziehen über Kästchen übersprungen. Erweiterungskästchen aktivieren Code in allen Projekten dieser Konfiguration. **Zurücksetzen** ändert keine Erweiterungszustimmung. Siehe [Panel-Erweiterungen](extensions.md).
 
 ## Verlaufsdetails und Eingabegröße {#transcript-composer}
 
 1. Öffnen Sie **Chat**, um Standarddetails des Verlaufs zu wählen. Vorgaben sind **Nichts**, **Minimal**, **Ausgewogen** und **Alles**; Einzeländerungen erzeugen **Benutzerdefiniert**.
-2. Legen Sie für Denken, Diagnosen, Werkzeugeingaben, Tokens, Systemnachrichten und jeden Werkzeugtyp den **Standardzustand** jeder Zeile fest (**Ausgeblendet**, **Eingeklappt** oder **Erweitert**), oder verwenden Sie das Popup **Nachrichteninhalt** der Unterhaltung, das diese Auswahl teilt.
+2. Legen Sie den **Standardzustand** jeder Zeile fest (**Ausgeblendet**, **Eingeklappt** oder **Erweitert**), oder verwenden Sie das Popup **Nachrichteninhalt** der Unterhaltung mit denselben Einstellungen. Bei **Werkzeuggruppen** zeigt **Deaktiviert** jeden Aufruf auf einer eigenen Karte; **Eingeklappt** und **Erweitert** legen den Anfangszustand der Gruppen fest.
 3. Aktivieren Sie unter **Allgemein** nach Bedarf **Nachrichten-Zeitleiste anzeigen**, **Pfeile für erste/neueste Nachricht unter der Zeitleiste anzeigen**, **Diffs von Tool-Aufrufen geteilt anzeigen** und **Gesendete Prompts in die Warteschlange stellen** (Prompts, die während der Arbeit einer Sitzung gesendet werden, einreihen statt sie einzuschieben).
 4. Ändern Sie die Größe des Eingabefelds über dessen Größensteuerung; lange Entwürfe scrollen im Feld.
 
@@ -112,6 +112,8 @@ Die ungelesene Glocken-/Verlaufszahl, die nur an den Verlauf geleitete Benachric
 Wenn das System Benachrichtigungsaktionen unterstützt, zeigt ein Klick auf die Benachrichtigung die Unterhaltung an, sofern sie noch geöffnet ist. Ob das Fenster in den Vordergrund kommt, hängt von der Desktop-Umgebung ab.
 
 ## Erweiterte Optionen {#advanced}
+
+In Rune zeigt das **i** neben einem deaktivierten Schalter den Grund an, wenn Sie es fokussieren. Der Konfigurationseditor nennt bei JSON-/JSONC-Syntaxfehlern die Zeile; Speichern bleibt möglich.
 
 1. Öffnen Sie **Erweitert**.
 2. Aktivieren oder deaktivieren Sie nur die benötigten Optionen; jede Änderung wird über die CodeNomad-Einstellungen gespeichert. Um die Ausführungsumgebung der Sitzung zu ändern, klappen Sie die eingeklappte Gruppe **Umgebungsvariablen** am Ende auf.

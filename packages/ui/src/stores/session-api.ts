@@ -56,7 +56,7 @@ import {
   loading,
   setLoading,
   cleanupBlankSessions,
-  updateThreadTotalsForParent,
+  updateThreadTotalsForParents,
   setSessionPage,
   prependSessionListId,
   removeSessionListId,
@@ -479,7 +479,8 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   const client = instances().get(instanceId)?.client
   if (!client) return
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
-  const captured = new Map(sessions().get(instanceId) ?? [])
+  // Session maps are snapshots; retained rows protect the read across SSE.
+  const captured = sessions().get(instanceId) ?? new Map<string, Session>()
   let active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
   if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
   // An active-only map cannot explain a run that settled during an SSE gap.
@@ -510,10 +511,15 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
     if (baseline.status === "working" && !Object.prototype.hasOwnProperty.call(active, id)) settledWithoutEvent.push(id)
   }
   setSessions(previous => {
-    const next = new Map(previous)
-    const current = new Map(next.get(instanceId) ?? [])
+    const held = previous.get(instanceId)
+    if (!held) return previous
+    let current: Map<string, Session> | undefined
+    const update = (id: string, row: Session) => {
+      current ??= new Map(held)
+      current.set(id, row)
+    }
     for (const [id, baseline] of captured) {
-      const latest = current.get(id)
+      const latest = held.get(id)
       if (!latest) continue
       const info = outcomes.get(id)
       // Activity can release an acknowledged send's brief delivery hold even
@@ -521,16 +527,21 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
       if (outcomes.has(id) && !info && !Object.prototype.hasOwnProperty.call(active, id)) {
         const epoch = idleReadAdmissionEpoch(baseline, latest)
         if (epoch !== latest.idleReadAdmissionEpoch) {
-          current.set(id, { ...latest, idleReadAdmissionEpoch: epoch })
+          update(id, { ...latest, idleReadAdmissionEpoch: epoch })
         }
         continue
       }
+      // An unchanged, already-authoritative idle row needs neither a new
+      // object nor publication. Unknown and unsettled rows still reconcile.
+      if (latest === baseline && !info && !Object.prototype.hasOwnProperty.call(active, id)
+        && baseline.status === "idle" && baseline.runtimeStatusKnown && baseline.retry === null
+        && baseline.generationRecovery === null && baseline.outcome !== "interrupted"
+        && baseline.idleReadAdmissionEpoch === idleReadAdmissionEpoch(baseline)) continue
       const fetched = withRuntimeStatus(info ? toClientSessionV2(instanceId, info, baseline) : baseline, baseline, active)
       const merged = mergeFetchedSessionRuntimeState(fetched, baseline, latest)
-      if (merged) current.set(id, merged)
+      if (merged) update(id, merged)
     }
-    next.set(instanceId, current)
-    return next
+    return current ? new Map(previous).set(instanceId, current) : previous
   })
   reconcilePendingSessionIndicators(instanceId)
   for (const sessionId of settledWithoutEvent) observeNonEventSettlement(instanceId, sessionId)
@@ -1043,7 +1054,7 @@ async function fetchSessions(instanceId: string, options?: {
       cursors: new Set(response.nextCursor ? [response.nextCursor] : []),
       pages: 1,
     })
-    for (const rootId of rootIds) updateThreadTotalsForParent(instanceId, rootId)
+    updateThreadTotalsForParents(instanceId, rootIds)
 
     reconcilePendingSessionIndicators(instanceId)
 
@@ -1218,7 +1229,7 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
     if (root && !roots.includes(root.id)) roots.push(root.id)
   }
   setSessionPage(instanceId, roots, Boolean(response.nextCursor), false, response.nextCursor)
-  for (const rootId of roots) updateThreadTotalsForParent(instanceId, rootId)
+  updateThreadTotalsForParents(instanceId, roots)
 }
 
 export function excludeMissingMoveFromSearch(instanceId: string, sessionId: string): void {
@@ -1353,6 +1364,7 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     },
     revert: apiSession.revert,
     pendingPermission: existingSession?.pendingPermission,
+    pendingForm: existingSession?.pendingForm,
   }
 }
 
@@ -1444,7 +1456,7 @@ async function createSession(instanceId: string, agent?: string, location?: { di
 
     setSessions((prev) => {
       const next = new Map(prev)
-      const instanceSessions = next.get(instanceId) || new Map()
+      const instanceSessions = new Map(prev.get(instanceId))
       instanceSessions.set(session.id, session)
       next.set(instanceId, instanceSessions)
       return next
@@ -1651,14 +1663,13 @@ function removeSessionProjection(instanceId: string, sessionId: string, ownsSele
   clearSessionSeenInterruption(instanceId, sessionId)
   setSessionExpanded(instanceId, sessionId, false)
   setSessions((prev) => {
+    const held = prev.get(instanceId)
+    if (!held?.has(sessionId)) return prev
     const next = new Map(prev)
-    const instanceSessions = next.get(instanceId)
-    if (instanceSessions) {
-      instanceSessions.delete(sessionId)
-      if (instanceSessions.size === 0) {
-        next.delete(instanceId)
-      }
-    }
+    const instanceSessions = new Map(held)
+    instanceSessions.delete(sessionId)
+    if (instanceSessions.size === 0) next.delete(instanceId)
+    else next.set(instanceId, instanceSessions)
     return next
   })
 
@@ -2171,25 +2182,15 @@ async function loadMessages(
         modelID = defaultModel.modelId
       }
 
-      if (nextWindow.kind === "latest") setSessions((prev) => {
-        if (!isCurrent()) return prev
-        const next = new Map(prev)
-        const nextInstanceSessions = next.get(instanceId)
-        if (!nextInstanceSessions) return next
-        const existingSession = nextInstanceSessions.get(sessionId)
-        if (!existingSession) return next
-        nextInstanceSessions.set(sessionId, {
-          ...existingSession,
-          // Transcript metadata describes past execution, not the current
-          // selection. Only fill missing values, including when a user or native
-          // selection event changed them while this history request was pending.
-          agent: existingSession.agent || agentName,
-          model: existingSession.model.providerId && existingSession.model.modelId
-            ? existingSession.model
-            : providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
-        })
-        next.set(instanceId, nextInstanceSessions)
-        return next
+      if (nextWindow.kind === "latest") withSession(instanceId, sessionId, (existingSession) => {
+        if (!isCurrent()) return false
+        // Transcript metadata describes past execution. Only fill initially missing values.
+        const agent = existingSession.agent || agentName
+        const model = (!existingSession.model.providerId || !existingSession.model.modelId) && providerID && modelID
+          ? { providerId: providerID, modelId: modelID } : existingSession.model
+        if (agent === existingSession.agent && model === existingSession.model) return false
+        existingSession.agent = agent
+        existingSession.model = model
       })
 
       const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
@@ -2197,10 +2198,22 @@ async function loadMessages(
       }
       if (!isCurrent()) return false
       const expectedRevision = nextWindow.kind === "latest" && !initialSeed ? messageRevision : undefined
-      if ((!initialSeed && hasLatestRevisionConflict())
-        || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
+      // Short-circuit: a load already raced by a native event must not seed
+      // its stale snapshot at all (the retry re-fetches instead).
+      if (!initialSeed && hasLatestRevisionConflict()) {
+        retryAfterRevisionConflict = true
+      } else if (!(await seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false, true, true,
+        // A load that lost its authority while the chunked seed computed (a
+        // cancelled or superseded jump) must not publish; ordinary streaming
+        // keeps it, with the finalize pass deciding rows by freshness.
+        () => isCurrent(),
+        nextWindow.kind === "latest"))) {
         retryAfterRevisionConflict = true
       } else {
+        // The chunked seed awaited across task boundaries: the load's
+        // authority may have ended while its chunks computed. A cancelled or
+        // superseded load must not install its window.
+        if (!isCurrent()) return false
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
         commitCurrentWindow(nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)
@@ -2250,6 +2263,11 @@ async function loadMessages(
     try {
       if (sessions().get(instanceId)?.has(sessionId)) {
         if (revisionRetry >= MAX_LATEST_WINDOW_REVISION_RETRIES) {
+          // A load that lost its authority on its final attempt (cancelled or
+          // superseded between the retry's backoff and this check) fails
+          // silently: publishing a load error for a window nobody awaits
+          // would strand an error surface with no retry left.
+          if (!isCurrent()) return false
           const error = new Error(tGlobal("messageSection.loadError.detail"))
           setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
           throw error

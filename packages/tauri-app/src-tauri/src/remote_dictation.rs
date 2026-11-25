@@ -31,6 +31,7 @@ use window::{open_sheet, sheet_target_matches};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RemoteDocument {
+    instance: Arc<()>,
     started: bool,
     pub(crate) ready: bool,
     microphone_ready: bool,
@@ -38,6 +39,10 @@ pub(crate) struct RemoteDocument {
 }
 
 impl RemoteDocument {
+    fn matches(&self, instance: &Arc<()>) -> bool {
+        Arc::ptr_eq(&self.instance, instance)
+    }
+
     fn allows(&self, id: Uuid) -> bool {
         self.ready && self.cancelled.len() < MAX_CANCELLED_IDS && !self.cancelled.contains(&id)
     }
@@ -273,7 +278,7 @@ impl ApiMicrophonePurpose {
         }
     }
 
-    fn allows_engine(self, api_selected: impl FnOnce() -> bool) -> bool {
+    pub(crate) fn allows_engine(self, api_selected: impl FnOnce() -> bool) -> bool {
         // An input test is independent of the engine choice, but still needs
         // the same document checks and its own native consent to open the source.
         self == Self::InputTest || api_selected()
@@ -286,7 +291,6 @@ pub(crate) fn with_api_microphone_document<T>(
     label: &str,
     current: &Url,
     window_generation: u64,
-    purpose: ApiMicrophonePurpose,
     action: impl FnOnce(&str) -> T,
 ) -> Option<T> {
     let state = app.state::<AppState>();
@@ -295,8 +299,6 @@ pub(crate) fn with_api_microphone_document<T>(
     if entry.window_generation != window_generation
         || !entry.dictation_document.ready
         || !is_microphone_document(entry, current)
-        || !purpose
-            .allows_engine(|| app.state::<DeviceSpeech>().preferred_engine() == Ok(Some(Engine::Api)))
     {
         return None;
     }
@@ -500,11 +502,18 @@ fn remote_request(
     webview: &Webview,
     request: Request,
     current: Url,
+    document_instance: Option<Arc<()>>,
     resolver: &InvokeResolver,
 ) -> Result<(), &'static str> {
     let app = webview.app_handle();
     let state = app.state::<AppState>();
     let label = webview.label();
+    let speech = app.state::<DeviceSpeech>();
+    let preference = document_instance.as_ref().map(|_| speech.preferred_engine());
+    let read_choice = || match &preference {
+        Some(Ok(choice)) => Ok(*choice),
+        _ => Err("Device speech preference unavailable"),
+    };
     let requires_focus = matches!(
         request,
         Request::Begin { .. } | Request::ClaimMicrophone { .. }
@@ -522,15 +531,14 @@ fn remote_request(
         .map_err(|_| "Remote window registry unavailable")?;
     let registered = metadata
         .get_mut(label)
-        .filter(|entry| remote_origin_matches(&entry.origin, &current))
+        .filter(|entry| {
+            remote_origin_matches(&entry.origin, &current)
+                && document_instance.as_ref().is_none_or(|expected| {
+                    entry.dictation_document.matches(expected)
+                })
+        })
         .ok_or("Dictation requires a registered remote document")?;
     let document = &mut registered.dictation_document;
-    let speech = app.state::<DeviceSpeech>();
-    let read_choice = || {
-        speech
-            .preferred_engine()
-            .map_err(|_| "Device speech preference unavailable")
-    };
     match request {
         Request::ClaimMicrophone { .. } | Request::ReleaseMicrophone { .. } => {
             if !is_microphone_document(registered, &current) || !focused {
@@ -565,7 +573,7 @@ fn remote_request(
             if !is_microphone_document(registered, &current)
                 || !registered.dictation_document.allows(id)
                 || !focused
-                || !purpose.allows_engine(|| speech.preferred_engine() == Ok(Some(Engine::Api)))
+                || !purpose.allows_engine(|| read_choice() == Ok(Some(Engine::Api)))
             {
                 return Err("API microphone requires the focused remote application document");
             }
@@ -589,7 +597,7 @@ fn remote_request(
                 .ok_or("unavailable")?;
             if !capture
                 .purpose()
-                    .allows_engine(|| speech.preferred_engine() == Ok(Some(Engine::Api)))
+                    .allows_engine(|| read_choice() == Ok(Some(Engine::Api)))
             {
                 return Err("unavailable");
             }
@@ -766,8 +774,6 @@ fn settle(webview: &Webview, current: Url, request: Settlement) -> Result<(), St
 #[path = "remote_dictation_tests.rs"]
 mod tests;
 
-// Admission is synchronous in the native invoke handler. Only the begin's
-// response is deferred; the resolver belongs to that original IPC invocation.
 pub(crate) fn with_relay(generated: impl Fn(Invoke) -> bool) -> impl Fn(Invoke) -> bool {
     move |invoke| match dispatch(invoke) {
         Ok(()) => true,
@@ -779,13 +785,31 @@ fn dispatch(invoke: Invoke) -> Result<(), Invoke> {
     match invoke.message.command() {
         "remote_dictation_request" => {
             let result = primary_origin(&invoke).and_then(|url| {
-                remote_request(
-                    invoke.message.webview_ref(),
-                    parse(&invoke)?,
-                    url,
-                    &invoke.resolver,
-                )
-                .map_err(str::to_owned)
+                let request = parse(&invoke)?;
+                let webview = invoke.message.webview_ref();
+                let reads_preference = match &request {
+                    Request::Read {} | Request::Begin { .. } => true,
+                    #[cfg(target_os = "linux")]
+                    Request::StartApiMicrophone { .. } | Request::StartApiInputTest { .. }
+                    | Request::StatusApiMicrophone { .. } | Request::FinishApiMicrophone { .. } => true,
+                    _ => false,
+                };
+                if !reads_preference {
+                    return remote_request(webview, request, url, None, &invoke.resolver)
+                        .map_err(str::to_owned);
+                }
+                let state = webview.app_handle().state::<AppState>();
+                let document = state.remote_navigation.lock().ok()
+                    .and_then(|entries| entries.get(webview.label()).map(|entry| entry.dictation_document.instance.clone()))
+                    .ok_or("Dictation requires a registered remote document")?;
+                let webview = webview.clone();
+                let resolver = invoke.resolver.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(error) = remote_request(&webview, request, url, Some(document), &resolver) {
+                        resolver.reject(error);
+                    }
+                });
+                Ok(())
             });
             if let Err(error) = result {
                 invoke.resolver.reject(error);

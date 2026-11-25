@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "Error de sintaxis en la línea {line}",
   "settings.nav.servers": "Servidores",
   "settings.servers.open": "Abrir",
   "settings.servers.dialog.name": "Nombre",
@@ -251,6 +252,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "Salida",
   "contextUsagePanel.labels.cost": "Costo",
   "contextUsagePanel.included": "Incluido",
+  "contextUsagePanel.partialTotal": "Total parcial de la conversación",
+  "contextUsagePanel.totalUnavailable": "Total de la conversación no disponible",
   "contextUsagePanel.labels.totalInput": "Entrada total",
   "contextUsagePanel.labels.totalOutput": "Salida total",
   "contextUsagePanel.labels.totalCost": "Costo total",
@@ -442,7 +445,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "Versión de OpenCode",
   "settings.opencode.update.subtitle": "Versión instalada del binario de OpenCode configurado.",
   "settings.opencode.update.checking": "Leyendo la versión instalada...",
-  "settings.opencode.update.checkFailed": "No se pudo leer la versión instalada de OpenCode.",
+  "settings.opencode.update.checkFailed": "No se pudo comprobar si hay actualizaciones de OpenCode.",
   "settings.opencode.update.retry": "Reintentar",
   "settings.opencode.update.installed": "Versión instalada",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} está disponible. OpenCode V2 no admite la instalación automática.",
@@ -749,5 +752,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "Descargar .txt",
   "settings.info.diagnostics.reportBug": "Informar de un error",
   "settings.info.diagnostics.copied": "Diagnósticos copiados.",
+  "settings.info.actions.failed": "No se pudo completar la acción. Inténtalo de nuevo.",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI no proporciona datos de uso para este método de inicio de sesión de ChatGPT. Puedes seguir chateando.",
 } as const

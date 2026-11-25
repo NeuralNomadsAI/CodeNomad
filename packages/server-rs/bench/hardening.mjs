@@ -2,7 +2,7 @@
 // floods (M1), lexical paths and cross-site navigation (M2), Git configuration guard (M3), protected data
 // folder (F2), event stream budgets (F3). `node hardening.mjs <opencode executable>`
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile, rm } from "node:fs/promises"
 import { existsSync } from "node:fs"
@@ -13,7 +13,7 @@ import tls from "node:tls"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
-import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
 import { dropRegistration, out, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 const cli = process.argv[2]
@@ -171,14 +171,14 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
     const legitBrowse = await send(local, `/api/filesystem?path=repo`, { headers: H() })
     note("M2.legit-browse", { status: legitBrowse.status }, legitBrowse.status === 200)
 
-    // ---- M3: Git configuration guard
+    // ---- M3: Git configuration guard (passive reads; explicit mutations follow
+    // normal Git configuration for parity with `git-mutations.ts`, e.g. local LFS filters)
     const marker = path.join(home, "filter-ran.txt")
     const filterCmd = `touch '${marker.replaceAll("\\", "/")}'; cat`
     const gitRoutes = {
       status: () => send(local, `/api/workspaces/${id}/worktrees/root/git-status`, { headers: H() }),
       diff: () => send(local, `/api/workspaces/${id}/worktrees/root/git-diff?path=a.txt&scope=unstaged`, { headers: H() }),
-      stage: () => send(local, `/api/workspaces/${id}/worktrees/root/git-stage`, { method: "POST", headers: M(), body: JSON.stringify({ paths: ["a.txt"] }) }),
-      commit: () => send(local, `/api/workspaces/${id}/worktrees/root/git-commit`, { method: "POST", headers: M(), body: JSON.stringify({ message: "probe" }) }),
+      history: () => send(local, `/api/workspaces/${id}/worktrees/root/git-history`, { headers: H() }),
     }
     const baseline = await gitRoutes.status()
     note("M3.baseline", { status: baseline.status }, baseline.status === 200)
@@ -310,8 +310,9 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
   } finally {
     for (const s of open) s.destroy()
     child.stdin.write("shutdown\n")
-    await stopFixtureChild(child, stopped).catch(() => child.kill())
-    await dropRegistration(env, child.pid)
+    const pid = await fixtureChildPid(child)
+    await stopFixtureChild(child, stopped)
+    await dropRegistration(env, pid)
     await writeJson("hardening.json", { binary: bin, failures, results })
     await writeFile(path.join(out, "hardening-rs.log"), lines)
   }

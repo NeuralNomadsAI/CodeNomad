@@ -1,7 +1,7 @@
 // The real TS server of this checkout. With `CNRS_FIXTURE_URL`, on the fixture daemon only: discovery
 // returns its endpoint, ensure/restart are refused. Without it, its own CLI lifecycle (`service.mjs`).
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { readFile, realpath } from "node:fs/promises"
 import tls from "node:tls"
 import { fileURLToPath } from "node:url"
 import { dist, fromDist } from "./fixtures.mjs"
@@ -20,6 +20,19 @@ if (process.env.CNRS_FIXTURE_URL) {
   rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   OpenCodeCliService.prototype.discover = async () => endpoint
   for (const action of ["ensure", "restart"]) OpenCodeCliService.prototype[action] = async () => { throw new Error(`Fixture forbids service ${action}`) }
+}
+if (process.env.CNRS_FIXTURE_RELEASES) {
+  const { Agent, setGlobalDispatcher } = await import("undici")
+  const fixture = new URL(process.env.CNRS_FIXTURE_RELEASES)
+  assert.equal(fixture.href, `${fixture.origin}/`)
+  assert(fixture.hostname === "127.0.0.1" && fixture.protocol === "http:" && fixture.port)
+  setGlobalDispatcher(new class extends Agent {
+    dispatch(options, handler) {
+      if (String(options.origin) === "https://api.github.com" && options.path.startsWith("/repos/NeuralNomadsAI/CodeNomad/releases"))
+        return super.dispatch({ ...options, origin: fixture.origin }, handler)
+      return super.dispatch(options, handler)
+    }
+  }())
 }
 // `providers` mode: every HTTPS request goes to the bench's fake provider (`https://host/path` →
 // `<fake>/host/path`), so no provider is ever contacted.
@@ -59,5 +72,6 @@ if (process.env.CNRS_PREVIEW_TEST_TUNNEL === "1") {
     return start.call(this)
   }
 }
-process.argv[1] = fileURLToPath(entry)
+// Match index.js's import.meta.url even when dist is a junction to a separate reference build.
+process.argv[1] = await realpath(fileURLToPath(entry))
 await import(entry)

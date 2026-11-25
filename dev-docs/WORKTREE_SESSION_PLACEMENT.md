@@ -34,6 +34,15 @@
 
 Implementation:
 
+- Rust holds a shared deletion permit for each mutation's physical checkouts,
+  including a file's resolved write target. A deletion blocks and drains only
+  the checkouts it needs, reserves its target root against overlapping
+  workspace opens, and revalidates session families before evacuation. A
+  dispatched native mutation keeps its permit through the response body; a
+  disconnected observer leaves a bounded 60-second drain.
+- Prompt location selectors are resolved again before admission, including
+  paths whose subfolders have yet to be created. Worktree creation holds a
+  shared deletion permit while session moves in the same repository can proceed.
 - Rust root-session mutations verify the opened folder's native project, physical
   checkout, common Git directory and current filesystem identity through a bounded
   point read. Sibling checkout enumeration belongs to the worktree inventory and
@@ -63,11 +72,13 @@ Implementation:
 - The UI follows creation with the verified family transaction, using the
   returned identifier rather than guessing it from the branch name.
 - Native worktree events invalidate ownership and UI state. Opening the selector also
-  discovers external Git changes. Native session moves refresh the catalogue before
-  list reconciliation. When a move's destination does not exactly match the
-  opened folder or a listed worktree, consult a fresh inventory, then use a
-  workspace-scoped session read for any remaining miss. The proxy resolves aliases such as symlinks
-  and junctions. Move and restore placement reads return a registered worktree slug only
+  discovers external Git changes. An in-scope move with a held display root
+  adds that root directly when absent, preserving native parent links and
+  the list cursor. A missing root still needs inventory reconciliation. When a
+  move's destination does not exactly match the opened folder or a listed worktree,
+  consult a fresh inventory, then use a workspace-scoped session read for any
+  remaining miss. The proxy resolves aliases such as symlinks and junctions.
+  Move and restore placement reads return a registered worktree slug only
   when the ownership resolver matches its exact list directory. Live admission
   and catalogue filtering use that slug against the workspace inventory, as does
   the worktree selector for its current option. Execution keeps the native
@@ -265,3 +276,5 @@ authorized workspace spelling before changing UI state.
 - Worktree inventory snapshots live in `workspaces/worktree-inventory.ts`: display reads serve cached data and lazily revalidate, directory authorization uses validated reads, and family transactions force fresh reads. Invalidation retains display data and fences pending scans; `workspace.worktreesChanged` refreshes UI consumers after a changed snapshot is published. Keep selector opening independent of refresh completion and suppress duplicate selection events during inventory reconciliation.
   Strict directory-cache and native-inventory reads permit two automatic restarts, then one fresh read; another invalidation rejects that demand and permits a later retry. Ordinary readers keep trailing reloads until a current scan settles. Pending strict demands have their own retry budget while sharing native single-scan work and validated snapshots with ordinary readers.
 - Worktree branch/HEAD annotations use one NUL-delimited Git worktree snapshot, intersected with native inventory and verified Git identities; effective checkout roots must respect Git configuration as well as administrative backlinks. Pending move targets belong to the store's instance/family request identity and survive selector navigation/remounts until native reconciliation settles.
+  Root verification snapshots shared config before Git reads it and checks both shared and enabled per-worktree config files again before publishing. A changed file rejects the scan. Existing per-worktree config, shared root overrides and conditional includes use Git to resolve the effective root. Ordinary includes use one final expanded-config read for the whole scan. Queued per-checkout probes yield to authority commands with bounded overtaking.
+  After successful creation and branch attachment, a config change permits one retry of the result inventory only.

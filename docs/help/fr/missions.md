@@ -4,6 +4,10 @@ Une Mission rassemble un objectif, une conversation de coordination, des tâches
 
 Si Missions est indisponible, **Paramètres OpenCode** ouvre la récupération du service pour un plugin absent ou en échec. **Diagnostic serveur** ouvre le rapport de diagnostic dans Paramètres → Info lorsque le pont local Missions du serveur est indisponible.
 
+## Afficher ou masquer Missions {#activation}
+
+Dans **Personnaliser le panneau droit**, cochez **Missions** pour afficher l’onglet, ou décochez et confirmez pour le masquer. Ce geste écrit aussi `codenomad.missions` ou `-codenomad.missions` dans la configuration globale du serveur OpenCode connecté. Une règle du projet peut primer. Désactiver ne supprime ni ne met rien en pause, mais des exécutions planifiées peuvent être manquées. Si l’écriture échoue, l’onglet conserve la visibilité choisie. **Réinitialiser** n’agit que sur la disposition. **Statut → Plugins** omet l’avertissement pour cette règle globale exacte ; les autres désactivations proposent **Réactiver**.
+
 ## Créer une Mission {#create}
 
 Les connexions distantes utilisent le même formulaire et les mêmes commandes. Préférez HTTPS pour protéger les échanges réseau.
@@ -23,6 +27,8 @@ Les agents peuvent aussi diagnostiquer la programmation, préparer ses réglages
 Les agents peuvent lire, enregistrer, remplacer ou renommer, supprimer et réparer les configurations, y compris enregistrer les instructions d’une Mission existante. Ils peuvent aussi modifier les profils et sessions par défaut, globalement ou par scénario, rétablir l’héritage, réinitialiser les préférences invalides et modifier la préférence de suppression des conversations de tâches. La bibliothèque et ces préférences s’appliquent à tous les projets du profil CodeNomad. La profondeur des sous-agents du projet accepte 1 à 10 ou **Hériter**, avec réparation d’un bloc de configuration vide. Chaque modification vérifie la valeur lue et préserve les changements humains intervenus depuis.
 
 **Enregistrer la configuration**, en bas à côté d’Annuler et Créer, nomme et conserve une configuration réutilisable. Cette action ne crée ni ne démarre de Mission. Programmation et **Démarrer automatiquement** se règlent séparément. L’engrenage des Missions ouvre les Préférences et la bibliothèque ; supprimer une configuration conserve les missions et conversations existantes.
+
+Pour remplacer une configuration enregistrée, utilisez son nom et choisissez **Remplacer**. Si plusieurs portent ce nom, chargez d’abord celle à remplacer. Un nouveau nom crée une copie tant que la bibliothèque dispose de place.
 
 ### Objectif, Titre et Notes {#mission-instructions}
 

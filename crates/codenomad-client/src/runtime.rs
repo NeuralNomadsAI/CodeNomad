@@ -60,3 +60,22 @@ pub async fn recv_timeout<T>(
     })
     .await
 }
+
+pub async fn timeout<T>(duration: Duration, task: impl Future<Output = T>) -> Option<T> {
+    futures_lite::future::race(async { Some(task.await) }, async {
+        sleep(duration).await;
+        None
+    })
+    .await
+}
+
+pub async fn until_closed<T, U>(
+    sender: &async_channel::Sender<T>,
+    task: impl Future<Output = U>,
+) -> Option<U> {
+    futures_lite::future::race(async { Some(task.await) }, async {
+        sender.closed().await;
+        None
+    })
+    .await
+}

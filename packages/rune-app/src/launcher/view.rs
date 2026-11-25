@@ -1,41 +1,40 @@
-use crate::{State, launcher, strings::t};
+use crate::{State, components::button_tx, launcher, strings::t};
 use rune::{El, ScrollSpec, col, text};
 use rune_theme_codenomad::{
     Space, TextRole, field_kit,
-    layout::{self, Layout, hinted_field, literal_field},
+    layout::{self, Layout, literal_field},
 };
 #[cfg(test)]
 mod tests;
-pub fn button(key: &str, label: &str, disabled: bool, press: impl Fn(&mut State) + 'static) -> El {
-    layout::button(label, disabled, press).key(key.to_string())
-}
-pub fn button_tx(
-    key: &str,
-    label: &str,
-    disabled: bool,
-    press: impl Fn(&mut State, &mut rune::Tx) + 'static,
-) -> El {
-    layout::button_tx(label, disabled, press).key(key.to_string())
-}
 pub fn view(s: &State) -> El {
-    let crate::Screen::Launcher(l) = &s.screen else {
+    let Some(l) = s.screen.launcher() else {
         return rune::el();
     };
+    #[cfg(target_arch = "wasm32")]
+    if l.connection.is_none() && crate::platform::pairing::required(s) {
+        return rune::el();
+    }
     let scope = s.input_scope.clone();
     let waiting = !crate::workspace::input_ready(s);
+    #[cfg(target_arch = "wasm32")]
+    let password = !crate::platform::pairing::available();
+    #[cfg(not(target_arch = "wasm32"))]
+    let password = true;
     let mut body = col().full_width().separate(Space::Md);
-    if l.connection.is_none() {
+    let busy = l.pending || l.managed_renewal.is_some();
+    if l.connection.is_none() || l.authentication_required {
         body = body
             .child(text(t("rune.server")).text_role(TextRole::Title))
             .child(
                 literal_field(&l.address)
+                    .disabled(l.authentication_required)
                     .label(t("rune.server"))
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Address))
                     .build(field_kit(layout::dark()))
                     .key("server-address"),
-            )
-            .child(text(t("authRecovery.password")))
-            .child(
+            );
+        if password {
+            body = body.child(text(t("authRecovery.password"))).child(
                 literal_field(&l.password)
                     .label(t("authRecovery.password"))
                     .secure()
@@ -43,14 +42,28 @@ pub fn view(s: &State) -> El {
                     .on_submit(crate::screen::action_tx(&scope, launcher::connect))
                     .build(field_kit(layout::dark()))
                     .key("server-password"),
-            )
-            .child(button_tx(
-                "connect",
-                t("folderSelection.servers.dialog.connect"),
-                l.pending,
-                crate::screen::action_tx(&scope, launcher::connect),
-            ));
+            );
+        }
+        body = body.child(button_tx(
+            "connect",
+            t("folderSelection.servers.dialog.connect"),
+            busy,
+            crate::screen::action_tx(&scope, launcher::connect),
+        ));
     } else {
+        let mut browse = button_tx(
+            "browse",
+            t("folderSelection.browseMenu.title"),
+            l.pending || waiting || !crate::platform::folder_picker_available(),
+            crate::screen::action_tx(&scope, crate::platform::browse),
+        );
+        if crate::platform::folder_picker_available() {
+            browse = browse.help(crate::settings::with_shortcut_label(
+                s,
+                t("folderSelection.browseMenu.thisComputer"),
+                "browse-folder",
+            ));
+        }
         body = body
             .child(text(t("instanceInfo.labels.folder")).text_role(TextRole::Title))
             .child(
@@ -65,12 +78,7 @@ pub fn view(s: &State) -> El {
             .child(
                 rune_theme_codenomad::layout::action_row()
                     .separate(Space::Sm)
-                    .child(button_tx(
-                        "browse",
-                        t("folderSelection.browseMenu.title"),
-                        l.pending || waiting || !crate::platform::folder_picker_available(),
-                        crate::screen::action_tx(&scope, crate::platform::browse),
-                    ))
+                    .child(browse)
                     .child(button_tx(
                         "open-folder",
                         t("directoryBrowser.openCurrent"),
@@ -78,97 +86,32 @@ pub fn view(s: &State) -> El {
                         crate::screen::action_tx(&scope, launcher::open),
                     )),
             );
-        if l.project.is_none() {
-            for p in &l.projects {
-                let path = p.path.clone();
-                body = body.child(
-                    button_tx(
-                        &format!("project-{}", p.id),
-                        &p.path,
-                        l.pending || waiting,
-                        crate::screen::action_tx(&scope, move |s: &mut State, tx| {
-                            launcher::choose_project(s, &path, tx);
-                        }),
-                    )
-                    .literal_direction(),
-                );
-            }
-        } else {
-            body = body
-                .child(
-                    rune_theme_codenomad::layout::action_row()
-                        .separate(Space::Sm)
-                        .child(text(t("sessionList.header.title")).text_role(TextRole::Title))
-                        .child(button(
-                            "refresh-sessions",
-                            t("rune.refresh"),
-                            l.pending || waiting,
-                            crate::screen::action(&scope, |s: &mut State| launcher::list(s, false)),
-                        )),
+        if l.projects_stale {
+            body = body.child(button_tx(
+                "refresh-projects",
+                t("sessionList.loadError.retry"),
+                l.projects_refresh.is_some() || waiting,
+                crate::screen::action_tx(&scope, |s: &mut State, _| {
+                    launcher::refresh_projects(s);
+                }),
+            ));
+        }
+        for p in &l.projects {
+            let path = p.path.clone();
+            body = body.child(
+                button_tx(
+                    &format!("project-{}", p.id),
+                    &p.path,
+                    l.pending || waiting,
+                    crate::screen::action_tx(&scope, move |s: &mut State, tx| {
+                        launcher::choose_project(s, &path, tx);
+                    }),
                 )
-                .child(
-                    hinted_field(&l.search, t("rune.search"))
-                        .label(t("rune.search"))
-                        .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Search))
-                        .build(field_kit(layout::dark()))
-                        .key("session-search"),
-                );
-            let filter = l.search.text.to_lowercase();
-            let mut items = col().full_width().separate(Space::Xs);
-            for session in l
-                .sessions
-                .iter()
-                .filter(|s| s.title.to_lowercase().contains(&filter))
-            {
-                let id = session.id.clone();
-                let title = session.title.clone();
-                items = items.child(
-                    button(
-                        &format!("session-{id}"),
-                        if session.title.is_empty() {
-                            t("sessionList.session.untitled")
-                        } else {
-                            &session.title
-                        },
-                        l.pending || waiting,
-                        crate::screen::action(&scope, move |s: &mut State| {
-                            launcher::choose(s, id.clone(), title.clone())
-                        }),
-                    )
-                    .full_width(),
-                );
-            }
-            if l.sessions.is_empty() {
-                items = items.child(text(t("rune.empty_sessions")));
-            }
-            if l.next.is_some() {
-                items = items.child(button(
-                    "more-sessions",
-                    t("rune.more"),
-                    l.pending || waiting || l.sessions.len() >= 2000,
-                    crate::screen::action(&scope, |s: &mut State| launcher::list(s, true)),
-                ));
-            }
-            body = body
-                .child(col().key("session-list").full_width().child(items))
-                .child(text(t("sessionList.actions.newSession.title")))
-                .child(
-                    hinted_field(&l.title, t("rune.session_title"))
-                        .label(t("rune.session_title"))
-                        .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Title))
-                        .on_submit(crate::screen::action_tx(&scope, launcher::create))
-                        .build(field_kit(layout::dark()))
-                        .key("session-title"),
-                )
-                .child(button_tx(
-                    "create-session",
-                    t("rune.create"),
-                    l.pending || waiting || l.creation_uncertain || l.title.text.trim().is_empty(),
-                    crate::screen::action_tx(&scope, launcher::create),
-                ));
+                .literal_direction(),
+            );
         }
     }
-    if l.pending {
+    if busy {
         body = body.child(text(t("rune.loading")));
     }
     if let Some(error) = l.error {

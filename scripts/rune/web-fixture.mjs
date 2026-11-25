@@ -1,6 +1,6 @@
 //! Owned Rust static server and browser smoke fixture; upstream service discovery is closed.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
 import {createHash} from 'node:crypto'
 import {access, mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
@@ -72,8 +72,10 @@ try {
   const bytes = await wasm.body()
   assert.equal(createHash('sha256').update(bytes).digest('hex'), manifest.files.find(file => file.file === 'app_bg.wasm').sha256)
   proof.static = {html: true, wasmMime: wasm.headers()['content-type'], wasmBytes: bytes.length, wasmHashMatchesBundle: true}
+  const pasteOnly = process.argv.includes('--paste-only')
   const smoke = spawn(process.execPath, [path.join(root, 'scripts/rune/web-smoke.mjs'), '--url', `${origin}/`,
-    '--storage-state', storage, '--out', path.join(profile, 'browser'), '--executable', chromium.executablePath()], {cwd: root, windowsHide: true,
+    '--storage-state', storage, '--out', path.join(profile, 'browser'), '--executable', chromium.executablePath(),
+    ...(pasteOnly ? ['--paste-only'] : [])], {cwd: root, windowsHide: true,
       env, stdio: ['ignore', 'pipe', 'pipe']})
   let diagnostic = ''
   for (const stream of [smoke.stdout, smoke.stderr]) stream.on('data', chunk => {if (diagnostic.length < 65536) diagnostic += chunk})

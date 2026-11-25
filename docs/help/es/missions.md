@@ -4,6 +4,10 @@ Una Misión reúne un objetivo, una conversación del coordinador, tareas y resu
 
 Si Misiones no está disponible, **Ajustes de OpenCode** abre la recuperación del servicio para un plugin ausente o con errores. **Diagnóstico del servidor** abre el informe de diagnóstico en Configuración → Info cuando el puente local de Misiones del servidor no está disponible.
 
+## Mostrar u ocultar Misiones {#activation}
+
+En **Personalizar panel derecho**, marca **Misiones** para mostrar la pestaña o desmárcala y confirma para ocultarla. El gesto también escribe `codenomad.missions` o `-codenomad.missions` en la configuración global del servidor OpenCode conectado. Las reglas del proyecto pueden prevalecer. Desactivar no elimina ni pausa nada, pero pueden omitirse ejecuciones programadas. Si falla la escritura, la pestaña conserva la visibilidad elegida. **Restablecer** solo cambia la disposición. **Estado → Plugins** omite el aviso para esa regla global exacta; las demás desactivaciones siguen ofreciendo **Reactivar**.
+
 ## Crear una Misión {#create}
 
 Las conexiones remotas usan el mismo formulario y los mismos controles. Usa preferentemente HTTPS para proteger el tráfico de red.
@@ -23,6 +27,8 @@ También pueden diagnosticar la programación, preparar sus ajustes conservando 
 Los agentes pueden leer, guardar, reemplazar o renombrar, eliminar y reparar configuraciones, incluidas las instrucciones de una Misión existente. También pueden cambiar los perfiles y las sesiones predeterminados globalmente o por guion, restaurar la herencia, restablecer preferencias inválidas y cambiar la preferencia de eliminación de conversaciones de tareas. La biblioteca y estas preferencias se aplican a todos los proyectos del perfil de CodeNomad. La profundidad de subagentes del proyecto admite 1–10 o **Heredar**, incluida la reparación de un bloque de configuración vacío. Cada cambio comprueba el último valor leído y conserva las modificaciones humanas posteriores.
 
 **Guardar configuración**, abajo junto a Cancelar y Crear, conserva una configuración reutilizable sin crear ni iniciar una Misión. Programación e inicio automático se eligen aparte. El engranaje abre Preferencias y la biblioteca; eliminar una configuración conserva las misiones y conversaciones.
+
+Para sustituir una configuración guardada, usa su nombre y elige **Reemplazar**. Si varias tienen ese nombre, carga primero la que quieras sustituir. Un nombre nuevo guarda una copia mientras haya espacio en la biblioteca.
 
 ### Objetivo, Título y Notas {#mission-instructions}
 

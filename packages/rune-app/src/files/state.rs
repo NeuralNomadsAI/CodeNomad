@@ -9,6 +9,8 @@ use std::{
     sync::Arc,
 };
 
+const MAX_TRACKED_PATHS: usize = 1024;
+
 #[derive(Default)]
 struct Snapshot {
     directories: BTreeMap<String, Vec<Entry>>,
@@ -17,6 +19,7 @@ struct Snapshot {
     loaded: BTreeMap<String, u64>,
     versions: BTreeMap<String, u64>,
     version: u64,
+    latest_version: u64,
 }
 impl Snapshot {
     fn empty() -> Self {
@@ -45,7 +48,7 @@ pub struct Tree {
     state: Snapshot,
     cache: VecDeque<(String, Snapshot)>,
     requests: BTreeMap<String, Pending>,
-    errors: BTreeMap<String, String>,
+    errors: BTreeMap<String, codenomad_client::history::Error>,
     active: bool,
     closed: bool,
     dirty: bool,
@@ -77,7 +80,7 @@ impl Tree {
     pub fn select(&mut self, path: String) {
         self.state.selected = Some(path);
     }
-    pub fn errors(&self) -> &BTreeMap<String, String> {
+    pub fn errors(&self) -> &BTreeMap<String, codenomad_client::history::Error> {
         &self.errors
     }
     pub fn busy(&self, path: &str) -> bool {
@@ -164,11 +167,11 @@ impl Tree {
                 .map(|(_, state)| state)
         };
         if let Some(state) = state {
-            let version = state
-                .version
-                .max(state.versions.values().copied().max().unwrap_or(0))
-                + 1;
-            if let Some(path) = path {
+            state.latest_version += 1;
+            let version = state.latest_version;
+            if let Some(path) = path
+                && (state.versions.len() < MAX_TRACKED_PATHS || state.versions.contains_key(path))
+            {
                 state.versions.insert(path.into(), version);
             } else {
                 state.version = version;
@@ -304,6 +307,7 @@ impl Tree {
                 };
                 self.state.directories.retain(|key, _| !invalid(key));
                 self.state.loaded.retain(|key, _| !invalid(key));
+                self.errors.retain(|key, _| !invalid(key));
                 self.requests.retain(|key, pending| {
                     if invalid(key) {
                         pending.cancel.close();
@@ -317,7 +321,7 @@ impl Tree {
                 self.dirty |= self.visible().iter().any(|path| self.stale(path));
             }
             Err(error) => {
-                self.errors.insert(read.path, error.to_string());
+                self.errors.insert(read.path, error);
             }
         }
         true
@@ -343,4 +347,28 @@ fn descendant(candidate: &str, path: &str) -> bool {
     candidate
         .strip_prefix(path)
         .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_invalidations_collapse_to_directory_version_at_bound() {
+        let mut tree = Tree::new("/repo".into());
+        for index in 0..MAX_TRACKED_PATHS {
+            tree.invalidate("/repo", Some(&format!("dir-{index}")));
+        }
+        assert_eq!(tree.state.versions.len(), MAX_TRACKED_PATHS);
+        assert_eq!(tree.state.version, 0);
+        // Updating an already-tracked path keeps per-path tracking within bound.
+        tree.invalidate("/repo", Some("dir-0"));
+        assert_eq!(tree.state.versions.len(), MAX_TRACKED_PATHS);
+        assert_eq!(tree.state.version, 0);
+        // Exceeding MAX_TRACKED_PATHS collapses to a directory-wide invalidation.
+        tree.invalidate("/repo", Some("dir-overflow"));
+        assert!(tree.state.versions.is_empty());
+        assert_eq!(tree.state.version, (MAX_TRACKED_PATHS + 2) as u64);
+        assert_eq!(tree.state.version("."), (MAX_TRACKED_PATHS + 2) as u64);
+    }
 }

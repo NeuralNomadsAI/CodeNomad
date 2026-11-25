@@ -12,6 +12,7 @@ struct App {
     focus_target: bool,
     inline_target: bool,
     many: bool,
+    all_disabled: bool,
     hidden: bool,
     dialog: bool,
 }
@@ -24,6 +25,7 @@ fn descriptor(s: &App) -> Rc<Menu<App>> {
         s.dialog = !s.inline_target;
     });
     item.description = Some("Details".into());
+    item.disabled = s.all_disabled;
     item.checked = Some(true);
     item.select_before_close = s.gesture;
     if s.focus_target {
@@ -38,6 +40,7 @@ fn descriptor(s: &App) -> Rc<Menu<App>> {
         s.events.push("disabled".into())
     });
     disabled.disabled = true;
+    disabled.description = Some("Unavailable while busy".into());
     let mut items = vec![Rc::new(item), Rc::new(disabled)];
     if s.many {
         items.push(Rc::new(Item::new("last", "Last", |_, _| {})));
@@ -212,6 +215,8 @@ fn selection_runs_after_actual_focus_return_and_captures_original_descriptor() {
             .events
             .contains(&"restored:Some(\"cancel\")".into())
     );
+    // Advance past frame 0 of the dialog's entrance fade so its Cancel button is hittable.
+    rt.frame(0.016);
     tap(&mut rt, "cancel");
     assert_eq!(focused(&rt).as_deref(), Some("actions:trigger"));
 }
@@ -261,7 +266,7 @@ fn gesture_target_preserves_dialog_focus_but_moves_returned_trigger_focus() {
     }
 }
 #[test]
-fn trigger_arrows_open_at_enabled_edges_and_keep_menu_navigation() {
+fn trigger_arrows_open_at_edges_and_keep_menu_navigation() {
     let mut rt = runtime();
     rt.state.many = true;
     key(&mut rt, Key::Tab);
@@ -354,7 +359,7 @@ fn disabled_checked_and_description_match_accessible_contract() {
     );
     let elements = rt.elements();
     assert!(
-        !elements
+        elements
             .iter()
             .find(|e| e.key.as_deref() == Some("actions:item:disabled"))
             .unwrap()
@@ -369,6 +374,43 @@ fn disabled_checked_and_description_match_accessible_contract() {
     deliver(&mut rt);
     assert!(rt.state.menu.is_open("actions"));
     assert!(!rt.state.events.contains(&"disabled".into()));
+}
+#[test]
+fn all_disabled_actions_remain_reachable_and_inert() {
+    let mut rt = runtime();
+    rt.update(|s, _| s.all_disabled = true);
+    key(&mut rt, Key::Tab);
+    key(&mut rt, Key::Enter);
+    assert_eq!(focused(&rt).as_deref(), Some("actions:item:open"));
+    key(&mut rt, Key::Down);
+    assert_eq!(focused(&rt).as_deref(), Some("actions:item:disabled"));
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.focused && e.help.as_deref() == Some("Unavailable while busy"))
+    );
+    let mirror: serde_json::Value = serde_json::from_str(&rt.a11y_json()).unwrap();
+    assert!(
+        mirror
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["t"] == "Disabled" && e["d"] == "Unavailable while busy"),
+        "{mirror}"
+    );
+    assert!(
+        rt.accessibility_tree()
+            .nodes
+            .iter()
+            .any(|(_, node)| node.label() == Some("Disabled") && node.is_disabled())
+    );
+    key(&mut rt, Key::Enter);
+    key(&mut rt, Key::Text(" ".into()));
+    deliver(&mut rt);
+    assert!(rt.state.menu.is_open("actions"));
+    assert_eq!(rt.state.events, ["open:true"]);
+    key(&mut rt, Key::Escape);
+    assert_eq!(focused(&rt).as_deref(), Some("actions:trigger"));
 }
 #[test]
 fn removing_visible_owner_preserves_the_admitted_selection() {

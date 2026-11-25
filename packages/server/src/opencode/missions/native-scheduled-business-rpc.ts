@@ -7,6 +7,7 @@ import { Session } from "@opencode/schema/session"
 import { z } from "zod"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { MissionControlError } from "../../missions/control-error"
+import { truncateMissionText } from "../../missions/truncate-text"
 import { missionBusinessCall, missionBusinessMethods, missionBusinessResult, type MissionBusinessControl, type MissionBusinessMethod } from "../../missions/business-control"
 import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
 import { requiresMissionCalendar } from "../../missions/launch-policy"
@@ -229,7 +230,7 @@ export const registerNativeScheduledBusinessRpc = Effect.fn("missions.registerSc
           if (method === "execute") return executeNativeScheduledBusiness(runtime, entry, executeSchema.parse(input), found.binding,
             async id => (await source(ctx, id, run, entry.current))?.binding).catch((error: unknown) => {
             if (!(error instanceof MissionControlError)) throw error
-            return { selected: true, refusal: { message: error.message.slice(0, 4096) || error.code, code: error.code.slice(0, 240) } }
+            return { selected: true, refusal: { message: truncateMissionText(error.message, 4096) || error.code, code: error.code.slice(0, 240) } }
           })
           // A resumed original turn can reach context before its lost admission
           // ACK was published to the document. B alone reconciles that identity;

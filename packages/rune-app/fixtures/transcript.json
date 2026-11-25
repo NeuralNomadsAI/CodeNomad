@@ -1,0 +1,19 @@
+{
+  "id": "transcript",
+  "type": "assistant",
+  "agent": "build",
+  "model": {"providerID": "fixture", "id": "fixture"},
+  "time": {"created": 1, "completed": 2},
+  "tokens": {"input": 1250, "output": 340, "reasoning": 92, "cache": {"read": 240, "write": 32}},
+  "cost": 0.0068,
+  "content": [
+    {"type": "reasoning", "text": "Consider the result.", "time": {"created": 1000, "completed": 2000}},
+    {"type": "reasoning", "text": "**Check the output**\n\nVerify the sample trace.", "time": {"created": 2000, "completed": 4000}},
+    {"type": "text", "text": "## Results\n\n- **First**\n\n```rust\nlet count = 12;\n```"},
+    {"type": "tool", "id": "read", "name": "read", "state": {"status": "completed", "input": {"filePath": "src/demo.rs", "offset": 4}, "content": [{"type": "text", "text": "return 7;"}, {"type": "file", "name": "Sample image", "mime": "image/png", "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC"}]}},
+    {"type": "tool", "id": "edit", "name": "edit", "state": {"status": "completed", "input": {"filePath": "src/demo.rs"}, "metadata": {"files": [{"file": "src/demo.rs", "patch": "--- a/src/demo.rs\n+++ b/src/demo.rs\n@@ -1 +1 @@\n-return 7;\n+return 8;"}]}, "content": [{"type": "text", "text": "Edit applied."}]}},
+    {"type": "tool", "id": "shell", "name": "bash", "state": {"status": "completed", "input": {"command": "printf '%s' result", "description": "Print result"}, "content": [{"type": "text", "text": "\u001b[31mresult\u001b[0m"}]}},
+    {"type": "tool", "id": "search", "name": "grep", "state": {"status": "completed", "input": {"pattern": "return"}, "content": [{"type": "text", "text": "src/demo.rs:1:return 8;"}]}},
+    {"type": "tool", "id": "execute", "name": "execute", "state": {"status": "completed", "input": {"code": "// Inspect the sample"}, "metadata": {"toolCalls": [{"tool": "sample_read", "status": "completed", "input": {"label": "Nested input fixture"}}]}, "content": [{"type": "text", "text": "{\"count\":1}"}]}}
+  ]
+}

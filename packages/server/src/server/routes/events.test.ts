@@ -5,6 +5,7 @@ import Fastify from "fastify"
 import type { EventBus } from "../../events/bus"
 import type { Logger } from "../../logger"
 import { registerEventRoutes } from "./events"
+import { userFileDigest } from "../../opencode/session-pruning/user-file-reference"
 
 const logger = { debug() {}, trace() {}, isLevelEnabled() { return false } } as unknown as Logger
 
@@ -69,6 +70,31 @@ async function waitFor(check: () => boolean): Promise<void> {
 }
 
 describe("SSE backpressure", () => {
+  it("keeps the reference stream open after an inbox attachment above the client bound", async () => {
+    const test = harness()
+    try {
+      const response = test.app.inject({ url: "/api/events?clientId=client&connectionId=connection&userFiles=reference-v1" })
+      await waitFor(test.ready)
+      const bytes = Buffer.alloc(255 * 1024, 17)
+      const data = bytes.toString("base64")
+      test.emit({ type: "instance.event", instanceId: "work", event: { type: "session.inbox.enqueued", data: {
+        sessionID: "session", inboxID: "message", item: { type: "user", payload: {
+          text: "upload", files: [{ name: "fixture.bin", mime: "application/octet-stream", data }],
+        } },
+      } } })
+      test.emit({ type: "workspace.stopped", workspaceId: "marker", reason: "deleted" })
+      test.drain()
+      assert.deepEqual(test.counts(), { unsubscribed: 0, unregistered: 0 })
+      test.close()
+      const result = await response
+      assert.equal(result.statusCode, 200)
+      assert(result.body.includes(userFileDigest(bytes)))
+      assert(!result.body.includes(data))
+      assert.match(result.body, /"workspaceId":"marker"/)
+      assert(Buffer.byteLength(result.body) < 1024)
+    } finally { await test.app.close() }
+  })
+
   it("does not override the central CORS policy", async () => {
     const test = harness({ corsOrigin: false })
     try {

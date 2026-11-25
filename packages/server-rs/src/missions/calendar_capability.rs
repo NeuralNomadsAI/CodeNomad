@@ -67,11 +67,23 @@ pub(super) async fn config_entries(app: &App, endpoint: &Arc<Endpoint>, dir: &st
     Ok(ConfigEntries { entries, experimental })
 }
 
+pub(super) const INLINE_CONFIG_SOURCE: &str = "OPENCODE_CONFIG_CONTENT";
+pub(super) const REMOTE_CONFIG_SOURCE: &str = "well-known";
+
+pub(super) fn source_path(path: &str) -> Option<&str> {
+    (!matches!(path, INLINE_CONFIG_SOURCE | REMOTE_CONFIG_SOURCE)).then_some(path)
+}
+
 pub(super) fn experimental(entry: &Value) -> Option<&Value> {
     (entry["type"] == "document").then(|| entry["info"].get("experimental")).flatten()
 }
 
-pub(super) fn origin<'a>(entries: &'a [Value], provenance: &str) -> Option<&'a str> {
+pub(super) fn origin<'a>(entries: &'a [Value], flag: &'a Value) -> Option<&'a str> {
+    // Runtimes with the top-level setting name the deciding source themselves; pathless config has no file.
+    if let Some(path) = flag["path"].as_str().filter(|p| !p.is_empty()) {
+        return source_path(path);
+    }
+    let provenance = flag["provenance"].as_str()?;
     if !matches!(provenance, "experimental-block" | "all-flags") {
         return None;
     }
@@ -92,8 +104,23 @@ fn flag_origin_tracks_native_document_precedence() {
         json!({"type":"document","path":"/project","info":{"experimental":{"automations":false}}}),
         json!({"type":"directory","path":"/unrelated"}),
     ];
-    assert_eq!(origin(&entries, "experimental-block"), Some("/project"));
-    assert_eq!(origin(&entries, "all-flags"), Some("/global"));
+    assert_eq!(origin(&entries, &json!({"enabled":false,"provenance":"experimental-block"})), Some("/project"));
+    assert_eq!(origin(&entries, &json!({"enabled":true,"provenance":"all-flags"})), Some("/global"));
+    assert_eq!(
+        origin(&entries, &json!({"enabled":true,"provenance":"automations-setting","path":"/p.json"})),
+        Some("/p.json")
+    );
+    assert_eq!(origin(&entries, &json!({"enabled":true,"provenance":"automations-setting"})), None);
+    for path in [INLINE_CONFIG_SOURCE, REMOTE_CONFIG_SOURCE] {
+        assert_eq!(
+            origin(&entries, &json!({"enabled":false,"provenance":"automations-setting","path":path})),
+            None
+        );
+    }
+    assert_eq!(
+        origin(&[], &json!({"enabled":false,"provenance":"experimental-block","path":"/g.json"})),
+        Some("/g.json")
+    );
 }
 
 fn members(v: &Value) -> impl Iterator<Item = &Value> {
@@ -197,7 +224,10 @@ fn contract(doc: &Value) -> Result<(), &'static str> {
     }
     let schemas = &doc["components"]["schemas"];
     let schema = |v| Schema(schemas, v);
-    let valid = schema(&schemas["Config.InfoEncoded"]).field("experimental").field("automations").typed("boolean")
+    // The on/off setting is top-level `automations`, or `experimental.automations` on runtimes that read that block.
+    let config = schema(&schemas["Config.InfoEncoded"]);
+    let valid = (config.field("automations").typed("boolean")
+        || config.field("experimental").field("automations").typed("boolean"))
         && routes.iter().all(|&(path, method, action)| {
             let op = &paths[path][method];
             let params = || members(&op["parameters"]);
@@ -249,6 +279,98 @@ fn contract(doc: &Value) -> Result<(), &'static str> {
 mod tests {
     use super::*;
 
+    fn fixture() -> Value {
+        let string = json!({"type":"string"});
+        let number = json!({"type":"number"});
+        let reference = |name: &str| json!({"$ref": format!("#/components/schemas/{name}")});
+        let action = json!({"anyOf":[{
+            "type":"object",
+            "properties":{
+                "type":{"type":"string","enum":["prompt"]},
+                "prompt":string,
+                "to":{"anyOf":[{"type":"object","properties":{"session":string},"required":["session"]}]}
+            },
+            "required":["type","prompt","to"]
+        }]});
+        let triggers: Vec<Value> = ["at", "every", "cron"]
+            .into_iter()
+            .map(|kind| {
+                json!({
+                    "type":"object",
+                    "properties":{"type":{"type":"string","enum":[kind]}, kind: string, "tz": string},
+                    "required":["type", kind]
+                })
+            })
+            .collect();
+        let schemas = json!({
+            "Config.InfoEncoded": {
+                "type":"object",
+                "properties":{"experimental":{"type":"object","properties":{"automations":{"type":"boolean"}}}}
+            },
+            "Automation.Info": {
+                "type":"object",
+                "properties":{
+                    "id":string,"name":string,"projectID":string,"directory":string,"sessionID":string,
+                    "trigger":reference("Automation.Trigger"),"tz":string,"action":action,
+                    "status":{"type":"string","enum":["active","paused","done"]},
+                    "runCount":{"type":"integer","minimum":0},
+                    "nextDueAt":number,"expires":number,
+                    "time":{"type":"object","properties":{"created":number,"updated":number}}
+                },
+                "required":["id","name","projectID","directory","trigger","tz","action","status","runCount","time"]
+            },
+            "Automation.Trigger": {"anyOf": triggers},
+            "Automation.CreatePayload": {
+                "type":"object",
+                "properties":{
+                    "sessionID":string,"name":string,"trigger":reference("Automation.Trigger"),
+                    "action":action,"expires":string
+                },
+                "required":["name","trigger","action"]
+            }
+        });
+        let base = "/api/experimental/automation";
+        let item = "/api/experimental/automation/{automationID}";
+        let mut paths = serde_json::Map::new();
+        for (path, method, name) in [
+            (base, "post", "create"),
+            (base, "get", "list"),
+            (item, "get", "get"),
+            (item, "delete", "delete"),
+            ("/api/experimental/automation/{automationID}/pause", "post", "pause"),
+            ("/api/experimental/automation/{automationID}/resume", "post", "resume"),
+        ] {
+            let mut op = json!({"operationId": format!("experimental.automation.{name}")});
+            if name == "delete" {
+                op["responses"] = json!({"204":{}});
+            } else {
+                let data = if name == "list" {
+                    json!({"type":"array","items":reference("Automation.Info")})
+                } else {
+                    reference("Automation.Info")
+                };
+                op["responses"] = json!({"200":{"content":{"application/json":{"schema":{
+                    "type":"object","properties":{"data":data},"required":["data"]
+                }}}}});
+            }
+            if name == "list" {
+                op["parameters"] = json!([{"name":"sessionID","in":"query","required":false,"schema":{"anyOf":[string]}}]);
+            } else if path != base {
+                op["parameters"] = json!([{"name":"automationID","in":"path","required":true,"schema":string}]);
+            }
+            if name == "create" {
+                op["requestBody"] = json!({"content":{"application/json":{"schema":reference("Automation.CreatePayload")}}});
+            }
+            paths
+                .entry(path.to_owned())
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .unwrap()
+                .insert(method.to_owned(), op);
+        }
+        json!({"paths": paths, "components": {"schemas": schemas}})
+    }
+
     #[test]
     fn missing_operations_and_missing_payload_contract_are_distinct() {
         assert_eq!(contract(&json!({})), Err("missing-api"));
@@ -259,5 +381,18 @@ mod tests {
         document["paths"][format!("{base}/{{automationID}}/pause")] = json!({"post":{}});
         document["paths"][format!("{base}/{{automationID}}/resume")] = json!({"post":{}});
         assert_eq!(contract(&document), Err("incompatible-contract"));
+    }
+
+    #[test]
+    fn automations_setting_qualifies_at_top_level_or_in_experimental_block() {
+        let mut doc = fixture();
+        assert_eq!(contract(&doc), Ok(()));
+        doc["components"]["schemas"]["Config.InfoEncoded"]["properties"] =
+            json!({"automations":{"type":"boolean"},"experimental":{"type":"object","properties":{}}});
+        assert_eq!(contract(&doc), Ok(()));
+        doc["components"]["schemas"]["Config.InfoEncoded"]["properties"]["automations"]["type"] = json!("string");
+        assert_eq!(contract(&doc), Err("incompatible-contract"));
+        doc["components"]["schemas"]["Config.InfoEncoded"]["properties"] = json!({});
+        assert_eq!(contract(&doc), Err("incompatible-contract"));
     }
 }

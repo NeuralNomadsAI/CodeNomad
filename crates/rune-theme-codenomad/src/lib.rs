@@ -3,13 +3,28 @@
 pub mod action_menu;
 #[cfg(feature = "test-support")]
 pub mod action_menu_scene;
+pub mod ansi;
+pub mod attachment;
 pub mod catalogue;
+pub mod clipboard;
+pub mod document_reader;
+pub mod file_row_actions;
 mod generated_catalogues;
+mod generated_layout;
+pub mod git_diff;
+pub mod git_panel;
 pub mod interruption;
 mod kit;
 pub mod layout;
+pub mod markdown;
+pub mod palettes;
+pub mod provider_usage;
+pub mod settings;
+pub mod shell;
 pub mod tabs;
+pub mod timeline;
 mod tokens;
+pub mod usage;
 pub mod window_control;
 pub mod workspace_tree;
 pub use kit::{field_kit, kit};
@@ -24,9 +39,28 @@ fn document() -> &'static Value {
     DOCUMENT.get_or_init(|| serde_json::from_str(THEME).expect("generated CodeNomad theme"))
 }
 pub fn theme(dark: bool) -> &'static Theme {
-    static THEMES: [OnceLock<Theme>; 2] = [const { OnceLock::new() }; 2];
-    THEMES[dark as usize]
-        .get_or_init(|| Theme::from_value(document(), dark).expect("generated CodeNomad colors"))
+    if let Some(palette) = palettes::active(dark) {
+        return palette.theme();
+    }
+    static THEMES: [OnceLock<Theme>; 4] = [const { OnceLock::new() }; 4];
+    THEMES[palette_index(dark)].get_or_init(|| {
+        let doc = document();
+        if layout::source_palette() {
+            let product = serde_json::json!({
+                "blend": doc["blend"],
+                "name": doc["name"],
+                "light": doc["product"]["light"]["colors"],
+                "dark": doc["product"]["dark"]["colors"],
+            });
+            Theme::from_value(&product, dark)
+        } else {
+            Theme::from_value(doc, dark)
+        }
+        .expect("generated CodeNomad colors")
+    })
+}
+fn palette_index(dark: bool) -> usize {
+    2 * usize::from(layout::source_palette()) + usize::from(dark)
 }
 pub fn qualification_gaps() -> &'static [Value] {
     document()["gaps"]

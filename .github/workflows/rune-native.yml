@@ -7,6 +7,8 @@ on:
     paths:
       - 'Cargo.*'
       - 'packages/rune-app/**'
+      - 'packages/server-rs/**'
+      - 'packages/server/src/server/routes/auth-pages/**'
       - 'crates/**'
       - 'scripts/rune/**'
       - 'packages/ui/src/**'
@@ -14,14 +16,14 @@ on:
       - '.github/workflows/rune-native.yml'
       - 'package*.json'
   push:
-    branches: [feat/rust-server, 'codex/rune-*']
+    branches: [feat/rust-server, 'rune/*']
 
 permissions:
   contents: read
 
 concurrency:
   group: rune-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/feat/rust-server' }}
 
 jobs:
   headless:
@@ -52,12 +54,25 @@ jobs:
         with:
           toolchain: '1.99.1'
           targets: wasm32-unknown-unknown
-          components: rustfmt
+          components: rustfmt, clippy
       - name: Linux offscreen graphics dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libvulkan1
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libvulkan1 nasm
+      - name: Windows AVIF assembler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            choco install nasm --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'NASM installation failed' }
+            Add-Content -LiteralPath $env:GITHUB_PATH -Value 'C:\Program Files\NASM'
+          }
+      - name: macOS x86 AVIF assembler
+        if: runner.os == 'macOS'
+        run: |
+          if [[ "$(uname -m)" == x86_64 ]] && ! command -v nasm >/dev/null; then brew install nasm; fi
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install generator browser
         run: npx --workspace @codenomad/ui playwright install --with-deps chromium
@@ -69,17 +84,28 @@ jobs:
       - name: Check generated source and component inventory
         run: |
           node scripts/rune/generate-theme.mjs --check
+          node scripts/rune/generate-palettes.mjs --check
           node scripts/rune/generate-catalogues.mjs --check
+          node scripts/rune/generate-hotkeys.mjs --check
           node scripts/rune/component-inventory.mjs --check
           node --test scripts/rune/*.test.mjs
           node --test packages/rune-app/fixtures/*.test.mjs
           node --test scripts/perf/*.test.mjs
       - name: Build application and run native runtime tests
         run: |
-          cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -- --check
+          cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -p codenomad-windows-notifications -- --check
+          cargo fmt --manifest-path packages/server-rs/Cargo.toml -- --check
+          cargo clippy --locked -p codenomad-client -p codenomad-rune-app -- -D clippy::correctness -D clippy::suspicious
+          cargo clippy --locked --manifest-path packages/server-rs/Cargo.toml -- -D clippy::correctness -D clippy::suspicious
+          if [[ "$RUNNER_OS" != Windows ]]; then
+            cargo test --no-run --locked --manifest-path packages/server-rs/Cargo.toml
+          fi
           cargo test --locked --workspace
           cargo run --locked -p rune-style-policy -- packages/rune-app/src
           cargo build --locked -p codenomad-rune-app --bin codenomad-rune
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
+          fi
       - name: Build shared client, state and views for WebAssembly
         run: |
           cargo build --locked --target wasm32-unknown-unknown -p codenomad-client -p rune-theme-codenomad
@@ -104,23 +130,40 @@ jobs:
           node scripts/rune/parity/workspace-tree-row-native.mjs --binary "$CARGO_TARGET_DIR/debug/examples/workspace-tree-row$suffix"
       - name: Qualify restoration through the shared Rust server
         run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            # Windows defaults TMP/TEMP under the user profile, which serve.rs rejects.
+            win_temp="$(cygpath -w "$RUNNER_TEMP")"
+            TMP="$win_temp" TEMP="$win_temp" cargo test --locked --manifest-path packages/server-rs/Cargo.toml
+          else
+            cargo test --locked --manifest-path packages/server-rs/Cargo.toml
+          fi
           cargo build --locked --manifest-path packages/server-rs/Cargo.toml
           suffix=''
-          if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            suffix='.exe'
+          fi
           export RUNE_CLIENT_EXE="$CARGO_TARGET_DIR/debug/codenomad-rune$suffix"
           export RUNE_SERVER_EXE="$CARGO_TARGET_DIR/debug/codenomad-rs$suffix"
           node packages/rune-app/fixtures/launcher-fixture.mjs --workspace-claims
           node packages/rune-app/fixtures/launcher-fixture.mjs --restore-state
           node packages/rune-app/fixtures/launcher-fixture.mjs --files-state --document-state
+          if [[ "$RUNNER_OS" == Windows ]]; then node packages/rune-app/fixtures/launcher-fixture.mjs --git-panel; fi
           node packages/rune-app/fixtures/files-fixture.mjs
           node packages/rune-app/fixtures/files-fixture.mjs --write
           node packages/rune-app/fixtures/recovery-fixture.mjs
+          node packages/rune-app/fixtures/recovery-fixture.mjs --suspend
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            node packages/rune-app/fixtures/launcher-fixture.mjs --git-panel --place-worktree
+            node packages/rune-app/fixtures/launcher-fixture.mjs --git-panel --place-worktree --placement-ambiguity
+            node packages/rune-app/fixtures/launcher-fixture.mjs --git-panel --place-worktree --placement-busy
+          fi
       - name: Compare shared controls with Solid on Windows
         if: runner.os == 'Windows'
         run: |
           node scripts/rune/component-inventory.mjs
           node --import tsx scripts/rune/parity/window-close.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune.exe"
           node scripts/rune/parity/compare-window-close.mjs
+          node --import tsx scripts/rune/parity/preferences.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune.exe"
           node scripts/rune/parity/action-menu.mjs
           cp target/rune-inventory/components__action-overflow-menu.json target/rune-parity/action-menu/source-sheet.json
           node scripts/rune/parity/compare-action-menu.mjs --thresholds scripts/rune/parity/action-menu-thresholds.json
@@ -141,6 +184,7 @@ jobs:
           path: |
             target/rune-evidence/${{ runner.os }}/
             target/rune-parity/window-close/
+            target/rune-parity/preferences/
             target/rune-parity/action-menu/
             target/rune-parity/workspace-tree-row/
             target/rune-action-menu/

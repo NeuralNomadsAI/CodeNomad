@@ -142,6 +142,312 @@ test("configuration progress names save, confirmation, removal and read separate
   } finally { release(); await page.close() }
 })
 
+test("saving a configuration under the same name requires confirmation and keeps its ID", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const model = { version: 1, id: modelID, name: "Release brief", objective: "Original objective", notes: "", template: "custom" }
+  const fixture = await setup(page, { missionModels: [model] })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await pickBrief(page, modelID)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Updated objective")
+    await nameBrief(page, ` ${model.name} `)
+    const field = page.getByLabel(await text(page, "missions.models.name"), { exact: true })
+    const dialog = page.getByRole("dialog")
+    const confirm = dialog.getByRole("button", { name: "Replace", exact: true })
+    await field.press("Enter")
+    await confirm.waitFor({ timeout: 4000 })
+    assert.equal(fixture.writes.length, 0)
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    await dialog.waitFor({ state: "hidden" })
+    await field.and(page.locator(":focus")).waitFor()
+    assert.equal(await field.inputValue(), ` ${model.name} `)
+    assert.equal(fixture.writes.length, 0)
+    await field.press("Enter")
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).and(page.locator(":focus")).waitFor()
+    await page.keyboard.press("Tab")
+    await confirm.and(page.locator(":focus")).waitFor()
+    await page.keyboard.press("Enter")
+    await field.waitFor({ state: "hidden" })
+    await page.getByRole("button", { name: await text(page, "missions.create.brief.saveAs"), exact: true }).and(page.locator(":focus")).waitFor()
+    assert.equal(fixture.writes.length, 1)
+    assert.deepEqual(fixture.bucket().settings.missionModels, [{ ...model, objective: "Updated objective" }])
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Third objective")
+    await nameBrief(page, model.name)
+    await field.press("Enter")
+    await confirm.click()
+    await field.waitFor({ state: "hidden" })
+    assert.equal(fixture.writes.length, 2)
+    assert.deepEqual(fixture.bucket().settings.missionModels, [{ ...model, objective: "Third objective" }])
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("renaming or deleting a loaded duplicate-name configuration conflicts instead of overwriting its namesake", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const otherID = "00000000-0000-4000-8000-000000000002"
+  const first = { version: 1, id: modelID, name: "Release brief", objective: "Objective A", notes: "", template: "custom" }
+  const second = { version: 1, id: otherID, name: "Release brief", objective: "Objective B", notes: "", template: "custom" }
+  const fixture = await setup(page, { missionModels: [first, second] })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await pickBrief(page, first.id)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Edited A")
+    await nameBrief(page, first.name)
+    const field = page.getByLabel("Configuration name", { exact: true })
+    const renamed = { ...first, name: "Release brief archived" }
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionModels: [renamed, second] } })
+    await dispatchOwner(page, fixture.bucket())
+    await field.press("Enter")
+    await page.getByRole("alert").filter({ hasText: "Reload saved configurations, then try again." }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.equal(await field.inputValue(), first.name)
+    assert.deepEqual(fixture.bucket().settings.missionModels, [renamed, second])
+    assert.equal(fixture.writes.length, 0)
+    // Deleting the loaded entry leaves only its namesake; saving still conflicts instead of selecting the other ID.
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionModels: [second] } })
+    await dispatchOwner(page, fixture.bucket())
+    await page.getByRole("button", { name: "Reload saved configurations", exact: true }).click()
+    await page.getByRole("alert").waitFor({ state: "detached" })
+    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>('input[aria-label="Configuration name"]')?.disabled)
+    await field.press("Enter")
+    await page.getByRole("alert").filter({ hasText: "Reload saved configurations, then try again." }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.deepEqual(fixture.bucket().settings.missionModels, [second])
+    assert.equal(fixture.writes.length, 0)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("editing a loaded configuration elsewhere before opening Save reports a conflict instead of losing those changes", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const model = { version: 1, id: modelID, name: "Release brief", objective: "Original objective", notes: "Original notes", template: "custom" }
+  const fixture = await setup(page, { missionModels: [model] })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await pickBrief(page, modelID)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Local objective")
+    const changed = { ...model, notes: "Notes edited elsewhere" }
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionModels: [changed] } })
+    await dispatchOwner(page, fixture.bucket())
+    await nameBrief(page, model.name)
+    const field = page.getByLabel("Configuration name", { exact: true })
+    await field.press("Enter")
+    await page.getByRole("alert").filter({ hasText: "Reload saved configurations, then try again." }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.equal(await field.inputValue(), model.name)
+    assert.deepEqual(fixture.bucket().settings.missionModels, [changed])
+    assert.equal(fixture.writes.length, 0)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("saving a fresh draft binds repeat saves to its saved baseline and conflicts on concurrent notes edits", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const fixture = await setup(page)
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Fresh objective v1")
+    await page.getByLabel("Notes", { exact: true }).fill("Initial notes")
+    await nameBrief(page, "My draft")
+    const field = page.getByLabel("Configuration name", { exact: true })
+    await field.press("Enter")
+    await field.waitFor({ state: "hidden" })
+    assert.equal(fixture.writes.length, 1)
+    const saved = fixture.bucket().settings.missionModels[0]
+    assert.equal(saved.name, "My draft")
+    // Same-baseline repeat save from the still-open draft replaces the same ID after confirmation.
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Fresh objective v2")
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click()
+    await field.fill("My draft")
+    await field.press("Enter")
+    await page.getByRole("dialog").getByRole("button", { name: "Replace", exact: true }).click()
+    await field.waitFor({ state: "hidden" })
+    assert.equal(fixture.writes.length, 2)
+    const updated = fixture.bucket().settings.missionModels[0]
+    assert.equal(updated.id, saved.id)
+    assert.equal(updated.objective, "Fresh objective v2")
+    // Concurrent notes edit elsewhere before the next save must conflict instead of overwriting newer notes.
+    const remote = { ...updated, notes: "Notes edited elsewhere" }
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionModels: [remote] } })
+    await dispatchOwner(page, fixture.bucket())
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Fresh objective v3")
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click()
+    await field.fill("My draft")
+    await field.press("Enter")
+    await page.getByRole("alert").filter({ hasText: "Reload saved configurations, then try again." }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.equal(await field.inputValue(), "My draft")
+    assert.deepEqual(fixture.bucket().settings.missionModels, [remote])
+    assert.equal(fixture.writes.length, 2)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("saving a copy from a loaded configuration binds repeat saves to the copy baseline without losing concurrent notes", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const original = { version: 1, id: modelID, name: "Release brief", objective: "Objective A", notes: "Notes A", template: "custom" }
+  const fixture = await setup(page, { missionModels: [original] })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await pickBrief(page, original.id)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Copy objective v1")
+    await nameBrief(page, "My draft")
+    const field = page.getByLabel("Configuration name", { exact: true })
+    await field.press("Enter")
+    await field.waitFor({ state: "hidden" })
+    assert.equal(fixture.writes.length, 1)
+    assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), original.name)
+    const copy = fixture.bucket().settings.missionModels.find((item: { name: string }) => item.name === "My draft")
+    assert.ok(copy && copy.id !== original.id)
+    // Same-baseline repeat save updates the copy while keeping its ID and leaving the original intact.
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Copy objective v2")
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click()
+    await field.fill("My draft")
+    await field.press("Enter")
+    await page.getByRole("dialog").getByRole("button", { name: "Replace", exact: true }).click()
+    await field.waitFor({ state: "hidden" })
+    assert.equal(fixture.writes.length, 2)
+    const copyV2 = fixture.bucket().settings.missionModels.find((item: { id: string }) => item.id === copy.id)
+    assert.equal(copyV2.objective, "Copy objective v2")
+    assert.deepEqual(fixture.bucket().settings.missionModels.find((item: { id: string }) => item.id === original.id), original)
+    // Concurrent notes edit on the copy elsewhere before saving again must report a conflict.
+    const remoteCopy = { ...copyV2, notes: "Copy notes edited elsewhere" }
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionModels: [original, remoteCopy] } })
+    await dispatchOwner(page, fixture.bucket())
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Copy objective v3")
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click()
+    await field.fill("My draft")
+    await field.press("Enter")
+    await page.getByRole("alert").filter({ hasText: "Reload saved configurations, then try again." }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.equal(await field.inputValue(), "My draft")
+    assert.deepEqual(fixture.bucket().settings.missionModels, [original, remoteCopy])
+    assert.equal(fixture.writes.length, 2)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("a held save that completes while the editor is hidden retains its baseline for the same draft without retargeting another draft", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const fixture = await setup(page)
+  let release = () => {}, reached = () => {}
+  let hold = new Promise<void>(resolve => { release = resolve })
+  let started = new Promise<void>(resolve => { reached = resolve })
+  let holdWrite = false
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.route("**/api/storage/config/ui*", async route => {
+      if (holdWrite && route.request().method() !== "GET") { reached(); await hold }
+      return route.fallback()
+    })
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Hidden save v1")
+    await page.getByLabel("Notes", { exact: true }).fill("Initial notes")
+    await nameBrief(page, "My draft")
+    const field = page.getByLabel("Configuration name", { exact: true })
+    holdWrite = true
+    await field.press("Enter")
+    await started
+    // Switch away (editor stays mounted while hidden), then let the in-flight save succeed.
+    await page.evaluate(() => window.missionDefaultsModels.active(false))
+    release()
+    await page.waitForFunction(() => window.missionDefaultsModels.loaded() && window.missionDefaultsModels.preferences().missionModels.length === 1)
+    assert.equal(fixture.writes.length, 1)
+    assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest(".mission-brief-save"))), false, "completing while hidden does not steal focus")
+    const saved = fixture.bucket().settings.missionModels[0]
+    const remote = { ...saved, notes: "Remote notes while hidden" }
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionModels: [remote] } })
+    await dispatchOwner(page, fixture.bucket())
+    // Return to the same mounted draft: editing only objective and saving under the same name must conflict.
+    await page.evaluate(() => window.missionDefaultsModels.active(true))
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Hidden save v2")
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click()
+    await field.fill("My draft")
+    await field.press("Enter")
+    await page.getByRole("alert").filter({ hasText: "Reload saved configurations, then try again." }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.deepEqual(fixture.bucket().settings.missionModels, [remote])
+    assert.equal(fixture.writes.length, 1)
+    // A late save completion from a replaced/closed draft must never bind a new draft to its baseline.
+    hold = new Promise<void>(resolve => { release = resolve })
+    started = new Promise<void>(resolve => { reached = resolve })
+    await field.fill("Other draft")
+    await field.press("Enter")
+    await started
+    await page.evaluate(() => { window.missionDefaultsModels.view("closed"); window.missionDefaultsModels.view("create") })
+    holdWrite = false
+    release()
+    await page.waitForFunction(() => window.missionDefaultsModels.loaded() && window.missionDefaultsModels.preferences().missionModels.length === 2)
+    const other = fixture.bucket().settings.missionModels.find((item: { name: string }) => item.name === "Other draft")
+    const remoteOther = { ...other, notes: "Edited elsewhere" }
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionModels: [remote, remoteOther] } })
+    await dispatchOwner(page, fixture.bucket())
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Brand new draft")
+    await nameBrief(page, "Other draft")
+    await field.press("Enter")
+    await page.getByRole("dialog").getByRole("button", { name: "Replace", exact: true }).waitFor()
+    await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click()
+    assert.equal(fixture.writes.length, 2)
+    assert.deepEqual(fixture.errors, [])
+  } finally { release(); await page.close() }
+})
+
+test("a full library with duplicate names replaces only the loaded configuration", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const name = "A configuration whose name is longer than the sixty-character Mission title"
+  const models = Array.from({ length: 20 }, (_, index) => ({
+    version: 1, id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    name: index < 2 ? name : `Configuration ${index}`, objective: `Objective ${index}`, notes: "", template: "custom",
+  }))
+  const fixture = await setup(page, { missionModels: models })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("A draft")
+    await nameBrief(page, name)
+    const save = page.locator(".mission-brief-save").getByRole("button", { name: "Save configuration", exact: true })
+    assert.equal(await save.isDisabled(), true)
+    await page.getByText("Load the configuration you want to replace or use a different name.", { exact: true }).waitFor()
+    const field = page.getByLabel("Configuration name", { exact: true })
+    await field.press("Escape")
+    await pickBrief(page, models[1].id)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Updated objective")
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click()
+    assert.equal(await field.inputValue(), name)
+    await field.press("Enter")
+    await page.getByRole("dialog").getByRole("button", { name: "Replace", exact: true }).click()
+    await field.waitFor({ state: "hidden" })
+    const stored = fixture.bucket().settings.missionModels
+    assert.equal(stored.length, 20)
+    assert.deepEqual(stored.find(item => item.id === models[0].id), models[0])
+    assert.deepEqual(stored.find(item => item.id === models[1].id), { ...models[1], objective: "Updated objective" })
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("confirming replacement does not overwrite a concurrent edit", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const model = { version: 1, id: modelID, name: "Release brief", objective: "Original objective", notes: "", template: "custom" }
+  const fixture = await setup(page, { missionModels: [model] })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await pickBrief(page, modelID)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Local draft")
+    await nameBrief(page, model.name)
+    const field = page.getByLabel("Configuration name", { exact: true })
+    await field.press("Enter")
+    const replace = page.getByRole("dialog").getByRole("button", { name: "Replace", exact: true })
+    await replace.waitFor()
+    const changed = { ...model, objective: "Other window" }
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionModels: [changed] } })
+    await dispatchOwner(page, fixture.bucket())
+    await replace.click()
+    await page.getByRole("alert").filter({ hasText: "Reload saved configurations, then try again." }).waitFor()
+    assert.equal(await field.inputValue(), model.name)
+    assert.deepEqual(fixture.bucket().settings.missionModels, [changed])
+    assert.equal(fixture.writes.length, 0)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
 test("creation waits for loaded defaults and exposes exact requested choices", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let release!: () => void

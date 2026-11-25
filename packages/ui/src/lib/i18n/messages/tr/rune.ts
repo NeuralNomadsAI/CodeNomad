@@ -1,4 +1,8 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "Bu sunucu ek geçmişini desteklemiyor.",
+  "rune.attachments_missing": "Taslağın ekleri geri yüklenmedi.",
+  "rune.attachments_keep_text": "Yalnızca metni tut",
+  "rune.pairing_guide": "Eşleştirme bağlantısı oluşturmak için CodeNomad sunucusunda admin.sh veya admin.ps1 çalıştırın. Bağlantıyı bu cihazda başka bir sekmede açın.",
   "rune.loading": "Yükleniyor",
   "rune.ready": "Hazır",
   "rune.streaming": "Yanıt geliyor",

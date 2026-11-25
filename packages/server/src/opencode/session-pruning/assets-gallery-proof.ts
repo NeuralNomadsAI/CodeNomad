@@ -10,8 +10,10 @@ export const LOOKBACK_MESSAGES = 32
 export const LOOKBACK_BYTES = 32 * 1024 * 1024
 export const NOTICE_CAP = 4096
 export const NOTICE_ROW_LIMIT = 64 * 1024
-/** OpenCode's image tool: its tool-part name and its completion notices' `metadata.source`. */
-export const IMAGE_TOOL = "experimental_image_generate"
+/** OpenCode's image tool: its tool-part name and its completion notices' `metadata.source`,
+ * under either name, so history written by `experimental_image_generate` stays recognized. */
+const IMAGE_TOOLS: ReadonlySet<unknown> = new Set(["generate_image", "experimental_image_generate"])
+export const isImageTool = (name: unknown) => IMAGE_TOOLS.has(name)
 const PROMPT_BYTES = 8192
 const IMAGE_MIME = /^image\/(png|jpeg|gif|webp|avif)$/
 
@@ -107,7 +109,7 @@ export function coverage(db: DatabaseSync, sessionID: string, boundary: string |
     }
     scanned.push({ seq, bytes })
     for (const part of Array.isArray(data?.content) ? data.content : []) {
-      if (part?.type === "tool" && part.name === IMAGE_TOOL) calls.push({ seq, part })
+      if (part?.type === "tool" && isImageTool(part.name)) calls.push({ seq, part })
     }
   }
   const reachedStart = !stopped && rows.length < windowRows + LOOKBACK_MESSAGES
@@ -133,7 +135,7 @@ export function coverage(db: DatabaseSync, sessionID: string, boundary: string |
     .all(NOTICE_ROW_LIMIT, sessionID, floor === Infinity ? Number.MAX_SAFE_INTEGER : floor, through, ...after(boundary), NOTICE_CAP + 1)
   const capped = synthetic.length > NOTICE_CAP, kept = synthetic.slice(0, NOTICE_CAP)
   const undecoded = kept.filter(row => !row.ok).map(row => ({ seq: Number(row.seq), time: Number(row.time) }))
-  const notices = kept.filter(row => row.ok && row.source === IMAGE_TOOL && typeof row.job === "string").map(row => {
+  const notices = kept.filter(row => row.ok && isImageTool(row.source) && typeof row.job === "string").map(row => {
     const named = /Saved image: (.+) \(/.exec(typeof row.text === "string" ? row.text : "")?.[1]
     const file = row.state === "completed" && named && P.isAbsolute(named) && typeof row.stem === "string" && stemOf(named) === norm(row.stem)
       ? P.normalize(named) : undefined

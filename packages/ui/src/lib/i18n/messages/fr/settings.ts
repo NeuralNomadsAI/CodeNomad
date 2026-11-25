@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "Erreur de syntaxe à la ligne {line}",
   "settings.nav.servers": "Serveurs",
   "settings.servers.open": "Ouvrir",
   "settings.servers.dialog.name": "Nom",
@@ -251,6 +252,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "Sortie",
   "contextUsagePanel.labels.cost": "Coût",
   "contextUsagePanel.included": "Inclus",
+  "contextUsagePanel.partialTotal": "Total partiel de la conversation",
+  "contextUsagePanel.totalUnavailable": "Total de la conversation indisponible",
   "contextUsagePanel.labels.totalInput": "Entrée totale",
   "contextUsagePanel.labels.totalOutput": "Sortie totale",
   "contextUsagePanel.labels.totalCost": "Coût total",
@@ -442,7 +445,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "Version d’OpenCode",
   "settings.opencode.update.subtitle": "Version installée du binaire OpenCode configuré.",
   "settings.opencode.update.checking": "Lecture de la version installée...",
-  "settings.opencode.update.checkFailed": "Impossible de lire la version installée d’OpenCode.",
+  "settings.opencode.update.checkFailed": "Impossible de vérifier les mises à jour d’OpenCode.",
   "settings.opencode.update.retry": "Réessayer",
   "settings.opencode.update.installed": "Version installée",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} est disponible. L’installation automatique n’est pas prise en charge par OpenCode V2.",
@@ -749,5 +752,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "Télécharger .txt",
   "settings.info.diagnostics.reportBug": "Signaler un bug",
   "settings.info.diagnostics.copied": "Diagnostics copiés.",
+  "settings.info.actions.failed": "Impossible de terminer l’action. Réessayez.",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI ne permet pas de consulter l'utilisation avec cette méthode de connexion ChatGPT. Les conversations restent disponibles.",
 } as const

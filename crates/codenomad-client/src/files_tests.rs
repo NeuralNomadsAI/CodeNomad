@@ -1,6 +1,6 @@
 use crate::{
     backend::{Backend, read_json},
-    files::{EntryKind, MAX_ENTRIES, MAX_FILE_BYTES},
+    files::{EntryKind, ListingTooLarge, MAX_ENTRIES, MAX_FILE_BYTES},
     http::Http,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -77,6 +77,7 @@ impl Server {
                 workspace: "workspace".into(),
                 session: String::new(),
                 client_id: "files-fixture".into(),
+                session_directory: None,
                 fresh_mode: false,
             },
             requests,
@@ -110,6 +111,24 @@ fn run(test: impl std::future::Future<Output = ()>) {
 }
 fn preview(bytes: &[u8]) -> Value {
     json!({"workspaceId":"workspace","relativePath":"code.bin","encoding":"base64","contents":STANDARD.encode(bytes),"version":"opaque W/\"v:été\""})
+}
+
+#[test]
+fn listing_limit_is_distinct_from_an_unrelated_bad_request() {
+    run(async {
+        let server = Server::new(vec![
+            (400, br#"{"error":"Directory listing too large"}"#.to_vec()),
+            (400, br#"{"error":"Invalid file path"}"#.to_vec()),
+            (
+                200,
+                serde_json::to_vec(&vec![Value::Null; MAX_ENTRIES + 1]).unwrap(),
+            ),
+        ]);
+        for too_large in [true, false, true] {
+            let error = server.backend.files("/trial", "src").await.unwrap_err();
+            assert_eq!(error.is::<ListingTooLarge>(), too_large);
+        }
+    });
 }
 
 #[test]
@@ -266,6 +285,7 @@ fn invalid_scopes_do_not_dispatch_any_http_request() {
             workspace: "workspace".into(),
             session: String::new(),
             client_id: "fixture".into(),
+            session_directory: None,
             fresh_mode: false,
         };
         for directory in ["", "relative", "C:relative", "/bad\0dir"] {

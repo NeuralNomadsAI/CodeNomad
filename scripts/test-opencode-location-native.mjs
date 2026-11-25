@@ -2,7 +2,8 @@
 // testNativeLocationIdentity from an already-isolated native test. No discovery,
 // shared daemon, user config or non-fixture database is ever used.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
+import { spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
 import os from "node:os"

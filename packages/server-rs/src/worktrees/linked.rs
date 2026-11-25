@@ -2,6 +2,7 @@
 pub use super::inventory::{
     Catalogue, EventCache, Tree, catalogue, event_catalogue, forget, invalidate, readable_checkout, scope,
 };
+pub(crate) use super::inventory::{RootCheckout, catalogue_with_local, probe_root_checkout};
 use crate::{App, Error, Shared, Workspace, error, files, git, opencode::proxy};
 use axum::{
     Extension, Json,
@@ -38,11 +39,30 @@ pub async fn native(
     body: Option<Value>,
     max: usize,
 ) -> Result<Value, Error> {
-    let mut request = app
-        .native
-        .request(method, app.native.url().join(path).map_err(|_| native_error())?)
-        .query(query)
-        .timeout(Duration::from_secs(12));
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let endpoint = app.native.acquire(deadline).await.map_err(|_| native_error())?;
+    let url = endpoint.url.join(path).map_err(|_| native_error())?;
+    let request = app.native.client.request(method, url).basic_auth("opencode", Some(&endpoint.password));
+    send(request, query, body, max).await
+}
+
+pub(super) async fn send(
+    request: reqwest::RequestBuilder,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+) -> Result<Value, Error> {
+    send_with_timeout(request, query, body, max, Duration::from_secs(60)).await
+}
+
+pub(super) async fn send_with_timeout(
+    request: reqwest::RequestBuilder,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+    timeout: Duration,
+) -> Result<Value, Error> {
+    let mut request = request.query(query).timeout(timeout);
     if let Some(body) = body {
         request = request.json(&body);
     }
@@ -55,6 +75,39 @@ pub async fn native(
 async fn native_get(app: &App, path: &str, max: usize) -> Result<Value, Error> {
     native(app, Method::GET, path, &[], None, max).await
 }
+/// `DELETE /api/worktree` without force, pinned to an acquired endpoint.
+async fn delete_worktree_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    project: &str,
+    directory: &str,
+) -> Result<(), Error> {
+    if !app.native.current(endpoint) {
+        return Err(native_error());
+    }
+    let body = json!({"projectID": project, "directory": directory, "force": false});
+    let url = endpoint.url.join("/api/worktree").map_err(|_| native_error())?;
+    let request = app.native.client.request(Method::DELETE, url).basic_auth("opencode", Some(&endpoint.password));
+    send(request, &[], Some(body), 16384).await.map(drop)
+}
+
+async fn native_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    method: Method,
+    path: &str,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+) -> Result<Value, Error> {
+    if !app.native.current(endpoint) {
+        return Err(native_error());
+    }
+    let url = endpoint.url.join(path).map_err(|_| native_error())?;
+    let request = app.native.client.request(method, url).basic_auth("opencode", Some(&endpoint.password));
+    send(request, query, body, max).await
+}
+
 /// `DELETE /api/worktree` without force.
 async fn delete_worktree(app: &App, project: &str, directory: &str) -> Result<(), Error> {
     let body = json!({"projectID": project, "directory": directory, "force": false});
@@ -78,6 +131,34 @@ fn announce(app: &App, w: &Workspace) {
     invalidate(app);
     app.emit(json!({"type":"workspace.worktreesChanged","workspaceId":w.id}));
 }
+
+async fn repo_common(path: &Path, non_git: Status) -> Result<PathBuf, Error> {
+    let out = git::run(path, &["rev-parse", "--path-format=absolute", "--git-common-dir"], 16 * 1024).await?;
+    if out.not_a_repository() {
+        return Err(error(non_git, "Workspace is not a Git repository"));
+    }
+    let text = out.ok()?.text();
+    dunce::canonicalize(text.trim()).map_err(|_| native_error())
+}
+
+/// Coordinate session moves and worktree deletions across occurrences of the same repository.
+async fn topology(
+    app: &App,
+    id: &str,
+    non_git: Status,
+) -> Result<(Workspace, tokio::sync::OwnedMutexGuard<()>), Error> {
+    let workspace = app.workspace(id)?;
+    let common = repo_common(&workspace.path, non_git).await?;
+    #[cfg(test)]
+    super::fence_test_trace::record("topology reservation", "wait");
+    let guard = super::fence::serialize(format!("worktree\n{}", super::fence::identity(&common))).await;
+    if !crate::sessions::permission_mode::workspace_current(app, &workspace)
+        || repo_common(&workspace.path, non_git).await.ok().as_ref() != Some(&common)
+    {
+        return Err(conflict("Workspace changed"));
+    }
+    Ok((workspace, guard))
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Create {
@@ -100,13 +181,22 @@ pub async fn create(
     {
         return Err(invalid("Invalid worktree branch"));
     }
-    let _guard = app.project_mutation.lock().await;
     let w = app.workspace(&id)?;
-    let catalogue = catalogue(&app, &w, true).await?;
+    let endpoint =
+        app.native.acquire(tokio::time::Instant::now() + Duration::from_secs(30)).await.map_err(|_| native_error())?;
+    let from_slug = input.from_slug.as_deref().unwrap_or("root");
+    let catalogue = super::inventory::catalogue_at(&app, &w, true, Some(&endpoint), Duration::from_secs(12)).await?;
     git::guard_config(&catalogue.main).await?;
-    let from = catalogue.get(input.from_slug.as_deref().unwrap_or("root"))?;
-    if from.nested_missing {
-        return Err(conflict("Source worktree does not contain the workspace folder"));
+    let from = catalogue.get(from_slug)?;
+    if !from.creatable_source() {
+        return Err(invalid("Source worktree not found"));
+    }
+    let mut paths: Vec<_> = catalogue.trees.iter().map(|tree| super::fence::identity(tree.registered())).collect();
+    paths.push(super::fence::identity(&catalogue.parent));
+    let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A worktree is being removed"))?;
+    let confirmed = super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), Duration::from_secs(12)).await?;
+    if confirmed.get(from_slug).ok() != Some(from) || !from.source_live() {
+        return Err(conflict("Source worktree changed"));
     }
     git(&w.path, &["check-ref-format", "--branch", branch]).await.map_err(|_| invalid("Invalid worktree branch"))?;
     let branch_ref = format!("refs/heads/{branch}");
@@ -128,9 +218,9 @@ pub async fn create(
     if !git::sha(&rev) {
         return Err(native_error());
     }
-    let relative = w.path.strip_prefix(catalogue.get("root")?.registered()).map_err(|_| native_error())?;
+    let relative = from.source_relative(&w.path, catalogue.get("root")?.registered()).ok_or_else(native_error)?;
     if !relative.as_os_str().is_empty() {
-        let relative = host(relative)?.replace('\\', "/");
+        let relative = host(&relative)?.replace('\\', "/");
         let kind = git(from.registered(), &["cat-file", "-t", &format!("{rev}:{relative}")]).await.ok();
         if kind.as_deref().map(str::trim) != Some("tree") {
             let body = json!({"code": "nested_folder_unavailable",
@@ -138,56 +228,210 @@ pub async fn create(
             return Err((Status::CONFLICT, Json(body)));
         }
     }
-    let mut main_workspace = w.clone();
-    main_workspace.path = catalogue.main.clone();
-    let into = files::root(&main_workspace)?;
-    for dir in [".codenomad", ".codenomad/worktrees"] {
-        files::contained(&into, dir, true)?;
-        if !into.is_dir(dir) {
-            into.create_dir(dir).map_err(|_| conflict("Unable to create worktree directory"))?;
+    {
+        let _exclude =
+            super::fence::serialize(format!("worktree-exclude\n{}", super::fence::identity(&catalogue.main))).await;
+        let mut main_workspace = w.clone();
+        main_workspace.path = catalogue.main.clone();
+        let into = files::root(&main_workspace)?;
+        for dir in [".codenomad", ".codenomad/worktrees"] {
+            files::contained(&into, dir, true)?;
+            if !into.is_dir(dir) {
+                into.create_dir(dir).map_err(|_| conflict("Unable to create worktree directory"))?;
+            }
+            if into.canonicalize(dir).ok().as_deref() != Some(Path::new(dir)) {
+                return Err(conflict("Worktree parent was replaced"));
+            }
         }
-        if into.canonicalize(dir).ok().as_deref() != Some(Path::new(dir)) {
-            return Err(conflict("Worktree parent was replaced"));
+        // Ensure `.codenomad/worktrees/` is listed in the effective `info/exclude`, matching TS
+        // `worktree-map.ts:6-21, 62-74`, `native-worktrees.ts:217-229`, and `worktrees.ts:359-364`:
+        // ignore mkdir/read failures (e.g. unwritable info dir or directory at `info/exclude`), and
+        // propagate only append failures as `400` before `POST /api/worktree`. Anchor every step
+        // to the verified Git common directory via `cap_std` + Unix `O_NONBLOCK` + `fstat` so a
+        // racing symlink at `info/` or FIFO at `exclude` can neither escape the repo nor block.
+        let git_paths = git(
+            &catalogue.main,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir", "--git-path", "info/exclude"],
+        )
+        .await;
+        if let Ok(raw) = git_paths {
+            let mut lines = raw.lines();
+            if let (Some(common_raw), Some(exclude_raw)) = (lines.next(), lines.next()) {
+                let common_path = PathBuf::from(common_raw.trim());
+                let exclude_path = PathBuf::from(exclude_raw.trim());
+                // Move `_exclude` into `spawn_blocking` so cancelling the request mid-write
+                // never releases the serialization lock before the worker finishes.
+                let exclude_updated = tokio::task::spawn_blocking(move || -> Result<(), Error> {
+                    let _exclude_guard = _exclude;
+                    let Ok(common_canon) = dunce::canonicalize(&common_path) else { return Ok(()) };
+                    let rel = match exclude_path
+                        .strip_prefix(&common_path)
+                        .or_else(|_| exclude_path.strip_prefix(&common_canon))
+                    {
+                        Ok(r) => r.to_path_buf(),
+                        Err(_) => return Ok(()),
+                    };
+                    let mut comps = rel.components();
+                    let (
+                        Some(std::path::Component::Normal(info_comp)),
+                        Some(std::path::Component::Normal(file_comp)),
+                        None,
+                    ) = (comps.next(), comps.next(), comps.next())
+                    else {
+                        return Ok(());
+                    };
+                    // Require the exact `info/exclude` components: if `<common_dir>/info` was an
+                    // in-repo symlink already resolved by `git rev-parse --path-format=absolute`,
+                    // `info_comp` will not be `"info"` and we refuse to follow it.
+                    if info_comp != std::ffi::OsStr::new("info") || file_comp != std::ffi::OsStr::new("exclude") {
+                        return Ok(());
+                    }
+                    let Ok(common_dir) =
+                        cap_std::fs::Dir::open_ambient_dir(&common_canon, cap_std::ambient_authority())
+                    else {
+                        return Ok(());
+                    };
+                    // Match TS `worktree-map.ts:8-12`: ignore mkdir/open failure for `info/`.
+                    // Refuse to follow an in-repo symlink at `info` so we never write outside the
+                    // physical `info/` directory inside the verified Git common directory.
+                    let _ = common_dir.create_dir(info_comp);
+                    let Ok(info_meta) = common_dir.symlink_metadata(info_comp) else { return Ok(()) };
+                    if !info_meta.is_dir() || info_meta.is_symlink() {
+                        return Ok(());
+                    }
+                    let Ok(info) = common_dir.open_dir(info_comp) else { return Ok(()) };
+                    #[cfg(unix)]
+                    {
+                        use cap_std::fs::MetadataExt;
+                        let expected_info_path = common_canon.join(info_comp);
+                        if dunce::canonicalize(&expected_info_path).ok().as_deref()
+                            != Some(expected_info_path.as_path())
+                        {
+                            return Ok(());
+                        }
+                        let Ok(opened_meta) = info.dir_metadata() else { return Ok(()) };
+                        if opened_meta.dev() != info_meta.dev() || opened_meta.ino() != info_meta.ino() {
+                            return Ok(());
+                        }
+                    }
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+                        use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
+                        let expected_info_path = common_canon.join(info_comp);
+                        let handle = info.as_raw_handle();
+                        let len = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
+                        if len == 0 {
+                            return Ok(());
+                        }
+                        let mut buf = vec![0u16; len as usize];
+                        let written = unsafe { GetFinalPathNameByHandleW(handle, buf.as_mut_ptr(), len, 0) };
+                        if written == 0 || written as usize >= buf.len() {
+                            return Ok(());
+                        }
+                        let actual =
+                            dunce::simplified(Path::new(&std::ffi::OsString::from_wide(&buf[..written as usize])))
+                                .to_path_buf();
+                        if actual != expected_info_path {
+                            return Ok(());
+                        }
+                    }
+                    #[cfg(unix)]
+                    let add_nonblock = |opts: &mut cap_std::fs::OpenOptions| {
+                        use cap_std::fs::OpenOptionsExt;
+                        #[cfg(any(
+                            target_os = "macos",
+                            target_os = "freebsd",
+                            target_os = "openbsd",
+                            target_os = "netbsd"
+                        ))]
+                        const O_NONBLOCK: i32 = 0x0004;
+                        #[cfg(not(any(
+                            target_os = "macos",
+                            target_os = "freebsd",
+                            target_os = "openbsd",
+                            target_os = "netbsd"
+                        )))]
+                        const O_NONBLOCK: i32 = 0x0800;
+                        opts.custom_flags(O_NONBLOCK);
+                    };
+                    // Match TS `worktree-map.ts:15-20`: missing file is empty; any other read failure
+                    // (including a directory, symlink, or FIFO at `info/exclude`) returns without error.
+                    let mut contents = Vec::new();
+                    match info.symlink_metadata(file_comp) {
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                        Ok(m) if m.is_file() && !m.is_symlink() => {
+                            let mut read_opts = cap_std::fs::OpenOptions::new();
+                            read_opts.read(true);
+                            #[cfg(unix)]
+                            add_nonblock(&mut read_opts);
+                            let Ok(mut reader) = info.open_with(file_comp, &read_opts) else { return Ok(()) };
+                            if !reader.metadata().is_ok_and(|m| m.is_file()) {
+                                return Ok(());
+                            }
+                            if (&mut reader).take(64 * 1024 + 1).read_to_end(&mut contents).is_err()
+                                || contents.len() > 64 * 1024
+                            {
+                                return Ok(());
+                            }
+                        }
+                        _ => return Ok(()),
+                    }
+                    let text = String::from_utf8_lossy(&contents);
+                    if text.lines().any(|line| line.trim_end_matches('\r') == ".codenomad/worktrees/") {
+                        return Ok(());
+                    }
+                    // Match TS `worktree-map.ts:21, 62-74`: append failure propagates as `400`.
+                    let write_err = || error(Status::BAD_REQUEST, "Git exclude is unavailable");
+                    let mut append_opts = cap_std::fs::OpenOptions::new();
+                    append_opts.append(true).create(true);
+                    #[cfg(unix)]
+                    add_nonblock(&mut append_opts);
+                    let mut writer = info.open_with(file_comp, &append_opts).map_err(|_| write_err())?;
+                    if !writer.metadata().is_ok_and(|m| m.is_file()) {
+                        return Err(write_err());
+                    }
+                    writer.write_all(b"\n# codenomad\n.codenomad/worktrees/\n").map_err(|_| write_err())?;
+                    Ok(())
+                })
+                .await
+                .map_err(|_| error(Status::BAD_REQUEST, "Git exclude is unavailable"))?;
+                exclude_updated?;
+            }
         }
-    }
-    let info = into.open_dir(".git/info").map_err(|_| conflict("Git exclude is unavailable"))?;
-    if into.canonicalize(".git/info").ok().as_deref() != Some(Path::new(".git/info")) {
-        return Err(conflict("Git exclude is not physically owned"));
-    }
-    let mut options = cap_std::fs::OpenOptions::new();
-    options.read(true).append(true).create(true);
-    if info.symlink_metadata("exclude").is_ok_and(|m| !m.is_file() || m.is_symlink()) {
-        return Err(conflict("Git exclude is not physically owned"));
-    }
-    let mut excludes = info.open_with("exclude", &options).map_err(|_| conflict("Git exclude is unavailable"))?;
-    let mut contents = Vec::new();
-    let unavailable = || conflict("Git exclude is unavailable");
-    (&mut excludes).take(64 * 1024 + 1).read_to_end(&mut contents).map_err(|_| unavailable())?;
-    if contents.len() > 64 * 1024 {
-        return Err(conflict("Git exclude exceeds the limit"));
-    }
-    let text = String::from_utf8_lossy(&contents);
-    if !text.lines().any(|line| line == ".codenomad/worktrees/") {
-        excludes.write_all(b"\n# codenomad\n.codenomad/worktrees/\n").map_err(|_| unavailable())?;
     }
     let name = branch.replace('/', "-");
     let body = json!({"projectID": catalogue.project, "from": from.service_root, "branch": rev,
         "directory": catalogue.parent, "name": name});
-    let created = native(&app, Method::POST, "/api/worktree", &[], Some(body), 64 * 1024).await?;
+    let created = native_at(&app, &endpoint, Method::POST, "/api/worktree", &[], Some(body), 64 * 1024).await?;
     let service = created["directory"].as_str().ok_or_else(native_error)?;
     let inside = |d: &PathBuf| *d != catalogue.parent && d.starts_with(&catalogue.parent);
     physical(service).filter(inside).ok_or_else(native_error)?;
-    let confirmed = self::catalogue(&app, &w, false).await?;
+    if catalogue.by_registered(service).is_some() {
+        return Err(native_error());
+    }
+    let read_catalogue_once_retry = || async {
+        match super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), Duration::from_secs(12)).await {
+            Ok(cat) => Ok(cat),
+            Err(err) if err.1["error"].as_str() == Some(super::inventory::CONFIG_CHANGED_ERROR) => {
+                super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), Duration::from_secs(12)).await
+            }
+            Err(err) => Err(err),
+        }
+    };
+    let confirmed = read_catalogue_once_retry().await?;
     let checkout = confirmed
         .by_registered(service)
         .filter(|t| t.slug != "root" && t.head.as_deref() == Some(&rev))
         .ok_or_else(native_error)?;
     let args = if existing { vec!["switch", "--", branch] } else { vec!["switch", "-c", branch] };
     if git(checkout.registered(), &args).await.is_err() {
-        delete_worktree(&app, &catalogue.project, service).await?;
+        delete_worktree_at(&app, &endpoint, &catalogue.project, service).await?;
         return Err(conflict("Unable to attach the branch"));
     }
-    let updated = self::catalogue(&app, &w, false).await?;
+    // Retry the final inventory read once ONLY on `WorktreeConfigChangedError` so a newly created
+    // and attached worktree is not falsely reported as failed (TS `native-worktrees.ts:256-264`).
+    let updated = read_catalogue_once_retry().await?;
     let row = updated
         .by_registered(service)
         .filter(|r| r.branch.as_deref() == Some(branch))
@@ -283,14 +527,17 @@ async fn move_members(
     app: &App,
     w: &Workspace,
     cat: &Catalogue,
+    evacuating: Option<&Tree>,
     members: &[Value],
     target: &Tree,
     principal: &crate::auth::Principal,
 ) -> Result<(), Error> {
+    let keys = members.iter().map(|row| row_id(row).map(super::fence::session)).collect::<Result<Vec<_>, _>>()?;
+    let _placing = super::fence::try_block(&keys).ok_or_else(|| conflict("A session request is in progress"))?;
     inactive(app, members).await?;
     for member in members {
         let from = directory(member)?;
-        if cat.by_directory(from).is_none() {
+        if member_owner(cat, evacuating, from).is_none() {
             return Err(conflict("Session worktree is not owned"));
         }
         proxy::verify_mutation(app, row_id(member)?, from, member).await?;
@@ -305,6 +552,9 @@ async fn move_members(
             let id = row_id(member)?;
             inactive(app, std::slice::from_ref(member)).await?;
             principal.live()?;
+            if !crate::sessions::permission_mode::workspace_current(app, w) {
+                return Err(conflict("Workspace changed"));
+            }
             if directory(member)? == target.service {
                 continue;
             }
@@ -331,7 +581,11 @@ async fn move_members(
             if directory(&now)? == old {
                 continue;
             }
-            if directory(&now)? != target.service || catalogue(app, w, false).await?.by_directory(old).is_none() {
+            let verified = catalogue(app, w, false).await?;
+            let verified_evac = evacuating.and_then(|t| verified.get(&t.slug).ok().filter(|v| *v == t));
+            let original_owner = member_owner(cat, evacuating, old);
+            let verified_owner = member_owner(&verified, verified_evac, old);
+            if directory(&now)? != target.service || verified_owner.is_none() || verified_owner != original_owner {
                 return Err(conflict("Session move requires manual recovery"));
             }
             native_move(app, id, old).await?;
@@ -365,13 +619,18 @@ async fn place_owned(
     input: Move,
     principal: crate::auth::Principal,
 ) -> Result<Json<Value>, Error> {
-    let _guard = app.project_mutation.lock().await;
+    let (w, _guard) = topology(&app, &id, Status::CONFLICT).await?;
     principal.live()?;
-    let w = app.workspace(&id)?;
     let cat = catalogue(&app, &w, true).await?;
     let target = cat.get(input.worktree_slug.trim())?;
     let (root, members) = family(&sessions(&app, &cat.project).await?, &session)?;
-    move_members(&app, &w, &cat, &members, target, &principal).await?;
+    let mut paths = vec![super::fence::identity(target.registered())];
+    for member in &members {
+        let tree = owner(&cat, directory(member)?).ok_or_else(|| conflict("Session worktree is not owned"))?;
+        paths.push(super::fence::identity(tree.registered()));
+    }
+    let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A session worktree is being removed"))?;
+    move_members(&app, &w, &cat, None, &members, target, &principal).await?;
     announce(&app, &w);
     let ids: Vec<_> = members.iter().map(|m| &m["id"]).collect();
     Ok(Json(json!({"rootSessionId": root, "sessionIds": ids, "worktreeSlug": target.slug})))
@@ -455,59 +714,144 @@ async fn remove_owned(
     slug: String,
     principal: crate::auth::Principal,
 ) -> Result<Status, Error> {
-    let _guard = app.project_mutation.lock().await;
-    principal.live()?;
+    static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let trace = |stage: &str| {
+        if *TRACE.get_or_init(|| std::env::var_os("CNRS_MUTATION_FENCE_TRACE").is_some()) {
+            eprintln!("mutation-fence DELETE {slug}: {stage}");
+        }
+    };
     let w = app.workspace(&id)?;
-    let cat = catalogue(&app, &w, true).await?;
+    let common = repo_common(&w.path, Status::BAD_REQUEST).await?;
+    trace("read catalogue");
+    principal.live()?;
+    let mut cat = catalogue(&app, &w, true).await?;
     git::guard_config(&cat.main).await?;
-    let target = cat.get(&slug)?;
-    if target.locked || !target.removable {
-        return Err(conflict("Worktree is locked or not removable"));
-    }
-    let workspaces = app.inner.lock().unwrap().workspaces.clone();
-    if workspaces.iter().any(|other| other.id != w.id && other.path.starts_with(target.registered())) {
+    let preliminary_root = {
+        let target = cat.get(&slug)?;
+        if target.locked || !target.removable {
+            return Err(conflict("Worktree is locked or not removable"));
+        }
+        target.registered().to_path_buf()
+    };
+    let _deleting =
+        super::fence::reserve_deletion_root(&super::fence::identity(&preliminary_root)).map_err(conflict)?;
+    if app
+        .inner
+        .lock()
+        .unwrap()
+        .workspaces
+        .iter()
+        .any(|other| other.id != w.id && other.path.starts_with(&preliminary_root))
+    {
         return Err(conflict("Worktree is open in another workspace"));
     }
-    clean(target).await?;
-    no_blockers(&app, target, &cat, true).await?;
+    trace("wait for topology");
+    #[cfg(test)]
+    super::fence_test_trace::record("topology reservation", "wait");
+    let (_guard, waited) =
+        super::fence::serialize_checked(format!("worktree\n{}", super::fence::identity(&common))).await;
+    principal.live()?;
+    if !crate::sessions::permission_mode::workspace_current(&app, &w) {
+        return Err(conflict("Workspace changed"));
+    }
+    if waited {
+        cat = catalogue(&app, &w, false).await?;
+        let target = cat.get(&slug).map_err(|_| conflict("Worktree changed before deletion"))?;
+        if target.registered() != preliminary_root.as_path() {
+            return Err(conflict("Worktree changed before deletion"));
+        }
+        if target.locked || !target.removable {
+            return Err(conflict("Worktree is locked or not removable"));
+        }
+    }
+    if app
+        .inner
+        .lock()
+        .unwrap()
+        .workspaces
+        .iter()
+        .any(|other| other.id != w.id && other.path.starts_with(&preliminary_root))
+    {
+        return Err(conflict("Worktree is open in another workspace"));
+    }
+    clean(cat.get(&slug)?).await?;
+    trace("first native blocker inventory");
+    no_blockers(&app, cat.get(&slug)?, &cat, true).await?;
+    trace("read evacuation sessions");
     let rows = sessions(&app, &cat.project).await?;
+    let mut families = evacuation_families(&rows, cat.get(&slug)?)?;
+    let mut admitted = match evacuation_paths(&cat, cat.get(&slug)?, &families) {
+        Ok(paths) => paths,
+        Err(_) => {
+            cat = catalogue(&app, &w, false).await?;
+            let target = cat.get(&slug).map_err(|_| conflict("Worktree changed before deletion"))?;
+            if target.registered() != preliminary_root.as_path() {
+                return Err(conflict("Worktree changed before deletion"));
+            }
+            families = evacuation_families(&rows, target)?;
+            evacuation_paths(&cat, target, &families)?
+        }
+    };
+    let target = cat.get(&slug)?;
     let root = cat.get("root")?;
     if root.nested_missing {
         return Err(conflict("Evacuation destination is missing"));
     }
-    let mut families = Vec::new();
-    let mut found = HashSet::new();
-    for row in &rows {
-        if within(target, directory(row)?) {
-            let (id, members) = family(&rows, row_id(row)?)?;
-            if found.insert(id) {
-                families.push(members);
-            }
-        }
-    }
     // `worktreeDeletionFence.run`: the target and the evacuation destination stay blocked
     // through evacuation, removal and rollback (consulted by `subagent-depth` writes).
     // A drain timeout is not a `ProjectSessionError`: `asProjectError` answers 502.
-    let _fence = crate::worktrees::fence::block(&[
-        crate::worktrees::fence::identity(target.registered()),
-        crate::worktrees::fence::identity(root.registered()),
-    ])
-    .await
-    .map_err(|message| error(Status::BAD_GATEWAY, message))?;
+    admitted.extend([super::fence::identity(target.registered()), super::fence::identity(root.registered())]);
+    let paths: Vec<_> = admitted.iter().cloned().collect();
+    trace("enter fence drain");
+    let _fence = crate::worktrees::fence::block(&paths).await.map_err(|message| error(Status::BAD_GATEWAY, message))?;
+    #[cfg(test)]
+    let _trace = super::fence_test_trace::held("checkout fence");
+    trace("fence drained");
+    if !crate::sessions::permission_mode::workspace_current(&app, &w) {
+        return Err(conflict("Workspace changed"));
+    }
+    if app
+        .inner
+        .lock()
+        .unwrap()
+        .workspaces
+        .iter()
+        .any(|other| other.id != w.id && other.path.starts_with(target.registered()))
+    {
+        return Err(conflict("Worktree is open in another workspace"));
+    }
+    let fresh = catalogue(&app, &w, false).await?;
+    if fresh.get(&slug).ok() != Some(target)
+        || fresh.get("root").ok().is_none_or(|r| {
+            r.registered() != root.registered() || r.path != root.path || r.service != root.service || r.nested_missing
+        })
+    {
+        return Err(conflict("Worktree changed before deletion"));
+    }
+    let cat = fresh;
+    let target = cat.get(&slug)?;
+    let root = cat.get("root")?;
+    let families = evacuation_families(&sessions(&app, &cat.project).await?, target)?;
+    let needed = evacuation_paths(&cat, target, &families)?;
+    if !super::fence::covered(&admitted, &needed) {
+        return Err(conflict("Session worktrees changed before deletion"));
+    }
+    no_blockers(&app, target, &cat, true).await?;
     let mut moved = Vec::new();
     let removal = async {
         for members in &families {
             principal.live()?;
-            move_members(&app, &w, &cat, members, root, &principal).await?;
+            move_members(&app, &w, &cat, Some(target), members, root, &principal).await?;
             moved.extend(members.iter());
         }
         no_blockers(&app, target, &cat, false).await?;
         let now = catalogue(&app, &w, false).await?;
-        if now.get(&slug)? != target {
+        if now.get(&slug).ok() != Some(target) {
             return Err(conflict("Worktree changed before deletion"));
         }
         clean(target).await?;
         principal.live()?;
+        trace("issue native deletion");
         delete_worktree(&app, &cat.project, &target.service_root).await
     }
     .await;
@@ -528,8 +872,9 @@ async fn remove_owned(
                 }
                 if session["projectID"] != cat.project
                     || directory(&session)? != root.service
-                    || verified.by_directory(original) != cat.by_directory(original)
-                    || verified.by_directory(original).is_none()
+                    || member_owner(&verified, verified.get(&slug).ok(), original)
+                        != member_owner(&cat, Some(target), original)
+                    || member_owner(&verified, verified.get(&slug).ok(), original).is_none()
                 {
                     return Err(conflict("Evacuation rollback requires manual reconciliation"));
                 }
@@ -548,6 +893,44 @@ async fn remove_owned(
     app.file_watches.lock().unwrap().forget_under(target.registered());
     announce(&app, &w);
     Ok(Status::NO_CONTENT)
+}
+
+fn evacuation_families(rows: &[Value], target: &Tree) -> Result<Vec<Vec<Value>>, Error> {
+    let mut families = Vec::new();
+    let mut found = HashSet::new();
+    for row in rows {
+        if within(target, directory(row)?) {
+            let (id, members) = family(rows, row_id(row)?)?;
+            if found.insert(id) {
+                families.push(members);
+            }
+        }
+    }
+    Ok(families)
+}
+
+fn owner<'a>(cat: &'a Catalogue, dir: &str) -> Option<&'a Tree> {
+    if let Some(exact) = cat.by_directory(dir) {
+        return Some(exact);
+    }
+    let resolved = physical(dir)?;
+    cat.trees.iter().filter(|tree| tree.contains_live(&resolved)).max_by_key(|tree| tree.path.as_os_str().len())
+}
+
+fn member_owner<'a>(cat: &'a Catalogue, evacuating: Option<&'a Tree>, dir: &str) -> Option<&'a Tree> {
+    owner(cat, dir).or_else(|| evacuating.filter(|tree| within(tree, dir)))
+}
+
+fn evacuation_paths(cat: &Catalogue, target: &Tree, families: &[Vec<Value>]) -> Result<HashSet<String>, Error> {
+    families
+        .iter()
+        .flatten()
+        .map(|row| {
+            let dir = directory(row)?;
+            let tree = member_owner(cat, Some(target), dir).ok_or_else(|| conflict("Session worktree is not owned"))?;
+            Ok(super::fence::identity(tree.registered()))
+        })
+        .collect()
 }
 async fn clean(target: &Tree) -> Result<(), Error> {
     let status = git(target.registered(), &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).await?;
@@ -570,3 +953,7 @@ mod tests {
         assert!(family(&cycle, "child").is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "mutation_race.rs"]
+mod mutation_race;

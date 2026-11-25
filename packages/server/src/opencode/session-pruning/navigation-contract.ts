@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { pruningBlockedSchema } from "./contract"
+import { USER_FILES_REFERENCE, USER_FILE_BASE64, USER_FILE_COUNT } from "./user-file-contract"
 
 const id = z.string().min(1).max(256)
 export const navigationTargetSchema = z.discriminatedUnion("kind", [
@@ -11,6 +12,14 @@ export const navigationTargetSchema = z.discriminatedUnion("kind", [
 ])
 export type NavigationTarget = z.infer<typeof navigationTargetSchema>
 export const navigationWindowInputSchema = z.object({ sessionID: id, target: navigationTargetSchema }).strict()
+export const sessionAttachmentInputSchema = z.object({
+  sessionID: id, messageID: id, fileIndex: z.number().int().min(0).max(USER_FILE_COUNT - 1), sha256: z.string().length(64),
+  confirm: z.literal(true).optional(),
+}).strict()
+export const sessionAttachmentResultSchema = z.union([
+  pruningBlockedSchema, z.object({ status: z.enum(["missing", "too_large", "current"]) }).strict(),
+  z.object({ status: z.literal("file"), data: z.string().max(USER_FILE_BASE64) }).strict(),
+])
 const outlineCursorSchema = z.object({ after: z.number().int().nonnegative(), through: z.number().int().nonnegative() }).strict()
 export const outlineCheckpointSchema = z.object({ after: z.number().int().min(-1), through: z.number().int().nonnegative(),
   digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
@@ -70,6 +79,6 @@ export const navigationWindowResultSchema = z.union([pruningBlockedSchema,
   status: z.literal("window"),
   messages: z.array(z.object({ id, type: messageType, time: z.object({ created: z.number() }).passthrough() }).passthrough()).max(200),
   older: navigationTargetSchema.nullable(), newer: navigationTargetSchema.nullable(),
-  resume: navigationTargetSchema, latest: z.boolean(),
+  resume: navigationTargetSchema, latest: z.boolean(), userFiles: z.literal(USER_FILES_REFERENCE).optional(),
 }).strict()])
 export type NavigationWindowResult = z.infer<typeof navigationWindowResultSchema>

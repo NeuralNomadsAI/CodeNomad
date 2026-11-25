@@ -2,6 +2,7 @@
 //! reference's `auth.json`, bootstrap token and named cookie, and the paired-device admission of
 //! the HTTPS listener (`devices`, `remote`, `tls`).
 pub mod devices;
+pub mod managed;
 pub mod password;
 pub mod remote;
 pub mod tls;
@@ -50,6 +51,7 @@ pub fn local_routes() -> Router<Shared> {
         .route("/api/remote-control/devices/{id}", delete(devices::revoke))
         .route("/api/remote-control/previews", put(devices::set_previews).layer(DefaultBodyLimit::max(4096)))
         .route("/api/auth/token", post(token).layer(DefaultBodyLimit::max(4096)))
+        .route("/api/auth/logout", post(logout))
         .route("/api/auth/password", post(set_password).layer(DefaultBodyLimit::max(24 * 1024)))
         .route("/login", get(login_page))
         .route("/auth/token", get(token_page))
@@ -96,6 +98,7 @@ pub struct Settings {
     pub file: Option<PathBuf>,
     pub cookie: String,
     pub token: bool,
+    pub managed_local: bool,
     pub skip: bool,
     pub idle: Duration,
     pub absolute: Duration,
@@ -107,14 +110,35 @@ struct Credentials {
     user_provided: bool,
 }
 
+#[derive(Default)]
+struct CredentialStore {
+    version: u64,
+    current: Option<Credentials>,
+}
+
+#[derive(Default)]
+struct SessionState {
+    sessions: HashMap<String, Session>,
+    managed: Option<managed::ManagedSession>,
+    password_writing: bool,
+}
+
+struct PasswordWriteGuard<'a>(&'a Mutex<SessionState>);
+impl Drop for PasswordWriteGuard<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().password_writing = false;
+    }
+}
+
 pub struct Auth {
     settings: Settings,
     /// `None`: bootstrap only, until a password is set.
-    credentials: Mutex<Option<Credentials>>,
+    credentials: Mutex<CredentialStore>,
     token: Mutex<Option<(String, Instant)>>,
     /// The single principal of `--dangerously-skip-auth`.
     open: Principal,
-    sessions: Mutex<HashMap<String, Session>>,
+    /// Lock order: `credentials` before `sessions` whenever both are needed.
+    sessions: Mutex<SessionState>,
     login_budget: tokio::sync::Semaphore,
     password_change: tokio::sync::Mutex<()>,
 }
@@ -159,7 +183,7 @@ impl Auth {
         };
         Ok(Self {
             settings,
-            credentials: Mutex::new(credentials),
+            credentials: Mutex::new(CredentialStore { version: 0, current: credentials }),
             token: Mutex::new(token),
             open: Principal(CancellationToken::new()),
             sessions: Mutex::default(),
@@ -182,62 +206,145 @@ impl Auth {
         if self.settings.skip {
             return None;
         }
-        let sessions = self.sessions.lock().unwrap();
-        let session = sessions.get(key)?;
+        let state = self.sessions.lock().unwrap();
+        let session = state.sessions.get(key)?;
         (!self.expired(session) && session.principal.live().is_ok()).then(|| session.username.clone())
     }
     fn expired(&self, s: &Session) -> bool {
         s.seen.elapsed() >= self.settings.idle || s.born.elapsed() >= self.settings.absolute
     }
-    pub async fn sweep(app: Shared) {
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            app.auth.sessions.lock().unwrap().retain(|_, s| {
-                if !app.auth.expired(s) {
-                    return true;
-                }
-                s.principal.0.cancel();
-                false
-            });
-        }
-    }
-    fn principal(&self, key: Option<&str>) -> Option<Principal> {
-        if self.settings.skip {
-            return Some(self.open.clone());
-        }
-        let mut sessions = self.sessions.lock().unwrap();
-        let s = sessions.get_mut(key?)?;
-        if self.expired(s) {
-            s.principal.0.cancel();
-            sessions.remove(key?);
-            return None;
-        }
-        s.seen = Instant::now();
-        Some(s.principal.clone())
-    }
-    /// `{username, passwordUserProvided}` of the reference's `getStatus`.
-    fn identity(&self) -> (String, bool) {
-        match &*self.credentials.lock().unwrap() {
-            Some(c) if !self.settings.skip => (c.username.clone(), c.user_provided),
-            _ => (self.settings.username.clone(), false),
-        }
-    }
-    fn open_session(&self, username: String) -> Result<String, Error> {
-        let id = random_id().ok_or_else(|| error(Status::SERVICE_UNAVAILABLE, "Login unavailable"))?;
-        let now = Instant::now();
-        let mut sessions = self.sessions.lock().unwrap();
-        sessions.retain(|_, s| {
+    fn prune_expired(&self, state: &mut SessionState) {
+        state.sessions.retain(|_, s| {
             let live = !self.expired(s);
             if !live {
                 s.principal.0.cancel();
             }
             live
         });
-        sessions.insert(
+    }
+    pub async fn sweep(app: Shared) {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let mut state = app.auth.sessions.lock().unwrap();
+            app.auth.prune_expired(&mut state);
+        }
+    }
+    fn principal(&self, key: Option<&str>) -> Option<Principal> {
+        if self.settings.skip {
+            return Some(self.open.clone());
+        }
+        let key = key?;
+        let mut state = self.sessions.lock().unwrap();
+        let expired = state.sessions.get(key).map(|s| self.expired(s))?;
+        if expired {
+            if let Some(s) = state.sessions.remove(key) {
+                s.principal.0.cancel();
+            }
+            return None;
+        }
+        let principal = {
+            let s = state.sessions.get_mut(key)?;
+            s.seen = Instant::now();
+            s.principal.clone()
+        };
+        if let Some(managed) = state.managed.as_mut()
+            && managed.current == key
+        {
+            managed.delivered = true;
+        }
+        Some(principal)
+    }
+    /// `{username, passwordUserProvided}` of the reference's `getStatus`.
+    fn identity(&self) -> (String, bool) {
+        match &self.credentials.lock().unwrap().current {
+            Some(c) if !self.settings.skip => (c.username.clone(), c.user_provided),
+            _ => (self.settings.username.clone(), false),
+        }
+    }
+    fn can_renew_bootstrap(&self, credentials: &Option<Credentials>) -> bool {
+        !self.settings.skip
+            && self.settings.managed_local
+            && self.settings.token
+            && credentials.is_none()
+            && self.settings.file.as_ref().is_none_or(|file| !file.exists())
+    }
+    fn insert_session(&self, state: &mut SessionState, username: String) -> Result<String, Error> {
+        let id = random_id().ok_or_else(|| error(Status::SERVICE_UNAVAILABLE, "Login unavailable"))?;
+        let now = Instant::now();
+        self.prune_expired(state);
+        state.sessions.insert(
             id.clone(),
             Session { born: now, seen: now, username, principal: Principal(CancellationToken::new()) },
         );
         Ok(id)
+    }
+    fn open_session(&self, username: String) -> Result<String, Error> {
+        let mut state = self.sessions.lock().unwrap();
+        self.insert_session(&mut state, username)
+    }
+    fn open_session_if_credentials_version(&self, version: u64, username: String) -> Result<String, Error> {
+        let credentials = self.credentials.lock().unwrap();
+        if credentials.version != version || credentials.current.as_ref().is_none_or(|c| c.username != username) {
+            return Err(error(Status::UNAUTHORIZED, "Invalid credentials"));
+        }
+        let mut state = self.sessions.lock().unwrap();
+        self.insert_session(&mut state, username)
+    }
+    fn open_bootstrap_session(&self) -> Result<String, Error> {
+        let credentials = self.credentials.lock().unwrap();
+        let username = match &credentials.current {
+            Some(c) if !self.settings.skip => c.username.clone(),
+            _ => self.settings.username.clone(),
+        };
+        let can_renew = self.can_renew_bootstrap(&credentials.current);
+        let mut state = self.sessions.lock().unwrap();
+        let id = self.insert_session(&mut state, username)?;
+        if can_renew {
+            state.managed = Some(managed::ManagedSession { current: id.clone(), previous: None, delivered: true });
+        }
+        Ok(id)
+    }
+    /// Called only by the authenticated process parent on stdin.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn renew_managed_session(&self) -> Option<String> {
+        self.renew_managed_session_if(|| true)
+    }
+    pub fn renew_managed_session_if(&self, live: impl Fn() -> bool) -> Option<String> {
+        let credentials = self.credentials.lock().unwrap();
+        if !live() || !self.can_renew_bootstrap(&credentials.current) {
+            return None;
+        }
+        let username = self.settings.username.clone();
+        let mut state = self.sessions.lock().unwrap();
+        if state.password_writing || !live() {
+            return None;
+        }
+        self.prune_expired(&mut state);
+        let managed = state.managed.as_ref()?;
+        if state.sessions.contains_key(&managed.current) {
+            return (!managed.delivered).then(|| managed.current.clone());
+        }
+        let previous = if managed.delivered { Some(managed.current.clone()) } else { managed.previous.clone() };
+        let current = self.insert_session(&mut state, username).ok()?;
+        state.managed = Some(managed::ManagedSession { current: current.clone(), previous, delivered: false });
+        Some(current)
+    }
+    fn revoke_session(&self, key: Option<&str>) {
+        if self.settings.skip {
+            return;
+        }
+        let Some(cookie) = key else {
+            return;
+        };
+        let mut state = self.sessions.lock().unwrap();
+        let revoking_managed =
+            state.managed.as_ref().is_some_and(|m| m.current == cookie || m.previous.as_deref() == Some(cookie));
+        let target = if revoking_managed { state.managed.take().map(|m| m.current) } else { Some(cookie.to_owned()) };
+        if let Some(id) = target
+            && let Some(session) = state.sessions.remove(&id)
+        {
+            session.principal.0.cancel();
+        }
     }
     /// Values are base64url session ids, which `encodeURIComponent` leaves unchanged.
     fn session_cookie(&self, value: &str, max_age: Option<u64>) -> String {
@@ -387,9 +494,10 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         // The reference's `preHandler`: public auth routes and pages, then the session; pages
         // without one go to `/login`, other non-API paths reach the UI only.
         let principal = app.auth.principal(key.as_deref());
-        let public = matches!(path.as_str(), "/api/auth/login" | "/api/auth/status" | "/api/auth/token")
-            || path == "/login"
-            || path == "/auth/token" && app.auth.settings.token;
+        let public =
+            matches!(path.as_str(), "/api/auth/login" | "/api/auth/logout" | "/api/auth/status" | "/api/auth/token")
+                || path == "/login"
+                || path == "/auth/token" && app.auth.settings.token;
         let api = ["/api/", "/workspaces/", "/sidecars/", "/previews/"].iter().any(|p| path.starts_with(p));
         let html = wants_html(req.headers());
         if public || principal.is_some() {
@@ -398,7 +506,13 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
                 req.extensions_mut().insert(principal);
             }
             next.run(req).await
-        } else if path == "/" || html && (!api || req.method() == Method::GET && !path.starts_with("/api/")) {
+        } else if path == "/"
+            || !api
+                && percent_encoding::percent_decode_str(&path)
+                    .decode_utf8()
+                    .is_ok_and(|p| crate::host::ui::is_html_path(&p))
+            || html && (!api || req.method() == Method::GET && !path.starts_with("/api/"))
+        {
             found("/login")
         } else if api {
             unauthorized().into_response()
@@ -437,12 +551,13 @@ pub async fn login(
     if username.is_empty() || password.is_empty() || username.len() > 1024 || password.len() > 8192 {
         return Err(error(Status::BAD_REQUEST, "Invalid login body"));
     }
-    if !app.auth.settings.skip {
+    let id = if !app.auth.settings.skip {
         let _permit =
             app.auth.login_budget.try_acquire().map_err(|_| error(Status::TOO_MANY_REQUESTS, "Login busy"))?;
-        let Some((expected, record)) =
-            app.auth.credentials.lock().unwrap().as_ref().map(|c| (c.username.clone(), c.record.clone()))
-        else {
+        let Some((version, expected, record)) = ({
+            let store = app.auth.credentials.lock().unwrap();
+            store.current.as_ref().map(|c| (store.version, c.username.clone(), c.record.clone()))
+        }) else {
             return Err(error(Status::UNAUTHORIZED, "Invalid credentials"));
         };
         let valid = tokio::task::spawn_blocking(move || record.verify(&password))
@@ -451,8 +566,10 @@ pub async fn login(
         if !valid || username != expected {
             return Err(error(Status::UNAUTHORIZED, "Invalid credentials"));
         }
-    }
-    let id = app.auth.open_session(username)?;
+        app.auth.open_session_if_credentials_version(version, username)?
+    } else {
+        app.auth.open_session(username)?
+    };
     Ok(([(header::SET_COOKIE, app.auth.issued_session_cookie(&id))], Json(json!({"ok":true}))))
 }
 
@@ -486,12 +603,20 @@ pub async fn token(
     if !accepted {
         return error(Status::UNAUTHORIZED, "Invalid token").into_response();
     }
-    match app.auth.open_session(app.auth.identity().0) {
+    match app.auth.open_bootstrap_session() {
         Ok(id) => {
             ([(header::SET_COOKIE, app.auth.issued_session_cookie(&id))], Json(json!({"ok":true}))).into_response()
         }
         Err(e) => e.into_response(),
     }
+}
+
+/// `POST /api/auth/logout`: revokes the session (including a managed local renewal right).
+pub async fn logout(State(app): State<Shared>, headers: HeaderMap) -> Result<Response, Error> {
+    let (key, _) = cookies(&headers, app.auth.cookie_name())?;
+    let _change = app.auth.password_change.lock().await;
+    app.auth.revoke_session(key.as_deref());
+    Ok(([(header::SET_COOKIE, app.auth.session_cookie("", Some(0)))], Json(json!({"ok":true}))).into_response())
 }
 
 #[derive(Deserialize)]
@@ -505,7 +630,10 @@ pub async fn set_password(
     principal: Option<Extension<Principal>>,
     payload: Result<Json<NewPassword>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    if principal.is_none() {
+    let Some(Extension(principal)) = principal else {
+        return unauthorized().into_response();
+    };
+    if principal.live().is_err() {
         return unauthorized().into_response();
     }
     let password = match payload {
@@ -525,10 +653,18 @@ pub async fn set_password(
             "Server password is provided via CLI/env and cannot be changed while running. Restart without --password / CODENOMAD_SERVER_PASSWORD to use auth.json.",
         );
     };
-    let _change = app.auth.password_change.lock().await;
     let record = match tokio::task::spawn_blocking(move || password::Record::new(&password)).await {
         Ok(Ok(record)) => record,
         _ => return conflict("Password hashing failed"),
+    };
+    let _change = app.auth.password_change.lock().await;
+    let _writing = {
+        let mut state = app.auth.sessions.lock().unwrap();
+        if principal.live().is_err() {
+            return unauthorized().into_response();
+        }
+        state.password_writing = true;
+        PasswordWriteGuard(&app.auth.sessions)
     };
     let username = app.auth.identity().0;
     let stored = password::AuthFile {
@@ -541,15 +677,21 @@ pub async fn set_password(
     if let Err(e) = password::save(file, &stored) {
         return conflict(&e.to_string());
     }
-    *app.auth.credentials.lock().unwrap() =
-        Some(Credentials { username: username.clone(), record, user_provided: true });
-    app.auth.sessions.lock().unwrap().retain(|_, s| {
-        let keep = s.username != username;
-        if !keep {
-            s.principal.0.cancel();
-        }
-        keep
-    });
+    {
+        let mut credentials = app.auth.credentials.lock().unwrap();
+        credentials.version = credentials.version.wrapping_add(1);
+        credentials.current = Some(Credentials { username: username.clone(), record, user_provided: true });
+        let mut state = app.auth.sessions.lock().unwrap();
+        state.managed = None;
+        state.sessions.retain(|_, s| {
+            let keep = s.username != username;
+            if !keep {
+                s.principal.0.cancel();
+            }
+            keep
+        });
+    }
+    drop(_writing);
     (
         [(header::SET_COOKIE, app.auth.session_cookie("", Some(0)))],
         Json(json!({"ok":true,"username":username,"passwordUserProvided":true})),

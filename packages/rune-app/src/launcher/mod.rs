@@ -1,14 +1,44 @@
 //! One serialized opening action at a time; HTTP never runs on the UI thread.
+mod connection;
+pub(crate) mod linked;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod managed_renewal_tests;
+pub(crate) mod placement;
+mod projects;
+#[cfg(target_arch = "wasm32")]
+mod reopen;
+mod search;
+mod sessions;
+#[cfg(test)]
+mod tests;
 pub(crate) mod view;
+mod visits;
 use crate::{
     Phase, State,
     backend::Backend,
     catalog::{Project, Session, Sessions},
     history::Result,
 };
-use codenomad_client::{Receiver, bounded};
+use codenomad_client::{Receiver, bounded, runtime::Instant};
+pub use connection::{connect, refresh_projects};
+pub(crate) use placement::place;
+pub(crate) use projects::set_project;
+pub use projects::{choose_project, open, restore};
+#[cfg(target_arch = "wasm32")]
+pub(crate) use reopen::reopen;
 use rune::{Tx, edit::TextEdit};
-use std::future::Future;
+#[cfg(target_arch = "wasm32")]
+use sessions::attach;
+#[cfg(feature = "test-support")]
+pub use sessions::back;
+use sessions::{bind, dismiss_origin_panel, retire_session};
+pub(crate) use sessions::{bind_search, choose_child_ticket, choose_destination};
+pub use sessions::{
+    can_change_session, can_open_child_session, can_visit, choose, close_session, create,
+    create_blank, list, visit,
+};
+use std::{collections::HashSet, future::Future};
+pub(crate) use visits::Visits;
 
 pub struct Launcher {
     pub address: TextEdit,
@@ -16,35 +46,95 @@ pub struct Launcher {
     pub folder: TextEdit,
     pub title: TextEdit,
     pub search: TextEdit,
+    pub(crate) search_results: search::Search,
+    pub show_title: bool,
+    pub show_search: bool,
+    pub visits: Visits,
     pub connection: Option<Backend>,
+    pub(crate) authentication_required: bool,
+    pub(crate) catalogue_watch: Option<codenomad_client::stream::CatalogueWatch>,
+    pub(crate) catalogue_generation: u64,
+    pub(crate) workspace_stream_generation: u64,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
     pub project: Option<Project>,
     pub sessions: Vec<Session>,
+    pub listed_sessions: HashSet<String>,
     pub next: Option<String>,
+    pub(crate) linked: linked::Linked,
+    pub(crate) consumed_cursors: HashSet<u64>,
     pub pending: bool,
+    listing: bool,
     pub error: Option<&'static str>,
     pub creation_uncertain: bool,
+    pub creation_uncertain_linked: Option<String>,
     pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
+    pending_stream_generation: u64,
+    stopped_during_pending: HashSet<String>,
+    stopped_during_pending_overflow: bool,
+    detached_reconcile: Option<(u64, HashSet<String>, Receiver<Option<Vec<Project>>>)>,
+    detached_reconcile_trailing: bool,
+    failed_detached_workspaces: HashSet<String>,
+    pub(crate) rebind_after_send: Option<String>,
+    resume_after_job: bool,
+    connection_generation: u64,
+    pending_connection_generation: u64,
+    selection_ticket: Option<u64>,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
+    managed_renewal: Option<connection::ManagedRenewal>,
+    managed_renewal_failed_for: Option<Backend>,
+    managed_renewal_attempts: u8,
+    pub(crate) projects_stale: bool,
+    projects_refresh: Option<(u64, Receiver<connection::ProjectsRefresh>)>,
     wake: rune::Waker,
 }
 enum Reply {
     Connected(Backend, Vec<Project>, String),
-    Opened(
-        crate::workspace::opening::Opening,
-        Sessions,
-        Option<(Backend, String)>,
-    ),
-    Listed(Sessions, bool),
-    Bound(Backend, String),
+    AuthenticationExpired(Backend),
+    Opened(crate::workspace::opening::Opening, Sessions, Restored),
+    Listed(Sessions, Option<String>),
+    Created(Backend, String, String, String, Option<u64>, Option<u64>),
+    CreatedUnbound(Session, String),
+    CreatePrecheckFailed,
+    CreateRejected,
+    CreateUncertainLinked(String),
+    Selected(Vec<String>, Option<Selection>, Option<u64>, bool),
+    #[cfg(target_arch = "wasm32")]
+    Reopened(crate::workspace::opening::Opening, Backend, String, String),
+    Placed(Backend, String, String, bool, bool),
+    PlacementUnconfirmed(crate::git::PlacementHold),
+    PlacementReconciled(Backend, String, String, crate::git::PlacementHold),
+}
+type Selection = (Backend, String, Option<usize>, Instant, String);
+enum Restored {
+    Empty,
+    Bound(Backend, String, String),
+    Missing(String),
 }
 impl Launcher {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn fixture() -> Self {
         Self::with_boot(std::sync::Arc::new(|| {}), None)
+    }
+    pub fn blocks_prompt(&self) -> bool {
+        self.pending && !self.listing
+    }
+    #[cfg(test)]
+    pub(crate) fn workspace_stream_online(&self) -> bool {
+        self.detached_reconcile.is_none()
+            && self.failed_detached_workspaces.is_empty()
+            && (self.catalogue_watch.is_none()
+                || self.workspace_stream_generation == 0
+                || self.workspace_stream_generation % 2 == 1)
+    }
+    pub(crate) fn workspace_stream_online_for(&self, workspace_id: &str) -> bool {
+        self.detached_reconcile.is_none()
+            && !self.failed_detached_workspaces.contains(workspace_id)
+            && (self.catalogue_watch.is_none()
+                || self.workspace_stream_generation == 0
+                || self.workspace_stream_generation % 2 == 1)
     }
     pub fn local_connection(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
@@ -89,21 +179,56 @@ impl Launcher {
             folder: TextEdit::new(""),
             title: TextEdit::new(""),
             search: TextEdit::new(""),
+            search_results: Default::default(),
+            show_title: false,
+            show_search: false,
+            visits: Visits::default(),
             connection: None,
+            authentication_required: false,
+            catalogue_watch: None,
+            catalogue_generation: 0,
+            workspace_stream_generation: 0,
             server_id: None,
             projects: vec![],
             project: None,
             sessions: vec![],
+            listed_sessions: HashSet::new(),
             next: None,
+            linked: Default::default(),
+            consumed_cursors: HashSet::new(),
             pending: starting,
+            listing: false,
             error: None,
             creation_uncertain: false,
+            creation_uncertain_linked: None,
             openings: Default::default(),
             result: None,
+            pending_stream_generation: 0,
+            stopped_during_pending: HashSet::new(),
+            stopped_during_pending_overflow: false,
+            detached_reconcile: None,
+            detached_reconcile_trailing: false,
+            failed_detached_workspaces: HashSet::new(),
+            rebind_after_send: None,
+            resume_after_job: false,
+            connection_generation: 0,
+            pending_connection_generation: 0,
+            selection_ticket: None,
             boot,
             host: None,
+            managed_renewal: None,
+            managed_renewal_failed_for: None,
+            managed_renewal_attempts: 0,
+            projects_stale: false,
+            projects_refresh: None,
             wake,
         }
+    }
+    pub(crate) fn renewing_managed_session(&self) -> bool {
+        self.managed_renewal.is_some()
+    }
+    pub(crate) fn start_managed_renewal(&mut self, expired: &Backend) -> bool {
+        connection::start_managed_renewal(self, expired)
     }
     fn job(
         &mut self,
@@ -114,300 +239,395 @@ impl Launcher {
             return;
         }
         self.pending = true;
+        self.pending_connection_generation = self.connection_generation;
+        self.pending_stream_generation = self.workspace_stream_generation;
+        self.stopped_during_pending.clear();
+        self.stopped_during_pending_overflow = false;
+        self.catalogue_generation = self.catalogue_generation.wrapping_add(1);
         self.error = None;
+        let origin = (error != "rune.connect_error")
+            .then(|| self.connection.clone())
+            .flatten();
         let (out, input) = bounded(1);
         self.result = Some(input);
         let wake = self.wake.clone();
         crate::platform::spawn(async move {
             // Only the operation label reaches the UI; responses and credentials stay private.
-            let result = f.await.map_err(|_| error.into());
+            let result = match f.await {
+                Ok(reply) => Ok(reply),
+                Err(err)
+                    if codenomad_client::http::authentication_expired(&err)
+                        && let Some(origin) = origin =>
+                {
+                    if matches!(origin.authentication_status().await, Ok(false)) {
+                        Ok(Reply::AuthenticationExpired(origin))
+                    } else {
+                        Err(error.into())
+                    }
+                }
+                Err(_) => Err(error.into()),
+            };
             let _ = out.send(result).await;
             wake();
         });
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn session_choices_remain_visible_in_the_scrolling_launcher() {
-        for viewport in [(320.0, 640.0), (1400.0, 1600.0)] {
-            let mut state = crate::init();
-            let mut launcher = Launcher::with_boot(std::sync::Arc::new(|| {}), None);
-            launcher.connection = Some(Backend {
-                client: codenomad_client::http::Http::new().unwrap(),
-                base: "http://127.0.0.1:9/".into(),
-                workspace: String::new(),
-                session: String::new(),
-                client_id: "fixture".into(),
-                fresh_mode: false,
-            });
-            launcher.project = Some(Project {
-                id: "project".into(),
-                path: "/fixture".into(),
-            });
-            launcher.sessions = vec![Session {
-                id: "existing".into(),
-                title: "Existing history".into(),
-            }];
-            state.screen = crate::Screen::Launcher(launcher);
-            let mut runtime =
-                rune::Runtime::new(state, crate::view, viewport, rune::Env::new(false, 1.0));
-            runtime.frame(0.0);
-            runtime.update(|_, tx| {
-                tx.scroll_into_view("session-existing");
-                tx.instant();
-            });
-            for _ in 0..12 {
-                runtime.frame(1.0 / 60.0);
+const MAX_RECONCILE_ATTEMPTS: usize = 5;
+
+fn spawn_detached_reconcile(l: &mut Launcher, generation: u64) {
+    spawn_detached_reconcile_with(l, generation, HashSet::new());
+}
+
+fn spawn_detached_reconcile_with(l: &mut Launcher, generation: u64, opened_after: HashSet<String>) {
+    let Some(backend) = l.connection.clone() else {
+        return;
+    };
+    let (out, input) = bounded(1);
+    l.detached_reconcile = Some((generation, opened_after, input));
+    l.detached_reconcile_trailing = false;
+    l.failed_detached_workspaces.clear();
+    let wake = l.wake.clone();
+    crate::platform::spawn(async move {
+        let mut delay_ms = 1_000u64;
+        for attempt in 0..MAX_RECONCILE_ATTEMPTS {
+            match codenomad_client::runtime::until_closed(&out, backend.projects()).await {
+                None => return,
+                Some(Ok(projects)) => {
+                    let _ = out.send(Some(projects)).await;
+                    wake();
+                    return;
+                }
+                Some(Err(_)) => {
+                    if attempt + 1 == MAX_RECONCILE_ATTEMPTS {
+                        let _ = out.send(None).await;
+                        wake();
+                        return;
+                    }
+                    if codenomad_client::runtime::until_closed(
+                        &out,
+                        crate::platform::sleep(std::time::Duration::from_millis(delay_ms)),
+                    )
+                    .await
+                    .is_none()
+                    {
+                        return;
+                    }
+                    delay_ms = (delay_ms * 2).min(8_000);
+                }
             }
-            let choice = runtime
-                .elements()
-                .into_iter()
-                .find(|e| e.path.ends_with("/session-existing"))
-                .unwrap();
-            let [_, y, _, height] = choice.rect;
-            assert!(
-                height > 0.0 && y < viewport.1 && y + height > 0.0,
-                "session choice must have visible geometry: {:?}",
-                choice.rect
-            );
-            let (x, y) = runtime.find("session-existing").unwrap();
-            assert!(x >= 0.0 && x < viewport.0 && y >= 0.0 && y < viewport.1);
         }
-    }
-    #[test]
-    fn bootstrap_failure_reaches_the_rendered_launcher() {
-        let (out, input) = bounded(1);
-        let mut state = crate::init();
-        state.screen =
-            crate::Screen::Launcher(Launcher::with_boot(std::sync::Arc::new(|| {}), Some(input)));
-        out.try_send(Err("private backend startup detail".into()))
-            .unwrap();
-        let mut runtime = rune::Runtime::new(
-            state,
-            crate::view,
-            (640.0, 800.0),
-            rune::Env::new(false, 1.0),
-        );
-        runtime.poll = Some(crate::poll);
-        runtime.frame(0.0);
-        assert_eq!(
-            runtime.state.screen.launcher().unwrap().error,
-            Some("rune.connect_error")
-        );
-        let tree = runtime.accessibility_json().to_string();
-        assert!(tree.contains(crate::strings::t("rune.connect_error")));
-        assert!(!tree.contains("private backend startup detail"));
-    }
-    #[test]
-    fn shared_fields_edit_their_inner_models_and_stale_launcher_input_is_discarded() {
-        let mut state = crate::init();
-        let mut launcher = Launcher::fixture();
-        launcher.address = TextEdit::new("");
-        launcher.password = TextEdit::new("");
-        state.screen = crate::Screen::Launcher(launcher);
-        let mut rt = rune::Runtime::new(
-            state,
-            crate::view,
-            (640.0, 800.0),
-            rune::Env::new(false, 1.0),
-        );
-        rt.frame(0.0);
-        for (key, value) in [
-            ("server-address", "synthetic-server"),
-            ("server-password", "synthetic-password"),
-        ] {
-            let node = rt
-                .elements()
-                .into_iter()
-                .find(|node| node.key.as_deref() == Some(key))
-                .unwrap();
-            assert_eq!(node.fill, rune_theme_codenomad::field_kit(false).c.bg_base);
-            let (x, y) = rt.find(key).unwrap();
-            rt.pointer_down(x, y);
-            rt.pointer_up(x, y);
-            rt.paste(value);
-            rt.frame(0.02);
-        }
-        assert_eq!(
-            rt.state.screen.launcher().unwrap().address.text,
-            "synthetic-server"
-        );
-        assert_eq!(
-            rt.state.screen.launcher().unwrap().password.text,
-            "synthetic-password"
-        );
-        rt.state.show_chat();
-        rt.state.draft = TextEdit::new("current composer");
-        rt.paste("late password edit");
-        rt.frame(0.02);
-        assert_eq!(
-            rt.state.screen.launcher().unwrap().password.text,
-            "synthetic-password"
-        );
-        assert_eq!(rt.state.draft.text, "current composer");
-    }
-}
-pub fn connect(s: &mut State, _: &mut Tx) {
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    if l.pending {
-        return;
-    }
-    l.host = None;
-    let address = l.address.text.clone();
-    let password = l.password.text.clone();
-    l.job("rune.connect_error", async move {
-        let b = Backend::connect(&address, &password).await?;
-        let server_id = b.server_id().await?;
-        let projects = b.projects().await?;
-        Ok(Reply::Connected(b, projects, server_id))
     });
 }
-pub fn choose_project(s: &mut State, path: &str, tx: &mut Tx) {
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    l.folder = TextEdit::new(path);
-    open(s, tx);
+
+pub(crate) fn can_retry_detached_workspace(s: &State, workspace_id: &str) -> bool {
+    crate::workspace::has_detached_panels(s)
+        && s.screen.launcher().is_some_and(|l| {
+            l.failed_detached_workspaces.contains(workspace_id)
+                && l.detached_reconcile.is_none()
+                && !l.authentication_required
+                && l.workspace_stream_generation % 2 == 1
+        })
 }
-pub fn open(s: &mut State, tx: &mut Tx) {
-    if !crate::workspace::input_ready(s) {
+
+pub(crate) fn retry_detached_reconcile(s: &mut State) {
+    if !crate::workspace::has_detached_panels(s) {
         return;
     }
-    if !crate::workspace::prepare_open(s, tx) {
-        if let Some(l) = s.screen.launcher_mut() {
-            l.error = Some("rune.open_error");
-        }
-        return;
-    }
-    let intent = s
-        .workspace
-        .as_ref()
-        .map(|ui| ui.active_key().to_string())
-        .unwrap_or_else(|| "launcher".into());
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    let Some(b) = l.connection.clone() else {
-        return;
-    };
-    if l.pending {
-        return;
-    }
-    let pending = match l.openings.begin(b.clone(), &intent) {
-        Ok(pending) => pending,
-        Err(_) => {
-            l.error = Some("rune.open_error");
-            return;
-        }
-    };
-    let folder = l.folder.text.trim().to_string();
-    l.job("rune.open_error", async move {
-        let opening = pending.create(&folder).await?;
-        let rows = b.sessions(&opening.project, None).await?;
-        Ok(Reply::Opened(opening, rows, None))
-    });
-}
-pub fn list(s: &mut State, more: bool) {
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
-        return;
-    };
-    let cursor = if more { l.next.clone() } else { None };
-    l.job("rune.list_error", async move {
-        Ok(Reply::Listed(
-            b.sessions(&p, cursor.as_deref()).await?,
-            more,
-        ))
-    });
-}
-pub fn create(s: &mut State, _: &mut Tx) {
-    if !crate::workspace::input_ready(s) {
-        return;
-    }
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    if l.creation_uncertain || l.title.text.trim().is_empty() {
-        return;
-    }
-    let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
-        return;
-    };
-    let title = l.title.text.clone();
-    // A create request is never automatically retried. Refresh reconciles a lost response.
-    l.job("rune.create_error", async move {
-        let session = b.create_session(&p, &title).await?;
-        Ok(Reply::Bound(
-            b.bind(&p, &session.id, true).await?,
-            session.title,
-        ))
-    });
-}
-pub fn choose(s: &mut State, id: String, title: String) {
-    if !crate::workspace::input_ready(s) {
-        return;
-    }
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
-        return;
-    };
-    l.job("rune.open_error", async move {
-        Ok(Reply::Bound(b.bind(&p, &id, false).await?, title))
-    });
-}
-pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
-    let Some(l) = s.screen.launcher_mut() else {
-        return false;
-    };
-    let mut boot_changed = false;
-    if let Some(result) = l
-        .boot
-        .as_ref()
-        .and_then(|receiver| receiver.try_recv().ok())
+    if let Some(l) = s.screen.launcher_mut()
+        && !l.failed_detached_workspaces.is_empty()
+        && l.detached_reconcile.is_none()
+        && !l.authentication_required
+        && l.workspace_stream_generation % 2 == 1
     {
-        l.boot = None;
-        l.pending = false;
-        boot_changed = true;
-        match result {
-            Ok((backend, host)) => {
-                l.address = TextEdit::new(&backend.base);
-                l.host = Some(host);
-                // Bootstrap owns the authenticated cookie jar even if project listing fails.
-                l.connection = Some(backend.clone());
-                l.job("rune.list_error", async move {
-                    let server_id = backend.server_id().await?;
-                    let projects = backend.projects().await?;
-                    Ok(Reply::Connected(backend, projects, server_id))
-                });
+        let generation = l.workspace_stream_generation;
+        spawn_detached_reconcile(l, generation);
+    }
+}
+
+pub(crate) fn session_loaded(s: &State) -> bool {
+    s.files.is_some()
+        || s.agent.is_some()
+        || s.commands.is_some()
+        || s.incoming.is_some()
+        || s.composer.pending()
+        || s.status_permissions.writing()
+}
+
+pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
+    let browser_changed = cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s));
+    let selected = crate::workspace::active_session(s).map(str::to_owned);
+    let stream_update = s.screen.launcher_mut().and_then(|l| {
+        let watch = l.catalogue_watch.as_ref()?;
+        let unauthorized = watch.take_authentication_required();
+        let disconnected = watch.take_disconnect();
+        let (generation, overflow, events) = watch.take_workspace_events();
+        let previous = l.workspace_stream_generation;
+        l.workspace_stream_generation = generation;
+        let expired = unauthorized.then(|| l.connection.clone()).flatten();
+        Some((
+            previous,
+            generation,
+            overflow,
+            disconnected,
+            events,
+            expired,
+        ))
+    });
+    let mut relayed = false;
+    if let Some((previous, generation, overflow, disconnected, events, expired)) = stream_update {
+        let mut stopped = Vec::new();
+        let mut other = Vec::new();
+        for event in events {
+            if matches!(
+                event,
+                codenomad_client::transport::WorkspaceEvent::Stopped { .. }
+            ) {
+                stopped.push(event);
+            } else {
+                other.push(event);
             }
-            Err(_) => l.error = Some("rune.connect_error"),
+        }
+        if overflow
+            && let Some(l) = s.screen.launcher_mut()
+            && l.pending
+        {
+            l.stopped_during_pending_overflow = true;
+        }
+        if !stopped.is_empty() {
+            if let Some(l) = s.screen.launcher_mut() {
+                for event in &stopped {
+                    if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } =
+                        event
+                    {
+                        if l.pending {
+                            if l.stopped_during_pending.len() < 128 {
+                                l.stopped_during_pending.insert(workspace_id.clone());
+                            } else if !l.stopped_during_pending.contains(workspace_id) {
+                                l.stopped_during_pending_overflow = true;
+                            }
+                        }
+                        if let Some((_, opened_after, _)) = &mut l.detached_reconcile {
+                            opened_after.remove(workspace_id);
+                        }
+                    }
+                }
+            }
+            relayed |= crate::workspace::deliver_detached_events(s, &stopped);
+        }
+        #[cfg(target_arch = "wasm32")]
+        if disconnected {
+            crate::platform::pairing::observe(s);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = disconnected;
+        let mut start_reconcile = None;
+        let mut overflow_reconcile = false;
+        if generation != previous {
+            if generation > 0 && generation % 2 == 0 {
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.detached_reconcile = None;
+                    l.detached_reconcile_trailing = false;
+                    l.failed_detached_workspaces.clear();
+                }
+                relayed |= crate::workspace::set_detached_online(s, false);
+            } else if generation % 2 == 1 {
+                relayed |= crate::workspace::set_detached_online(s, false);
+                if crate::workspace::has_detached_panels(s) {
+                    start_reconcile = Some(generation);
+                }
+            }
+        } else if overflow && generation % 2 == 1 {
+            relayed |= crate::workspace::set_detached_online(s, false);
+            if crate::workspace::has_detached_panels(s) {
+                start_reconcile = Some(generation);
+                overflow_reconcile = true;
+            }
+        }
+        if let Some(reconcile_generation) = start_reconcile
+            && crate::workspace::has_detached_panels(s)
+            && let Some(l) = s.screen.launcher_mut()
+            && !l.authentication_required
+        {
+            if overflow_reconcile
+                && l.detached_reconcile
+                    .as_ref()
+                    .is_some_and(|(active_gen, _, _)| *active_gen == reconcile_generation)
+            {
+                l.detached_reconcile_trailing = true;
+            } else {
+                spawn_detached_reconcile(l, reconcile_generation);
+            }
+        }
+        if !other.is_empty() {
+            relayed |= crate::workspace::deliver_detached_events(s, &other);
+        }
+        if let Some(expired) = expired {
+            relayed |= crate::settings::authentication_required(s, &expired);
         }
     }
+    let cancel_reconcile = s.screen.launcher().and_then(|l| {
+        let (_, opened_after, _) = l.detached_reconcile.as_ref()?;
+        if l.authentication_required {
+            Some(false)
+        } else if !l.detached_reconcile_trailing
+            && !crate::workspace::has_unopened_detached_panels(s, opened_after)
+        {
+            Some(!opened_after.is_empty())
+        } else {
+            None
+        }
+    });
+    if let Some(bring_opened_online) = cancel_reconcile {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.detached_reconcile = None;
+            l.detached_reconcile_trailing = false;
+        }
+        if bring_opened_online {
+            relayed |= crate::workspace::set_detached_online(s, true);
+        }
+    }
+    let reconciled = s.screen.launcher_mut().and_then(|l| {
+        let (reconcile_generation, _, rx) = l.detached_reconcile.as_ref()?;
+        let result = rx.try_recv().ok()?;
+        let current = l.workspace_stream_generation;
+        let reconcile_generation = *reconcile_generation;
+        let trailing = std::mem::take(&mut l.detached_reconcile_trailing);
+        let opened_after = l
+            .detached_reconcile
+            .take()
+            .map(|(_, opened_after, _)| opened_after)?;
+        (reconcile_generation == current).then_some((current, trailing, opened_after, result))
+    });
+    if let Some((current, trailing, opened_after, result)) = reconciled {
+        if trailing {
+            if let Some(projects) = &result {
+                let mut live: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+                for id in &opened_after {
+                    live.insert(id.as_str());
+                }
+                relayed |= crate::workspace::stop_unlisted_detached(s, &live);
+            }
+            if crate::workspace::has_detached_panels(s)
+                && let Some(l) = s.screen.launcher_mut()
+                && !l.authentication_required
+            {
+                spawn_detached_reconcile(l, current);
+            }
+        } else {
+            match result {
+                Some(projects) => {
+                    let live: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+                    relayed |=
+                        crate::workspace::reconcile_detached_online(s, &opened_after, Some(&live));
+                }
+                None => {
+                    let failed: HashSet<String> = crate::workspace::detached_workspace_ids(s)
+                        .into_iter()
+                        .filter(|id| !opened_after.contains(id))
+                        .collect();
+                    if let Some(l) = s.screen.launcher_mut() {
+                        l.failed_detached_workspaces.extend(failed);
+                    }
+                    if !opened_after.is_empty() {
+                        relayed |=
+                            crate::workspace::reconcile_detached_online(s, &opened_after, None);
+                    }
+                }
+            }
+        }
+    }
+    if s.screen
+        .launcher()
+        .is_some_and(|l| !l.failed_detached_workspaces.is_empty())
+    {
+        let active_detached = crate::workspace::detached_workspace_ids(s);
+        if let Some(l) = s.screen.launcher_mut() {
+            l.failed_detached_workspaces
+                .retain(|id| active_detached.contains(id));
+        }
+    }
+    let loaded = session_loaded(s);
+    let deferred_rebind = s.screen.launcher().and_then(|l| {
+        let id = l.rebind_after_send.as_ref()?;
+        if l.authentication_required
+            || (loaded && s.screen.is_launcher())
+            || crate::workspace::active_session(s) != Some(id.as_str())
+        {
+            return Some(None);
+        }
+        if !s.composer.pending() && !l.pending && !s.status_permissions.writing() {
+            return Some(Some(id.clone()));
+        }
+        None
+    });
+    if let Some(action) = deferred_rebind {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.rebind_after_send = None;
+        }
+        if let Some(id) = action {
+            s.incoming = None;
+            if loaded {
+                s.phase = Phase::Failed;
+            }
+            choose_destination(s, id, None, tx);
+            relayed = true;
+        }
+    }
+    if connection::poll_managed_renewal(s, selected.clone(), tx) {
+        tx.instant();
+        return true;
+    }
+    if connection::poll_projects_refresh(s) {
+        relayed = true;
+    }
+    let blocked = !can_change_session(s)
+        || s.screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required);
+    let child_blocked = !can_open_child_session(s)
+        || s.screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required);
+    let Some(l) = s.screen.launcher_mut() else {
+        return relayed;
+    };
+    let mut changed = relayed | browser_changed | (!l.pending && l.visits.poll_checks());
+    changed |= connection::poll_boot(l);
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
-        if boot_changed {
+        if changed {
             tx.instant();
         }
-        return boot_changed;
+        return changed;
     };
     l.result = None;
     l.pending = false;
+    l.listing = false;
+    let stale_connection = l.pending_connection_generation != l.connection_generation;
+    let pending_stream_generation = l.pending_stream_generation;
+    let stopped_during_pending = std::mem::take(&mut l.stopped_during_pending);
+    let stopped_during_pending_overflow = std::mem::take(&mut l.stopped_during_pending_overflow);
+    if l.selection_ticket
+        .take()
+        .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
+    {
+        if std::mem::take(&mut l.resume_after_job)
+            && !l.authentication_required
+            && l.project.is_none()
+        {
+            crate::workspace::resume(s, tx);
+        }
+        tx.instant();
+        return true;
+    }
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
-            l.connection = Some(b);
-            l.server_id = Some(server_id);
-            l.projects = projects;
-            l.password = TextEdit::new("");
-            crate::workspace::connected(s);
-            crate::workspace::resume(s, tx);
+            if !stale_connection {
+                apply_connected(s, b, Some(projects), server_id, selected, tx);
+            }
+        }
+        Ok(Reply::AuthenticationExpired(expired)) => {
+            crate::settings::authentication_required(s, &expired);
         }
         Ok(Reply::Opened(opening, rows, restored)) => {
             let project = opening.project.clone();
@@ -417,144 +637,496 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 return true;
             }
             l.folder = TextEdit::new(&project.path);
-            l.project = Some(project.clone());
-            l.sessions = rows.rows;
-            l.next = rows.next;
-            l.search = TextEdit::new("");
+            set_project(l, Some(project.clone()));
+            l.linked = Default::default();
             l.creation_uncertain = false;
-            crate::workspace::opened(s, &project);
-            if let Some((backend, title)) = restored {
-                bind(s, backend, title, tx);
-            }
-        }
-        Ok(Reply::Listed(rows, more)) => {
-            if !more {
-                l.creation_uncertain = false;
-            }
-            if !more {
-                l.sessions.clear();
-            }
-            for row in rows.rows {
-                if !l.sessions.iter().any(|s| s.id == row.id) {
-                    l.sessions.push(row);
+            l.creation_uncertain_linked = None;
+            l.rebind_after_send = None;
+            l.failed_detached_workspaces.remove(&project.id);
+            let stopped_in_flight = stopped_during_pending.contains(&project.id);
+            let current_stream_generation = l.workspace_stream_generation;
+            let needs_reconcile = !stopped_in_flight
+                && (stopped_during_pending_overflow
+                    || (current_stream_generation % 2 == 1
+                        && pending_stream_generation != current_stream_generation));
+            if !stopped_in_flight {
+                if !stopped_during_pending_overflow
+                    && let Some((reconcile_generation, opened_after, _)) = &mut l.detached_reconcile
+                    && pending_stream_generation == *reconcile_generation
+                {
+                    opened_after.insert(project.id.clone());
+                } else if !l.authentication_required
+                    && let Some((reconcile_generation, mut opened_after, _)) =
+                        l.detached_reconcile.take()
+                {
+                    opened_after.remove(&project.id);
+                    spawn_detached_reconcile_with(l, reconcile_generation, opened_after);
                 }
             }
-            l.next = rows.next;
+            connection::watch_catalogue(l);
+            l.apply_listing(rows, false, None);
+            l.search = TextEdit::new("");
+            let auth_required = l.authentication_required;
+            crate::workspace::opened(s, &project);
+            match restored {
+                Restored::Bound(backend, title, slug) if !auth_required && !stopped_in_flight => {
+                    if stale_connection {
+                        choose_destination(s, backend.session, None, tx);
+                    } else {
+                        bind(s, backend, title, None, &slug, tx);
+                    }
+                }
+                Restored::Bound(_, _, _) if stopped_in_flight => {
+                    crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
+                }
+                Restored::Bound(_, _, _) => {}
+                Restored::Missing(id) => {
+                    retire_session(s, &id);
+                    crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
+                }
+                Restored::Empty => {
+                    crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
+                }
+            }
+            if stopped_in_flight {
+                crate::workspace::deliver_detached_events(
+                    s,
+                    &[codenomad_client::transport::WorkspaceEvent::Stopped {
+                        workspace_id: project.id,
+                    }],
+                );
+            } else if needs_reconcile
+                && !auth_required
+                && current_stream_generation % 2 == 1
+                && crate::workspace::has_detached_panels(s)
+                && s.screen
+                    .launcher()
+                    .is_some_and(|l| l.detached_reconcile.is_none())
+            {
+                let _ = crate::workspace::set_detached_online(s, false);
+                if let Some(l) = s.screen.launcher_mut() {
+                    spawn_detached_reconcile(l, current_stream_generation);
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            linked::load(s);
         }
-        Ok(Reply::Bound(b, title)) => {
-            bind(s, b, title, tx);
+        Ok(Reply::Listed(rows, cursor)) => {
+            if let Some(cursor) = cursor {
+                l.consume_cursor(&cursor);
+                l.apply_listing(rows, true, selected.as_deref());
+                if l.next.is_none() {
+                    l.check_omitted_visits();
+                }
+            } else if cfg!(target_os = "windows")
+                || l.creation_uncertain_linked.is_some() && cfg!(not(target_arch = "wasm32"))
+            {
+                l.apply_directory_refresh(rows, selected.as_deref());
+                crate::workspace::schedule_catalogue(s);
+            } else {
+                l.apply_listing(rows, false, selected.as_deref());
+                if l.next.is_none() {
+                    l.check_omitted_visits();
+                }
+                #[cfg(target_arch = "wasm32")]
+                linked::load(s);
+            }
+        }
+        Ok(Reply::Created(b, title, slug, submitted, dismiss, ticket)) => {
+            if !submitted.is_empty() && l.title.text == submitted {
+                l.title = TextEdit::new("");
+                l.show_title = false;
+            }
+            let superseded = ticket.is_some_and(|t| t != s.notifications.navigation_ticket());
+            let stopped_in_flight =
+                stopped_during_pending_overflow || stopped_during_pending.contains(&b.workspace);
+            if blocked || superseded || l.authentication_required || stopped_in_flight {
+                if !stopped_in_flight {
+                    l.sessions.insert(
+                        0,
+                        Session {
+                            id: b.session,
+                            title,
+                        },
+                    );
+                }
+            } else if stale_connection {
+                let session_id = b.session;
+                if !l.sessions.iter().any(|row| row.id == session_id) {
+                    l.sessions.insert(
+                        0,
+                        Session {
+                            id: session_id.clone(),
+                            title,
+                        },
+                    );
+                }
+                l.rebind_after_send = None;
+                dismiss_origin_panel(s, dismiss, tx);
+                choose_destination(s, session_id, ticket, tx);
+            } else {
+                dismiss_origin_panel(s, dismiss, tx);
+                bind(s, b, title, None, &slug, tx);
+            }
+        }
+        Ok(Reply::CreatedUnbound(session, submitted)) => {
+            if !submitted.is_empty() && l.title.text == submitted {
+                l.title = TextEdit::new("");
+                l.show_title = false;
+            }
+            let stopped_in_flight = stopped_during_pending_overflow
+                || l.project
+                    .as_ref()
+                    .is_some_and(|p| stopped_during_pending.contains(&p.id));
+            if !stopped_in_flight && !l.sessions.iter().any(|row| row.id == session.id) {
+                l.sessions.insert(0, session);
+            }
+            l.error = Some("sessionList.reload.error");
+            crate::shell::notifications::emit_outcome(
+                s,
+                crate::shell::notifications::Category::Sessions,
+                None,
+                crate::strings::t("sessionList.reload.error"),
+                true,
+            );
+        }
+        Ok(Reply::CreatePrecheckFailed) => {
+            l.error = Some("sessionList.reload.error");
+            crate::shell::notifications::emit_outcome(
+                s,
+                crate::shell::notifications::Category::Sessions,
+                None,
+                crate::strings::t("sessionList.reload.error"),
+                true,
+            );
+        }
+        Ok(Reply::CreateRejected) => {
+            l.error = Some("rune.create_error");
+            crate::shell::notifications::emit_outcome(
+                s,
+                crate::shell::notifications::Category::Sessions,
+                None,
+                crate::strings::t("rune.create_error"),
+                true,
+            );
+        }
+        Ok(Reply::CreateUncertainLinked(directory)) => {
+            l.creation_uncertain = true;
+            l.creation_uncertain_linked = Some(directory);
+            l.linked.mark_reload();
+            l.error = Some("rune.create_error");
+            crate::shell::notifications::emit_outcome(
+                s,
+                crate::shell::notifications::Category::Sessions,
+                None,
+                crate::strings::t("rune.create_error"),
+                true,
+            );
+        }
+        Ok(Reply::Selected(missing, selection, dismiss, allow_streaming)) => {
+            let selection_blocked = if allow_streaming {
+                child_blocked
+            } else {
+                blocked
+            };
+            l.sessions.retain(|row| !missing.contains(&row.id));
+            l.linked.rows.retain(|row| !missing.contains(&row.id));
+            if let Some(pages) = &mut l.linked.pages {
+                pages.rows.retain(|row| !missing.contains(&row.id));
+            }
+            l.search_results
+                .rows
+                .retain(|row| !missing.contains(&row.id));
+            l.listed_sessions.retain(|id| !missing.contains(id));
+            l.visits.forget(&missing);
+            if let Some((backend, _, _, verified, _)) = &selection {
+                l.visits.verified(&backend.session, *verified);
+            }
+            if let Some(id) = selected
+                .as_deref()
+                .filter(|id| s.phase == Phase::Failed && missing.iter().any(|m| m == id))
+            {
+                retire_session(s, id);
+                tx.instant();
+                return true;
+            }
+            let auth_required = l.authentication_required;
+            if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
+                !auth_required
+                    && !stopped_during_pending_overflow
+                    && !stopped_during_pending.contains(&b.workspace)
+                    && (!selection_blocked
+                        || s.phase == Phase::Failed
+                            && selected.as_deref() == Some(b.session.as_str()))
+            }) {
+                l.show_title = false;
+                if stale_connection {
+                    dismiss_origin_panel(s, dismiss, tx);
+                    choose_destination(s, b.session, None, tx);
+                } else {
+                    dismiss_origin_panel(s, dismiss, tx);
+                    bind(s, b, title, visit, &slug, tx);
+                }
+            } else if !selection_blocked {
+                l.error = Some("sessionList.reload.error");
+                crate::shell::notifications::emit_outcome(
+                    s,
+                    crate::shell::notifications::Category::Sessions,
+                    None,
+                    crate::strings::t("sessionList.reload.error"),
+                    true,
+                );
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        Ok(Reply::Reopened(opening, backend, title, slug)) => {
+            if !l.authentication_required && !stale_connection {
+                let id = opening.project.id.clone();
+                l.failed_detached_workspaces.remove(&id);
+                let stopped_in_flight = stopped_during_pending.contains(&id);
+                let current_stream_generation = l.workspace_stream_generation;
+                let needs_reconcile = !stopped_in_flight
+                    && (stopped_during_pending_overflow
+                        || (current_stream_generation % 2 == 1
+                            && pending_stream_generation != current_stream_generation));
+                if !stopped_in_flight {
+                    if !stopped_during_pending_overflow
+                        && let Some((reconcile_generation, opened_after, _)) =
+                            &mut l.detached_reconcile
+                        && pending_stream_generation == *reconcile_generation
+                    {
+                        opened_after.insert(id.clone());
+                    } else if let Some((reconcile_generation, mut opened_after, _)) =
+                        l.detached_reconcile.take()
+                    {
+                        opened_after.remove(&id);
+                        spawn_detached_reconcile_with(l, reconcile_generation, opened_after);
+                    }
+                }
+                if !stopped_in_flight {
+                    reopen::apply(s, opening, backend, title, &slug);
+                } else {
+                    s.phase = Phase::RestoreFailed;
+                }
+                if stopped_in_flight {
+                    crate::workspace::deliver_detached_events(
+                        s,
+                        &[codenomad_client::transport::WorkspaceEvent::Stopped {
+                            workspace_id: id,
+                        }],
+                    );
+                } else if needs_reconcile
+                    && current_stream_generation % 2 == 1
+                    && crate::workspace::has_detached_panels(s)
+                    && s.screen
+                        .launcher()
+                        .is_some_and(|l| l.detached_reconcile.is_none())
+                {
+                    let _ = crate::workspace::set_detached_online(s, false);
+                    if let Some(l) = s.screen.launcher_mut() {
+                        spawn_detached_reconcile(l, current_stream_generation);
+                    }
+                }
+            }
+        }
+        Ok(Reply::Placed(backend, title, slug, confirmed, attempted)) => {
+            if selected.as_deref() == Some(backend.session.as_str()) {
+                let auth_required = l.authentication_required;
+                l.error = (!confirmed).then_some("sessionList.worktreeMove.error");
+                crate::workspace::schedule_catalogue(s);
+                if !auth_required
+                    && !stopped_during_pending_overflow
+                    && !stopped_during_pending.contains(&backend.workspace)
+                    && (attempted
+                        || crate::git::placement(s) != Some(slug.as_str())
+                        || s.phase == Phase::Failed)
+                {
+                    if stale_connection {
+                        choose_destination(s, backend.session, None, tx);
+                    } else {
+                        bind(s, backend, title, None, &slug, tx);
+                    }
+                }
+            }
+        }
+        Ok(Reply::PlacementUnconfirmed(family)) => {
+            l.error = Some("sessionList.worktreeMove.error");
+            crate::git::hold_placement(s, family);
+            crate::workspace::schedule_catalogue(s);
+        }
+        Ok(Reply::PlacementReconciled(backend, title, slug, family)) => {
+            let auth_required = l.authentication_required;
+            crate::git::release_placement(s, &backend.base, &family);
+            crate::workspace::schedule_catalogue(s);
+            if !auth_required
+                && !stopped_during_pending_overflow
+                && !stopped_during_pending.contains(&backend.workspace)
+                && (crate::git::placement(s) != Some(slug.as_str()) || s.phase == Phase::Failed)
+            {
+                if stale_connection {
+                    choose_destination(s, backend.session, None, tx);
+                } else {
+                    bind(s, backend, title, None, &slug, tx);
+                }
+            }
         }
         Err(error) => {
-            let key = match error.to_string().as_str() {
-                "rune.connect_error" => "rune.connect_error",
-                "rune.list_error" => "rune.list_error",
-                "rune.create_error" => "rune.create_error",
-                "rune.restore_error" => "rune.restore_error",
-                _ => "rune.open_error",
-            };
-            if key == "rune.create_error" {
-                l.creation_uncertain = true;
+            if stale_connection && l.resume_after_job {
+                l.error = None;
+            } else {
+                let key = match error.to_string().as_str() {
+                    "rune.connect_error" => "rune.connect_error",
+                    "rune.list_error" => "rune.list_error",
+                    "rune.create_error" => "rune.create_error",
+                    "rune.restore_error" => "rune.restore_error",
+                    "sessionList.reload.error" => "sessionList.reload.error",
+                    "sessionList.worktreeMove.error" => "sessionList.worktreeMove.error",
+                    _ => "rune.open_error",
+                };
+                if key == "rune.create_error" {
+                    l.creation_uncertain = true;
+                }
+                l.error = Some(key);
+                if matches!(key, "rune.restore_error" | "rune.open_error") {
+                    use crate::shell::notifications::{Category, emit_outcome};
+                    emit_outcome(s, Category::Projects, None, crate::strings::t(key), true);
+                } else if matches!(key, "sessionList.reload.error" | "rune.create_error") {
+                    crate::shell::notifications::emit_outcome(
+                        s,
+                        crate::shell::notifications::Category::Sessions,
+                        None,
+                        crate::strings::t(key),
+                        true,
+                    );
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    if key == "rune.restore_error" && !s.screen.is_launcher() {
+                        s.phase = Phase::RestoreFailed;
+                    }
+                    crate::platform::pairing::observe(s);
+                }
             }
-            l.error = Some(key);
         }
+    }
+    if s.screen.launcher_mut().is_some_and(|l| {
+        !l.pending
+            && !l.authentication_required
+            && std::mem::take(&mut l.resume_after_job)
+            && l.project.is_none()
+    }) {
+        crate::workspace::resume(s, tx);
+    }
+    if let Some(l) = s.screen.launcher_mut()
+        && !l.pending
+    {
+        l.visits.poll_checks();
     }
     tx.instant();
     true
 }
-pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
-    let intent = s
-        .workspace
-        .as_ref()
-        .map(|ui| ui.active_key().to_string())
-        .unwrap_or_else(|| "launcher".into());
+
+fn apply_connected(
+    s: &mut State,
+    b: Backend,
+    projects: Option<Vec<Project>>,
+    server_id: String,
+    selected: Option<String>,
+    tx: &mut Tx,
+) {
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
-    if l.pending {
-        return;
-    }
-    let Some(backend) = l.connection.clone() else {
-        return;
-    };
-    let local = l.local_connection();
-    let identity = if local {
-        saved.backend_id.is_none()
+    let reauthenticated = std::mem::take(&mut l.authentication_required);
+    let live_ids: Option<HashSet<String>> = if reauthenticated {
+        projects
+            .as_ref()
+            .map(|list| list.iter().map(|p| p.id.clone()).collect())
     } else {
-        saved.backend_id.as_deref()
-            == Some(if cfg!(target_arch = "wasm32") {
-                "web"
+        None
+    };
+    l.catalogue_watch = None;
+    l.workspace_stream_generation = 0;
+    l.detached_reconcile = None;
+    l.detached_reconcile_trailing = false;
+    l.failed_detached_workspaces.clear();
+    l.rebind_after_send = None;
+    l.resume_after_job = false;
+    l.managed_renewal = None;
+    l.managed_renewal_failed_for = None;
+    l.managed_renewal_attempts = 0;
+    l.projects_refresh = None;
+    l.connection_generation = l.connection_generation.wrapping_add(1);
+    l.connection = Some(b);
+    l.server_id = Some(server_id);
+    if let Some(projects) = projects {
+        l.projects = projects;
+        l.projects_stale = false;
+    }
+    l.password = TextEdit::new("");
+    if reauthenticated {
+        connection::watch_catalogue(l);
+    }
+    let has_project = l.project.is_some();
+    let job_pending = l.pending;
+    crate::workspace::connected(s);
+    if reauthenticated {
+        crate::workspace::renew_connection(s);
+        if let Some(live_ids) = &live_ids {
+            let live: HashSet<&str> = live_ids.iter().map(String::as_str).collect();
+            crate::workspace::stop_unlisted_detached(s, &live);
+        }
+        if has_project && let Some(id) = selected {
+            if s.composer.pending() && s.incoming.is_none() {
+                crate::composer::settle_pending(
+                    s,
+                    codenomad_client::transport::PromptOutcome::Unconfirmed,
+                );
+            }
+            if (s.composer.pending() && s.incoming.is_some())
+                || s.status_permissions.writing()
+                || job_pending
+            {
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.rebind_after_send = Some(id);
+                }
+                s.phase = Phase::Failed;
+                s.show_chat();
+            } else if session_loaded(s) {
+                s.incoming = None;
+                s.phase = Phase::Failed;
+                s.show_chat();
+                choose_destination(s, id, None, tx);
             } else {
-                "external"
-            })
-            && saved.server_id.is_some()
-            && saved.server_id == l.server_id
-    };
-    if !identity {
-        l.error = Some("rune.restore_error");
-        return;
-    }
-    let pending = match l.openings.begin(backend.clone(), &intent) {
-        Ok(pending) => pending,
-        Err(_) => {
-            l.error = Some("rune.restore_error");
-            return;
-        }
-    };
-    l.job("rune.restore_error", async move {
-        let opening = pending.create(&saved.folder).await?;
-        let rows = backend.sessions(&opening.project, None).await?;
-        let bound = if let Some(id) = &saved.active_session_id {
-            let (bound, session) = backend.bind_session(&opening.project, id, false).await?;
-            Some((bound, session.title))
+                s.incoming = None;
+                choose_destination(s, id, None, tx);
+            }
         } else {
-            None
-        };
-        Ok(Reply::Opened(opening, rows, bound))
-    });
-}
-fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
-    let draft = crate::workspace::bound(s, &b);
-    crate::files::bind(s, &b);
-    s.agent = None;
-    s.expanded_tools.clear();
-    s.chat_title = title;
-    s.messages.clear();
-    s.draft = TextEdit::new(draft);
-    s.phase = Phase::Loading;
-    s.can_older = false;
-    s.paging = false;
-    s.history_error = false;
-    s.revision += 1;
-    let (out, incoming) = bounded(64);
-    let (commands, input) = bounded(1);
-    s.incoming = Some(incoming);
-    s.commands = Some(commands);
-    let wake = s.wake.clone();
-    crate::platform::spawn(async move {
-        if crate::transport::run_backend(b, out.clone(), input, wake.clone())
-            .await
-            .is_err()
-        {
-            crate::transport::publish(&out, &wake, crate::transport::Event::Failed).await;
+            let active_live = s
+                .screen
+                .launcher()
+                .and_then(|l| l.project.as_ref())
+                .is_some_and(|p| {
+                    live_ids
+                        .as_ref()
+                        .is_none_or(|ids| ids.contains(p.id.as_str()))
+                });
+            if active_live {
+                crate::git::project_opened(s);
+                crate::workspace::restore_files_mode(s);
+            }
+            if job_pending {
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.resume_after_job = true;
+                }
+            } else {
+                crate::workspace::resume(s, tx);
+            }
         }
-    });
-    s.show_chat();
-    crate::workspace::capture(s);
-    tx.scroll_to_bottom_instant("history");
-}
-pub fn back(s: &mut State) {
-    if !matches!(s.phase, Phase::Ready | Phase::Failed)
-        || (!s.draft.text.is_empty() && s.workspace.is_none())
-        || crate::agent::navigation_blocked(s)
-        || s.screen.launcher().is_none()
-    {
-        return;
+    } else {
+        crate::workspace::resume(s, tx);
     }
-    crate::workspace::capture(s);
-    s.agent = None;
-    s.commands = None;
-    s.incoming = None;
-    s.files = None;
-    s.show_launcher();
-    list(s, false);
 }

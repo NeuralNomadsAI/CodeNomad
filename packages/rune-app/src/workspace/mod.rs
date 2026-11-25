@@ -1,14 +1,45 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 mod cache;
 pub(crate) mod opening;
+pub(crate) mod outlines;
 mod persistence;
+mod save_snapshot;
+mod snapshot_budget;
 mod state;
 pub(crate) use persistence::finish;
+pub(crate) use state::active_workspace;
+pub(crate) use state::contains_project;
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(crate) use state::evict_for_probe;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use state::native_window_store;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::poll_cached_notifications;
+#[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
+pub(crate) use state::set_files_tab;
 pub(crate) use state::{
-    Ui, bound, capture, close, connected, draft_changed, input_ready, new_tab, opened, poll,
-    prepare_open, resume, retry, select, status, strip,
+    Activation, can_switch_for_notification, check_notification, notification_target,
+    observes_notification, open_notification, open_session_tab_target, owns_notification,
+    switch_tab_for_child, workspace_notification,
+};
+pub(crate) use state::{
+    Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
+    close, connected, conversation_stream_clients, draft_changed, file_draft_status, file_wrap,
+    files_tab, has_conversation_stream, input_ready, new_tab, opened, panel_width, poll,
+    poll_file_drafts, prepare_open, renew_connection, restore_files_mode, resume, retry,
+    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative, status,
+    strip, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
+};
+pub(crate) use state::{
+    close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
+    has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_reader,
+    mission_observation_project, mission_panel, mission_reader, mission_supported,
+    missions_composing, reconcile_detached_online, restore_mission_reader_focus, right_panel_tab,
+    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_missions,
 };
 
+use crate::composer::draft_storage::SavedParts;
+use save_snapshot::encode_for_save;
 use serde_json::{Map, Value, json};
 
 pub(crate) const MAX_BYTES: usize = 1024 * 1024;
@@ -17,11 +48,19 @@ const MAX_TABS: usize = 32;
 const MAX_DRAFTS: usize = 24;
 const MAX_DRAFT: usize = 32 * 1024;
 const MAX_STRINGS: usize = 96 * 1024;
+pub(crate) const MAX_PANEL_WIDTH: u16 = 16_384;
+const PANEL_WIDTH_KEYS: [&str; 2] = [
+    "opencode-session-sidebar-width-v8",
+    "opencode-session-right-drawer-width-v1",
+];
+pub(crate) const FILE_WRAP_KEY: &str = "opencode-session-right-panel-files-word-wrap-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub revision: u64,
     pub saved_at: u64,
+    pub panel_widths: [Option<u16>; 2],
+    pub file_wrap: Option<bool>,
     pub tabs: Vec<Tab>,
     pub active: Option<usize>,
 }
@@ -41,6 +80,39 @@ pub struct Workspace {
     pub workspace_id: Option<String>,
     pub active_session_id: Option<String>,
     pub drafts: BTreeMap<String, String>,
+    pub(crate) attachment_drafts: BTreeSet<String>,
+    pub(crate) attachment_parts: BTreeMap<String, SavedParts>,
+    pub(crate) view: ViewState,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ViewState {
+    right_panel: RightPanelTab,
+    files_mode: Option<&'static str>,
+    selected_mission: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RightPanelTab {
+    Status,
+    Files,
+    Missions,
+}
+
+impl Default for RightPanelTab {
+    fn default() -> Self {
+        Self::Status
+    }
+}
+
+impl RightPanelTab {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Files => "files",
+            Self::Missions => "missions",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,7 +137,29 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
     if integer(root.get("version"))? != 1 {
         return Err(Error::Unsupported);
     }
-    empty_map(root.get("layout"))?;
+    let layout = object(required(root, "layout")?)?;
+    fields(
+        layout,
+        &[PANEL_WIDTH_KEYS[0], PANEL_WIDTH_KEYS[1], FILE_WRAP_KEY],
+    )?;
+    let file_wrap = match layout.get(FILE_WRAP_KEY).and_then(Value::as_str) {
+        Some("on") => Some(true),
+        Some("off") => Some(false),
+        _ => None,
+    };
+    let mut panel_widths = [None; 2];
+    for (side, key) in PANEL_WIDTH_KEYS.iter().enumerate() {
+        if let Some(raw) = layout.get(*key) {
+            let width = raw
+                .as_str()
+                .and_then(|s| s.parse::<f64>().ok())
+                .filter(|width| {
+                    width.is_finite() && (0.0..=f64::from(MAX_PANEL_WIDTH)).contains(width)
+                })
+                .ok_or(Error::Malformed)?;
+            panel_widths[side] = Some(width.floor() as u16);
+        }
+    }
     let revision = integer(root.get("revision"))?;
     let saved_at = integer(root.get("savedAt"))?;
     let (tabs, active) = if root.get("session") == Some(&Value::Null) {
@@ -91,6 +185,8 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
     let snapshot = Snapshot {
         revision,
         saved_at,
+        panel_widths,
+        file_wrap,
         tabs,
         active,
     };
@@ -100,6 +196,14 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
 
 pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
     validate(snapshot)?;
+    let bytes = snapshot_bytes(snapshot)?;
+    if bytes.len() > MAX_BYTES {
+        return Err(Error::Limit);
+    }
+    Ok(bytes)
+}
+
+fn snapshot_bytes(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
     let tabs: Vec<Value> = snapshot
         .tabs
         .iter()
@@ -122,18 +226,44 @@ pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
                         value[key] = Value::String(entry.clone());
                     }
                 }
+                if !workspace.attachment_drafts.is_empty() {
+                    value["attachmentDrafts"] = json!(workspace.attachment_drafts);
+                }
+                if !workspace.attachment_parts.is_empty() {
+                    value["attachmentParts"] = Value::Object(
+                        workspace
+                            .attachment_parts
+                            .iter()
+                            .map(|(id, parts)| (id.clone(), parts.encode()))
+                            .collect(),
+                    );
+                }
+                if workspace.view != ViewState::default() {
+                    value["viewState"] = json!({
+                        "version": 1,
+                        "rightPanelTab": workspace.view.right_panel.key(),
+                        "filesMode": workspace.view.files_mode.unwrap_or("workspace"),
+                    });
+                    if let Some(id) = &workspace.view.selected_mission {
+                        value["viewState"]["missions"] = json!({ "selected": id });
+                    }
+                }
                 value
             }
         })
         .collect();
     let active = snapshot.active.map(|index| index as i64).unwrap_or(-1);
-    let value = json!({"version": 1, "revision": snapshot.revision, "savedAt": snapshot.saved_at,
-        "layout": {}, "session": {"tabs": tabs, "activeTabIndex": active}});
-    let bytes = serde_json::to_vec(&value).map_err(|_| Error::Malformed)?;
-    if bytes.len() > MAX_BYTES {
-        return Err(Error::Limit);
+    let mut layout: Map<_, _> = PANEL_WIDTH_KEYS
+        .into_iter()
+        .zip(snapshot.panel_widths)
+        .filter_map(|(key, width)| Some((key.into(), json!(width?.to_string()))))
+        .collect();
+    if let Some(wrap) = snapshot.file_wrap {
+        layout.insert(FILE_WRAP_KEY.into(), json!(if wrap { "on" } else { "off" }));
     }
-    Ok(bytes)
+    let value = json!({"version": 1, "revision": snapshot.revision, "savedAt": snapshot.saved_at,
+        "layout": layout, "session": {"tabs": tabs, "activeTabIndex": active}});
+    serde_json::to_vec(&value).map_err(|_| Error::Malformed)
 }
 
 fn tab(value: &Value) -> Result<Tab, Error> {
@@ -156,6 +286,8 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     "activeSessionId",
                     "drafts",
                     "attachments",
+                    "attachmentDrafts",
+                    "attachmentParts",
                     "scrollSnapshots",
                     "unseenIdleSince",
                     "generationRecovery",
@@ -173,7 +305,6 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                 "generationRecovery",
                 "seenInterruptions",
                 "outlineIndexes",
-                "viewState",
             ] {
                 if value.contains_key(key) {
                     empty_map(value.get(key))?;
@@ -199,6 +330,18 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     ))
                 })
                 .collect::<Result<_, Error>>()?;
+            let attachment_drafts = match value.get("attachmentDrafts") {
+                None => BTreeSet::new(),
+                Some(ids) => {
+                    let ids = ids.as_array().ok_or(Error::Malformed)?;
+                    if ids.len() > MAX_DRAFTS {
+                        return Err(Error::Limit);
+                    }
+                    ids.iter()
+                        .map(|id| id.as_str().map(str::to_owned).ok_or(Error::Malformed))
+                        .collect::<Result<_, _>>()?
+                }
+            };
             Ok(Tab::Workspace(Workspace {
                 backend_id: optional_string(value, "backendId")?,
                 server_id: optional_string(value, "serverId")?,
@@ -214,6 +357,18 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                 workspace_id: optional_string(value, "workspaceId")?,
                 active_session_id: optional_string(value, "activeSessionId")?,
                 drafts,
+                attachment_drafts,
+                attachment_parts: if let Some(parts) = value.get("attachmentParts") {
+                    object(parts)?
+                        .iter()
+                        .map(|(id, raw)| {
+                            Ok((id.clone(), SavedParts::decode(raw).ok_or(Error::Malformed)?))
+                        })
+                        .collect::<Result<_, Error>>()?
+                } else {
+                    BTreeMap::new()
+                },
+                view: view_state(value.get("viewState"))?,
             }))
         }
         Some(_) => Err(Error::Unsupported),
@@ -221,10 +376,77 @@ fn tab(value: &Value) -> Result<Tab, Error> {
     }
 }
 
+fn view_state(value: Option<&Value>) -> Result<ViewState, Error> {
+    let Some(value) = value else {
+        return Ok(ViewState::default());
+    };
+    let value = object(value)?;
+    if value.is_empty() {
+        return Ok(ViewState::default());
+    }
+    fields(
+        value,
+        &["version", "rightPanelTab", "filesMode", "missions"],
+    )?;
+    if integer(value.get("version"))? != 1 {
+        return Err(Error::Unsupported);
+    }
+    let right_panel = match value.get("rightPanelTab").map(|key| key.as_str()) {
+        None | Some(Some("status")) => RightPanelTab::Status,
+        Some(Some("files")) => RightPanelTab::Files,
+        Some(Some("missions")) => RightPanelTab::Missions,
+        _ => return Err(Error::Unsupported),
+    };
+    let files_mode = match value.get("filesMode") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            crate::git::Mode::restore(value.as_str().ok_or(Error::Malformed)?)
+                .ok_or(Error::Unsupported)?
+                .key(),
+        ),
+    };
+    let selected_mission = match value.get("missions") {
+        None => None,
+        Some(missions) => {
+            let missions = object(missions)?;
+            fields(missions, &["selected"])?;
+            match missions.get("selected") {
+                None => None,
+                Some(Value::String(id)) if !id.is_empty() && id.encode_utf16().count() <= 240 => {
+                    Some(id.clone())
+                }
+                Some(_) => return Err(Error::Malformed),
+            }
+        }
+    };
+    Ok(ViewState {
+        right_panel,
+        files_mode: files_mode.or((right_panel == RightPanelTab::Files).then_some("workspace")),
+        selected_mission,
+    })
+}
+
 fn validate(snapshot: &Snapshot) -> Result<(), Error> {
+    if snapshot_string_units(snapshot)? > MAX_STRINGS {
+        return Err(Error::Limit);
+    }
+    Ok(())
+}
+
+fn snapshot_string_units(snapshot: &Snapshot) -> Result<usize, Error> {
     if snapshot.revision > MAX_SAFE
         || snapshot.saved_at > MAX_SAFE
         || snapshot.tabs.len() > MAX_TABS
+    {
+        return Err(Error::Limit);
+    }
+    if snapshot
+        .panel_widths
+        .iter()
+        .zip(rune_theme_codenomad::shell::PANEL_MIN)
+        .any(|(width, min)| {
+            width.is_some_and(|width| f32::from(width) < min || width > MAX_PANEL_WIDTH)
+        })
     {
         return Err(Error::Limit);
     }
@@ -233,12 +455,15 @@ fn validate(snapshot: &Snapshot) -> Result<(), Error> {
         Some(index) if index < snapshot.tabs.len() => {}
         _ => return Err(Error::Malformed),
     }
-    let mut remaining = MAX_STRINGS;
+    let mut remaining = usize::MAX;
     for tab in &snapshot.tabs {
         let Tab::Workspace(workspace) = tab else {
             continue;
         };
-        if workspace.occurrence >= MAX_TABS as u64 || workspace.drafts.len() > MAX_DRAFTS {
+        if workspace.occurrence >= MAX_TABS as u64
+            || workspace.drafts.len() > MAX_DRAFTS
+            || workspace.attachment_drafts.len() > MAX_DRAFTS
+        {
             return Err(Error::Limit);
         }
         take(&workspace.folder, 4096, false, &mut remaining)?;
@@ -273,8 +498,21 @@ fn validate(snapshot: &Snapshot) -> Result<(), Error> {
             }
             take(text, MAX_DRAFT, true, &mut remaining)?;
         }
+        for id in &workspace.attachment_drafts {
+            take(id, 256, false, &mut remaining)?;
+            if !draft_id(id) {
+                return Err(Error::Malformed);
+            }
+        }
+        if workspace
+            .attachment_parts
+            .iter()
+            .any(|(id, parts)| !workspace.attachment_drafts.contains(id) || !parts.valid())
+        {
+            return Err(Error::Malformed);
+        }
     }
-    Ok(())
+    Ok(usize::MAX - remaining)
 }
 
 fn take(value: &str, max: usize, empty: bool, remaining: &mut usize) -> Result<(), Error> {

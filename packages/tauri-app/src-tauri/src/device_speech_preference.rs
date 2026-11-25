@@ -53,7 +53,17 @@ impl Store {
         Ok(value)
     }
 
+    #[cfg(test)]
     pub(super) fn select(&self, engine: Engine, expected: Option<&str>) -> Result<(), SpeechError> {
+        self.select_if(engine, expected, || true).map(|_| ())
+    }
+
+    pub(super) fn select_if(
+        &self,
+        engine: Engine,
+        expected: Option<&str>,
+        admit: impl FnOnce() -> bool,
+    ) -> Result<bool, SpeechError> {
         let directory = self.0.parent().ok_or(SpeechError::Failed)?;
         fs::create_dir_all(directory).map_err(|_| SpeechError::Failed)?;
         let _lock = SelectionLock::acquire(directory, SystemTime::now())
@@ -69,9 +79,12 @@ impl Store {
             tempfile::NamedTempFile::new_in(directory).map_err(|_| SpeechError::Failed)?;
         serde_json::to_writer(&mut temporary, &value).map_err(|_| SpeechError::Failed)?;
         temporary.flush().map_err(|_| SpeechError::Failed)?;
+        if !admit() {
+            return Ok(false);
+        }
         temporary
             .persist(&self.0)
             .map_err(|_| SpeechError::Failed)?;
-        Ok(())
+        Ok(true)
     }
 }
