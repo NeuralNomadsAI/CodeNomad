@@ -104,25 +104,32 @@ mod tests {
             .find_map(|child| find_a11y(child, key))
     }
 
-    fn toggle_state(rt: &Runtime<crate::State>) -> (String, bool) {
+    fn toggle_state(rt: &Runtime<crate::State>) -> (String, Option<bool>) {
         let tree = rt.accessibility_json();
         let node = find_a11y(&tree, "example-code-0-diagram-toggle").unwrap();
         let name = node["name"].as_str().unwrap().to_owned();
-        let checked = node
-            .get("states")
-            .and_then(|s| s.as_array())
-            .is_some_and(|states| states.iter().any(|s| s.as_str() == Some("checked")));
+        let states = node.get("states").and_then(|s| s.as_array());
+        let checked =
+            if states.is_some_and(|states| states.iter().any(|s| s.as_str() == Some("checked"))) {
+                Some(true)
+            } else if states
+                .is_some_and(|states| states.iter().any(|s| s.as_str() == Some("unchecked")))
+            {
+                Some(false)
+            } else {
+                None
+            };
         (name, checked)
     }
 
     #[test]
     fn accessible_toggle_name_reports_the_current_mode_and_the_next_action() {
         let mut rt = render("```mermaid\nflowchart LR\n  A --> B\n```", false);
-        assert_eq!(toggle_state(&rt), ("Show source".into(), true));
+        assert_eq!(toggle_state(&rt), ("Show source".into(), Some(true)));
         click(&mut rt, "example-code-0-diagram-toggle");
-        assert_eq!(toggle_state(&rt), ("Show diagram".into(), false));
+        assert_eq!(toggle_state(&rt), ("Show diagram".into(), Some(false)));
         click(&mut rt, "example-code-0-diagram-toggle");
-        assert_eq!(toggle_state(&rt), ("Show source".into(), true));
+        assert_eq!(toggle_state(&rt), ("Show source".into(), Some(true)));
     }
 
     #[test]

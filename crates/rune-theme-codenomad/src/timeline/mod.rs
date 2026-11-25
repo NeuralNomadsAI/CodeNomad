@@ -232,13 +232,21 @@ pub fn view<S: 'static>(
         .virtual_rows(
             band_count,
             estimate,
-            |_: &S, i| Cow::Owned(i.to_string()),
+            move |_: &S, i| {
+                let first = i * BAND;
+                let len = (count - first).min(BAND);
+                if len == BAND && first + len < count {
+                    Cow::Owned(i.to_string())
+                } else {
+                    Cow::Owned(format!("{i}:{len}:last"))
+                }
+            },
             move |s, i| {
                 let first = i * BAND;
                 build(s, first, (count - first).min(BAND))
             },
         )
-        .virtual_rows_version(version);
+        .virtual_rows_version((version, count));
     let extent = rune::col()
         .key("timeline-extent")
         .w_full()
@@ -405,5 +413,68 @@ mod tests {
                 );
             }
         }
+        // Growing a rail in the same runtime after measuring a short final band (65 -> 512)
+        // must rekey that band so its cached short height never shifts later bands upward.
+        let scroll = Rc::new(Cell::new(ScrollPosition::default()));
+        let mut rt = rune::Runtime::new(
+            Scene {
+                count: 65,
+                scroll: scroll.clone(),
+            },
+            |s: &Scene, _| {
+                let scroll = s.scroll.clone();
+                let rail = view(
+                    800.0,
+                    "en",
+                    s.count,
+                    s.count as u64,
+                    |_: &Scene, i| Cow::Owned(format!("m-{i}")),
+                    |_: &Scene, i| Marker {
+                        label: Cow::Owned(format!("Marker {i}")),
+                        current: "Current",
+                        glyph: &icons::USER,
+                        tone: "message-user-border",
+                        active: i == 0,
+                    },
+                    |_: &mut Scene, _, _| {},
+                    |_: &Scene, _, el| el,
+                )
+                .unwrap()
+                .on_scroll_offset(move |pos| scroll.set(pos));
+                rail_slot(rail)
+            },
+            (800.0, 320.0),
+            rune::Env::new(false, 1.0),
+        );
+        for _ in 0..4 {
+            rt.frame(0.016);
+        }
+        rt.update(|_, tx| show_marker(64, tx));
+        for _ in 0..4 {
+            rt.frame(0.016);
+        }
+        assert!(rt.find("m-64").is_some(), "short final band measured");
+        rt.update(|_, tx| show_marker(0, tx));
+        for _ in 0..4 {
+            rt.frame(0.016);
+        }
+        rt.update(|s, _| s.count = 512);
+        for _ in 0..4 {
+            rt.frame(0.016);
+        }
+        rt.update(|_, tx| show_marker(511, tx));
+        for _ in 0..4 {
+            rt.frame(0.016);
+        }
+        let pos = scroll.get();
+        let expected_512 = 512.0 * height + 511.0 * gap;
+        assert!(
+            (pos.max[1] + pos.viewport[1] - expected_512).abs() < 1.0,
+            "grown rail must keep exact extent {expected_512}, got {pos:?}"
+        );
+        assert!(
+            rt.find("m-511").is_some(),
+            "last marker must mount at the bottom after growing past a previously measured short band"
+        );
     }
 }

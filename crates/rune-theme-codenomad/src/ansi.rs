@@ -544,6 +544,18 @@ mod tests {
     fn sgr_53_and_55_toggle_ansi_overline_decorations() {
         let plain = "top plain red";
         let overlined = "\u{1b}[53mtop\u{1b}[55m plain \u{1b}[31;53mred\u{1b}[0m";
+        let (text, _, strikes, overlines) = styled(parse(overlined));
+        assert_eq!(text, plain);
+        assert!(strikes.is_empty());
+        assert_eq!(
+            overlines
+                .iter()
+                .map(|&(start, end, _)| &text[start..end])
+                .collect::<Vec<_>>(),
+            vec!["top", "red"],
+            "SGR 55 must clear overline before ' plain ' and SGR 53 must re-enable it on 'red'"
+        );
+        assert_eq!(overlines[1].2, Some(rgb(187, 0, 0)));
         let paint_count = |source: &'static str| {
             let mut rt = rune::Runtime::new(
                 source,
@@ -565,6 +577,8 @@ mod tests {
         );
         // Concealed text with SGR 53 must not paint a visible overline rule.
         let hidden_overlined = "\u{1b}[8;53msecret\u{1b}[0m";
+        let (_, _, _, hidden_ov) = styled(parse(hidden_overlined));
+        assert!(hidden_ov.is_empty());
         assert_eq!(paint_count(hidden_overlined), 0);
     }
 

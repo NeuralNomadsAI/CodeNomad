@@ -260,7 +260,11 @@ fn render_page<S: 'static>(source_text: &str, markdown_text: Option<&str>, raw: 
             );
             col()
                 .full_width()
-                .child(layout::action_row().child(text("diff")).child(copy))
+                .child(
+                    layout::action_row()
+                        .child(text(t("toolCall.diff.label")))
+                        .child(copy),
+                )
                 .child(card)
         },
     )

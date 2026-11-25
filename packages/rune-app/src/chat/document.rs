@@ -328,7 +328,11 @@ fn prose_for(
                     .key(format!("{diff_group}-diff-{}-copy", frame.index));
                     col()
                         .full_width()
-                        .child(layout::action_row().child(text("diff")).child(copy))
+                        .child(
+                            layout::action_row()
+                                .child(text(t("toolCall.diff.label")))
+                                .child(copy),
+                        )
                         .child(card)
                 },
             )

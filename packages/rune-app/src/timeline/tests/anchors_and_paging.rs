@@ -249,6 +249,46 @@ fn inward_drag_from_overscroll_cancels_pending_page_while_elastic_return_does_no
         cancelled.is_closed(),
         "direct inward drag from overscroll must cancel pending older page"
     );
+    // Finish the first gesture and settle back to top.
+    rt.touch(1, TouchPhase::Ended, x, y + h * 0.62, 0.38);
+    for _ in 0..90 {
+        rt.frame(0.016);
+    }
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_to_instant("history", 0.0, 0.0);
+    });
+    for _ in 0..4 {
+        rt.frame(0.016);
+    }
+    while commands.try_recv().is_ok() {}
+    // Second pull: release into elastic return and force view commits mid-rebound.
+    // Even if virtual_rows clamps offset during EdgeReturn, the rebound must not cancel paging.
+    rt.touch(2, TouchPhase::Started, x, y + h * 0.18, 2.0);
+    for i in 1..=8 {
+        rt.touch(
+            2,
+            TouchPhase::Moved,
+            x,
+            y + h * (0.18 + 0.07 * i as f32),
+            2.0 + f64::from(i) * 0.016,
+        );
+        rt.frame(0.016);
+    }
+    let Command::Page(Before, cancelled2) = commands.try_recv().unwrap() else {
+        panic!("second touch pull must request older history")
+    };
+    rt.touch(2, TouchPhase::Ended, x, y + h * 0.74, 2.13);
+    for step in 0..90 {
+        if step == 10 || step == 20 {
+            rt.update(|s, _| s.revision = s.revision.wrapping_add(1));
+        }
+        rt.frame(0.016);
+    }
+    assert!(
+        !cancelled2.is_closed(),
+        "elastic return with mid-rebound view commits must not cancel pending older page"
+    );
 }
 
 #[test]
