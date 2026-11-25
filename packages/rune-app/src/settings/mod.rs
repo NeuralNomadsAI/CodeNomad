@@ -170,11 +170,20 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         .launcher()
         .is_some_and(|launcher| shared.bind(launcher.connection.clone()));
     let expired = shared.observe_authentication();
+    let mut renewing = false;
     if expired {
+        let expired_backend = shared.backend.clone();
         if let Some(launcher) = s.screen.launcher_mut() {
             launcher.authentication_required = true;
+            if let Some(expired_backend) = &expired_backend {
+                renewing = launcher.start_managed_renewal(expired_backend);
+            }
         }
-        s.phase = crate::Phase::Failed;
+        s.phase = if renewing {
+            crate::Phase::Reconnecting
+        } else {
+            crate::Phase::Failed
+        };
     }
     {
         let watch = s.screen.launcher().and_then(|l| l.catalogue_watch.as_ref());
@@ -317,7 +326,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         }
     });
     if expired {
-        s.show_launcher();
+        if !renewing {
+            s.show_launcher();
+        }
         crate::workspace::suspend_missions(s);
     } else {
         if keep_passage {

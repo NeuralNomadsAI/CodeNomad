@@ -125,8 +125,8 @@ pub fn announce(local: &str, remote: Option<&str>) {
 }
 
 /// `installShutdownStdinHandler`: whole lines only; `codenomad:shutdown` stops once, other lines
-/// may be native responses. End of input changes nothing.
-pub fn read_stdin(stop: CancellationToken) {
+/// may be native responses or managed-session renewals. End of input changes nothing.
+pub fn read_stdin(stop: CancellationToken, app: crate::Shared) {
     std::thread::spawn(move || {
         let mut input = io::stdin().lock();
         let mut buffer = Vec::new();
@@ -140,8 +140,8 @@ pub fn read_stdin(stop: CancellationToken) {
             let text = text.trim_end_matches('\n').trim_end_matches('\r');
             if text.trim() == SHUTDOWN_COMMAND {
                 stop.cancel();
-            } else {
-                native_parent::handle_line(text);
+            } else if !native_parent::handle_line(text) && !stop.is_cancelled() && native_parent::available() {
+                crate::auth::managed::handle_control_if(text, &app.auth, || !stop.is_cancelled(), line);
             }
         }
     });

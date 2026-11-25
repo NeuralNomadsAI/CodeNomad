@@ -1,5 +1,6 @@
 use super::banners::{
-    anchor_offset, has_any_rail_marker, has_rail_marker, is_row_visible, snapshot,
+    anchor_offset, arm_rail_collision, has_any_rail_marker, has_rail_marker, is_row_visible,
+    snapshot,
 };
 use super::*;
 
@@ -325,6 +326,7 @@ pub(super) fn check(mut rt: Runtime<State>, expected_offset: f32) -> Runtime<Sta
         offset_before_wheel > 130.0,
         "precondition: rail offset must stay strictly interior across all wheel deltas: {offset_before_wheel}"
     );
+    arm_rail_collision(&mut rt);
     rt.wheel_xy(
         rail_rect[0] + rail_rect[2] / 2.0,
         rail_rect[1] + rail_rect[3] / 2.0,

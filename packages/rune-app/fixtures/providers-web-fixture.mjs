@@ -584,9 +584,18 @@ try {
     await whitespace.press('Enter')
     await page.getByRole('switch',{name:'Hide whitespace-only changes',checked:false,exact:true}).waitFor({state:'attached'})
     assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
-    // Rune's current mirror omits disabled switches; their keyboard help stays available.
     assert.equal(await page.getByRole('button',{name:'Focus existing window on second launch',exact:true}).count(),0)
-    assert.deepEqual(await page.getByRole('switch').allTextContents(),['Hide whitespace-only changes'])
+    assert.deepEqual(await page.getByRole('switch').allTextContents(),[
+      'Auto-cleanup blank sessions',
+      'Keep subagent idle markers',
+      'Provider credit balance',
+      'Hide whitespace-only changes',
+      'Hold long assistant replies',
+    ])
+    for (const name of ['Auto-cleanup blank sessions','Keep subagent idle markers','Provider credit balance','Hold long assistant replies']) {
+      assert.equal(await page.getByRole('switch',{name,exact:true}).getAttribute('aria-disabled'),'true')
+    }
+    assert.equal(await whitespace.getAttribute('aria-disabled'),null)
     const info = page.getByRole('button',{name:'Hold long assistant replies',exact:true})
     assert.equal(await info.getAttribute('aria-description'),'Rune does not apply this setting yet.')
     await info.press('Enter')
@@ -1251,9 +1260,9 @@ try {
   const writesDuringOutage = writes.length
   await presetButton('Nothing').click({force:true})
   await afterPaint()
-  const disabledReadBtn = page.getByRole('button',{name:'Default state for read — Expanded',exact:true})
-  assert.equal(await disabledReadBtn.getAttribute('aria-description'),'Disabled')
-  await disabledReadBtn.click({force:true})
+  const disabledRead = page.getByRole('combobox',{name:'Default state for read — Expanded',exact:true})
+  assert.equal(await disabledRead.getAttribute('aria-disabled'),'true')
+  await disabledRead.click({force:true})
   await afterPaint()
   const recoveredRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'GET')
   await settingsDialog.getByRole('button',{name:'Retry',exact:true}).click({force:true})

@@ -379,7 +379,7 @@ pub(super) fn view(s: &State) -> Option<El> {
                 },
             )
             .key("permission-mode")
-            .disabled(!owner.available()),
+            .aria_disabled(!owner.available()),
         );
     }
     if let Some(status) = status {

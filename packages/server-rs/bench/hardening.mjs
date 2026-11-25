@@ -171,14 +171,14 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
     const legitBrowse = await send(local, `/api/filesystem?path=repo`, { headers: H() })
     note("M2.legit-browse", { status: legitBrowse.status }, legitBrowse.status === 200)
 
-    // ---- M3: Git configuration guard
+    // ---- M3: Git configuration guard (passive reads; explicit mutations follow
+    // normal Git configuration for parity with `git-mutations.ts`, e.g. local LFS filters)
     const marker = path.join(home, "filter-ran.txt")
     const filterCmd = `touch '${marker.replaceAll("\\", "/")}'; cat`
     const gitRoutes = {
       status: () => send(local, `/api/workspaces/${id}/worktrees/root/git-status`, { headers: H() }),
       diff: () => send(local, `/api/workspaces/${id}/worktrees/root/git-diff?path=a.txt&scope=unstaged`, { headers: H() }),
-      stage: () => send(local, `/api/workspaces/${id}/worktrees/root/git-stage`, { method: "POST", headers: M(), body: JSON.stringify({ paths: ["a.txt"] }) }),
-      commit: () => send(local, `/api/workspaces/${id}/worktrees/root/git-commit`, { method: "POST", headers: M(), body: JSON.stringify({ message: "probe" }) }),
+      history: () => send(local, `/api/workspaces/${id}/worktrees/root/git-history`, { headers: H() }),
     }
     const baseline = await gitRoutes.status()
     note("M3.baseline", { status: baseline.status }, baseline.status === 200)

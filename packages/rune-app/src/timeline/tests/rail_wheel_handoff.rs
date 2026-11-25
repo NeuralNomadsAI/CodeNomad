@@ -108,19 +108,12 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
         "precondition: fragment-long-msg:1 aligned at top before rail arrival: offset={offset_before}, rel={}",
         frag1_before[1] - hist_rect[1]
     );
-    // First verify the control case (input_waiting=false): rail arrival calls keep_passage and
-    // snaps fragment-long-msg:1 back to rel=0 even if a wheel notch arrives on the same frame.
-    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, false));
+    // First verify the control case (no input waiting): rail arrival calls keep_passage and
+    // keeps fragment-long-msg:1 anchored at rel=0 across the reflow.
     rt.update(|s, _| {
         owner(s).changed = true;
         owner(s).index_changed = true;
     });
-    rt.wheel_xy(
-        hist_rect[0] + hist_rect[2] / 2.0,
-        hist_rect[1] + hist_rect[3] / 2.0,
-        0.0,
-        60.0,
-    );
     rt.frame(0.016);
     let hist_ctrl = rt.presented("history").expect("history presented").0;
     let frag1_ctrl = rt
@@ -129,14 +122,12 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
         .0;
     assert!(
         rt.presented("timeline").is_some() && (frag1_ctrl[1] - hist_ctrl[1]).abs() <= 2.0,
-        "control: without input_waiting, rail arrival snaps fragment-long-msg:1 back to rel=0: rel={}",
+        "control: without input_waiting, rail arrival keeps fragment-long-msg:1 at rel=0: rel={}",
         frag1_ctrl[1] - hist_ctrl[1]
     );
-    // Expire Rune's 100 ms unphased wheel burst window, reset to rail-absent state, re-verify
-    // fragment-long-msg:1 alignment at top, then repeat with input_waiting=true (as Rune's
-    // native/web hosts set when wheel input is queued): timeline::poll must skip keep_passage so
-    // the user's upward wheel moves history (~60px).
-    rt.poll = Some(crate::poll);
+    // Reset to rail-absent state, re-verify fragment-long-msg:1 alignment at top, then repeat
+    // with a queued transcript wheel: Rune sets tx.input_waiting()=true so timeline::poll skips
+    // keep_passage and the user's upward wheel moves history (~60px).
     for _ in 0..8 {
         rt.frame(0.02);
     }
@@ -164,7 +155,6 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
         "precondition: fragment-long-msg:1 re-aligned at top after 160ms wheel gap: offset={offset_before}, rel={}",
         frag1_before_2[1] - hist_rect[1]
     );
-    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
     rt.update(|s, _| {
         owner(s).changed = true;
         owner(s).index_changed = true;
@@ -194,7 +184,6 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
     // Also verify on_layout_tx threshold crossing honors poll_input_waiting: narrowing 500 -> 419px
     // on the same frame a wheel notch is queued must skip keep_passage so the user's wheel moves
     // history upward instead of snapping fragment-long-msg:1 back to rel=0.
-    rt.poll = Some(crate::poll);
     for _ in 0..8 {
         rt.frame(0.02);
     }
@@ -227,8 +216,7 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
     let hist_pre_narrow = rt.presented("history").expect("history presented").0;
     let offset_pre_narrow = owner(&mut rt.state).scroll.get().viewport.offset[1];
     assert!(offset_pre_narrow > 100.0);
-    // Frame 2 drains poll (setting poll_input_waiting=true), then Action::Layout(419) and wheel.
-    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
+    // Frame 2 drains poll (seeing tx.input_waiting()==true from wheel), then Action::Layout(419) and wheel.
     rt.wheel_xy(
         hist_pre_narrow[0] + hist_pre_narrow[2] / 2.0,
         hist_pre_narrow[1] + hist_pre_narrow[3] / 2.0,
@@ -254,7 +242,6 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
     );
     // Once the exit transition and subsequent poll settle, timeline must be unmounted and
     // flush_deferred_keep_passage must discard the deferred re-anchor because the transcript scrolled.
-    rt.poll = Some(crate::poll);
     for _ in 0..20 {
         rt.frame(0.016);
     }
@@ -291,11 +278,13 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
     assert!(rt.presented("timeline").is_some());
     rt.set_viewport((419.0, 320.0), 1.0);
     rt.frame(0.016);
-    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Function(1),
+        mods: rune::Mods::default(),
+    });
     rt.frame(0.016);
     assert!(owner(&mut rt.state).keep_passage_deferred.is_some());
     // Must replay on the VERY FIRST idle poll (not 20 frames later).
-    rt.poll = Some(crate::poll);
     rt.frame(0.016);
     let hist_idle = rt.presented("history").expect("history presented").0;
     let frag1_idle = rt
@@ -332,7 +321,10 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
     }
     rt.set_viewport((419.0, 320.0), 1.0);
     rt.frame(0.016);
-    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Function(1),
+        mods: rune::Mods::default(),
+    });
     rt.frame(0.016);
     let original_deferred = owner(&mut rt.state)
         .keep_passage_deferred
@@ -350,7 +342,6 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
         Some(original_deferred),
         "second toggle before idle poll must preserve the original pre-reflow target"
     );
-    rt.poll = Some(crate::poll);
     rt.frame(0.016);
     let hist_rail_wheel = rt.presented("history").expect("history presented").0;
     let frag1_rail_wheel = rt
@@ -377,7 +368,10 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
     }
     rt.set_viewport((419.0, 320.0), 1.0);
     rt.frame(0.016);
-    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Function(1),
+        mods: rune::Mods::default(),
+    });
     rt.frame(0.016);
     assert!(owner(&mut rt.state).keep_passage_deferred.is_some());
     rt.update(|s, tx| navigation::select(s, "head:User:0:false", tx));
@@ -385,7 +379,6 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
         owner(&mut rt.state).keep_passage_deferred.is_none(),
         "resident jump must clear keep_passage_deferred immediately"
     );
-    rt.poll = Some(crate::poll);
     for _ in 0..5 {
         rt.frame(0.016);
     }

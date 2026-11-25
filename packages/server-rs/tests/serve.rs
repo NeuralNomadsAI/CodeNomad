@@ -503,6 +503,73 @@ async fn shutdown_cancels_pending_plugin_snapshot() {
 }
 
 #[tokio::test]
+async fn managed_session_renews_over_parent_pipes_and_retires_on_logout() {
+    let args = [&PROD[..], &["--https", "false", "--http-port", "0"]].concat();
+    let mut server =
+        Server::start_with(scratch("managed-renew"), Path::new(env!("CARGO_BIN_EXE_codenomad-rs")), &args, |cmd| {
+            cmd.env("CODENOMAD_NATIVE_PARENT", "1")
+                .env("CODENOMAD_SESSION_IDLE_SECONDS", "1")
+                .env("CNRS_FIXTURE_URL", "http://127.0.0.1:9/")
+                .env("CNRS_FIXTURE_PASSWORD", "placeholder");
+        });
+    let (token, url, _) = server.ready().await;
+    let client = client();
+    let set = client
+        .post(format!("{url}/api/auth/token"))
+        .json(&serde_json::json!({ "token": token }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let old_cookie = set.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_owned();
+    assert_eq!(client.get(format!("{url}/api/meta")).header("cookie", &old_cookie).send().await.unwrap().status(), 200);
+
+    async fn ask(stdin: &mut tokio::process::ChildStdin, id: &str) {
+        let line = format!("codenomad:renew-session {id}\n");
+        stdin.write_all(line.as_bytes()).await.unwrap();
+        stdin.flush().await.unwrap();
+    }
+    async fn read_reply(server: &mut Server, id: &str) -> String {
+        let prefix = format!("CODENOMAD_MANAGED_SESSION:{id} ");
+        loop {
+            let line = server.line().await;
+            if let Some(value) = line.strip_prefix(&prefix) {
+                return value.to_owned();
+            }
+        }
+    }
+
+    // Active delivered session must not renew.
+    let id1 = "9d754f99-0b08-44d0-a99c-0d6c95229647";
+    ask(server.child.stdin.as_mut().unwrap(), id1).await;
+    assert_eq!(read_reply(&mut server, id1).await, "-");
+
+    // Wait for the 1 s idle expiry, verify 401, then renew over parent stdin/stdout.
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(client.get(format!("{url}/api/meta")).header("cookie", &old_cookie).send().await.unwrap().status(), 401);
+    let id2 = "11111111-2222-4333-8444-555555555555";
+    ask(server.child.stdin.as_mut().unwrap(), id2).await;
+    let renewed = read_reply(&mut server, id2).await;
+    assert_eq!(renewed.len(), 43);
+    let new_cookie = format!("{COOKIE}={renewed}");
+    assert_ne!(new_cookie, old_cookie);
+    assert_eq!(client.get(format!("{url}/api/meta")).header("cookie", &new_cookie).send().await.unwrap().status(), 200);
+
+    // Logout revokes the renewed session and retires the managed renewal right.
+    assert_eq!(
+        client.post(format!("{url}/api/auth/logout")).header("cookie", &new_cookie).send().await.unwrap().status(),
+        200
+    );
+    assert_eq!(client.get(format!("{url}/api/meta")).header("cookie", &new_cookie).send().await.unwrap().status(), 401);
+    let id3 = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    ask(server.child.stdin.as_mut().unwrap(), id3).await;
+    assert_eq!(read_reply(&mut server, id3).await, "-");
+
+    server.stop(b"").await;
+}
+
+#[tokio::test]
 async fn serve_declares_missions_capability_without_bench_env() {
     let executable = Path::new(env!("CARGO_BIN_EXE_codenomad-rs"));
     let args =

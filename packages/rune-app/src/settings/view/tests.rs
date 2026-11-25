@@ -187,6 +187,13 @@ fn node<'a>(tree: &'a Value, key: &str) -> Option<&'a Value> {
         .find_map(|child| node(child, key))
 }
 
+fn listbox(tree: &Value) -> Option<&Value> {
+    if tree["role"] == "list-box" {
+        return Some(tree);
+    }
+    tree["children"].as_array()?.iter().find_map(listbox)
+}
+
 #[test]
 fn settings_opencode_focus_refreshes_without_forcing_a_registry_recheck() {
     crate::platform::block_on(async {
@@ -329,7 +336,7 @@ fn settings_palette_selector_uses_active_appearance_and_returns_focus_on_escape(
         runtime.pointer_up(x, y);
         runtime.frame(0.02);
         let tree = runtime.accessibility_json();
-        let list = node(&tree, "listbox").expect("open palette menu");
+        let list = listbox(&tree).expect("open palette menu");
         assert!(list.to_string().contains(option));
         assert!(!list.to_string().contains(absent));
         runtime.key(rune::KeyEvent {
@@ -338,7 +345,7 @@ fn settings_palette_selector_uses_active_appearance_and_returns_focus_on_escape(
         });
         runtime.frame(0.02);
         let tree = runtime.accessibility_json();
-        assert!(node(&tree, "listbox").is_none());
+        assert!(listbox(&tree).is_none());
         let trigger = node(&tree, "palette-trigger").unwrap();
         assert!(trigger["states"].to_string().contains("collapsed"));
         assert!(trigger["states"].to_string().contains("focused"));
@@ -365,19 +372,19 @@ fn settings_palette_menu_tracks_effective_appearance_and_returns_keyboard_focus(
     press(&mut runtime, rune::Key::Enter);
     press(&mut runtime, rune::Key::Down);
     let tree = runtime.accessibility_json();
-    let menu = node(&tree, "listbox").unwrap();
+    let menu = listbox(&tree).unwrap();
     assert!(menu.to_string().contains("Linen"));
     assert!(menu.to_string().contains("focused"));
 
     runtime.update(|s, _| s.shared.borrow_mut().fixture_mode("light"));
     runtime.frame(0.02);
     let tree_after_same_slot = runtime.accessibility_json();
-    assert_eq!(node(&tree_after_same_slot, "listbox").unwrap(), menu);
+    assert_eq!(listbox(&tree_after_same_slot).unwrap(), menu);
     runtime.update(|s, _| s.shared.borrow_mut().fixture_mode("system"));
     runtime.set_system_dark(true);
     runtime.frame(0.02);
     let tree = runtime.accessibility_json();
-    assert!(node(&tree, "listbox").is_none());
+    assert!(listbox(&tree).is_none());
     assert!(
         node(&tree, "palette-trigger").unwrap()["states"]
             .to_string()
@@ -385,15 +392,10 @@ fn settings_palette_menu_tracks_effective_appearance_and_returns_keyboard_focus(
     );
     press(&mut runtime, rune::Key::Enter);
     let tree = runtime.accessibility_json();
-    assert!(
-        node(&tree, "listbox")
-            .unwrap()
-            .to_string()
-            .contains("Basalt")
-    );
+    assert!(listbox(&tree).unwrap().to_string().contains("Basalt"));
     runtime.update(|s, _| s.shared.borrow_mut().fixture_mode("light"));
     runtime.frame(0.02);
-    assert!(node(&runtime.accessibility_json(), "listbox").is_none());
+    assert!(listbox(&runtime.accessibility_json()).is_none());
 }
 
 #[test]
@@ -424,7 +426,7 @@ fn settings_palette_pointer_release_cannot_commit_a_stale_system_slot() {
             prefs.palette_display(false).unwrap().id == "light",
             change_theme
         );
-        assert!(node(&runtime.accessibility_json(), "listbox").is_none());
+        assert!(listbox(&runtime.accessibility_json()).is_none());
     }
 }
 
@@ -454,7 +456,7 @@ fn settings_closed_palette_arrow_keeps_focus_and_advances_the_display() {
         let trigger = node(&tree, "palette-trigger").unwrap();
         assert_eq!(trigger["value"], name);
         assert!(trigger["states"].to_string().contains("focused"));
-        assert!(node(&tree, "listbox").is_none());
+        assert!(listbox(&tree).is_none());
     }
 }
 
@@ -507,12 +509,7 @@ fn settings_language_picker_opens_with_enter() {
     });
     runtime.frame(0.02);
     let tree = runtime.accessibility_json();
-    assert!(
-        node(&tree, "listbox")
-            .unwrap()
-            .to_string()
-            .contains("Français")
-    );
+    assert!(listbox(&tree).unwrap().to_string().contains("Français"));
 }
 
 #[test]
@@ -591,7 +588,7 @@ fn pending_permissions_keep_tab_focus_and_refuse_new_selections() {
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     rt.frame(0.02);
-    assert!(node(&rt.accessibility_json(), "listbox").is_none());
+    assert!(listbox(&rt.accessibility_json()).is_none());
     assert_eq!(
         rt.state.shared.borrow().new_conversation_permissions(),
         "autonomous"

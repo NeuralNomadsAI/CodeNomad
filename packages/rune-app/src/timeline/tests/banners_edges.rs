@@ -1,3 +1,4 @@
+use super::banners::arm_rail_collision;
 use super::*;
 
 pub(super) fn check(
@@ -30,6 +31,7 @@ pub(super) fn check(
     let rail_hit_y = (search_rect[1] + search_rect[3] + 12.0)
         .max(rail_rect[1] + 8.0)
         .min(rail_rect[1] + rail_rect[3] - 8.0);
+    arm_rail_collision(&mut rt);
     rt.wheel_xy(rail_rect[0] + rail_rect[2] / 2.0, rail_hit_y, 0.0, 30.0);
     rt.frame(0.016);
     assert!(
@@ -95,6 +97,7 @@ pub(super) fn check(
     );
     let rail_rect = rt.presented("timeline").expect("timeline presented").0;
     let hist_rect = rt.presented("history").expect("history presented").0;
+    arm_rail_collision(&mut rt);
     rt.wheel_event(
         rune_theme_codenomad::timeline::WheelEvent::new(0.0, 30.0)
             .at(
@@ -159,6 +162,7 @@ pub(super) fn check(
     rt.frame(0.016);
     let rail_rect = rt.presented("timeline").expect("timeline presented").0;
     let hist_rect = rt.presented("history").expect("history presented").0;
+    arm_rail_collision(&mut rt);
     rt.wheel_event(
         rune_theme_codenomad::timeline::WheelEvent::new(0.0, 40.0)
             .at(
@@ -224,6 +228,7 @@ pub(super) fn check(
     rt.frame(0.016);
     let rail_rect = rt.presented("timeline").expect("timeline presented").0;
     let hist_rect = rt.presented("history").expect("history presented").0;
+    arm_rail_collision(&mut rt);
     rt.wheel_event(
         rune_theme_codenomad::timeline::WheelEvent::new(0.0, 40.0)
             .at(
@@ -287,6 +292,7 @@ pub(super) fn check(
     rt.frame(0.016);
     let rail_rect = rt.presented("timeline").expect("timeline presented").0;
     let hist_rect = rt.presented("history").expect("history presented").0;
+    arm_rail_collision(&mut rt);
     rt.wheel_xy(
         rail_rect[0] + rail_rect[2] / 2.0,
         rail_rect[1] + rail_rect[3] / 2.0,
@@ -337,6 +343,7 @@ pub(super) fn check(
     rt.frame(0.016);
     let rail_rect = rt.presented("timeline").expect("timeline presented").0;
     let hist_rect = rt.presented("history").expect("history presented").0;
+    arm_rail_collision(&mut rt);
     rt.wheel_xy(
         rail_rect[0] + rail_rect[2] / 2.0,
         rail_rect[1] + rail_rect[3] / 2.0,
@@ -414,13 +421,7 @@ pub(super) fn check(
     let rail_rect = rt.presented("timeline").expect("timeline presented").0;
     let hist_rect = rt.presented("history").expect("history presented").0;
     // Arm a programmatic rail scroll on the exact frame the wheel arrives (without resizing history).
-    rt.update(|s, tx| {
-        let mut sc = owner(s).scroll.get();
-        let target = sc.at.max[1].max(120.0);
-        sc.programmatic_rail = Some(target);
-        owner(s).scroll.set(sc);
-        rune_theme_codenomad::timeline::scroll_rail_to(target, tx);
-    });
+    arm_rail_collision(&mut rt);
     rt.wheel_event(
         rune_theme_codenomad::timeline::WheelEvent::new(0.0, 40.0)
             .at(
@@ -492,13 +493,7 @@ pub(super) fn check(
     );
     let rail_rect = rt.presented("timeline").expect("timeline presented").0;
     let hist_rect = rt.presented("history").expect("history presented").0;
-    rt.update(|s, tx| {
-        let mut sc = owner(s).scroll.get();
-        let target = sc.at.max[1].max(120.0);
-        sc.programmatic_rail = Some(target);
-        owner(s).scroll.set(sc);
-        rune_theme_codenomad::timeline::scroll_rail_to(target, tx);
-    });
+    arm_rail_collision(&mut rt);
     rt.wheel_xy(
         rail_rect[0] + rail_rect[2] / 2.0,
         rail_rect[1] + rail_rect[3] / 2.0,
