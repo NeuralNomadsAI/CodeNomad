@@ -390,7 +390,7 @@ fn view(s: &State, key: &str, entry: &Entry, path: Option<&str>) -> El {
                 move |s| s.transcript_display.diffs.edit(&write),
                 diff::ViewOptions {
                     labels: Some(diff::labels(locale(), "toolCall.diff.label")),
-                    scroll_bar: true,
+                    scroll_bar: entry.lines >= 6,
                     ..diff::ViewOptions::default()
                 },
             ),

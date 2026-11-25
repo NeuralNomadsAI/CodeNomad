@@ -241,13 +241,18 @@ fn end_reveals_the_selected_row_and_exposes_every_row_selection_state() {
 
 #[test]
 fn tab_into_workspace_tree_schedules_immediate_focus_sync_via_input_waiting() {
+    static POLL_LAST: std::sync::Mutex<Option<(bool, f64)>> = std::sync::Mutex::new(None);
+    fn observed_poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
+        *POLL_LAST.lock().unwrap() = Some((tx.input_waiting(), now));
+        crate::files::poll(s, now, tx)
+    }
     crate::platform::block_on(async {
         let http = http::Http::new().await;
         let mut ui = http.ui(Store::default(), "files-input-waiting");
         seed(&mut ui, 2);
         ui.panel = true;
         let mut rt = shell_runtime(ui);
-        rt.poll = Some(crate::files::poll);
+        rt.poll = Some(observed_poll);
         rt.update(|_, tx| tx.focus("right-panel-toggle", true));
         rt.frame(0.02);
         rt.frame(0.02);
@@ -258,6 +263,7 @@ fn tab_into_workspace_tree_schedules_immediate_focus_sync_via_input_waiting() {
         };
         let mut landed = false;
         for _ in 0..16 {
+            *POLL_LAST.lock().unwrap() = None;
             rt.key(event.clone());
             rt.frame(0.02);
             let focused_row = rt
@@ -265,13 +271,20 @@ fn tab_into_workspace_tree_schedules_immediate_focus_sync_via_input_waiting() {
                 .iter()
                 .any(|node| node.key.as_deref() == Some("file-row-file00.txt") && node.focused);
             if focused_row {
-                // `files::poll` saw `tx.input_waiting() == true` before Tab moved focus
-                // and scheduled an immediate wake so the next frame syncs tree selection.
+                let (waiting, clock) = POLL_LAST.lock().unwrap().unwrap();
                 assert!(
-                    rt.wake_deadline().is_some(),
-                    "sync_tree_focus must schedule immediate wake when input_waiting is true"
+                    waiting,
+                    "files::poll must see tx.input_waiting() == true on the Tab frame"
                 );
+                assert_eq!(
+                    rt.wake_deadline(),
+                    Some(clock),
+                    "sync_tree_focus must schedule an immediate wake at the poll clock"
+                );
+                *POLL_LAST.lock().unwrap() = None;
                 rt.frame(0.02);
+                let (waiting_after, _) = POLL_LAST.lock().unwrap().unwrap();
+                assert!(!waiting_after);
                 assert_eq!(
                     rt.state.files.as_ref().unwrap().tree.selected(),
                     Some("file00.txt")

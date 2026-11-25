@@ -88,6 +88,19 @@ fn text_diff(
         .context(context)
         .ignore_edge_whitespace(hide);
     let mut file = FileDiff::from_texts_with(path, &old, &new, options);
+    if hide {
+        let news: Vec<_> = new.lines().collect();
+        for line in file
+            .hunks
+            .iter_mut()
+            .flat_map(|h| &mut h.lines)
+            .filter(|line| line.kind == rune_theme_codenomad::git_diff::LineKind::Context)
+        {
+            if let Some(text) = line.new.and_then(|n| news.get((n - 1) as usize)) {
+                line.text = (*text).into();
+            }
+        }
+    }
     // The Kit builds no rows for equal texts, including ignored whitespace. A
     // context-only hunk keeps the actual modified-side text readable/selectable.
     if file.hunks.is_empty() && !new.is_empty() {
@@ -350,6 +363,15 @@ mod tests {
         assert_eq!(file.language(), Some("rust"));
         assert!(!highlight(file.language(), "let foo = 1;").is_empty());
         let lines = &file.hunks[0].lines;
+        let context_line = lines
+            .iter()
+            .find(|line| line.kind == LineKind::Context)
+            .unwrap();
+        assert_eq!(
+            (context_line.new, context_line.text.as_str()),
+            (Some(1), "  a")
+        );
+        assert!(file.text(Side::Old).unwrap().starts_with("\ta\n"));
         let removed = lines
             .iter()
             .find(|line| line.kind == LineKind::Removed)

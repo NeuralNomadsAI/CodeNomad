@@ -25,11 +25,41 @@ pub(crate) fn labels(locale: &'static str, list_key: &'static str) -> LabelResol
         DiffLabel::FileStatus(FileStatus::Deleted) => {
             catalogue::message(locale, "instanceShell.gitChanges.deleted").map(str::to_owned)
         }
-        DiffLabel::ShowHiddenLines(count) => Some(catalogue::format(
-            locale,
-            "instanceShell.gitChanges.hiddenRows.show",
-            &[("count", &count.to_string())],
-        )),
         _ => None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_labels_resolve_real_french_catalogue_entries() {
+        let resolve = labels("fr", "gitPanel.diff");
+        assert_eq!(
+            resolve(DiffLabel::List).as_deref(),
+            catalogue::message("fr", "gitPanel.diff")
+        );
+        assert_eq!(
+            resolve(DiffLabel::ExpandFile).as_deref(),
+            catalogue::message("fr", "sessionList.expand.expandTitle")
+        );
+        assert_eq!(
+            resolve(DiffLabel::CollapseFile).as_deref(),
+            catalogue::message("fr", "sessionList.expand.collapseTitle")
+        );
+        assert_eq!(
+            resolve(DiffLabel::CommentLine).as_deref(),
+            catalogue::message("fr", "instanceShell.gitChanges.actions.insertContext")
+        );
+        assert_eq!(
+            resolve(DiffLabel::BinaryFile).as_deref(),
+            catalogue::message("fr", "instanceShell.gitChanges.binaryViewer")
+        );
+        assert_eq!(
+            resolve(DiffLabel::FileStatus(FileStatus::Deleted)).as_deref(),
+            catalogue::message("fr", "instanceShell.gitChanges.deleted")
+        );
+        assert_eq!(resolve(DiffLabel::ShowHiddenLines(5)), None);
+    }
 }
