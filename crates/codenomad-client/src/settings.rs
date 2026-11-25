@@ -2,6 +2,7 @@
 pub mod config_files;
 pub mod info;
 pub mod memory;
+pub mod missions;
 mod opencode_actions;
 mod providers;
 pub mod remote;

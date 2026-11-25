@@ -23,6 +23,7 @@ enum Section {
     Notifications,
     Shortcuts,
     Providers,
+    Missions,
     Stats,
     Remote,
     ConfigFiles,
@@ -39,6 +40,7 @@ impl Section {
             Self::Notifications => "settings.nav.notifications",
             Self::Shortcuts => "settings.nav.hotkeys",
             Self::Providers => "settings.nav.providers",
+            Self::Missions => "settings.nav.missions",
             Self::Stats => "settings.usage.title",
             Self::Remote => "settings.nav.remote",
             Self::ConfigFiles => "settings.nav.configFiles",
@@ -65,6 +67,7 @@ pub(super) struct Panel {
     transcript_picker: Option<super::TranscriptRow>,
     announced_transcript_error: Option<&'static str>,
     catalog: Catalog,
+    missions: super::missions::Missions,
     scope: super::host_support::HostSupport,
     config_files: super::config_files::Editor,
     environment: super::advanced::environment::Editor,
@@ -183,11 +186,17 @@ impl Panel {
             false
         };
         let editor = prefs.memory.poll_editor(&mut self.memory_editor);
+        let missions = self.missions.poll(
+            prefs,
+            wake,
+            self.shown && paired && self.section == Section::Missions,
+        );
         picker_closed
             | editor
             | scope_changed
             | environment
             | opencode
+            | missions
             | self.poll_notification_permission()
             | (self.shown && paired && self.section == Section::Info && self.info.poll(prefs, wake))
             | (self.section == Section::Remote
@@ -299,6 +308,7 @@ fn close(s: &mut State) {
     panel.logging.close();
     panel.remote.close();
     panel.info.close();
+    panel.missions.close();
     panel.recording_shortcut = false;
     panel.shortcut_capture = Default::default();
     if panel.notification_permission.get() != PermissionRequest::Pending {
@@ -361,6 +371,7 @@ pub(super) fn view(
         Section::Notifications,
         Section::Shortcuts,
         Section::Providers,
+        Section::Missions,
         Section::Stats,
         Section::Remote,
         Section::ConfigFiles,
@@ -408,6 +419,9 @@ pub(super) fn view(
             }
             if panel.section != Section::Providers {
                 panel.catalog.suspend();
+            }
+            if panel.section != Section::Missions {
+                panel.missions.close();
             }
             if panel.section != Section::Remote {
                 panel.remote.close();
@@ -519,6 +533,15 @@ pub(super) fn view(
             let panel = &mut s.settings.web;
             (panel.shown && panel.section == Section::Stats).then_some(&mut panel.stats)
         }),
+        Section::Missions => panel.missions.view(
+            &s.settings.shared,
+            panel.shown && panel.section == Section::Missions,
+            &mut layers,
+            |s: &mut State| {
+                let panel = &mut s.settings.web;
+                (panel.shown && panel.section == Section::Missions).then_some(&mut panel.missions)
+            },
+        ),
         Section::Notifications => col()
             .full_width()
             .child(notification_settings::view(

@@ -40,6 +40,7 @@ pub(super) struct Window {
     pub(super) opencode: opencode::Status,
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
+    missions: super::missions::Missions,
     stats: super::stats::Dashboard,
     remote: remote::Remote,
     info: info::Info,
@@ -65,6 +66,7 @@ enum Section {
     OpenCode,
     Notifications,
     Providers,
+    Missions,
     Shortcuts,
     Stats,
     Remote,
@@ -144,6 +146,7 @@ impl Window {
         }
         self.logging.close();
         self.remote.close();
+        self.missions.close();
         if self.memory_editor.has_unsaved() || self.config_files.dirty() {
             self.confirm_close = true;
         } else {
@@ -209,6 +212,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let opencode_label = t("settings.nav.opencode");
         let notifications_label = t("settings.nav.notifications");
         let providers_label = t("settings.nav.providers");
+        let missions_label = t("settings.nav.missions");
         let stats_label = t("settings.usage.title");
         let conversation_label = t("settings.nav.chat");
         let shortcuts_label = t("settings.nav.hotkeys");
@@ -222,6 +226,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::OpenCode => opencode_label,
             Section::Notifications => notifications_label,
             Section::Providers => providers_label,
+            Section::Missions => missions_label,
             Section::Shortcuts => shortcuts_label,
             Section::Stats => stats_label,
             Section::Remote => remote_label,
@@ -257,6 +262,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-providers",
                     providers_label,
                     s.section == Section::Providers,
+                ),
+                (
+                    "settings-missions",
+                    missions_label,
+                    s.section == Section::Missions,
                 ),
                 ("settings-stats", stats_label, s.section == Section::Stats),
                 (
@@ -303,6 +313,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-conversation" => Section::Conversation,
                     "settings-notifications" => Section::Notifications,
                     "settings-providers" => Section::Providers,
+                    "settings-missions" => Section::Missions,
                     "settings-hotkeys" => Section::Shortcuts,
                     "settings-stats" if super::stats::supported(&s.shared.borrow()) => {
                         Section::Stats
@@ -325,6 +336,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 s.memory_help_failed = false;
                 if s.section != Section::Providers {
                     s.providers.suspend();
+                }
+                if s.section != Section::Missions {
+                    s.missions.close();
                 }
                 if s.section != Section::Remote {
                     s.remote.close();
@@ -430,6 +444,18 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             .provider_target
                             .as_ref()
                             .is_some_and(providers::Target::online),
+                ),
+            ),
+            Section::Missions => (
+                "missions",
+                s.missions.view(
+                    &s.shared,
+                    !s.closing && !s.confirm_close,
+                    &mut layers,
+                    |s: &mut Window| {
+                        (s.section == Section::Missions && !s.closing && !s.confirm_close)
+                            .then_some(&mut s.missions)
+                    },
                 ),
             ),
             Section::Stats => (

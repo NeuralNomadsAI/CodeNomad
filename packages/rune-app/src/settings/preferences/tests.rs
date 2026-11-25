@@ -6,6 +6,7 @@ mod conversation;
 mod events;
 mod info;
 mod memory;
+mod missions;
 mod notifications;
 mod opencode;
 mod providers;

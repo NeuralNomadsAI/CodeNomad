@@ -47,6 +47,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     s.memory_help_failed = false;
                     s.remote.close();
                     s.info.close();
+                    s.missions.close();
                 }
                 let environment = s
                     .environment
@@ -123,6 +124,13 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         tx,
                     ) | leave
                 });
+                let missions_changed = prefs.window_wake.clone().is_some_and(|wake| {
+                    s.missions.poll(
+                        &mut prefs,
+                        &wake,
+                        s.section == Section::Missions && !s.confirm_close && !s.closing,
+                    )
+                });
                 drop(prefs);
                 let providers_changed = if s.section == Section::Providers {
                     let prefs = s.shared.borrow();
@@ -136,6 +144,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     | remote_changed
                     | info_changed
                     | stats_changed
+                    | missions_changed
                     | providers_changed
                     | editor_changed
                     | environment
@@ -151,6 +160,8 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 s.confirm_close = false;
             } else if s.memory_editor.shown() {
                 s.memory_editor.dismiss();
+            } else if s.section == Section::Missions && s.missions.cancel_confirm() {
+                return true;
             } else {
                 let cancelled = s.shared.borrow_mut().memory.cancel_cleanup_confirmation();
                 if !cancelled {

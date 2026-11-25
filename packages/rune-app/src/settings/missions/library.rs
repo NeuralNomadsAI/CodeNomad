@@ -1,0 +1,341 @@
+//! Saved Mission configurations (`missionModels`) section matching `MissionModelLibrary`.
+use super::Picker;
+use crate::{
+    platform,
+    settings::preferences::{Owner, Preferences},
+    strings::t,
+};
+use codenomad_client::{
+    Receiver, bounded,
+    settings::missions::{
+        MissionPatchOutcome, MissionPreferenceExpectation, UserMissionModel,
+        normalize_mission_models, patch_mission_preferences, remove_mission_model_value,
+        valid_mission_models,
+    },
+};
+use rune::{El, col, text};
+use rune_theme_codenomad::{
+    Space, TextRole,
+    layout::{self, Layout},
+    settings as chrome,
+};
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+
+enum Reply {
+    Remove(MissionPatchOutcome),
+    Reset(MissionPatchOutcome),
+    Reload(Option<Value>),
+}
+
+#[derive(Default)]
+pub(super) struct State {
+    owner: Option<String>,
+    selected_id: String,
+    pending_label: Option<&'static str>,
+    failed: bool,
+    reconciliation_pending: bool,
+    flight: Option<Receiver<Reply>>,
+}
+
+fn raw_models(snapshot: Option<&Value>) -> Option<&Value> {
+    snapshot
+        .and_then(|doc| doc.get("settings"))
+        .and_then(|settings| settings.get("missionModels"))
+}
+
+pub(super) fn models_valid(prefs: &Preferences) -> bool {
+    prefs.config_loaded() && valid_mission_models(raw_models(prefs.saved(Owner::Config)))
+}
+
+impl State {
+    pub(super) fn pending(&self) -> bool {
+        self.flight.is_some()
+    }
+
+    pub(super) fn select(&mut self, id: String) {
+        self.selected_id = id;
+    }
+
+    pub(super) fn selected_model(&self, prefs: &Preferences) -> Option<UserMissionModel> {
+        let models = normalize_mission_models(raw_models(prefs.saved(Owner::Config)));
+        models
+            .into_iter()
+            .find(|model| model.id == self.selected_id)
+    }
+
+    pub(super) fn start_remove(
+        &mut self,
+        prefs: &Preferences,
+        id: &str,
+        wake: &rune::Waker,
+    ) -> bool {
+        if self.pending() || !models_valid(prefs) {
+            return false;
+        }
+        let Some(backend) = prefs.backend.clone() else {
+            return false;
+        };
+        let saved = prefs.saved(Owner::Config);
+        let models = normalize_mission_models(raw_models(saved));
+        let next = remove_mission_model_value(&models, id);
+        let expected = MissionPreferenceExpectation::from_ui_config(saved, "missionModels");
+        self.owner = Some(backend.client_id.clone());
+        self.pending_label = Some("missions.models.removing");
+        self.failed = false;
+        self.reconciliation_pending = false;
+        let (out, inbox) = bounded(1);
+        let wake = wake.clone();
+        self.flight = Some(inbox);
+        platform::spawn(async move {
+            let outcome =
+                patch_mission_preferences(&backend, json!({ "missionModels": next }), &[expected])
+                    .await;
+            if out.send(Reply::Remove(outcome)).await.is_ok() {
+                wake();
+            }
+        });
+        true
+    }
+
+    pub(super) fn start_reset(&mut self, prefs: &Preferences, wake: &rune::Waker) -> bool {
+        if self.pending() || !prefs.config_loaded() {
+            return false;
+        }
+        let Some(backend) = prefs.backend.clone() else {
+            return false;
+        };
+        let expected = MissionPreferenceExpectation::from_ui_config(
+            prefs.saved(Owner::Config),
+            "missionModels",
+        );
+        self.owner = Some(backend.client_id.clone());
+        self.pending_label = Some("missions.models.resetting");
+        self.failed = false;
+        self.reconciliation_pending = false;
+        let (out, inbox) = bounded(1);
+        let wake = wake.clone();
+        self.flight = Some(inbox);
+        platform::spawn(async move {
+            let outcome =
+                patch_mission_preferences(&backend, json!({ "missionModels": [] }), &[expected])
+                    .await;
+            if out.send(Reply::Reset(outcome)).await.is_ok() {
+                wake();
+            }
+        });
+        true
+    }
+
+    pub(super) fn start_reload(&mut self, prefs: &mut Preferences, wake: &rune::Waker) -> bool {
+        if self.pending() || !prefs.can_retry() {
+            return false;
+        }
+        let Some(backend) = prefs.backend.clone() else {
+            return false;
+        };
+        if prefs.is_transport_lost() {
+            prefs.revalidate_transport();
+        }
+        self.owner = Some(backend.client_id.clone());
+        self.pending_label = Some("missions.models.reloading");
+        self.failed = false;
+        self.reconciliation_pending = false;
+        let (out, inbox) = bounded(1);
+        let wake = wake.clone();
+        self.flight = Some(inbox);
+        platform::spawn(async move {
+            let snapshot = Owner::Config.read(&backend).await.ok();
+            if out.send(Reply::Reload(snapshot)).await.is_ok() {
+                wake();
+            }
+        });
+        true
+    }
+
+    pub(super) fn poll(&mut self, prefs: &mut Preferences) -> bool {
+        let current_owner = prefs.backend.as_ref().map(|b| b.client_id.as_str());
+        if self.owner.as_deref().is_some() && self.owner.as_deref() != current_owner {
+            *self = Self::default();
+            return true;
+        }
+        let Some(reply) = self.flight.as_ref().and_then(|inbox| inbox.try_recv().ok()) else {
+            return false;
+        };
+        self.flight = None;
+        self.pending_label = None;
+        match reply {
+            Reply::Remove(outcome) => match outcome {
+                MissionPatchOutcome::Applied(snapshot) => {
+                    self.selected_id.clear();
+                    self.failed = false;
+                    self.reconciliation_pending = false;
+                    prefs.apply_mission_config(snapshot);
+                }
+                MissionPatchOutcome::Conflict
+                | MissionPatchOutcome::Unsupported
+                | MissionPatchOutcome::Failed => {
+                    self.failed = true;
+                }
+            },
+            Reply::Reset(outcome) => match outcome {
+                MissionPatchOutcome::Applied(snapshot) => {
+                    self.selected_id.clear();
+                    self.failed = false;
+                    self.reconciliation_pending = false;
+                    prefs.apply_mission_config(snapshot);
+                }
+                MissionPatchOutcome::Conflict
+                | MissionPatchOutcome::Unsupported
+                | MissionPatchOutcome::Failed => {
+                    self.failed = true;
+                }
+            },
+            Reply::Reload(Some(snapshot)) => {
+                self.failed = false;
+                self.reconciliation_pending = false;
+                prefs.apply_mission_config(snapshot);
+            }
+            Reply::Reload(None) => {
+                self.failed = true;
+            }
+        }
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn view<S: 'static>(
+        &self,
+        prefs: &Preferences,
+        active: bool,
+        open_picker: Option<Picker>,
+        layers: &mut Vec<El>,
+        set_picker: impl Fn(&mut S, Option<Picker>) + Copy + 'static,
+        select: impl Fn(&mut S, String) + Copy + 'static,
+        remove: impl Fn(&mut S) + Clone + 'static,
+        reset: impl Fn(&mut S) + Clone + 'static,
+        reload: impl Fn(&mut S) + Clone + 'static,
+    ) -> El {
+        let loaded = prefs.config_loaded();
+        let valid = models_valid(prefs);
+        let disabled = !active || self.pending() || !valid;
+        let models = normalize_mission_models(raw_models(prefs.saved(Owner::Config)));
+        let selection = models.iter().find(|m| m.id == self.selected_id);
+
+        let mut name_counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for model in &models {
+            *name_counts.entry(model.name.as_str()).or_default() += 1;
+        }
+        let mut labels = vec![t("missions.models.none").to_owned()];
+        let mut ids = vec![String::new()];
+        for model in &models {
+            let label = if name_counts.get(model.name.as_str()).copied().unwrap_or(0) > 1 {
+                let short: String = model.id.chars().take(8).collect();
+                format!("{} ({short})", model.name)
+            } else {
+                model.name.clone()
+            };
+            labels.push(label);
+            ids.push(model.id.clone());
+        }
+        let current_index = selection
+            .and_then(|sel| ids.iter().position(|id| id == &sel.id))
+            .unwrap_or(0);
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let is_open = open_picker == Some(Picker::Library) && !disabled;
+        let labels_for_choose = labels.clone();
+        let picker = chrome::picker("mission-model-library", t("missions.models.select"), &refs)
+            .current(Some(refs[current_index]))
+            .disabled(disabled)
+            .open(is_open)
+            .on_toggle(move |s: &mut S| set_picker(s, (!is_open).then_some(Picker::Library)))
+            .on_close(move |s: &mut S| set_picker(s, None))
+            .on_choose(move |s: &mut S, value, _| {
+                set_picker(s, None);
+                if let Some(pos) = labels_for_choose.iter().position(|label| label == value) {
+                    select(s, ids[pos].clone());
+                }
+            });
+        let picker = chrome::build_picker(picker, layers);
+
+        let mut card = col()
+            .role("region")
+            .label(t("missions.models.title"))
+            .full_width()
+            .separate(Space::Sm)
+            .child(
+                text(t("missions.models.title"))
+                    .text_role(TextRole::Title)
+                    .role("heading"),
+            )
+            .child(chrome::setting_row(t("missions.models.select"), picker));
+
+        let invalid_loaded = loaded && !valid;
+        if invalid_loaded {
+            card = card
+                .child(text(t("missions.models.invalid")).wrap().role("alert"))
+                .child(
+                    layout::action_row()
+                        .child(
+                            layout::button(
+                                t("missions.models.reset"),
+                                self.pending() || !active,
+                                reset,
+                            )
+                            .key("mission-models-reset"),
+                        )
+                        .child(
+                            layout::button(
+                                t("missions.preferences.reload"),
+                                self.pending() || !active,
+                                reload.clone(),
+                            )
+                            .key("mission-models-reload-invalid")
+                            .label(t("missions.models.reload"))
+                            .help(t("missions.models.reload")),
+                        ),
+                );
+        }
+
+        card = card.child(
+            layout::action_row().child(
+                layout::button(
+                    t("missions.models.remove"),
+                    disabled || selection.is_none(),
+                    remove,
+                )
+                .key("mission-models-remove"),
+            ),
+        );
+
+        if let Some(label) = self.pending_label {
+            card = card.child(text(t(label)).role("status"));
+        }
+        if self.failed {
+            card = card.child(text(t("missions.models.error")).wrap().role("alert"));
+        }
+        if self.reconciliation_pending {
+            card = card.child(
+                text(t("missions.defaults.reconciliationPending"))
+                    .wrap()
+                    .role("alert"),
+            );
+        }
+        if (self.failed || self.reconciliation_pending) && !invalid_loaded {
+            card = card.child(
+                layout::action_row().child(
+                    layout::button(
+                        t("missions.preferences.reload"),
+                        self.pending() || !active,
+                        reload,
+                    )
+                    .key("mission-models-reload")
+                    .label(t("missions.models.reload"))
+                    .help(t("missions.models.reload")),
+                ),
+            );
+        }
+
+        chrome::card(card)
+    }
+}

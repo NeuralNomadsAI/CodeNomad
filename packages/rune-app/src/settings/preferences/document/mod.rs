@@ -181,6 +181,13 @@ impl Document {
         self.read.failed
     }
 
+    pub(super) fn apply_external_snapshot(&mut self, snapshot: Value) {
+        if !self.read.reattach {
+            self.snapshot = Some(snapshot);
+            self.read.failed = false;
+        }
+    }
+
     pub(super) fn awaiting_initial_read(&self) -> bool {
         self.snapshot.is_none() && !self.read.failed
     }

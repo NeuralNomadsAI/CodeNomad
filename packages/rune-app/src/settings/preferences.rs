@@ -866,6 +866,29 @@ impl Preferences {
         self.doc(owner).snapshot.as_ref()
     }
 
+    pub(super) fn config_loaded(&self) -> bool {
+        self.saved(Owner::Config).is_some()
+            && !self.config.read_failed()
+            && !self.transport_lost
+            && self.can_retry()
+    }
+
+    pub(super) fn config_read_failed(&self) -> bool {
+        self.config.read_failed() || self.transport_lost || self.authentication_required
+    }
+
+    pub(super) fn apply_mission_config(&mut self, snapshot: Value) {
+        self.config.apply_external_snapshot(snapshot);
+        self.revision += 1;
+        for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
+            wake();
+        }
+    }
+
+    pub(super) fn invalidate_config_for_missions(&mut self) {
+        self.config.invalidate();
+    }
+
     #[cfg(test)]
     pub fn error(&self) -> Option<&'static str> {
         if self.authentication_required {
