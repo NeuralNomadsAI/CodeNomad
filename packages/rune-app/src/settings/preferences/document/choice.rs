@@ -16,6 +16,8 @@ pub(in crate::settings::preferences) enum Choice {
     TranscriptPreset,
     TranscriptRow(Row),
     LogLevel,
+    OpenCodeBinary,
+    OpenCodeBinaries,
     UpdateFeed,
     Advanced(crate::settings::advanced::Toggle),
     Environment,
@@ -90,6 +92,30 @@ impl Choice {
             }
             return;
         }
+        if let (Self::OpenCodeBinary, ChoiceValue::OpenCodeBinary(path)) = (self, value) {
+            patch["opencodeBinary"] = json!(path);
+            return;
+        }
+        if let (Self::OpenCodeBinaries, ChoiceValue::OpenCodeBinaries(op)) = (self, value) {
+            let current = parse_opencode_binaries(snapshot);
+            let next = apply_opencode_binaries_op(&current, op);
+            patch["opencodeBinaries"] = Value::Array(
+                next.into_iter()
+                    .map(|entry| {
+                        let mut map = serde_json::Map::new();
+                        map.insert("path".into(), json!(entry.path));
+                        if let Some(version) = entry.version {
+                            map.insert("version".into(), json!(version));
+                        }
+                        if let Some(last_used) = entry.last_used {
+                            map.insert("lastUsed".into(), json!(last_used));
+                        }
+                        Value::Object(map)
+                    })
+                    .collect(),
+            );
+            return;
+        }
         let ChoiceValue::Text(value) = *value else {
             return;
         };
@@ -123,7 +149,11 @@ impl Choice {
                 row.put(&mut patch["settings"], &snapshot["settings"], value, atomic)
             }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
-            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment => (),
+            Self::Shortcut(_)
+            | Self::ShortcutReset
+            | Self::Environment
+            | Self::OpenCodeBinary
+            | Self::OpenCodeBinaries => (),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 patch["appearancePreferences"][mode] = json!({
@@ -165,6 +195,25 @@ impl Choice {
             };
             return value_ok && mask_ok;
         }
+        if let (Self::OpenCodeBinary, ChoiceValue::OpenCodeBinary(path)) = (self, value) {
+            return normalize_opencode_binary(snapshot) == *path;
+        }
+        if let (Self::OpenCodeBinaries, ChoiceValue::OpenCodeBinaries(op)) = (self, value) {
+            let entries = parse_opencode_binaries(snapshot);
+            return match op {
+                OpenCodeBinariesOp::Upsert { path, version, .. } => {
+                    path == "opencode"
+                        || path == "opencode2"
+                        || entries.iter().any(|entry| {
+                            entry.path == *path
+                                && version
+                                    .as_ref()
+                                    .is_none_or(|v| entry.version.as_ref() == Some(v))
+                        })
+                }
+                OpenCodeBinariesOp::Remove { path } => !entries.iter().any(|e| e.path == *path),
+            };
+        }
         let ChoiceValue::Text(value) = *value else {
             return false;
         };
@@ -191,7 +240,11 @@ impl Choice {
             Self::TranscriptPreset => transcript_preset::confirmed(value, &snapshot["settings"]),
             Self::TranscriptRow(row) => row.confirmed(value, &snapshot["settings"]),
             Self::Mode => appearance["mode"] == value,
-            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment => false,
+            Self::Shortcut(_)
+            | Self::ShortcutReset
+            | Self::Environment
+            | Self::OpenCodeBinary
+            | Self::OpenCodeBinaries => false,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 let slot = &appearance[mode];
@@ -216,6 +269,108 @@ impl Choice {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::settings) struct OpenCodeBinaryEntry {
+    pub path: String,
+    pub version: Option<String>,
+    pub last_used: Option<u64>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(in crate::settings) enum OpenCodeBinariesOp {
+    Upsert {
+        path: String,
+        version: Option<String>,
+        last_used: u64,
+    },
+    Remove {
+        path: String,
+    },
+}
+
+pub(in crate::settings) fn normalize_opencode_binary(snapshot: &Value) -> String {
+    snapshot["opencodeBinary"]
+        .as_str()
+        .map(str::trim)
+        .filter(|path| !path.is_empty() && *path != "opencode")
+        .unwrap_or("opencode2")
+        .to_owned()
+}
+
+pub(in crate::settings) fn parse_opencode_binaries(snapshot: &Value) -> Vec<OpenCodeBinaryEntry> {
+    let Some(items) = snapshot["opencodeBinaries"].as_array() else {
+        return Vec::new();
+    };
+    let mut entries = Vec::new();
+    for item in items {
+        let Some(path) = item["path"]
+            .as_str()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        else {
+            continue;
+        };
+        if entries
+            .iter()
+            .any(|existing: &OpenCodeBinaryEntry| existing.path == path)
+        {
+            continue;
+        }
+        let version = item["version"]
+            .as_str()
+            .filter(|v| !v.is_empty() && v.len() <= 256 && !v.contains(char::is_control))
+            .map(str::to_owned);
+        let last_used = item["lastUsed"].as_u64();
+        entries.push(OpenCodeBinaryEntry {
+            path: path.to_owned(),
+            version,
+            last_used,
+        });
+    }
+    entries
+}
+
+fn apply_opencode_binaries_op(
+    source: &[OpenCodeBinaryEntry],
+    op: &OpenCodeBinariesOp,
+) -> Vec<OpenCodeBinaryEntry> {
+    match op {
+        OpenCodeBinariesOp::Upsert {
+            path,
+            version,
+            last_used,
+        } => {
+            if path == "opencode" || path == "opencode2" {
+                return source.to_vec();
+            }
+            let existing = source.iter().find(|entry| entry.path == *path);
+            let next_entry = OpenCodeBinaryEntry {
+                path: path.clone(),
+                version: version
+                    .clone()
+                    .or_else(|| existing.and_then(|e| e.version.clone())),
+                last_used: Some(*last_used),
+            };
+            let mut out = Vec::with_capacity(source.len().min(10) + 1);
+            out.push(next_entry);
+            for entry in source {
+                if entry.path != *path {
+                    out.push(entry.clone());
+                }
+                if out.len() >= 10 {
+                    break;
+                }
+            }
+            out
+        }
+        OpenCodeBinariesOp::Remove { path } => source
+            .iter()
+            .filter(|entry| entry.path != *path)
+            .cloned()
+            .collect(),
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub(super) enum ChoiceValue {
     Text(&'static str),
@@ -225,6 +380,8 @@ pub(super) enum ChoiceValue {
         value: Option<String>,
         secret: Option<bool>,
     },
+    OpenCodeBinary(String),
+    OpenCodeBinaries(OpenCodeBinariesOp),
 }
 
 impl ChoiceValue {

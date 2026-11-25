@@ -2,8 +2,11 @@ mod choice;
 mod runtime;
 
 pub(super) use choice::Choice;
-pub(in crate::settings) use choice::env_var_is_masked;
 use choice::{ChoiceValue, Choices, is_transcript};
+pub(in crate::settings) use choice::{
+    OpenCodeBinariesOp, OpenCodeBinaryEntry, env_var_is_masked, normalize_opencode_binary,
+    parse_opencode_binaries,
+};
 
 use crate::settings::transcript_preset::{self, Row};
 use codenomad_client::{
@@ -228,6 +231,24 @@ impl Document {
             && !self.choice_failed(Choice::Environment)
     }
 
+    pub(super) fn stage_opencode_binary(&mut self, path: String) {
+        self.stage_value(Choice::OpenCodeBinary, ChoiceValue::OpenCodeBinary(path));
+    }
+
+    pub(super) fn opencode_binary_pending(&self) -> bool {
+        self.write.requested.contains_key(&Choice::OpenCodeBinary)
+            && !self.choice_failed(Choice::OpenCodeBinary)
+    }
+
+    pub(super) fn stage_opencode_binaries(&mut self, op: OpenCodeBinariesOp) {
+        self.stage_value(Choice::OpenCodeBinaries, ChoiceValue::OpenCodeBinaries(op));
+    }
+
+    pub(super) fn opencode_binaries_pending(&self) -> bool {
+        self.write.requested.contains_key(&Choice::OpenCodeBinaries)
+            && !self.choice_failed(Choice::OpenCodeBinaries)
+    }
+
     pub(super) fn reset_shortcuts(&mut self) {
         if !self.shortcuts_pending() {
             self.write
@@ -447,7 +468,10 @@ impl Document {
     pub(super) fn requested(&self, choice: Choice) -> Option<&'static str> {
         match self.write.requested.get(&choice)? {
             ChoiceValue::Text(value) => Some(*value),
-            ChoiceValue::Shortcut(_) | ChoiceValue::Environment { .. } => None,
+            ChoiceValue::Shortcut(_)
+            | ChoiceValue::Environment { .. }
+            | ChoiceValue::OpenCodeBinary(_)
+            | ChoiceValue::OpenCodeBinaries(_) => None,
         }
     }
 

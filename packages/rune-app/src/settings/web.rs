@@ -536,34 +536,60 @@ pub(super) fn view(
                             .wrap()
                     }),
             ),
-        Section::OpenCode if local => col()
-            .full_width()
-            .child(opencode::view(
+        Section::OpenCode if local => {
+            let wake = Some(s.wake.clone());
+            let logs_action = opencode::logs_action_view(
                 &panel.opencode,
                 prefs,
-                |s: &mut State| {
-                    let panel = &s.settings.web;
-                    let mut prefs = s.settings.shared.borrow_mut();
-                    if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs) {
-                        panel.opencode.start(&mut prefs, Some(s.wake.clone()));
-                    }
-                },
-                |s: &mut State| {
-                    let panel = &mut s.settings.web;
-                    let mut prefs = s.settings.shared.borrow_mut();
-                    if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs) {
-                        panel.opencode.read(&mut prefs, Some(&s.wake), Some(true));
-                    }
-                },
-                |s| &mut s.settings.web.opencode,
-            ))
-            .child(
-                panel
-                    .logging
-                    .view(&s.settings.shared, &mut layers, |s: &mut State| {
-                        &mut s.settings.web.logging
-                    }),
-            ),
+                &s.settings.shared,
+                wake.clone(),
+                &mut layers,
+                |s: &mut State| &mut s.settings.web.opencode,
+            );
+            col()
+                .full_width()
+                .child(opencode::view(
+                    &panel.opencode,
+                    prefs,
+                    |s: &mut State| {
+                        let panel = &s.settings.web;
+                        let mut prefs = s.settings.shared.borrow_mut();
+                        if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs)
+                        {
+                            panel.opencode.start(&mut prefs, Some(s.wake.clone()));
+                        }
+                    },
+                    |s: &mut State| {
+                        let panel = &mut s.settings.web;
+                        let mut prefs = s.settings.shared.borrow_mut();
+                        if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs)
+                        {
+                            panel.opencode.read(&mut prefs, Some(&s.wake), Some(true));
+                        }
+                    },
+                    |s| &mut s.settings.web.opencode,
+                ))
+                .child(opencode::executable_view(
+                    &panel.opencode,
+                    prefs,
+                    &s.settings.shared,
+                    wake.clone(),
+                    |s: &mut State| &mut s.settings.web.opencode,
+                ))
+                .child(opencode::login_start_view(
+                    &panel.opencode,
+                    prefs,
+                    &s.settings.shared,
+                    wake,
+                    |s: &mut State| &mut s.settings.web.opencode,
+                ))
+                .child(panel.logging.view(
+                    &s.settings.shared,
+                    &mut layers,
+                    logs_action,
+                    |s: &mut State| &mut s.settings.web.logging,
+                ))
+        }
         Section::Remote if local => panel.remote.view(&s.settings.shared, |s: &mut State| {
             let panel = &mut s.settings.web;
             (panel.shown

@@ -406,6 +406,7 @@ impl Document {
             changed = true;
         }
         let sse_stale = backend.client.preferences_revision(owner) != self.snapshot_rev;
+        let binaries_need_fresh = self.write.pending.contains(&Choice::OpenCodeBinaries);
         let needs_fresh_on_stale = !atomic && self.has_stale_sensitive_write();
         let needs_fresh_on_disk = !atomic && self.needs_fresh_snapshot();
         let operation = if !self.write.retry.is_empty() {
@@ -421,7 +422,8 @@ impl Document {
             }
         } else if writes_allowed
             && ((needs_fresh_on_stale && (self.read.queued || sse_stale))
-                || (needs_fresh_on_disk && !self.read.fresh_for_write)
+                || ((needs_fresh_on_disk || binaries_need_fresh) && !self.read.fresh_for_write)
+                || (binaries_need_fresh && (self.read.queued || sse_stale))
                 || (!self.write.uncertain.is_empty() && self.read.queued))
         {
             self.read.queued = false;
@@ -467,7 +469,8 @@ impl Document {
                 (Choice::Environment, value) => value.needs_atomic_mask(),
                 _ => false,
             });
-            let needs_fresh = !atomic && relies_on_atomic;
+            let binaries_sensitive = sent.contains_key(&Choice::OpenCodeBinaries);
+            let needs_fresh = (!atomic && relies_on_atomic) || binaries_sensitive;
             if !atomic
                 && sent
                     .keys()
