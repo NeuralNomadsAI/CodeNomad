@@ -108,7 +108,7 @@ Conservan controles y zona. Tras reiniciar el servicio requieren **Reanudar** de
 
 ## Árbol y resultados {#tracking}
 
-El chevrón despliega tareas; hacer clic selecciona Misión o tarea. Sus acciones quedan en la cabecera. Sin tareas no hay chevrón. El filtro busca en las entradas cargadas.
+El chevrón despliega tareas; hacer clic selecciona Misión o tarea. Sus acciones quedan en la cabecera. Sin tareas no hay chevrón. El filtro busca en las entradas cargadas. Las Misiones únicas y recurrentes comparten una lista, con la actividad más reciente primero; una ejecución programada en curso va arriba.
 
 El ojo alterna el resumen central y sigue la selección. **Abrir conversación** lleva al coordinador o tarea. El menú ⋯ contiene las acciones disponibles de actualización, interrupción, configuración y edición.
 

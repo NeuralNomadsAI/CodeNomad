@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal, createEffect, untrack, type JSX } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { useMissionSchedules, unifiedScheduleHold, type UnifiedMissionSchedule } from "../stores/mission-schedules"
-import { missionMarkStateKey, unifiedScheduleMark, type MissionPickerEntry } from "./mission-picker-model"
+import { missionMarkStateKey, unifiedScheduleActivityAt, unifiedScheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 import { markScheduleSuccessSeen, scheduleSuccessSeen, seedScheduleSuccessSeen } from "../stores/mission-view-state"
 import { describeMissionCriteria, missionCriteriaZone } from "./mission-scheduling-summary"
 import { createMissionScheduleControls } from "./mission-schedule-controls"
@@ -54,7 +54,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
     const mark = unifiedScheduleMark(doc, requests, !doc.latestResult || scheduleSuccessSeen(seenScope(), "scheduled", doc.id, doc.latestResult.id),
       !list.error() && list.fresh(doc.id) && !held)
     const stateKey = missionMarkStateKey(mark)
-    return { key: `scheduled:${doc.id}`, title: doc.configuration.title, mark,
+    return { key: `scheduled:${doc.id}`, title: doc.configuration.title, mark, activityAt: unifiedScheduleActivityAt(doc),
       status: [t(stateKey ?? `missions.scheduleList.state.${doc.state}`), requests ? t("missionsPanel.task.input") : "",
         criteria(doc), nextWake(doc)].filter(Boolean).join(" · ") }
   }))

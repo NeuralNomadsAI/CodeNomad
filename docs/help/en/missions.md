@@ -118,7 +118,7 @@ Existing daily entries keep their own controls and saved time zone. After a serv
 
 ## Follow the tree and read results {#tracking}
 
-The chevron expands or collapses a Mission's tasks. Clicking a row selects the Mission or task; actions for that selection stay in the header. A Mission without tasks has no chevron. **Filter missions** filters the loaded directory.
+The chevron expands or collapses a Mission's tasks. Clicking a row selects the Mission or task; actions for that selection stay in the header. A Mission without tasks has no chevron. **Filter missions** filters the loaded directory. One-time and recurring Missions share one list, latest activity first; a running scheduled run comes first.
 
 The eye toggles **Summary** in the central reader and follows your selection while pressed. Use **Open conversation** to go to the coordinator or selected task. **More actions** (⋯) contains the applicable update, interruption, save-configuration and edit commands.
 

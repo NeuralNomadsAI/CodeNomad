@@ -4,7 +4,7 @@ import { filterMissionPickerEntries, missionMark, scheduleMark, unifiedScheduleM
 import type { RecurrenceSchedule } from "../stores/mission-recurrence"
 import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 
-const entry = (key: string, mark: MissionPickerEntry["mark"] = "idle", title = key): MissionPickerEntry => ({ key, title, status: "", mark })
+const entry = (key: string, mark: MissionPickerEntry["mark"] = "idle", title = key): MissionPickerEntry => ({ key, title, status: "", mark, activityAt: 0 })
 
 test("a mission's mark: an answer first, then resumable stops, observed work, and unseen completion", () => {
   const unseen = { openRequests: 0, seen: false }, seen = { openRequests: 0, seen: true }
