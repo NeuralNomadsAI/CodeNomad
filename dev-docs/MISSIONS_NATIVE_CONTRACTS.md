@@ -430,8 +430,12 @@ retains the original request and its explicit receipt recovery.
 
 Native regression: `node --import tsx
 scripts/test-mission-experimental-settings-native.mjs <absolute-isolated-cli>`.
-It exercises real discovery/whole-block precedence/watcher acknowledgement and
-both edit orders, using private roots and a provider request counter.
+Against a runtime with the top-level `automations` setting it exercises real
+discovery and watcher acknowledgement: the default ON with a zero-write ready plan;
+a project, global, inline, legacy-block or environment OFF with its exact refusal;
+an OFF hidden under a higher ON; and the project depth (set, 0, removal,
+whole-block precedence, preserved BOM/EOL/comments), using private roots and a
+provider request counter.
 
 The product preparation endpoint is
 `/api/workspaces/:id/missions/:missionID/schedule-settings`: GET reads its document;
