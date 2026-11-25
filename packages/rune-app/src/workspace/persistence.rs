@@ -136,6 +136,11 @@ impl Persistence {
         });
     }
     pub fn poll_load(&mut self) -> Option<(Option<Snapshot>, Result<Option<Vec<u8>>>)> {
+        if self.mutating {
+            self.loaded = None;
+            self.loading = false;
+            return None;
+        }
         let result = self.loaded.as_ref()?.try_recv().ok()?;
         self.loaded = None;
         self.loading = false;
@@ -239,48 +244,54 @@ impl Persistence {
             self.file_draft_retry_requested = true;
         }
     }
+    fn reload_from_store(&mut self, store: Store, wake: rune::Waker) {
+        if self.loading {
+            return;
+        }
+        self.loading = true;
+        let (out, input) = bounded(1);
+        self.loaded = Some(input);
+        crate::platform::spawn(async move {
+            let result = async {
+                let restore_enabled = store.restore_enabled().await.ok();
+                let (snapshot, drafts) = match restore_enabled {
+                    Some(true) => {
+                        let snapshot = store.load().await.and_then(|bytes| {
+                            bytes
+                                .map(|bytes| {
+                                    decode(&bytes).map_err(|_| "invalid saved workspace".into())
+                                })
+                                .transpose()
+                        });
+                        let drafts = store.load_file_drafts().await;
+                        (snapshot, drafts)
+                    }
+                    Some(false) => (Ok(None), Ok(None)),
+                    None => (
+                        Err("invalid restore preference".into()),
+                        Err("invalid restore preference".into()),
+                    ),
+                };
+                Ok((store, restore_enabled, snapshot, drafts))
+            }
+            .await;
+            let _ = out.send(result).await;
+            wake();
+        });
+    }
     pub fn retry_file_drafts(&mut self, wake: rune::Waker) {
+        if self.mutating {
+            return;
+        }
         let Some(store) = self.store.clone() else {
             return;
         };
         if self.restore_read_error {
-            if self.loading {
-                return;
-            }
             // Re-read the restore preference and saved data on the existing Store without
             // dropping it (dropping Store on Web cancels openings; on desktop it can collide
             // with Preferences' lock clone).
-            self.loading = true;
             self.read_error = false;
-            let (out, input) = bounded(1);
-            self.loaded = Some(input);
-            crate::platform::spawn(async move {
-                let result = async {
-                    let restore_enabled = store.restore_enabled().await.ok();
-                    let (snapshot, drafts) = match restore_enabled {
-                        Some(true) => {
-                            let snapshot = store.load().await.and_then(|bytes| {
-                                bytes
-                                    .map(|bytes| {
-                                        decode(&bytes).map_err(|_| "invalid saved workspace".into())
-                                    })
-                                    .transpose()
-                            });
-                            let drafts = store.load_file_drafts().await;
-                            (snapshot, drafts)
-                        }
-                        Some(false) => (Ok(None), Ok(None)),
-                        None => (
-                            Err("invalid restore preference".into()),
-                            Err("invalid restore preference".into()),
-                        ),
-                    };
-                    Ok((store, restore_enabled, snapshot, drafts))
-                }
-                .await;
-                let _ = out.send(result).await;
-                wake();
-            });
+            self.reload_from_store(store, wake);
             return;
         }
         if !self.file_draft_read_error || self.retrying_file_drafts.is_some() {
@@ -328,6 +339,8 @@ impl Persistence {
         outlines: &mut super::outlines::Cache,
     ) {
         self.mutating = true;
+        self.loaded = None;
+        self.loading = false;
         self.saving = None;
         self.retrying_file_drafts = None;
         #[cfg(not(target_arch = "wasm32"))]
@@ -361,22 +374,22 @@ impl Persistence {
             outlines.restore_after_failed_mutation();
         }
     }
+    /// Applies a confirmed restore-enabled change. Returns `true` when the workspace should
+    /// immediately mark itself dirty to write live state; returns `false` when repairing an
+    /// unreadable marker triggered a reload that must finish before unblocking writes.
     pub fn apply_restore_enabled(
         &mut self,
         enabled: bool,
         current_revision: u64,
         documents: &Documents,
         outlines: &mut super::outlines::Cache,
-    ) {
+        wake: rune::Waker,
+    ) -> bool {
+        let was_unreadable = self.restore_read_error;
         self.mutating = false;
         self.mutation_baseline = None;
         self.restore_enabled = enabled;
         self.restore_read_error = false;
-        self.read_error = false;
-        self.write_error = false;
-        self.partial = false;
-        self.file_draft_error = false;
-        self.file_draft_read_error = false;
         self.saving = None;
         self.retrying_file_drafts = None;
         #[cfg(not(target_arch = "wasm32"))]
@@ -384,6 +397,23 @@ impl Persistence {
             self.saving_file_drafts = None;
             self.file_drafts_first_dirty = None;
         }
+        if enabled && was_unreadable {
+            // Existing state/drafts on disk were never loaded while the marker was unreadable.
+            // Keep writes blocked and reload them before allowing the live window to overwrite disk.
+            self.read_error = true;
+            self.file_draft_read_error = true;
+            documents.block_file_draft_updates(true);
+            outlines.restore_after_failed_mutation();
+            if let Some(store) = self.store.clone() {
+                self.reload_from_store(store, wake);
+            }
+            return false;
+        }
+        self.read_error = false;
+        self.write_error = false;
+        self.partial = false;
+        self.file_draft_error = false;
+        self.file_draft_read_error = false;
         documents.block_file_draft_updates(false);
         if enabled {
             self.cleared_revision = None;
@@ -399,6 +429,7 @@ impl Persistence {
                 self.file_drafts_due = 0.0;
                 self.file_draft_retry_requested = true;
             }
+            true
         } else {
             documents.discard_unopened_saved_drafts();
             outlines.clear_saved();
@@ -412,6 +443,7 @@ impl Persistence {
                 self.file_drafts_dirty_revision = drafts_rev;
                 self.file_draft_retry_requested = false;
             }
+            false
         }
     }
     pub fn apply_cleared(

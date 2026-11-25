@@ -488,7 +488,15 @@ impl Document {
                 (Choice::Environment, value) => value.needs_atomic_mask(),
                 _ => false,
             });
-            let needs_fresh = !atomic && relies_on_atomic;
+            let palette_sensitive = sent.get(&Choice::PaletteMutation).is_some_and(|value| {
+                matches!(
+                    value,
+                    ChoiceValue::Palette(mutation)
+                        if mutation
+                            .needs_fresh_snapshot(self.snapshot.as_ref().unwrap_or(&Value::Null))
+                )
+            });
+            let needs_fresh = (!atomic && relies_on_atomic) || palette_sensitive;
             if !atomic
                 && sent
                     .keys()

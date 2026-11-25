@@ -260,6 +260,22 @@ impl Ui {
         self.ready = true;
         self.persistence.store = Some(store);
     }
+    #[cfg(test)]
+    pub(crate) fn fixture_unreadable_restore(&mut self) {
+        self.touched = false;
+        self.persistence.restore_enabled = false;
+        self.persistence.restore_read_error = true;
+        self.persistence.read_error = true;
+        self.persistence.file_draft_read_error = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn persistence_loading(&self) -> bool {
+        self.persistence.loading
+    }
+    #[cfg(test)]
+    pub(crate) fn workspace_revision(&self) -> u64 {
+        self.revision
+    }
     pub(crate) fn restore_enabled(&self) -> bool {
         self.persistence.restore_enabled
     }
@@ -283,10 +299,12 @@ impl Ui {
         enabled: bool,
         documents: &crate::files::document::store::Store,
         outlines: &mut super::outlines::Cache,
+        wake: rune::Waker,
     ) {
-        self.persistence
-            .apply_restore_enabled(enabled, self.revision, documents, outlines);
-        if enabled {
+        if self
+            .persistence
+            .apply_restore_enabled(enabled, self.revision, documents, outlines, wake)
+        {
             self.changed();
         }
         self.staged_revision = None;

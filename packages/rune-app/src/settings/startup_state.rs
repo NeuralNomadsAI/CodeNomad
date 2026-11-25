@@ -93,7 +93,12 @@ impl StartupState {
                 }),
             ) => {
                 if let Some(ui) = s.workspace.as_mut() {
-                    ui.apply_restore_enabled(enabled, &s.documents, &mut s.saved_outlines);
+                    ui.apply_restore_enabled(
+                        enabled,
+                        &s.documents,
+                        &mut s.saved_outlines,
+                        s.wake.clone(),
+                    );
                 }
                 let mut prefs = s.settings.shared.borrow_mut();
                 prefs.startup.restore_enabled = enabled;

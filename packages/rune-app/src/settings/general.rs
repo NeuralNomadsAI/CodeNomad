@@ -184,11 +184,16 @@ impl Controls {
     }
 
     pub(super) fn close_palette_on_slot_change(&self, dark: bool) {
+        let mut draft = self.draft.borrow_mut();
+        let active_dark = if draft.dirty || draft.awaiting_save.is_some() {
+            draft.dark
+        } else {
+            dark
+        };
         // Removing the kit modal returns focus to its trigger.
-        if self.picker.get() == Some(Picker::Palette(!dark)) {
+        if self.picker.get() == Some(Picker::Palette(!active_dark)) {
             self.picker.set(None);
         }
-        let mut draft = self.draft.borrow_mut();
         if !draft.dirty
             && draft.awaiting_save.is_none()
             && draft

@@ -539,7 +539,7 @@ fn legacy_inline_custom_scheme_is_materialized_and_edit_never_resurrects_deleted
         let preset_colors = ColorSchemeColors::default_custom()
             .with(ColorField::AccentPrimary, "#FF6600")
             .unwrap();
-        prefs.state.snapshot = Some(json!({
+        let initial_state = json!({
             "colorScheme": {
                 "id": "custom",
                 "appearance": "dark",
@@ -549,7 +549,8 @@ fn legacy_inline_custom_scheme_is_materialized_and_edit_never_resurrects_deleted
             "colorSchemePresets": {
                 "p1": { "name": "Amber", "appearance": "dark", "colors": preset_colors.to_json() }
             }
-        }));
+        });
+        prefs.state.snapshot = Some(initial_state.clone());
         let options = prefs.palette_options(true);
         let preset_opt = options
             .iter()
@@ -557,6 +558,9 @@ fn legacy_inline_custom_scheme_is_materialized_and_edit_never_resurrects_deleted
             .unwrap()
             .clone();
         assert!(prefs.select_palette_option(&preset_opt));
+        let pre_select_get = poll_next_request(&mut prefs, &listener).await;
+        assert!(pre_select_get.first.starts_with("GET "));
+        pre_select_get.reply(200, initial_state).await;
         let patch = poll_next_request(&mut prefs, &listener).await;
         assert!(patch.first.starts_with("PATCH "));
         assert_eq!(
@@ -632,6 +636,105 @@ fn legacy_inline_custom_scheme_is_materialized_and_edit_never_resurrects_deleted
         let failed_get = poll_next_request(&mut prefs, &listener).await;
         assert!(failed_get.first.starts_with("GET "));
         failed_get.reply(503, json!({"error": "unavailable"})).await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while prefs.palette_saving() {
+            prefs.poll();
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(prefs.palette_save_failed());
+    });
+}
+
+#[test]
+fn switching_from_slot_only_custom_builtin_migrates_override_and_deleted_preset_select_rejects() {
+    platform::block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend = Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+            .await
+            .unwrap();
+        let mut prefs = Preferences {
+            backend: Some(backend),
+            ..Preferences::default()
+        };
+        prefs.fixture();
+        let mist = built_in().iter().find(|p| p.id == "mist").unwrap();
+        let slate = built_in().iter().find(|p| p.id == "slate").unwrap();
+        let custom_mist = mist
+            .colors()
+            .with(ColorField::AccentPrimary, "#AA22CC")
+            .unwrap();
+        // Slot-only custom Mist without colorSchemeOverrides["mist"].
+        prefs.state.snapshot = Some(json!({
+            "appearancePreferences": {
+                "mode": "dark",
+                "dark": {
+                    "scheme": {
+                        "id": "mist",
+                        "appearance": "dark",
+                        "colors": custom_mist.to_json()
+                    },
+                    "presetId": null
+                }
+            },
+            "colorSchemePresets": {
+                "p1": { "name": "Temp", "appearance": "dark", "colors": custom_mist.to_json() }
+            }
+        }));
+        prefs.set_palette(slate);
+        let patch = poll_next_request(&mut prefs, &listener).await;
+        assert!(patch.first.starts_with("PATCH "));
+        assert_eq!(
+            patch.body["colorSchemeOverrides"]["mist"]["accentPrimary"], "#AA22CC",
+            "switching away from slot-only custom built-in must migrate override: {}",
+            patch.body
+        );
+        let migrated_override = patch.body["colorSchemeOverrides"].clone();
+        patch
+            .reply(
+                200,
+                json!({
+                    "appearancePreferences": {
+                        "mode": "dark",
+                        "dark": { "scheme": { "id": "slate", "appearance": "dark", "colors": null }, "presetId": null }
+                    },
+                    "colorSchemeOverrides": migrated_override,
+                    "colorSchemePresets": {
+                        "p1": { "name": "Temp", "appearance": "dark", "colors": custom_mist.to_json() }
+                    }
+                }),
+            )
+            .await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while prefs.state.requested(Choice::Palette(true)).is_some() {
+            prefs.poll();
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(prefs.has_saved_override("mist"));
+
+        // Selecting a preset deleted on server rejects cleanly after fresh GET without PATCHing.
+        let p1 = prefs
+            .palette_options(true)
+            .into_iter()
+            .find(|o| o.preset_id.as_deref() == Some("p1"))
+            .unwrap();
+        assert!(prefs.select_palette_option(&p1));
+        let pre_get = poll_next_request(&mut prefs, &listener).await;
+        assert!(pre_get.first.starts_with("GET "));
+        pre_get
+            .reply(
+                200,
+                json!({
+                    "appearancePreferences": {
+                        "mode": "dark",
+                        "dark": { "scheme": { "id": "slate", "appearance": "dark", "colors": null }, "presetId": null }
+                    },
+                    "colorSchemeOverrides": migrated_override,
+                    "colorSchemePresets": {}
+                }),
+            )
+            .await;
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while prefs.palette_saving() {
             prefs.poll();

@@ -382,21 +382,44 @@ impl Store {
                     }
                 }
                 let saved = match state_lock.lock() {
-                    Ok(_guard) => files.save_restore_enabled(true),
-                    Err(_) => Err("state store unavailable".into()),
-                };
-                if let Ok(mut gate) = gate.lock() {
-                    if saved.is_ok() {
-                        gate.restore = RestoreMode::Enabled;
-                        gate.generation = gate.generation.wrapping_add(1);
+                    Ok(_guard) => {
+                        let res = files.save_restore_enabled(true);
+                        let actual = match files.restore_enabled() {
+                            Ok(true) => RestoreMode::Enabled,
+                            Ok(false) => RestoreMode::Disabled,
+                            Err(_) => RestoreMode::Unknown,
+                        };
+                        if let Ok(mut gate) = gate.lock() {
+                            gate.restore = actual;
+                            gate.generation = gate.generation.wrapping_add(1);
+                            gate.frozen = false;
+                        }
+                        res
                     }
-                    gate.frozen = false;
-                }
+                    Err(_) => {
+                        if let Ok(mut gate) = gate.lock() {
+                            gate.frozen = false;
+                        }
+                        Err("state store unavailable".into())
+                    }
+                };
                 saved?;
                 return Ok(true);
             }
             let saved = match state_lock.lock() {
-                Ok(_guard) => files.save_restore_enabled(false),
+                Ok(_guard) => {
+                    let res = files.save_restore_enabled(false);
+                    let actual = match files.restore_enabled() {
+                        Ok(true) => RestoreMode::Enabled,
+                        Ok(false) => RestoreMode::Disabled,
+                        Err(_) => RestoreMode::Unknown,
+                    };
+                    if let Ok(mut gate) = gate.lock() {
+                        gate.restore = actual;
+                        gate.generation = gate.generation.wrapping_add(1);
+                    }
+                    res
+                }
                 Err(_) => Err("state store unavailable".into()),
             };
             if let Err(err) = saved {
@@ -404,10 +427,6 @@ impl Store {
                     gate.frozen = false;
                 }
                 return Err(err);
-            }
-            if let Ok(mut gate) = gate.lock() {
-                gate.restore = RestoreMode::Disabled;
-                gate.generation = gate.generation.wrapping_add(1);
             }
             let cleaned =
                 Self::remove_startup_files(&files, &state_lock, &file_drafts_lock, &staged, &queue);

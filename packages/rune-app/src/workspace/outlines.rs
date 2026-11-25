@@ -29,6 +29,7 @@ pub(crate) struct Cache {
     saving: Option<Receiver<()>>,
     dirty: bool,
     pending_write_before_freeze: bool,
+    unloaded_before_freeze: bool,
     mutations: HashMap<Session, Weak<Cell<u64>>>,
     invalidated_while_loading: HashSet<Session>,
 }
@@ -107,6 +108,7 @@ impl Cache {
 
     pub(crate) fn begin_freeze(&mut self) -> u64 {
         self.pending_write_before_freeze |= self.dirty || self.saving.is_some();
+        self.unloaded_before_freeze |= !self.started || self.loading.is_some();
         self.started = true;
         self.loading = None;
         self.saving = None;
@@ -116,6 +118,9 @@ impl Cache {
     }
 
     pub(crate) fn restore_after_failed_mutation(&mut self) {
+        if std::mem::take(&mut self.unloaded_before_freeze) {
+            self.started = false;
+        }
         if std::mem::take(&mut self.pending_write_before_freeze) {
             self.dirty = true;
         }
@@ -124,6 +129,7 @@ impl Cache {
     pub(crate) fn clear_saved(&mut self) {
         self.entries.clear();
         self.pending_write_before_freeze = false;
+        self.unloaded_before_freeze = false;
         self.started = true;
         self.loading = None;
         self.saving = None;
@@ -133,6 +139,7 @@ impl Cache {
 
     pub(crate) fn clear_saved_before(&mut self, baseline: u64) {
         self.pending_write_before_freeze = false;
+        self.unloaded_before_freeze = false;
         self.entries.retain(|entry| entry.version > baseline);
         self.started = true;
         self.loading = None;
@@ -143,6 +150,7 @@ impl Cache {
 
     pub(crate) fn mark_dirty_if_nonempty(&mut self) {
         self.pending_write_before_freeze = false;
+        self.unloaded_before_freeze = false;
         self.started = true;
         self.loading = None;
         self.saving = None;

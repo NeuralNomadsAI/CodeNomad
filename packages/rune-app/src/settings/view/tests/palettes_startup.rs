@@ -225,19 +225,48 @@ fn startup_state_card_renders_and_controls_native_persistence() {
         "re-enabling Restore must purge leftover files before publishing true"
     );
 
-    // Malformed restore-enabled.json is treated as Unknown (read error) and enabling Restore
-    // from Unknown must NOT purge existing saved startup files on disk.
-    std::fs::write(
-        root.join("state.json"),
-        b"{\"revision\":2,\"savedAt\":2,\"tabs\":[]}",
-    )
+    // Malformed restore-enabled.json is treated as Unknown (read error): enabling Restore
+    // through the Preferences UI repairs the marker AND reloads existing state.json instead of
+    // overwriting it with an empty window.
+    let saved_json = crate::workspace::encode(&crate::workspace::Snapshot {
+        revision: 7,
+        saved_at: 42,
+        panel_widths: [None, None],
+        file_wrap: None,
+        tabs: vec![crate::workspace::Tab::Blank],
+        active: Some(0),
+    })
     .unwrap();
+    std::fs::write(root.join("state.json"), &saved_json).unwrap();
     std::fs::write(root.join("restore-enabled.json"), b"{bad json").unwrap();
     assert!(crate::platform::block_on(store.restore_enabled()).is_err());
-    assert!(crate::platform::block_on(store.set_restore_enabled(true)).unwrap());
+    rt.state
+        .workspace
+        .as_mut()
+        .unwrap()
+        .fixture_unreadable_restore();
+    rt.frame(0.02);
+    pref_rt.frame(0.02);
+    click_key(&mut pref_rt, "startup-restore-switch");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !rt.state.settings.shared.borrow().startup.restore_enabled()
+        || rt.state.settings.shared.borrow().startup.busy()
+        || rt.state.workspace.as_ref().unwrap().persistence_loading()
+    {
+        rt.frame(0.02);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().workspace_revision(),
+        7,
+        "re-enabling Restore from unreadable marker must reload existing state instead of overwriting it"
+    );
     assert!(
-        root.join("state.json").exists(),
-        "enabling Restore from unreadable preference must not erase saved state"
+        std::fs::read(root.join("state.json"))
+            .unwrap()
+            .windows(12)
+            .any(|w| w == br#""revision":7"#)
     );
 
     // Unopened restored file drafts are dropped on Clear without altering active editors.

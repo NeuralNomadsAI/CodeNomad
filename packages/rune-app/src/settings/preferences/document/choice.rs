@@ -132,6 +132,15 @@ impl Choice {
             Self::Shortcut(_) | Self::ShortcutReset | Self::Environment | Self::PaletteMutation => {
             }
             Self::Palette(dark) => {
+                let legacy = crate::settings::palettes::legacy_scheme(snapshot, &Value::Null);
+                crate::settings::palettes::migrate_active_builtin_override(
+                    patch,
+                    snapshot,
+                    &Value::Null,
+                    legacy.as_ref(),
+                    dark,
+                    Some(value),
+                );
                 let mode = if dark { "dark" } else { "light" };
                 patch["appearancePreferences"][mode] = json!({
                     "scheme":{"id":value,"appearance":mode,"colors":null},"presetId":null
