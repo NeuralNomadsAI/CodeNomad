@@ -92,7 +92,7 @@ impl Reader {
                         reader_event(reading, self.generation, out, wake, failed()).await;
                     }
                 }
-                Ok(_) => {
+                Ok(_) | Err(PageFailure::StreamClosed) => {
                     self.dirty = true;
                     self.quiet = Instant::now() + Duration::from_millis(100);
                     reader_event(reading, self.generation, out, wake, failed()).await;
