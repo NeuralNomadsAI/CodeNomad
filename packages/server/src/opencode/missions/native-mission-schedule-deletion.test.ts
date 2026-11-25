@@ -108,9 +108,12 @@ test("reconcileNativeMissionScheduleMaintenance compacts only when deleting clea
   const stoppedOnly = { ...cleanedDoc, deletion: null } as unknown as MissionDocument
   await reconcileNativeMissionScheduleMaintenance({ ...deletingDoc, deletion: null } as unknown as MissionDocument, "ses_aux", async () => true, async () => stoppedOnly, async () => { compacted++ })
   assert.equal(compacted, 1)
+  // A compaction that cannot finish yet leaves the completed cleanup complete.
+  assert.deepEqual(await reconcileNativeMissionScheduleMaintenance(deletingDoc, "ses_aux", async () => true, async () => cleanedDoc,
+    async () => { throw new Error("cleanup-pending") }), { complete: true })
 })
 
-test("receiveNativeMissionScheduleWake compacts a completed deleting schedule and still replies applied", async () => {
+for (const failing of [false, true]) test(`receiveNativeMissionScheduleWake replies applied for a completed deleting schedule, ${failing ? "also when it cannot be compacted yet" : "which it compacts"}`, async () => {
   const { store, ctx, run } = await createStore()
   const wake = { missionID: "msn_wake_del", generation: 1, scheduleID: "aut_aux", run: 1, sessionID: "ses_aux", messageID: "msg_aut_aux_1" }
   const incarnation = { id: "inc_1", pid: process.pid, url: "http://127.0.0.1:1" }
@@ -144,10 +147,11 @@ test("receiveNativeMissionScheduleWake compacts a completed deleting schedule an
       claim = { ...claim, settled: { revision: latest.revision, highWater: 1 } }
       return true
     },
-    compact: () => compactNativeMissionDocumentDeletion(ctx, store, wake.missionID, run, current).then(() => undefined),
+    compact: failing ? async () => { throw new Error("cleanup-pending") }
+      : () => compactNativeMissionDocumentDeletion(ctx, store, wake.missionID, run, current).then(() => undefined),
   })
   assert.equal(reply.state, "applied")
   const tombstone = await store.read(wake.missionID)
-  assert.ok(tombstone && "deletedAt" in tombstone)
-  assert.equal(tombstone.requestID, "req_wake_del")
+  assert.equal(Boolean(tombstone && "deletedAt" in tombstone), !failing)
+  if (tombstone && "deletedAt" in tombstone) assert.equal(tombstone.requestID, "req_wake_del")
 })

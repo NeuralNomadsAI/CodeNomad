@@ -72,7 +72,8 @@ export async function reconcileNativeMissionScheduleMaintenance(doc: MissionDocu
   const result = await reconcile()
   const complete = result.calendarOwner?.operation.pending === false && !result.calendarOwner.retired.length
     && !result.calendarOwner.slots.some(slot => slot.sessionID === sessionID)
-  if (complete && result.deletion) await compact?.()
+  // Best effort: the cleanup is complete either way, and a manual Check reports why a deletion stays.
+  if (complete && result.deletion) await compact?.().catch(() => undefined)
   return { complete }
 }
 

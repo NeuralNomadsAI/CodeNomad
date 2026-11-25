@@ -82,7 +82,8 @@ export async function readForgeRemote(directory: string, signal?: AbortSignal): 
   }
   const remotes = new Map<string, string>()
   for (const line of (await read(["remote", "-v"])).split(/\r?\n/)) {
-    const match = /^([^\t]+)\t(.+) \(fetch\)$/.exec(line.trim())
+    // A partial clone's line ends with its filter: "(fetch) [blob:none]".
+    const match = /^([^\t]+)\t(.+) \(fetch\)(?: \[[^\]]*\])?$/.exec(line.trim())
     if (match && !remotes.has(match[1]!)) remotes.set(match[1]!, match[2]!)
   }
   const names = [...remotes.keys()]

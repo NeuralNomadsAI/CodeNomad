@@ -35,13 +35,14 @@ export async function compactNativeMissionDocumentDeletion(
   if (actorPending || managedOrReleasePending || missionDocumentDeletionPending(deleting))
     return { compacted: false, managedOrReleasePending }
   const range = await run(optionalOrdinaryJournalRange(ctx, run))
-  await store.withExclusion(async locked => {
+  const compacted = await store.withExclusion(async locked => {
     const fresh = await locked.read(missionID)
-    if (!fresh || "deletedAt" in fresh || !fresh.deletion || missionDocumentDeletionPending(fresh)) return
+    if (!fresh || "deletedAt" in fresh || !fresh.deletion || missionDocumentDeletionPending(fresh)) return false
     await deleteDormantMissionJournal(locked, { range, get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
       set: async (key, value, guard) => { current(); guard?.(); await run(ctx.storage.set(key, value)) } }, fresh, current)
     await finishMissionDocumentDeletion(use => use(locked), use => use(locked),
       { missionID, ...fresh.deletion }, Date.now(), current, true)
+    return true
   })
-  return { compacted: true, managedOrReleasePending: false }
+  return { compacted, managedOrReleasePending: false }
 }
