@@ -328,7 +328,7 @@ pub(super) fn admit_window(s: &mut State, serial: u64, page: Page, accept: impl 
     } else {
         super::demanded(s)
     };
-    if !allowed || owner(s).jump.serial != serial || gesture(s) {
+    if !allowed || owner(s).jump.serial != serial || gesture(s).0 {
         return;
     }
     let Some((_cancel, target)) = owner(s).jump.flight.take() else {
@@ -361,14 +361,17 @@ pub(crate) fn failed(s: &mut State, serial: u64) {
     }
 }
 
-fn gesture(s: &mut State) -> bool {
+fn gesture(s: &mut State) -> (bool, bool) {
     let t = owner(s);
     let observed = t.scroll.get();
     let previous = std::mem::replace(&mut t.jump.last, observed);
     let rail_moved = previous.rail != observed.rail;
     let transcript_moved = previous.transcript != observed.transcript;
     let last_rail = observed.wheel_last_rail.unwrap_or(observed.last_hand_rail);
+    let mut view_changed = false;
     if transcript_moved {
+        let j = &owner(s).jump;
+        view_changed = j.filtered || j.retry.is_some();
         cancel_jump(s);
     }
     if rail_moved && (!transcript_moved || last_rail) {
@@ -376,7 +379,7 @@ fn gesture(s: &mut State) -> bool {
     } else if transcript_moved {
         owner(s).jump.browse = false;
     }
-    transcript_moved
+    (transcript_moved, view_changed)
 }
 
 pub(super) fn hand_scrolled(s: &mut State, rail: bool) {
@@ -451,7 +454,7 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         scroll.transcript_wheel_momentum = false;
         t.scroll.set(scroll);
     }
-    let moved = gesture(s);
+    let (_, moved) = gesture(s);
     let mut halted = false;
     {
         let t = owner(s);

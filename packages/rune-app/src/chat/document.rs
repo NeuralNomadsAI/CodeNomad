@@ -212,6 +212,8 @@ fn prose_for(
                 .filter(|q| q.active)
                 .map(|q| (q.terms.to_vec(), q.ranked));
             let truncated = shown.len() < source.len();
+            let diff_group = group.clone();
+            let diff_scope = scope.clone();
             markdown::prose(
                 shown,
                 streaming,
@@ -310,6 +312,27 @@ fn prose_for(
                     col()
                         .full_width()
                         .child(header.child(wrap).child(copy))
+                        .child(card)
+                },
+                move |card, frame| {
+                    let copy = markdown::copy_button(
+                        t("markdown.codeBlock.copy.label"),
+                        screen::action_tx(&diff_scope, {
+                            let source = frame.source.to_owned();
+                            move |s, tx| {
+                                s.transcript_display.children.cancel_copy();
+                                tx.copy(source.as_str());
+                            }
+                        }),
+                    )
+                    .key(format!("{diff_group}-diff-{}-copy", frame.index));
+                    col()
+                        .full_width()
+                        .child(
+                            layout::action_row()
+                                .child(text(t("toolCall.diff.label")))
+                                .child(copy),
+                        )
                         .child(card)
                 },
             )
@@ -475,5 +498,41 @@ mod tests {
         let line = format!("{}\n{}", "a".repeat(94), "b".repeat(600_000));
         let (_, width, hidden, more) = prefix(&[&line], 100);
         assert_eq!((width, hidden, more), (95, 600_000, 250_005));
+    }
+
+    #[test]
+    fn markdown_diff_fence_exposes_copy_frame_and_square_code_blocks() {
+        use rune::{Env, Runtime};
+        const SOURCE: &str = "```diff\n-old\n+new\n```\n\n```rust\nlet x = 1;\n```\n";
+        let s = crate::init();
+        let mut rt = Runtime::new(
+            s,
+            |s, _| {
+                crate::strings::with_locale("en", || {
+                    prose_at(s, "example".into(), SOURCE, false, PROSE_LIMIT)
+                })
+            },
+            (800.0, 500.0),
+            Env::new(false, 1.0),
+        );
+        let clipboard = rune::clipboard::memory();
+        rt.use_clipboard(&clipboard);
+        rt.frame(0.016);
+        let (x, y) = rt
+            .find("example-diff-0-copy")
+            .expect("markdown diff fence must expose a copy button via Markdown::diff_frame");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.016);
+        assert_eq!(clipboard.text().unwrap().trim_end(), "-old\n+new");
+        // Code blocks must use square corners (radius == 0.0) per AGENTS.md and markdown.css.
+        let code_block_has_rounded = rt
+            .elements()
+            .iter()
+            .any(|el| el.rect[2] > 200.0 && el.rect[3] > 20.0 && el.radius > 0.0);
+        assert!(
+            !code_block_has_rounded,
+            "markdown code/diff cards must have square corners (radius 0.0)"
+        );
     }
 }
