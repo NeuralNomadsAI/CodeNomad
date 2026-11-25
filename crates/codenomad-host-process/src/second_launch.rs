@@ -403,17 +403,23 @@ mod win {
         // SAFETY: Both handles remain valid across the wait.
         let waited = unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, INFINITE) };
         let mut transferred = 0u32;
-        if waited == WAIT_OBJECT_0 {
-            // SAFETY: Cancel and drain via raw `ov_ptr` before `overlapped` leaves scope.
-            unsafe {
-                CancelIoEx(pipe, ov_ptr);
-                let _ = GetOverlappedResult(pipe, ov_ptr, &mut transferred, 1);
-            }
-            return None;
+        if waited == WAIT_OBJECT_0 + 1 {
+            // SAFETY: `io_event` signalled completion; check result via the same raw `ov_ptr`.
+            let connected = unsafe { GetOverlappedResult(pipe, ov_ptr, &mut transferred, 0) != 0 };
+            return Some(connected);
         }
-        // SAFETY: `io_event` signalled completion; check result via the same raw `ov_ptr`.
-        let connected = unsafe { GetOverlappedResult(pipe, ov_ptr, &mut transferred, 0) != 0 };
-        Some(connected)
+        // Cancel and drain on BOTH stop_event (WAIT_OBJECT_0) and WAIT_FAILED before
+        // `overlapped` and `io_event` leave scope.
+        // SAFETY: `pipe` and `ov_ptr` stay valid until GetOverlappedResult returns.
+        unsafe {
+            CancelIoEx(pipe, ov_ptr);
+            let _ = GetOverlappedResult(pipe, ov_ptr, &mut transferred, 1);
+        }
+        if waited == WAIT_OBJECT_0 {
+            None
+        } else {
+            Some(false)
+        }
     }
 
     fn create_pipe(pipe_name: &[u16], stop_event: HANDLE) -> Option<OwnedHandle> {

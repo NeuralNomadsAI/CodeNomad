@@ -45,7 +45,11 @@ fn fnv1a_128(fields: &[(&str, &str)]) -> u128 {
 #[cfg(any(target_os = "windows", test))]
 fn normalize_lexical_path(raw: &str) -> String {
     let trimmed = raw.trim().replace('\\', "/");
-    let (unc, body) = if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("//?/unc/") {
+    let (unc, body) = if trimmed
+        .as_bytes()
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"//?/unc/"))
+    {
         (true, trimmed[8..].trim_start_matches('/'))
     } else if let Some(stripped) = trimmed.strip_prefix("//?/") {
         (false, stripped)
@@ -320,6 +324,19 @@ mod tests {
         })
         .unwrap();
         assert_eq!(unc_plain, unc_extended);
+
+        // Non-ASCII paths whose byte 8 falls inside a multi-byte UTF-8 character never panic.
+        let accented = resolve_scope_id(ScopeInputs {
+            state_dir: Some(r"D:\Tempé\state"),
+            ..Default::default()
+        })
+        .unwrap();
+        let cjk = resolve_scope_id(ScopeInputs {
+            state_dir: Some(r"C:\日本語\root"),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_ne!(accented, cjk);
 
         // Distinct roots and distinct RUNE_BACKEND targets produce distinct scopes.
         let root_b = resolve_scope_id(ScopeInputs {
