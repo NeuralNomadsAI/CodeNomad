@@ -32,19 +32,27 @@ pub fn view(
     conversation: impl FnOnce(&State, &mut Cx<State>) -> El,
 ) -> El {
     let touch = touch_controls(s, cx);
+    let skip_tab = s.shell.has_floating();
     let mut root = col()
         .key("application-shell")
         .full_width()
         .full_height()
         .reading_surface()
-        .on_layout_tx(move |s: &mut State, [_, _, width, height], tx| {
-            s.shell.measure(width, height, touch, tx)
-        });
+        .child(rune_theme_codenomad::shell::viewport_probe(
+            touch,
+            move |s: &mut State, [_, _, width, height], tx| {
+                if s.shell.measure(width, height, touch, tx) == Some(1) {
+                    crate::git::dismiss_panel_overlays(s);
+                }
+            },
+        ));
     if crate::platform::titlebar::available() {
         root = root.child(crate::platform::titlebar::view(s, cx));
     }
     if let Some(ui) = &s.workspace {
-        root = root.child(workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside));
+        root = root.child(
+            workspace::strip(s, touch, skip_tab).on_background_press_tx(Panels::dismiss_outside),
+        );
         let primary = workspace::status(s);
         let secondary = workspace::file_draft_status(s).filter(|&draft| primary != Some(draft));
         if let Some(error) = primary {
@@ -56,12 +64,19 @@ pub fn view(
             if let Some(draft_error) = secondary {
                 banner = banner.child(text(t(draft_error)).wrap().role("alert"));
             }
-            root = root.child(banner.child(layout::action_row().child(button_tx(
-                "workspace-retry",
-                t("sessionList.loadError.retry"),
-                false,
-                crate::screen::action_tx(&s.input_scope, workspace::retry),
-            ))));
+            root = root.child(
+                banner.child(
+                    layout::action_row().child(
+                        button_tx(
+                            "workspace-retry",
+                            t("sessionList.loadError.retry"),
+                            false,
+                            crate::screen::action_tx(&s.input_scope, workspace::retry),
+                        )
+                        .tab_index(if skip_tab { -1 } else { 0 }),
+                    ),
+                ),
+            );
         }
         let body = body(s, cx, conversation).key(format!("tab-body-{}", ui.active_key()));
         root.child(body.remaining())
@@ -70,8 +85,8 @@ pub fn view(
             rune::row()
                 .full_width()
                 .on_background_press_tx(Panels::dismiss_outside)
-                .child(crate::settings::direct_entry(s, touch))
-                .child(notifications::history_entry(s, touch)),
+                .child(crate::settings::direct_entry(s, touch, skip_tab))
+                .child(notifications::history_entry(s, touch, skip_tab)),
         )
         .child(body(s, cx, conversation).remaining())
     }
@@ -151,7 +166,7 @@ pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> 
         return true;
     }
     if event.key == Key::Tab && !event.mods.ctrl && !event.mods.cmd && !event.mods.alt {
-        return panels::wrap_floating_focus(s, event.mods.shift, tx);
+        return s.shell.wrap_floating_focus(event.mods.shift, tx);
     }
     if event.key == Key::Function(6) && s.shell.has_floating() {
         return !event.mods.ctrl && !event.mods.cmd && !event.mods.alt;

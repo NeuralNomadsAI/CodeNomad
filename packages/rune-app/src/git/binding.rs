@@ -53,8 +53,21 @@ pub(crate) fn diff_preferences(s: &State) -> DiffPreferences {
 
 pub(crate) fn overlay_open(s: &State) -> bool {
     s.git.owner.as_ref().is_some_and(|ui| {
-        ui.placement_picker.is_some() || (ui.shown && (ui.open_menu.is_some() || ui.picker))
+        let picker_visible = ui.picker
+            && ui.online
+            && ui
+                .inventory
+                .as_ref()
+                .is_some_and(|list| list.trees.iter().any(|tree| !tree.missing));
+        ui.placement_picker.is_some() || (ui.shown && (ui.open_menu.is_some() || picker_visible))
     })
+}
+
+pub(crate) fn dismiss_panel_overlays(s: &mut State) {
+    if let Some(ui) = &mut s.git.owner {
+        ui.picker = false;
+        ui.open_menu = None;
+    }
 }
 
 pub(crate) enum SessionDirectory {
@@ -105,7 +118,19 @@ pub(crate) fn fixture_commit_draft(s: &mut State, text: Option<&str>) -> Option<
 
 #[cfg(test)]
 pub(crate) fn fixture_open_picker(s: &mut State) {
+    if s.git
+        .owner
+        .as_ref()
+        .is_some_and(|ui| ui.inventory.is_none())
+    {
+        let shown = s.git.owner.as_ref().is_some_and(|ui| ui.shown);
+        fixture_worktrees(s);
+        if let Some(ui) = s.git.owner.as_mut() {
+            ui.shown = shown;
+        }
+    }
     if let Some(ui) = s.git.owner.as_mut() {
+        ui.online = true;
         ui.picker = true;
     }
 }

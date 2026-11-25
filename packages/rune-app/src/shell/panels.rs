@@ -109,7 +109,11 @@ impl Panels {
             return width <= height;
         };
         if (width - prev_w).abs() < 1.0 {
-            return self.portrait;
+            if !self.portrait && screen_portrait == Some(true) {
+                self.screen_portrait = Some(true);
+                return true;
+            }
+            return self.portrait || width <= height;
         }
         let screen_changed = screen_portrait.is_some() && screen_portrait != self.screen_portrait;
         if screen_portrait.is_some() {
@@ -130,12 +134,18 @@ impl Panels {
         width <= height
     }
 
-    pub(super) fn measure(&mut self, width: f32, height: f32, touch: bool, tx: &mut Tx) {
+    pub(super) fn measure(
+        &mut self,
+        width: f32,
+        height: f32,
+        touch: bool,
+        tx: &mut Tx,
+    ) -> Option<usize> {
         #[cfg(target_arch = "wasm32")]
         let screen_portrait = web_screen_portrait();
         #[cfg(not(target_arch = "wasm32"))]
         let screen_portrait = None;
-        self.measure_with_screen(width, height, touch, screen_portrait, tx);
+        self.measure_with_screen(width, height, touch, screen_portrait, tx)
     }
 
     pub(super) fn measure_with_screen(
@@ -145,11 +155,12 @@ impl Panels {
         touch: bool,
         screen_portrait: Option<bool>,
         tx: &mut Tx,
-    ) {
+    ) -> Option<usize> {
         if width > 0.0 && !self.right_width_initialized {
             self.preferred[1] = shell::default_right_panel(width);
             self.right_width_initialized = true;
         }
+        let prev_floating = self.floating;
         self.width = width;
         let portrait = self.resolve_portrait(width, height, touch, screen_portrait);
         if touch && width > 0.0 && height > 0.0 && !self.touch_initialized {
@@ -182,6 +193,7 @@ impl Panels {
             self.resizing = None;
         }
         tx.instant();
+        prev_floating.filter(|&index| self.floating != Some(index))
     }
 
     pub fn visible(&self, index: usize) -> bool {
@@ -265,40 +277,15 @@ impl Panels {
             f32::from(crate::workspace::MAX_PANEL_WIDTH),
         )
     }
-}
 
-pub(super) fn wrap_floating_focus(s: &State, backward: bool, tx: &mut Tx) -> bool {
-    let Some(index) = s.shell.floating else {
-        return false;
-    };
-    if tx.focused().is_none() {
-        tx.focus(KEYS[index], true);
-        return true;
-    }
-    if backward {
-        if tx.focused() != Some(KEYS[0]) {
+    pub(super) fn wrap_floating_focus(&self, _backward: bool, tx: &mut Tx) -> bool {
+        let Some(index) = self.floating else {
             return false;
-        }
-        let target = if index == 0 {
-            sidebar::last_focus_key(s).to_owned()
-        } else {
-            right_panel::last_focus_key(s).unwrap_or_else(|| right_panel::tab_focus_key(s))
         };
-        tx.focus(target.as_str(), true);
-        if index == 0 && target == "refresh-sessions" {
-            tx.scroll_into_view_in("session-list", target.as_str());
+        if tx.focused().is_none() {
+            tx.focus(KEYS[index], true);
+            return true;
         }
-        return true;
-    }
-    let last = if index == 0 {
-        Some(sidebar::last_focus_key(s).to_owned())
-    } else {
-        right_panel::last_focus_key(s)
-    };
-    if last.as_deref().is_some_and(|key| tx.focused() == Some(key)) {
-        tx.focus(KEYS[0], true);
-        true
-    } else {
         false
     }
 }

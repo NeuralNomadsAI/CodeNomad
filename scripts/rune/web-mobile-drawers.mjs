@@ -76,19 +76,17 @@ export async function mobileDrawersBrowser({values, m, out, storage, url, root})
       let allowed = await policy.request(req)
       if (!allowed && u.origin === url.origin && (await req.allHeaders()).cookie) {
         const [, id, tail] = p.match(/^\/api\/workspaces\/([^/]+)\/(files|worktrees\/[^/]+\/git-status)$/) ?? []
-        const [, nativeId, nativeTail] = p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(location|worktree(?:\/refresh)?)$/) ?? []
+        const [, nativeId, nativeTail] = p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(location|worktree)$/) ?? []
         if (req.method() === 'GET' && policy.workspaces.has(id)) {
           if (tail === 'files') {
             allowed = ownedDirectory(u.searchParams.get('directory')) && ['.', ''].includes(u.searchParams.get('path') ?? '')
           } else {
             allowed = true
           }
-        } else if (policy.workspaces.has(nativeId)) {
-          if (req.method() === 'GET' && nativeTail === 'location') {
+        } else if (req.method() === 'GET' && policy.workspaces.has(nativeId)) {
+          if (nativeTail === 'location') {
             allowed = ownedDirectory(u.searchParams.get('location[directory]') ?? values.project)
-          } else if (nativeTail === 'worktree' && req.method() === 'GET') {
-            allowed = true
-          } else if (nativeTail === 'worktree/refresh' && req.method() === 'POST') {
+          } else if (nativeTail === 'worktree') {
             allowed = true
           }
         }
@@ -250,12 +248,59 @@ export async function mobileDrawersBrowser({values, m, out, storage, url, root})
     await page.keyboard.press('Enter')
     await flush(page)
     await waitExpanded(right, true)
+    proof.phone.escapeReturnedFocusToToggle = true
+
+    // Verify full Tab wrap inside floating Files drawer: never escapes to top bar and wraps back to left toggle.
+    const activeDescendant = () => page.evaluate(() => {
+      const active = document.activeElement
+      const id = active?.getAttribute('aria-activedescendant')
+      const el = (id && document.getElementById(id)) || active
+      return {
+        role: el?.getAttribute('role'),
+        label: el?.getAttribute('aria-label') || el?.textContent?.trim(),
+      }
+    })
+    let wrappedToLeft = false
+    for (let step = 0; step < 24; step++) {
+      await page.keyboard.press('Tab')
+      await flush(page)
+      const cur = await activeDescendant()
+      assert.notEqual(cur.label, m['instanceTabs.new.ariaLabel'], 'Tab must not escape floating Files drawer to project tab bar')
+      assert.notEqual(cur.label, m['toastHistory.title'], 'Tab must not escape floating Files drawer to Notifications bell')
+      if (cur.label === m['window.menu.leftPanel']) {
+        wrappedToLeft = true
+        break
+      }
+    }
+    assert(wrappedToLeft, 'Tab inside floating Files drawer must wrap back to left panel toggle')
+    await page.keyboard.press('Shift+Tab')
+    await flush(page)
+    const wrappedBack = await activeDescendant()
+    const inRightRegion = wrappedBack.role && wrappedBack.label
+      ? (await rightRegion.getByRole(wrappedBack.role, {name: wrappedBack.label, exact: true}).count()) > 0
+      : false
+    assert(
+      inRightRegion &&
+      wrappedBack.label !== m['window.menu.leftPanel'] &&
+      wrappedBack.label !== m['window.menu.rightPanel'] &&
+      wrappedBack.label !== m['instanceShell.rightPanel.tabs.files'],
+      `Shift+Tab from left toggle must wrap to last Files control inside right panel, got ${JSON.stringify({...wrappedBack, inRightRegion})}`,
+    )
+    proof.phone.filesTabWrapped = wrappedBack
     await page.keyboard.press('Escape')
     await flush(page)
     await waitExpanded(right, false)
-    proof.phone.escapeReturnedFocusToToggle = true
 
-    // Outside top-bar action (Notifications bell) dismisses floating left drawer without stealing focus.
+    // Outside non-modal top-bar tap (active project tab) dismisses floating left drawer immediately before any key press.
+    await press(left)
+    await waitExpanded(left, true)
+    await press(mirror(page).getByRole('tab', {name: values.project, exact: true}))
+    await flush(page)
+    await waitExpanded(left, false)
+    await leftRegion.waitFor({state: 'detached'})
+    proof.phone.outsideTabDismissed = true
+
+    // Outside modal top-bar action (Notifications bell) dismisses floating left drawer without stealing focus from Notifications.
     await press(left)
     await waitExpanded(left, true)
     await press(button(page, m['toastHistory.title']))
@@ -267,6 +312,14 @@ export async function mobileDrawersBrowser({values, m, out, storage, url, root})
     await notifDialog.waitFor({state: 'detached'})
     await waitExpanded(left, false)
     await leftRegion.waitFor({state: 'detached'})
+    // Pressing Enter right after closing Notifications must reopen Notifications (not left drawer), proving focus returned to the bell.
+    await page.keyboard.press('Enter')
+    await flush(page)
+    await notifDialog.waitFor({state: 'attached'})
+    await page.keyboard.press('Escape')
+    await flush(page)
+    await notifDialog.waitFor({state: 'detached'})
+    await waitExpanded(left, false)
     proof.phone.outsideTopBarDismissed = true
 
     // 2. Landscape tablet start (1366x1024): both panels docked, hide on portrait, independent per-orientation memory.

@@ -266,6 +266,22 @@ pub fn cover(element: El) -> El {
     element.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
 }
 
+pub fn viewport_probe<S: 'static>(
+    touch: bool,
+    on_layout: impl Fn(&mut S, [f32; 4], &mut Tx) + 'static,
+) -> El {
+    rune::el()
+        .key(if touch {
+            "shell-viewport-touch"
+        } else {
+            "shell-viewport-pointer"
+        })
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .inert()
+        .a11y_hidden()
+        .on_layout_tx(on_layout)
+}
+
 pub fn floating_notice(notice: El) -> El {
     let inset = tokens(layout::dark()).space(Space::Sm).px();
     row()

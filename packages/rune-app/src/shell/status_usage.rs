@@ -187,19 +187,6 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed | s.status_usage.select(model) | s.status_usage.poll(now, tx, &s.wake)
 }
 
-pub(super) fn has_section(s: &State) -> bool {
-    s.status_usage.backend.is_some()
-        || s.screen.is_launcher()
-            && s.screen
-                .launcher()
-                .and_then(|l| l.connection.as_ref())
-                .is_some_and(|backend| backend.client.supports("provider-usage"))
-}
-
-pub(super) fn expanded(s: &State) -> bool {
-    s.status_usage.expanded
-}
-
 pub(super) fn section(s: &State) -> Option<El> {
     let panel = &s.status_usage;
     let no_session = s.screen.is_launcher();

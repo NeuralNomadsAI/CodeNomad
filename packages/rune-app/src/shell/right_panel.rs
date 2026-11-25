@@ -7,38 +7,6 @@ use crate::{
 use rune::{El, col, text};
 use rune_theme_codenomad::{Space, layout::Layout, shell};
 
-pub(super) fn tab_focus_key(s: &State) -> String {
-    let index = match workspace::right_panel_tab(s) {
-        RightPanelTab::Status => 0,
-        RightPanelTab::Files => 1,
-        RightPanelTab::Missions if workspace::mission_supported(s) => 2,
-        RightPanelTab::Missions => 0,
-    };
-    format!("right-panel-tab-{index}")
-}
-
-pub(super) fn last_focus_key(s: &State) -> Option<String> {
-    match workspace::right_panel_tab(s) {
-        RightPanelTab::Status => {
-            if super::status_usage::has_section(s) {
-                return (!super::status_usage::expanded(s)).then(|| "status-provider-usage".into());
-            }
-            if super::status_permissions::has_section(s) {
-                return Some(if super::status_permissions::expanded(s) {
-                    "permission-mode-info".into()
-                } else {
-                    "status-permissions".into()
-                });
-            }
-            Some(tab_focus_key(s))
-        }
-        RightPanelTab::Files => {
-            (s.git.owner.is_none() && s.files.is_none()).then(|| tab_focus_key(s))
-        }
-        RightPanelTab::Missions => None,
-    }
-}
-
 pub fn view(s: &State, width: f32, touch: bool, floating: bool) -> El {
     let label = t("instanceShell.rightPanel.tabs.status");
     let names = [

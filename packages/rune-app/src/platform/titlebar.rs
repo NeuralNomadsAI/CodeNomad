@@ -50,9 +50,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         s.native_locale_repaint.set(true);
         (s.wake)();
     }
+    let skip_tab = s.shell.has_floating();
     #[cfg(not(target_os = "windows"))]
-    let _ = s;
-    shell::titlebar(cx, t("window.title.main"), rtl, menus(locale))
+    let _ = skip_tab;
+    shell::titlebar(cx, t("window.title.main"), rtl, menus(locale, skip_tab))
 }
 
 pub fn poll(s: &State) -> bool {
@@ -75,7 +76,7 @@ pub(crate) fn sync_locale(s: &State, locale: &'static str) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn menus(locale: &'static str) -> El {
+fn menus(locale: &'static str, skip_tab: bool) -> El {
     row()
         .role("navigation")
         .label(t("window.menu.ariaLabel"))
@@ -140,6 +141,7 @@ fn menus(locale: &'static str) -> El {
                     });
                 })
                 .key(key)
+                .tab_index(if skip_tab { -1 } else { 0 })
             }),
         )
 }
@@ -153,6 +155,6 @@ enum Menu {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn menus(_: &'static str) -> El {
+fn menus(_: &'static str, _: bool) -> El {
     row()
 }

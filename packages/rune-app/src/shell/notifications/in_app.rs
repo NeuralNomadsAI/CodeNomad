@@ -184,7 +184,7 @@ pub(crate) fn measure(s: &mut State, [_, _, width, height]: [f32; 4], tx: &mut T
     }
 }
 
-pub(crate) fn entry(s: &State, touch: bool) -> El {
+pub(crate) fn entry(s: &State, touch: bool, skip_tab: bool) -> El {
     let inbox = &s.notifications.in_app;
     let unread = inbox.unread();
     let count = (unread > 0).then(|| {
@@ -202,6 +202,7 @@ pub(crate) fn entry(s: &State, touch: bool) -> El {
         count,
         inbox.opened.is_some(),
         touch,
+        skip_tab,
         |s: &mut State, tx| {
             crate::shell::Panels::dismiss_outside(s, tx);
             if s.notifications.in_app.opened.is_some() {
@@ -283,6 +284,7 @@ pub(crate) fn layers(s: &State, output: &mut Vec<El>) {
 
 fn card(s: &State, record: &Record, read: Option<bool>, height: f32) -> El {
     let bubble = read.is_none();
+    let skip_tab = bubble && s.shell.has_floating();
     let id = record.id;
     let title = if let Some(read) = read {
         let name = if read {
@@ -313,10 +315,8 @@ fn card(s: &State, record: &Record, read: Option<bool>, height: f32) -> El {
         } else {
             "interruption.viewConversation"
         };
-        toolbar = toolbar.child(layout::button_tx(
-            t(label),
-            false,
-            move |s: &mut State, tx| {
+        toolbar = toolbar.child(
+            layout::button_tx(t(label), false, move |s: &mut State, tx| {
                 if s.notifications.in_app.opened.is_some() {
                     close(s, tx);
                 }
@@ -326,8 +326,9 @@ fn card(s: &State, record: &Record, read: Option<bool>, height: f32) -> El {
                     .bubbles
                     .retain(|(record, _)| record.id != id);
                 activate_notice(s, target.clone());
-            },
-        ));
+            })
+            .tab_index(if skip_tab { -1 } else { 0 }),
+        );
     }
     toolbar = toolbar.child(
         layout::button(
@@ -346,10 +347,17 @@ fn card(s: &State, record: &Record, read: Option<bool>, height: f32) -> El {
                 }
             },
         )
+        .tab_index(if skip_tab { -1 } else { 0 })
         .key(format!("notification-dismiss-{id}")),
     );
-    theme::record(title, &record.body, toolbar, bubble.then_some(height))
-        .key(format!("notification-{id}"))
+    theme::record(
+        title,
+        &record.body,
+        toolbar,
+        bubble.then_some(height),
+        skip_tab,
+    )
+    .key(format!("notification-{id}"))
 }
 
 #[cfg(test)]

@@ -147,16 +147,18 @@ pub fn tab<S: 'static>(
 ) -> El {
     let close_help = catalogue::message(locale, "instanceTab.actions.close.ariaLabel").unwrap();
     tab_with_help(
-        locale, tab, selected, first, close_help, on_select, on_close,
+        locale, tab, selected, first, close_help, false, on_select, on_close,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tab_with_help<S: 'static>(
     locale: &str,
     tab: &ProjectTab<'_>,
     selected: bool,
     first: bool,
     close_help: &str,
+    skip_tab: bool,
     on_select: impl Fn(&mut S, &str, &mut Tx) + 'static,
     on_close: impl Fn(&mut S, &str, &mut Tx) + 'static,
 ) -> El {
@@ -291,7 +293,11 @@ fn tab_with_help<S: 'static>(
         .on_press_tx(move |s, tx| action(s, &id, tx))
         .role("group")
         .label(tab.title)
-        .child(select_button.role("tab"));
+        .child(
+            select_button
+                .role("tab")
+                .tab_index(if skip_tab { -1 } else { 0 }),
+        );
     if let Some(status) = tab.status {
         let side = t.length(Length::Icon).px() / 2.0;
         slot = slot.child(
@@ -327,7 +333,8 @@ fn tab_with_help<S: 'static>(
                 .radius(metric("borderRadius"))
                 .hover_group()
                 .hover(t.color("tab-close-hover-bg"))
-                .no_focus_ring(),
+                .no_focus_ring()
+                .tab_index(if skip_tab { -1 } else { 0 }),
             &close_key,
             "tabCloseFocus",
         ));
@@ -352,6 +359,7 @@ pub fn strip<S: 'static>(
         active,
         word("instanceTabs.new.title"),
         word("instanceTab.actions.close.ariaLabel"),
+        false,
         on_select,
         on_close,
         on_new,
@@ -367,6 +375,7 @@ pub fn strip_with_help<S: 'static>(
     active: Option<&str>,
     new_help: &str,
     active_close_help: &str,
+    skip_tab: bool,
     on_select: impl Fn(&mut S, &str, &mut Tx) + 'static,
     on_close: impl Fn(&mut S, &str, &mut Tx) + 'static,
     on_new: impl Fn(&mut S, &mut Tx) + 'static,
@@ -387,7 +396,8 @@ pub fn strip_with_help<S: 'static>(
         new_size,
         on_new,
     )
-    .key("project-tabs-new");
+    .key("project-tabs-new")
+    .tab_index(if skip_tab { -1 } else { 0 });
     let select = Rc::new(on_select);
     let close = Rc::new(on_close);
     let close_label = word("instanceTab.actions.close.ariaLabel");
@@ -405,6 +415,7 @@ pub fn strip_with_help<S: 'static>(
             } else {
                 close_label
             },
+            skip_tab,
             move |s, id, tx| select(s, id, tx),
             move |s, id, tx| close(s, id, tx),
         )
@@ -738,10 +749,14 @@ mod tests {
                         .button(true, key, move |s: &mut App| s.closed.push(key.into()))
                         .key(key)
                 });
-                let bell =
-                    crate::shell::notices::bell("bell", None, false, true, |s: &mut App, _| {
-                        s.closed.push("bell".into())
-                    });
+                let bell = crate::shell::notices::bell(
+                    "bell",
+                    None,
+                    false,
+                    true,
+                    false,
+                    |s: &mut App, _| s.closed.push("bell".into()),
+                );
                 strip_view(s, true, actions.into_iter().chain([bell]))
             })
         }

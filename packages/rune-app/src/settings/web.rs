@@ -244,9 +244,10 @@ impl Panel {
     }
 }
 
-pub(super) fn entry(touch: bool) -> El {
+pub(super) fn entry(touch: bool, skip_tab: bool) -> El {
     rune_theme_codenomad::tabs::BarAction::Settings
         .button(touch, t("settings.title"), open)
+        .tab_index(if skip_tab { -1 } else { 0 })
         .key("open-preferences")
 }
 

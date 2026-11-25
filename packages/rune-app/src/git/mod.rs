@@ -14,10 +14,10 @@ pub(crate) use binding::fixture_open_preview;
 pub(crate) use binding::poll_notices;
 pub(crate) use binding::{
     Binding, PlacementHold, SessionDirectory, can_place, close_preview, connected,
-    connected_placed, detach_session, diff_preferences, event, file_link_scope, files_checkout,
-    has_preview, hold_placement, is_composing, mode, online, overlay_open, placeable, placement,
-    placement_hold, placement_unconfirmed, poll, project_opened, release_placement,
-    session_directory, set_diff_preferences, set_mode, show,
+    connected_placed, detach_session, diff_preferences, dismiss_panel_overlays, event,
+    file_link_scope, files_checkout, has_preview, hold_placement, is_composing, mode, online,
+    overlay_open, placeable, placement, placement_hold, placement_unconfirmed, poll,
+    project_opened, release_placement, session_directory, set_diff_preferences, set_mode, show,
 };
 #[cfg(test)]
 pub(crate) use binding::{
@@ -283,6 +283,10 @@ impl Ui {
             if self.has_local_preview() {
                 self.dirty(&[Lane::Preview]);
             }
+        } else {
+            self.picker = false;
+            self.open_menu = None;
+            self.placement_picker = None;
         }
         self.demand();
     }

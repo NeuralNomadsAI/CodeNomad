@@ -71,21 +71,6 @@ pub(super) fn visible_session_ids(l: &launcher::Launcher) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn last_focus_key(s: &State) -> &'static str {
-    if workspace::input_ready(s) {
-        return "refresh-sessions";
-    }
-    if let Some(l) = s.screen.launcher() {
-        if l.show_title || s.screen.is_launcher() {
-            return "session-title";
-        }
-        if l.show_search {
-            return "session-search";
-        }
-    }
-    "session-search-toggle"
-}
-
 pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     let Some(l) = s.screen.launcher() else {
         return col();

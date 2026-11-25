@@ -229,28 +229,87 @@ fn floating_right_panel_tab_reaches_panel_controls_and_wraps() {
     settle(&mut rt);
 
     click(&mut rt, "right-panel-toggle");
-    rt.update(|_, tx| tx.focus("right-panel-toggle", true));
+    rt.update(|_, tx| tx.focus("sessions-panel-toggle", true));
     settle(&mut rt);
 
+    // Shift+Tab from sessions-panel-toggle must wrap to the real last control in right-panel (Files), not the tab header or top bar.
+    press_key(&mut rt, Key::Tab, true);
+    assert!(
+        focus_inside(&rt, "/right-panel/"),
+        "Shift+Tab from sessions-panel-toggle must wrap into floating right-panel, got {:?}",
+        focused_key(&rt)
+    );
+    assert_ne!(
+        focused_key(&rt).as_deref(),
+        Some("right-panel-tab-1"),
+        "Shift+Tab must land on the last focusable Files control, not stop on the tab header"
+    );
+
+    // Forward Tab from that last control must wrap back to sessions-panel-toggle instead of escaping to the project tab bar.
     press_key(&mut rt, Key::Tab, false);
     assert_eq!(
         focused_key(&rt).as_deref(),
-        Some("right-panel-tab-1"),
-        "Tab from right-panel-toggle must enter the floating right panel instead of jumping back to sessions-panel-toggle"
+        Some("sessions-panel-toggle"),
+        "Tab from the last floating right-panel control must wrap back to sessions-panel-toggle"
     );
 
-    // Keep tabbing through Files controls to confirm git-worktree-trigger is reachable.
+    // Tab forward all the way around, asserting every stop stays inside session-shell and visits right-panel-tab-1 and git-worktree-trigger.
+    let mut reached_tab = false;
     let mut reached_worktree = false;
-    for _ in 0..8 {
+    let mut wrapped = false;
+    for _ in 0..24 {
         press_key(&mut rt, Key::Tab, false);
-        if focused_key(&rt).as_deref() == Some("git-worktree-trigger") {
-            reached_worktree = true;
-            break;
+        assert!(
+            focus_inside(&rt, "/right-panel/")
+                || matches!(
+                    focused_key(&rt).as_deref(),
+                    Some("sessions-panel-toggle" | "right-panel-toggle")
+                ),
+            "Tab escaped floating right drawer to {:?}",
+            focused_key(&rt)
+        );
+        match focused_key(&rt).as_deref() {
+            Some("right-panel-tab-1") => reached_tab = true,
+            Some("git-worktree-trigger") => reached_worktree = true,
+            Some("sessions-panel-toggle") => {
+                wrapped = true;
+                break;
+            }
+            _ => {}
         }
     }
+    assert!(reached_tab, "Tab must enter right-panel-tab-1");
     assert!(
         reached_worktree,
         "Tab must reach git-worktree-trigger inside floating right panel"
+    );
+    assert!(
+        wrapped,
+        "Tab must wrap cleanly back to sessions-panel-toggle"
+    );
+
+    // Collapsed Status collapsible section (key "trigger" inside status-permissions) must also wrap cleanly.
+    workspace::set_right_panel_tab(&mut rt.state, workspace::RightPanelTab::Status);
+    let backend = Backend {
+        workspace: "project".into(),
+        session: "session".into(),
+        ..Backend::unauthenticated("http://127.0.0.1:9/").unwrap()
+    };
+    rt.state.status_permissions.fixture_bind(backend);
+    settle(&mut rt);
+    rt.update(|_, tx| tx.focus("sessions-panel-toggle", true));
+    settle(&mut rt);
+    press_key(&mut rt, Key::Tab, true);
+    assert!(
+        focus_inside(&rt, "/status-permissions/"),
+        "Shift+Tab on collapsed Status section must reach status-permissions trigger, got {:?}",
+        focused_key(&rt)
+    );
+    press_key(&mut rt, Key::Tab, false);
+    assert_eq!(
+        focused_key(&rt).as_deref(),
+        Some("sessions-panel-toggle"),
+        "Tab from collapsed Status collapsible trigger must wrap back to sessions-panel-toggle"
     );
 }
 
@@ -362,7 +421,7 @@ fn screen_orientation_change_on_vertical_ime_shrink_does_not_flip_portrait() {
     // Simulate a browser/emulator flipping screen.orientation to landscape when IME shrinks height below width.
     rt.update(|s, tx| {
         s.shell
-            .measure_with_screen(390.0, 350.0, true, Some(false), tx)
+            .measure_with_screen(390.0, 350.0, true, Some(false), tx);
     });
     assert!(
         rt.state.shell.has_floating() && rt.state.shell.visible(0),
@@ -372,7 +431,7 @@ fn screen_orientation_change_on_vertical_ime_shrink_does_not_flip_portrait() {
     // Genuine rotation changes width as well as orientation -> closes floating drawer without opening docked panels.
     rt.update(|s, tx| {
         s.shell
-            .measure_with_screen(844.0, 240.0, true, Some(false), tx)
+            .measure_with_screen(844.0, 240.0, true, Some(false), tx);
     });
     assert!(
         !rt.state.shell.has_floating() && !rt.state.shell.visible(0) && !rt.state.shell.visible(1)
@@ -391,15 +450,162 @@ fn screen_orientation_change_on_vertical_ime_shrink_does_not_flip_portrait() {
     assert!(rt.state.shell.visible(0) && rt.state.shell.visible(1));
     rt.update(|s, tx| {
         s.shell
-            .measure_with_screen(1366.0, 500.0, true, Some(false), tx)
+            .measure_with_screen(1366.0, 500.0, true, Some(false), tx);
     });
     assert!(rt.state.shell.visible(0) && rt.state.shell.visible(1));
     rt.update(|s, tx| {
         s.shell
-            .measure_with_screen(1024.0, 600.0, true, Some(true), tx)
+            .measure_with_screen(1024.0, 600.0, true, Some(true), tx);
     });
     assert!(
         !rt.state.shell.visible(0) && !rt.state.shell.visible(1),
         "rotating from landscape to portrait with IME open must switch to portrait when screen.orientation changes"
+    );
+}
+
+#[test]
+fn landscape_tablet_rotating_with_ime_recovers_portrait_when_ime_closes_or_orientation_arrives() {
+    // Sub-case 1: landscape tablet rotates with IME open while screen.orientation is unavailable, then IME closes.
+    let mut tablet = touch_init();
+    fixture(&mut tablet);
+    let mut rt = Runtime::new(
+        tablet,
+        english_touch,
+        (1366.0, 1024.0),
+        Env::new(false, 1.0),
+    );
+    settle(&mut rt);
+    assert!(rt.state.shell.visible(0) && rt.state.shell.visible(1));
+    rt.update(|s, tx| {
+        s.shell
+            .measure_with_screen(1366.0, 600.0, true, Some(false), tx);
+    });
+    rt.update(|s, tx| {
+        s.shell
+            .measure_with_screen(1024.0, 600.0, true, Some(false), tx);
+    });
+    // Now keyboard closes at constant width 1024 (1024x1366 is unmistakably portrait).
+    rt.update(|s, tx| {
+        s.shell.measure_with_screen(1024.0, 1366.0, true, None, tx);
+    });
+    assert!(
+        !rt.state.shell.visible(0) && !rt.state.shell.visible(1),
+        "closing IME at portrait aspect 1024x1366 must recover portrait and hide landscape panels"
+    );
+
+    // Sub-case 2: delayed screen.orientation=portrait arrives at constant width 1024x600.
+    let mut tablet2 = touch_init();
+    fixture(&mut tablet2);
+    let mut rt = Runtime::new(
+        tablet2,
+        english_touch,
+        (1366.0, 1024.0),
+        Env::new(false, 1.0),
+    );
+    settle(&mut rt);
+    rt.update(|s, tx| {
+        s.shell
+            .measure_with_screen(1366.0, 600.0, true, Some(false), tx);
+    });
+    rt.update(|s, tx| {
+        s.shell
+            .measure_with_screen(1024.0, 600.0, true, Some(false), tx);
+    });
+    rt.update(|s, tx| {
+        s.shell
+            .measure_with_screen(1024.0, 600.0, true, Some(true), tx);
+    });
+    assert!(
+        !rt.state.shell.visible(0) && !rt.state.shell.visible(1),
+        "delayed screen.orientation=portrait at 1024x600 must recover portrait"
+    );
+}
+
+#[test]
+fn switching_pointer_to_touch_at_constant_viewport_recomputes_drawers() {
+    let mut state = init();
+    fixture(&mut state);
+    let mut rt = Runtime::new(state, english_touch, (768.0, 1024.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    assert!(
+        rt.state.shell.visible(0),
+        "mouse mode at 768x1024 starts with docked left panel"
+    );
+
+    // Switch convertible device from mouse to touch without resizing.
+    rt.update(|s, _| s.shell.touch_override = true);
+    settle(&mut rt);
+    assert!(
+        !rt.state.shell.visible(0) && !rt.state.shell.visible(1),
+        "switching to touch at portrait 768x1024 must hide docked panels without waiting for a resize"
+    );
+
+    // Switch back from touch to mouse without resizing.
+    rt.update(|s, _| s.shell.touch_override = false);
+    settle(&mut rt);
+    assert!(
+        rt.state.shell.visible(0),
+        "switching back to mouse at 768x1024 must restore docked left panel"
+    );
+}
+
+#[test]
+fn offline_git_worktree_picker_does_not_block_floating_drawer_escape() {
+    let state = project_state_with_git();
+    let mut rt = Runtime::new(state, english_touch, (390.0, 844.0), Env::new(false, 1.0));
+    rt.on_key = Some(crate::shell::keys);
+    settle(&mut rt);
+
+    click(&mut rt, "right-panel-toggle");
+    click(&mut rt, "git-worktree-trigger");
+    assert!(crate::git::overlay_open(&rt.state));
+
+    // Connection drops while picker is open: Select hides its listbox because it is disabled.
+    rt.update(|s, _| crate::git::online(s, false));
+    settle(&mut rt);
+    assert!(
+        !crate::git::overlay_open(&rt.state),
+        "offline hidden Git picker must not report overlay_open"
+    );
+
+    press_key(&mut rt, Key::Escape, false);
+    assert!(
+        !rt.state.shell.has_floating() && !rt.state.shell.visible(1),
+        "Escape must close the floating right drawer once the hidden Git picker is cleared"
+    );
+    assert_eq!(focused_key(&rt).as_deref(), Some("right-panel-toggle"));
+}
+
+#[test]
+fn rotating_from_portrait_floating_right_to_landscape_docked_closes_git_picker() {
+    let state = project_state_with_git();
+    let mut rt = Runtime::new(state, english_touch, (1024.0, 768.0), Env::new(false, 1.0));
+    rt.on_key = Some(crate::shell::keys);
+    settle(&mut rt);
+    assert!(rt.state.shell.visible(0) && rt.state.shell.visible(1));
+
+    // Rotate to portrait 768x1024 (both hide), open left docked (260px), open right floating, open worktree picker.
+    rt.set_viewport((768.0, 1024.0), 1.0);
+    settle(&mut rt);
+    click(&mut rt, "sessions-panel-toggle");
+    assert!(rt.state.shell.visible(0) && !rt.state.shell.has_floating());
+    click(&mut rt, "right-panel-toggle");
+    assert!(rt.state.shell.has_floating() && rt.state.shell.visible(1));
+    click(&mut rt, "git-worktree-trigger");
+    assert!(crate::git::overlay_open(&rt.state));
+    assert!(rt.find("option0").is_some());
+
+    // Rotate back to landscape 1024x768: right panel transitions directly from floating to docked.
+    rt.set_viewport((1024.0, 768.0), 1.0);
+    settle(&mut rt);
+    assert!(!rt.state.shell.has_floating() && rt.state.shell.visible(1));
+    assert!(
+        !crate::git::overlay_open(&rt.state) && rt.find("option0").is_none(),
+        "rotating from floating right panel to docked landscape must close the anchored Git picker"
+    );
+    assert_eq!(
+        focused_key(&rt).as_deref(),
+        Some("right-panel-toggle"),
+        "closing the floating drawer on rotation must return focus to right-panel-toggle"
     );
 }

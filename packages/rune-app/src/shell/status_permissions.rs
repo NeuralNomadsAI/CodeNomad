@@ -130,6 +130,13 @@ impl Permissions {
         });
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_bind(&mut self, backend: Backend) {
+        self.backend = Some(backend);
+        self.online = true;
+        self.visible = true;
+    }
+
     pub(crate) fn settling(&self) -> bool {
         self.writing()
             || self
@@ -326,14 +333,6 @@ fn retry(s: &State) -> El {
         !s.status_permissions.online || s.status_permissions.read.is_some(),
         screen::action(&s.input_scope, |s| s.status_permissions.dirty = true),
     )
-}
-
-pub(super) fn has_section(s: &State) -> bool {
-    s.status_permissions.backend.is_some()
-}
-
-pub(super) fn expanded(s: &State) -> bool {
-    s.status_permissions.expanded
 }
 
 pub(super) fn view(s: &State) -> Option<El> {
