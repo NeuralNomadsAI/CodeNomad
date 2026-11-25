@@ -243,11 +243,17 @@ fn render_body(
     let has_output =
         !pending && (structured.is_some() || parts.iter().any(|part| !part.trim().is_empty()));
     let skill = tool.name == "skill" && tool.status == "completed" && has_output;
-    let result_list =
-        (expanded && !active && tool.name == "websearch" && tool.status == "completed")
-            .then(|| search::view(s, parts[0]))
-            .flatten();
-    let rich_diff = !active && !nested && tool_diff::candidate(tool, parts[0]);
+    let result_list = (expanded
+        && !active
+        && tool.name == "websearch"
+        && tool.status == "completed"
+        && !query.is_some_and(|q| q.matches(parts[0])))
+    .then(|| search::view(s, parts[0]))
+    .flatten();
+    let rich_diff = !active
+        && !nested
+        && tool_diff::candidate(tool, parts[0])
+        && !query.is_some_and(|q| q.matches(parts[0]));
     let wrap_key = format!("{key}-wrap");
     let wrap = !s.transcript_display.toggled(&wrap_key);
     let shared_wrap = expanded
@@ -482,7 +488,8 @@ fn render_body(
         let show = s
             .transcript_display
             .expanded(&input_key, input_mode == "expanded");
-        let allow_search_reveal = input_mode != "hidden";
+        let allow_search_reveal =
+            input_mode != "hidden" && query.is_none_or(|q| q.claimed.is_none_or(|c| !c.get()));
         let input = (show || (active && allow_search_reveal))
             .then(|| {
                 if let Some(raw) = tool.input.as_str() {

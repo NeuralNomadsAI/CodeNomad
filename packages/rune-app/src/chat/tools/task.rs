@@ -96,43 +96,14 @@ pub(super) fn body(
     {
         return None;
     }
-    let prompt_key = format!("{key}-task-prompt");
-    let prompt_claims = !prompt.trim().is_empty()
-        && query.is_some_and(|q| {
-            q.active
-                && q.claimed.is_none_or(|c| !c.get())
-                && super::super::document::bounded_prose_matches_for(
-                    s,
-                    key,
-                    &prompt_key,
-                    prompt,
-                    PANE_LIMIT,
-                    q,
-                )
-        });
     let mut result = col().full_width().separate(Space::Sm);
-    for (section, label, value, truncated, section_query) in [
-        (
-            "prompt",
-            "toolCall.task.sections.prompt",
-            prompt,
-            false,
-            query.map(|q| Query {
-                active: prompt_claims,
-                claimed: None,
-                ..q
-            }),
-        ),
+    for (section, label, value, truncated) in [
+        ("prompt", "toolCall.task.sections.prompt", prompt, false),
         (
             "output",
             "toolCall.task.sections.output",
             output,
             output_truncated,
-            query.map(|q| Query {
-                active: q.active && !prompt_claims && q.claimed.is_none_or(|c| !c.get()),
-                claimed: None,
-                ..q
-            }),
         ),
     ] {
         if !value.trim().is_empty() || truncated {
@@ -165,7 +136,7 @@ pub(super) fn body(
                         shown_value,
                         tool.status == "running" && section == "output",
                         pane_limit,
-                        section_query,
+                        query,
                     ),
                     true,
                 ));

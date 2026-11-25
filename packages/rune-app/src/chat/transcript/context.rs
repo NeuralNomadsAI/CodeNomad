@@ -51,24 +51,20 @@ pub(super) fn view(s: &State, message: &Message) -> Option<El> {
         .children((expanded && !message.body.is_empty()).then(|| {
             let content = format!("{key}-content");
             if system {
-                document::window(
-                    s,
-                    content,
-                    &[&message.body],
-                    document::PROSE_LIMIT,
-                    |shown, _| {
-                        rune_theme_codenomad::markdown::tool_pane(
-                            rune_theme_codenomad::markdown::search_code(
-                                shown,
-                                "text",
-                                false,
-                                true,
-                                search.map(|hit| hit.text_query(&message.id, Some(0))),
-                            ),
+                let revealed = active_search || s.transcript_display.search_revealed(&key);
+                let limit = document::PROSE_LIMIT + if revealed { document::STEP } else { 0 };
+                document::window(s, content, &[&message.body], limit, |shown, _| {
+                    rune_theme_codenomad::markdown::tool_pane(
+                        rune_theme_codenomad::markdown::search_code(
+                            shown,
+                            "text",
+                            false,
                             true,
-                        )
-                    },
-                )
+                            search.map(|hit| hit.text_query(&message.id, Some(0))),
+                        ),
+                        true,
+                    )
+                })
             } else {
                 document::prose(s, &message.id, content, &message.body, false)
             }

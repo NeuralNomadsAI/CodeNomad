@@ -376,10 +376,10 @@ fn collapsed_shell_group_exposes_background_action_in_its_header() {
         s.transcript_display.children.bind(backend);
         s.messages = [
             json!({"id":"m1","type":"assistant","content":[
-                {"type":"tool","id":"s1","name":"bash","state":{"status":"completed","input":{"command":"echo 1"}}}
+                {"type":"tool","id":"s1","name":"BASH","state":{"status":"completed","input":{"command":"echo 1"}}}
             ]}),
             json!({"id":"m2","type":"assistant","content":[
-                {"type":"tool","id":"s2","name":"bash","state":{"status":"running","input":{"command":"sleep 10"}}}
+                {"type":"tool","id":"s2","name":"Shell","state":{"status":"running","input":{"command":"sleep 10"}}}
             ]}),
             json!({"id":"m3","type":"assistant","content":[
                 {"type":"tool","id":"r1","name":"read","state":{"status":"completed","input":{}}},

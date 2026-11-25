@@ -26,7 +26,7 @@ enum Kind {
 }
 
 fn kind(tool: &Tool) -> Option<Kind> {
-    match tool.name.as_str() {
+    match tool.name.to_ascii_lowercase().as_str() {
         "read" | "glob" | "grep" => Some(Kind::Exploration),
         "bash" | "shell" => Some(Kind::Shell),
         _ => None,
@@ -198,7 +198,7 @@ impl Groups {
                         });
                         run.summary.keys.push(member);
                         run.summary.count += 1;
-                        run.summary.reads += usize::from(tool.name == "read");
+                        run.summary.reads += usize::from(tool.name.eq_ignore_ascii_case("read"));
                         run.summary.completed = message.completed;
                         run.summary.backgroundable |=
                             kind == Kind::Shell && tool.status == "running";

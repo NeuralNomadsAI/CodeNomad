@@ -307,3 +307,174 @@ fn search_highlight_marks_other_visible_messages_without_opening_their_collapsed
     assert_eq!(marks_in(&rt, true, viewport), 0);
     assert_eq!(marks_in(&rt, false, viewport), 0);
 }
+
+#[test]
+fn search_highlights_cover_rich_tools_long_streaming_reasoning_deep_system_and_unique_task_anchor()
+{
+    let long_stream = format!("Needle in long stream\n{}", "x".repeat(12_000));
+    let deep_system = format!("{}\nNeedle deep in system", "s".repeat(52_000));
+    let edit_diff = "--- a/demo.rs\n+++ b/demo.rs\n@@ -1,2 +1,2 @@\n-old\n+Needle in edit diff\n";
+    let patch_diff = "--- a/p.rs\n+++ b/p.rs\n@@ -1,2 +1,2 @@\n-before\n+Needle in patch diff\n";
+    let m1 = row(json!({
+        "id": "m1", "type": "assistant", "time": {"completed": 1},
+        "content": [
+            {"type": "tool", "id": "t_active", "name": "task", "state": {
+                "status": "completed",
+                "input": {"description": "Run", "prompt": "Needle in task prompt"},
+                "content": [{"type": "text", "text": "Task done"}]
+            }}
+        ]
+    }));
+    let m2 = row(json!({
+        "id": "m2", "type": "assistant",
+        "content": [
+            {"type": "tool", "id": "ws_open", "name": "websearch", "state": {
+                "status": "completed",
+                "content": [{"type": "text", "text": "## [Result](https://example.com/a)\nNeedle in websearch snippet"}]
+            }},
+            {"type": "tool", "id": "ed_open", "name": "edit", "state": {
+                "status": "completed",
+                "input": {"filePath": "demo.rs"},
+                "metadata": {"diff": edit_diff}
+            }},
+            {"type": "tool", "id": "ap_open", "name": "apply_patch", "state": {
+                "status": "completed",
+                "metadata": {"files": [{"relativePath": "p.rs", "diff": patch_diff}]}
+            }},
+            {"type": "reasoning", "text": long_stream}
+        ]
+    }));
+    let sys_deep = row(json!({"id": "sys_deep", "type": "system", "text": deep_system}));
+
+    let mut s = crate::init();
+    crate::settings::fixture_transcript(
+        &mut s,
+        json!({
+            "toolGroupVisibility": "collapsed",
+            "toolInputsVisibility": "collapsed",
+            "showThinkingBlocks": true,
+            "thinkingBlocksExpansion": "expanded",
+            "systemMessagesVisibility": "collapsed",
+            "toolCallExpansionDefaults": {
+                "tools": {"task": "collapsed", "websearch": "expanded", "edit": "expanded", "other": "expanded"}
+            }
+        }),
+    );
+    s.messages = vec![m1, m2, sys_deep];
+    let mut rt = Runtime::new(
+        s,
+        |s, _| {
+            crate::strings::with_locale("en", || {
+                rune::col()
+                    .full_width()
+                    .children((0..s.messages.len()).map(|i| crate::chat::transcript::message(s, i)))
+            })
+        },
+        (960.0, 2400.0),
+        Env::new(false, 1.0),
+    );
+    // Warm hold_frame caches and reveal streaming reasoning past TOOL_LIMIT so it enters hold_frame.
+    rt.frame(0.016);
+    let (x, y) = rt.find("reveal-reasoning-m2:0-body").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.5);
+
+    let rect_of = |rt: &Runtime<State>, key: &str| {
+        rt.elements()
+            .into_iter()
+            .find(|node| node.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("missing element key {key}"))
+            .rect
+    };
+    let marks_in = |rt: &Runtime<State>, active: bool, bounds: [f32; 4]| {
+        rt.elements()
+            .into_iter()
+            .filter(|node| {
+                node.role == "mark"
+                    && node.label.as_deref() == Some("Needle")
+                    && (node.key.as_deref() == Some("history-search-match")) == active
+                    && node.rect[2] > 0.0
+                    && node.rect[3] > 0.0
+                    && {
+                        let cx = node.rect[0] + node.rect[2] * 0.5;
+                        let cy = node.rect[1] + node.rect[3] * 0.5;
+                        cx >= bounds[0]
+                            && cx <= bounds[0] + bounds[2]
+                            && cy >= bounds[1]
+                            && cy <= bounds[1] + bounds[3]
+                    }
+            })
+            .count()
+    };
+    let viewport = [0.0, 0.0, 960.0, 2400.0];
+
+    // Selecting a Tool hit at part 0 on m1 (task) must place only one active anchor on m1
+    // (never duplicating it in collapsed/expanded tool_input) and must mark m2's part 0 websearch,
+    // edit diff, apply_patch diff, and >TOOL_LIMIT streaming reasoning as secondary only.
+    rt.update(|s, _| {
+        s.transcript_display.search_highlight = Some(highlight("m1", Kind::Tool, 0));
+    });
+    rt.frame(0.5);
+
+    let t_active = crate::chat::tools::tool_key("m1", "t_active");
+    let m1_rect = rect_of(&rt, "m1");
+
+    assert_eq!(marks_in(&rt, true, viewport), 1);
+    assert_eq!(marks_in(&rt, true, m1_rect), 1);
+    // Collapsed tool_input stays closed because task::body already claimed the active anchor.
+    assert!(rt.find(&format!("copy-{t_active}-input")).is_none());
+    // Even if tool_input is manually expanded on the active task card, the anchor remains unique.
+    let (x, y) = rt.find(&format!("toggle-{t_active}-tool_input")).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.5);
+    let m1_rect = rect_of(&rt, "m1");
+    let m2_ws = rect_of(&rt, &crate::chat::tools::tool_key("m2", "ws_open"));
+    let m2_ed = rect_of(&rt, &crate::chat::tools::tool_key("m2", "ed_open"));
+    let m2_ap = rect_of(&rt, &crate::chat::tools::tool_key("m2", "ap_open"));
+    let m2_thought = rect_of(&rt, "reasoning-m2:0");
+    assert_eq!(marks_in(&rt, true, viewport), 1);
+    assert_eq!(marks_in(&rt, true, m1_rect), 1);
+    assert_eq!(marks_in(&rt, false, m1_rect), 1);
+
+    assert_eq!(marks_in(&rt, true, m2_ws), 0);
+    assert_eq!(marks_in(&rt, false, m2_ws), 1);
+    assert_eq!(marks_in(&rt, true, m2_ed), 0);
+    assert_eq!(marks_in(&rt, false, m2_ed), 1);
+    assert_eq!(marks_in(&rt, true, m2_ap), 0);
+    assert_eq!(marks_in(&rt, false, m2_ap), 1);
+    assert_eq!(marks_in(&rt, true, m2_thought), 0);
+    assert_eq!(marks_in(&rt, false, m2_thought), 1);
+
+    // Selecting a deep system message hit (> PROSE_LIMIT) reveals the match and marks it active.
+    rt.update(|s, _| {
+        s.transcript_display.search_highlight = Some(highlight("sys_deep", Kind::Text, 0));
+    });
+    rt.frame(0.5);
+    assert!(rt.find("history-search-match").is_some());
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("Needle deep in system")
+    );
+    assert_eq!(
+        rt.elements()
+            .into_iter()
+            .filter(|n| n.role == "mark" && n.key.as_deref() == Some("history-search-match"))
+            .count(),
+        1
+    );
+
+    // Clearing search invalidates cached hold_frame cards and removes every search mark.
+    rt.update(|s, _| s.transcript_display.search_highlight = None);
+    rt.frame(0.5);
+    assert!(rt.find("history-search-match").is_none());
+    assert_eq!(
+        rt.elements()
+            .into_iter()
+            .filter(|n| n.role == "mark" && n.label.as_deref() == Some("Needle"))
+            .count(),
+        0
+    );
+}

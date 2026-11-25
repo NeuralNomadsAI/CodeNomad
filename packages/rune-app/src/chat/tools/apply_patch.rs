@@ -427,6 +427,7 @@ pub(super) fn view(
             && complete
             && !message.starts_with("child:")
             && tool_diff::structured_candidate(patch)
+            && !query.is_some_and(|q| q.matches(patch))
         {
             tool_diff::body(s, message, &card_key, tool, patch, path, fallback)
         } else {
