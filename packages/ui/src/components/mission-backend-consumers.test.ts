@@ -310,15 +310,20 @@ function scheduleScope(api: Record<string, any>) {
   const mission = { id: "m", revision: 1 }
   const configuration = { objective: "objective", notes: "notes" }
   const doc = { id: "m", revision: 1, kind: "one-time", configuration, edit: { reason: null }, observation: { state: "complete" } }
+  const ownerValue = { signal: env.captureBackendOperation(id).signal }
   const scope: Record<string, any> = { ...env, accepted, released, doc, mission, target: "m", unified: true,
     props: { instanceId: id, directory: "/repo", action: {}, active: () => true, scope: () => "scope",
       captureDraft: () => ({}), onSaved: (...args: any[]) => accepted.push(args), onLoad: (value: any) => accepted.push(value) },
-    capture: () => env.captureBackendOperation(id).current, held: () => undefined, reading: () => false, retryable: () => true,
+    capture: () => env.captureBackendOperation(id).current, held: () => undefined, reading: () => false,
+    owner: () => ownerValue,
+    captureOwner: (controller: AbortController) => () => !controller.signal.aborted,
+    reconcileRead: undefined,
     document: () => doc, journal: () => mission, holdMissionScheduleEditor: () => true,
-    releaseMissionScheduleEditor: (_scope: string, request: string) => released.push(request), retainMissionScheduleEditor: () => {},
-    exactMissionScheduleEditorReceipt: () => true, refusedMissionScheduleReceipt: () => false,
+    releaseMissionScheduleEditor: (_scope: string, request: string) => { released.push(request); return false }, retainMissionScheduleEditor: () => {},
+    resumeMissionScheduleEditor: () => true,
+    exactMissionScheduleEditorReceipt: () => true, partialMissionScheduleReceipt: () => undefined, refusedMissionScheduleReceipt: () => false,
     HttpResponseError: class extends Error {}, MissionMutationError: class extends Error {},
-    setReading: () => {}, setRetryable: () => {}, setFailed: () => {}, setReady: () => {}, setConflict: () => {}, setDocument: () => {},
+    setReading: () => {}, setFailed: () => {}, setReady: () => {}, setConflict: () => {}, setDocument: () => {},
     setPreviousDraft: () => {}, comparison: () => "draft", setJournal: () => {}, adopt: (value: any) => accepted.push(value),
     readText: async () => configuration,
     readBody: async (_mission: any, selector: any) => ({ after: selector.field === "objective" ? "objective" : "notes" }),
@@ -389,24 +394,34 @@ for (const kind of ["journal", "unified-journal", "configure", "create"] as cons
       fetchMissionSchedule: async (owner: string) => { assert.equal(owner, id); calls.push("document"); return { document: scope.doc } },
       fetchMissionScheduleCreation: async (owner: string, requestID: string) => { assert.equal(owner, id); assert.equal(requestID, "r"); calls.push("creation"); return { document: scope.doc } },
     })
-    scope.held = () => ({ payload: JSON.stringify(request) })
+    scope.held = () => ({ payload: JSON.stringify(request), state: "uncertain" })
     await production("./mission-editor-schedule.ts", "reconcile", scope)()
     assert.deepEqual(calls, kind === "unified-journal" ? ["journal", "document"] : kind === "journal" ? ["journal"] : kind === "create" ? ["creation"] : ["document"])
     assert.deepEqual(scope.released, ["r"]); assert.equal(scope.accepted.length, 1)
   })
 }
 
-test("schedule retry preparation reads the original receipt then dispatches the original remote retry", async () => {
+test("schedule reconcile automatically retries a positively recorded partial preparation once", async () => {
   const calls: any[] = [], request = { action: "configure", missionID: "m", requestID: "r", expectedRevision: 1, directory: "/repo" }
+  const partial = { pending: true, document: { ...scopeDoc(), control: { action: "configure", requestID: "r", expectedRevision: 1, pending: true } } }
+  const complete = { pending: false, document: { ...scopeDoc(), revision: 2, control: { action: "configure", requestID: "r", expectedRevision: 1, pending: false } } }
+  function scopeDoc() { return { id: "m", revision: 1, kind: "one-time", configuration: { objective: "objective", notes: "notes" }, edit: { reason: null }, observation: { state: "complete" } } }
   const scope = scheduleScope({
-    fetchMissionSchedule: async (...args: any[]) => { calls.push(["read", ...args]); return { document: scope.doc } },
-    saveMissionSchedule: async (...args: any[]) => { calls.push(["retry", ...args]); return { document: scope.doc } },
+    fetchMissionSchedule: async (...args: any[]) => { calls.push(["read", ...args]); return partial },
+    saveMissionSchedule: async (...args: any[]) => { calls.push(["retry", ...args]); return complete },
   })
-  const hold = { payload: JSON.stringify(request) }; scope.held = () => hold
-  await production("./mission-editor-schedule.ts", "retryPreparation", scope)()
+  let hold = { payload: JSON.stringify(request), state: "uncertain" as "pending" | "uncertain" }
+  scope.held = () => hold
+  scope.exactMissionScheduleEditorReceipt = (_request: any, result: any) => result === complete
+  scope.resumeMissionScheduleEditor = () => { hold = { ...hold, state: "pending" }; return true }
+  scope.retainMissionScheduleEditor = () => { hold = { ...hold, state: "uncertain" } }
+  await production("./mission-editor-schedule.ts", "reconcile", scope)()
   assert.deepEqual(calls.map(call => call[0]), ["read", "retry"])
-  assert.deepEqual(calls[0].slice(1), [id, "m", { directory: "/repo", requestID: "r" }])
-  assert.deepEqual(calls[1].slice(1), [id, { ...request, retry: true }]); assert.deepEqual(scope.released, ["r"])
+  assert.deepEqual(calls[0].slice(1, 4), [id, "m", { directory: "/repo", requestID: "r" }])
+  assert.ok(calls[0][4] instanceof AbortSignal)
+  assert.deepEqual(calls[1].slice(1, 3), [id, { ...request, retry: true }])
+  assert.ok(calls[1][3] instanceof AbortSignal)
+  assert.deepEqual(scope.released, ["r"])
 })
 
 function editorScope(api: Record<string, any>, kind: "edit" | "delete") {
@@ -518,6 +533,7 @@ function controlScope(api: Record<string, any>) {
   const scope: Record<string, any> = { ...env, holds, refreshed, doc,
     props: { instanceId: id, directory: "/repo", document: () => doc, active: () => true, refresh: () => refreshed.push("refresh") },
     capable: () => true, capture: () => env.captureBackendOperation(id).current, identity: () => "scope", held: () => undefined,
+    capabilityOwner: () => ({ signal: env.captureBackendOperation(id).signal }), reconcileRead: undefined, stopReconcile: () => {},
     setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, setFeedback: () => {}, bump: () => {}, label: () => "Play", t: (key: string) => key,
     HttpResponseError,
     requiresMissionCalendar: () => true, showConfirmDialog: async () => true,
@@ -556,7 +572,9 @@ test("schedule activation reconciliation uses the read-only settings endpoint", 
   } })
   Object.assign(scope, { held: () => hold, busy: () => false }); scope.holds.set("scope", hold)
   await production("./mission-schedule-controls.ts", "reconcile", scope)()
-  assert.deepEqual(calls, [[id, "m", { requestID: "r", expectedDocumentRevision: 1 }]])
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].slice(0, 4), [id, "m", { requestID: "r", expectedDocumentRevision: 1 }, false])
+  assert.ok(calls[0][4] instanceof AbortSignal)
   assert.ok(scope.refreshed.includes("activation"))
 })
 
@@ -578,7 +596,7 @@ test("schedule control passive capability display is owner routed", async () => 
   let published: string | undefined, dispose!: () => void
   const effect = production("./mission-schedule-controls.ts", "createEffect", { ...env,
     props: { instanceId: id, directory: "/repo", refreshVersion: () => 0, active: () => true },
-    capabilityOwner: () => ({ signal: new AbortController().signal }), previousOwner: undefined,
+    capabilityOwner: () => ({ signal: new AbortController().signal }), previousOwner: undefined, stopReconcile: () => {},
     capture: () => env.captureBackendOperation(id).current, setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, setFeedback: () => {},
     feedback: () => undefined, setCapability: (value: string) => { published = value },
   }, "fetchMissionScheduleCapability")

@@ -836,11 +836,13 @@ separate concurrent reads and reject late responses from a replaced connection.
 
 `stores/mission-schedule-editor-holds.ts` retains serialized create/configure/journal-edit
 intent and its exact draft before dispatch. Transport loss and incomplete replies keep
-that identity across mountings. Explicit receipt refresh performs reads only; a matching
-complete original receipt releases the hold. A journal edit's retained history entry
+that identity across mountings. While the editor is active, automatic read-only rereads
+check the original receipt on mount and periodically until a matching complete original
+receipt releases the hold. A journal edit's retained history entry
 includes its `requestID`, revision and accepted text; unified text also requires a matching
 document read. Missing/evicted evidence keeps the hold. Never resend a held edit or
-creation automatically, and never use a negative read as permission for another identity.
+creation automatically without an exact positive partial preparation receipt, and never use
+a negative read as permission for another identity.
 Journal editor reloads and retained edit receipts resolve objective/notes through
 content reads pinned to the display map's body descriptors. Plan-change reads name
 the original revision and compare its accepted text; unified receipt confirmation
@@ -849,10 +851,13 @@ content retains the hold. Calendar-owned editor prefill uses the schedule read.
 Editor reads and the body display cache share only the pure wire-slice validator
 (`lib/mission-content-slice.ts`); editor receipt checks fetch their own exact,
 descriptor-pinned content independently of the display cache.
-For a journal-bound preparation, an exact positive partial receipt exposes **Try again**.
-That explicit action rereads the original receipt and resumes only its retained
-configure request, payload and revision. Remounts retain uncertainty and require
-another positive read before offering that retry.
+For a journal-bound preparation, when an automatic reread observes an exact positive
+partial receipt, the editor transitions the shared hold to `pending` and automatically
+resends only that retained configure request with `retry: true` (same `requestID`,
+payload and `expectedRevision`). Keeping the shared hold `pending` blocks automatic
+rereads and duplicate retries across remounts until the retry settles; an unconfirmed
+retry restores the `uncertain` hold with the original identity so the next automatic
+reread decides again.
 
 Source choices use explicit project pages on demand, one reader per event kind listed
 in the criteria (`mission-editor-sources.ts`). Schedule documents page by eight;
@@ -908,8 +913,9 @@ and minimum publication revision R in that entry. New mutations and Edit stay
 disabled until a fully validated display document for the same object and owner
 publishes at revision >= R. Remounts, same-owner revalidation and failed, partial or
 older display reads retain this obligation and the confirmed feedback. During this
-wait, Refresh saved request requests only a display refresh; an unresolved request
-uses its exact receipt read. Confirmed deletion releases matching retention and
+wait, the active view rereads the held request every 5 seconds without user action
+(`lib/mission-held-reread.ts`): a confirmed request requests only a display refresh; an
+unresolved request uses its exact receipt read. Confirmed deletion releases matching retention and
 clears the current selection without waiting for publication of a deleted document;
 pending deletion retains a visible
 row even after its inventory entry disappears. A held request, partial or not, admits no

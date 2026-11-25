@@ -94,25 +94,40 @@ for (const outcome of ["success", "failure"] as const) {
   }
 }
 
-for (const name of ["reload", "reconcile", "retryPreparation"]) {
+for (const name of ["reload", "reconcile"] as const) {
   for (const outcome of ["success", "failure", "cancellation"] as const) {
     test(`editor schedule ${name}: revoked ${outcome} releases its serial read`, async () => {
-      const backend = attachment(), request = deferred()
-      let reading = false, writes = 0
-      const hold = { payload: JSON.stringify({ action: "configure", missionID: "m", directory: "/repo", requestID: "r" }) }
+      const backend = attachment(), requests = [deferred(), deferred()]
+      let reading = false, reads = 0, writes = 0
+      const hold = { payload: JSON.stringify({ action: "configure", missionID: "m", directory: "/repo", requestID: "r" }), state: "uncertain" }
+      const ownerValue = { signal: backend.captureBackendOperation("i").signal }
       const scope = { props: { instanceId: "i", directory: "/repo", action: { scheduleID: "m" }, active: () => true, scope: () => "s" },
         held: () => name === "reload" ? undefined : hold, reading: () => reading, target: "m", unified: true,
-        capture: () => backend.captureBackendOperation("i").current, retryable: () => true,
-        setReading: (value: boolean) => { reading = value }, setFailed: () => {}, setReady: () => {}, setRetryable: () => {},
-        serverApi: { fetchMissionSchedule: () => request.promise, saveMissionSchedule: () => { writes++; return {} } },
+        capture: () => backend.captureBackendOperation("i").current,
+        owner: () => ownerValue,
+        captureOwner: (controller: AbortController) => () => !controller.signal.aborted,
+        reconcileRead: undefined, partialMissionScheduleReceipt: () => undefined,
+        setReading: (value: boolean) => { reading = value }, setFailed: () => {}, setReady: () => {},
+        serverApi: {
+          fetchMissionSchedule: () => requests[reads++].promise,
+          saveMissionSchedule: () => { writes++; return {} },
+        },
       }
       const run = method("./mission-editor-schedule.ts", name, scope)
-      const first = run(); assert.equal(reading, true)
+      const first = run()
+      assert.equal(reads, 1)
+      if (name === "reload") assert.equal(reading, true)
       backend.revoke(); backend.replace()
-      await run() // No successor is admitted while this same view's read owns the flag.
-      if (outcome === "success") request.resolve({ document: { id: "m" } })
-      else request.reject(new DOMException(outcome, outcome === "cancellation" ? "AbortError" : "Error"))
+      await run() // No successor is admitted while this same view's read owns the serial slot.
+      assert.equal(reads, 1)
+      if (outcome === "success") requests[0].resolve({ document: { id: "m" } })
+      else requests[0].reject(new DOMException(outcome, outcome === "cancellation" ? "AbortError" : "Error"))
       await first
+      assert.equal(reading, false); assert.equal(writes, 0)
+      const next = run()
+      assert.equal(reads, 2, "revoked outcome must release the serial read for subsequent reads")
+      requests[1].reject(new DOMException("cleanup", "AbortError"))
+      await next
       assert.equal(reading, false); assert.equal(writes, 0)
     })
   }

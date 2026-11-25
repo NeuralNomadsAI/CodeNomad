@@ -96,7 +96,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.lock.scope": "The stored execution roots differ from this editor's directory-only scope. The configuration and draft are kept read-only; open the owning location before editing.",
   "missions.scheduling.uncertain": "This change is unconfirmed.",
   "missions.scheduling.uncertainOther": "Another change from this window is unconfirmed.",
-  "missions.scheduling.readReceipt": "Refresh saved request",
   "missions.scheduling.lock.journal": "This Mission uses the execution journal. Its instructions and notes can be edited; the other settings require a synchronized preparation contract.",
   "missions.scheduling.lock.ever-created-task": "A task has already been created. The template stays fixed, including after tasks finish or are retired.",
   "missions.scheduling.moreSources": "Load more sources",

@@ -859,8 +859,8 @@ export function createServerApi(ctx: BackendHttp) {
       } })
     },
     /** One mission's compact map and cleanups, for display reconciliation (lost acknowledgements, cleanup retries). */
-    fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
-      return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}`)
+    fetchMission(instanceId: string, missionId: string, signal?: AbortSignal): Promise<MissionReadResponse> {
+      return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}`, { signal })
     },
     /** More of one mission's tasks for display: a window of its display order or tasks by name;
      * it shares the secondary read budget. */
@@ -901,25 +901,25 @@ export function createServerApi(ctx: BackendHttp) {
       const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined) as [string, string][])
       return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
     },
-    fetchMissionScheduleCreation(instanceId: string, requestID: string, directory?: string): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+    fetchMissionScheduleCreation(instanceId: string, requestID: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       const query = new URLSearchParams(directory === undefined ? {} : { directory })
-      return secondaryRead(undefined, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`, { signal }))
     },
-    saveMissionSchedule(instanceId: string, input: import("../stores/mission-schedule-editor-holds").MissionScheduleEditorRequest): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+    saveMissionSchedule(instanceId: string, input: import("../stores/mission-schedule-editor-holds").MissionScheduleEditorRequest, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       const { missionID, ...body } = input
       const target = missionID ? `${encodeURIComponent(missionID)}/schedule` : "scheduled"
-      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${target}`, { method: "POST", body: JSON.stringify(body) })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${target}`, { method: "POST", body: JSON.stringify(body), signal })
     },
     controlMissionSchedule(instanceId: string, missionID: string, input: { action: "play" | "resume" | "pause" | "stop" | "check" | "run-now" | "delete";
       requestID: string; expectedRevision: number; directory?: string; deleteManagedSessions?: boolean }): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule`, {
         method: "POST", body: JSON.stringify(input), signal: AbortSignal.timeout(30_000) })
     },
-    missionScheduleSettings(instanceId: string, missionID: string, input: { requestID: string; expectedDocumentRevision: number }, apply = false): Promise<{ document: import("../../../server/src/missions/mission-document-one-time").MissionDocumentSummary }> {
+    missionScheduleSettings(instanceId: string, missionID: string, input: { requestID: string; expectedDocumentRevision: number }, apply = false, signal?: AbortSignal): Promise<{ document: import("../../../server/src/missions/mission-document-one-time").MissionDocumentSummary }> {
       const url = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule-settings`
-      const signal = AbortSignal.timeout(30_000)
-      return apply ? request(url, { method: "POST", body: JSON.stringify(input), signal })
-        : secondaryRead(signal, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`, { signal }))
+      const live = signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000)
+      return apply ? request(url, { method: "POST", body: JSON.stringify(input), signal: live })
+        : secondaryRead(live, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`, { signal: live }))
     },
     /** The same read, with the full map, from the authoritative full snapshot, for admitting an application-authored prompt. */
     fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse<MissionMap>> {

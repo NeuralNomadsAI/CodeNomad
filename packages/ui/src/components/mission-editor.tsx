@@ -647,7 +647,7 @@ export function MissionEditor(props: {
       <Show when={schedule.previousDraft()}>{previous => <details class="mission-profile-optional"><summary>{t("missions.scheduling.previousDraft")}</summary>
         <textarea readOnly rows={8} value={previous()} aria-label={t("missions.scheduling.previousDraft")} /></details>}</Show>
       <Show when={!uncertain() && error()}><p role="alert">{error()}</p></Show>
-      <Show when={kind !== "create" && schedule.held()?.state === "uncertain"}><p role="alert">{t(otherUncertain()
+      <Show when={schedule.held()?.state === "uncertain"}><p role="alert">{t(otherUncertain()
         ? "missions.scheduling.uncertainOther" : "missions.scheduling.uncertain")}</p></Show>
     </div>
     <footer class="window-footer">
@@ -660,14 +660,11 @@ export function MissionEditor(props: {
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>
       <Show when={needsSourceLocation() && sourceLocationFailed() && !uncertain()}><button type="button" class="button-secondary"
         onClick={() => setSourceLocationRevision(value => value + 1)}>{t("missions.control.refresh")}</button></Show>
-      <Show when={uncertain()}><button type="button" class="button-secondary" disabled={schedule.reading() || creationReading()} onClick={() => {
+      <Show when={uncertain() && !schedule.held()}><button type="button" class="button-secondary" disabled={creationReading()} onClick={() => {
         if (!isActive()) return
-        if (schedule.held()) void schedule.reconcile()
-        else if (mode() === "recurring") props.onRecurrenceRefresh?.()
+        if (mode() === "recurring") props.onRecurrenceRefresh?.()
         else void reconcileCreation()
-      }}>{t(schedule.held() ? "missions.scheduling.readReceipt" : "missions.control.refresh")}</button></Show>
-      <Show when={uncertain() && schedule.retryable()}><button type="button" class="button-secondary" disabled={schedule.reading()}
-        onClick={() => void schedule.retryPreparation()}>{t("missions.control.retry")}</button></Show>
+      }}>{t("missions.control.refresh")}</button></Show>
       <Show when={kind === "create"} fallback={
           <button type="submit" class="button-primary" disabled={locked() || !isActive() || (kind !== "delete" && (textLocked() || !objective().trim() || !structuralLocked() && !policyReady()))}>
           {t(pending() ? "missions.control.mutation.pending" : kind === "delete"

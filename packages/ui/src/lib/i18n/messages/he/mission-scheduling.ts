@@ -92,7 +92,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.lock.scope": "שורשי הביצוע השמורים שונים מתחום התיקייה של העורך. ההגדרות והטיוטה נשמרות לקריאה בלבד; יש לפתוח את המיקום הבעלים לפני עריכה.",
   "missions.scheduling.uncertain": "השינוי טרם אושר.",
   "missions.scheduling.uncertainOther": "שינוי אחר בחלון הזה טרם אושר.",
-  "missions.scheduling.readReceipt": "רענון הבקשה השמורה",
   "missions.scheduling.lock.journal": "המשימה משתמשת ביומן הביצוע. אפשר לערוך הוראות והערות; יתר ההגדרות דורשות חוזה הכנה מסונכרן.",
   "missions.scheduling.lock.ever-created-task": "כבר נוצרה מטלה. התבנית נשארת קבועה גם לאחר שמטלות מסתיימות או מוסרות.",
   "missions.scheduling.moreSources": "טעינת מקורות נוספים",

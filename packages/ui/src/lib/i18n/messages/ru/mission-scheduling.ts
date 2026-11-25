@@ -92,7 +92,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.lock.scope": "Сохранённые корни выполнения отличаются от каталога этого редактора. Конфигурация и черновик доступны только для чтения; откройте место-владелец перед редактированием.",
   "missions.scheduling.uncertain": "Изменение не подтверждено.",
   "missions.scheduling.uncertainOther": "Другое изменение этого окна не подтверждено.",
-  "missions.scheduling.readReceipt": "Обновить сохранённый запрос",
   "missions.scheduling.lock.journal": "Эта миссия использует журнал выполнения. Инструкции и заметки доступны для изменения; остальные настройки требуют синхронизированного контракта подготовки.",
   "missions.scheduling.lock.ever-created-task": "Задача уже была создана. Шаблон остаётся фиксированным даже после завершения или отзыва задач.",
   "missions.scheduling.moreSources": "Загрузить другие источники",

@@ -78,8 +78,8 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
         ?? (["pause", "resume", "play"] as const).find(action => doc().availableActions.includes(action))
       const action = (name: "play" | "resume" | "pause" | "stop" | "run-now") => ({ key: name, label: controls.label(name),
         disabled: !controls.capable(name), busy: controls.pendingAction() === name, onSelect: () => controls.act(name) })
-      const status = () => controls.progress() ?? (controls.held() ? controls.busy() ? undefined
-        : controls.publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain"
+      const status = () => controls.progress() ?? (controls.held()
+        ? controls.publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain"
         : controls.feedback() ?? (controls.refusal() ? "missions.scheduleList.activationRefused"
         : controls.capability() === "missing" ? "missions.scheduling.capability.missing"
         : controls.capability() === "activatable" ? "missions.scheduleList.runNowRequiresEnabled" : undefined))
@@ -92,7 +92,6 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
           onEdit={() => { if (editable()) props.onEdit(id) }} editDisabled={!editable()}
           onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")} deleteBusy={controls.pendingAction() === "delete"}
           onOpenConversation={doc().pendingPassage ? () => props.onOpenConversation(doc().pendingPassage!.coordinatorSessionID) : undefined}
-          secondary={<Show when={controls.held()}><button type="button" class="window-action" disabled={controls.busy()} onClick={() => void controls.reconcile()}>{t("missions.scheduling.readReceipt")}</button></Show>}
           feedback={<>
             <p role="status">{status() ? t(status()!) : ""}</p>
             <Show when={controls.refusal()}>{refusal => <>

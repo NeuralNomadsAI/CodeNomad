@@ -92,7 +92,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.lock.scope": "Les racines d’exécution enregistrées diffèrent du périmètre de dossier de cet éditeur. La configuration et le brouillon restent en lecture seule ; ouvrez le dossier propriétaire avant de modifier.",
   "missions.scheduling.uncertain": "Cette modification reste non confirmée.",
   "missions.scheduling.uncertainOther": "Une autre modification de cette fenêtre reste non confirmée.",
-  "missions.scheduling.readReceipt": "Actualiser la requête enregistrée",
   "missions.scheduling.lock.journal": "Cette Mission utilise le journal d’exécution. Ses instructions et notes sont modifiables ; les autres réglages nécessitent un contrat de préparation synchronisé.",
   "missions.scheduling.lock.ever-created-task": "Une tâche a déjà été créée. Le modèle de mission reste fixe, même après la fin ou le retrait des tâches.",
   "missions.scheduling.moreSources": "Charger d’autres sources",

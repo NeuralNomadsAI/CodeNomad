@@ -92,7 +92,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.lock.scope": "Las raíces de ejecución guardadas difieren del ámbito de directorio de este editor. La configuración y el borrador quedan en solo lectura; abre la ubicación propietaria para editarlos.",
   "missions.scheduling.uncertain": "Este cambio no está confirmado.",
   "missions.scheduling.uncertainOther": "Otro cambio de esta ventana no está confirmado.",
-  "missions.scheduling.readReceipt": "Actualizar la solicitud guardada",
   "missions.scheduling.lock.journal": "Esta Misión usa el diario de ejecución. Se pueden editar instrucciones y notas; los demás ajustes requieren un contrato de preparación sincronizado.",
   "missions.scheduling.lock.ever-created-task": "Ya se ha creado una tarea. La plantilla queda fija incluso cuando las tareas terminan o se retiran.",
   "missions.scheduling.moreSources": "Cargar más fuentes",
