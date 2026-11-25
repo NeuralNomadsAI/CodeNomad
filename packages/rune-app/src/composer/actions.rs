@@ -19,7 +19,6 @@ pub struct Owner {
     pub(crate) announce_unconfirmed: bool,
     optimistic_id: Option<String>,
     unconfirmed: Option<UnconfirmedPrompt>,
-    pub command_unconfirmed: Option<UnconfirmedCommand>,
     pub restored: bool,
     pub attachments_missing: bool,
     pub(crate) recall: Option<super::recall::Recall>,
@@ -286,29 +285,6 @@ fn hash_attachments(edit: &TextEdit, attachments: &[super::draft::Attachment]) -
     count.hash(&mut hasher);
     (count, hasher.finish())
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct UnconfirmedCommand {
-    name_len: usize,
-    name_hash: u64,
-    args_len: usize,
-    args_hash: u64,
-}
-impl UnconfirmedCommand {
-    pub(crate) fn new(name: &str, args: &str) -> Self {
-        let (name_len, name_hash) = hash_text(name);
-        let (args_len, args_hash) = hash_text(args);
-        Self {
-            name_len,
-            name_hash,
-            args_len,
-            args_hash,
-        }
-    }
-    fn matches(&self, name: &str, args: &str) -> bool {
-        (self.name_len, self.name_hash) == hash_text(name)
-            && (self.args_len, self.args_hash) == hash_text(args)
-    }
-}
 struct PendingSend {
     id: String,
     edit: TextEdit,
@@ -326,23 +302,8 @@ impl PendingSend {
     }
 }
 
-fn repeats_uncertain_command(s: &State) -> bool {
-    s.composer
-        .command_unconfirmed
-        .as_ref()
-        .is_some_and(|unconfirmed| {
-            super::picker::command_parts(&s.draft.text).is_some_and(|(candidate, args)| {
-                s.composer
-                    .draft
-                    .resolve_args(&s.draft, args)
-                    .is_some_and(|resolved| unconfirmed.matches(candidate, &resolved))
-            })
-        })
-}
-
 pub(crate) fn command_held(s: &State) -> bool {
     command_receipts::repeats(s)
-        || repeats_uncertain_command(s)
         || s.command_receipts.full() && s.composer.picker.selected_command(&s.draft.text).is_some()
 }
 
@@ -431,6 +392,10 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             name: slash.name.clone(),
             text: slash.args.clone(),
         };
+        if !s.command_receipts.reserve(id.clone()) {
+            refuse_send(s, tx);
+            return;
+        }
         if s.commands
             .as_ref()
             .is_some_and(|pipe| pipe.try_send(command).is_ok())
@@ -459,6 +424,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             s.composer.send_error = false;
             s.composer.announce_send_error = false;
         } else {
+            s.command_receipts.release_in_flight(&id);
             refuse_send(s, tx);
         }
         return;

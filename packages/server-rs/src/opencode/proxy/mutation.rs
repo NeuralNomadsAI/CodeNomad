@@ -35,6 +35,7 @@ pub(super) struct InputRecheck<'a> {
     pub session: Option<&'a str>,
     pub directory: &'a str,
     pub native_directory: Option<&'a str>,
+    pub bound_directory: Option<&'a str>,
     pub message_list: bool,
     pub actual: &'a Option<Value>,
     pub initial_identity: &'a Option<(PathBuf, PathBuf, String)>,
@@ -68,8 +69,18 @@ impl InputRecheck<'_> {
         )
         .await
         .map_err(|e| if e.0 == Status::BAD_GATEWAY { crate::opencode::pre_dispatch_unavailable() } else { e })?;
+        let fresh_dir = fresh["location"]["directory"].as_str();
+        let bound_ok = self.bound_directory.is_none_or(|bound| {
+            fresh_dir.is_some_and(|native| {
+                native == bound
+                    || crate::files::paths::canonical(&self.app.scope, native)
+                        .zip(crate::files::paths::canonical(&self.app.scope, bound))
+                        .is_some_and(|(a, b)| a == b)
+            })
+        });
         if !self.actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
-            || fresh["location"]["directory"] != self.directory
+            || fresh_dir != Some(self.directory)
+            || !bound_ok
             || !self.location_live()
         {
             return Err(foreign());

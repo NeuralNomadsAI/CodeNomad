@@ -455,7 +455,8 @@ fn settings_direct_authentication_accepts_a_rotated_password_and_keeps_the_draft
 }
 
 #[test]
-fn a_native_command_401_with_a_live_backend_session_has_one_rejection_and_no_relogin() {
+fn an_unmarked_native_command_401_with_a_live_backend_session_has_one_unconfirmed_receipt_and_no_relogin()
+ {
     platform::block_on(async {
         let (listener, mut prefs) = fixture().await;
         let (_sse, commands, events) = start(&listener, prefs.backend.take().unwrap()).await;
@@ -510,7 +511,7 @@ fn retry_waits_for_the_opening_stream_to_report_authentication() {
 }
 
 #[test]
-fn settings_send_during_a_stream_outage_preserves_the_unsubmitted_draft() {
+fn settings_send_during_a_stream_outage_keeps_unconfirmed_lock_and_draft() {
     assert_direct_recovery(None);
 }
 
@@ -793,6 +794,12 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
         .await;
         assert_eq!(runtime.state.draft.text, "refused prompt");
         assert_eq!(runtime.state.messages[0].id, "recent");
+        if prompt_reply.is_none() || prompt_reply == Some(401) {
+            assert!(
+                runtime.state.composer.unconfirmed_id().is_some(),
+                "unmarked 401 prompt must keep its unconfirmed lock when Sync omits the attempted ID"
+            );
+        }
     });
 }
 

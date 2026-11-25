@@ -18,6 +18,8 @@ function fixture() {
   const state = {
     owned: false, metadata: undefined as Record<string, unknown> | undefined, directory: "/repo/worktree",
     result: undefined as unknown, failure: undefined as unknown, current: true,
+    connectionError: undefined as unknown,
+    profileError: undefined as unknown,
     afterRead: async () => {},
     beforeFetchCheck: async () => {},
   }
@@ -45,7 +47,7 @@ function fixture() {
   } as unknown as OpenCodeClient
   const endpoint = { url: "http://private-fixture.invalid" }
   const connection = {
-    endpoint, client, profile: async () => "modern" as const,
+    endpoint, client, profile: async () => { if (state.profileError) throw state.profileError; return "modern" as const },
     assertCurrent() { if (!state.current) throw new Error("replaced connection") }, invalidate() {},
     fetch: async (
       _input: unknown,
@@ -63,7 +65,8 @@ function fixture() {
   }
   const workspace = { id: "w", path: "/repo" }
   const manager: InstanceProxyWorkspaceManager = {
-    get: () => workspace as never, getSharedServiceConnection: async () => connection,
+    get: () => workspace as never,
+    getSharedServiceConnection: async () => { if (state.connectionError) throw state.connectionError; return connection },
     getSharedServiceEndpoint: async () => { throw new Error("must keep the acquired endpoint") },
     getSharedServiceClient: async () => { throw new Error("must keep the acquired client") },
     getInstanceAuthorizationHeader: () => undefined, getServiceDirectory: () => "/repo",
@@ -298,9 +301,63 @@ test("late beforeFetch connection replacement rejects prompt with 502 before dis
     payload: { text: "blocked before send" },
   })
   assert.equal(response.statusCode, 502, response.body)
+  assert.equal(response.headers["x-codenomad-before-dispatch"], "1")
   assert.deepEqual(response.json(), { error: "opencode_unavailable_before_send" })
   assert.deepEqual(f.events, ["environment"])
   assert.deepEqual(f.uncertainSessions, [])
+})
+
+test("service acquisition and profile negotiation failures classify as marked 502 before dispatch", async () => {
+  const f = fixture()
+  f.state.connectionError = new Error("service starting")
+  const first = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_acq_fail/prompt`,
+    payload: { text: "blocked during acquisition" },
+  })
+  assert.equal(first.statusCode, 502, first.body)
+  assert.equal(first.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(first.json(), { error: "opencode_unavailable_before_send" })
+  assert.deepEqual(f.events, [])
+
+  f.state.connectionError = undefined
+  f.state.profileError = new Error("negotiation unavailable")
+  const second = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_neg_fail/command`,
+    payload: { name: "build", text: "blocked during negotiation" },
+  })
+  assert.equal(second.statusCode, 502, second.body)
+  assert.equal(second.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(second.json(), { error: "opencode_unavailable_before_send" })
+  assert.deepEqual(f.events, [])
+})
+
+test("carrier metadata appearing before final dispatch check rejects prompt with 403", async () => {
+  const f = fixture()
+  f.state.beforeFetchCheck = async () => {
+    f.state.metadata = { "codenomad.schedule-carrier": true }
+  }
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_late_carrier/prompt`,
+    payload: { text: "blocked on late carrier marker" },
+  })
+  assert.equal(response.statusCode, 403, response.body)
+  assert.deepEqual(f.events, ["environment"])
+  assert.deepEqual(f.uncertainSessions, [])
+})
+
+test("duplicate x-codenomad-session-directory headers are rejected with 400 before dispatch", async () => {
+  const f = fixture()
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_dup_header/prompt`,
+    headers: { "x-codenomad-session-directory": ["/repo/worktree", "/repo/worktree"] },
+    payload: { text: "duplicate header" },
+  })
+  assert.equal(response.statusCode, 400, response.body)
+  assert.deepEqual(f.events, [])
 })
 
 test("session move fence blocks concurrent prompt posts with 409 before dispatch", async () => {

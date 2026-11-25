@@ -166,10 +166,6 @@ impl Recall {
         &self.draft
     }
 
-    pub(crate) fn matches_draft(&self, edit: &TextEdit, draft: &Draft) -> bool {
-        self.edit.text == edit.text && self.draft.attachments == draft.attachments
-    }
-
     pub(crate) fn clear_draft(&mut self) {
         self.edit.clear();
         self.draft = Draft::default();

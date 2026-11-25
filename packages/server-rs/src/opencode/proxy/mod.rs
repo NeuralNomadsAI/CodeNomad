@@ -25,6 +25,20 @@ use guards::{
 };
 
 pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Response, Error> {
+    match relay_inner(app, request).await {
+        Err((Status::BAD_GATEWAY, body))
+            if matches!(
+                body.0["error"].as_str(),
+                Some("opencode_unavailable_before_send" | "session_environment_failed")
+            ) =>
+        {
+            Ok((Status::BAD_GATEWAY, [("x-codenomad-before-dispatch", "1")], body).into_response())
+        }
+        other => other,
+    }
+}
+
+async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     let (head, body) = request.into_parts();
     let principal = head.extensions.get::<crate::auth::Principal>().cloned().ok_or_else(crate::auth::unauthorized)?;
     let invalid = || error(Status::BAD_REQUEST, "Invalid workspace instance path");
@@ -671,6 +685,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         session,
         directory,
         native_directory,
+        bound_directory: bound_directory.as_deref(),
         message_list,
         actual: &actual,
         initial_identity: &initial_identity,

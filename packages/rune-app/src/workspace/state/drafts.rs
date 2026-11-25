@@ -12,7 +12,6 @@ pub(super) struct LiveDraft {
     text: Option<String>,
     parts: Option<(Draft, bool)>,
     unconfirmed: Option<crate::composer::UnconfirmedPrompt>,
-    command_unconfirmed: Option<crate::composer::UnconfirmedCommand>,
 }
 
 impl LiveDraft {
@@ -27,10 +26,7 @@ impl LiveDraft {
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.text.is_none()
-            && self.parts.is_none()
-            && self.unconfirmed.is_none()
-            && self.command_unconfirmed.is_none()
+        self.text.is_none() && self.parts.is_none() && self.unconfirmed.is_none()
     }
 
     pub(super) fn clear_unconfirmed_matching(
@@ -439,7 +435,7 @@ pub fn capture(s: &mut State) {
 }
 
 pub fn unconfirmed_drafts_full(s: &State) -> bool {
-    if s.composer.unconfirmed_id().is_none() && s.composer.command_unconfirmed.is_none() {
+    if s.composer.unconfirmed_id().is_none() {
         return false;
     }
     let Some(ui) = &s.workspace else {
@@ -461,10 +457,7 @@ pub fn unconfirmed_drafts_full(s: &State) -> bool {
         || item
             .live_drafts
             .iter()
-            .filter(|(existing, draft)| {
-                existing.as_str() != key
-                    && (draft.unconfirmed.is_some() || draft.command_unconfirmed.is_some())
-            })
+            .filter(|(existing, draft)| existing.as_str() != key && draft.unconfirmed.is_some())
             .count()
             >= super::super::MAX_DRAFTS
 }
@@ -485,8 +478,7 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
             let too_long = oversized(text);
             let has_device_parts = draft.inline_usage().0 != 0;
             let unconfirmed = s.composer.clone_unconfirmed();
-            let has_unconfirmed = unconfirmed.is_some() || s.composer.command_unconfirmed.is_some();
-            if too_long || has_device_parts || has_unconfirmed {
+            if too_long || has_device_parts || unconfirmed.is_some() {
                 let live = item.live_drafts.entry(key.into()).or_default();
                 live.text = too_long.then(|| text.clone());
                 live.parts = (too_long || has_device_parts).then(|| {
@@ -495,7 +487,6 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
                     (draft, missing)
                 });
                 live.unconfirmed = unconfirmed;
-                live.command_unconfirmed = s.composer.command_unconfirmed.clone();
             } else {
                 item.live_drafts.remove(key);
             }
@@ -567,9 +558,6 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
             s.composer.restore_unconfirmed(unconfirmed.clone());
         } else if let Some(unconfirmed) = closed_unconfirmed {
             s.composer.restore_unconfirmed(unconfirmed);
-        }
-        if let Some(slash) = live.and_then(|draft| draft.command_unconfirmed.as_ref()) {
-            s.composer.command_unconfirmed = Some(slash.clone());
         }
     }
     if !same_session && let Some((draft, missing)) = live.and_then(|draft| draft.parts.as_ref()) {
@@ -681,10 +669,10 @@ mod tests {
         b.session = "kept-edited".into();
         let _ = bound(&mut s, &b);
         s.draft = rune::edit::TextEdit::new("edited user draft");
-        s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
-            "compact",
-            &"x".repeat(1024),
-        ));
+        s.composer
+            .restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(
+                "msg_kept_edited".into(),
+            ));
         capture(&mut s);
 
         // Sessions with unconfirmed locks preserve every lock up to MAX_DRAFTS (including those
@@ -694,27 +682,78 @@ mod tests {
             b.session = format!("ses-{index}");
             let _ = bound(&mut s, &b);
             s.draft = rune::edit::TextEdit::new("");
-            s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
-                "compact",
-                &"x".repeat(1024),
-            ));
+            s.composer
+                .restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(format!(
+                    "msg_{index}"
+                )));
             assert!(!unconfirmed_drafts_full(&s));
             capture(&mut s);
         }
         b.session = "ses-overflow".into();
         let _ = bound(&mut s, &b);
         s.draft = rune::edit::TextEdit::new("draft with unconfirmed lock");
-        s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
-            "compact",
-            &"x".repeat(1024),
-        ));
+        s.composer
+            .restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(
+                "msg_overflow".into(),
+            ));
         assert!(unconfirmed_drafts_full(&s));
         // Every previously recorded unconfirmed session retains its anti-replay lock.
         b.session = "ses-0".into();
         let _ = bound(&mut s, &b);
-        assert!(s.composer.command_unconfirmed.is_some());
+        assert_eq!(s.composer.unconfirmed_id(), Some("msg_0"));
         b.session = "kept-edited".into();
         assert_eq!(bound(&mut s, &b), "edited user draft");
-        assert!(s.composer.command_unconfirmed.is_some());
+        assert_eq!(s.composer.unconfirmed_id(), Some("msg_kept_edited"));
+    }
+
+    #[test]
+    fn slash_unconfirmed_persists_across_tab_switch_and_recall_until_settled() {
+        use crate::transport::{Command, PromptOutcome};
+        let (sender, receiver) = codenomad_client::bounded(4);
+        let mut s = crate::init();
+        crate::gallery::shell::fixture(&mut s);
+        let mut ui = Ui::new();
+        ui.set_ready_for_test();
+        s.workspace = Some(ui);
+        let project = crate::catalog::Project {
+            id: "ws".into(),
+            path: "/repo".into(),
+        };
+        let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        backend.workspace = "ws".into();
+        backend.session = "ses-a".into();
+        s.screen.launcher_mut().unwrap().project = Some(project.clone());
+        crate::workspace::opened(&mut s, &project);
+        let _ = bound(&mut s, &backend);
+        s.phase = crate::Phase::Ready;
+        s.commands = Some(sender.clone());
+        s.composer.picker.add_test_command("compact");
+        let mut rt = rune::Runtime::new(s, crate::view, (800.0, 600.0), rune::Env::new(false, 1.0));
+        rt.state.draft = rune::edit::TextEdit::new("/compact now");
+        rt.update(|s, tx| crate::composer::send(s, tx, false));
+        let Command::Slash { attempt, .. } = receiver.try_recv().unwrap() else {
+            panic!("expected slash command")
+        };
+        crate::composer::acknowledge(&mut rt.state, &attempt, PromptOutcome::Unconfirmed);
+        assert_eq!(rt.state.draft.text.trim(), "/compact now");
+        assert!(crate::composer::command_held(&rt.state));
+
+        // Open a second tab, switch back to Tab 1, recall the command and confirm the hold remains.
+        let first_tab = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+        rt.update(|s, tx| crate::workspace::new_tab(s, tx));
+        rt.update(|s, tx| crate::workspace::select(s, &first_tab, tx));
+        rt.state.draft.clear();
+        rt.update(|s, tx| assert!(crate::composer::recall::step(s, true, true, tx)));
+        assert_eq!(rt.state.draft.text.trim(), "/compact now");
+        assert!(crate::composer::command_held(&rt.state));
+        assert!(!crate::composer::can_send(&rt.state));
+
+        // Exact late receipt releases the hold.
+        crate::composer::acknowledge(
+            &mut rt.state,
+            &attempt,
+            PromptOutcome::Confirmed(attempt.clone()),
+        );
+        assert!(!crate::composer::command_held(&rt.state));
     }
 }

@@ -48,12 +48,12 @@ pub(crate) async fn classify_http_error(
     response: reqwest::Response,
 ) -> crate::prompt::PromptError {
     let status = response.status();
+    let before_dispatch = response
+        .headers()
+        .get("x-codenomad-before-dispatch")
+        .and_then(|value| value.to_str().ok())
+        == Some("1");
     if status == reqwest::StatusCode::UNAUTHORIZED {
-        let before_dispatch = response
-            .headers()
-            .get("x-codenomad-before-dispatch")
-            .and_then(|value| value.to_str().ok())
-            == Some("1");
         return crate::prompt::PromptError::AuthenticationRequired { before_dispatch };
     }
     if status.is_client_error() {
@@ -67,7 +67,7 @@ pub(crate) async fn classify_http_error(
                 return crate::prompt::PromptError::Rejected;
             }
         }
-        reqwest::StatusCode::BAD_GATEWAY => {
+        reqwest::StatusCode::BAD_GATEWAY if before_dispatch => {
             if let Ok(body) = crate::prompt_receipt::read(response).await
                 && matches!(
                     body["error"].as_str(),

@@ -752,9 +752,10 @@ fn prompt_pre_send_502_session_environment_failed_is_rejected_not_unconfirmed() 
             backend.workspace = "workspace".into();
             backend.session = "session".into();
             let server = tokio::spawn(async move {
-                for body in [
-                    r#"{"error":"session_environment_failed"}"#,
-                    r#"{"error":"upstream_gateway_timeout"}"#,
+                for (before_dispatch, body) in [
+                    (true, r#"{"error":"session_environment_failed"}"#),
+                    (false, r#"{"error":"opencode_unavailable_before_send"}"#),
+                    (false, r#"{"error":"upstream_gateway_timeout"}"#),
                 ] {
                     let (socket, _) = listener.accept().await.unwrap();
                     let mut req = BufReader::new(socket);
@@ -776,8 +777,13 @@ fn prompt_pre_send_502_session_environment_failed_is_rejected_not_unconfirmed() 
                         let mut discard = vec![0; content_length];
                         req.read_exact(&mut discard).await.unwrap();
                     }
+                    let marker = if before_dispatch {
+                        "x-codenomad-before-dispatch: 1\r\n"
+                    } else {
+                        ""
+                    };
                     let reply = format!(
-                        "HTTP/1.1 502 Bad Gateway\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        "HTTP/1.1 502 Bad Gateway\r\n{marker}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len()
                     );
                     req.get_mut().write_all(reply.as_bytes()).await.unwrap();
@@ -795,16 +801,28 @@ fn prompt_pre_send_502_session_environment_failed_is_rejected_not_unconfirmed() 
                 first.downcast_ref::<crate::prompt::PromptError>(),
                 Some(&crate::prompt::PromptError::Rejected)
             );
-            let second = backend
+            let unmarked_spoof = backend
                 .prompt(&crate::prompt::Prompt {
                     id: Some("msg_00000000000000000000000000000006".into()),
+                    text: "unmarked 502 with pre-dispatch body".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(
+                unmarked_spoof.downcast_ref::<crate::prompt::PromptError>(),
+                Some(&crate::prompt::PromptError::Unconfirmed)
+            );
+            let third = backend
+                .prompt(&crate::prompt::Prompt {
+                    id: Some("msg_00000000000000000000000000000007".into()),
                     text: "ambiguous 502".into(),
                     ..Default::default()
                 })
                 .await
                 .unwrap_err();
             assert_eq!(
-                second.downcast_ref::<crate::prompt::PromptError>(),
+                third.downcast_ref::<crate::prompt::PromptError>(),
                 Some(&crate::prompt::PromptError::Unconfirmed)
             );
             server.await.unwrap();

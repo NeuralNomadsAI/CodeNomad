@@ -1088,6 +1088,8 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
     return
   }
+  const isPromptOrCommandPost = request.method === "POST"
+    && /^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathname)
   const kind = controlKind(request.method, pathname.replace(/\/+$/, ""))
   const sessionControl = kind && !isGlobalFormAction(pathname, request.method) ? kind : undefined
   const workspaceOperation = sessionControl ? workspaceManager.captureWorkspaceOperation?.(workspaceId) : undefined
@@ -1119,18 +1121,42 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     }
   }
 
-  const connection = await wait(Promise.resolve(workspaceManager.getSharedServiceConnection?.(workspaceId)))
-  const endpoint = connection?.endpoint ?? await wait(workspaceManager.getSharedServiceEndpoint(workspaceId))
+  let connection: Awaited<ReturnType<NonNullable<InstanceProxyWorkspaceManager["getSharedServiceConnection"]>>> | undefined
+  let endpoint: Awaited<ReturnType<InstanceProxyWorkspaceManager["getSharedServiceEndpoint"]>>
+  try {
+    connection = await wait(Promise.resolve(workspaceManager.getSharedServiceConnection?.(workspaceId)))
+    endpoint = connection?.endpoint ?? await wait(workspaceManager.getSharedServiceEndpoint(workspaceId))
+  } catch (error) {
+    const statusCode = (error as { statusCode?: unknown } | undefined)?.statusCode
+    if (isPromptOrCommandPost && !signal.aborted && !(typeof statusCode === "number" && statusCode >= 400 && statusCode < 500)) {
+      reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
+      return
+    }
+    throw error
+  }
   const clientForRequest = () => {
     signal.throwIfAborted()
     return wait(connection ? Promise.resolve(connection.client) : workspaceManager.getSharedServiceClient())
   }
   if (!endpoint) {
-    reply.code(502).send({ error: "OpenCode service is not ready" })
+    if (isPromptOrCommandPost) {
+      reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
+      return
+    }
+    reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "OpenCode service is not ready" })
     return
   }
 
-  await wait(Promise.resolve(connection?.profile(signal)))
+  try {
+    await wait(Promise.resolve(connection?.profile(signal)))
+  } catch (error) {
+    const statusCode = (error as { statusCode?: unknown } | undefined)?.statusCode
+    if (isPromptOrCommandPost && !signal.aborted && !(typeof statusCode === "number" && statusCode >= 400 && statusCode < 500)) {
+      reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
+      return
+    }
+    throw error
+  }
   let locationContext: LocationRef | undefined
   try { locationContext = readLocationContext(request.headers[LOCATION_CONTEXT_HEADER]) }
   catch { return reply.code(400).send({ error: "Invalid location context" }) }
@@ -1372,8 +1398,6 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   }
   let authorizedSessionDirectory: string | undefined
   let authorizedSession: Awaited<ReturnType<OpenCodeClient["session"]["get"]>> | undefined
-  const isPromptOrCommandPost = request.method === "POST"
-    && /^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathname)
   let boundSessionDirectory: string | undefined
   const matchesBoundSessionDirectory = async (nativeDirectory: string, boundDirectory: string): Promise<boolean> => {
     if (nativeDirectory === boundDirectory) return true
@@ -1405,7 +1429,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         return
       }
       if (isPromptOrCommandPost && !isSessionNotFoundError(error) && !signal.aborted) {
-        reply.code(502).send({ error: "opencode_unavailable_before_send" })
+        reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
         return
       }
       if (!isSessionNotFoundError(error)) throw error
@@ -1439,7 +1463,14 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     authorizedSession = session
     const sessionDirectoryHeader = request.headers["x-codenomad-session-directory"]
     if (session && isPromptOrCommandPost && sessionDirectoryHeader !== undefined) {
-      if (typeof sessionDirectoryHeader !== "string" || sessionDirectoryHeader.length > 16_384) {
+      let headerOccurrences = 0
+      const rawHeaders = request.raw.rawHeaders
+      if (Array.isArray(rawHeaders)) {
+        for (let i = 0; i < rawHeaders.length; i += 2) {
+          if (rawHeaders[i]?.toLowerCase() === "x-codenomad-session-directory") headerOccurrences += 1
+        }
+      }
+      if (headerOccurrences > 1 || typeof sessionDirectoryHeader !== "string" || sessionDirectoryHeader.length > 16_384) {
         reply.code(400).send({ error: "Invalid session directory header" })
         return
       }
@@ -1539,7 +1570,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           if (isSessionNotFoundError(error) && sessionId) {
             return reply.code(404).send({ _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
           }
-          return reply.code(502).send({ error: "opencode_unavailable_before_send" })
+          return reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
         }
         throw error
       }
@@ -1654,7 +1685,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         // Never log the SDK error: it can contain the complete environment body.
         releaseMutation?.()
         logger.error({ workspaceId, sessionId }, "Failed to apply profile environment")
-        return reply.code(502).send({ error: SESSION_ENVIRONMENT_FAILED_ERROR_CODE })
+        return reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: SESSION_ENVIRONMENT_FAILED_ERROR_CODE })
       }
       if (!pathname.replace(/\/$/, "").endsWith("/shell")) {
         try {
@@ -1681,7 +1712,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           }))
         } catch (error) {
           releaseMutation?.()
-          if (error instanceof AccountSelectionFailed) return reply.code(502).send({ error: "PROVIDER_ACCOUNT_SELECTION_FAILED" })
+          if (error instanceof AccountSelectionFailed) {
+            return reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "PROVIDER_ACCOUNT_SELECTION_FAILED" })
+          }
           throw error
         }
       }
@@ -1759,6 +1792,14 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           if (!stillOwned) {
             throw new PreDispatchHttpError(403, { error: "Location does not belong to workspace" })
           }
+          try {
+            assertOrdinaryMissionScheduleBody({ metadata: fresh.metadata })
+          } catch (error) {
+            if (error instanceof MissionScheduleInputError) {
+              throw new PreDispatchHttpError(error.statusCode, { error: error.message })
+            }
+            throw error
+          }
         }
         : undefined
       // A transcript page read by the UI: large tool images load on demand.
@@ -1772,8 +1813,8 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           : undefined,
         beforeDispatch: verifyPromptPlacementBeforeDispatch,
         request, reply, url: targetUrl.toString(), body, headers,
-        fetch: confirmPermission || confirmDeletion || confirmRoot || forkSource ? async (input, init) => {
-          const response = await runtimeFetch(input, init)
+        fetch: confirmPermission || confirmDeletion || confirmRoot || forkSource ? async (input, init, mediaResponseProcessor, dispatchHooks) => {
+          const response = await runtimeFetch(input, init, mediaResponseProcessor, dispatchHooks)
           if (response.ok) {
             await confirmPermission?.()
             await confirmDeletion?.()
@@ -1885,7 +1926,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   } catch (error) {
     releaseMutation?.()
     if (isPromptOrCommandPost && !enteredForward && !signal.aborted && !reply.sent) {
-      return reply.code(502).send({ error: "opencode_unavailable_before_send" })
+      return reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
     }
     throw error
   }

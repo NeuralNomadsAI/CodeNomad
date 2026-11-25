@@ -589,6 +589,13 @@ async fn read_page(
         ),
     )
     .await;
+    let result = match result {
+        Some(Err(PageFailure::Read(_))) if wire.is_stream_closed() || !wire.alive.load(SeqCst) => {
+            Some(Err(PageFailure::StreamClosed))
+        }
+        Some(Err(PageFailure::Read(_))) if !fence.valid(wire) => None,
+        other => other,
+    };
     result.filter(|_| {
         !wire.is_placement_changed()
             && reading.is_none_or(|reading| reading.demand.current().generation == generation)
@@ -751,6 +758,27 @@ mod diagnostic_tests {
                 futures_lite::future::poll_once(&mut fut).await,
                 Some(Some(Err(PageFailure::StreamClosed)))
             ));
+
+            // Even if the HTTP future is ready with an ordinary read error on the same poll as
+            // stream closure, read_page must classify it as StreamClosed rather than Read.
+            let closed_wire = stream::State::default();
+            closed_wire
+                .alive
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            closed_wire
+                .upstream
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            closed_wire.close_stream();
+            let outcome = read_page(
+                &backend,
+                None,
+                0,
+                &closed_wire,
+                super::Fence::Live(0),
+                std::future::ready(Err("transient read failure".into())),
+            )
+            .await;
+            assert!(matches!(outcome, Some(Err(PageFailure::StreamClosed))));
         });
     }
 }

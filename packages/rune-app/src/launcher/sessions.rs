@@ -491,7 +491,7 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
     } else if !s.draft.text.is_empty()
         || !s.composer.draft.attachments.is_empty()
         || s.composer.unconfirmed_id().is_some()
-        || s.composer.command_unconfirmed.is_some()
+        || s.command_receipts.has_for_state(s)
     {
         return false;
     }

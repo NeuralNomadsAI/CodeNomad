@@ -103,7 +103,7 @@ fn can_admit_send(
         && !wire.placement_closed()
         && !wire.auth_expired.load(SeqCst)
         && !reading.is_some_and(|lane| lane.revoked.load(SeqCst))
-        && (reading.is_some() || !reader.parked && !reader.historical && ever_opened)
+        && (reading.is_some() || !reader.historical && ever_opened)
 }
 
 pub(crate) async fn run_with_reading(

@@ -117,7 +117,7 @@ export async function moveProjectSessionFamily(params: {
   targetDirectory: string
   resolveExactDirectory?: (directory: string) => Promise<string | undefined>
   validateTarget?: () => Promise<boolean>
-  runMutation?: <T>(directories: string[], operation: () => Promise<T>) => Promise<T>
+  runMutation?: <T>(directories: string[], operation: () => Promise<T>, sessionIds?: string[]) => Promise<T>
 }): Promise<SessionFamilyMoveResult> {
   return withProject(params.client, params.projectLocation, async (context) => {
     if (params.validateTarget && !await params.validateTarget()) {
@@ -129,6 +129,7 @@ export async function moveProjectSessionFamily(params: {
     if (!family) throw new ProjectSessionError("Session not found in project", 404)
     assertWorkspaceFamily(family[1], context.workspaceID)
     const target = await resolveProjectLocation(context, params.targetDirectory, params.resolveExactDirectory)
+    const sessionIds = family[1].map(({ id }) => id)
     const move = async () => {
       await assertInactive(context.client, family[1])
       for (const session of family[1]) await assertOrdinaryMissionScheduleSession(context.client, session)
@@ -136,10 +137,10 @@ export async function moveProjectSessionFamily(params: {
         throw new ProjectSessionError("Worktree changed before the session move", 409)
       }
       await moveWithRollback(context, family[1], target)
-      return { rootSessionId: family[0], sessionIds: family[1].map(({ id }) => id) }
+      return { rootSessionId: family[0], sessionIds }
     }
     return params.runMutation
-      ? params.runMutation([...family[1].map(({ location }) => location.directory), target.directory], move)
+      ? params.runMutation([...family[1].map(({ location }) => location.directory), target.directory], move, sessionIds)
       : move()
   })
 }

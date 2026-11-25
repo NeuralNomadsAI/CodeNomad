@@ -378,10 +378,6 @@ impl Http {
         }
         matched
     }
-    #[cfg(test)]
-    pub(crate) fn verify_server_identity(&self, id: &str) -> bool {
-        self.attest(id, Vec::new())
-    }
     pub(crate) fn verify_server_identity_at(
         &self,
         id: &str,

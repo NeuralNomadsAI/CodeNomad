@@ -374,6 +374,56 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
     assert!(!state.history_error);
     assert_eq!(state.transcript_display.timeline.page_retry, None);
 
+    // When ReaderSync arrives with older still valid, the failed pagination retry direction is preserved.
+    let mut state = init();
+    let (mut reader, lane) = Reader::open();
+    reader.install(false);
+    state.reader = Some(reader);
+    state.phase = Phase::Ready;
+    state.can_older = true;
+    let (cmd_tx, cmd_rx) = bounded(4);
+    let (out, incoming) = bounded(4);
+    state.commands = Some(cmd_tx);
+    state.incoming = Some(incoming);
+    assert!(request_page(&mut state, HistoryEdge::Oldest));
+    let _ = cmd_rx.try_recv().unwrap();
+    lane.connection.store(1, SeqCst);
+    out.try_send(Event::ConnectionLost).unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::Oldest)
+    );
+    lane.events
+        .try_send((
+            1,
+            1,
+            Event::ReaderSync {
+                page: crate::history::Page {
+                    rows: vec![],
+                    older: Some(serde_json::json!({"kind":"before","messageID":"m1"})),
+                    newer: None,
+                    running: false,
+                    user_file_references: false,
+                },
+                version: 1,
+            },
+        ))
+        .unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(!state.reader.as_ref().unwrap().resume_pending);
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::Oldest)
+    );
+    assert!(older(&mut state));
+    let Command::Page(retried_edge, _) = cmd_rx.try_recv().unwrap() else {
+        panic!("expected retried Command::Page");
+    };
+    assert_eq!(retried_edge, HistoryEdge::Oldest);
+
     // refresh_after_message_action cancels pending paging so a later disconnect cannot resurrect history_error.
     let mut state = init();
     let (mut reader, _lane) = Reader::open();

@@ -17,6 +17,5 @@ pub(crate) mod view;
 #[cfg(all(not(target_arch = "wasm32"), feature = "test-support"))]
 pub(crate) use actions::command_held;
 pub(crate) use actions::{
-    Owner, UnconfirmedCommand, UnconfirmedPrompt, acknowledge, can_send, reconcile, send,
-    settle_pending,
+    Owner, UnconfirmedPrompt, acknowledge, can_send, reconcile, send, settle_pending,
 };

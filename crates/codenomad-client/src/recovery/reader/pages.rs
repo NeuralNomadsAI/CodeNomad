@@ -13,7 +13,6 @@ impl Reader {
             backend,
             reading,
             wire,
-            rx,
             out,
             wake,
             ..
@@ -61,7 +60,7 @@ impl Reader {
                 return Ok(Turn::Next);
             };
             match page {
-                Ok(mut page) if wire.history_current(revision) && rx.is_empty() => {
+                Ok(mut page) if wire.history_current(revision) => {
                     if advances(&page, edge, &target)
                         && history::edge_page(&page, &self.resident, edge).is_ok()
                     {
@@ -188,7 +187,11 @@ impl Reader {
                 if !self.historical && !wire.valid(stamp) {
                     self.dirty = true;
                     self.quiet = crate::runtime::Instant::now();
-                } else if !self.historical && !self.owed_tools.is_empty() {
+                } else if !self.historical
+                    && (self.execution_settlement > 0
+                        || !self.owed_tools.is_empty()
+                        || !self.owed_synthetics.is_empty())
+                {
                     self.dirty = true;
                     self.quiet =
                         crate::runtime::Instant::now() + std::time::Duration::from_millis(100);

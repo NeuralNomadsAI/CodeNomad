@@ -72,22 +72,19 @@ export async function forwardRuntimeRequest(args: {
     if (body === undefined) headers.delete("content-type")
     let response: Response
     if (args.beforeDispatch) {
-      let hookRan = false
+      let beforeRan = false
       const dispatchHooks: RuntimeFetchDispatchHooks = {
         beforeFetch: async () => {
-          hookRan = true
+          beforeRan = true
           await args.beforeDispatch!()
         },
         onDispatch: () => { dispatched = true },
       }
-      if (args.fetch.length >= 4) {
-        response = await args.fetch(args.url, { method: args.request.method, headers, body, signal: controller.signal }, undefined, dispatchHooks)
-      } else {
-        await args.beforeDispatch()
-        dispatched = true
-        response = await args.fetch(args.url, { method: args.request.method, headers, body, signal: controller.signal })
+      response = await args.fetch(args.url, { method: args.request.method, headers, body, signal: controller.signal }, undefined, dispatchHooks)
+      if (!beforeRan) {
+        await response.body?.cancel().catch(() => {})
+        throw new PreDispatchHttpError(502, { error: "opencode_unavailable_before_send" })
       }
-      if (hookRan) dispatched = true
     } else {
       dispatched = true
       response = await args.fetch(args.url, { method: args.request.method, headers, body, signal: controller.signal })
@@ -150,11 +147,14 @@ export async function forwardRuntimeRequest(args: {
     release()
     if (error instanceof PreDispatchHttpError) {
       if (detached) return
+      if (error.statusCode === 502 || error.statusCode === 401) {
+        args.reply.header("x-codenomad-before-dispatch", "1")
+      }
       return args.reply.code(error.statusCode).send(error.payload)
     }
     if (!dispatched && args.beforeDispatch && !controller.signal.aborted) {
       if (detached) return
-      return args.reply.code(502).send({ error: "opencode_unavailable_before_send" })
+      return args.reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
     }
     if (!controller.signal.aborted) args.invalidate()
     if (detached) return

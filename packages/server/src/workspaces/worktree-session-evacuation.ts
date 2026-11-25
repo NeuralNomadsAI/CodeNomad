@@ -111,19 +111,31 @@ export class WorktreeDeletionFence {
   }
 
   runSession<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
-    this.sessionBlocked.set(sessionId, (this.sessionBlocked.get(sessionId) ?? 0) + 1)
+    return this.runSessions([sessionId], operation)
+  }
 
-    const previous = this.sessionQueues.get(sessionId) ?? Promise.resolve()
-    const current = previous.catch(() => {}).then(async () => {
-      await this.waitForSessionIdle(sessionId)
+  runSessions<T>(sessionIds: readonly string[], operation: () => Promise<T>): Promise<T> {
+    const ids = [...new Set(sessionIds)].sort()
+    if (!ids.length) return operation()
+    for (const sessionId of ids) {
+      this.sessionBlocked.set(sessionId, (this.sessionBlocked.get(sessionId) ?? 0) + 1)
+    }
+
+    const previous = Promise.all(
+      ids.map((sessionId) => (this.sessionQueues.get(sessionId) ?? Promise.resolve()).catch(() => {})),
+    )
+    const current = previous.then(async () => {
+      await Promise.all(ids.map((sessionId) => this.waitForSessionIdle(sessionId)))
       return operation()
     })
-    this.sessionQueues.set(sessionId, current)
+    for (const sessionId of ids) this.sessionQueues.set(sessionId, current)
     return current.finally(() => {
-      const count = this.sessionBlocked.get(sessionId) ?? 0
-      if (count > 1) this.sessionBlocked.set(sessionId, count - 1)
-      else this.sessionBlocked.delete(sessionId)
-      if (this.sessionQueues.get(sessionId) === current) this.sessionQueues.delete(sessionId)
+      for (const sessionId of ids) {
+        const count = this.sessionBlocked.get(sessionId) ?? 0
+        if (count > 1) this.sessionBlocked.set(sessionId, count - 1)
+        else this.sessionBlocked.delete(sessionId)
+        if (this.sessionQueues.get(sessionId) === current) this.sessionQueues.delete(sessionId)
+      }
     })
   }
 

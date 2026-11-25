@@ -9,9 +9,8 @@ use axum::{
 };
 use serde_json::{Value, json};
 
-use super::guards::{
-    carrier_denied, directory_identity, foreign, is_transport_json_content_type, marker, relayed, same_target,
-};
+use super::guards::{foreign, is_transport_json_content_type, relayed};
+use super::mutation::InputRecheck;
 use crate::opencode::{Endpoint, NativeBody, pre_dispatch_unavailable, read_json, session_directory, upstream_error};
 use crate::{Error, Shared, Workspace, error, not_found};
 
@@ -79,42 +78,24 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
             return Err(if send_input { pre_dispatch_unavailable() } else { upstream_error() });
         }
         if send_input {
-            let (_, physical, _) = initial_identity.as_ref().ok_or_else(foreign)?;
-            let admitted = input_checkout.as_ref().ok_or_else(foreign)?;
-            if !crate::worktrees::ownership::capture_directory(&app, &workspace, physical)
-                .await
-                .is_some_and(|current| admitted.same_checkout(&current))
-            {
-                return Err(foreign());
-            }
-            let fresh = crate::opencode::session_record_at(
-                &app,
-                &endpoint,
-                session.as_deref().ok_or_else(pre_dispatch_unavailable)?,
-            )
-            .await
-            .map_err(|e| if e.0 == Status::BAD_GATEWAY { pre_dispatch_unavailable() } else { e })?;
-            let fresh_dir = fresh["location"]["directory"].as_str();
-            let bound_ok = bound_directory.as_deref().is_none_or(|bound| {
-                fresh_dir.is_some_and(|native| {
-                    native == bound
-                        || crate::files::paths::canonical(&app.scope, native)
-                            .zip(crate::files::paths::canonical(&app.scope, bound))
-                            .is_some_and(|(a, b)| a == b)
-                })
-            });
-            let identity_live = directory_identity(&app.scope, fresh_dir, false)
-                .is_some_and(|now| initial_identity.as_ref() == Some(&now) && admitted.live(&now.0));
-            if !actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
-                || fresh_dir != Some(directory.as_str())
-                || !bound_ok
-                || !identity_live
-                || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
-            {
-                return Err(foreign());
-            }
-            if marker(&fresh) {
-                return Err(carrier_denied());
+            let recheck = InputRecheck {
+                app: &app,
+                workspace: &workspace,
+                endpoint: &endpoint,
+                principal: &principal,
+                session: session.as_deref(),
+                directory: &directory,
+                native_directory: actual.as_ref().and_then(|r| r["location"]["directory"].as_str()),
+                bound_directory: bound_directory.as_deref(),
+                message_list: false,
+                actual: &actual,
+                initial_identity: &initial_identity,
+                input_checkout: &input_checkout,
+            };
+            match recheck.verify().await {
+                Ok(_) => {}
+                Err(e) if e.0 == Status::UNAUTHORIZED => return Ok(crate::auth::unauthorized_before_dispatch()),
+                Err(e) => return Err(e),
             }
             if principal.0.is_cancelled() {
                 return Ok(crate::auth::unauthorized_before_dispatch());

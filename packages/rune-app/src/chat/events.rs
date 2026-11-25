@@ -282,8 +282,20 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 // The page offer or its cancellation alone settles that gesture.
                 if s.transcript_display.timeline.paging.is_none() {
                     s.paging = false;
-                    s.history_error = false;
-                    s.transcript_display.timeline.page_retry = None;
+                    let keep_retry = matches!(
+                        s.transcript_display.timeline.page_retry,
+                        Some(
+                            crate::transport::HistoryEdge::Before
+                                | crate::transport::HistoryEdge::Oldest
+                        ) if page.older.is_some()
+                    ) || matches!(
+                        s.transcript_display.timeline.page_retry,
+                        Some(crate::transport::HistoryEdge::After) if page.newer.is_some()
+                    );
+                    if !keep_retry {
+                        s.history_error = false;
+                        s.transcript_display.timeline.page_retry = None;
+                    }
                 }
                 // A newer activity event can run ahead of a snapshot in the content lane.
                 let running = if stale_activity {
@@ -541,12 +553,42 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
         .as_ref()
         .is_some_and(|receiver| receiver.is_closed() && receiver.is_empty())
     {
+        let terminal_phase = matches!(s.phase, Phase::Failed) || {
+            #[cfg(target_arch = "wasm32")]
+            {
+                matches!(s.phase, Phase::WorkspaceMissing)
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                false
+            }
+        };
+        let needs_transition = s.conversation_stream_connected
+            || !s.stream_offline
+            || s.composer.pending()
+            || !terminal_phase;
         s.conversation_stream_connected = false;
-        if s.composer.pending() || s.phase.reconnecting() {
+        if needs_transition {
             s.stream_offline = true;
             s.transcript_display.tool_clock.pause();
-            composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
-            s.phase = Phase::Failed;
+            if s.composer.pending() {
+                composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
+            }
+            s.composer.picker.set_attachments_supported(false);
+            s.status_permissions.online(false);
+            s.status_usage.disconnect();
+            chat::reader::suspend(s);
+            git::online(s, false);
+            if let Some(files) = &mut s.files {
+                files.online(false);
+            }
+            if let Some(a) = s.agent.as_mut() {
+                a.online = false;
+                a.attention.disconnected();
+            }
+            if !terminal_phase {
+                s.phase = Phase::Failed;
+            }
             changed = true;
         }
     }

@@ -127,6 +127,10 @@ impl State {
         let _ = self.closed.1.recv().await;
     }
 
+    pub(crate) fn is_stream_closed(&self) -> bool {
+        self.closed.0.is_closed()
+    }
+
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn close_stream(&self) {
         self.closed.0.close();
