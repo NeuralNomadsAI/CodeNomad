@@ -2761,13 +2761,19 @@ fn cleanup_pagination_stays_within_2000_row_display_and_seen_cap() {
             settled.cleanup.settled_cleanups[0].1.deletion_id,
             "del-2000"
         );
-        // First row (del-0) was evicted when the 2,000-row sliding window advanced to del-2000;
-        // navigating back to page 0 (Refresh) brings del-0 back and keeps it retryable.
+        // First row (del-0) was evicted when the 2,000-row sliding window advanced to del-2000.
+        // A passive refresh with unchanged order/total must NOT rewind the pagination cursor,
+        // while an explicit manual refresh navigates back to page 0 and makes del-0 retryable again.
         assert!(!panel.cleanups.iter().any(|r| r.deletion_id == "del-0"));
         let mut row0 = cleanup_row(1, false);
         row0.mission_id = "msn-0".into();
         row0.deletion_id = "del-0".into();
-        assert!(panel.accept_more_cleanups_for_test("stable-order", 0, total, vec![row0]));
+        assert!(panel.accept_more_cleanups_for_test("stable-order", 0, total, vec![row0.clone()]));
+        assert!(
+            !panel.cleanups.iter().any(|r| r.deletion_id == "del-0"),
+            "passive unchanged-order refresh must not rewind past-cap cleanup pagination"
+        );
+        assert!(panel.accept_manual_refresh_cleanups_for_test("stable-order", total, vec![row0]));
         assert_eq!(panel.cleanups.len(), 2_000);
         let first_row = panel
             .cleanups
@@ -4226,6 +4232,29 @@ fn cleanup_order_change_pagination_avoids_repeated_tail_rescans() {
             panel.cleanup_tail_visits(),
             0,
             "disjoint replacement pages must not rescan the retained tail"
+        );
+        // Order C collides with 1,000 retained tail rows across 20 pages: each collision must be
+        // removed in O(1) without rescanning the tail (<= 1,000 visits total, not O(pages * tail)).
+        assert!(panel.accept_more_cleanups_for_test(
+            "order-c",
+            0,
+            2_000,
+            (0..50).map(|i| make_row("c-head", i)).collect()
+        ));
+        panel.reset_cleanup_tail_visits();
+        for page in 0..20u64 {
+            let offset = (page + 1) * 50;
+            assert!(panel.accept_more_cleanups_for_test(
+                "order-c",
+                offset,
+                2_000,
+                (0..50).map(|i| make_row("new", page * 50 + i)).collect()
+            ));
+        }
+        assert!(
+            panel.cleanup_tail_visits() <= 1_000,
+            "colliding replacement pages must evict tail rows in O(1) without rescanning: visits={}",
+            panel.cleanup_tail_visits()
         );
         let (disp_len, seen_len, meta_len, pending_len) = panel.cleanup_index_counts();
         assert!(

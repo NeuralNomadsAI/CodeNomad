@@ -1205,6 +1205,23 @@ fn mission_delete_401_probes_auth_status_shows_signin_and_preserves_frozen_inten
 }
 
 #[test]
+fn stale_mission_auth_expired_is_ignored_when_window_has_no_bound_backend() {
+    let mut s = crate::init();
+    let mut tx = rune::Tx::default();
+    s.screen = crate::Screen::Chat { launcher: None };
+    assert!(crate::settings::bound_backend(&s).is_none());
+    let mut ui = Ui::new();
+    let stale_backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    ui.mission_auth_expired.push(stale_backend);
+    s.workspace = Some(ui);
+    super::super::poll(&mut s, 1.0, &mut tx);
+    assert!(
+        crate::chat::authentication::dialog(&s).is_none(),
+        "stale mission 401 must not open sign-in when no backend is bound"
+    );
+}
+
+#[test]
 fn cleanup_directory_load_more_401_triggers_reauth_without_replaying_delete() {
     crate::platform::block_on(async {
         let http = test_http::Http::new().await;

@@ -247,6 +247,8 @@ async fn native_read_bytes_rpc_with_client<T: Send + 'static>(
 const LARGE_RESPONSE_THRESHOLD: usize = 4 * 1024 * 1024;
 const LARGE_RESPONSE_CHUNK: usize = 64 * 1024;
 pub(super) const LARGE_RESPONSE_BUDGET_UNITS: usize = 2048;
+#[cfg(test)]
+const MUTATION_RESPONSE_BUDGET_UNITS: usize = LARGE_RESPONSE_BUDGET_UNITS * 2;
 const LARGE_RESPONSE_CHUNK_TIMEOUT: Duration = Duration::from_secs(30);
 const LARGE_RESPONSE_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -379,25 +381,25 @@ struct EnvelopeRaw<'a> {
 }
 
 #[derive(Deserialize)]
-struct MissionHeaderPeek<'a> {
-    id: &'a str,
+struct MissionHeaderPeek {
+    id: String,
     #[serde(rename = "projectID")]
-    project_id: &'a str,
+    project_id: String,
     #[serde(rename = "projectCanonical")]
-    project_canonical: &'a str,
+    project_canonical: String,
 }
 
 #[derive(Deserialize)]
-struct CleanupHeaderPeek<'a> {
+struct CleanupHeaderPeek {
     #[serde(rename = "missionID")]
-    mission_id: &'a str,
+    mission_id: String,
 }
 
 #[derive(Deserialize)]
 struct SnapshotOutputRaw<'a> {
     version: Option<u64>,
     #[serde(rename = "projectID")]
-    project_id: Option<&'a str>,
+    project_id: Option<String>,
     #[serde(rename = "generatedAt", borrow)]
     generated_at: Option<&'a RawValue>,
     #[serde(borrow)]
@@ -424,15 +426,15 @@ fn project_snapshot_bytes(
     let envelope: EnvelopeRaw<'_> = serde_json::from_slice(bytes).map_err(|_| ())?;
     let output_raw = envelope.output.ok_or(())?;
     let snap: SnapshotOutputRaw<'_> = serde_json::from_str(output_raw.get()).map_err(|_| ())?;
-    if snap.version != Some(1) || snap.project_id != Some(project) {
+    if snap.version != Some(1) || snap.project_id.as_deref() != Some(project) {
         return Err(());
     }
     let normalized = fence::normalize(canonical);
     let missions_raw = snap.missions.ok_or(())?;
     let mut target_raw: Option<&RawValue> = None;
     for raw in missions_raw {
-        let peek: MissionHeaderPeek<'_> = serde_json::from_str(raw.get()).map_err(|_| ())?;
-        if peek.project_id != project || fence::normalize(peek.project_canonical) != normalized {
+        let peek: MissionHeaderPeek = serde_json::from_str(raw.get()).map_err(|_| ())?;
+        if peek.project_id != project || fence::normalize(&peek.project_canonical) != normalized {
             return Err(());
         }
         if peek.id == target_id && target_raw.is_none() {
@@ -442,7 +444,7 @@ fn project_snapshot_bytes(
     let mut kept_cleanups = Vec::new();
     if let Some(cleanups_raw) = snap.cleanups {
         for raw in cleanups_raw {
-            if let Ok(peek) = serde_json::from_str::<CleanupHeaderPeek<'_>>(raw.get())
+            if let Ok(peek) = serde_json::from_str::<CleanupHeaderPeek>(raw.get())
                 && peek.mission_id == target_id
             {
                 kept_cleanups.push(ojson::parse(raw.get().as_bytes()).ok_or(())?);
@@ -969,6 +971,31 @@ mod tests {
             compact["mission"]["tasks"][0]["bodies"]["executionMode"]["digest"],
             ojson::content_digest(raw_mode)
         );
+
+        // Escaped Windows paths with backslashes and quotes must decode cleanly.
+        let win_path = r#"C:\repo\quoted"dir"#;
+        let win_path_json = serde_json::to_string(win_path).unwrap();
+        let win_snapshot = format!(
+            r#"{{"output":{{"version":1,"projectID":"prj_1","generatedAt":10,"missions":[{{"id":"msn_other","projectID":"prj_1","projectCanonical":{win_path_json}}},{{"version":1,"id":"msn_target","projectID":"prj_1","projectCanonical":{win_path_json},"objective":"Win","template":"custom","status":"active","runState":"running","coordinatorSessionId":"ses_coord","revision":1,"actors":[],"tasks":[],"reports":[],"frontier":[],"claims":[],"createdAt":1,"updatedAt":1,"history":[],"historyTruncated":false}}],"cleanups":[]}}}}"#
+        );
+        let win_bytes = project_snapshot_bytes(win_snapshot.as_bytes(), "msn_target", "prj_1", win_path, false).unwrap();
+        let win_val: Value = serde_json::from_slice(&win_bytes).unwrap();
+        assert_eq!(win_val["mission"]["objective"], "Win");
+    }
+
+    #[tokio::test]
+    async fn mutation_response_budget_allows_concurrent_mutation_while_large_response_streams() {
+        let budget = Arc::new(tokio::sync::Semaphore::new(MUTATION_RESPONSE_BUDGET_UNITS));
+        let first = budget.clone().acquire_many_owned(LARGE_RESPONSE_BUDGET_UNITS as u32).await.unwrap();
+        // Deliver a >4 MiB mutation response that keeps streaming while still holding its units.
+        let payload = vec![b'x'; LARGE_RESPONSE_THRESHOLD + 64 * 1024];
+        let _streaming_response = deliver_admitted_json_bytes(payload, first);
+        // An unrelated large-capable mutation must still be able to reserve its full 128 MiB cap immediately.
+        let second = budget
+            .clone()
+            .try_acquire_many_owned(LARGE_RESPONSE_BUDGET_UNITS as u32)
+            .expect("second mutation must not block behind a streaming large response");
+        drop(second);
     }
 
     #[tokio::test]

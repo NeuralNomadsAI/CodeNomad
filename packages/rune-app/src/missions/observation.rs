@@ -449,14 +449,15 @@ impl Observation {
 
     pub fn view<S: 'static>(&self, more: impl Fn(&mut S) + 'static) -> El {
         let label = t("missions.control.activity.title");
-        let partial = self.more_offset().is_some()
+        let page_incomplete = self.more_offset().is_some()
             || self.pages.len() > 1
             || self.pages.iter().any(|page| {
                 page.coverage != Coverage::Observed
                     || page.requests != Coverage::Observed
                     || !page.family_observed
-                    || !self.current(page)
             });
+        let stale = self.pages.iter().any(|page| !self.current(page));
+        let partial = page_incomplete || stale;
         let mut view = col()
             .full_width()
             .role("region")
@@ -517,7 +518,7 @@ impl Observation {
                 action = action.help(help).description(help);
             }
             view = view.child(action);
-        } else if partial {
+        } else if page_incomplete || (stale && !busy) {
             view = view.child(
                 theme::note(status(ActorState::Unknown), "status")
                     .description(t("missionsPanel.pages.observations")),

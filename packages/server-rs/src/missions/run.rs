@@ -214,7 +214,7 @@ async fn create_once(
 }
 
 fn valid_text(value: &str, min: usize, max: usize) -> bool {
-    (min..=max).contains(&value.chars().count())
+    (min..=max).contains(&value.encode_utf16().count())
 }
 
 fn creation_unavailable(message: &str) -> Error {

@@ -1908,7 +1908,18 @@ async fn run_cleanup_retry(
     let conflict_409 = matches!(outcome, DeletionOutcome::Failed(err) if err.status == 409);
     let definitive_client_refusal = matches!(
         outcome,
-        DeletionOutcome::Failed(err) if (400..500).contains(&err.status) && err.status != 409
+        DeletionOutcome::Failed(err)
+            if (400..500).contains(&err.status)
+                && err.status != 409
+                && matches!(
+                    err.code,
+                    Some(
+                        codenomad_client::missions::DeletionCode::MissionNotFound
+                            | codenomad_client::missions::DeletionCode::ForeignSession
+                            | codenomad_client::missions::DeletionCode::ChildSession
+                            | codenomad_client::missions::DeletionCode::InvalidDeleteOption
+                    )
+                )
     );
     let mutated = !conflict_409 && !definitive_client_refusal;
     if !still_live() {

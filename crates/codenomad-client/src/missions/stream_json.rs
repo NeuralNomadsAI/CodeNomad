@@ -14,6 +14,16 @@ const MAX_KEY_BYTES: usize = 128;
 const MAX_TOTAL_BYTES: usize = 128 * 1024 * 1024 + 256;
 const ACTOR_FILTER_KEYS: &[&str] = &["kind", "sessionId", "location"];
 const ACTOR_FIELD_LIMIT: usize = 64 * 1024;
+const CONTROL_SCALAR_KEYS: &[&str] = &[
+    "missionID",
+    "requestID",
+    "expectedRevision",
+    "action",
+    "graceful",
+    "completedRevision",
+    "unconfirmedReceipts",
+];
+const CONTROL_FIELD_LIMIT: usize = 64 * 1024;
 
 pub(crate) async fn read_filtered_json<T: DeserializeOwned>(
     response: Response,
@@ -33,6 +43,25 @@ pub(crate) async fn read_filtered_json_for_coordinator<T: DeserializeOwned>(
 ) -> Result<T> {
     let mut parser = FilterParser::new(root_keys, mission_keys, kept_limit)
         .with_actor_filter(coordinator_session_id);
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk?;
+        parser.feed(&chunk)?;
+    }
+    let assembled = parser.finish()?;
+    Ok(serde_json::from_slice(&assembled)?)
+}
+
+pub(crate) async fn read_filtered_json_for_lifecycle<T: DeserializeOwned>(
+    response: Response,
+    root_keys: &[&str],
+    mission_keys: &[&str],
+    coordinator_session_id: Option<&str>,
+    kept_limit: usize,
+) -> Result<T> {
+    let mut parser = FilterParser::new(root_keys, mission_keys, kept_limit)
+        .with_actor_filter(coordinator_session_id)
+        .with_control_summary();
     let mut chunks = response.bytes_stream();
     while let Some(chunk) = chunks.next().await {
         let chunk = chunk?;
@@ -67,7 +96,11 @@ enum ValueMode {
     CaptureMission,
     CaptureMissionRaw,
     CaptureActor,
+    CaptureControl,
+    CaptureReceiptAckState,
     SkipActorElem,
+    SkipPendingElem,
+    SkipReceiptElem,
     Skip,
 }
 
@@ -261,6 +294,16 @@ enum State {
     ActorsArrayStart,
     ActorsArrayValue,
     ActorsArrayCommaOrEnd,
+    MissionControlStart,
+    ControlPendingStart,
+    ControlPendingArrayStart,
+    ControlPendingArrayValue,
+    ControlPendingArrayCommaOrEnd,
+    ControlReceiptsStart,
+    ControlReceiptsArrayStart,
+    ControlReceiptsArrayValue,
+    ControlReceiptsArrayCommaOrEnd,
+    ReceiptNativeAckStart,
     ValueString {
         mode: ValueMode,
     },
@@ -286,6 +329,7 @@ struct FilterParser<'a> {
     root_keys: &'a [&'a str],
     mission_keys: &'a [&'a str],
     actor_filter: Option<&'a str>,
+    summarize_control: bool,
     kept_limit: usize,
     kept_bytes: usize,
     total_limit: usize,
@@ -293,6 +337,8 @@ struct FilterParser<'a> {
     state: State,
     in_mission: bool,
     in_actor: bool,
+    in_control: bool,
+    in_receipt: bool,
     key_raw: Vec<u8>,
     key_overflow: bool,
     current_key: Option<String>,
@@ -306,6 +352,13 @@ struct FilterParser<'a> {
     actors_has_any: bool,
     actor_fields: Vec<(String, Vec<u8>)>,
     actor_kept_bytes: usize,
+    control_fields: Vec<(String, Vec<u8>)>,
+    control_kept_bytes: usize,
+    pending_has_any: bool,
+    receipts_has_any: bool,
+    receipts_all_valid: bool,
+    receipt_ack_known: bool,
+    receipt_native_obj: bool,
 }
 
 impl<'a> FilterParser<'a> {
@@ -314,6 +367,7 @@ impl<'a> FilterParser<'a> {
             root_keys,
             mission_keys,
             actor_filter: None,
+            summarize_control: false,
             kept_limit,
             kept_bytes: 0,
             total_limit: MAX_TOTAL_BYTES,
@@ -321,6 +375,8 @@ impl<'a> FilterParser<'a> {
             state: State::ExpectRootOpen,
             in_mission: false,
             in_actor: false,
+            in_control: false,
+            in_receipt: false,
             key_raw: Vec::new(),
             key_overflow: false,
             current_key: None,
@@ -334,11 +390,23 @@ impl<'a> FilterParser<'a> {
             actors_has_any: false,
             actor_fields: Vec::new(),
             actor_kept_bytes: 0,
+            control_fields: Vec::new(),
+            control_kept_bytes: 0,
+            pending_has_any: false,
+            receipts_has_any: false,
+            receipts_all_valid: true,
+            receipt_ack_known: false,
+            receipt_native_obj: false,
         }
     }
 
     fn with_actor_filter(mut self, coordinator_session_id: Option<&'a str>) -> Self {
         self.actor_filter = coordinator_session_id;
+        self
+    }
+
+    fn with_control_summary(mut self) -> Self {
+        self.summarize_control = true;
         self
     }
 
@@ -422,10 +490,34 @@ impl<'a> FilterParser<'a> {
                             self.state = State::MissionValueStart;
                         } else if self.in_mission
                             && !self.in_actor
+                            && !self.in_control
+                            && !self.in_receipt
                             && self.actor_filter.is_some()
                             && self.current_key.as_deref() == Some("actors")
                         {
                             self.state = State::MissionActorsStart;
+                        } else if self.in_mission
+                            && !self.in_actor
+                            && !self.in_control
+                            && !self.in_receipt
+                            && self.summarize_control
+                            && self.current_key.as_deref() == Some("control")
+                        {
+                            self.state = State::MissionControlStart;
+                        } else if self.in_control
+                            && !self.in_receipt
+                            && self.current_key.as_deref() == Some("pending")
+                        {
+                            self.state = State::ControlPendingStart;
+                        } else if self.in_control
+                            && !self.in_receipt
+                            && self.current_key.as_deref() == Some("receipts")
+                        {
+                            self.state = State::ControlReceiptsStart;
+                        } else if self.in_receipt
+                            && self.current_key.as_deref() == Some("nativeAcknowledgement")
+                        {
+                            self.state = State::ReceiptNativeAckStart;
                         } else {
                             self.state = State::ExpectValue;
                         }
@@ -512,11 +604,159 @@ impl<'a> FilterParser<'a> {
                         return Err("expected ',' or ']' in actors array".into());
                     }
                 }
+                State::MissionControlStart => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b'{' {
+                        self.in_control = true;
+                        self.control_fields.clear();
+                        self.control_kept_bytes = 0;
+                        self.current_key = None;
+                        self.state = State::ObjectStart;
+                        i += 1;
+                    } else {
+                        self.start_value(ValueMode::CaptureMission, b)?;
+                        i += 1;
+                    }
+                }
+                State::ControlPendingStart => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b'[' {
+                        self.pending_has_any = false;
+                        self.current_key = None;
+                        self.state = State::ControlPendingArrayStart;
+                        i += 1;
+                    } else {
+                        self.start_value(ValueMode::CaptureControl, b)?;
+                        i += 1;
+                    }
+                }
+                State::ControlPendingArrayStart => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b']' {
+                        self.finish_control_pending();
+                        i += 1;
+                    } else {
+                        self.pending_has_any = true;
+                        self.start_value(ValueMode::SkipPendingElem, b)?;
+                        i += 1;
+                    }
+                }
+                State::ControlPendingArrayValue => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else {
+                        self.pending_has_any = true;
+                        self.start_value(ValueMode::SkipPendingElem, b)?;
+                        i += 1;
+                    }
+                }
+                State::ControlPendingArrayCommaOrEnd => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b',' {
+                        self.state = State::ControlPendingArrayValue;
+                        i += 1;
+                    } else if b == b']' {
+                        self.finish_control_pending();
+                        i += 1;
+                    } else {
+                        return Err("expected ',' or ']' in control pending array".into());
+                    }
+                }
+                State::ControlReceiptsStart => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b'[' {
+                        self.receipts_has_any = false;
+                        self.receipts_all_valid = true;
+                        self.current_key = None;
+                        self.state = State::ControlReceiptsArrayStart;
+                        i += 1;
+                    } else {
+                        self.start_value(ValueMode::CaptureControl, b)?;
+                        i += 1;
+                    }
+                }
+                State::ControlReceiptsArrayStart => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b']' {
+                        self.finish_control_receipts();
+                        i += 1;
+                    } else if b == b'{' {
+                        self.in_receipt = true;
+                        self.receipt_ack_known = false;
+                        self.receipt_native_obj = false;
+                        self.current_key = None;
+                        self.state = State::ObjectStart;
+                        i += 1;
+                    } else {
+                        self.receipts_has_any = true;
+                        self.receipts_all_valid = false;
+                        self.start_value(ValueMode::SkipReceiptElem, b)?;
+                        i += 1;
+                    }
+                }
+                State::ControlReceiptsArrayValue => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b'{' {
+                        self.in_receipt = true;
+                        self.receipt_ack_known = false;
+                        self.receipt_native_obj = false;
+                        self.current_key = None;
+                        self.state = State::ObjectStart;
+                        i += 1;
+                    } else {
+                        self.receipts_has_any = true;
+                        self.receipts_all_valid = false;
+                        self.start_value(ValueMode::SkipReceiptElem, b)?;
+                        i += 1;
+                    }
+                }
+                State::ControlReceiptsArrayCommaOrEnd => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b',' {
+                        self.state = State::ControlReceiptsArrayValue;
+                        i += 1;
+                    } else if b == b']' {
+                        self.finish_control_receipts();
+                        i += 1;
+                    } else {
+                        return Err("expected ',' or ']' in control receipts array".into());
+                    }
+                }
+                State::ReceiptNativeAckStart => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else {
+                        self.receipt_native_obj = b == b'{';
+                        self.current_key = None;
+                        self.start_value(ValueMode::Skip, b)?;
+                        i += 1;
+                    }
+                }
                 State::ExpectValue => {
                     if is_ws(b) {
                         i += 1;
                     } else {
-                        let mode = if self.in_actor {
+                        let mode = if self.in_receipt {
+                            match self.current_key.as_deref() {
+                                Some("acknowledgementState") => ValueMode::CaptureReceiptAckState,
+                                _ => ValueMode::Skip,
+                            }
+                        } else if self.in_control {
+                            match self.current_key.as_deref() {
+                                Some(k) if CONTROL_SCALAR_KEYS.contains(&k) => {
+                                    ValueMode::CaptureControl
+                                }
+                                _ => ValueMode::Skip,
+                            }
+                        } else if self.in_actor {
                             match self.current_key.as_deref() {
                                 Some(k) if ACTOR_FILTER_KEYS.contains(&k) => {
                                     ValueMode::CaptureActor
@@ -556,7 +796,12 @@ impl<'a> FilterParser<'a> {
                     }
                 }
                 State::ValuePrimitive { mode } => {
-                    let delim = if mode == ValueMode::SkipActorElem {
+                    let delim = if matches!(
+                        mode,
+                        ValueMode::SkipActorElem
+                            | ValueMode::SkipPendingElem
+                            | ValueMode::SkipReceiptElem
+                    ) {
                         is_ws(b) || b == b',' || b == b']'
                     } else {
                         is_ws(b) || b == b',' || b == b'}'
@@ -848,12 +1093,30 @@ impl<'a> FilterParser<'a> {
 
     fn capture_byte(&mut self, mode: ValueMode, b: u8) -> Result<()> {
         match mode {
-            ValueMode::Skip | ValueMode::SkipActorElem => return Ok(()),
+            ValueMode::Skip
+            | ValueMode::SkipActorElem
+            | ValueMode::SkipPendingElem
+            | ValueMode::SkipReceiptElem => return Ok(()),
             ValueMode::CaptureActor => {
                 if self.actor_kept_bytes >= ACTOR_FIELD_LIMIT {
                     return Err("oversized actor fields in filtered JSON response".into());
                 }
                 self.actor_kept_bytes += 1;
+                self.current_buf.push(b);
+                return Ok(());
+            }
+            ValueMode::CaptureControl => {
+                if self.control_kept_bytes >= CONTROL_FIELD_LIMIT {
+                    return Err("oversized control fields in filtered JSON response".into());
+                }
+                self.control_kept_bytes += 1;
+                self.current_buf.push(b);
+                return Ok(());
+            }
+            ValueMode::CaptureReceiptAckState => {
+                if self.current_buf.len() >= CONTROL_FIELD_LIMIT {
+                    return Err("oversized receipt state in filtered JSON response".into());
+                }
                 self.current_buf.push(b);
                 return Ok(());
             }
@@ -894,10 +1157,34 @@ impl<'a> FilterParser<'a> {
                     upsert_field(&mut self.actor_fields, key, val);
                 }
             }
+            ValueMode::CaptureControl => {
+                if let Some(key) = self.current_key.take() {
+                    let val = std::mem::take(&mut self.current_buf);
+                    upsert_field(&mut self.control_fields, key, val);
+                }
+            }
+            ValueMode::CaptureReceiptAckState => {
+                self.current_key = None;
+                let val = std::mem::take(&mut self.current_buf);
+                self.receipt_ack_known =
+                    serde_json::from_slice::<String>(&val).ok().as_deref() == Some("known");
+            }
             ValueMode::SkipActorElem => {
                 self.current_key = None;
                 self.current_buf.clear();
                 self.state = State::ActorsArrayCommaOrEnd;
+                return Ok(());
+            }
+            ValueMode::SkipPendingElem => {
+                self.current_key = None;
+                self.current_buf.clear();
+                self.state = State::ControlPendingArrayCommaOrEnd;
+                return Ok(());
+            }
+            ValueMode::SkipReceiptElem => {
+                self.current_key = None;
+                self.current_buf.clear();
+                self.state = State::ControlReceiptsArrayCommaOrEnd;
                 return Ok(());
             }
             ValueMode::Skip => {
@@ -907,6 +1194,28 @@ impl<'a> FilterParser<'a> {
         }
         self.state = State::ObjectCommaOrClose;
         Ok(())
+    }
+
+    fn finish_control_pending(&mut self) {
+        let summary = if self.pending_has_any {
+            b"[\"_\"]".to_vec()
+        } else {
+            b"[]".to_vec()
+        };
+        upsert_field(&mut self.control_fields, "pending".to_owned(), summary);
+        self.state = State::ObjectCommaOrClose;
+    }
+
+    fn finish_control_receipts(&mut self) {
+        let summary = if !self.receipts_has_any {
+            b"[]".to_vec()
+        } else if self.receipts_all_valid {
+            b"[{\"acknowledgementState\":\"known\",\"nativeAcknowledgement\":{}}]".to_vec()
+        } else {
+            b"[{}]".to_vec()
+        };
+        upsert_field(&mut self.control_fields, "receipts".to_owned(), summary);
+        self.state = State::ObjectCommaOrClose;
     }
 
     fn finish_actors_array(&mut self) -> Result<()> {
@@ -924,7 +1233,41 @@ impl<'a> FilterParser<'a> {
     }
 
     fn close_filtered_object(&mut self) -> Result<()> {
-        if self.in_actor {
+        if self.in_receipt {
+            self.in_receipt = false;
+            self.receipts_has_any = true;
+            if !(self.receipt_ack_known && self.receipt_native_obj) {
+                self.receipts_all_valid = false;
+            }
+            self.state = State::ControlReceiptsArrayCommaOrEnd;
+        } else if self.in_control {
+            self.in_control = false;
+            let fields = std::mem::take(&mut self.control_fields);
+            self.control_kept_bytes = 0;
+            let mut elem = Vec::with_capacity(256);
+            elem.push(b'{');
+            for (idx, (key, val)) in fields.iter().enumerate() {
+                if idx > 0 {
+                    elem.push(b',');
+                }
+                elem.extend_from_slice(
+                    serde_json::to_string(key)
+                        .map_err(|_| "invalid control key")?
+                        .as_bytes(),
+                );
+                elem.push(b':');
+                elem.extend_from_slice(val);
+            }
+            elem.push(b'}');
+            if self.kept_bytes.saturating_add(elem.len()) > self.kept_limit {
+                return Err("oversized filtered JSON response".into());
+            }
+            self.kept_bytes += elem.len();
+            if let MissionField::Object(mission_fields) = &mut self.mission {
+                upsert_field(mission_fields, "control".to_owned(), elem);
+            }
+            self.state = State::ObjectCommaOrClose;
+        } else if self.in_actor {
             self.in_actor = false;
             let fields = std::mem::take(&mut self.actor_fields);
             self.actor_kept_bytes = 0;

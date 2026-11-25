@@ -141,20 +141,17 @@ pub(super) async fn ready(app: &App, scope: &Scope, row: &Value) -> Result<(), E
     let source: J = serde_json::from_value(row.clone()).map_err(|_| unknown())?;
     let session = Session::read(&source);
     let loc = session.location.as_ref().ok_or_else(unknown)?;
-    let family = obs.family(&session).await;
-    let active = obs.get("/api/session/active", &[], 256 * 1024, deadline).await.map_err(|_| unknown())?;
-    let active = active.get("data").and_then(J::obj).ok_or_else(unknown)?;
-    if active.iter().any(|(id, v)| id == &session.id && truthy(v)) {
-        return Err(busy());
-    }
-    let family = match family {
+    let family = match obs.family(&session).await {
         Ok(family) => family,
         Err(_) => {
+            let active = obs.get("/api/session/active", &[], 256 * 1024, deadline).await.map_err(|_| unknown())?;
+            let active = active.get("data").and_then(J::obj).ok_or_else(unknown)?;
             return Err(
-                if obs
-                    .active_descendant(&session.id, active, &mut HashMap::new(), &mut 256, deadline)
-                    .await
-                    .unwrap_or(false)
+                if active.iter().any(|(id, v)| id == &session.id && truthy(v))
+                    || obs
+                        .active_descendant(&session.id, active, &mut HashMap::new(), &mut 256, deadline)
+                        .await
+                        .unwrap_or(false)
                 {
                     busy()
                 } else {
@@ -163,9 +160,6 @@ pub(super) async fn ready(app: &App, scope: &Scope, row: &Value) -> Result<(), E
             );
         }
     };
-    if active.iter().any(|(id, v)| family.has(id) && truthy(v)) {
-        return Err(busy());
-    }
     let mut inbox_paths = Vec::with_capacity(family.order.len());
     for id in &family.order {
         let id = super::activity::native::component(id).ok_or_else(unknown)?;
@@ -175,7 +169,8 @@ pub(super) async fn ready(app: &App, scope: &Scope, row: &Value) -> Result<(), E
         obs.get(path, &[], 512 * 1024, deadline).await.map_err(|_| unknown())
     });
     let dir_query = [("location[directory]", loc.directory.as_str())];
-    let (inboxes, forms, permissions, shells) = tokio::try_join!(
+    let (active, inboxes, forms, permissions, shells) = tokio::try_join!(
+        async { obs.get("/api/session/active", &[], 256 * 1024, deadline).await.map_err(|_| unknown()) },
         futures_util::future::try_join_all(inbox_futs),
         async { obs.get("/api/form", &dir_query, 2 * 1024 * 1024, deadline).await.map_err(|_| unknown()) },
         async {
@@ -185,6 +180,10 @@ pub(super) async fn ready(app: &App, scope: &Scope, row: &Value) -> Result<(), E
         },
         async { obs.get("/api/shell", &dir_query, 2 * 1024 * 1024, deadline).await.map_err(|_| unknown()) },
     )?;
+    let active = active.get("data").and_then(J::obj).ok_or_else(unknown)?;
+    if active.iter().any(|(id, v)| (id == &session.id || family.has(id)) && truthy(v)) {
+        return Err(busy());
+    }
     for body in inboxes {
         if !body.get("data").and_then(J::arr).ok_or_else(unknown)?.is_empty() {
             return Err(busy());

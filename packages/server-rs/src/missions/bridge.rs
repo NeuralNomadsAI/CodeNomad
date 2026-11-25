@@ -176,7 +176,8 @@ pub(super) async fn sync_environment(app: &App, scope: &Scope, sid: &str) -> Res
 }
 
 /// Advisory Git availability context, scoped to the already-authorized native root session.
-/// Mirrors `packages/server/src/workspaces/session-git-context.ts` within one 2 s budget.
+/// Mirrors `packages/server/src/workspaces/session-git-context.ts` and `git-requirement.ts`
+/// within one 2 s budget.
 pub(super) async fn sync_git_context(app: &Shared, scope: &Scope, row: &Value) {
     const KEY: &str = "codenomad.git-availability";
     const CONTEXT: &str = "CodeNomad cannot run Git from its backend process PATH. Git is a prerequisite for full functionality, but directory-only conversation access is tolerated so the user can consult you and ask for installation help. CodeNomad Git operations and worktree discovery, creation, removal and moves are unavailable. Session access is limited to the explicitly opened physical folder; other checkouts can be opened separately. The agent's execution host may differ from the CodeNomad backend (for example WSL or a remote connection): Git working in your shell does not prove it works in the backend. Help install Git for the backend account when requested. Windows supports per-user installation without administrator rights; on Linux/macOS choose an installation method appropriate to the user's permissions and existing tools. After changing the backend PATH, fully restart CodeNomad or its server process. Do not restart the shared OpenCode daemon just to refresh CodeNomad's PATH. This context reports a dependency limitation, not a request to interrupt the user's current task.";
@@ -185,11 +186,24 @@ pub(super) async fn sync_git_context(app: &Shared, scope: &Scope, row: &Value) {
         let mut cmd = tokio::process::Command::new("git");
         cmd.arg("--version")
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true);
         #[cfg(windows)]
         cmd.creation_flags(0x0800_0000);
-        let available = cmd.status().await.is_ok_and(|s| s.success());
+        let available = match cmd.output().await {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some(false),
+            Ok(out)
+                if out.status.success()
+                    && std::str::from_utf8(&out.stdout).ok().is_some_and(is_git_version_output) =>
+            {
+                Some(true)
+            }
+            _ => None,
+        };
+        let Some(available) = available else {
+            return;
+        };
         if current_root(app, scope, row).await.is_err() {
             return;
         }
@@ -215,6 +229,14 @@ pub(super) async fn sync_git_context(app: &Shared, scope: &Scope, row: &Value) {
         }
     };
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), work).await;
+}
+
+fn is_git_version_output(stdout: &str) -> bool {
+    let trimmed = stdout.trim();
+    trimmed.len() > 12
+        && trimmed.is_char_boundary(12)
+        && trimmed[..12].eq_ignore_ascii_case("git version ")
+        && trimmed[12..].chars().next().is_some_and(|c| !c.is_whitespace())
 }
 
 /// Optional named instruction, pinned to the same root and connection as

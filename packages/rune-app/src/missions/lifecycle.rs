@@ -993,7 +993,7 @@ impl Lifecycle {
                 };
                 self.feedback = Some((source.clone(), intent.target.clone(), key));
             }
-            outcome != LifecycleOutcome::Rejected
+            outcome != LifecycleOutcome::Rejected && outcome != LifecycleOutcome::MissionNotFound
         });
         (finished, auth_expired)
     }

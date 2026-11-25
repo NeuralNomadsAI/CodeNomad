@@ -305,11 +305,14 @@ fn background_refresh_keeps_actions_vertical_position_stable() {
         let actions =
             rune_theme_codenomad::layout::button("Check status", false, |_: &mut Host| {})
                 .key("mission-control-primary");
+        let cleanups =
+            rune_theme_codenomad::layout::button("Retry cleanup", false, |_: &mut Host| {})
+                .key("mission-below-detail");
         super::super::panel_body(
             &host.panel,
             |h: &mut Host| (Some(&mut h.panel), &mut h.fallback),
             actions,
-            rune::el(),
+            cleanups,
             None,
         )
     }
@@ -376,27 +379,38 @@ fn background_refresh_keeps_actions_vertical_position_stable() {
         Env::new(false, 1.0),
     );
     rt.frame(0.016);
-    let control_y = |rt: &Runtime<Host>| {
+    let element_y = |rt: &Runtime<Host>, key: &str| {
         rt.elements()
             .into_iter()
-            .find(|el| el.key.as_deref() == Some("mission-control-primary"))
-            .expect("primary mission control button rendered")
+            .find(|el| el.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("{key} rendered"))
             .rect[1]
     };
-    let y_before = control_y(&rt);
+    let control_y_before = element_y(&rt, "mission-control-primary");
+    let below_detail_y_before = element_y(&rt, "mission-below-detail");
 
-    // Mark summaries, detail, and observation busy as during a background refresh.
-    let (cancel_sum, _rx_sum) = bounded::<()>(1);
-    rt.state.panel.lanes[Kind::Summaries as usize].active = Some((1, cancel_sum));
-    rt.state.panel.detail.refresh();
-    rt.state.panel.observation.refresh();
-    assert!(rt.state.panel.busy(Kind::Summaries));
-    assert!(rt.state.panel.detail.busy());
+    // Mark summaries, detail, and observation (including a revision advance) busy as during a
+    // background refresh, using `rt.update` so Rune re-runs `view`.
+    rt.update(|host, _| {
+        let (cancel_sum, _rx_sum) = bounded::<()>(1);
+        host.panel.lanes[Kind::Summaries as usize].active = Some((1, cancel_sum));
+        std::mem::forget(_rx_sum);
+        host.panel.detail.refresh();
+        host.panel.observation.observe(8);
+        host.panel.observation.refresh();
+        assert!(host.panel.busy(Kind::Summaries));
+        assert!(host.panel.detail.busy());
+    });
 
     rt.frame(0.016);
-    let y_during = control_y(&rt);
+    let control_y_during = element_y(&rt, "mission-control-primary");
+    let below_detail_y_during = element_y(&rt, "mission-below-detail");
     assert!(
-        (y_before - y_during).abs() < 0.01,
-        "background refresh shifted mission controls vertically: before={y_before}, during={y_during}"
+        (control_y_before - control_y_during).abs() < 0.01,
+        "background refresh shifted mission controls vertically: before={control_y_before}, during={control_y_during}"
+    );
+    assert!(
+        (below_detail_y_before - below_detail_y_during).abs() < 0.01,
+        "background refresh shifted cleanup rows below detail vertically: before={below_detail_y_before}, during={below_detail_y_during}"
     );
 }

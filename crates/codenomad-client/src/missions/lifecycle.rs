@@ -1,4 +1,4 @@
-use super::{directory::panel_id, stream_json::read_filtered_json_for_coordinator};
+use super::{directory::panel_id, stream_json::read_filtered_json_for_lifecycle};
 use crate::{
     backend::Backend,
     history::{Result, valid_id},
@@ -119,6 +119,7 @@ impl ControlReceipt {
 pub enum LifecycleOutcome {
     Acknowledged(u64),
     Rejected,
+    MissionNotFound,
     Unconfirmed,
     AuthenticationRequired,
 }
@@ -203,7 +204,7 @@ impl Backend {
             }
             return Ok(LifecycleOutcome::Unconfirmed);
         }
-        let body: serde_json::Value = read_filtered_json_for_coordinator(
+        let body: serde_json::Value = read_filtered_json_for_lifecycle(
             response,
             &["code", "mission"],
             &[
@@ -231,10 +232,13 @@ fn settle(
     if status.as_u16() == 409
         && matches!(
             body["code"].as_str(),
-            Some("revision-conflict" | "mission-finished" | "mission-not-found")
+            Some("revision-conflict" | "mission-finished")
         )
     {
         return LifecycleOutcome::Rejected;
+    }
+    if status.as_u16() == 404 && body["code"].as_str() == Some("mission-not-found") {
+        return LifecycleOutcome::MissionNotFound;
     }
     let mission = &body["mission"];
     let control = &mission["control"];
@@ -364,22 +368,44 @@ mod tests {
                 "{path}"
             );
         }
-        for (code, expected) in [
-            ("revision-conflict", LifecycleOutcome::Rejected),
-            ("mission-finished", LifecycleOutcome::Rejected),
-            ("mission-not-found", LifecycleOutcome::Rejected),
-            ("control-pending", LifecycleOutcome::Unconfirmed),
-            ("request-conflict", LifecycleOutcome::Unconfirmed),
+        for (status, body, expected) in [
+            (
+                reqwest::StatusCode::CONFLICT,
+                json!({"code":"revision-conflict"}),
+                LifecycleOutcome::Rejected,
+            ),
+            (
+                reqwest::StatusCode::CONFLICT,
+                json!({"code":"mission-finished"}),
+                LifecycleOutcome::Rejected,
+            ),
+            (
+                reqwest::StatusCode::NOT_FOUND,
+                json!({"code":"mission-not-found"}),
+                LifecycleOutcome::MissionNotFound,
+            ),
+            (
+                reqwest::StatusCode::NOT_FOUND,
+                json!({"error":"Workspace unavailable"}),
+                LifecycleOutcome::Unconfirmed,
+            ),
+            (
+                reqwest::StatusCode::CONFLICT,
+                json!({"code":"mission-not-found"}),
+                LifecycleOutcome::Unconfirmed,
+            ),
+            (
+                reqwest::StatusCode::CONFLICT,
+                json!({"code":"control-pending"}),
+                LifecycleOutcome::Unconfirmed,
+            ),
+            (
+                reqwest::StatusCode::CONFLICT,
+                json!({"code":"request-conflict"}),
+                LifecycleOutcome::Unconfirmed,
+            ),
         ] {
-            assert_eq!(
-                settle(
-                    reqwest::StatusCode::CONFLICT,
-                    &json!({"code":code}),
-                    &target,
-                    &request
-                ),
-                expected
-            );
+            assert_eq!(settle(status, &body, &target, &request), expected);
         }
     }
 
@@ -405,15 +431,18 @@ mod tests {
                 coordinator: "coordinator".into(),
                 coordinator_location: Some(("/fixture".into(), None)),
             };
-            // Server handles: (1) >6 MiB lifecycle 200 ack, (2) 401 + auth/status false.
+            // Server handles: (1) >8 MiB lifecycle 200 ack with large control.receipts & targets,
+            // (2) >6 MiB lifecycle 200 with one unknown receipt -> Unconfirmed,
+            // (3) 401 + auth/status false.
             let server = tokio::spawn(async move {
-                // 1. Large 200 response (>6 MiB task brief).
+                // 1. Large 200 response (>6 MiB nativeAcknowledgement + >2 MiB targets).
                 let (mut s, _) = listener.accept().await.unwrap();
                 let mut buf = vec![0u8; 4096];
                 let _ = s.read(&mut buf).await;
-                let huge = "a".repeat(6 * 1024 * 1024);
+                let huge_ack = "a".repeat(6 * 1024 * 1024);
+                let huge_target = "t".repeat(2 * 1024 * 1024);
                 let body = format!(
-                    r#"{{"mission":{{"id":"msn-one","projectID":"project","projectCanonical":"/fixture","coordinatorSessionId":"coordinator","revision":8,"actors":[{{"kind":"coordinator","sessionId":"coordinator","location":{{"directory":"/fixture"}}}}],"tasks":[{{"brief":"{huge}"}}],"control":{{"missionID":"msn-one","requestID":"{req_id}","action":"pause","expectedRevision":7,"graceful":true,"pending":[],"completedRevision":8}}}}}}"#
+                    r#"{{"mission":{{"id":"msn-one","projectID":"project","projectCanonical":"/fixture","coordinatorSessionId":"coordinator","revision":8,"actors":[{{"kind":"coordinator","sessionId":"coordinator","location":{{"directory":"/fixture"}}}}],"control":{{"missionID":"msn-one","requestID":"{req_id}","action":"pause","expectedRevision":7,"graceful":true,"pending":[],"completedRevision":8,"targets":["{huge_target}"],"receipts":[{{"sessionID":"ses-1","acknowledgementState":"known","nativeAcknowledgement":{{"payload":"{huge_ack}"}}}}]}}}}}}"#
                 );
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -422,7 +451,20 @@ mod tests {
                 s.write_all(resp.as_bytes()).await.unwrap();
                 s.write_all(body.as_bytes()).await.unwrap();
 
-                // 2. 401 on control POST, then GET /api/auth/status -> authenticated: false.
+                // 2. Large 200 response where a second receipt is unknown -> must stay Unconfirmed.
+                let (mut s_unk, _) = listener.accept().await.unwrap();
+                let _ = s_unk.read(&mut buf).await;
+                let body_unk = format!(
+                    r#"{{"mission":{{"id":"msn-one","projectID":"project","projectCanonical":"/fixture","coordinatorSessionId":"coordinator","revision":8,"actors":[{{"kind":"coordinator","sessionId":"coordinator","location":{{"directory":"/fixture"}}}}],"control":{{"missionID":"msn-one","requestID":"{req_id}","action":"pause","expectedRevision":7,"graceful":true,"pending":[],"completedRevision":8,"receipts":[{{"sessionID":"ses-1","acknowledgementState":"known","nativeAcknowledgement":{{"payload":"{huge_ack}"}}}},{{"sessionID":"ses-2","acknowledgementState":"unknown","nativeAcknowledgement":null}}]}}}}}}"#
+                );
+                let resp_unk = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body_unk.len()
+                );
+                s_unk.write_all(resp_unk.as_bytes()).await.unwrap();
+                s_unk.write_all(body_unk.as_bytes()).await.unwrap();
+
+                // 3. 401 on control POST, then GET /api/auth/status -> authenticated: false.
                 let (mut s2, _) = listener.accept().await.unwrap();
                 let _ = s2.read(&mut buf).await;
                 let ebody = r#"{"error":"unauthorized"}"#;
@@ -444,6 +486,9 @@ mod tests {
 
             let large = backend.control_mission(&target, &request).await.unwrap();
             assert_eq!(large, LifecycleOutcome::Acknowledged(8));
+
+            let unknown = backend.control_mission(&target, &request).await.unwrap();
+            assert_eq!(unknown, LifecycleOutcome::Unconfirmed);
 
             let expired = backend.control_mission(&target, &request).await.unwrap();
             assert_eq!(expired, LifecycleOutcome::AuthenticationRequired);

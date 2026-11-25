@@ -146,7 +146,7 @@ impl App {
             mission_reads: crate::config::serve() || crate::bench::missions_read(),
             mission_read_slot: Arc::new(Semaphore::new(1)),
             mission_large_response_budget: Arc::new(Semaphore::new(2048)),
-            mission_mutation_response_budget: Arc::new(Semaphore::new(2048)),
+            mission_mutation_response_budget: Arc::new(Semaphore::new(4096)),
             linked_events: Default::default(),
             mission_bridge,
             mission_control_slot: Arc::new(Semaphore::new(1)),

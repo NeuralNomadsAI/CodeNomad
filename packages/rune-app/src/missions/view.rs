@@ -144,7 +144,7 @@ pub(crate) fn panel_body<S: 'static>(
                         .child(
                             layout::button(t("missions.control.refresh"), false, move |s| {
                                 if let Some(panel) = refresh.get(s).0 {
-                                    panel.refresh();
+                                    panel.refresh_manual();
                                 }
                             })
                             .key("missions-refresh"),

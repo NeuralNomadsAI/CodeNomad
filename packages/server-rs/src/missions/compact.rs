@@ -43,11 +43,6 @@ fn j_is_null(value: Option<&J>) -> bool {
     matches!(value, None | Some(J::Null))
 }
 
-fn take_field(entries: &mut Vec<(String, J)>, key: &str) -> Option<J> {
-    let pos = entries.iter().position(|(k, _)| k == key)?;
-    Some(entries.swap_remove(pos).1)
-}
-
 fn take_field_ordered(entries: &mut Vec<(String, J)>, key: &str) -> Option<J> {
     let pos = entries.iter().position(|(k, _)| k == key)?;
     Some(entries.remove(pos).1)
@@ -871,7 +866,7 @@ pub(super) fn compact_mission_j(map: J) -> J {
         .map(|change| match change {
             J::O(mut c_entries) => {
                 let bodies = described_owned(&mut c_entries, CHANGE_BODY_FIELDS);
-                let reason = take_field(&mut c_entries, "reason");
+                let reason = take_field_ordered(&mut c_entries, "reason");
                 strip_fields(&mut c_entries, CHANGE_BODY_FIELDS);
                 set_field(&mut c_entries, "bodies", J::O(bodies));
                 if let Some(J::S(text)) = reason {
@@ -885,7 +880,7 @@ pub(super) fn compact_mission_j(map: J) -> J {
 
     if full {
         let bodies = described_owned(&mut entries, MISSION_BODY_FIELDS);
-        let obj_text = take_field(&mut entries, "objective");
+        let obj_text = take_field_ordered(&mut entries, "objective");
         let briefing = take_field_ordered(&mut entries, "briefing");
         strip_fields(&mut entries, &["objective", "notes", "summary", "briefing", "frontier", "claims"]);
         set_field(&mut entries, "bodies", J::O(bodies));

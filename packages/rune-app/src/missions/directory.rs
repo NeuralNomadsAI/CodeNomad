@@ -26,7 +26,14 @@ pub(super) enum Kind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Read {
     Refresh,
+    ManualRefresh,
     More,
+}
+
+impl Read {
+    fn is_refresh(self) -> bool {
+        !matches!(self, Self::More)
+    }
 }
 
 #[derive(Default)]
@@ -35,9 +42,11 @@ struct Lane {
     window: Option<Window>,
     failed: Option<Read>,
     owed: bool,
+    owed_manual: bool,
     seen: HashSet<(String, Option<String>)>,
     seen_order: VecDeque<(String, Option<String>)>,
-    tail_keys: HashSet<(String, Option<String>)>,
+    tail_pos: HashMap<(String, Option<String>), usize>,
+    tail_pinned_len: usize,
     prefix_len: usize,
     #[cfg(test)]
     tail_visits: usize,
@@ -469,16 +478,28 @@ impl Panel {
         self.remember_deleted_mission(mission_id);
         let lane = &mut self.lanes[Kind::Summaries as usize];
         let mut removed_in_prefix = 0usize;
+        let mut removed_in_tail = false;
         let mut idx = 0usize;
         self.summaries.retain(|row| {
             let keep = row.id != mission_id;
-            if !keep && idx < lane.prefix_len {
-                removed_in_prefix += 1;
+            if !keep {
+                if idx < lane.prefix_len {
+                    removed_in_prefix += 1;
+                } else {
+                    removed_in_tail = true;
+                }
             }
             idx += 1;
             keep
         });
         lane.prefix_len = lane.prefix_len.saturating_sub(removed_in_prefix);
+        if removed_in_tail {
+            lane.tail_pos.clear();
+            lane.tail_pinned_len = 0;
+            for (rel, row) in self.summaries[lane.prefix_len..].iter().enumerate() {
+                lane.tail_pos.insert((row.id.clone(), None), rel);
+            }
+        }
         if self.selected.as_deref() == Some(mission_id) {
             self.selection_live.revoke();
             self.mounted_selection_live.revoke();
@@ -549,7 +570,8 @@ impl Panel {
         } else {
             self.cleanups.insert(0, receipt.clone());
             self.lanes[Kind::Cleanups as usize].prefix_len = 0;
-            self.lanes[Kind::Cleanups as usize].tail_keys.clear();
+            self.lanes[Kind::Cleanups as usize].tail_pos.clear();
+            self.lanes[Kind::Cleanups as usize].tail_pinned_len = 0;
             self.cleanup_meta.insert(row_id.clone(), new_meta);
             if receipt.is_pending() {
                 pending_changed |= self
@@ -688,14 +710,26 @@ impl Panel {
     }
 
     pub(super) fn refresh(&mut self) {
+        self.refresh_with(Read::Refresh);
+    }
+
+    pub(super) fn refresh_manual(&mut self) {
+        self.refresh_with(Read::ManualRefresh);
+    }
+
+    fn refresh_with(&mut self, read: Read) {
         if self.visible {
             self.detail.refresh();
             self.observation.refresh();
             for kind in KINDS {
                 if self.busy(kind) {
-                    self.lanes[kind as usize].owed = true;
+                    let lane = &mut self.lanes[kind as usize];
+                    lane.owed = true;
+                    if read == Read::ManualRefresh {
+                        lane.owed_manual = true;
+                    }
                 } else {
-                    self.start(kind, Read::Refresh);
+                    self.start(kind, read);
                 }
             }
         }
@@ -885,7 +919,7 @@ impl Panel {
         }
         let lane = &mut self.lanes[kind as usize];
         let (offset, order) = match (read, &lane.window) {
-            (Read::Refresh, _) => (0, None),
+            (Read::Refresh | Read::ManualRefresh, _) => (0, None),
             (Read::More, Some(window)) if window.end < window.total => {
                 (window.end, Some(window.order.as_str()))
             }
@@ -946,7 +980,13 @@ impl Panel {
             lane.active = None;
             changed = true;
             let owed = std::mem::take(&mut lane.owed);
-            let keep_failed_more = done.read == Read::Refresh && lane.failed == Some(Read::More);
+            let owed_manual = std::mem::take(&mut lane.owed_manual);
+            let next_owed = if owed_manual {
+                Read::ManualRefresh
+            } else {
+                Read::Refresh
+            };
+            let keep_failed_more = done.read.is_refresh() && lane.failed == Some(Read::More);
             let order = keep_failed_more
                 .then(|| lane.window.as_ref().map(|w| w.order.clone()))
                 .flatten();
@@ -976,7 +1016,7 @@ impl Panel {
                         self.cleanup_view_live = LiveFlag::new(true);
                     }
                     if owed {
-                        self.start(done.kind, Read::Refresh);
+                        self.start(done.kind, next_owed);
                     }
                 }
                 Err(error) if error.is::<DirectoryAuthExpired>() => {
@@ -994,7 +1034,7 @@ impl Panel {
                         self.revoke_all_cleanup_tokens();
                     }
                     if owed {
-                        self.start(done.kind, Read::Refresh);
+                        self.start(done.kind, next_owed);
                     }
                 }
                 _ => {
@@ -1004,7 +1044,7 @@ impl Panel {
                         self.revoke_all_cleanup_tokens();
                     }
                     if owed {
-                        self.start(done.kind, Read::Refresh);
+                        self.start(done.kind, next_owed);
                     }
                 }
             }
@@ -1073,12 +1113,14 @@ impl Panel {
         {
             return false;
         }
-        if read == Read::Refresh
+        if read.is_refresh()
             && self.lanes[kind as usize].window.as_ref().is_some_and(|w| {
                 w.order == page.window.order
                     && w.total == page.window.total
                     && w.end > page.window.end
-                    && (kind != Kind::Cleanups || w.end <= CLEANUP_DISPLAY_CAP as u64)
+                    && (read != Read::ManualRefresh
+                        || kind != Kind::Cleanups
+                        || w.end <= CLEANUP_DISPLAY_CAP as u64)
             })
         {
             return true;
@@ -1208,7 +1250,7 @@ impl Panel {
                 let covered = page.window.end == page.window.total;
                 self.project = Some(page.project_id);
                 lane.window = Some(page.window);
-                let pending_changed = if read == Read::Refresh || (covered && had_tail) {
+                let pending_changed = if read.is_refresh() || (covered && had_tail) {
                     self.rebuild_cleanup_indices()
                 } else {
                     let mut changed = false;
@@ -1341,6 +1383,31 @@ impl Panel {
     }
 
     #[cfg(test)]
+    pub(super) fn accept_manual_refresh_cleanups_for_test(
+        &mut self,
+        order: &str,
+        total: u64,
+        rows: Vec<Cleanup>,
+    ) -> bool {
+        let end = rows.len() as u64;
+        self.accept(
+            Kind::Cleanups,
+            Read::ManualRefresh,
+            DirectoryPage {
+                project_id: self.project.clone().unwrap_or_else(|| "project".into()),
+                finish_high_water: None,
+                window: Window {
+                    order: order.into(),
+                    offset: 0,
+                    end,
+                    total,
+                },
+                rows: DirectoryRows::Cleanups(rows),
+            },
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn accept_cleanups_for_test(&mut self, rows: Vec<Cleanup>) -> bool {
         let len = rows.len() as u64;
         self.accept(
@@ -1462,10 +1529,11 @@ fn merge_filtered<T>(
     keep: impl Fn(&T) -> bool,
     pin: impl Fn(&T) -> bool,
 ) -> Option<Vec<T>> {
-    if read == Read::Refresh {
+    if read.is_refresh() {
         lane.seen.clear();
         lane.seen_order.clear();
-        lane.tail_keys.clear();
+        lane.tail_pos.clear();
+        lane.tail_pinned_len = 0;
         lane.prefix_len = 0;
     } else if rows.iter().any(|row| lane.seen.contains(&key(row))) {
         return None;
@@ -1480,26 +1548,48 @@ fn merge_filtered<T>(
             // Final page covers the entire order: drop any remaining old tail in O(1).
             if lane.prefix_len < display.len() {
                 evicted.extend(display.drain(lane.prefix_len..));
-                lane.tail_keys.clear();
+                lane.tail_pos.clear();
+                lane.tail_pinned_len = 0;
             }
         } else if lane.prefix_len < display.len() {
-            // Only touch the tail if incoming keys collide with it; otherwise O(page_size).
-            let mut collisions: HashSet<(String, Option<String>)> = incoming_keys
-                .into_iter()
-                .filter(|k| lane.tail_keys.remove(k))
-                .collect();
-            if !collisions.is_empty() {
-                let mut i = lane.prefix_len;
-                while i < display.len() && !collisions.is_empty() {
-                    #[cfg(test)]
-                    {
-                        lane.tail_visits += 1;
+            // Evict colliding tail rows in O(1) each via relative-offset index without scanning the tail,
+            // preserving the invariant that pinned tail rows precede unpinned tail rows.
+            for k in incoming_keys {
+                let Some(rel) = lane.tail_pos.remove(&k) else {
+                    continue;
+                };
+                #[cfg(test)]
+                {
+                    lane.tail_visits += 1;
+                }
+                let abs = lane.prefix_len + rel;
+                if rel < lane.tail_pinned_len {
+                    let last_pinned_rel = lane.tail_pinned_len - 1;
+                    if rel != last_pinned_rel {
+                        display.swap(abs, lane.prefix_len + last_pinned_rel);
+                        let moved_key = key(&display[abs]);
+                        lane.tail_pos.insert(moved_key, rel);
                     }
-                    let k = key(&display[i]);
-                    if collisions.remove(&k) {
-                        evicted.push(display.remove(i));
-                    } else {
-                        i += 1;
+                    let last_pinned_abs = lane.prefix_len + last_pinned_rel;
+                    let last_abs = display.len() - 1;
+                    if last_pinned_abs != last_abs {
+                        display.swap(last_pinned_abs, last_abs);
+                        let moved_key = key(&display[last_pinned_abs]);
+                        lane.tail_pos.insert(moved_key, last_pinned_rel);
+                    }
+                    lane.tail_pinned_len -= 1;
+                    if let Some(removed) = display.pop() {
+                        evicted.push(removed);
+                    }
+                } else {
+                    let last_abs = display.len() - 1;
+                    if abs != last_abs {
+                        display.swap(abs, last_abs);
+                        let moved_key = key(&display[abs]);
+                        lane.tail_pos.insert(moved_key, rel);
+                    }
+                    if let Some(removed) = display.pop() {
+                        evicted.push(removed);
                     }
                 }
             }
@@ -1508,7 +1598,9 @@ fn merge_filtered<T>(
                 let target_len = max_len.saturating_sub(kept.len());
                 while display.len() > lane.prefix_len && display.len() > target_len {
                     if let Some(removed) = display.pop() {
-                        lane.tail_keys.remove(&key(&removed));
+                        lane.tail_pos.remove(&key(&removed));
+                        lane.tail_pinned_len =
+                            lane.tail_pinned_len.min(display.len() - lane.prefix_len);
                         evicted.push(removed);
                     }
                 }
@@ -1531,7 +1623,9 @@ fn merge_filtered<T>(
             lane.prefix_len -= drop_prefix;
             while display.len() > max_len {
                 if let Some(removed) = display.pop() {
-                    lane.tail_keys.remove(&key(&removed));
+                    lane.tail_pos.remove(&key(&removed));
+                    lane.tail_pinned_len =
+                        lane.tail_pinned_len.min(display.len() - lane.prefix_len);
                     evicted.push(removed);
                 }
             }
@@ -1565,7 +1659,8 @@ fn merge_filtered<T>(
         evicted.extend(display.drain(..overflow));
     }
     lane.prefix_len = display.len();
-    lane.tail_keys.clear();
+    lane.tail_pos.clear();
+    lane.tail_pinned_len = 0;
     if window.end != window.total && !tail_rows.is_empty() {
         let mut pinned_tail = Vec::new();
         let mut unpinned_tail = Vec::new();
@@ -1586,13 +1681,25 @@ fn merge_filtered<T>(
         }
         let budget = cap.map_or(usize::MAX, |max_len| max_len.saturating_sub(display.len()));
         let mut remaining = budget;
-        for (k, row) in pinned_tail.into_iter().chain(unpinned_tail) {
+        for (k, row) in pinned_tail {
             if remaining == 0 {
                 evicted.push(row);
                 continue;
             }
             remaining -= 1;
-            lane.tail_keys.insert(k);
+            let rel = display.len() - lane.prefix_len;
+            lane.tail_pos.insert(k, rel);
+            lane.tail_pinned_len += 1;
+            display.push(row);
+        }
+        for (k, row) in unpinned_tail {
+            if remaining == 0 {
+                evicted.push(row);
+                continue;
+            }
+            remaining -= 1;
+            let rel = display.len() - lane.prefix_len;
+            lane.tail_pos.insert(k, rel);
             display.push(row);
         }
     }

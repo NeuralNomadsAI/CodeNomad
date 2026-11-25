@@ -138,18 +138,56 @@ pub fn parse(bytes: &[u8]) -> Option<J> {
 fn number(f: f64, out: &mut String) {
     if !f.is_finite() {
         out.push_str("null");
-    } else if f == 0.0 {
+        return;
+    }
+    if f == 0.0 {
         out.push('0');
-    } else if f.fract() == 0.0 && f.abs() < 1e21 {
-        out.push_str(&format!("{f:.0}"));
-    } else if f.abs() >= 1e-6 && f.abs() < 1e21 {
-        out.push_str(&format!("{f}"));
+        return;
+    }
+    if f < 0.0 {
+        out.push('-');
+    }
+    // Format from the shortest round-tripping decimal (`{:e}`), following ECMA-262 Number::toString.
+    let sci = format!("{:e}", f.abs());
+    let Some((mantissa, exp_str)) = sci.split_once('e') else {
+        out.push_str(&sci);
+        return;
+    };
+    let Ok(exp) = exp_str.parse::<i32>() else {
+        out.push_str(&sci);
+        return;
+    };
+    let digits: String = mantissa.chars().filter(|&c| c != '.').collect();
+    let k = digits.len() as i32;
+    let n = exp + 1;
+    if k <= n && n <= 21 {
+        out.push_str(&digits);
+        for _ in 0..(n - k) {
+            out.push('0');
+        }
+    } else if 0 < n && n <= 21 {
+        let split = n as usize;
+        out.push_str(&digits[..split]);
+        out.push('.');
+        out.push_str(&digits[split..]);
+    } else if -6 < n && n <= 0 {
+        out.push_str("0.");
+        for _ in 0..(-n) {
+            out.push('0');
+        }
+        out.push_str(&digits);
     } else {
-        // JavaScript exponent form: `1e+21`, `1.5e-7`.
-        let text = format!("{f:e}");
-        match text.split_once('e') {
-            Some((m, e)) if !e.starts_with('-') => out.push_str(&format!("{m}e+{e}")),
-            _ => out.push_str(&text),
+        out.push_str(&digits[..1]);
+        if digits.len() > 1 {
+            out.push('.');
+            out.push_str(&digits[1..]);
+        }
+        out.push('e');
+        if exp >= 0 {
+            out.push('+');
+            out.push_str(&exp.to_string());
+        } else {
+            out.push_str(&exp.to_string());
         }
     }
 }
@@ -338,6 +376,11 @@ mod tests {
     fn stringify_matches_json_stringify() {
         let v = parse(br#"{"b":1,"a":[true,null,-2,1.5,1e21,1e-7,"\u0001\n\"\\"],"b":3}"#).unwrap();
         assert_eq!(v.stringify(), r#"{"b":3,"a":[true,null,-2,1.5,1e+21,1e-7,"\u0001\n\"\\"]}"#);
+        let large_f64 = J::F(100_000_000_000_000_020_000.0);
+        assert_eq!(large_f64.stringify(), "100000000000000020000");
+        assert_eq!(J::F(1e20).stringify(), "100000000000000000000");
+        assert_eq!(J::F(1e-6).stringify(), "0.000001");
+        assert_eq!(J::F(-0.0).stringify(), "0");
     }
 
     fn header() -> Vec<(String, J)> {
