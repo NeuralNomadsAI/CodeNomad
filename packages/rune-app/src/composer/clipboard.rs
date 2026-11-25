@@ -70,14 +70,19 @@ pub fn request(s: &mut State, tx: &mut Tx) {
     });
 }
 
-pub fn menu(s: &mut State, point: (f32, f32), style: rune::PopupMenuStyle, tx: &mut Tx) {
+pub fn menu(
+    s: &mut State,
+    point: (f32, f32),
+    look: rune_theme_codenomad::layout::PopupMenuLook,
+    tx: &mut Tx,
+) {
     let scope = s.input_scope.clone();
     let (a, b) = s.draft.range();
     rune_theme_codenomad::layout::editor_menu(
         tx,
         point,
         a != b,
-        style,
+        look,
         move |s: &mut State, action, tx| {
             if !s.current_scope(&scope) || s.composer.editing_locked() {
                 return;

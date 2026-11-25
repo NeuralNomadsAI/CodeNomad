@@ -197,7 +197,7 @@ fn prose_for(
             steps,
             std::rc::Rc::as_ptr(&scope) as usize,
             active_locale,
-            layout::dark(),
+            layout::appearance_key(),
             &unwrapped,
             search_id,
             prose_query.map(|q| (q.terms, q.ranked, q.active)),

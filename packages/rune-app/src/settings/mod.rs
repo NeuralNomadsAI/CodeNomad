@@ -118,6 +118,20 @@ pub(crate) fn fixture_transcript(s: &mut State, settings: serde_json::Value) {
 }
 
 #[cfg(test)]
+pub(crate) fn fixture_appearance(
+    s: &mut State,
+    light_scheme: &str,
+    dark_scheme: &str,
+    high_contrast: &str,
+) {
+    s.settings
+        .shared
+        .borrow_mut()
+        .fixture_appearance(light_scheme, dark_scheme, high_contrast);
+    s.revision += 1;
+}
+
+#[cfg(test)]
 pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
     s.settings.shared.borrow_mut().fixture_usage(mode);
     s.revision += 1;

@@ -254,14 +254,14 @@ fn editor(s: &State, compact: bool) -> El {
     let input = {
         let physical_scope = scope.clone();
         let menu_scope = scope.clone();
-        let menu_style = layout::popup_menu_style();
+        let menu_look = layout::popup_menu_look();
         input
             .on_physical_input(move |s: &mut State, event, tx| {
                 s.current_scope(&physical_scope) && super::clipboard::physical(s, event, tx)
             })
             .on_secondary_press(move |s: &mut State, point, tx| {
                 if s.current_scope(&menu_scope) {
-                    super::clipboard::menu(s, (point.x, point.y), menu_style.clone(), tx);
+                    super::clipboard::menu(s, (point.x, point.y), menu_look.clone(), tx);
                 }
             })
             .on_drop_files(move |s: &mut State, paths, _| {

@@ -67,24 +67,24 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>, touch: bool) -> El {
             t("settings.behavior.expansionPresets.ariaLabel"),
             &labels,
         )
-            .current(Some(current))
-            .disabled(disabled)
-            .open(preset_open)
-            .on_toggle(screen::action(&s.input_scope, move |s| {
-                s.settings.transcript_filters.preset_open.set(!preset_open);
-            }))
-            .on_close(screen::action(&s.input_scope, |s| {
-                s.settings.transcript_filters.preset_open.set(false);
-            }))
-            .on_choose(move |s: &mut State, label, _| {
-                s.settings.transcript_filters.preset_open.set(false);
-                if let Some(i) = labels.iter().position(|option| *option == label) {
-                    s.settings
-                        .shared
-                        .borrow_mut()
-                        .set_transcript(None, PRESETS[i]);
-                }
-            });
+        .current(Some(current))
+        .disabled(disabled)
+        .open(preset_open)
+        .on_toggle(screen::action(&s.input_scope, move |s| {
+            s.settings.transcript_filters.preset_open.set(!preset_open);
+        }))
+        .on_close(screen::action(&s.input_scope, |s| {
+            s.settings.transcript_filters.preset_open.set(false);
+        }))
+        .on_choose(move |s: &mut State, label, _| {
+            s.settings.transcript_filters.preset_open.set(false);
+            if let Some(i) = labels.iter().position(|option| *option == label) {
+                s.settings
+                    .shared
+                    .borrow_mut()
+                    .set_transcript(None, PRESETS[i]);
+            }
+        });
         let key_scope = scope.clone();
         let body = col()
             .full_width()
@@ -234,9 +234,8 @@ fn the_popup_uses_the_active_occurrence_and_dismisses_on_escape() {
                 .find_map(|child| find(child, key))
         }
         let preset = find(&tree, "filters-preset-trigger").unwrap();
-        let expected_name = crate::strings::with_locale("en", || {
-            t("settings.behavior.expansionPresets.ariaLabel")
-        });
+        let expected_name =
+            crate::strings::with_locale("en", || t("settings.behavior.expansionPresets.ariaLabel"));
         let expected = crate::strings::with_locale("en", || preset_label("balanced"));
         assert_eq!(preset["name"], expected_name);
         assert_eq!(preset["value"], expected);
@@ -339,9 +338,8 @@ fn preset_exposes_accessible_value_and_escape_closes_list_before_popup() {
     rt.frame(0.02);
     assert!(rt.find("transcript-filters").is_some());
 
-    let expected_label = crate::strings::with_locale("en", || {
-        t("settings.behavior.expansionPresets.ariaLabel")
-    });
+    let expected_label =
+        crate::strings::with_locale("en", || t("settings.behavior.expansionPresets.ariaLabel"));
     let balanced = crate::strings::with_locale("en", || preset_label("balanced"));
     let everything = crate::strings::with_locale("en", || preset_label("everything"));
     let custom = crate::strings::with_locale("en", || preset_label("custom"));
@@ -443,5 +441,37 @@ fn preset_exposes_accessible_value_and_escape_closes_list_before_popup() {
             .to_string()
             .contains("focused"),
         "closing Message content popup with Escape must return focus to trigger"
+    );
+
+    // Consecutive Escapes right after keyboard-opening the preset list close the list first,
+    // then the popup, returning focus at each step.
+    let (x, y) = rt.find(TRIGGER).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    rt.update(|_, tx| tx.focus("filters-preset-trigger", true));
+    rt.frame(0.02);
+    let enter = KeyEvent {
+        key: Key::Enter,
+        mods: Default::default(),
+    };
+    rt.key(enter.clone());
+    rt.key_up(enter);
+    rt.frame(0.02);
+    assert!(rt.find("filters-preset-content").is_some());
+    press_escape(&mut rt);
+    assert!(rt.find("filters-preset-content").is_none());
+    assert!(rt.find("transcript-filters").is_some());
+    assert!(
+        a11y_node(&rt.accessibility_json(), "filters-preset-trigger").unwrap()["states"]
+            .to_string()
+            .contains("focused")
+    );
+    press_escape(&mut rt);
+    assert!(rt.find("transcript-filters").is_none());
+    assert!(
+        a11y_node(&rt.accessibility_json(), TRIGGER).unwrap()["states"]
+            .to_string()
+            .contains("focused")
     );
 }
