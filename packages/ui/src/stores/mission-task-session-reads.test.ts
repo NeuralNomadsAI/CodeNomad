@@ -255,3 +255,28 @@ test("a completed queued rerun registers no owner: releasing the last view still
   assert.equal(store.taskSession("inst", mission, "build"), undefined, "nothing is published without an owner")
   assert.equal(state.activeReads, 0)
 })
+
+test("coordinator message scan stops after the first page once every task is linked", async () => {
+  let pages = 0
+  const root = {
+    message: {
+      list: async ({ cursor }: { sessionID: string; cursor?: string }) => {
+        pages++
+        if (!cursor) {
+          return {
+            data: [{ type: "assistant", content: [{ type: "tool", name: "subagent", state: {
+              input: { prompt: assignment("msn_one", "build") }, metadata: { sessionID: "ses_child" },
+            } }] }],
+            cursor: { next: "page_2" },
+          }
+        }
+        assert.fail("must not fetch older pages once every task is linked")
+      },
+    },
+    session: { list: async () => assert.fail("must not list children once linked"), active: async () => ({}) },
+  }
+  const store = createMissionTaskSessions({ connection: () => root, generation: () => 1, root: () => root as never, warn: () => {} })
+  await store.demand("inst", mission, 1, "view")
+  assert.equal(pages, 1)
+  assert.equal(store.taskSession("inst", mission, "build"), "ses_child")
+})

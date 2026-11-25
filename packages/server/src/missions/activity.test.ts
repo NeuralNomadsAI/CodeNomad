@@ -735,3 +735,22 @@ test("a deleted actor session is read once, then shown missing without native re
   assert.equal(state(await observe()), "missing")
   assert.equal(counts.get, reads + 1, "only the live actor is read again")
 })
+
+test("completed missions skip recursive session.list family walks while preserving own activity and active-descendant probes; session.updated keeps cached trees", async () => {
+  const cache = new MissionActivityCache()
+  const sessions = { coord: {}, child: { parentID: "coord" }, live: {} }
+  const client = native({ sessions, active: { child: { type: "running" } } })
+  const counts = counted(client)
+  const done = snapshot([actor("coord", "coordinator")])
+  done.missions[0].status = "completed"
+  const result = await projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache, snapshot: done })
+  assert.equal(counts.list, 0, "completed mission without open reports never walks session.list")
+  assert.equal(result.missions[0].actors[0].state, "background")
+  const active = snapshot([actor("live", "coordinator")])
+  await projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache, snapshot: active })
+  const afterWarm = counts.list
+  assert.ok(afterWarm > 0)
+  cache.observeEvent({ type: "session.updated" })
+  await projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache, snapshot: active })
+  assert.equal(counts.list, afterWarm, "session.updated does not flush cached family trees")
+})

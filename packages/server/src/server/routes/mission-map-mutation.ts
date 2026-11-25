@@ -51,11 +51,13 @@ export async function prepareMissionMapMutation(input: {
   const directory = await wait(manager.getServiceDirectoryForPath(workspaceID, requested.directory))
   if (!directory) throw new MissionMapMutationError(503, "Mission plugin unavailable")
   const location = { directory }, options = { location, ...locationRequestOptions(location) }
+  let resolvedProjectID: string
   try {
     const resolved = await wait(client.location.get({ location }, { ...locationRequestOptions(location), signal }))
     if (!sameLocation(location, resolved) || !await wait(manager.ownsLocation(workspaceID, resolved, client, { signal }))) {
       throw new MissionMapMutationError(403, "Native mission location differs from owned directory")
     }
+    resolvedProjectID = resolved.project.id
     const inventory = await wait(client.plugin.list({ location }, { ...locationRequestOptions(location), signal }))
     if (!inventory.data.some(entry => entry.id === CODENOMAD_MISSIONS_RPC_ID && entry.state.status === "active")) {
       throw new MissionMapMutationError(503, "Mission plugin unavailable")
@@ -80,6 +82,7 @@ export async function prepareMissionMapMutation(input: {
     workspace,
     base,
     location,
+    projectID: resolvedProjectID,
     current: unchanged,
     async refresh() { await admission.assertCurrent(); unchanged() },
     /** Transfer this exact permit to a synchronous scheduled-request hold.

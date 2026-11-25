@@ -775,3 +775,21 @@ test("creation refusals before the native create carry no-effect codes; dispatch
   // Ordinary validation refusals remain reviewed codeless statuses.
   assert.equal((await create({ owns: false })).status, 403)
 })
+
+test("panel display reads reuse cached location and plugin inventory checks and evict on RPC failure", async () => {
+  const panel = missionPanelPage({ source: "summaries", projectID: "project-1" }, [])
+  let rpcErr: unknown
+  const f = manager({ panelHandler: async () => { if (rpcErr) throw rpcErr; return panel } })
+  const app = Fastify({ logger: false })
+  registerMissionRoutes(app, { workspaceManager: f.value })
+  try {
+    assert.equal((await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries" } })).statusCode, 200)
+    assert.equal((await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries" } })).statusCode, 200)
+    assert.equal(f.calls.filter(call => call.method === "location").length, 1)
+    assert.equal(f.calls.filter(call => call.method === "list").length, 1)
+    rpcErr = { type: "rpc.unavailable", message: "gone" }
+    const failed = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries" } })
+    assert.deepEqual(failed.json(), { available: false, reason: "plugin-unavailable", missions: [] })
+    assert.equal(f.calls.filter(call => call.method === "list").length, 2, "RPC failure rechecks plugin inventory")
+  } finally { await app.close() }
+})
