@@ -217,8 +217,8 @@ impl Display {
         s.revision += 1;
     }
 
-    pub(super) fn execute_search_expanded(&self, search_id: u64, key: &str, default: bool) -> bool {
-        if self.active.execute_search.0 == search_id {
+    pub(super) fn card_search_expanded(&self, search_id: u64, key: &str, default: bool) -> bool {
+        if search_id != 0 && self.active.execute_search.0 == search_id {
             self.active
                 .execute_search
                 .1
@@ -230,7 +230,7 @@ impl Display {
         }
     }
 
-    pub(super) fn set_execute_search_expanded(
+    pub(super) fn set_card_search_expanded(
         s: &mut State,
         search_id: u64,
         key: &str,
@@ -243,6 +243,19 @@ impl Display {
         }
         state.1.insert(key.into(), expanded);
         s.revision += 1;
+    }
+
+    pub(super) fn execute_search_expanded(&self, search_id: u64, key: &str, default: bool) -> bool {
+        self.card_search_expanded(search_id, key, default)
+    }
+
+    pub(super) fn set_execute_search_expanded(
+        s: &mut State,
+        search_id: u64,
+        key: &str,
+        expanded: bool,
+    ) {
+        Self::set_card_search_expanded(s, search_id, key, expanded);
     }
 
     pub(super) fn compact_split(&self, epoch: u64, key: &str) -> bool {
