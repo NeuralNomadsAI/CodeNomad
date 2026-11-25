@@ -536,6 +536,9 @@ impl Document {
             if let Some(gate) = pre_patch_gate {
                 let _ = gate.recv().await;
             }
+            if sender.is_closed() {
+                return;
+            }
             let mut snapshot = None;
             let mut patched = false;
             let mut rejected = false;
@@ -576,6 +579,8 @@ impl Document {
                     read_inv = invalidation_seq.load(Ordering::Acquire);
                     if write_needs_fresh && (read_rev != snapshot_rev || read_inv != prepared_inv) {
                         skipped = Skip::Stale;
+                    } else if sender.is_closed() {
+                        return;
                     } else {
                         match owner.patch(&backend, &patch, atomic_bound).await {
                             PatchOutcome::Applied(value) => {

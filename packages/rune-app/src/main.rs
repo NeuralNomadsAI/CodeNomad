@@ -383,7 +383,7 @@ fn run_app() {
         },
         |s, tx| {
             settings::quit(s);
-            workspace::finish(s, tx);
+            workspace::finish_on_quit(s, tx);
         },
     );
     platform::finish();

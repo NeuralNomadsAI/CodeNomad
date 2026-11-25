@@ -873,7 +873,7 @@ impl Preferences {
             // Settle arrived replies first without dispatching new unconfirmed work; step_close_drain
             // counts settlements and enforces stall/total/op-cap budgets before any next dispatch.
             let (changed, dropped_mid_poll, settled_count) =
-                self.poll_documents_inner(!shutdown, false);
+                self.poll_documents_inner(!shutdown, 0);
             let drain_changed = self.step_close_drain(
                 disconnected,
                 rev_changed,
@@ -925,14 +925,21 @@ impl Preferences {
     }
 
     fn poll_documents(&mut self) -> bool {
-        let (changed, dropped, _) = self.poll_documents_inner(true, true);
+        let (changed, dropped, _) = self.poll_documents_inner(true, u32::MAX);
         changed | dropped
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn unconfirmed_in_flight(&self) -> u32 {
+        u32::from(self.config.has_unconfirmed() && self.config.in_flight())
+            + u32::from(self.state.has_unconfirmed() && self.state.in_flight())
+            + u32::from(self.server.has_unconfirmed() && self.server.in_flight())
     }
 
     fn poll_documents_inner(
         &mut self,
         revalidate_idle: bool,
-        allow_dispatch: bool,
+        mut dispatch_budget: u32,
     ) -> (bool, bool, u32) {
         let install = self.opencode_install.poll();
         if self.authentication_required {
@@ -964,14 +971,11 @@ impl Preferences {
             self.show_server || self.show_environment || self.server.unsettled(),
         );
         #[cfg(not(target_arch = "wasm32"))]
-        let (config_dispatch, state_dispatch, server_dispatch) = (
-            allow_dispatch || !config_unconfirmed,
-            allow_dispatch || !state_unconfirmed,
-            allow_dispatch || !server_unconfirmed,
-        );
+        let config_was_in_flight = self.config.in_flight();
+        #[cfg(not(target_arch = "wasm32"))]
+        let config_dispatch = !config_unconfirmed || dispatch_budget > 0;
         #[cfg(target_arch = "wasm32")]
-        let (config_dispatch, state_dispatch, server_dispatch) =
-            (allow_dispatch, allow_dispatch, allow_dispatch);
+        let config_dispatch = dispatch_budget > 0;
         let (config_changed, config_settled) = if poll_config {
             self.config.poll(
                 &backend,
@@ -988,6 +992,10 @@ impl Preferences {
         } else {
             (false, false)
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        if config_unconfirmed && !config_was_in_flight && self.config.in_flight() {
+            dispatch_budget = dispatch_budget.saturating_sub(1);
+        }
         if self.transport_lost && self.config.transport_revalidated() {
             self.transport_lost = false;
             if revalidate_idle {
@@ -997,6 +1005,12 @@ impl Preferences {
                 }
             }
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        let state_was_in_flight = self.state.in_flight();
+        #[cfg(not(target_arch = "wasm32"))]
+        let state_dispatch = !state_unconfirmed || dispatch_budget > 0;
+        #[cfg(target_arch = "wasm32")]
+        let state_dispatch = dispatch_budget > 0;
         let (state_changed, state_settled) = if poll_state {
             self.state.poll(
                 &backend,
@@ -1013,6 +1027,14 @@ impl Preferences {
         } else {
             (false, false)
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        if state_unconfirmed && !state_was_in_flight && self.state.in_flight() {
+            dispatch_budget = dispatch_budget.saturating_sub(1);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let server_dispatch = !server_unconfirmed || dispatch_budget > 0;
+        #[cfg(target_arch = "wasm32")]
+        let server_dispatch = dispatch_budget > 0;
         let (server_changed, server_settled) = if poll_server {
             self.server.poll(
                 &backend,

@@ -967,6 +967,133 @@ fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfi
         );
     });
 
+    // A worker held before PATCH admission must never send a PATCH after the drain expires.
+    let (gated_listener, mut gated_prefs) = platform::block_on(fixture());
+    gated_prefs.set_drain_budgets(Duration::from_millis(45), Duration::from_secs(5));
+    let (gate_tx, gate_rx) = bounded(1);
+    gated_prefs.config.set_pre_patch_gate(gate_rx);
+    gated_prefs.set_locale("he");
+    assert_eq!(
+        gated_prefs.begin_close_drain(false),
+        crate::settings::preferences::CloseOutcome::Draining
+    );
+    platform::block_on(async {
+        platform::sleep(Duration::from_millis(70)).await;
+        gated_prefs.poll();
+        assert!(!gated_prefs.has_close_drain());
+        assert_eq!(gated_prefs.take_save_warning(), Some("en"));
+        gate_tx.send(()).await.unwrap();
+        assert!(
+            timeout(Duration::from_millis(80), gated_listener.accept())
+                .await
+                .is_err(),
+            "abandoned pre-patch flight must not transmit a PATCH after expiry"
+        );
+    });
+
+    // Abandoning an ordered transcript queue (row edit, then preset) must not invert their order on Retry.
+    let (order_listener, mut order_prefs) = platform::block_on(fixture());
+    order_prefs.set_drain_budgets(Duration::from_millis(45), Duration::from_secs(5));
+    order_prefs.set_locale("he");
+    order_prefs.poll();
+    platform::block_on(async {
+        let held_locale = request(&order_listener).await;
+        order_prefs.set_transcript(
+            Some(crate::settings::transcript_preset::Row::Diagnostics),
+            "hidden",
+        );
+        order_prefs.set_transcript(None, "everything");
+        assert_eq!(
+            order_prefs.begin_close_drain(false),
+            crate::settings::preferences::CloseOutcome::Draining
+        );
+        platform::sleep(Duration::from_millis(70)).await;
+        order_prefs.poll();
+        assert!(!order_prefs.has_close_drain());
+        assert_eq!(order_prefs.take_save_warning(), Some("en"));
+        drop(held_locale);
+        order_prefs.retry_transcript();
+        order_prefs.poll();
+        let retry_read = request(&order_listener).await;
+        assert!(retry_read.first.starts_with("GET "));
+        retry_read
+            .reply(200, json!({"settings":{"locale":"en"}}))
+            .await;
+        let retry_patch = poll_next_request(&mut order_prefs, &order_listener).await;
+        assert_eq!(retry_patch.first, "PATCH /api/storage/config/ui HTTP/1.1");
+        assert_eq!(
+            retry_patch.body["settings"]["diagnosticsExpansion"],
+            json!("expanded"),
+            "Retry after row-then-preset timeout must apply preset (expanded), not earlier hidden row: {}",
+            retry_patch.body
+        );
+        retry_patch
+            .reply(200, json!({"settings": retry_patch.body["settings"]}))
+            .await;
+    });
+
+    // Admission budget across multiple owners: at 15 settled ops with 2 ready owners, admit at most 1.
+    let (multi_listener, mut multi_prefs) = platform::block_on(fixture());
+    multi_prefs.set_drain_budgets(Duration::from_secs(5), Duration::from_secs(10));
+    multi_prefs.set_locale("he");
+    multi_prefs.poll();
+    platform::block_on(async {
+        let first_config = request(&multi_listener).await;
+        assert_eq!(
+            multi_prefs.begin_close_drain(true),
+            crate::settings::preferences::CloseOutcome::Draining
+        );
+        // Settle Config as op #15 while State and Server are both ready to write.
+        multi_prefs.set_close_drain_settled_ops(14);
+        multi_prefs
+            .doc_mut(Owner::State)
+            .stage(Choice::Mode, "dark");
+        multi_prefs
+            .doc_mut(Owner::Server)
+            .stage(Choice::LogLevel, "WARN");
+        first_config
+            .reply(200, json!({"settings":{"locale":"he"}}))
+            .await;
+        let admitted_one = poll_next_request(&mut multi_prefs, &multi_listener).await;
+        assert!(
+            timeout(Duration::from_millis(80), multi_listener.accept())
+                .await
+                .is_err(),
+            "at 15 settled ops, admission budget must allow at most 1 new owner flight, not 2"
+        );
+        drop(admitted_one);
+    });
+
+    // Fixed total deadline: successive settlements refresh stall budget but cannot extend total budget.
+    let (total_listener, mut total_prefs) = platform::block_on(fixture());
+    total_prefs.set_drain_budgets(Duration::from_millis(120), Duration::from_millis(90));
+    total_prefs.set_locale("he");
+    total_prefs.poll();
+    platform::block_on(async {
+        let first = request(&total_listener).await;
+        total_prefs.set_locale("fr");
+        assert_eq!(
+            total_prefs.begin_close_drain(true),
+            crate::settings::preferences::CloseOutcome::Draining
+        );
+        platform::sleep(Duration::from_millis(55)).await;
+        first.reply(200, json!({"settings":{"locale":"he"}})).await;
+        let second = poll_next_request(&mut total_prefs, &total_listener).await;
+        total_prefs.set_locale("de");
+        platform::sleep(Duration::from_millis(55)).await;
+        second.reply(200, json!({"settings":{"locale":"fr"}})).await;
+        platform::sleep(Duration::from_millis(15)).await;
+        total_prefs.poll();
+        assert!(!total_prefs.has_close_drain());
+        assert_eq!(total_prefs.take_save_warning(), Some("fr"));
+        assert!(
+            timeout(Duration::from_millis(80), total_listener.accept())
+                .await
+                .is_err(),
+            "fixed total deadline must expire even after successive stall-refreshing settlements"
+        );
+    });
+
     // A non-shutdown Preferences close drain on Config still allows unrelated State SSE refreshes.
     let (idle_listener, mut idle_prefs) = platform::block_on(fixture());
     idle_prefs.set_drain_budgets(Duration::from_secs(5), Duration::from_secs(10));

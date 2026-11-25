@@ -153,7 +153,7 @@ impl Preferences {
             self.observe_transport_drops();
             self.take_invalidations();
             // Settle arrived replies first without dispatching new unconfirmed work.
-            let (_, _, settled) = self.poll_documents_inner(!shutdown, false);
+            let (_, _, settled) = self.poll_documents_inner(!shutdown, 0);
             initial_settled = initial_settled.saturating_add(settled);
         }
         if !self.has_unconfirmed() {
@@ -162,15 +162,23 @@ impl Preferences {
             self.clear_drain_wake();
             return CloseOutcome::Confirmed;
         }
+        let used_ops = self
+            .close_drain
+            .as_ref()
+            .map_or(0, |drain| drain.settled_ops)
+            .saturating_add(initial_settled);
         let pre_dispatch_expired = already_expired
-            || self.close_drain.as_ref().is_some_and(|drain| {
-                drain.is_expired(stall_budget, total_budget)
-                    || drain.settled_ops.saturating_add(initial_settled) >= 16
-            });
+            || self
+                .close_drain
+                .as_ref()
+                .is_some_and(|drain| drain.is_expired(stall_budget, total_budget))
+            || used_ops >= 16;
         if !pre_dispatch_expired && self.backend.is_some() && !self.authentication_required {
             self.prepare_all_drains(true, true);
             if self.documents_draining() {
-                let (_, _, settled_next) = self.poll_documents_inner(!shutdown, true);
+                let budget =
+                    16u32.saturating_sub(used_ops.saturating_add(self.unconfirmed_in_flight()));
+                let (_, _, settled_next) = self.poll_documents_inner(!shutdown, budget);
                 initial_settled = initial_settled.saturating_add(settled_next);
             }
         }
@@ -266,7 +274,13 @@ impl Preferences {
                 self.prepare_all_drains(rev_changed, false);
             }
             if self.documents_draining() {
-                let (_, _, settled_next) = self.poll_documents_inner(!shutdown, true);
+                let settled_ops = self
+                    .close_drain
+                    .as_ref()
+                    .map_or(0, |drain| drain.settled_ops);
+                let budget =
+                    16u32.saturating_sub(settled_ops.saturating_add(self.unconfirmed_in_flight()));
+                let (_, _, settled_next) = self.poll_documents_inner(!shutdown, budget);
                 if settled_next > 0
                     && let Some(drain) = &mut self.close_drain
                 {

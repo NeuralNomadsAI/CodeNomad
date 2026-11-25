@@ -492,6 +492,11 @@ impl Document {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn in_flight(&self) -> bool {
+        self.flight.is_some() || self.barrier.is_some()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn has_unconfirmed(&self) -> bool {
         !self.write.requested.is_empty()
             || !self.write.transcript_queue.is_empty()
@@ -505,12 +510,22 @@ impl Document {
         if !self.has_unconfirmed() {
             return;
         }
+        let mut clear_transcript_for_preset = |write: &mut Write| {
+            write.requested.retain(|c, _| !is_transcript(*c));
+            write.failed.retain(|c| !is_transcript(*c));
+            write.post_preset_rows.clear();
+        };
         for flight in [self.barrier.take(), self.flight.take()]
             .into_iter()
             .flatten()
         {
             match flight.operation {
                 Operation::Write(sent) => {
+                    if sent.contains_key(&Choice::TranscriptPreset)
+                        && !self.transcript_superseded(Choice::TranscriptPreset)
+                    {
+                        clear_transcript_for_preset(&mut self.write);
+                    }
                     for (choice, value) in sent {
                         if is_transcript(choice) {
                             if !self.transcript_superseded(choice) {
@@ -530,7 +545,13 @@ impl Document {
                 }
             }
         }
-        for (choice, value) in std::mem::take(&mut self.write.uncertain) {
+        let uncertain = std::mem::take(&mut self.write.uncertain);
+        if uncertain.contains_key(&Choice::TranscriptPreset)
+            && !self.transcript_superseded(Choice::TranscriptPreset)
+        {
+            clear_transcript_for_preset(&mut self.write);
+        }
+        for (choice, value) in uncertain {
             if is_transcript(choice) {
                 if !self.transcript_superseded(choice) {
                     self.write.requested.insert(choice, value);
@@ -542,6 +563,9 @@ impl Document {
             }
         }
         for batch in self.write.transcript_queue.drain(..) {
+            if batch.contains_key(&Choice::TranscriptPreset) {
+                clear_transcript_for_preset(&mut self.write);
+            }
             for (choice, value) in batch {
                 self.write.requested.insert(choice, value);
                 self.write.failed.insert(choice);

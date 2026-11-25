@@ -407,14 +407,24 @@ impl Persistence {
         true
     }
 }
-pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
+pub(crate) fn finish(s: &mut crate::State, tx: &mut rune::Tx) {
+    finish_inner(s, tx, true);
+}
+
+pub(crate) fn finish_on_quit(s: &mut crate::State, tx: &mut rune::Tx) {
+    finish_inner(s, tx, false);
+}
+
+fn finish_inner(s: &mut crate::State, _: &mut rune::Tx, mark_closed: bool) {
     if s.workspace.as_ref().is_some_and(|ui| ui.finished) {
         return;
     }
     super::capture_files_mode(s);
     super::capture(s);
     if let Some(mut ui) = s.workspace.take() {
-        ui.finished = true;
+        if mark_closed {
+            ui.finished = true;
+        }
         ui.openings.close();
         let snapshot = ui.snapshot();
         let drafts_saved = ui.persistence.flush_file_drafts(&s.documents);
