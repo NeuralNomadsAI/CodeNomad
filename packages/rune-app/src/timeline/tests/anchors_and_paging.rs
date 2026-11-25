@@ -1,6 +1,4 @@
 use super::*;
-use rune::{Cx, El, Env, Runtime, TouchPhase};
-use serde_json::json;
 
 #[test]
 fn technical_search_uses_native_part_indexes_and_reveals_the_match() {
@@ -73,15 +71,6 @@ fn technical_search_uses_native_part_indexes_and_reveals_the_match() {
     }
 }
 
-fn assistant(id: &str) -> crate::history::Row {
-    crate::history::decode_message(&json!({
-        "id":id,"type":"assistant","time":{"completed":1},
-        "content":[{"type":"text","text":"Lead"},
-            {"type":"tool","id":"inspect","name":"read","state":{"status":"completed","output":"OK"}},
-            {"type":"text","text":"Exact destination"}]
-    })).unwrap().into()
-}
-
 #[test]
 fn older_gesture_revokes_the_distant_jump_and_keeps_the_visible_window() {
     let mut s = crate::init();
@@ -134,18 +123,6 @@ fn oldest_supersedes_a_pending_page_and_absent_newer_cursor_is_local() {
         ));
         assert_eq!(s.messages[0].id, "reading");
     });
-}
-
-fn user(id: &str) -> crate::history::Row {
-    crate::history::decode_message(&json!({
-        "id":id,"type":"user","text":"Long transcript below this anchor.\n\n".repeat(10)
-    }))
-    .unwrap()
-    .into()
-}
-
-fn view(s: &State, cx: &mut Cx<State>) -> El {
-    rune_theme_codenomad::layout::render(cx, |cx| crate::chat::view::chat_view(s, cx))
 }
 
 #[test]

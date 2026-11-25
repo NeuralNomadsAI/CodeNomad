@@ -84,7 +84,7 @@ impl Reading {
     }
 }
 
-pub(crate) fn keep_passage(s: &State, tx: &mut Tx) {
+pub(crate) fn passage_target(s: &State) -> Option<(String, f32)> {
     let reading = s.transcript_display.reading();
     if !reading.following
         && let (Some((message, _)), Some(passage)) = (&reading.top, &reading.passage)
@@ -101,10 +101,18 @@ pub(crate) fn keep_passage(s: &State, tx: &mut Tx) {
         )
         .then(|| super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key))
         .flatten();
-        tx.scroll_key_to(
+        Some((
             group.unwrap_or_else(|| format!("{message}/{}", passage.key)),
             passage.offset,
-        );
+        ))
+    } else {
+        None
+    }
+}
+
+pub(crate) fn keep_passage(s: &State, tx: &mut Tx) {
+    if let Some((key, offset)) = passage_target(s) {
+        tx.scroll_key_to(key, offset);
     }
 }
 

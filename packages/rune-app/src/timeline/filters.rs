@@ -246,6 +246,7 @@ mod tests {
 
 pub(super) fn reselect(s: &mut State) {
     let t = owner(s);
+    t.jump.active_version = Some(t.version);
     t.jump.active = t
         .jump
         .requested_active

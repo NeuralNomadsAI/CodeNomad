@@ -18,6 +18,19 @@ const DELAY: f64 = 0.08;
 const CLOSE_DELAY: f64 = 0.16;
 const MAX_UNITS: usize = 4096;
 
+struct PreviewBounds(rune_theme_codenomad::layout::DrawnRect);
+
+impl Default for PreviewBounds {
+    fn default() -> Self {
+        Self(rune_theme_codenomad::layout::DrawnRect::new([0.0; 4]))
+    }
+}
+
+#[derive(Clone, Default)]
+struct PreviewScroll(
+    std::rc::Rc<std::cell::Cell<(rune_theme_codenomad::timeline::ScrollPosition, Option<f32>)>>,
+);
+
 #[derive(Default)]
 pub(super) struct Previews {
     hover: Option<String>,
@@ -27,6 +40,8 @@ pub(super) struct Previews {
     opening: Option<(String, f64)>,
     closing: Option<f64>,
     over_preview: bool,
+    bounds: PreviewBounds,
+    scroll: PreviewScroll,
     placement: Option<(f32, f32, f32, [f32; 2])>,
     plan: Option<(usize, usize, u64, bool)>,
     wanted: Vec<String>,
@@ -82,6 +97,8 @@ impl Previews {
         self.opening = None;
         self.closing = None;
         self.over_preview = false;
+        self.bounds.0.set([0.0; 4]);
+        self.scroll.0.set(Default::default());
         self.placement = None;
         self.plan = None;
         self.wanted.clear();
@@ -113,6 +130,8 @@ pub(crate) fn dismiss(s: &mut State) -> bool {
     p.dismissed = Some(target);
     p.over_preview = false;
     p.closing = None;
+    p.bounds.0.set([0.0; 4]);
+    p.scroll.0.set(Default::default());
     true
 }
 
@@ -284,6 +303,10 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         p.closing = None;
     }
     let mut changed = old != p.target;
+    if changed {
+        p.bounds.0.set([0.0; 4]);
+        p.scroll.0.set(Default::default());
+    }
     if let Some(wanted) = wanted
         && wanted != p.wanted
     {
@@ -397,6 +420,56 @@ fn preview_text<'a>(s: &'a State, marker: &Marker) -> Option<Cow<'a, str>> {
     (!text.is_empty()).then_some(text)
 }
 
+pub(super) fn is_shown(s: &State) -> bool {
+    s.transcript_display.timeline.previews.target.is_some()
+}
+
+#[cfg(test)]
+pub(super) fn scroll_offset(s: &State) -> f32 {
+    s.transcript_display
+        .timeline
+        .previews
+        .scroll
+        .0
+        .get()
+        .0
+        .offset[1]
+}
+
+pub(super) fn covers_point(s: &State, x: f32, y: f32) -> bool {
+    let t = &s.transcript_display.timeline;
+    if !super::demanded(s) {
+        return false;
+    }
+    let Some(id) = t.previews.target.as_deref() else {
+        return false;
+    };
+    let visible =
+        rune_theme_codenomad::timeline::visible_markers(t.scroll.get().at, t.markers.len());
+    let Some(marker) = t.markers[visible].iter().find(|m| m.id == id) else {
+        return false;
+    };
+    if preview_text(s, marker).is_none() {
+        return false;
+    }
+    let [rx, ry, rw, rh] = t.previews.bounds.0.get();
+    rw > 0.0 && rh > 0.0 && x >= rx && x <= rx + rw && y >= ry && y <= ry + rh
+}
+
+pub(super) fn forward_wheel(s: &State, x: f32, y: f32, dy: f32, tx: &mut Tx) -> bool {
+    if !covers_point(s, x, y) {
+        return false;
+    }
+    let scroll = &s.transcript_display.timeline.previews.scroll.0;
+    let (pos, target) = scroll.get();
+    if dy != 0.0 && pos.max[1] > 0.0 {
+        let next = (target.unwrap_or(pos.offset[1]) - dy).clamp(0.0, pos.max[1].max(0.0));
+        scroll.set((pos, Some(next)));
+        tx.scroll_to_instant(theme::KEY, pos.offset[0], next);
+    }
+    true
+}
+
 pub(crate) fn overlay(s: &State) -> Option<El> {
     if !super::demanded(s) {
         return None;
@@ -409,14 +482,18 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
     let text = preview_text(s, marker)?;
     let id = id.to_owned();
     let scope = s.input_scope.clone();
+    let scroll = t.previews.scroll.0.clone();
     Some(
-        rune_theme_codenomad::timeline::preview::surface(&id, &text, s.window_size)?
-            .on_hover_change(move |s: &mut State, inside, _| {
-                if s.current_scope(&scope) && owner(s).previews.target.as_ref() == Some(&id) {
-                    owner(s).previews.over_preview = inside;
-                    (s.wake)();
-                }
-            }),
+        rune_theme_codenomad::timeline::preview::surface(&id, &text, s.window_size, move |at| {
+            scroll.set((at, None));
+        })?
+        .drawn_rect_into(&t.previews.bounds.0)
+        .on_hover_change(move |s: &mut State, inside, _| {
+            if s.current_scope(&scope) && owner(s).previews.target.as_ref() == Some(&id) {
+                owner(s).previews.over_preview = inside;
+                (s.wake)();
+            }
+        }),
     )
 }
 
