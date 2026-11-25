@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { link, mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises"
+import fs from "node:fs"
+import { chmod, link, mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
@@ -8,6 +9,8 @@ import Fastify from "fastify"
 import { WorkspaceManager } from "../../workspaces/manager"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { registerWorkspaceRoutes } from "./workspaces"
+import { registerBackendRelayRoutes } from "./backend-relay"
+import type { RemoteServerBrowseManager } from "../../codenomad-servers/browse-manager"
 
 const shaTag = (text: string) => `"${createHash("sha256").update(Buffer.from(text, "utf-8")).digest("hex")}"`
 
@@ -148,6 +151,134 @@ describe("workspace file version & optimistic concurrency", () => {
       assert.equal(await readFile(alias, "utf-8"), "ok")
     } finally {
       await f.close()
+    }
+  })
+
+  it("rejects an external change during staging and leaves no temporary file behind", async (t) => {
+    const f = await createFixture()
+    try {
+      const target = path.join(f.root, "race.txt")
+      await writeFile(target, "v1", "utf-8")
+      const originalOpen = fs.promises.open.bind(fs.promises)
+      let injected = false
+      t.mock.method(fs.promises, "open", async (...args: Parameters<typeof fs.promises.open>) => {
+        const handle = await originalOpen(...args)
+        if (!injected && String(args[0]).includes(".codenomad-tmp-")) {
+          injected = true
+          await writeFile(target, "external-during-stage", "utf-8")
+        }
+        return handle
+      })
+      const response = await f.put("race.txt", { contents: "ours", expectedVersion: shaTag("v1") })
+      t.mock.restoreAll()
+      assert.equal(response.statusCode, 409)
+      assert.deepEqual(response.json(), { error: "File changed on disk" })
+      assert.equal(await readFile(target, "utf-8"), "external-during-stage")
+      assert.deepEqual(await readdir(f.root), ["race.txt"])
+    } finally {
+      t.mock.restoreAll()
+      await f.close()
+    }
+  })
+
+  it("aborts without in-place fallback when staging fails", async (t) => {
+    const f = await createFixture()
+    try {
+      const target = path.join(f.root, "stage-fail.txt")
+      await writeFile(target, "intact", "utf-8")
+      const originalOpen = fs.promises.open.bind(fs.promises)
+      t.mock.method(fs.promises, "open", async (...args: Parameters<typeof fs.promises.open>) => {
+        const handle = await originalOpen(...args)
+        if (String(args[0]).includes(".codenomad-tmp-")) {
+          const originalWrite = handle.write.bind(handle)
+          handle.write = (async () => {
+            const err = Object.assign(new Error("simulated stage failure"), { code: "EACCES" })
+            throw err
+          }) as typeof originalWrite
+        }
+        return handle
+      })
+      const response = await f.put("stage-fail.txt", { contents: "replacement", expectedVersion: shaTag("intact") })
+      t.mock.restoreAll()
+      assert.equal(response.statusCode, 400)
+      assert.equal(await readFile(target, "utf-8"), "intact")
+      assert.deepEqual(await readdir(f.root), ["stage-fail.txt"])
+    } finally {
+      t.mock.restoreAll()
+      await f.close()
+    }
+  })
+
+  it("serializes concurrent conditional saves across hardlink aliases", async () => {
+    const f = await createFixture()
+    try {
+      const a = path.join(f.root, "a.txt")
+      const b = path.join(f.root, "b.txt")
+      await writeFile(a, "base", "utf-8")
+      await link(a, b)
+      const baseTag = shaTag("base")
+
+      const [first, second] = await Promise.all([
+        f.put("a.txt", { contents: "from-a", expectedVersion: baseTag }),
+        f.put("b.txt", { contents: "from-b", expectedVersion: baseTag }),
+      ])
+      const codes = [first.statusCode, second.statusCode].sort((x, y) => x - y)
+      assert.deepEqual(codes, [204, 409])
+      const winner = first.statusCode === 204 ? "from-a" : "from-b"
+      assert.equal(await readFile(a, "utf-8"), winner)
+      assert.equal(await readFile(b, "utf-8"), winner)
+    } finally {
+      await f.close()
+    }
+  })
+
+  it("refuses read-only files and reports oversized saves with file_too_large", async () => {
+    const f = await createFixture()
+    const readonlyFile = path.join(f.root, "readonly.txt")
+    try {
+      await writeFile(readonlyFile, "locked", "utf-8")
+      await chmod(readonlyFile, 0o444)
+      const refused = await f.put("readonly.txt", { contents: "overwrite", expectedVersion: shaTag("locked") })
+      if (process.getuid?.() !== 0) {
+        assert.equal(refused.statusCode, 400)
+        assert.equal(await readFile(readonlyFile, "utf-8"), "locked")
+      }
+
+      const tooLarge = await f.put("big.txt", { contents: "a".repeat(5 * 1024 * 1024 + 1) })
+      assert.equal(tooLarge.statusCode, 400)
+      assert.equal(tooLarge.json().code, "file_too_large")
+    } finally {
+      await chmod(readonlyFile, 0o666).catch(() => {})
+      await f.close()
+    }
+  })
+
+  it("forwards If-Match and ETag through the backend relay", async () => {
+    const app = Fastify()
+    const seen: { ifMatch?: string | null } = {}
+    const manager = {
+      relay: async (_id: string, _target: string, init: RequestInit) => {
+        seen.ifMatch = new Headers(init.headers).get("if-match")
+        return new Response(null, { status: 204, headers: { etag: shaTag("next") } })
+      },
+    } as unknown as RemoteServerBrowseManager
+    registerBackendRelayRoutes(app, {
+      manager,
+      getSelfOrigins: () => new Set(["http://localhost:9898"]),
+      guardCaller: () => true,
+    })
+    try {
+      const response = await app.inject({
+        method: "PUT",
+        url: "/api/backends/remote-1/api/workspaces/ws/files/content?path=a.txt",
+        headers: { "content-type": "application/json", "if-match": shaTag("prev") },
+        payload: { contents: "next" },
+      })
+      assert.equal(response.statusCode, 204)
+      assert.equal(seen.ifMatch, shaTag("prev"))
+      assert.equal(response.headers.etag, shaTag("next"))
+    } finally {
+      await app.close()
     }
   })
 })

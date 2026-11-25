@@ -216,7 +216,7 @@ test("a failed write removes a temporarily clean revert rather than retaining a 
   } finally { fixture.fail = false; release(); h.close() }
 })
 
-test("save forwards snapshot.version and shows a localized conflict message on 409 without losing the draft", async () => {
+test("save forwards snapshot.version and shows localized errors on 409 and file_too_large without losing the draft", async () => {
   fixture.disk = "baseline"; fixture.version = '"abc123"'; fixture.lastExpectedVersion = undefined
   fixture.writing = false; fixture.gate = null
   const conflictError = Object.assign(new Error("File changed on disk"), { status: 409 })
@@ -226,18 +226,25 @@ test("save forwards snapshot.version and shows a localized conflict message on 4
   try {
     h.editor.adopt("baseline")
     h.editor.change("my edit")
+    h.editor.verify("other on disk", "different-hash")
+    assert.equal(h.editor.conflict(), true)
     await h.editor.save()
     assert.equal(fixture.lastExpectedVersion, '"abc123"')
     assert.deepEqual(errors, ["filesPanel.saveConflict"])
     assert.equal(h.editor.dirty(), true)
     assert.equal(h.editor.text(), "my edit")
     assert.equal(h.editor.saving(), false)
-    assert.equal(h.editor.conflict(), false)
+    assert.equal(h.editor.conflict(), true, "known draft conflict stays set until save or refresh resolves it")
+
+    // Oversized save reports a localized save-specific message.
+    fixture.fail = Object.assign(new Error("Selected file is too large to attach"), { status: 400, code: "file_too_large" })
+    await h.editor.save()
+    assert.equal(errors[1], "filesPanel.saveTooLarge")
 
     // A non-file 409 keeps its own message rather than claiming a file edit conflict.
     fixture.fail = Object.assign(new Error("Worktree deletion is in progress"), { status: 409 })
     await h.editor.save()
-    assert.equal(errors[1], "Worktree deletion is in progress")
+    assert.equal(errors[2], "Worktree deletion is in progress")
     h.editor.discard()
   } finally { fixture.fail = false; fixture.version = undefined; h.close() }
 })

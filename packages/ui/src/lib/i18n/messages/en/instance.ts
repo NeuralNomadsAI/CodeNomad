@@ -159,6 +159,7 @@ export const instanceMessages = {
   "filesPanel.binary": "Preview unavailable for this binary file.",
   "filesPanel.draftConflict": "The file changed on disk. Your draft was kept.",
   "filesPanel.saveConflict": "The file changed on disk while saving. Refresh or save again.",
+  "filesPanel.saveTooLarge": "File is too large to save.",
   "filesPanel.draftLimit": "Could not keep this draft. Save or copy your latest edits before closing.",
   "filesPanel.image.before": "Before",
   "filesPanel.image.after": "After",

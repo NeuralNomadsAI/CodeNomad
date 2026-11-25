@@ -220,10 +220,12 @@ export function useWorkspaceFileEditor(options: {
       invalidateFilesystemCaches(options.instanceId)
     } catch (error) {
       if (current()) {
-        const isFileConflict = error instanceof Error && (error as { status?: unknown }).status === 409 && error.message === "File changed on disk"
-        if (isFileConflict) {
-          setConflict(false)
+        const status = error instanceof Error ? (error as { status?: unknown }).status : undefined
+        const code = error instanceof Error ? (error as { code?: unknown }).code : undefined
+        if (status === 409 && error instanceof Error && error.message === "File changed on disk") {
           options.onError(options.t("filesPanel.saveConflict"))
+        } else if (code === "file_too_large" || (status === 400 && error instanceof Error && error.message === "Selected file is too large to attach")) {
+          options.onError(options.t("filesPanel.saveTooLarge"))
         } else {
           options.onError(error instanceof Error ? error.message : options.t("instanceShell.rightPanel.toast.saveError"))
         }

@@ -10,7 +10,7 @@ import { isGitAvailable, resolveRepoRoot } from "../../workspaces/git-worktrees"
 import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
-import { FileChangedError } from "../../filesystem/browser"
+import { FileChangedError, FileTooLargeError } from "../../filesystem/browser"
 import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
 import { GitProbeUnavailableError, GitRequiredError } from "../../workspaces/git-requirement"
 import { getGitHistory, getGitCommit, getGitCommitDiff } from "../../workspaces/git-history"
@@ -494,6 +494,7 @@ async function resolveGitWorktreeDirectory(
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
   if (error instanceof FileChangedError) return reply.code(error.statusCode).send({ error: error.message })
+  if (error instanceof FileTooLargeError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   if (error instanceof GitRequiredError || error instanceof GitProbeUnavailableError || error instanceof GitInitError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   if (isGitCloneError(error)) {
     reply.code(error.statusCode)

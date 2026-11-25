@@ -1,8 +1,14 @@
-import { createHash, randomUUID } from "node:crypto"
 import fs from "fs"
 import os from "os"
 import path from "path"
-import { withFileAccess } from "./file-access"
+import {
+  FileChangedError,
+  FileTooLargeError,
+  fileVersion,
+  readBoundedFile,
+  withResolvedFileAccess,
+  writeVersionedFile,
+} from "./versioned-file"
 import {
   FileSystemCreateFolderResponse,
   FileSystemEntry,
@@ -11,6 +17,8 @@ import {
   FileSystemListingMetadata,
   WINDOWS_DRIVES_ROOT,
 } from "../api-types"
+
+export { FileChangedError, FileTooLargeError, fileVersion }
 
 interface FileSystemBrowserOptions {
   rootDir: string
@@ -25,27 +33,6 @@ interface DirectoryReadOptions {
 }
 
 const WINDOWS_DRIVE_LETTERS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))
-const MAX_READABLE_FILE_BYTES = 5 * 1024 * 1024
-const RENAME_FALLBACK_CODES = new Set(["EACCES", "EPERM", "EBUSY", "EXDEV", "ENOSYS", "ENOTSUP"])
-
-export function fileVersion(bytes: Uint8Array): string {
-  return `"${createHash("sha256").update(bytes).digest("hex")}"`
-}
-
-export class FileChangedError extends Error {
-  readonly statusCode = 409
-
-  constructor(message = "File changed on disk") {
-    super(message)
-    this.name = "FileChangedError"
-  }
-}
-
-function isRenameFallbackError(error: unknown): boolean {
-  if (error instanceof FileChangedError) return false
-  const code = (error as NodeJS.ErrnoException | undefined)?.code
-  return typeof code === "string" && RENAME_FALLBACK_CODES.has(code)
-}
 
 export class FileSystemBrowser {
   private readonly root: string
@@ -111,125 +98,8 @@ export class FileSystemBrowser {
     if (this.unrestricted) {
       throw new Error("writeFile is not available in unrestricted mode")
     }
-    const bytes = Buffer.from(contents, "utf-8")
-    if (bytes.length > MAX_READABLE_FILE_BYTES) {
-      throw new Error("Selected file is too large to attach")
-    }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    const expectedVersion = options?.expectedVersion
-    return withFileAccess(resolved, async () => {
-      const inspectTarget = async (): Promise<{ stats: fs.Stats; targetPath: string } | null> => {
-        let linkStats: fs.Stats
-        try {
-          linkStats = await fs.promises.lstat(resolved)
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null
-          throw error
-        }
-        if (linkStats.isSymbolicLink()) {
-          let targetPath: string
-          try {
-            targetPath = await fs.promises.realpath(resolved)
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null
-            throw error
-          }
-          const stats = await fs.promises.stat(targetPath)
-          if (!stats.isFile()) {
-            if (expectedVersion !== undefined) throw new FileChangedError()
-            throw new Error("Selected path is not a file")
-          }
-          return { stats, targetPath }
-        }
-        if (!linkStats.isFile()) {
-          if (expectedVersion !== undefined) throw new FileChangedError()
-          throw new Error("Selected path is not a file")
-        }
-        return { stats: linkStats, targetPath: resolved }
-      }
-
-      const verifyVersion = async (existing: { stats: fs.Stats; targetPath: string } | null) => {
-        if (expectedVersion === undefined) return
-        if (!existing || existing.stats.size > MAX_READABLE_FILE_BYTES) {
-          throw new FileChangedError()
-        }
-        let currentBytes: Buffer
-        try {
-          currentBytes = await fs.promises.readFile(existing.targetPath)
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException)?.code === "ENOENT") throw new FileChangedError()
-          throw error
-        }
-        if (fileVersion(currentBytes) !== expectedVersion) {
-          throw new FileChangedError()
-        }
-      }
-
-      const existing = await inspectTarget()
-      await verifyVersion(existing)
-
-      const nextVersion = fileVersion(bytes)
-      const targetPath = existing?.targetPath ?? resolved
-
-      const writeInPlace = async () => {
-        const handle = await fs.promises.open(targetPath, "r+")
-        try {
-          let written = 0
-          while (written < bytes.length) {
-            const { bytesWritten } = await handle.write(bytes, written, bytes.length - written, written)
-            written += bytesWritten
-          }
-          await handle.truncate(bytes.length)
-          await handle.sync()
-        } finally {
-          await handle.close()
-        }
-      }
-
-      if (existing && existing.stats.nlink > 1) {
-        await writeInPlace()
-        return nextVersion
-      }
-
-      const tempPath = path.join(path.dirname(targetPath), `.codenomad-tmp-${process.pid}-${randomUUID()}`)
-      const mode = existing && !this.isWindows ? existing.stats.mode & 0o777 : undefined
-      let tempCreated = false
-      try {
-        const handle = await fs.promises.open(tempPath, "wx", mode)
-        tempCreated = true
-        try {
-          if (mode !== undefined) {
-            await handle.chmod(mode)
-          }
-          await handle.writeFile(bytes)
-          await handle.sync()
-        } finally {
-          await handle.close()
-        }
-        if (expectedVersion !== undefined) {
-          const latest = await inspectTarget()
-          if (!latest || latest.targetPath !== targetPath || latest.stats.nlink !== existing?.stats.nlink) {
-            throw new FileChangedError()
-          }
-          await verifyVersion(latest)
-        }
-        await fs.promises.rename(tempPath, targetPath)
-        tempCreated = false
-      } catch (error) {
-        if (tempCreated) {
-          await fs.promises.unlink(tempPath).catch(() => {})
-        }
-        if (existing && isRenameFallbackError(error)) {
-          const latest = await inspectTarget()
-          if (!latest || latest.targetPath !== targetPath) throw new FileChangedError()
-          await verifyVersion(latest)
-          await writeInPlace()
-          return nextVersion
-        }
-        throw error
-      }
-      return nextVersion
-    })
+    return writeVersionedFile(resolved, contents, { expectedVersion: options?.expectedVersion, isWindows: this.isWindows })
   }
 
   async readFile(relativePath: string): Promise<string> {
@@ -237,7 +107,7 @@ export class FileSystemBrowser {
       throw new Error("readFile is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    return withFileAccess(resolved, () => fs.promises.readFile(resolved, "utf-8"))
+    return withResolvedFileAccess(resolved, this.isWindows, (target) => fs.promises.readFile(target.targetPath, "utf-8"))
   }
 
   async readFileBase64(relativePath: string): Promise<string> {
@@ -245,26 +115,14 @@ export class FileSystemBrowser {
       throw new Error("readFileBase64 is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    return withFileAccess(resolved, async () => (await fs.promises.readFile(resolved)).toString("base64"))
+    return withResolvedFileAccess(resolved, this.isWindows, async (target) => (await fs.promises.readFile(target.targetPath)).toString("base64"))
   }
 
   async readFileContent(targetPath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<FileSystemFileContentResponse> {
     const encoding = options?.encoding ?? "utf-8"
     const resolved = this.unrestricted ? this.resolveUnrestrictedPath(targetPath) : this.toRestrictedAbsolute(targetPath)
-    return withFileAccess(resolved, async () => {
-      const stats = await fs.promises.stat(resolved)
-      if (!stats.isFile()) {
-        throw new Error("Selected path is not a file")
-      }
-      if (stats.size > MAX_READABLE_FILE_BYTES) {
-        throw new Error("Selected file is too large to attach")
-      }
-      const buffer = await fs.promises.readFile(resolved)
-      if (buffer.length > MAX_READABLE_FILE_BYTES) {
-        throw new Error("Selected file is too large to attach")
-      }
-      return { path: targetPath, contents: buffer.toString(encoding), encoding, version: fileVersion(buffer) }
-    })
+    const { contents, version } = await readBoundedFile(resolved, encoding, this.isWindows)
+    return { path: targetPath, contents, encoding, version }
   }
 
   private async listRestrictedWithMetadata(relativePath: string | undefined, includeFiles: boolean): Promise<FileSystemListResponse> {
