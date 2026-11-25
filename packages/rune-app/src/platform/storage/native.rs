@@ -54,6 +54,7 @@ impl Files {
         plain(&directory, true)?;
         let path = directory.join("state.lock");
         plain(&path, false)?;
+        #[allow(clippy::suspicious_open_options)]
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
