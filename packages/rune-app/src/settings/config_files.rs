@@ -258,6 +258,7 @@ impl Editor {
                 .child(
                     layout::textarea(&self.draft)
                         .rows(12)
+                        .line_home_end(true)
                         .label(t("settings.configFiles.title"))
                         .disabled(waiting || self.confirm.is_some())
                         .on_edit(move |s| &mut edit(s).draft)
@@ -356,5 +357,44 @@ mod tests {
         assert_eq!(editor.goal, None);
         editor.suspend();
         assert_eq!(editor.draft.text, "{/* draft */}");
+    }
+
+    #[test]
+    fn config_files_editor_enables_line_home_end() {
+        struct Host {
+            editor: Editor,
+            shared: std::rc::Rc<std::cell::RefCell<Preferences>>,
+        }
+        let shared = std::rc::Rc::new(std::cell::RefCell::new(Preferences::default()));
+        let mut draft = TextEdit::new("{\n  \"a\": 1\n}");
+        draft.set_caret(2);
+        draft.focused = true;
+        let editor = Editor {
+            files: Some(vec![api::File {
+                id: "opencode".into(),
+                label: "Config Files".into(),
+                path: "~/.config/opencode/opencode.jsonc".into(),
+                language: "jsonc".into(),
+            }]),
+            active: Some(0),
+            original: Some(draft.text.clone()),
+            draft,
+            exists: true,
+            ..Editor::default()
+        };
+        let mut rt = rune::Runtime::new(
+            Host { editor, shared },
+            |host, _| {
+                let mut layers = Vec::new();
+                host.editor
+                    .view(&mut layers, &host.shared, |host: &mut Host| {
+                        &mut host.editor
+                    })
+            },
+            (600.0, 400.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        assert!(rt.state.editor.draft.line_home_end());
     }
 }

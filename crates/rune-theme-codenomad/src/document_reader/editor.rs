@@ -44,6 +44,7 @@ pub fn field(
         .label(label)
         .width(available)
         .spellcheck(false)
+        .line_home_end(true)
         .wrap_anywhere()
         .spans(source_spans(dark, path, &edit.text))
 }
@@ -171,4 +172,28 @@ pub fn confirmation<S: 'static>(
         .center()
         .fill(t.color("overlay-scrim"))
         .child(card)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn code_editor_field_enables_line_home_end() {
+        let mut edit = TextEdit::new("first\nsecond");
+        edit.set_caret(2);
+        edit.focused = true;
+        let mut rt = rune::Runtime::new(
+            edit,
+            |edit, _| {
+                field(false, "main.rs", edit, "main.rs", false, Some(600.0))
+                    .on_edit(|edit: &mut TextEdit| edit)
+                    .build(code_kit(false))
+            },
+            (600.0, 300.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        assert!(rt.state.line_home_end());
+    }
 }

@@ -4,6 +4,7 @@ use codenomad_client::{
     files::{Entry, EntryKind},
     history::Result,
 };
+use rune_theme_codenomad::workspace_tree::TreeModel;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::Arc,
@@ -14,6 +15,7 @@ const MAX_TRACKED_PATHS: usize = 1024;
 #[derive(Default)]
 struct Snapshot {
     directories: BTreeMap<String, Vec<Entry>>,
+    model: TreeModel<Entry>,
     expanded: BTreeSet<String>,
     selected: Option<String>,
     loaded: BTreeMap<String, u64>,
@@ -30,6 +32,34 @@ impl Snapshot {
     }
     fn version(&self, path: &str) -> u64 {
         self.version.max(*self.versions.get(path).unwrap_or(&0))
+    }
+    fn sync_model(&mut self) {
+        let mut model = TreeModel::new();
+        fn populate(
+            directories: &BTreeMap<String, Vec<Entry>>,
+            expanded: &BTreeSet<String>,
+            parent: Option<&str>,
+            path: &str,
+            model: &mut TreeModel<Entry>,
+        ) {
+            for entry in directories.get(path).into_iter().flatten() {
+                if entry.kind == EntryKind::Directory {
+                    if model.insert_branch(parent, entry.path.clone(), entry.clone()) {
+                        if expanded.contains(&entry.path) {
+                            model.set_expanded(&entry.path, true);
+                        }
+                        populate(directories, expanded, Some(&entry.path), &entry.path, model);
+                    }
+                } else {
+                    model.insert(parent, entry.path.clone(), entry.clone());
+                }
+            }
+        }
+        populate(&self.directories, &self.expanded, None, ".", &mut model);
+        if let Some(selected) = self.selected.as_deref() {
+            model.select(selected);
+        }
+        self.model = model;
     }
 }
 struct Pending {
@@ -78,6 +108,7 @@ impl Tree {
         self.state.selected.as_deref()
     }
     pub fn select(&mut self, path: String) {
+        self.state.model.select(&path);
         self.state.selected = Some(path);
     }
     pub fn errors(&self) -> &BTreeMap<String, codenomad_client::history::Error> {
@@ -87,27 +118,25 @@ impl Tree {
         self.requests.contains_key(path)
     }
     pub fn expanded(&self, path: &str) -> bool {
-        self.state.expanded.contains(path)
+        path == "."
+            || if self.state.model.contains(path) {
+                self.state.model.is_expanded(path)
+            } else {
+                self.state.expanded.contains(path)
+            }
     }
     pub fn rows(&self) -> Vec<Row<'_>> {
-        fn visit<'a>(state: &'a Snapshot, path: &'a str, depth: usize, rows: &mut Vec<Row<'a>>) {
-            for entry in state.directories.get(path).into_iter().flatten() {
-                let expanded = (entry.kind == EntryKind::Directory)
-                    .then(|| state.expanded.contains(&entry.path));
-                rows.push(Row {
+        (0..self.state.model.visible_len())
+            .filter_map(|index| {
+                let (entry, row) = self.state.model.row(index)?;
+                Some(Row {
                     entry,
-                    parent: path,
-                    depth,
-                    expanded,
-                });
-                if expanded == Some(true) {
-                    visit(state, &entry.path, depth + 1, rows);
-                }
-            }
-        }
-        let mut rows = Vec::new();
-        visit(&self.state, ".", 1, &mut rows);
-        rows
+                    parent: self.state.model.parent(row.id).unwrap_or("."),
+                    depth: row.depth as usize + 1,
+                    expanded: row.expanded,
+                })
+            })
+            .collect()
     }
     fn visible(&self) -> Vec<String> {
         std::iter::once(".".to_owned())
@@ -219,8 +248,10 @@ impl Tree {
         }
         if !self.state.expanded.insert(path.into()) {
             self.state.expanded.remove(path);
+            self.state.model.set_expanded(path, false);
             return vec![];
         }
+        self.state.model.set_expanded(path, true);
         let paths = self.visible();
         paths
             .into_iter()
@@ -318,6 +349,7 @@ impl Tree {
                 });
                 self.state.directories.insert(read.path.clone(), entries);
                 self.state.loaded.insert(read.path, read.version);
+                self.state.sync_model();
                 self.dirty |= self.visible().iter().any(|path| self.stale(path));
             }
             Err(error) => {
@@ -370,5 +402,69 @@ mod tests {
         assert!(tree.state.versions.is_empty());
         assert_eq!(tree.state.version, (MAX_TRACKED_PATHS + 2) as u64);
         assert_eq!(tree.state.version("."), (MAX_TRACKED_PATHS + 2) as u64);
+    }
+
+    #[test]
+    fn tree_model_preserves_branch_semantics_for_unloaded_and_empty_folders() {
+        let dir = |name: &str, path: &str| Entry {
+            name: name.into(),
+            path: path.into(),
+            kind: EntryKind::Directory,
+            absolute_path: None,
+            directory_identity: None,
+            size: None,
+            modified_at: None,
+        };
+        let file = |name: &str, path: &str| Entry {
+            name: name.into(),
+            path: path.into(),
+            kind: EntryKind::File,
+            absolute_path: None,
+            directory_identity: None,
+            size: None,
+            modified_at: None,
+        };
+        let mut tree = Tree::new("/repo".into());
+        tree.activate(true);
+        let root = tree.take_refresh().pop().unwrap();
+        assert!(tree.complete(
+            root,
+            Ok(vec![
+                dir("empty", "empty"),
+                dir("lazy", "lazy"),
+                file("README.md", "README.md"),
+            ]),
+            Ok,
+        ));
+
+        assert!(tree.state.model.is_branch("empty"));
+        assert!(tree.state.model.is_branch("lazy"));
+        assert!(!tree.state.model.is_branch("README.md"));
+        let rows: Vec<_> = tree
+            .rows()
+            .into_iter()
+            .map(|r| (r.entry.path.as_str(), r.depth, r.expanded))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("empty", 1, Some(false)),
+                ("lazy", 1, Some(false)),
+                ("README.md", 1, None),
+            ]
+        );
+
+        let empty_read = tree.toggle("empty").pop().unwrap();
+        assert_eq!(tree.rows()[0].expanded, Some(true));
+        assert!(tree.complete(empty_read, Ok(vec![]), Ok));
+        assert!(tree.state.model.is_branch("empty"));
+        assert!(!tree.state.model.has_children("empty"));
+        assert_eq!(tree.rows()[0].expanded, Some(true));
+
+        let _lazy_read = tree.toggle("lazy").pop().unwrap();
+        assert!(tree.state.model.is_branch("lazy"));
+        assert_eq!(tree.rows()[1].expanded, Some(true));
+        assert!(tree.toggle("empty").is_empty());
+        assert_eq!(tree.rows()[0].expanded, Some(false));
     }
 }

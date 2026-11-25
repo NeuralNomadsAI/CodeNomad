@@ -36,10 +36,12 @@ pub fn split(main: El, tree: Option<El>, width: f32, expanded: bool) -> El {
         .children(tree.map(|tree| rune::col().w(width).h_full().min_h(0.0).child(tree)))
 }
 pub fn image(image: &rune::Image, label: &str) -> El {
-    let Some([width, height]) = image.size() else {
+    let Some([width, height]) = image.intrinsic_size() else {
         return rune::el();
     };
-    // Intrinsic SVG metadata: https://github.com/anomalyco/rune/issues/1361.
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return rune::el();
+    }
     rune::col()
         .grow(1.0)
         .min_h(0.0)
@@ -49,9 +51,9 @@ pub fn image(image: &rune::Image, label: &str) -> El {
         .child(
             rune::el()
                 .pixels_fit(image.pixels(), rune::SurfaceFit::Fit)
-                .aspect_fit(width as f32 / height as f32)
-                .max_w(width as f32)
-                .max_h(height as f32)
+                .aspect_fit(width / height)
+                .max_w(width)
+                .max_h(height)
                 .role("img")
                 .label(label),
         )
@@ -401,4 +403,55 @@ pub fn mermaid(dark: bool, text: &str) -> Option<El> {
             t.color("surface-inset"),
         ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn svg_preview_uses_intrinsic_dimensions_instead_of_supersampled_raster_size() {
+        let cache = rune::ImageCache::new(Arc::new(|| {}));
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="8"><rect width="16" height="8" fill="#000"/></svg>"##;
+        let svg_image = cache.load(&svg[..]);
+        assert_eq!(svg_image.wait(), Ok([32, 16]));
+        assert_eq!(svg_image.intrinsic_size(), Some([16.0, 8.0]));
+
+        let mut rt = rune::Runtime::new(
+            svg_image,
+            |img, _| image(img, "diagram.svg"),
+            (400.0, 300.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        let node = rt
+            .elements()
+            .into_iter()
+            .find(|el| el.role == "img")
+            .expect("rendered svg img element");
+        assert_eq!((node.rect[2], node.rect[3]), (16.0, 8.0));
+    }
+
+    #[test]
+    fn raster_preview_uses_decoded_dimensions() {
+        let cache = rune::ImageCache::new(Arc::new(|| {}));
+        let raster = cache.rgba(24, 12, vec![255u8; 24 * 12 * 4]);
+        assert_eq!(raster.wait(), Ok([24, 12]));
+        assert_eq!(raster.intrinsic_size(), Some([24.0, 12.0]));
+
+        let mut rt = rune::Runtime::new(
+            raster,
+            |img, _| image(img, "sample.png"),
+            (400.0, 300.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        let node = rt
+            .elements()
+            .into_iter()
+            .find(|el| el.role == "img")
+            .expect("rendered raster img element");
+        assert_eq!((node.rect[2], node.rect[3]), (24.0, 12.0));
+    }
 }

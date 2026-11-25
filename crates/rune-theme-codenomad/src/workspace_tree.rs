@@ -1,6 +1,7 @@
 //! Workspace row geometry from the Solid tree; its owner supplies actions and input policy.
 use crate::{Space, layout::Layout, tokens};
 use rune::{El, Icon, TextStyle, icon};
+pub use rune_kit::TreeModel;
 #[path = "workspace_tree_icons.rs"]
 pub mod icons;
 
