@@ -126,6 +126,7 @@ impl Groups {
                     |(_, steps)| steps,
                 );
             let (head, tail) = super::transcript::part_window(message.parts.len(), steps);
+            let mut reasoning_counts = None;
             for (part, content) in message.parts.iter().enumerate() {
                 if part >= head && part < tail {
                     index.finish(run.take(), true);
@@ -168,8 +169,16 @@ impl Groups {
                             .saturating_add(reasoning::duration_ms(fragment));
                         run.summary.title = reasoning::extract_title(&fragment.text);
                         run.summary.completed = message.completed;
-                        run.prune
-                            .push(message, fragment.part_index, PruneKind::Reasoning, content);
+                        let counts = reasoning_counts.get_or_insert_with(|| {
+                            super::message_actions::reasoning_digest_counts(message)
+                        });
+                        run.prune.push(
+                            message,
+                            fragment.part_index,
+                            PruneKind::Reasoning,
+                            content,
+                            Some(counts),
+                        );
                         run.summary.search_hit |= super::search_hit::query(
                             s,
                             &message.id,
@@ -213,7 +222,7 @@ impl Groups {
                         run.summary.reads += usize::from(tool.name == "read");
                         run.summary.completed = message.completed;
                         run.prune
-                            .push(message, tool.part_index, PruneKind::Tool, content);
+                            .push(message, tool.part_index, PruneKind::Tool, content, None);
                         run.summary.search_hit |= super::search_hit::query(
                             s,
                             &message.id,
@@ -330,10 +339,11 @@ impl Groups {
         })
     }
 
-    pub(super) fn has_group(&self, key: &str) -> bool {
+    pub(super) fn group_owner_message(&self, key: &str) -> Option<&str> {
         self.chunks
             .values()
-            .any(|chunk| chunk.first && chunk.summary.key == key)
+            .find(|chunk| chunk.first && chunk.summary.key == key)
+            .map(|chunk| chunk.summary.message.as_str())
     }
 }
 

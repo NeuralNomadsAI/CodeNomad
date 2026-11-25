@@ -1,5 +1,10 @@
 use crate::State;
 use rune::{El, Tx};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    rc::{Rc, Weak},
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Bookmark {
@@ -13,6 +18,7 @@ pub(crate) struct Reading {
     passage: Option<Passage>,
     jump: Option<String>,
     lookup: Option<Jump>,
+    mounted: RefCell<HashMap<String, Weak<()>>>,
 }
 
 struct Passage {
@@ -36,11 +42,28 @@ impl Default for Reading {
             passage: None,
             jump: None,
             lookup: None,
+            mounted: RefCell::new(HashMap::new()),
         }
     }
 }
 
 impl Reading {
+    fn lease(&self, id: &str) -> Rc<()> {
+        let mut mounted = self.mounted.borrow_mut();
+        if let Some(existing) = mounted.get(id).and_then(Weak::upgrade) {
+            existing
+        } else {
+            let token = Rc::new(());
+            mounted.insert(id.to_owned(), Rc::downgrade(&token));
+            token
+        }
+    }
+
+    pub(super) fn row_mounted(&self, id: &str) -> bool {
+        let mut mounted = self.mounted.borrow_mut();
+        mounted.retain(|_, lease| lease.strong_count() > 0);
+        mounted.contains_key(id)
+    }
     pub(super) fn hold(&mut self, message: String) {
         self.following = false;
         self.top = Some((message, 0.0));
@@ -324,10 +347,12 @@ pub(crate) fn restore_position(s: &mut State, tx: &mut Tx) {
 
 pub(super) fn row(s: &State, id: String, view: El) -> El {
     let scope = s.input_scope.clone();
+    let mounted = s.transcript_display.reading().lease(&id);
     let lease = super::receipts::Receipts::lease(s, &id);
     let receipt = super::receipts::for_message(s, &id);
     view.children(receipt)
         .on_drawn_layout_tx(move |s: &mut State, rect, tx| {
+            let _ = &mounted;
             if s.current_scope(&scope) {
                 let [_, top, _, height] = s.tool_diff_preferences.history_bounds.get();
                 s.transcript_display.reading_mut().record(&id, top, rect);

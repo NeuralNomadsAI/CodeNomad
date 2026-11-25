@@ -287,6 +287,17 @@ pub(crate) async fn run_with_reading(
                     reader.quiet = Instant::now();
                     continue;
                 }
+                if kind == "rpc.codenomad.session-pruning.pruned" {
+                    if native["data"]["sessionID"] != backend.session {
+                        continue;
+                    }
+                    publish(&out, &wake, Event::HistoryInvalidated).await;
+                    reader.clear_window_on_revert();
+                    reader.parked = false;
+                    reader.dirty = reader.active_reader;
+                    reader.quiet = Instant::now();
+                    continue;
+                }
                 if !reader.active_reader || reading.is_some() && reader.historical {
                     match kind {
                         "session.step.started" => {

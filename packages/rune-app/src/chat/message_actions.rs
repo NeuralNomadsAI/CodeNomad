@@ -15,7 +15,7 @@ mod menu;
 mod multi_prune_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
-pub(super) use cleanup::GroupPrune;
+pub(super) use cleanup::{GroupPrune, reasoning_digest_counts};
 pub(super) use menu::{group_delete_button, header, overlays, restore};
 
 #[derive(Clone, PartialEq, Eq)]
@@ -30,7 +30,6 @@ pub(super) struct PruneContext {
     pub group_key: Option<String>,
     pub owner_message: Option<String>,
     pub summary_label: Option<String>,
-    pub return_focus: Option<String>,
 }
 
 #[derive(Default)]
@@ -55,6 +54,7 @@ struct Job {
     returned: Receiver<codenomad_client::history::Result<Outcome>>,
     error: &'static str,
     reread: bool,
+    cancellable: bool,
 }
 
 enum Intent {
@@ -152,6 +152,18 @@ impl Actions {
         self.job.is_some() || self.confirmation.is_some() || self.refresh_transcript
     }
 
+    pub(crate) fn cancel_preview(&mut self) -> bool {
+        let Some(job) = &self.job else {
+            return false;
+        };
+        if !job.cancellable {
+            return false;
+        }
+        job.cancel.close();
+        self.job = None;
+        true
+    }
+
     pub(crate) fn confirmation_open(&self, scope: &Rc<()>) -> bool {
         self.confirmation
             .as_ref()
@@ -183,6 +195,7 @@ impl Actions {
             returned,
             error: "",
             reread: false,
+            cancellable: false,
         });
     }
 }
@@ -244,6 +257,7 @@ fn start(s: &mut State, intent: Intent) {
     if owner.prune_hover.take().is_some() {
         s.revision += 1;
     }
+    let cancellable = matches!(&intent, Intent::PreviewPrune { .. });
     let owner = &mut s.transcript_display.messages;
     owner.job = Some(Job {
         scope: Rc::downgrade(&s.input_scope),
@@ -251,6 +265,7 @@ fn start(s: &mut State, intent: Intent) {
         returned,
         error,
         reread,
+        cancellable,
     });
     let wake = s.wake.clone();
     platform::spawn(async move {

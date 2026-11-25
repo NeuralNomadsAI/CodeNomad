@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "=0.10.9"
 async-channel = "2.5"

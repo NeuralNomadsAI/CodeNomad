@@ -144,7 +144,6 @@ fn controls(s: &State, message: &Message) -> Option<Rc<Menu<State>>> {
                                         group_key: None,
                                         owner_message: Some(id.clone()),
                                         summary_label: None,
-                                        return_focus: Some(format!("message-actions-{id}:trigger")),
                                     },
                                 },
                             );
@@ -234,7 +233,6 @@ pub(in crate::chat) fn group_delete_button(
                         group_key: Some(group_key.clone()),
                         owner_message: Some(owner_message.clone()),
                         summary_label: Some(summary_label.clone()),
-                        return_focus: Some(format!("delete-group-{group_key}")),
                     },
                 },
             );
@@ -318,16 +316,21 @@ pub(in crate::chat) fn overlays(s: &State, layers: &mut Vec<El>) {
 }
 
 fn resolve_return_focus(s: &State, context: &PruneContext) -> Option<String> {
+    let reading = s.transcript_display.reading();
     if let Some(group_key) = &context.group_key {
         let groups = super::super::tool_groups::Groups::project(s);
-        if groups.group_delete_active(s, group_key) {
-            return Some(format!("delete-group-{group_key}"));
-        }
-        if groups.has_group(group_key) {
+        if groups
+            .group_owner_message(group_key)
+            .is_some_and(|owner| reading.row_mounted(owner))
+        {
+            if groups.group_delete_active(s, group_key) {
+                return Some(format!("delete-group-{group_key}"));
+            }
             return Some(format!("toggle-{group_key}"));
         }
     }
     if let Some(message_id) = &context.owner_message
+        && reading.row_mounted(message_id)
         && let Some(row) = lookup(s, message_id)
     {
         if controls(s, row).is_some() {
@@ -337,11 +340,7 @@ fn resolve_return_focus(s: &State, context: &PruneContext) -> Option<String> {
             return Some(format!("copy-message-{message_id}"));
         }
     }
-    context
-        .return_focus
-        .clone()
-        .filter(|_| context.group_key.is_none())
-        .or_else(|| Some("rows".into()))
+    Some("composer".into())
 }
 
 pub(in crate::chat) fn restore(s: &State) -> impl Iterator<Item = El> {

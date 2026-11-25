@@ -875,6 +875,59 @@ fn blocked_partial_failure_full_queue_and_scope_rotation_are_handled_safely() {
             .await
             .reply(200, json!({"data":{"id":"session","revert":null}}))
             .await;
+
+        // 6. Pressing Escape cancels an in-flight preview immediately without waiting for timeout.
+        select_last(&mut rt, "ans", "delete-technical-parts");
+        wait_for(&mut rt, "stalled preview started", |s| {
+            s.transcript_display.messages.pending()
+        })
+        .await;
+        let _stalled = http.accept().await;
+        rt.update(|s, tx| {
+            assert!(crate::shell::keys(
+                s,
+                &KeyEvent {
+                    key: Key::Escape,
+                    mods: Mods::default(),
+                },
+                tx,
+            ));
+        });
+        settle(&mut rt);
+        assert!(!rt.state.transcript_display.messages.pending());
+        drop(_stalled);
+
+        // 7. Cancelling confirmation after the opener row was evicted focuses the composer
+        // instead of targeting an unmounted trigger.
+        select_last(&mut rt, "ans", "delete-technical-parts");
+        wait_for(&mut rt, "evicted opener preview", |s| {
+            s.transcript_display.messages.pending()
+        })
+        .await;
+        let _ = reply_preview_and_fresh(&http, &s1).await;
+        let _ = reply_preview_and_fresh(&http, &s2).await;
+        wait_for(&mut rt, "evicted opener confirm", |s| {
+            s.transcript_display
+                .messages
+                .confirmation_open(&s.input_scope)
+        })
+        .await;
+        rt.update(|s, _| {
+            s.messages.retain(|row| row.id != "ans");
+            s.revision += 1;
+        });
+        settle(&mut rt);
+        rt.key(KeyEvent {
+            key: Key::Escape,
+            mods: Mods::default(),
+        });
+        settle(&mut rt);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| e.focused && matches!(e.key.as_deref(), Some("composer" | "input"))),
+            "evicted opener must fall back to the mounted composer"
+        );
         http.quiet().await;
     });
 }

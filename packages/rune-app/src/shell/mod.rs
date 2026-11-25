@@ -159,6 +159,9 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if !tx.key_repeat() && event.mods == Mods::default() && event.key == Key::Escape {
+        if !s.screen.is_launcher() && s.transcript_display.messages.cancel_preview() {
+            return true;
+        }
         if crate::git::has_preview(s) {
             crate::git::close_preview(s);
             tx.instant();

@@ -318,7 +318,7 @@ impl Backend {
         if !valid_id(message) {
             return Err("invalid message action target".into());
         }
-        let (revision, parts) = self.fetch_prune_preview(message, false).await?;
+        let (revision, parts) = self.fetch_prune_preview(message, false, DEADLINE).await?;
         if parts.is_empty() {
             return Err("invalid prune parts".into());
         }
@@ -349,19 +349,27 @@ impl Backend {
     ) -> Result<PrunePreview> {
         let session_url = self.action_session()?;
         let normalized = validate_prune_targets(targets)?;
+        let deadline = crate::runtime::Instant::now() + DEADLINE;
         let mut messages = Vec::with_capacity(normalized.len());
         for target in normalized {
-            if cancel.is_closed() {
-                return Err("pruning selection expired".into());
-            }
-            let (preview_revision, available) =
-                self.fetch_prune_preview(&target.message, true).await?;
-            if cancel.is_closed() {
-                return Err("pruning selection expired".into());
-            }
-            let fresh_content = self
-                .fetch_completed_message_content(&session_url, &target.message)
-                .await?;
+            let preview_timeout = remaining_deadline(deadline)?;
+            let (preview_revision, available) = race_cancel(
+                cancel,
+                deadline,
+                self.fetch_prune_preview(&target.message, true, preview_timeout),
+            )
+            .await?;
+            let content_timeout = remaining_deadline(deadline)?;
+            let fresh_content = race_cancel(
+                cancel,
+                deadline,
+                self.fetch_completed_message_content(
+                    &session_url,
+                    &target.message,
+                    content_timeout,
+                ),
+            )
+            .await?;
             if cancel.is_closed() {
                 return Err("pruning selection expired".into());
             }
@@ -419,11 +427,12 @@ impl Backend {
         &self,
         session_url: &str,
         message: &str,
+        timeout: Duration,
     ) -> Result<Value> {
         let response = self
             .client
             .get(format!("{session_url}/message/{message}"))
-            .timeout(DEADLINE)
+            .timeout(timeout)
             .send()
             .await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -459,6 +468,7 @@ impl Backend {
         &self,
         message: &str,
         require_bytes: bool,
+        timeout: Duration,
     ) -> Result<(String, HashMap<u64, PruneKind>)> {
         let url = format!(
             "{}api/workspaces/{}/session-pruning/preview",
@@ -467,7 +477,7 @@ impl Backend {
         let response = self
             .client
             .post(url)
-            .timeout(DEADLINE)
+            .timeout(timeout)
             .json(&json!({"sessionID":self.session,"messageID":message}))
             .send()
             .await?;
@@ -575,6 +585,40 @@ impl Backend {
         }
         Ok(())
     }
+}
+
+fn remaining_deadline(deadline: crate::runtime::Instant) -> Result<Duration> {
+    let remaining = deadline.saturating_duration_since(crate::runtime::Instant::now());
+    if remaining.is_zero() {
+        Err("pruning preview timed out".into())
+    } else {
+        Ok(remaining)
+    }
+}
+
+async fn race_cancel<T>(
+    cancel: &Receiver<()>,
+    deadline: crate::runtime::Instant,
+    task: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    if cancel.is_closed() {
+        return Err("pruning selection expired".into());
+    }
+    let remaining = remaining_deadline(deadline)?;
+    futures_lite::future::race(task, async {
+        futures_lite::future::race(
+            async {
+                let _ = cancel.recv().await;
+                Err("pruning selection expired".into())
+            },
+            async {
+                crate::runtime::sleep(remaining).await;
+                Err("pruning preview timed out".into())
+            },
+        )
+        .await
+    })
+    .await
 }
 
 fn validate_prune_targets(targets: &[PruneMessageTarget]) -> Result<Vec<PruneMessageTarget>> {
@@ -739,6 +783,74 @@ fn write_canonical_object(map: &serde_json::Map<String, Value>, omit: &[&str], o
     out.push('}');
 }
 
+/// Format an IEEE-754 double per ECMA-262 §6.1.6.1.20 (`Number::toString(x, 10)`)
+/// so canonical JSON matches JavaScript `JSON.parse` + `JSON.stringify` for every number,
+/// including exponent boundaries (`1e-6`, `1e20`, `1e21`), `-0`, and integers above `2^53`.
+fn write_js_number(f: f64, out: &mut String) {
+    if !f.is_finite() {
+        out.push_str("null");
+        return;
+    }
+    if f == 0.0 {
+        out.push('0');
+        return;
+    }
+    let abs = if f.is_sign_negative() {
+        out.push('-');
+        -f
+    } else {
+        f
+    };
+    let exp_form = format!("{abs:e}");
+    let Some((mantissa, exp_str)) = exp_form.split_once('e') else {
+        out.push_str(&exp_form);
+        return;
+    };
+    let Ok(exp) = exp_str.parse::<i32>() else {
+        out.push_str(&exp_form);
+        return;
+    };
+    let mut digits = String::with_capacity(mantissa.len());
+    for byte in mantissa.bytes() {
+        if byte != b'.' {
+            digits.push(byte as char);
+        }
+    }
+    let k = digits.len() as i32;
+    let n = exp + 1;
+    if k <= n && n <= 21 {
+        out.push_str(&digits);
+        for _ in 0..(n - k) {
+            out.push('0');
+        }
+    } else if 0 < n && n <= 21 {
+        let split = n as usize;
+        out.push_str(&digits[..split]);
+        out.push('.');
+        out.push_str(&digits[split..]);
+    } else if -6 < n && n <= 0 {
+        out.push_str("0.");
+        for _ in 0..(-n) {
+            out.push('0');
+        }
+        out.push_str(&digits);
+    } else {
+        out.push_str(&digits[..1]);
+        if digits.len() > 1 {
+            out.push('.');
+            out.push_str(&digits[1..]);
+        }
+        out.push('e');
+        if n - 1 >= 0 {
+            out.push('+');
+        } else {
+            out.push('-');
+        }
+        use std::fmt::Write as _;
+        let _ = write!(out, "{}", (n - 1).unsigned_abs());
+    }
+}
+
 fn write_canonical_json(value: &Value, out: &mut String) {
     match value {
         Value::Array(items) => {
@@ -752,18 +864,10 @@ fn write_canonical_json(value: &Value, out: &mut String) {
             out.push(']');
         }
         Value::Object(map) => write_canonical_object(map, &[], out),
-        Value::Number(number) => {
-            if let Some(f) = number.as_f64()
-                && f.is_finite()
-                && f.fract() == 0.0
-                && f.abs() <= MAX_SAFE_JS_INT as f64
-            {
-                use std::fmt::Write as _;
-                let _ = write!(out, "{}", f as i64);
-            } else if let Ok(encoded) = serde_json::to_string(number) {
-                out.push_str(&encoded);
-            }
-        }
+        Value::Number(number) => match number.as_f64() {
+            Some(f) => write_js_number(f, out),
+            None => out.push_str("null"),
+        },
         scalar => {
             if let Ok(encoded) = serde_json::to_string(scalar) {
                 out.push_str(&encoded);
@@ -904,6 +1008,23 @@ mod tests {
         assert_eq!(
             content_revision(&sample),
             "5dacbb11f59229d04566faac24c818c5fb65a0a7404d0ca690572250e38d94b3"
+        );
+
+        // Cross-language Node.js fixture covering ECMA-262 exponent boundaries (1e-6, <1e-6,
+        // 1e20, 9.999999999999999e20, 1e21, 1.5e21), -0.0, subnormals, MAX_VALUE, and >2^53 ints.
+        let js_numbers: Value = serde_json::from_str(
+            r#"[{"type":"tool","id":"t1","name":"read","state":{"status":"completed","input":{"10":"b","2":"a","02":"c","zero":-0.0,"intFloat":1.0,"small6":0.000001,"smallBelow6":9.999999999999998e-7,"small7":0.0000001,"large20":1e20,"largeBelow21":9.999999999999999e20,"large21":1e21,"large21frac":1.5e21,"bigInt53plus1":9007199254740993,"negBigInt53":-9007199254740993,"maxU64":18446744073709551615,"negSmall6":-0.000001,"negSmall7":-0.0000001,"subnormal":5e-324,"maxVal":1.7976931348623157e+308}}}]"#,
+        )
+        .unwrap();
+        let mut canonical = String::new();
+        write_canonical_json(&js_numbers, &mut canonical);
+        assert_eq!(
+            canonical,
+            r#"[{"id":"t1","name":"read","state":{"input":{"2":"a","10":"b","02":"c","bigInt53plus1":9007199254740992,"intFloat":1,"large20":100000000000000000000,"large21":1e+21,"large21frac":1.5e+21,"largeBelow21":999999999999999900000,"maxU64":18446744073709552000,"maxVal":1.7976931348623157e+308,"negBigInt53":-9007199254740992,"negSmall6":-0.000001,"negSmall7":-1e-7,"small6":0.000001,"small7":1e-7,"smallBelow6":9.999999999999997e-7,"subnormal":5e-324,"zero":0},"status":"completed"},"type":"tool"}]"#
+        );
+        assert_eq!(
+            content_revision(&js_numbers),
+            "7d9ad04c5bb33f14ce62f7bf5b2c52d48531f4bf0b4d50b037c44c21789a4404"
         );
 
         let r_a = json!({"type":"reasoning","text":"Same","time":{"created":1,"completed":2},"native":{"sig":"A"}});

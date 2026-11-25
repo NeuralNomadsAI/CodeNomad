@@ -42,7 +42,7 @@ fn window(s: &State, message: &crate::Message) -> (usize, usize) {
 
 /// Count native reasoning digests once per message in O(N) so duplicate reasoning blocks
 /// stay unambiguous without quadratic re-scans.
-fn reasoning_digest_counts(row: &crate::Message) -> HashMap<&str, usize> {
+pub(in crate::chat) fn reasoning_digest_counts(row: &crate::Message) -> HashMap<&str, usize> {
     let mut counts = HashMap::new();
     for part in &row.parts {
         if let Part::Reasoning(reasoning) = part
@@ -260,18 +260,13 @@ pub(super) fn message_targets(s: &State, message_id: &str) -> Vec<PruneMessageTa
 }
 
 /// Accumulates exact `(message_id, part_index, kind, identity)` targets for a technical group run
-/// in O(N) total time per message.
+/// without rescanning the message; callers supply precomputed reasoning digest counts once per row.
 #[derive(Default)]
 pub(in crate::chat) struct GroupPrune {
     invalid: bool,
     messages: Vec<PruneMessageTarget>,
     seen_messages: HashSet<String>,
-    current_row: Option<(
-        String,
-        HashMap<String, usize>,
-        HashSet<u64>,
-        HashSet<PrunePartIdentity>,
-    )>,
+    current_row: Option<(String, HashSet<u64>, HashSet<PrunePartIdentity>)>,
 }
 
 impl GroupPrune {
@@ -281,6 +276,7 @@ impl GroupPrune {
         part_index: Option<usize>,
         kind: PruneKind,
         part: &Part,
+        reasoning_counts: Option<&HashMap<&str, usize>>,
     ) {
         if self.invalid {
             return;
@@ -296,7 +292,7 @@ impl GroupPrune {
         let switching = self
             .current_row
             .as_ref()
-            .is_none_or(|(id, _, _, _)| id != &row.id);
+            .is_none_or(|(id, _, _)| id != &row.id);
         if switching {
             if self.messages.len() >= MAX_PRUNE_MESSAGES
                 || !self.seen_messages.insert(row.id.clone())
@@ -304,18 +300,13 @@ impl GroupPrune {
                 self.invalid = true;
                 return;
             }
-            let counts: HashMap<String, usize> = reasoning_digest_counts(row)
-                .into_iter()
-                .map(|(k, v)| (k.to_owned(), v))
-                .collect();
             self.messages.push(PruneMessageTarget {
                 message: row.id.clone(),
                 parts: Vec::new(),
             });
-            self.current_row = Some((row.id.clone(), counts, HashSet::new(), HashSet::new()));
+            self.current_row = Some((row.id.clone(), HashSet::new(), HashSet::new()));
         }
-        let (_, counts, seen_indexes, seen_identities) =
-            self.current_row.as_mut().expect("active row");
+        let (_, seen_indexes, seen_identities) = self.current_row.as_mut().expect("active row");
         let identity = match part {
             Part::Tool(tool) => Some(PrunePartIdentity::Tool {
                 id: tool.id.clone(),
@@ -324,7 +315,9 @@ impl GroupPrune {
             Part::Reasoning(reasoning) => reasoning
                 .identity
                 .as_deref()
-                .filter(|digest| counts.get(*digest) == Some(&1))
+                .filter(|digest| {
+                    reasoning_counts.and_then(|counts| counts.get(*digest)) == Some(&1)
+                })
                 .map(|digest| PrunePartIdentity::Reasoning {
                     digest: digest.to_owned(),
                 }),

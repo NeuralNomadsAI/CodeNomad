@@ -171,7 +171,9 @@ fn confirmation_with_title<S: 'static>(
         .label(title.unwrap_or(message))
         .fill(t.color("surface-overlay"));
     if let Some(title) = title {
-        card = card.child(rune::text(title).text_role(crate::TextRole::Title).wrap());
+        card = card
+            .description(message)
+            .child(rune::text(title).text_role(crate::TextRole::Title).wrap());
     }
     let card = card
         .child(rune::text(message).wrap())
