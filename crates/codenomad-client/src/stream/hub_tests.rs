@@ -315,7 +315,6 @@ fn slow_subscriber_overflow_closes_only_the_slow_subscriber_without_disrupting_s
             replays: HashMap::new(),
             replays_overflowed: false,
             chunk_active: false,
-            partial_frame: false,
             stop: Some(stop_tx),
         }),
         done: done_rx,
@@ -388,7 +387,6 @@ fn late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chun
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
-                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,
@@ -558,7 +556,6 @@ fn physical_close_revokes_attestation_immediately_and_queued_opened_cannot_reins
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
-                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,
@@ -710,7 +707,6 @@ fn shared_stream_staleness_and_hanging_pong_close_all_subscribers_and_unregister
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
-                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,
@@ -862,7 +858,6 @@ fn begin_close_revokes_guards_and_blocks_new_subscribers_before_finish() {
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
-                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,
@@ -955,7 +950,6 @@ fn voluntary_detach_revokes_guard_immediately_without_outage_before_pump_exits()
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
-                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,
@@ -1040,7 +1034,6 @@ fn overflow_preserves_pending_session_moved_and_signals_placement_and_close() {
             replays: HashMap::new(),
             replays_overflowed: false,
             chunk_active: false,
-            partial_frame: false,
             stop: Some(stop_tx),
         }),
         done: done_rx,
@@ -1145,7 +1138,6 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             replays: HashMap::new(),
             replays_overflowed: false,
             chunk_active: false,
-            partial_frame: false,
             stop: Some(stop_tx),
         }),
         done: done_rx,
@@ -1202,7 +1194,6 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             replays: HashMap::new(),
             replays_overflowed: false,
             chunk_active: false,
-            partial_frame: false,
             stop: Some(stop_tx2),
         }),
         done: done_rx2,
@@ -1268,7 +1259,6 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
             replays: HashMap::new(),
             replays_overflowed: false,
             chunk_active: false,
-            partial_frame: false,
             stop: Some(stop_tx),
         }),
         done: done_rx,
@@ -1320,246 +1310,6 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
     chunk2.finish();
     assert_eq!(wakes.load(SeqCst), 2);
     assert_eq!(fence2.check(), FenceState::Valid);
-
-    // Chunk 3 + 4: cancellation SSE frame split across chunks (data: line in chunk 3, blank line in
-    // chunk 4) must keep the guard active between chunks until the frame terminates.
-    let fence3 = state.inbox.fence(state.inbox.capture(), 0);
-    let mut parser = super::super::frames::Parser::default();
-    let part1 = b"data: {\"type\":\"instance.event\",\"instanceId\":\"ws-1\",\"event\":{\"type\":\"session.inbox.cancelled\",\"data\":{\"sessionID\":\"ses-1\",\"inboxID\":\"q2\"}}}\n";
-    let g3 = shared.begin_chunk();
-    for byte in part1 {
-        assert!(parser.byte(*byte).unwrap().is_none());
-    }
-    assert!(
-        parser.in_frame(),
-        "parser must report in_frame between data line and terminating blank line"
-    );
-    g3.finish_with(parser.in_frame(), 0);
-    assert_eq!(
-        fence3.check(),
-        FenceState::Deferred,
-        "stale GET must stay deferred between split cancellation chunks"
-    );
-    let g4 = shared.begin_chunk();
-    let completed = parser
-        .byte(b'\n')
-        .unwrap()
-        .expect("blank line completes frame");
-    if let super::super::frames::Parsed::Data(kind, data) = completed {
-        shared.broadcast_frame(&hub, kind, data);
-    }
-    assert!(!parser.in_frame());
-    g4.finish_with(parser.in_frame(), 1);
-    assert_eq!(
-        fence3.check(),
-        FenceState::Invalid,
-        "completed cancellation frame in second chunk must invalidate the deferred fence"
-    );
-    assert_eq!(wakes.load(SeqCst), 3);
-
-    // Chunk 5 + 6: continuous stream where EVERY chunk completes one unrelated frame and immediately
-    // starts the next (parser.in_frame() == true at every chunk boundary) must NOT starve an
-    // unaffected conversation's authoritative inbox fence.
-    let latest_mark = state.inbox.ingress();
-    state.inbox.advance_applied(latest_mark);
-    let fence4 = state.inbox.fence(state.inbox.capture(), 0);
-    let g5 = shared.begin_chunk();
-    for byte in b"data: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.delta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"a\"}}}\n" {
-        assert!(parser.byte(*byte).unwrap().is_none());
-    }
-    assert!(parser.in_frame());
-    g5.finish_with(parser.in_frame(), 0);
-    assert_eq!(
-        fence4.check(),
-        FenceState::Deferred,
-        "snapshot latches wait for the single in-progress partial frame"
-    );
-    let g6 = shared.begin_chunk();
-    let mut completed_in_chunk6 = 0u64;
-    for byte in b"\ndata: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.delta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"b\"}}}\n" {
-        if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(*byte).unwrap() {
-            completed_in_chunk6 += 1;
-            shared.broadcast_frame(&hub, kind, data);
-        }
-    }
-    assert_eq!(completed_in_chunk6, 1);
-    assert!(
-        parser.in_frame(),
-        "next unrelated frame is already mid-parse at chunk 6 boundary"
-    );
-    g6.finish_with(parser.in_frame(), completed_in_chunk6);
-    assert_eq!(
-        wakes.load(SeqCst),
-        4,
-        "completing the awaited partial frame must wake the waiting UI even when a new frame began"
-    );
-    assert_eq!(
-        fence4.check(),
-        FenceState::Valid,
-        "continuous unrelated frames must not starve an unaffected conversation's inbox publication"
-    );
-}
-
-#[test]
-fn preview_pending_frame_invalidates_buffered_cancellation_and_quota_disconnect_without_starving() {
-    use crate::inbox::FenceState;
-    use std::sync::atomic::AtomicUsize;
-
-    let hub = Arc::new(Hub::default());
-    let (stop_tx, _stop_rx) = bounded(1);
-    let (_done_tx, done_rx) = bounded(1);
-    let (events, _events_rx) = bounded(4);
-    let wakes = Arc::new(AtomicUsize::new(0));
-    let wake_counter = wakes.clone();
-    let wake: crate::Wake = Arc::new(move || {
-        wake_counter.fetch_add(1, SeqCst);
-    });
-    let quota_watch = crate::provider_usage::Watch::default();
-    let quota = crate::provider_usage::Ingress::new(
-        quota_watch.clone(),
-        wake.clone(),
-        "ws-1".into(),
-        "ses-1".into(),
-    );
-    let state = State::observing_preferences(events, wake);
-    let sub = Subscriber::with_signals(
-        1,
-        Some(quota),
-        None,
-        SubscriberSignals {
-            conversation: Some(("ws-1".into(), "ses-1".into())),
-            inbox: Some(state.inbox.clone()),
-            ..SubscriberSignals::default()
-        },
-    );
-    let shared = Arc::new(SharedStream {
-        base: "http://127.0.0.1:5/".into(),
-        inner: Mutex::new(StreamInner {
-            phase: Phase::Connecting,
-            subscribers: vec![sub.clone()],
-            replays: HashMap::new(),
-            replays_overflowed: false,
-            chunk_active: false,
-            partial_frame: false,
-            stop: Some(stop_tx),
-        }),
-        done: done_rx,
-    });
-    assert!(shared.mark_open());
-    // Establish initial connected quota authority.
-    shared.broadcast_frame(
-        &hub,
-        "message".into(),
-        r#"{"type":"instance.eventStatus","instanceId":"ws-1","status":"connected","generation":1}"#.into(),
-    );
-    let mark0 = state.inbox.ingress();
-    state.inbox.advance_applied(mark0);
-    let quota_stamp = quota_watch.current();
-    assert!(quota_stamp.1, "quota authority must be online");
-
-    // 1. Chunk 1 leaves mid-line unrelated Frame A; fence defers on Frame A.
-    //    Chunk 2 completes Frame A AND buffers cancellation Frame B's complete data: line (missing
-    //    only the terminating blank line). preview_pending_frame must invalidate the fence before
-    //    chunk 2 finishes so stale q1 can never publish.
-    let fence_cancel = state.inbox.fence(state.inbox.capture(), 0);
-    let mut parser = super::super::frames::Parser::default();
-    let g1 = shared.begin_chunk();
-    for byte in b"data: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.del" {
-        assert!(parser.byte(*byte).unwrap().is_none());
-    }
-    assert!(parser.pending_complete_frame().is_none());
-    g1.finish_with(parser.in_frame(), 0);
-    assert_eq!(fence_cancel.check(), FenceState::Deferred);
-
-    let g2 = shared.begin_chunk();
-    let mut completed = 0u64;
-    for byte in b"ta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"x\"}}}\n\ndata: {\"type\":\"instance.event\",\"instanceId\":\"ws-1\",\"event\":{\"type\":\"session.inbox.cancelled\",\"data\":{\"sessionID\":\"ses-1\",\"inboxID\":\"q1\"}}}\n" {
-        if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(*byte).unwrap() {
-            completed += 1;
-            shared.broadcast_frame(&hub, kind, data);
-        }
-    }
-    assert_eq!(completed, 1);
-    let (pkind, pdata) = parser
-        .pending_complete_frame()
-        .expect("complete data line waiting for blank line");
-    assert!(shared.preview_pending_frame(pkind, pdata));
-    g2.finish_with(false, completed);
-    assert_eq!(
-        fence_cancel.check(),
-        FenceState::Invalid,
-        "buffered cancellation data: line must invalidate fence even when prior frame completed"
-    );
-    // Complete frame B's blank line so parser is clean.
-    let g2b = shared.begin_chunk();
-    if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(b'\n').unwrap() {
-        shared.broadcast_frame(&hub, kind, data);
-    }
-    g2b.finish_with(parser.in_frame(), 1);
-    let mark1 = state.inbox.ingress();
-    state.inbox.advance_applied(mark1);
-
-    // 2. Checking while chunk_active == true must latch wait_until_frame immediately so continuous
-    //    unrelated mid-line chunks cannot starve an unaffected conversation forever.
-    let fence_live = state.inbox.fence(state.inbox.capture(), 0);
-    let g3 = shared.begin_chunk();
-    assert_eq!(
-        fence_live.check(),
-        FenceState::Deferred,
-        "check during active chunk defers and latches wait_until_frame"
-    );
-    for byte in b"data: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.del" {
-        assert!(parser.byte(*byte).unwrap().is_none());
-    }
-    g3.finish_with(parser.in_frame(), 0);
-    let g4 = shared.begin_chunk();
-    let mut c4 = 0u64;
-    for byte in b"ta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"1\"}}}\n\ndata: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.del" {
-        if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(*byte).unwrap() {
-            c4 += 1;
-            shared.broadcast_frame(&hub, kind, data);
-        }
-    }
-    g4.finish_with(parser.in_frame(), c4);
-    let g5 = shared.begin_chunk();
-    let mut c5 = 0u64;
-    for byte in b"ta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"2\"}}}\n\ndata: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.del" {
-        if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(*byte).unwrap() {
-            c5 += 1;
-            shared.broadcast_frame(&hub, kind, data);
-        }
-    }
-    g5.finish_with(parser.in_frame(), c5);
-    assert_eq!(
-        fence_live.check(),
-        FenceState::Valid,
-        "latched target must release once awaited frames complete despite ongoing mid-line chunks"
-    );
-    // Drain remaining partial frame cleanly.
-    let g5b = shared.begin_chunk();
-    for byte in b"ta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"3\"}}}\n\n" {
-        if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(*byte).unwrap() {
-            shared.broadcast_frame(&hub, kind, data);
-        }
-    }
-    g5b.finish_with(parser.in_frame(), 1);
-
-    // 3. Buffered workspace disconnect data: line (missing only trailing blank line) must revoke
-    //    provider-quota authority before chunk_guard releases backpressure.
-    let g6 = shared.begin_chunk();
-    for byte in b"data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"ws-1\",\"status\":\"disconnected\",\"generation\":2}\n" {
-        assert!(parser.byte(*byte).unwrap().is_none());
-    }
-    let (qkind, qdata) = parser
-        .pending_complete_frame()
-        .expect("complete disconnect data line");
-    assert!(shared.preview_pending_frame(qkind, qdata));
-    g6.finish_with(false, 0);
-    assert_eq!(
-        quota_watch.publish_if_current(quota_stamp, || 42),
-        None,
-        "buffered disconnect frame must revoke quota authority before chunk backpressure clears"
-    );
 }
 
 #[test]
@@ -1590,7 +1340,6 @@ fn seed_opened_numbers_replayed_status_monotonically_before_live_inbox_frames() 
             replays: HashMap::from([("ws-1".to_owned(), replay_status.clone())]),
             replays_overflowed: false,
             chunk_active: false,
-            partial_frame: false,
             stop: Some(stop_tx),
         }),
         done: done_rx,
@@ -1639,7 +1388,6 @@ fn read_shared_delivers_session_moved_before_closed_after_overflow() {
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
-                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,

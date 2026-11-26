@@ -40,8 +40,6 @@ struct InboxWireInner {
     ingress: u64,
     applied: u64,
     chunk_active: bool,
-    in_frame: bool,
-    frame_seq: u64,
     publication_waiting: bool,
     wake: Option<crate::Wake>,
 }
@@ -59,8 +57,6 @@ impl std::fmt::Debug for InboxWire {
             .field("ingress", &inner.ingress)
             .field("applied", &inner.applied)
             .field("chunk_active", &inner.chunk_active)
-            .field("in_frame", &inner.in_frame)
-            .field("frame_seq", &inner.frame_seq)
             .finish()
     }
 }
@@ -114,25 +110,9 @@ impl InboxWire {
     /// Invalidates already-published snapshots without advancing the SSE `applied` watermark past
     /// unapplied frames still queued at the hub or transport channel.
     pub(crate) fn invalidate_published(&self) {
-        if let Some(wake) = self.invalidate_published_quiet() {
-            wake();
-        }
-    }
-
-    pub(crate) fn invalidate_published_quiet(&self) -> Option<crate::Wake> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.local_epoch = inner.local_epoch.wrapping_add(1);
-        std::mem::take(&mut inner.publication_waiting)
-            .then(|| inner.wake.clone())
-            .flatten()
-    }
-
-    pub(crate) fn invalidate_closed(&self) {
         let wake = {
             let mut inner = self.inner.lock().unwrap();
-            Self::bump_ingress(&mut inner);
-            inner.chunk_active = false;
-            inner.in_frame = false;
+            inner.local_epoch = inner.local_epoch.wrapping_add(1);
             std::mem::take(&mut inner.publication_waiting)
                 .then(|| inner.wake.clone())
                 .flatten()
@@ -142,40 +122,36 @@ impl InboxWire {
         }
     }
 
+    pub(crate) fn invalidate_closed(&self) {
+        let wake = {
+            let mut inner = self.inner.lock().unwrap();
+            Self::bump_ingress(&mut inner);
+            inner.chunk_active = false;
+            std::mem::take(&mut inner.publication_waiting)
+                .then(|| inner.wake.clone())
+                .flatten()
+        };
+        if let Some(wake) = wake {
+            wake();
+        }
+    }
+
+    /// Holds snapshot publication while complete SSE frames in a received HTTP chunk are
+    /// classified (matching `provider_usage::Ingress`); ends on chunk finish so continuous
+    /// unrelated streams cannot starve unaffected conversations.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn begin_chunk(&self) {
         self.inner.lock().unwrap().chunk_active = true;
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn sync_chunk_state(&self, chunk_active: bool, in_frame: bool) {
-        let mut inner = self.inner.lock().unwrap();
-        if chunk_active {
-            inner.chunk_active = true;
-        }
-        if in_frame {
-            inner.in_frame = true;
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn end_chunk_quiet(
-        &self,
-        clean: bool,
-        in_frame: bool,
-        completed_frames: u64,
-    ) -> Option<crate::Wake> {
+    pub(crate) fn end_chunk_quiet(&self, clean: bool) -> Option<crate::Wake> {
         let mut inner = self.inner.lock().unwrap();
         if !clean {
             Self::bump_ingress(&mut inner);
         }
         inner.chunk_active = false;
-        inner.in_frame = clean && in_frame;
-        if completed_frames > 0 || !inner.in_frame {
-            inner.frame_seq = inner.frame_seq.saturating_add(1);
-        }
-        let should_wake = !clean || !inner.in_frame || completed_frames > 0;
-        (should_wake && std::mem::take(&mut inner.publication_waiting))
+        std::mem::take(&mut inner.publication_waiting)
             .then(|| inner.wake.clone())
             .flatten()
     }
@@ -192,7 +168,7 @@ impl InboxWire {
             && inner.applied >= captured.ingress
     }
 
-    pub(crate) fn check(&self, captured: InboxStamp, wait_until_frame: &AtomicU64) -> FenceState {
+    pub(crate) fn check(&self, captured: InboxStamp) -> FenceState {
         let mut inner = self.inner.lock().unwrap();
         if inner.local_epoch != captured.local_epoch
             || inner.ingress != captured.ingress
@@ -201,29 +177,10 @@ impl InboxWire {
             return FenceState::Invalid;
         }
         if inner.chunk_active {
-            let _ = wait_until_frame.compare_exchange(
-                0,
-                inner.frame_seq.saturating_add(2),
-                SeqCst,
-                SeqCst,
-            );
             inner.publication_waiting = true;
             return FenceState::Deferred;
         }
-        if !inner.in_frame {
-            return FenceState::Valid;
-        }
-        let target = wait_until_frame.load(SeqCst);
-        if target > 0 {
-            if inner.frame_seq < target {
-                inner.publication_waiting = true;
-                return FenceState::Deferred;
-            }
-            return FenceState::Valid;
-        }
-        wait_until_frame.store(inner.frame_seq.saturating_add(1), SeqCst);
-        inner.publication_waiting = true;
-        FenceState::Deferred
+        FenceState::Valid
     }
 
     pub(crate) fn fence(&self, captured: InboxStamp, sync_epoch: u64) -> InboxFence {
@@ -231,7 +188,6 @@ impl InboxWire {
             backing: FenceBacking::Wire(self.clone()),
             captured,
             sync_epoch,
-            wait_until_frame: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -248,7 +204,6 @@ pub struct InboxFence {
     backing: FenceBacking,
     captured: InboxStamp,
     sync_epoch: u64,
-    wait_until_frame: Arc<AtomicU64>,
 }
 
 impl InboxFence {
@@ -260,7 +215,6 @@ impl InboxFence {
                 ingress: captured,
             },
             sync_epoch: 0,
-            wait_until_frame: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -275,7 +229,7 @@ impl InboxFence {
 
     pub fn check(&self) -> FenceState {
         match &self.backing {
-            FenceBacking::Wire(wire) => wire.check(self.captured, &self.wait_until_frame),
+            FenceBacking::Wire(wire) => wire.check(self.captured),
             FenceBacking::Atomic(current) => {
                 if current.load(SeqCst) == self.captured.ingress {
                     FenceState::Valid

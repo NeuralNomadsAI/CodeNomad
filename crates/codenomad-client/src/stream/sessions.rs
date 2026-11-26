@@ -31,7 +31,7 @@ pub(super) fn note_inbox_frame(
         })
 }
 
-pub(super) fn matches_inbox_value(workspace: &str, session: &str, value: &Value) -> bool {
+fn matches_inbox_value(workspace: &str, session: &str, value: &Value) -> bool {
     if value["instanceId"] != workspace {
         return false;
     }

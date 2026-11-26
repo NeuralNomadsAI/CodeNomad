@@ -150,23 +150,11 @@ impl Subscriber {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn sync_inbox_chunk(&self, chunk_active: bool, in_frame: bool) {
-        if let Some(inbox) = &self.signals.inbox {
-            inbox.sync_chunk_state(chunk_active, in_frame);
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn end_inbox_chunk_quiet(
-        &self,
-        clean: bool,
-        in_frame: bool,
-        completed_frames: u64,
-    ) -> Option<crate::Wake> {
+    fn end_inbox_chunk_quiet(&self, clean: bool) -> Option<crate::Wake> {
         self.signals
             .inbox
             .as_ref()
-            .and_then(|inbox| inbox.end_chunk_quiet(clean, in_frame, completed_frames))
+            .and_then(|inbox| inbox.end_chunk_quiet(clean))
     }
 
     fn note_inbox_frame(&self, kind: &str, data: &str) -> u64 {
@@ -355,8 +343,6 @@ struct StreamInner {
     replays_overflowed: bool,
     #[cfg(not(target_arch = "wasm32"))]
     chunk_active: bool,
-    #[cfg(not(target_arch = "wasm32"))]
-    partial_frame: bool,
     stop: Option<Sender<()>>,
 }
 
@@ -373,14 +359,9 @@ pub(super) struct ChunkGuard<'a> {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ChunkGuard<'_> {
-    #[cfg(test)]
-    pub(super) fn finish(self) {
-        self.finish_with(false, 0);
-    }
-
-    pub(super) fn finish_with(mut self, in_frame: bool, completed_frames: u64) {
+    pub(super) fn finish(mut self) {
         if let Some(shared) = self.shared.take() {
-            shared.end_chunk(true, in_frame, completed_frames);
+            shared.end_chunk(true);
         }
     }
 }
@@ -389,7 +370,7 @@ impl ChunkGuard<'_> {
 impl Drop for ChunkGuard<'_> {
     fn drop(&mut self) {
         if let Some(shared) = self.shared.take() {
-            shared.end_chunk(false, false, 0);
+            shared.end_chunk(false);
         }
     }
 }
@@ -438,95 +419,15 @@ impl SharedStream {
         ChunkGuard { shared: Some(self) }
     }
 
-    /// Pre-classifies a complete `data:` payload buffered at chunk end (missing only the
-    /// terminating blank line) so inbox and quota invalidations apply before chunk release.
-    /// Returns `true` when the payload was valid JSON (or a ping) and needs no partial deferral.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn preview_pending_frame(&self, kind: &str, data: &str) -> bool {
-        if kind == "codenomad.client.ping" {
-            return true;
-        }
-        if data.len() > super::limits::FRAME_LIMIT {
-            self.preview_skipped();
-            return true;
-        }
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim()) else {
-            return false;
-        };
-        let notify_quota = kind.is_empty() || kind == "message";
-        let mut wakes = Vec::new();
-        let mut inbox_wakes = Vec::new();
-        {
-            let inner = self.inner.lock().unwrap();
-            if matches!(inner.phase, Phase::Closing | Phase::Closed { .. }) {
-                return true;
-            }
-            for sub in &inner.subscribers {
-                if let Some((workspace, session)) = &sub.signals.conversation
-                    && let Some(inbox) = &sub.signals.inbox
-                    && super::sessions::matches_inbox_value(workspace, session, &value)
-                    && let Some(wake) = inbox.invalidate_published_quiet()
-                {
-                    inbox_wakes.push(wake);
-                }
-                if notify_quota
-                    && let Some(quota) = &sub.quota
-                    && quota.frame_quiet(data)
-                {
-                    wakes.push(quota.clone());
-                }
-            }
-        }
-        for wake in inbox_wakes {
-            wake();
-        }
-        for quota in wakes {
-            quota.wake();
-        }
-        true
-    }
-
-    /// Pre-invalidates inbox and quota authority when a chunk ends mid-skip of an oversized frame.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn preview_skipped(&self) {
-        let mut wakes = Vec::new();
-        let mut inbox_wakes = Vec::new();
-        {
-            let inner = self.inner.lock().unwrap();
-            if matches!(inner.phase, Phase::Closing | Phase::Closed { .. }) {
-                return;
-            }
-            for sub in &inner.subscribers {
-                if let Some(inbox) = &sub.signals.inbox
-                    && let Some(wake) = inbox.invalidate_published_quiet()
-                {
-                    inbox_wakes.push(wake);
-                }
-                if let Some(quota) = &sub.quota
-                    && quota.skipped_quiet()
-                {
-                    wakes.push(quota.clone());
-                }
-            }
-        }
-        for wake in inbox_wakes {
-            wake();
-        }
-        for quota in wakes {
-            quota.wake();
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn end_chunk(&self, clean: bool, in_frame: bool, completed_frames: u64) {
+    fn end_chunk(&self, clean: bool) {
         let mut wakes = Vec::new();
         let mut inbox_wakes = Vec::new();
         {
             let mut inner = self.inner.lock().unwrap();
             inner.chunk_active = false;
-            inner.partial_frame = clean && in_frame;
             for sub in &inner.subscribers {
-                if let Some(wake) = sub.end_inbox_chunk_quiet(clean, in_frame, completed_frames) {
+                if let Some(wake) = sub.end_inbox_chunk_quiet(clean) {
                     inbox_wakes.push(wake);
                 }
                 if let Some(quota) = &sub.quota {
@@ -660,7 +561,6 @@ impl SharedStream {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 inner.chunk_active = false;
-                inner.partial_frame = false;
             }
             inner.stop.take();
             if let Some(entry) = streams.get_mut(&self.base)
@@ -699,7 +599,6 @@ impl SharedStream {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 inner.chunk_active = false;
-                inner.partial_frame = false;
             }
             inner.stop.take();
             for sub in std::mem::take(&mut inner.subscribers) {
@@ -829,8 +728,8 @@ impl Hub {
                                 #[cfg(target_arch = "wasm32")]
                                 let chunk_active = false;
                                 #[cfg(not(target_arch = "wasm32"))]
-                                if inner.chunk_active || inner.partial_frame {
-                                    sub.sync_inbox_chunk(inner.chunk_active, inner.partial_frame);
+                                if chunk_active {
+                                    sub.begin_inbox_chunk();
                                 }
                                 if let Some(quota) = &sub.quota
                                     && quota.attach_open_quiet(&replays, skipped, chunk_active)
@@ -867,8 +766,6 @@ impl Hub {
                             replays_overflowed: false,
                             #[cfg(not(target_arch = "wasm32"))]
                             chunk_active: false,
-                            #[cfg(not(target_arch = "wasm32"))]
-                            partial_frame: false,
                             stop: Some(stop_tx),
                         }),
                         done: done_rx,

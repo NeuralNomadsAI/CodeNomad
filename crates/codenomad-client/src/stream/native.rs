@@ -278,11 +278,9 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
             watchdog.activity();
             let chunk_guard = shared.begin_chunk();
             let mut parse_failed = false;
-            let mut completed_frames = 0u64;
             for byte in chunk.as_ref() {
                 match parser.byte(*byte) {
                     Ok(Some(Parsed::Data(kind, _))) if kind == "codenomad.client.ping" => {
-                        completed_frames = completed_frames.saturating_add(1);
                         if let Some(done) = spawn_pong(
                             &b,
                             &connection,
@@ -296,11 +294,9 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                         }
                     }
                     Ok(Some(Parsed::Data(kind, data))) => {
-                        completed_frames = completed_frames.saturating_add(1);
                         shared.broadcast_frame(&hub, kind, data);
                     }
                     Ok(Some(Parsed::Skipped)) => {
-                        completed_frames = completed_frames.saturating_add(1);
                         b.client.children().invalidate_all(&b);
                         shared.broadcast_skipped();
                     }
@@ -315,15 +311,7 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                 drop(chunk_guard);
                 break;
             }
-            let unclassified_partial = if parser.is_skipping() {
-                shared.preview_skipped();
-                false
-            } else if let Some((kind, data)) = parser.pending_complete_frame() {
-                !shared.preview_pending_frame(kind, data)
-            } else {
-                parser.in_frame()
-            };
-            chunk_guard.finish_with(unclassified_partial, completed_frames);
+            chunk_guard.finish();
         }
         drop(pong_cancel_tx);
         drop(read_probe);
@@ -538,9 +526,9 @@ async fn receive_chunk(
     let unobserved = quota.map(crate::provider_usage::Ingress::chunk);
     struct InboxChunk<'a>(Option<&'a crate::inbox::InboxWire>);
     impl InboxChunk<'_> {
-        fn finish(mut self, in_frame: bool, completed_frames: u64) {
+        fn finish(mut self) {
             if let Some(inbox) = self.0.take()
-                && let Some(wake) = inbox.end_chunk_quiet(true, in_frame, completed_frames)
+                && let Some(wake) = inbox.end_chunk_quiet(true)
             {
                 wake();
             }
@@ -549,7 +537,7 @@ async fn receive_chunk(
     impl Drop for InboxChunk<'_> {
         fn drop(&mut self) {
             if let Some(inbox) = self.0.take()
-                && let Some(wake) = inbox.end_chunk_quiet(false, false, 0)
+                && let Some(wake) = inbox.end_chunk_quiet(false)
             {
                 wake();
             }
@@ -559,10 +547,8 @@ async fn receive_chunk(
         state.inbox.begin_chunk();
         InboxChunk(Some(&state.inbox))
     });
-    let mut completed_frames = 0u64;
     for byte in chunk {
         if let Some(frame) = parser.byte(*byte)? {
-            completed_frames = completed_frames.saturating_add(1);
             let mark = match &frame {
                 Parsed::Data(kind, data) if kind != "codenomad.client.ping" => {
                     if (kind.is_empty() || kind == "message")
@@ -597,7 +583,7 @@ async fn receive_chunk(
         }
     }
     if let Some(chunk) = inbox_chunk {
-        chunk.finish(parser.in_frame(), completed_frames);
+        chunk.finish();
     }
     if let Some(chunk) = unobserved {
         chunk.finish();
