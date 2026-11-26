@@ -9,6 +9,7 @@ pub mod catalogue;
 pub mod clipboard;
 pub mod document_reader;
 pub mod file_row_actions;
+pub mod form_controls;
 mod generated_catalogues;
 mod generated_layout;
 pub mod git_diff;

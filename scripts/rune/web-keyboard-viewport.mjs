@@ -21,7 +21,7 @@ export async function keyboardViewport(page, m, {kind, prefix, heading, headerHe
   const primary = button(actionKeys.at(-1))
   const title = mirror.getByRole('heading', {name: heading, exact: true})
   const newTab = button('instanceTabs.new.ariaLabel')
-  const interruptionLabel = kind === 'permission' ? m['rune.reason'] : 'q0'
+  const interruptionLabel = kind === 'permission' ? m['rune.reason'] : 'Question field 0'
   const partialInput = kind === 'permission' ? 'Motif partiel — 日本語' : 'Réponse partielle — 🦀'
   const paint = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
   const flushMirror = async () => {
