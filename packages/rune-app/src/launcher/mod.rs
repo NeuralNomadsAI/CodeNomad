@@ -678,8 +678,6 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.search = TextEdit::new("");
             let auth_required = l.authentication_required;
             crate::workspace::opened(s, &project);
-            s.command_palette.dismiss();
-            s.tab_rename.dismiss();
             match restored {
                 Restored::Bound(backend, title, slug) if !auth_required && !stopped_in_flight => {
                     if stale_connection {

@@ -39,7 +39,7 @@ pub async fn open(
 pub async fn open_workspace(
     backend: crate::backend::Backend,
     slug: String,
-    expected_root: String,
+    expected_root: Option<String>,
     target: WorkspaceTarget,
     owner: Weak<()>,
 ) -> Result<(), String> {
@@ -47,7 +47,9 @@ pub async fn open_workspace(
         .workspace_checkout(&slug)
         .await
         .map_err(|e| e.to_string())?;
-    if slug == "root" && !codenomad_client::same_server_path(&checkout, &expected_root) {
+    if let Some(expected) = expected_root.as_deref()
+        && !codenomad_client::same_server_path(&checkout, expected)
+    {
         return Err("Workspace changed".into());
     }
     tokio::task::spawn_blocking(move || {
@@ -187,6 +189,21 @@ fn chooser_started(
     Ok(false)
 }
 
+const OPEN_TARGET_ENV: &str = "CODENOMAD_OPEN_TARGET";
+// Constant scripts read the target path from the process environment so no path
+// characters (including PowerShell 5.1 typographic quotes) are ever parsed as code.
+const POWERSHELL_TERMINAL_SCRIPT: &str = "Set-Location -LiteralPath $env:CODENOMAD_OPEN_TARGET; Remove-Item Env:CODENOMAD_OPEN_TARGET -ErrorAction SilentlyContinue";
+const POWERSHELL_EDIT_SCRIPT: &str = "$ErrorActionPreference='Stop'; $p=$env:CODENOMAD_OPEN_TARGET; Remove-Item Env:CODENOMAD_OPEN_TARGET -ErrorAction SilentlyContinue; Start-Process -FilePath $p -Verb Edit";
+
+fn encode_powershell(script: &str) -> String {
+    STANDARD.encode(
+        script
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>(),
+    )
+}
+
 fn launch(selected: &Path, target: Target) -> io::Result<()> {
     let folder = selected.is_dir();
     let path = launch_path(selected);
@@ -198,15 +215,6 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
     let system =
         std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
     let powershell = system.join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    let encoded = |script: String| {
-        STANDARD.encode(
-            script
-                .encode_utf16()
-                .flat_map(u16::to_le_bytes)
-                .collect::<Vec<_>>(),
-        )
-    };
-    let literal = || path.to_string_lossy().replace('\'', "''");
     let spawn = |command: &mut Command| {
         command
             .current_dir(cwd)
@@ -237,13 +245,11 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
         Target::Reveal => start(explorer().raw_arg(format!("/select,\"{}\"", path.display()))),
         Target::Terminal if folder => hidden(
             Command::new(system.join("System32/cmd.exe"))
+                .env(OPEN_TARGET_ENV, &path)
                 .args(["/D", "/C", "start", ""])
                 .arg(&powershell)
                 .args(["-NoExit", "-EncodedCommand"])
-                .arg(encoded(format!(
-                    "Set-Location -LiteralPath '{}'",
-                    literal()
-                ))),
+                .arg(encode_powershell(POWERSHELL_TERMINAL_SCRIPT)),
         ),
         Target::Terminal => Err(io::ErrorKind::NotADirectory.into()),
         Target::Default => {
@@ -252,8 +258,13 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
                 return start(explorer().arg(&path));
             }
             if mode == DefaultMode::Edit
-                && hidden(Command::new(&powershell).args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
-                    .arg(encoded(format!("$ErrorActionPreference='Stop'; Start-Process -FilePath '{}' -Verb Edit", literal())))).is_ok()
+                && hidden(
+                    Command::new(&powershell)
+                        .env(OPEN_TARGET_ENV, &path)
+                        .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+                        .arg(encode_powershell(POWERSHELL_EDIT_SCRIPT)),
+                )
+                .is_ok()
             {
                 return Ok(());
             }
@@ -366,5 +377,19 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn powershell_scripts_pass_target_as_env_data_without_interpolation() {
+        for script in [POWERSHELL_TERMINAL_SCRIPT, POWERSHELL_EDIT_SCRIPT] {
+            assert!(script.contains("$env:CODENOMAD_OPEN_TARGET"));
+            assert!(!script.contains('\u{2019}'));
+            let decoded_bytes = STANDARD.decode(encode_powershell(script)).unwrap();
+            let utf16: Vec<u16> = decoded_bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            assert_eq!(String::from_utf16(&utf16).unwrap(), script);
+        }
     }
 }

@@ -86,35 +86,56 @@ pub(crate) fn can_rename_active(s: &State) -> bool {
 }
 
 pub(crate) fn open_active(s: &mut State, tx: &mut Tx) -> bool {
+    open_active_with_return_focus(s, None, tx)
+}
+
+pub(crate) fn open_active_with_return_focus(
+    s: &mut State,
+    return_focus: Option<String>,
+    tx: &mut Tx,
+) -> bool {
     let Some((tab_key, _)) = workspace::active_workspace(s) else {
         return false;
     };
     let tab_key = tab_key.to_owned();
-    open_for_tab(s, &tab_key, tx)
+    open_for_tab_with_return_focus(s, &tab_key, return_focus, tx)
 }
 
 pub(crate) fn open_for_tab(s: &mut State, tab_key: &str, tx: &mut Tx) -> bool {
+    open_for_tab_with_return_focus(s, tab_key, None, tx)
+}
+
+fn open_for_tab_with_return_focus(
+    s: &mut State,
+    tab_key: &str,
+    explicit_return: Option<String>,
+    tx: &mut Tx,
+) -> bool {
     if is_open(s) || blocked_for_open(s) {
         return false;
     }
     let Some(initial) = workspace::tab_rename_seed(s, tab_key) else {
         return false;
     };
-    let prior = tx
-        .focused()
-        .filter(|key| !key.starts_with("command-palette-"))
-        .map(str::to_owned);
-    let floating_fallback = if s.shell.floating_sessions().is_some() {
-        Some("sessions-panel-toggle".to_owned())
-    } else if s.shell.has_floating() {
-        Some("right-panel-toggle".to_owned())
+    let return_focus = if explicit_return.is_some() {
+        explicit_return
     } else {
-        None
-    };
-    let return_focus = match (prior.as_deref(), floating_fallback) {
-        (Some(theme::TRIGGER), _) => prior,
-        (_, Some(toggle_key)) => Some(toggle_key),
-        _ => prior.or_else(|| Some(format!("t-{tab_key}"))),
+        let prior = tx
+            .focused()
+            .filter(|key| !key.starts_with("command-palette-"))
+            .map(str::to_owned);
+        let floating_fallback = if s.shell.floating_sessions().is_some() {
+            Some("sessions-panel-toggle".to_owned())
+        } else if s.shell.has_floating() {
+            Some("right-panel-toggle".to_owned())
+        } else {
+            None
+        };
+        match (prior.as_deref(), floating_fallback) {
+            (Some(theme::TRIGGER), _) => prior,
+            (_, Some(toggle_key)) => Some(toggle_key),
+            _ => prior.or_else(|| Some(format!("t-{tab_key}"))),
+        }
     };
     super::Panels::dismiss_outside(s, tx);
     let mut input = TextEdit::new(&initial);

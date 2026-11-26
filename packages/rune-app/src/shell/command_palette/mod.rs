@@ -33,6 +33,12 @@ impl Palette {
         self.return_focus = None;
         self.close_control = WindowCloseState::default();
     }
+
+    #[cfg(test)]
+    pub(in crate::shell) fn query_for_test(&mut self, text: &str) {
+        self.query = TextEdit::new(text);
+        self.selected_id = None;
+    }
 }
 
 pub(crate) fn is_open(s: &State) -> bool {
@@ -192,8 +198,14 @@ pub(super) fn execute_by_id(s: &mut State, id: &'static str, tx: &mut Tx) -> boo
         return false;
     }
     let target = take_closed_state(s);
-    restore_focus(target, tx);
-    commands::execute(s, item.id, tx);
+    if item.id == "rename-instance" {
+        if !super::tab_rename::open_active_with_return_focus(s, target.clone(), tx) {
+            restore_focus(target, tx);
+        }
+    } else {
+        restore_focus(target, tx);
+        commands::execute(s, item.id, tx);
+    }
     tx.instant();
     true
 }
@@ -209,8 +221,14 @@ fn execute_selected(s: &mut State, tx: &mut Tx) -> bool {
     }
     let id = item.id;
     let target = take_closed_state(s);
-    restore_focus(target, tx);
-    commands::execute(s, id, tx);
+    if id == "rename-instance" {
+        if !super::tab_rename::open_active_with_return_focus(s, target.clone(), tx) {
+            restore_focus(target, tx);
+        }
+    } else {
+        restore_focus(target, tx);
+        commands::execute(s, id, tx);
+    }
     tx.instant();
     true
 }

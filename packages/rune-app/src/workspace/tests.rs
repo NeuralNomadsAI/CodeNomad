@@ -387,3 +387,109 @@ fn source_wrap_round_trips_the_solid_layout_key_without_affecting_window_state()
         );
     }
 }
+
+#[test]
+fn project_names_drop_before_drafts_and_never_block_restore_or_save() {
+    // 1. Solid-valid 300-unit name survives decode, while malformed or >4096-unit names
+    // drop only the optional projectName without rejecting tabs or drafts.
+    let mut base_tab = workspace();
+    base_tab.drafts.insert("ses_keep".into(), "keep me".into());
+    let mut raw = value(&snapshot(base_tab));
+    let long_solid = "n".repeat(300);
+    raw["session"]["tabs"][0]["projectName"] = json!(long_solid);
+    let restored = from_value(&raw).expect("300-unit Solid projectName restores");
+    match &restored.tabs[0] {
+        Tab::Workspace(w) => {
+            assert_eq!(w.project_name.as_deref(), Some(long_solid.as_str()));
+            assert_eq!(
+                w.drafts.get("ses_keep").map(String::as_str),
+                Some("keep me")
+            );
+        }
+        other => panic!("expected workspace tab, got {other:?}"),
+    }
+    for bad in [
+        json!("bad\nname"),
+        json!("a".repeat(MAX_PROJECT_NAME + 1)),
+        json!(42),
+    ] {
+        let mut mutated = raw.clone();
+        mutated["session"]["tabs"][0]["projectName"] = bad;
+        let decoded = from_value(&mutated).expect("bad optional projectName does not fail restore");
+        match &decoded.tabs[0] {
+            Tab::Workspace(w) => {
+                assert_eq!(w.project_name, None);
+                assert_eq!(
+                    w.drafts.get("ses_keep").map(String::as_str),
+                    Some("keep me")
+                );
+            }
+            other => panic!("expected workspace tab, got {other:?}"),
+        }
+    }
+
+    // 2. Near MAX_STRINGS, encode_for_save drops optional project names before evicting drafts.
+    let mut tab_a = workspace();
+    tab_a.project_name = Some("x".repeat(4000));
+    tab_a.drafts.insert("s1".into(), "d".repeat(MAX_DRAFT));
+    tab_a.drafts.insert("s2".into(), "d".repeat(MAX_DRAFT));
+    let mut tab_b = workspace();
+    tab_b.occurrence = 1;
+    tab_b.project_name = Some("y".repeat(4000));
+    tab_b
+        .drafts
+        .insert("s3".into(), "d".repeat(MAX_DRAFT - 1024));
+    let near_limit = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(tab_a), Tab::Workspace(tab_b)],
+        active: Some(0),
+    };
+    let (bytes, degraded) =
+        save_snapshot::encode_for_save(&near_limit).expect("save succeeds by dropping names first");
+    assert!(degraded);
+    let saved = decode(&bytes).expect("saved snapshot decodes");
+    let total_drafts: usize = saved
+        .tabs
+        .iter()
+        .map(|tab| match tab {
+            Tab::Workspace(w) => w.drafts.len(),
+            Tab::Blank => 0,
+        })
+        .sum();
+    assert_eq!(
+        total_drafts, 3,
+        "optional project names must never evict drafts"
+    );
+
+    // 3. Many tabs with max-size project names and zero drafts never fail encode_for_save or decode.
+    let tabs: Vec<Tab> = (0..26)
+        .map(|i| {
+            let mut w = workspace();
+            w.occurrence = i;
+            w.project_name = Some("z".repeat(MAX_PROJECT_NAME));
+            Tab::Workspace(w)
+        })
+        .collect();
+    let many_names = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs,
+        active: Some(0),
+    };
+    let (saved_bytes, _) =
+        save_snapshot::encode_for_save(&many_names).expect("project names alone never fail save");
+    let decoded = decode(&saved_bytes).expect("saved snapshot decodes");
+    assert_eq!(decoded.tabs.len(), 26);
+    assert!(
+        decoded
+            .tabs
+            .iter()
+            .all(|tab| matches!(tab, Tab::Workspace(_))),
+        "no workspace tab should be degraded to Tab::Blank"
+    );
+}

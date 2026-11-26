@@ -50,6 +50,7 @@ const MAX_TABS: usize = 32;
 const MAX_DRAFTS: usize = 24;
 const MAX_DRAFT: usize = 32 * 1024;
 const MAX_STRINGS: usize = 96 * 1024;
+pub(super) const MAX_PROJECT_NAME: usize = 4096;
 pub(crate) const MAX_PANEL_WIDTH: u16 = 16_384;
 const PANEL_WIDTH_KEYS: [&str; 2] = [
     "opencode-session-sidebar-width-v8",
@@ -185,7 +186,7 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
         };
         (tabs, active)
     };
-    let snapshot = Snapshot {
+    let mut snapshot = Snapshot {
         revision,
         saved_at,
         panel_widths,
@@ -193,6 +194,7 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
         tabs,
         active,
     };
+    drop_excess_project_names(&mut snapshot)?;
     validate(&snapshot)?;
     Ok(snapshot)
 }
@@ -354,9 +356,7 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     .as_str()
                     .ok_or(Error::Malformed)?
                     .to_owned(),
-                project_name: optional_string(value, "projectName")?
-                    .map(|name| name.trim().to_owned())
-                    .filter(|name| !name.is_empty()),
+                project_name: decode_project_name(value.get("projectName")),
                 occurrence: value
                     .get("occurrence")
                     .map(|v| integer(Some(v)))
@@ -434,6 +434,40 @@ fn view_state(value: Option<&Value>) -> Result<ViewState, Error> {
     })
 }
 
+pub(super) fn valid_project_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    !trimmed.is_empty()
+        && !trimmed.chars().any(char::is_control)
+        && trimmed.encode_utf16().nth(MAX_PROJECT_NAME).is_none()
+}
+
+fn decode_project_name(value: Option<&Value>) -> Option<String> {
+    let raw = value?.as_str()?;
+    let trimmed = raw.trim();
+    valid_project_name(trimmed).then(|| trimmed.to_owned())
+}
+
+pub(super) fn drop_excess_project_names(snapshot: &mut Snapshot) -> Result<(), Error> {
+    if snapshot_string_units(snapshot)? <= MAX_STRINGS {
+        return Ok(());
+    }
+    let tab_count = snapshot.tabs.len();
+    let active = snapshot.active;
+    let order = (0..tab_count)
+        .filter(|&index| Some(index) != active)
+        .chain(active.into_iter().filter(|&index| index < tab_count));
+    for index in order {
+        let changed = match &mut snapshot.tabs[index] {
+            Tab::Workspace(saved) => saved.project_name.take().is_some(),
+            Tab::Blank => false,
+        };
+        if changed && snapshot_string_units(snapshot)? <= MAX_STRINGS {
+            break;
+        }
+    }
+    Ok(())
+}
+
 fn validate(snapshot: &Snapshot) -> Result<(), Error> {
     if snapshot_string_units(snapshot)? > MAX_STRINGS {
         return Err(Error::Limit);
@@ -479,8 +513,8 @@ fn snapshot_string_units(snapshot: &Snapshot) -> Result<usize, Error> {
             return Err(Error::Malformed);
         }
         if let Some(name) = &workspace.project_name {
-            take(name, 256, false, &mut remaining)?;
-            if name.trim().is_empty() || name.chars().any(char::is_control) {
+            take(name, MAX_PROJECT_NAME, false, &mut remaining)?;
+            if !valid_project_name(name) {
                 return Err(Error::Malformed);
             }
         }

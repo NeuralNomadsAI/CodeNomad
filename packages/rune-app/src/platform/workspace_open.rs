@@ -147,7 +147,7 @@ pub async fn open(
 pub async fn open_workspace(
     _: crate::backend::Backend,
     _: String,
-    _: String,
+    _: Option<String>,
     _: WorkspaceTarget,
     _: std::sync::Weak<()>,
 ) -> Result<(), String> {

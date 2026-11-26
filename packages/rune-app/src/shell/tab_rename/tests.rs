@@ -291,15 +291,30 @@ fn shortcut_respects_overrides_disable_blank_tab_and_command_palette_entry() {
     send_key(&mut rt, Key::Function(2), Mods::default());
     assert!(!is_open(&rt.state));
 
-    // Command palette rename-instance opens rename modal and focuses input.
+    // Command palette rename-instance opened from header toggle returns focus to that toggle.
     settings::fixture_shortcuts(&rt.state, json!({}));
-    send_key(&mut rt, Key::Command('p'), primary_mods(true));
+    click(&mut rt, "command-palette-toggle");
     assert!(command_palette::is_open(&rt.state));
     click(&mut rt, "command-palette-item-rename-instance");
     assert!(!command_palette::is_open(&rt.state));
     assert!(is_open(&rt.state));
     assert!(focused_path_contains(&rt, INPUT_KEY));
-    // Escape returns focus to the project tab (not a dangling command-palette input).
+    send_key(&mut rt, Key::Escape, Mods::default());
+    assert_eq!(focused_key(&rt).as_deref(), Some("command-palette-toggle"));
+
+    // Keyboard activation from a focused tab also returns focus to that tab on Escape.
+    rt.update(|_, tx| tx.focus("t-tab-0", true));
+    settle(&mut rt);
+    send_key(&mut rt, Key::Command('p'), primary_mods(true));
+    assert!(command_palette::is_open(&rt.state));
+    rt.update(|s, _| {
+        s.command_palette.query_for_test("rename");
+    });
+    settle(&mut rt);
+    send_key(&mut rt, Key::Enter, Mods::default());
+    assert!(!command_palette::is_open(&rt.state));
+    assert!(is_open(&rt.state));
+    assert!(focused_path_contains(&rt, INPUT_KEY));
     send_key(&mut rt, Key::Escape, Mods::default());
     assert_eq!(focused_key(&rt).as_deref(), Some("t-tab-0"));
 
@@ -349,14 +364,24 @@ fn project_name_persists_in_window_snapshot_and_validates_bounds() {
         other => panic!("expected workspace tab, got {other:?}"),
     }
 
-    // Control characters and >256 UTF-16 units are rejected by snapshot validation.
+    // Control characters, >4096 UTF-16 units, and blank names drop only projectName on decode.
     let mut bad_ctrl = encoded.clone();
     bad_ctrl["session"]["tabs"][0]["projectName"] = json!("bad\nname");
-    assert!(workspace::decode(&serde_json::to_vec(&bad_ctrl).unwrap()).is_err());
+    let decoded_ctrl =
+        workspace::decode(&serde_json::to_vec(&bad_ctrl).unwrap()).expect("ctrl drops only name");
+    match &decoded_ctrl.tabs[0] {
+        workspace::Tab::Workspace(w) => assert_eq!(w.project_name, None),
+        other => panic!("expected workspace tab, got {other:?}"),
+    }
 
     let mut bad_len = encoded.clone();
-    bad_len["session"]["tabs"][0]["projectName"] = json!("a".repeat(257));
-    assert!(workspace::decode(&serde_json::to_vec(&bad_len).unwrap()).is_err());
+    bad_len["session"]["tabs"][0]["projectName"] = json!("a".repeat(4097));
+    let decoded_len =
+        workspace::decode(&serde_json::to_vec(&bad_len).unwrap()).expect("long drops only name");
+    match &decoded_len.tabs[0] {
+        workspace::Tab::Workspace(w) => assert_eq!(w.project_name, None),
+        other => panic!("expected workspace tab, got {other:?}"),
+    }
 
     let mut bad_empty = encoded;
     bad_empty["session"]["tabs"][0]["projectName"] = json!("   ");
@@ -519,8 +544,17 @@ fn palette_and_rename_dismiss_on_project_install_and_auth_renewal() {
         let mut rt = runtime(s);
         send_key(&mut rt, Key::Command('p'), primary_mods(true));
         assert!(command_palette::is_open(&rt.state));
+        let before_gen = workspace_open::generation_for_test(&rt.state);
         assert!(settings::authentication_required(&mut rt.state, &expired));
         assert!(!command_palette::is_open(&rt.state));
+        assert_ne!(
+            workspace_open::generation_for_test(&rt.state),
+            before_gen,
+            "authentication_required must cancel in-flight workspace_open"
+        );
+        // Stale errors tagged with the cancelled generation are dropped by poll().
+        workspace_open::inject_error_for_test(&rt.state, before_gen, "Old", "stale error");
+        assert!(!workspace_open::poll(&mut rt.state));
         // Clearing authentication_required after renewal must not resurface the closed palette.
         rt.update(|s, _| {
             if let Some(l) = s.screen.launcher_mut() {

@@ -11,6 +11,13 @@ pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Er
     let mut valid = snapshot.clone();
     for tab in &mut valid.tabs {
         let Tab::Workspace(saved) = tab else { continue };
+        if saved
+            .project_name
+            .as_deref()
+            .is_some_and(|name| !super::valid_project_name(name))
+        {
+            saved.project_name = None;
+        }
         let mut shell = saved.clone();
         shell.drafts.clear();
         shell.attachment_drafts.clear();
@@ -69,6 +76,7 @@ fn priority(active: bool, saved: &Workspace, id: &str) -> u8 {
 }
 
 fn fit_text(snapshot: &mut Snapshot) -> Result<(), Error> {
+    super::drop_excess_project_names(snapshot)?;
     let excess = snapshot_string_units(snapshot)?.saturating_sub(MAX_STRINGS);
     if excess == 0 {
         return Ok(());

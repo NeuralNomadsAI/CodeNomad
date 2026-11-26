@@ -58,7 +58,9 @@ pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::B
             s.phase = crate::Phase::Reconnecting;
             s.command_palette.dismiss();
             s.tab_rename.dismiss();
+            s.workspace_open.cancel();
         } else {
+            s.workspace_open.cancel();
             s.show_launcher();
         }
         crate::workspace::suspend_missions(s);
