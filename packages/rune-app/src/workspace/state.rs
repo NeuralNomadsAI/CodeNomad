@@ -517,11 +517,21 @@ impl Ui {
                         Some(i)
                     })
                 };
-                // Simulate each candidate placement (pure session-key placement vs placing
-                // __no_session_draft__ on each eligible tab) against full v1 encoding so we
-                // maximize genuinely encodable preserved drafts before tie-breaking by surviving
-                // tabs, local recovery slot preference, and tab order.
-                let mut candidates: Vec<Option<usize>> = vec![None];
+                // Simulate each candidate placement (pure session-key placement vs placing each
+                // bundle in __no_session_draft__ on each eligible tab) against full v1 encoding so
+                // we maximize genuinely encodable preserved drafts before tie-breaking by
+                // surviving tabs, local recovery slot preference, newest local draft, and tab
+                // order.
+                #[derive(PartialEq, Eq, PartialOrd, Ord)]
+                struct FallbackRank {
+                    kept: usize,
+                    surviving: usize,
+                    used_no_session: bool,
+                    newest_local: std::cmp::Reverse<usize>,
+                    dest_surviving: bool,
+                    dest_order: std::cmp::Reverse<usize>,
+                }
+                let mut candidates: Vec<(Option<usize>, Option<usize>)> = vec![(None, None)];
                 if no_session_free {
                     for (i, tab) in snap.tabs.iter().enumerate() {
                         if let Tab::Workspace(w) = tab
@@ -529,29 +539,35 @@ impl Ui {
                             && !self.entries[i].cleared.contains(super::NO_SESSION_DRAFT_ID)
                             && tab_has_room(w, &[super::NO_SESSION_DRAFT_ID])
                         {
-                            candidates.push(Some(i));
+                            for bundle_idx in 0..unprojected.len() {
+                                candidates.push((Some(i), Some(bundle_idx)));
+                            }
                         }
                     }
                 }
-                let mut best: Option<(
-                    (usize, usize, bool, bool, std::cmp::Reverse<usize>),
-                    Snapshot,
-                )> = None;
-                for no_session_dest in candidates {
+                let mut best: Option<(FallbackRank, Snapshot)> = None;
+                for (no_session_dest, local_bundle_idx) in candidates {
                     let mut cand = snap.clone();
                     let mut kept = 0usize;
                     let mut surviving_kept = 0usize;
                     let mut used_no_session = false;
-                    for bundle in &unprojected {
-                        if let Some(dest) = no_session_dest
-                            && !used_no_session
-                            && try_insert(&mut cand, dest, super::NO_SESSION_DRAFT_ID, bundle)
-                        {
-                            used_no_session = true;
-                            kept += 1;
-                            if !self.entries[dest].closing_deferred {
-                                surviving_kept += 1;
-                            }
+                    if let (Some(dest), Some(bundle_idx)) = (no_session_dest, local_bundle_idx) {
+                        if !try_insert(
+                            &mut cand,
+                            dest,
+                            super::NO_SESSION_DRAFT_ID,
+                            &unprojected[bundle_idx],
+                        ) {
+                            continue;
+                        }
+                        used_no_session = true;
+                        kept += 1;
+                        if !self.entries[dest].closing_deferred {
+                            surviving_kept += 1;
+                        }
+                    }
+                    for (bundle_idx, bundle) in unprojected.iter().enumerate() {
+                        if local_bundle_idx == Some(bundle_idx) {
                             continue;
                         }
                         if let Some(dest) = find_empty_session(&cand.tabs, true)
@@ -567,16 +583,15 @@ impl Ui {
                     if kept == 0 {
                         continue;
                     }
-                    let dest_surviving =
-                        no_session_dest.is_some_and(|i| !self.entries[i].closing_deferred);
-                    let dest_order = std::cmp::Reverse(no_session_dest.unwrap_or(usize::MAX));
-                    let rank = (
+                    let rank = FallbackRank {
                         kept,
-                        surviving_kept,
+                        surviving: surviving_kept,
                         used_no_session,
-                        dest_surviving,
-                        dest_order,
-                    );
+                        newest_local: std::cmp::Reverse(local_bundle_idx.unwrap_or(usize::MAX)),
+                        dest_surviving: no_session_dest
+                            .is_some_and(|i| !self.entries[i].closing_deferred),
+                        dest_order: std::cmp::Reverse(no_session_dest.unwrap_or(usize::MAX)),
+                    };
                     if best.as_ref().is_none_or(|(best_rank, _)| rank > *best_rank) {
                         best = Some((rank, cand));
                     }

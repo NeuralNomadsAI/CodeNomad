@@ -3865,15 +3865,21 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                 opened_twice,
                 "second sibling open must complete Reply::Opened while probe is in-flight"
             );
-            assert!(
+            assert_eq!(
                 r17_http
                     .workspace
                     .as_ref()
                     .unwrap()
                     .restored_draft_in_flight
                     .iter()
-                    .any(|(_, id, _)| id == "ses_probe_inflight"),
-                "sibling Reply::Opened must NOT cancel the in-flight probe"
+                    .filter(|(sc, id, cg)| {
+                        sc.same_scope(&scope_http)
+                            && id == "ses_probe_inflight"
+                            && *cg == conn_gen_http
+                    })
+                    .count(),
+                1,
+                "sibling Reply::Opened must neither cancel nor duplicate the in-flight probe"
             );
             // Deliver the controlled completion for ses_probe_inflight deterministically.
             let _ = r17_http
@@ -4686,10 +4692,81 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         );
         assert!(!wa.drafts.contains_key(NO_SESSION_DRAFT_ID));
         assert!(!wb.drafts.contains_key(NO_SESSION_DRAFT_ID));
+
+        // 40b. R20 Bloquant 1: Single tab with 2 free slots and 45 UTF-16 units remaining.
+        // Newest draft = 1-char text + attachment marker (41 units under __no_session_draft__,
+        // 11 units under ses_s). Older draft = 10-char text (30 units under __no_session_draft__,
+        // 15 units under ses_s). Reversing the assignment keeps BOTH (30 + 11 = 41 <= 45).
+        let mut single = closed("ses_s", "");
+        single.drafts.clear();
+        single.active_session_id = None;
+        let chunk = "x".repeat(30_000);
+        for i in 0..3 {
+            single
+                .drafts
+                .insert(format!("ses_sg_{i:02}"), chunk.clone());
+        }
+        for i in 3..(crate::workspace::MAX_DRAFTS - 3) {
+            single.drafts.insert(format!("ses_sg_{i:02}"), "a".into());
+        }
+        single.drafts.insert("ses_sg_pad".into(), "p".into());
+        let mut probe_single = Ui::new();
+        probe_single.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(single.clone())],
+            active: Some(0),
+        });
+        let single_base =
+            crate::workspace::snapshot_string_units(&probe_single.snapshot()).unwrap();
+        let single_rem = crate::workspace::MAX_STRINGS.saturating_sub(single_base);
+        let single_pad = single_rem.saturating_sub(45);
+        single
+            .drafts
+            .insert("ses_sg_pad".into(), "p".repeat(1 + single_pad));
+        let older_closed = closed("ses_s", "0123456789");
+        let mut newest_att = closed("ses_s", "a");
+        newest_att.attachment_drafts.insert("ses_s".into());
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(single.clone())],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.closed = vec![older_closed, newest_att];
+        ui.closed_restored = vec![Default::default(); 2];
+        ui.closed_derived_from = vec![Default::default(); 2];
+        ui.closed_pending_deleted.push((
+            crate::workspace::state::ProjectScope::from_workspace(&single),
+            "ses_s".into(),
+        ));
+        let snap = ui.snapshot();
+        assert!(crate::workspace::encode(&snap).is_ok());
+        let Tab::Workspace(ws) = &snap.tabs[0] else {
+            panic!("single tab");
+        };
+        assert_eq!(
+            ws.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+            Some("0123456789"),
+            "older text-only draft must take __no_session_draft__ so both drafts fit"
+        );
+        assert_eq!(
+            ws.drafts.get("ses_s").map(String::as_str),
+            Some("a"),
+            "newest draft with attachment marker must take ses_s so both drafts fit"
+        );
+        assert!(ws.attachment_drafts.contains("ses_s"));
     }
 
-    // 41. R19 Moyen 2: Passive catalogue refresh records fresh presence proof so a late 404
-    // started earlier cannot detach the draft of a session shown as present.
+    // 41. R19 Moyen 2 + R20 Moyen: Both a fresh passive catalogue page AND a late 404 probe
+    // queued BEFORE the same workspace::poll tick — passive catalogue presence proof must be
+    // applied before draining the 404 so the draft is NOT detached.
     {
         let mut s = draft_state();
         let proj = Project {
@@ -4740,41 +4817,40 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
             )))
             .is_ok()
         );
-        s.screen.launcher_mut().unwrap().project = Some(proj);
-        s.workspace = Some(ui);
-        let _ = crate::workspace::state::catalogue::poll(&mut s, 1.0, &mut tx);
-        // Now deliver the late 404 probe that started at epoch 0 before passive refresh arrived.
-        let _ = s
-            .workspace
-            .as_ref()
-            .unwrap()
-            .restored_draft_checks
-            .0
-            .try_send(crate::workspace::state::drafts::RestoredProbeResult {
+        let _ = ui.restored_draft_checks.0.try_send(
+            crate::workspace::state::drafts::RestoredProbeResult {
                 scope,
                 id: "ses_passive_live".into(),
                 connection_generation: conn_gen,
                 backend_base: base,
                 started_epoch: 0,
                 absence: Some(Some(codenomad_client::catalog::SessionAbsence::NotFound)),
-            });
+            },
+        );
+        s.screen.launcher_mut().unwrap().project = Some(proj);
+        s.workspace = Some(ui);
+        let _ = crate::workspace::poll(&mut s, 1.0, &mut tx);
         assert!(
-            !crate::workspace::state::drafts::poll_restored_draft_checks(&mut s),
-            "late 404 must be ignored after fresher passive catalogue refresh listed the session"
+            s.workspace
+                .as_ref()
+                .unwrap()
+                .restored_draft_in_flight
+                .is_empty(),
+            "late 404 probe must have been drained in the same workspace::poll tick"
         );
         let Tab::Workspace(after) = &s.workspace.as_ref().unwrap().entries[0].saved else {
             panic!("expected workspace");
         };
         assert_eq!(
             after.drafts.get("ses_passive_live").map(String::as_str),
-            Some("keep passive")
+            Some("keep passive"),
+            "same-tick passive catalogue presence proof must fence the already-queued late 404"
         );
     }
 
-    // 42. R19 Moyen 3: Per-request started_epoch in a serial probe batch — if key #2 is listed
-    // while key #1 is blocked in-flight, and then key #2 is deleted BEFORE key #2's own probe
-    // starts, key #2 captures the updated presence_epoch at request start so its valid 404 IS
-    // applied and recovers the draft.
+    // 42. R19 Moyen 3 + R20 Mineur 2: Per-request started_epoch in a serial probe batch —
+    // explicitly synchronize and verify causal order (k0_enter -> listed_k1 -> release_k0 ->
+    // k1_enter) without a 500ms early auto-release.
     {
         use std::{
             io::{Read, Write},
@@ -4785,9 +4861,11 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let address = format!("http://{}/", listener.local_addr().unwrap());
-        let (k0_entered_tx, k0_entered_rx) = mpsc::channel::<()>();
+        let (k0_entered_tx, k0_entered_rx) = tokio::sync::oneshot::channel::<()>();
         let k0_entered_tx = Arc::new(Mutex::new(Some(k0_entered_tx)));
         let (release_k0_tx, release_k0_rx) = mpsc::channel::<()>();
+        let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+        let events_srv = events.clone();
         let (stop, stopped) = mpsc::channel::<()>();
         let server = std::thread::spawn(move || {
             while matches!(stopped.try_recv(), Err(mpsc::TryRecvError::Empty)) {
@@ -4797,7 +4875,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                 };
                 socket.set_nonblocking(false).unwrap();
                 socket
-                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();
                 let mut bytes = Vec::new();
                 let mut byte = [0];
@@ -4812,16 +4890,21 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                 let (status, body): (u16, String) = if line
                     .contains("/instance/api/session/ses_ser_0 ")
                 {
+                    events_srv.lock().unwrap().push("k0_enter");
                     if let Some(tx) = k0_entered_tx.lock().unwrap().take() {
                         let _ = tx.send(());
                     }
-                    let _ = release_k0_rx.recv_timeout(Duration::from_millis(500));
+                    assert!(
+                        release_k0_rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+                        "ses_ser_0 must be released explicitly after presence is recorded"
+                    );
                     (
                         200,
                         r#"{"data":{"id":"ses_ser_0","title":"ok","location":{"directory":"/fixture"}}}"#
                             .into(),
                     )
                 } else if line.contains("/instance/api/session/ses_ser_1 ") {
+                    events_srv.lock().unwrap().push("k1_enter");
                     (
                         404,
                         r#"{"_tag":"SessionNotFoundError","sessionID":"ses_ser_1"}"#.into(),
@@ -4869,15 +4952,17 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         let empty = std::collections::HashSet::new();
         crate::platform::block_on(async {
             crate::workspace::check_restored_draft_sessions(&mut s, &conn, &proj, &empty);
-            let wait_k0 = Instant::now() + Duration::from_secs(2);
-            while Instant::now() < wait_k0 && k0_entered_rx.try_recv().is_err() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            // While ses_ser_0 is in-flight (before ses_ser_1's request starts), ses_ser_1 is listed.
+            assert!(
+                tokio::time::timeout(Duration::from_secs(5), k0_entered_rx)
+                    .await
+                    .is_ok(),
+                "ses_ser_0 must enter the HTTP handler before recording presence"
+            );
             let mut present = std::collections::HashSet::new();
             present.insert("ses_ser_1".into());
             crate::workspace::note_restored_draft_sessions_present(&mut s, &present);
-            // Release ses_ser_0; ses_ser_1's probe now starts AFTER the listing and receives 404.
+            events.lock().unwrap().push("listed_k1");
+            events.lock().unwrap().push("release_k0");
             let _ = release_k0_tx.send(());
             let finish = Instant::now() + Duration::from_secs(5);
             while Instant::now() < finish {
@@ -4895,6 +4980,11 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         });
         let _ = stop.send(());
         let _ = server.join();
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec!["k0_enter", "listed_k1", "release_k0", "k1_enter"],
+            "causal order must be strictly k0_enter -> listed_k1 -> release_k0 -> k1_enter"
+        );
         let Tab::Workspace(after) = &s.workspace.as_ref().unwrap().entries[0].saved else {
             panic!("expected workspace");
         };
