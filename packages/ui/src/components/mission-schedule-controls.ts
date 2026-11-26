@@ -221,7 +221,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   }
   rereadMissionHoldWhileActive(() => { const hold = held(); return !!hold && !hold.pending }, props.active, reconcile)
   const label = (action: Action) => t(action === "delete" ? "missionsPanel.picker.delete" : action === "run-now" ? "missionsPanel.action.runNow"
-    : action === "play" ? "missionsPanel.action.start" : `missionsPanel.action.${action}`)
+    : action === "play" ? "missionsPanel.action.start" : action === "check" ? "missionsPanel.action.checkStatus" : `missionsPanel.action.${action}`)
   // Direct creation already has an exact document receipt. Its continuation still
   // rereads the document and capability before any activation or Play dispatch.
   const progress = () => pendingAction() ? pendingAction() === "play" ? "missionsPanel.action.starting"
