@@ -31,6 +31,10 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
         col()
             .w_full()
             .h_full()
+            .child(form_header("Question", "Confirm deployment"))
+            .child(form_error("Unsupported form"))
+            .child(field_heading("Environment").key("field-heading"))
+            .child(field_description("Choose a target").key("field-description"))
             .child(radio_group(
                 "radio-grp",
                 "Choice",
@@ -58,6 +62,13 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                         |s: &mut Demo| s.radio = 1,
                     ),
                 ],
+            ))
+            .child(clear_choice_button(
+                "clear-btn",
+                "Clear",
+                "Choice · Clear",
+                false,
+                |s: &mut Demo, _| s.radio = 0,
             ))
             .child(checkbox_group(
                 "check-grp",
@@ -91,7 +102,7 @@ fn assert_palette_controls(label: &str, dark: bool) {
         checked_a: false,
         checked_b: true,
     };
-    let mut rt = Runtime::new(demo, demo_view, (240.0, 480.0), Env::new(dark, 1.0));
+    let mut rt = Runtime::new(demo, demo_view, (240.0, 640.0), Env::new(dark, 1.0));
     rt.frame(0.0);
     let tree = rt.accessibility_json();
     let group = node(&tree, "radio-grp").unwrap();
@@ -122,7 +133,7 @@ fn assert_palette_controls(label: &str, dark: bool) {
     assert!(has_state(chk_b, "checked"), "{chk_b}");
 
     let els = rt.elements();
-    for key in ["opt-a", "opt-b", "chk-a", "chk-b"] {
+    for key in ["opt-a", "opt-b", "clear-btn", "chk-a", "chk-b"] {
         let root = els.iter().find(|e| e.key.as_deref() == Some(key)).unwrap();
         assert_eq!(root.radius, 0.0, "{label}/{key} must stay square");
         for child in els.iter().filter(|e| e.path.starts_with(&root.path)) {
@@ -173,13 +184,13 @@ fn assert_palette_controls(label: &str, dark: bool) {
         decode_instance_color(rect.fill, rt.srgb_blend())
     };
 
-    // Inspect actual painted rest, hover, and selected colors across all cards.
+    // Inspect actual painted rest, hover, and selected colors across all cards and Clear button.
     let t = tokens(dark);
     let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
     let mut painted_hover_fills: std::collections::HashMap<&str, Color> =
         std::collections::HashMap::new();
     let mut now = 0.0;
-    for key in ["opt-b", "chk-a"] {
+    for key in ["opt-b", "clear-btn", "chk-a"] {
         let (x, y) = rt.find(key).unwrap();
         rt.pointer_move(x, y);
         now += 1.0;
@@ -190,6 +201,47 @@ fn assert_palette_controls(label: &str, dark: bool) {
     now += 1.0;
     rt.frame(now);
     let els = rt.elements();
+
+    // Form header, error banner, field heading, and field description meet >= 4.5:1 against base.
+    for key in [
+        "form-eyebrow",
+        "form-title",
+        "form-unsupported",
+        "field-heading",
+        "field-description",
+    ] {
+        let text_el = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("{label}: missing form copy {key}"));
+        let color = text_el.text_color.expect("form copy text_color");
+        let ratio = worst_contrast(color, &[base]);
+        assert!(
+            ratio >= 4.5,
+            "{label}/{key} form copy contrast below 4.5:1: {ratio:.2} (color={color:?}, base={base:?})"
+        );
+    }
+
+    // Enabled Clear control meets >= 4.5:1 text contrast against both painted rest and hover fills.
+    {
+        let clear = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("clear-btn"))
+            .unwrap();
+        let rest = effective_backgrounds(painted_card_fill(&rt, "clear-btn"), base);
+        let hover = effective_backgrounds(painted_hover_fills["clear-btn"], base);
+        let text_bgs = [rest[0], rest[1], hover[0], hover[1]];
+        let label_el = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("label") && e.path.starts_with(&clear.path))
+            .unwrap();
+        let label_color = label_el.text_color.expect("clear label text_color");
+        let label_ratio = worst_contrast(label_color, &text_bgs);
+        assert!(
+            label_ratio >= 4.5,
+            "{label}/clear-btn label text contrast below 4.5:1: {label_ratio:.2}"
+        );
+    }
 
     // Unchecked radio and checkbox indicator outlines (>= 3:1) and option copy (>= 4.5:1)
     // against actual painted indicator fill, rest card fill, and hovered card fill.
@@ -360,10 +412,11 @@ fn assert_palette_controls(label: &str, dark: bool) {
         opt_b_desc.rect
     );
 
-    // Tabbing into an already-selected radio paints a square 2px focus ring inset inside its 1px
-    // border with >= 3:1 linear-RGB contrast against its actual painted fill; arrowing to an
-    // unchecked radio paints a square 2px inset ring with >= 3:1 against both rest and hover fills.
-    let assert_ring = |rt: &Runtime<Demo>, key: &str, backgrounds: &[Color]| {
+    // Tabbing into an already-selected radio, Clear button, or unchecked checkbox paints a square
+    // 2px focus ring inset inside its 1px border with >= 3:1 linear-RGB contrast against actual
+    // painted rest and hover fills; programmatic keyboard focus on form-header paints a >= 3:1 ring
+    // against base.
+    let assert_ring = |rt: &Runtime<Demo>, key: &str, inset: f32, backgrounds: &[Color]| {
         let focused_el = rt
             .elements()
             .into_iter()
@@ -374,23 +427,21 @@ fn assert_palette_controls(label: &str, dark: bool) {
             "{label}/{key}: control must show visible keyboard focus"
         );
         let expected_ring = [
-            focused_el.rect[0] + 2.0,
-            focused_el.rect[1] + 2.0,
-            focused_el.rect[2] - 4.0,
-            focused_el.rect[3] - 4.0,
+            focused_el.rect[0] + inset,
+            focused_el.rect[1] + inset,
+            focused_el.rect[2] - inset * 2.0,
+            focused_el.rect[3] - inset * 2.0,
         ];
         let ring = rt.instances.iter().find(|inst| {
             inst.params[1] == KIND_RECT
                 && (inst.params[0] - 2.0).abs() < 0.01
                 && inst.border[3] > 0.0
                 && inst.radii == [0.0; 4]
-                && inst.rect[0] >= focused_el.rect[0] + 1.5
-                && inst.rect[1] >= focused_el.rect[1] + 1.5
                 && (0..4).all(|i| (inst.rect[i] - expected_ring[i]).abs() <= 1.0)
         });
         let ring = ring.unwrap_or_else(|| {
             panic!(
-                "{label}/{key}: focus ring must be inset and distinct from 1px border: card={:?} expected_ring={:?}",
+                "{label}/{key}: missing expected square 2px focus ring: el={:?} expected_ring={:?}",
                 focused_el.rect, expected_ring
             )
         });
@@ -403,6 +454,11 @@ fn assert_palette_controls(label: &str, dark: bool) {
         );
     };
 
+    rt.update(|_, tx| tx.focus(FORM_FOCUS_ANCHOR, true));
+    now += 1.0;
+    rt.frame(now);
+    assert_ring(&rt, FORM_FOCUS_ANCHOR, 0.0, &[base]);
+
     let tab = KeyEvent {
         key: Key::Tab,
         mods: Mods::default(),
@@ -412,9 +468,23 @@ fn assert_palette_controls(label: &str, dark: bool) {
     now += 1.0;
     rt.frame(now);
     let checked_bgs = effective_backgrounds(painted_card_fill(&rt, "opt-a"), base);
-    assert_ring(&rt, "opt-a", &checked_bgs);
+    assert_ring(&rt, "opt-a", 2.0, &checked_bgs);
 
-    // Tabbing again moves focus out of the radio group to the unchecked checkbox without toggling it.
+    // Tabbing moves focus to the Clear button and paints a >= 3:1 focus ring on rest & hover.
+    rt.key(tab.clone());
+    rt.key_up(tab.clone());
+    now += 1.0;
+    rt.frame(now);
+    let clear_rest = effective_backgrounds(painted_card_fill(&rt, "clear-btn"), base);
+    let clear_hover = effective_backgrounds(painted_hover_fills["clear-btn"], base);
+    assert_ring(
+        &rt,
+        "clear-btn",
+        2.0,
+        &[clear_rest[0], clear_rest[1], clear_hover[0], clear_hover[1]],
+    );
+
+    // Tabbing again moves focus to the unchecked checkbox without toggling it.
     rt.key(tab.clone());
     rt.key_up(tab);
     now += 1.0;
@@ -424,6 +494,7 @@ fn assert_palette_controls(label: &str, dark: bool) {
     assert_ring(
         &rt,
         "chk-a",
+        2.0,
         &[
             unchecked_rest[0],
             unchecked_rest[1],

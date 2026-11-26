@@ -91,13 +91,63 @@ pub fn has_declared_options(field: &Value) -> bool {
     field.get("options").is_some_and(Value::is_array)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldKind {
+    StringFree,
+    StringOptions,
+    Number,
+    Integer,
+    Boolean,
+    Multiselect,
+    Unsupported,
+}
+
+fn field_kind(field: &Value) -> FieldKind {
+    match field["type"].as_str() {
+        Some("string") if has_declared_options(field) => FieldKind::StringOptions,
+        Some("string") => FieldKind::StringFree,
+        Some("number") => FieldKind::Number,
+        Some("integer") => FieldKind::Integer,
+        Some("boolean") => FieldKind::Boolean,
+        Some("multiselect") => FieldKind::Multiselect,
+        _ => FieldKind::Unsupported,
+    }
+}
+
+fn is_line_editable_custom(value: &str) -> bool {
+    !value.contains(['\n', '\r']) && value.trim() == value
+}
+
+/// Whether an active field cannot be satisfied by any valid user action (for example a required
+/// closed choice whose declared options are empty or all normalize away).
+pub fn field_unanswerable(field: &Value) -> bool {
+    match field["type"].as_str() {
+        Some("string") if has_declared_options(field) && field["custom"] != true => {
+            field["required"] == true
+                && !normalized_options(field).iter().any(|opt| {
+                    let n = opt.value.encode_utf16().count() as u64;
+                    !field["minLength"].as_u64().is_some_and(|m| n < m)
+                        && !field["maxLength"].as_u64().is_some_and(|m| n > m)
+                })
+        }
+        Some("multiselect") if field["custom"] != true => {
+            let valid_count = normalized_options(field).len() as u64;
+            (field["required"] == true && valid_count == 0)
+                || field["minItems"]
+                    .as_u64()
+                    .is_some_and(|m| m > valid_count || m > 32)
+        }
+        _ => false,
+    }
+}
+
 pub struct Draft {
     pub edit: TextEdit,
     pub custom: TextEdit,
     pub choice: Option<String>,
     pub selected: BTreeSet<String>,
-    pub custom_defaults: Vec<String>,
-    pub seeded_custom_text: Option<String>,
+    pub preserved_custom: Vec<String>,
+    pub kind: Option<FieldKind>,
     pub dirty: bool,
 }
 impl Draft {
@@ -107,7 +157,9 @@ impl Draft {
     }
     pub fn choose_option(&mut self, value: &str) {
         self.choice = Some(value.into());
-        self.custom = TextEdit::new("");
+        if !self.custom.text.is_empty() {
+            self.custom = TextEdit::new("");
+        }
         self.dirty = true;
     }
     pub fn clear_choice(&mut self) {
@@ -132,9 +184,6 @@ impl Draft {
         self.dirty = true;
         &mut self.custom
     }
-    fn custom_matches_seed(&self) -> bool {
-        self.seeded_custom_text.as_deref() == Some(self.custom.text.as_str())
-    }
 }
 impl Default for Draft {
     fn default() -> Self {
@@ -143,13 +192,67 @@ impl Default for Draft {
             custom: TextEdit::new(""),
             choice: None,
             selected: BTreeSet::new(),
-            custom_defaults: Vec::new(),
-            seeded_custom_text: None,
+            preserved_custom: Vec::new(),
+            kind: None,
             dirty: false,
         }
     }
 }
 pub type Drafts = HashMap<(String, String), Draft>;
+
+fn fresh_draft(field: &Value) -> Draft {
+    let mut d = Draft {
+        kind: Some(field_kind(field)),
+        ..Default::default()
+    };
+    let value = &field["default"];
+    if field["type"] == "multiselect" {
+        if let Some(values) = value.as_array() {
+            let allowed = normalized_options(field);
+            let allow_custom = field["custom"] == true;
+            let hidden = field["hidden"] == true;
+            let mut seen_custom = HashSet::new();
+            let mut editable_custom = Vec::new();
+            for raw in values.iter().filter_map(Value::as_str) {
+                if raw.is_empty() {
+                    continue;
+                }
+                if allowed.iter().any(|opt| opt.value == raw) {
+                    d.selected.insert(raw.to_string());
+                } else if allow_custom && seen_custom.insert(raw.to_string()) {
+                    if hidden || !is_line_editable_custom(raw) {
+                        d.preserved_custom.push(raw.to_string());
+                    } else {
+                        editable_custom.push(raw);
+                    }
+                }
+            }
+            if !editable_custom.is_empty() {
+                d.custom = TextEdit::new(editable_custom.join("\n"));
+            }
+        }
+    } else if field["type"] == "string" && has_declared_options(field) {
+        if let Some(raw) = value.as_str().filter(|v| !v.is_empty()) {
+            let allowed = normalized_options(field);
+            if allowed.iter().any(|opt| opt.value == raw) {
+                d.choice = Some(raw.to_string());
+            } else if field["custom"] == true {
+                d.custom = TextEdit::new(raw);
+            }
+        }
+    } else if !value.is_null() {
+        d.edit = TextEdit::new(
+            value
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| value.to_string()),
+        );
+    } else if field["type"] == "boolean" && field["hidden"] != true {
+        d.edit = TextEdit::new("false");
+    }
+    d
+}
+
 pub fn seed(forms: &[Form], drafts: &mut Drafts) {
     drafts.retain(|(id, key), _| {
         forms
@@ -159,91 +262,88 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
     for form in forms {
         for field in &form.fields {
             let key = field["key"].as_str().unwrap_or_default().to_string();
-            let draft = drafts.entry((form.id.clone(), key)).or_insert_with(|| {
-                let mut d = Draft::default();
-                let value = &field["default"];
-                if field["type"] == "multiselect" {
-                    if let Some(values) = value.as_array() {
-                        let allowed = normalized_options(field);
-                        let allow_custom = field["custom"] == true;
-                        let mut seen_custom = HashSet::new();
-                        for raw in values.iter().filter_map(Value::as_str) {
-                            if raw.is_empty() {
-                                continue;
-                            }
-                            if allowed.iter().any(|opt| opt.value == raw) {
-                                d.selected.insert(raw.to_string());
-                            } else if allow_custom && seen_custom.insert(raw.to_string()) {
-                                d.custom_defaults.push(raw.to_string());
-                            }
+            let id = (form.id.clone(), key);
+            let kind = field_kind(field);
+            let Some(draft) = drafts.get_mut(&id) else {
+                drafts.insert(id, fresh_draft(field));
+                continue;
+            };
+            // Reseed incompatible drafts on field-kind transitions and never migrate a wire choice
+            // identifier into a visible text editor.
+            if let Some(prev) = draft.kind
+                && prev != kind
+            {
+                match (prev, kind) {
+                    (FieldKind::StringOptions, FieldKind::StringFree) => {
+                        let authored = std::mem::take(&mut draft.custom.text);
+                        if authored.is_empty() {
+                            *draft = fresh_draft(field);
+                            continue;
                         }
-                        if !d.custom_defaults.is_empty() {
-                            let initial = if field["hidden"] == true {
-                                String::new()
-                            } else {
-                                d.custom_defaults.join("\n")
-                            };
-                            d.custom = TextEdit::new(&initial);
-                            d.seeded_custom_text = Some(initial);
-                        }
+                        draft.edit = TextEdit::new(authored);
+                        draft.custom = TextEdit::new("");
+                        draft.choice = None;
+                        draft.selected.clear();
+                        draft.preserved_custom.clear();
+                        draft.kind = Some(kind);
+                        continue;
                     }
-                } else if field["type"] == "string" && has_declared_options(field) {
-                    if let Some(raw) = value.as_str().filter(|v| !v.is_empty()) {
-                        let allowed = normalized_options(field);
-                        if allowed.iter().any(|opt| opt.value == raw) {
-                            d.choice = Some(raw.to_string());
-                        } else if field["custom"] == true {
-                            d.custom = TextEdit::new(raw);
+                    (FieldKind::StringFree, FieldKind::StringOptions) => {
+                        if !draft.dirty && draft.edit.text.is_empty() {
+                            *draft = fresh_draft(field);
+                            continue;
                         }
+                        draft.kind = Some(kind);
                     }
-                } else if !value.is_null() {
-                    d.edit = TextEdit::new(
-                        value
-                            .as_str()
-                            .map(str::to_string)
-                            .unwrap_or_else(|| value.to_string()),
-                    );
-                } else if field["type"] == "boolean" && field["hidden"] != true {
-                    d.edit = TextEdit::new("false");
+                    _ => {
+                        *draft = fresh_draft(field);
+                        continue;
+                    }
                 }
-                d
-            });
-            // Reconcile retained drafts against the field's current schema so kind/option
-            // transitions never leave invisible failing state or duplicate custom/option values.
-            if field["type"] == "multiselect" {
-                draft.edit = TextEdit::new("");
+            } else {
+                draft.kind = Some(kind);
+            }
+
+            // Reconcile retained drafts against the field's current schema without replacing an
+            // unchanged TextEdit (so cursor and selection survive identical refreshes).
+            if kind == FieldKind::Multiselect {
+                if !draft.edit.text.is_empty() {
+                    draft.edit = TextEdit::new("");
+                }
                 draft.choice = None;
                 let allowed = normalized_options(field);
                 let allow_custom = field["custom"] == true;
+                let hidden = field["hidden"] == true;
                 if has_declared_options(field) {
                     draft.selected.retain(|selected| {
                         allowed.iter().any(|opt| opt.value == selected.as_str())
                     });
                 }
-                if draft.custom_matches_seed() {
-                    let mut remaining = Vec::new();
-                    for item in std::mem::take(&mut draft.custom_defaults) {
-                        if allowed.iter().any(|opt| opt.value == item.as_str()) {
-                            draft.selected.insert(item);
-                        } else if allow_custom {
-                            remaining.push(item);
+                let mut remaining_preserved = Vec::new();
+                let mut newly_editable = Vec::new();
+                for item in std::mem::take(&mut draft.preserved_custom) {
+                    if allowed.iter().any(|opt| opt.value == item.as_str()) {
+                        draft.selected.insert(item);
+                    } else if allow_custom {
+                        if !hidden
+                            && !draft.dirty
+                            && draft.custom.text.is_empty()
+                            && is_line_editable_custom(&item)
+                        {
+                            newly_editable.push(item);
+                        } else {
+                            remaining_preserved.push(item);
                         }
                     }
-                    draft.custom_defaults = remaining;
-                    let initial = if !allow_custom || draft.custom_defaults.is_empty() {
-                        String::new()
-                    } else if field["hidden"] == true {
-                        String::new()
+                }
+                draft.preserved_custom = remaining_preserved;
+                if !newly_editable.is_empty() {
+                    draft.custom = TextEdit::new(newly_editable.join("\n"));
+                }
+                if !draft.custom.text.is_empty() {
+                    if !allow_custom {
+                        draft.custom = TextEdit::new("");
                     } else {
-                        draft.custom_defaults.join("\n")
-                    };
-                    draft.custom = TextEdit::new(&initial);
-                    draft.seeded_custom_text =
-                        (!draft.custom_defaults.is_empty()).then_some(initial);
-                } else {
-                    draft.custom_defaults.clear();
-                    draft.seeded_custom_text = None;
-                    if !draft.custom.text.is_empty() {
                         let mut kept = Vec::new();
                         let mut promoted = false;
                         for line in draft.custom.text.lines() {
@@ -252,21 +352,21 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             {
                                 draft.selected.insert(trimmed.to_string());
                                 promoted = true;
-                            } else if allow_custom {
+                            } else {
                                 kept.push(line);
                             }
                         }
-                        if !allow_custom {
-                            draft.custom = TextEdit::new("");
-                        } else if promoted {
-                            draft.custom = TextEdit::new(kept.join("\n"));
+                        if promoted {
+                            let next = kept.join("\n");
+                            if draft.custom.text != next {
+                                draft.custom = TextEdit::new(next);
+                            }
                         }
                     }
                 }
-            } else if field["type"] == "string" && has_declared_options(field) {
+            } else if kind == FieldKind::StringOptions {
                 draft.selected.clear();
-                draft.custom_defaults.clear();
-                draft.seeded_custom_text = None;
+                draft.preserved_custom.clear();
                 let allowed = normalized_options(field);
                 let allow_custom = field["custom"] == true;
                 if draft
@@ -281,7 +381,9 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                     draft.edit = TextEdit::new("");
                     if allowed.iter().any(|opt| opt.value == prior.as_str()) {
                         draft.choice = Some(prior);
-                        draft.custom = TextEdit::new("");
+                        if !draft.custom.text.is_empty() {
+                            draft.custom = TextEdit::new("");
+                        }
                     } else if allow_custom && draft.custom.text.is_empty() {
                         draft.custom = TextEdit::new(prior);
                     }
@@ -299,17 +401,17 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 }
             } else {
                 draft.selected.clear();
-                draft.custom_defaults.clear();
-                draft.seeded_custom_text = None;
-                if field["type"] == "string" && draft.edit.text.is_empty() {
-                    if !draft.custom.text.is_empty() {
-                        draft.edit = TextEdit::new(&draft.custom.text);
-                    } else if let Some(chosen) = draft.choice.take() {
-                        draft.edit = TextEdit::new(chosen);
-                    }
-                }
+                draft.preserved_custom.clear();
                 draft.choice = None;
-                draft.custom = TextEdit::new("");
+                if kind == FieldKind::StringFree
+                    && draft.edit.text.is_empty()
+                    && !draft.custom.text.is_empty()
+                {
+                    draft.edit = TextEdit::new(&draft.custom.text);
+                }
+                if !draft.custom.text.is_empty() {
+                    draft.custom = TextEdit::new("");
+                }
             }
         }
     }
@@ -347,6 +449,7 @@ pub fn supported(form: &Form) -> bool {
             f["type"].as_str(),
             Some("string" | "number" | "integer" | "boolean" | "multiselect")
         ) && valid_options_shape(f)
+            && !(f["when"].as_array().is_none() && field_unanswerable(f))
     })
 }
 pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
@@ -438,27 +541,26 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
             }
         },
         Some("multiselect") => {
+            let options = normalized_options(field);
+            let is_declared = |entry: &str| options.iter().any(|o| o.value == entry);
             let mut values = d.selected.clone();
             if field["custom"] == true {
-                if d.custom_matches_seed() {
-                    for item in &d.custom_defaults {
-                        if item.encode_utf16().count() > 20_000 {
-                            return Err(());
-                        }
-                        if !item.is_empty() {
-                            values.insert(item.clone());
-                        }
+                for item in &d.preserved_custom {
+                    if item.encode_utf16().count() > 20_000 {
+                        return Err(());
                     }
-                } else {
-                    values.extend(
-                        d.custom
-                            .text
-                            .lines()
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                            .map(str::to_string),
-                    );
+                    if !item.is_empty() && !is_declared(item) {
+                        values.insert(item.clone());
+                    }
                 }
+                values.extend(
+                    d.custom
+                        .text
+                        .lines()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty() && !is_declared(v))
+                        .map(str::to_string),
+                );
             }
             let count = values.len() as u64;
             if count > 32
@@ -468,14 +570,10 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
             {
                 return Err(());
             }
-            if field["options"].as_array().is_some() {
-                let options = normalized_options(field);
-                if d.selected
-                    .iter()
-                    .any(|value| !options.iter().any(|o| o.value == value.as_str()))
-                {
-                    return Err(());
-                }
+            if field["options"].as_array().is_some()
+                && d.selected.iter().any(|value| !is_declared(value))
+            {
+                return Err(());
             }
             Ok(Some(json!(values)))
         }

@@ -818,9 +818,9 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
         let d = &a.drafts[&("form-custom-multi".into(), "mixed_tags".into())];
         assert!(
             has_state(after_tap_box, "unchecked"),
-            "promoted checkbox must uncheck on tap (pos={promoted_pos:?}, selected={:?}, custom_defaults={:?}, custom={:?}, box={after_tap_box})",
+            "promoted checkbox must uncheck on tap (pos={promoted_pos:?}, selected={:?}, preserved_custom={:?}, custom={:?}, box={after_tap_box})",
             d.selected,
-            d.custom_defaults,
+            d.preserved_custom,
             d.custom.text
         );
         let refreshed_ans = agent_forms::answer(&a.forms[0], &a.drafts)
@@ -951,4 +951,323 @@ fn single_untitled_field_inherits_and_wraps_overlong_form_title_at_narrow_width(
             title_el.rect
         );
     });
+}
+
+#[test]
+fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswerable_errors() {
+    crate::strings::with_locale("en", || {
+        // 1. Selecting a radio and refreshing the field without options never copies the raw wire
+        // value into the new textbox; incompatible kind transitions (e.g. hidden multiselect ->
+        // required boolean with default: true) reseed cleanly instead of blocking submission.
+        let form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-kind-reseed".into(),
+            title: "Kind transitions".into(),
+            fields: vec![
+                json!({
+                    "key": "env",
+                    "title": "Environment",
+                    "type": "string",
+                    "options": [{"value": "internal_prod", "label": "Production"}]
+                }),
+                json!({
+                    "key": "gate",
+                    "type": "multiselect",
+                    "hidden": true,
+                    "options": [{"value": "x", "label": "X"}],
+                    "default": ["x"]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(form);
+        let mut rt = Runtime::new(state, render_form, (420.0, 640.0), Env::new(false, 1.0));
+        rt.frame(0.0);
+        tap(
+            &mut rt,
+            &agent_forms::string_option_key("env", "internal_prod"),
+        );
+        assert_eq!(
+            rt.state.agent.as_ref().unwrap().drafts[&("form-kind-reseed".into(), "env".into())]
+                .choice
+                .as_deref(),
+            Some("internal_prod")
+        );
+
+        rt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields = vec![
+                json!({"key": "env", "title": "Environment", "type": "string"}),
+                json!({
+                    "key": "gate",
+                    "title": "Gate",
+                    "type": "boolean",
+                    "required": true,
+                    "hidden": true,
+                    "default": true
+                }),
+            ];
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        rt.frame(1.0 / 60.0);
+        rt.frame(1.0);
+        let tree = rt.accessibility_json();
+        let env_input = find_input(&tree, "field-env");
+        assert_eq!(
+            env_input["value"].as_str().unwrap_or(""),
+            "",
+            "dropping options must never copy a radio wire value into the textbox"
+        );
+        let mut visible_values = Vec::new();
+        collect_values(&tree, &mut visible_values);
+        assert!(
+            !visible_values.iter().any(|v| v.contains("internal_prod"))
+                && !rt.elements().iter().any(|e| e
+                    .text
+                    .as_deref()
+                    .is_some_and(|t| t.contains("internal_prod"))),
+            "wire choice ID leaked after removing options"
+        );
+        let a = rt.state.agent.as_ref().unwrap();
+        let ans = agent_forms::answer(&a.forms[0], &a.drafts)
+            .expect("reseeded required boolean default must submit cleanly");
+        assert!(ans.get("env").is_none());
+        assert_eq!(ans["gate"], json!(true));
+
+        // 2. Declared multiselect options have one authoritative selection state: typing a
+        // declared option's wire value into custom text cannot submit it while unchecked.
+        // 3. Visible multiline custom default stays intact when appending a new line.
+        // 4. Identical snapshot refresh keeps focus and partial selection inside custom editor.
+        let multi_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-multi-edges".into(),
+            title: "Multi edges".into(),
+            fields: vec![
+                json!({
+                    "key": "targets",
+                    "title": "Targets",
+                    "type": "multiselect",
+                    "custom": true,
+                    "options": [{"value": "prod", "label": "Production"}],
+                    "default": ["prod", "custom-keep"]
+                }),
+                json!({
+                    "key": "multiline",
+                    "title": "Multiline",
+                    "type": "multiselect",
+                    "custom": true,
+                    "options": [],
+                    "default": ["team\nlocal"]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(multi_form);
+        let mut mrt = Runtime::new(state, render_form, (420.0, 760.0), Env::new(false, 1.0));
+        mrt.frame(0.0);
+
+        // Focus custom-targets via real pointer click, select "custom" (0..6) with Shift+Right,
+        // then apply an identical snapshot refresh and verify both focus and selection survive.
+        let targets_input_el = mrt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("input") && e.path.contains("custom-targets"))
+            .expect("custom-targets inner input");
+        let targets_input_path = targets_input_el.path.clone();
+        let (ix, iy) = (
+            targets_input_el.rect[0] + targets_input_el.rect[2] * 0.5,
+            targets_input_el.rect[1] + targets_input_el.rect[3] * 0.5,
+        );
+        mrt.pointer_down(ix, iy);
+        mrt.pointer_up(ix, iy);
+        mrt.frame(1.0 / 60.0);
+        assert!(
+            mrt.elements()
+                .into_iter()
+                .any(|e| e.path == targets_input_path && e.focused),
+            "clicking custom-targets must focus its inner editor"
+        );
+        press_key(&mut mrt, Key::Home);
+        let shift = Mods {
+            shift: true,
+            ..Mods::default()
+        };
+        for _ in 0..6 {
+            let ev = KeyEvent {
+                key: Key::Right,
+                mods: shift,
+            };
+            mrt.key(ev.clone());
+            mrt.key_up(ev);
+            mrt.frame(1.0 / 60.0);
+        }
+        {
+            let d = &mrt.state.agent.as_ref().unwrap().drafts
+                [&("form-multi-edges".into(), "targets".into())];
+            assert_eq!(
+                (d.custom.anchor, d.custom.focus),
+                (0, 6),
+                "Shift+Right must select the first 6 bytes before refresh"
+            );
+        }
+        mrt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        mrt.frame(2.0 / 60.0);
+        assert!(
+            mrt.elements()
+                .into_iter()
+                .any(|e| e.path == targets_input_path && e.focused),
+            "identical snapshot refresh must preserve focus inside custom multiselect editor"
+        );
+        {
+            let d = &mrt.state.agent.as_ref().unwrap().drafts
+                [&("form-multi-edges".into(), "targets".into())];
+            assert_eq!(
+                (d.custom.anchor, d.custom.focus),
+                (0, 6),
+                "identical snapshot refresh must not collapse TextEdit selection"
+            );
+        }
+
+        // Type "prod" in custom-targets while Production is checked, then uncheck Production.
+        mrt.update(|s, _| {
+            let d = s
+                .agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-multi-edges".into(), "targets".into()))
+                .unwrap();
+            d.custom_editor().text = "prod\nextra-custom".into();
+        });
+        mrt.frame(1.0);
+        let prod_box = agent_forms::multi_option_key("targets", "prod");
+        tap(&mut mrt, &prod_box);
+        let mtree = mrt.accessibility_json();
+        assert!(has_state(
+            find_node(&mtree, &prod_box).unwrap(),
+            "unchecked"
+        ));
+
+        // Append "new" to visible multiline default field.
+        mrt.update(|s, _| {
+            let d = s
+                .agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-multi-edges".into(), "multiline".into()))
+                .unwrap();
+            d.custom_editor().text.push_str("\nnew");
+        });
+        mrt.frame(2.0);
+        let a = mrt.state.agent.as_ref().unwrap();
+        let mans = agent_forms::answer(&a.forms[0], &a.drafts).expect("valid multiselect answer");
+        assert_eq!(
+            mans["targets"],
+            json!(["extra-custom"]),
+            "unchecked declared option must not be submitted via custom text"
+        );
+        assert_eq!(
+            mans["multiline"],
+            json!(["new", "team\nlocal"]),
+            "editing a visible multiline custom default must preserve the structured entry intact"
+        );
+    });
+
+    // 5. Required closed choices with empty/normalized-away options surface an explicit localized
+    // error, never fall back to free text, and disable Answer (both unconditional and conditional).
+    for (locale, expected_error) in [
+        ("en", "Unsupported form"),
+        ("fr", "Formulaire non pris en charge"),
+    ] {
+        crate::strings::with_locale(locale, || {
+            for broken_field in [
+                json!({"key": "empty_closed", "title": "Pick", "type": "string", "required": true, "options": []}),
+                json!({"key": "blank_closed", "title": "Pick", "type": "string", "required": true, "options": [{"value": "", "label": "Empty"}]}),
+                json!({"key": "empty_multi", "title": "Tags", "type": "multiselect", "required": true, "options": []}),
+            ] {
+                let broken_form = Form {
+                    tool: None,
+                    infer_websearch: false,
+                    id: "form-unanswerable".into(),
+                    title: "Broken".into(),
+                    fields: vec![broken_field.clone()],
+                };
+                assert!(
+                    !agent_forms::supported(&broken_form),
+                    "required closed choice with zero valid options must be unsupported: {broken_field}"
+                );
+                let (state, _rx) = state_with_form(broken_form);
+                let mut urt =
+                    Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+                urt.frame(0.0);
+                let utree = urt.accessibility_json();
+                let err_node =
+                    find_node(&utree, "form-unsupported").expect("localized error banner");
+                assert_eq!(err_node["role"], "alert");
+                assert_eq!(err_node["name"], expected_error);
+                assert!(has_state(
+                    find_node(&utree, "answer-question").unwrap(),
+                    "disabled"
+                ));
+                let key = broken_field["key"].as_str().unwrap();
+                assert!(
+                    find_node(&utree, &format!("field-{key}")).is_none()
+                        && find_node(&utree, &format!("custom-{key}")).is_none(),
+                    "closed choice must never fall back to a free-text editor"
+                );
+            }
+
+            // Conditional unanswerable field stays valid while inactive and surfaces the error once active.
+            let cond_form = Form {
+                tool: None,
+                infer_websearch: false,
+                id: "form-cond-unanswerable".into(),
+                title: "Conditional".into(),
+                fields: vec![
+                    json!({
+                        "key": "mode",
+                        "title": "Mode",
+                        "type": "string",
+                        "default": "ok",
+                        "options": [
+                            {"value": "ok", "label": "Safe"},
+                            {"value": "broken", "label": "Broken"}
+                        ]
+                    }),
+                    json!({
+                        "key": "dead_end",
+                        "title": "Dead end",
+                        "type": "string",
+                        "required": true,
+                        "options": [],
+                        "when": [{"key": "mode", "op": "eq", "value": "broken"}]
+                    }),
+                ],
+            };
+            assert!(agent_forms::supported(&cond_form));
+            let (state, _rx) = state_with_form(cond_form);
+            let mut crt = Runtime::new(state, render_form, (420.0, 560.0), Env::new(false, 1.0));
+            crt.frame(0.0);
+            let inactive_tree = crt.accessibility_json();
+            assert!(find_node(&inactive_tree, "form-unsupported").is_none());
+            assert!(!has_state(
+                find_node(&inactive_tree, "answer-question").unwrap(),
+                "disabled"
+            ));
+            tap(&mut crt, &agent_forms::string_option_key("mode", "broken"));
+            let active_tree = crt.accessibility_json();
+            let err_node =
+                find_node(&active_tree, "form-unsupported").expect("active unanswerable alert");
+            assert_eq!(err_node["name"], expected_error);
+            assert!(has_state(
+                find_node(&active_tree, "answer-question").unwrap(),
+                "disabled"
+            ));
+            assert!(find_node(&active_tree, "field-dead_end").is_none());
+        });
+    }
 }

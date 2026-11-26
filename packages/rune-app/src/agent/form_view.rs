@@ -1,5 +1,5 @@
 use crate::{State, agent_api::Form, agent_forms, components::button, strings::t};
-use rune::{El, col, text};
+use rune::{El, col};
 use rune_theme_codenomad::{
     Space, field_kit, form_controls,
     layout::{self, Layout, textarea},
@@ -63,10 +63,14 @@ pub fn fields(s: &State, form: &Form) -> El {
             t("permissionApproval.kind.question"),
             &form.title,
         ));
-    if !supported {
-        body = body.child(text(t("rune.unsupported_question")))
-    }
     let values = agent_forms::values(form, &a.drafts);
+    let has_unanswerable_active = form
+        .fields
+        .iter()
+        .any(|f| agent_forms::active(f, &values) && agent_forms::field_unanswerable(f));
+    if !supported || has_unanswerable_active {
+        body = body.child(form_controls::form_error(t("rune.unsupported_question")))
+    }
     let visible: Vec<&serde_json::Value> = form
         .fields
         .iter()

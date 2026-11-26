@@ -339,10 +339,18 @@ fn card_focus_ring_color(t: &Tokens, selected: bool, card_fill: Color, hover_fil
     }
 }
 
+fn surface_text_color(t: &Tokens, candidates: &[&str]) -> Color {
+    let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+    contrasting_color(t, candidates, &[base], 4.5)
+}
+
 pub const FORM_FOCUS_ANCHOR: &str = "form-header";
 
 pub fn form_title(title: &str) -> El {
-    text(title).wrap_anywhere()
+    let t = tokens(layout::dark());
+    text(title)
+        .color(surface_text_color(t, &["text-primary", "text-secondary"]))
+        .wrap_anywhere()
 }
 
 pub fn form_header(eyebrow: &str, title: &str) -> El {
@@ -359,6 +367,7 @@ pub fn form_header(eyebrow: &str, title: &str) -> El {
         &[base],
         3.0,
     );
+    let eyebrow_color = surface_text_color(t, &["text-secondary", "text-primary"]);
     let label = if title.trim().is_empty() {
         eyebrow
     } else {
@@ -374,8 +383,26 @@ pub fn form_header(eyebrow: &str, title: &str) -> El {
         .tab_index(-1)
         .focus_ring(2.0, -2.0, focus_color)
         .focus_ring_radius(0.0)
-        .child(text(eyebrow).wrap_anywhere())
+        .child(
+            text(eyebrow)
+                .key("form-eyebrow")
+                .color(eyebrow_color)
+                .wrap_anywhere(),
+        )
         .child(form_title(title).key("form-title"))
+}
+
+pub fn form_error(message: &str) -> El {
+    let t = tokens(layout::dark());
+    text(message)
+        .key("form-unsupported")
+        .role("alert")
+        .text_role(TextRole::Label)
+        .color(surface_text_color(
+            t,
+            &["status-error", "text-primary", "text-secondary"],
+        ))
+        .wrap_anywhere()
 }
 
 pub fn clear_choice_button<S: 'static>(
@@ -385,17 +412,55 @@ pub fn clear_choice_button<S: 'static>(
     disabled: bool,
     press: impl Fn(&mut S, &mut rune::Tx) + 'static,
 ) -> El {
-    layout::button_tx(text_label, disabled, press)
+    let t = tokens(layout::dark());
+    let fill = card_fill(t, false, disabled);
+    let hover = card_hover_fill(t, fill);
+    let border = if disabled {
+        t.color("border-muted")
+    } else {
+        t.color("border-base")
+    };
+    let focus_color = card_focus_ring_color(t, false, fill, hover);
+    let (label_color, _) = card_text_colors(t, false, disabled, fill, hover);
+    let mut button = row()
         .key(key.to_string())
+        .role("button")
         .label(accessible_label)
+        .focusable(!disabled)
+        .disabled(disabled)
         .focus_return(FORM_FOCUS_ANCHOR)
+        .min_h(t.metric("button", "minHeight").px())
+        .px(t.space(Space::Md).px())
+        .py(t.space(Space::Xs).px())
+        .center()
+        .radius(0.0)
+        .fill(fill)
+        .border(1.0, border)
+        .focus_ring(2.0, -4.0, focus_color)
+        .focus_ring_radius(0.0)
+        .child(
+            text(text_label)
+                .key("label")
+                .text_role(TextRole::Button)
+                .color(label_color)
+                .a11y_hidden(),
+        );
+    if !disabled {
+        let action = std::rc::Rc::new(press);
+        let click = action.clone();
+        button = button
+            .hover(hover)
+            .on_press_tx(move |s, tx| click(s, tx))
+            .on_key(layout::enter_action(action));
+    }
+    button
 }
 
 pub fn field_heading(title: &str) -> El {
     let t = tokens(layout::dark());
     text(title)
         .text_role(TextRole::Label)
-        .color(t.color("text-primary"))
+        .color(surface_text_color(t, &["text-primary", "text-secondary"]))
         .wrap_anywhere()
 }
 
@@ -403,7 +468,7 @@ pub fn field_description(description: &str) -> El {
     let t = tokens(layout::dark());
     text(description)
         .text_role(TextRole::Small)
-        .color(t.color("text-secondary"))
+        .color(surface_text_color(t, &["text-secondary", "text-primary"]))
         .wrap_anywhere()
 }
 
