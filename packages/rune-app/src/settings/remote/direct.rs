@@ -3,7 +3,8 @@ use crate::{backend::Backend, platform, strings::t};
 use codenomad_client::{
     Receiver, Sender, bounded,
     settings::remote::{
-        self, AuthStatus, DirectAccessMeta, ListeningMode, NetworkAddress, split_remote_addresses,
+        self, AuthStatus, DirectAccessMeta, ListeningMode, NetworkAddress, PasswordSaved,
+        split_remote_addresses,
     },
 };
 use rune::{El, TextEdit, Waker, col, text};
@@ -22,7 +23,7 @@ pub(super) struct DirectAccess {
     auth_error: Option<ErrorText>,
     meta_flight: Option<(Sender<()>, Receiver<MetaReply>)>,
     mode_flight: Option<Receiver<Result<(), remote::Error>>>,
-    password_flight: Option<Receiver<Result<AuthStatus, remote::Error>>>,
+    password_flight: Option<Receiver<Result<PasswordSaved, remote::Error>>>,
     meta_error: Option<ErrorText>,
     disclosure_override: Option<bool>,
     locked_info_open: bool,
@@ -164,11 +165,23 @@ impl DirectAccess {
                 Ok(result) => {
                     self.password_flight = None;
                     match result {
-                        Ok(auth) => {
-                            self.auth = Some(auth);
+                        Ok(saved) => {
                             self.wipe_password_fields();
                             self.password_form_open = false;
                             self.password_error = None;
+                            match saved.auth {
+                                Ok(auth) => {
+                                    self.auth = Some(auth);
+                                    self.auth_error = None;
+                                }
+                                Err(err) => {
+                                    self.auth = None;
+                                    self.auth_error = Some(ErrorText::from_remote(
+                                        err,
+                                        "remoteAccess.authStatus.unavailable",
+                                    ));
+                                }
+                            }
                         }
                         Err(err) => {
                             self.password_error =
@@ -513,7 +526,7 @@ impl DirectAccess {
                     .secure()
                     .disabled(saving)
                     .on_edit(move |s: &mut S| &mut edit(s).direct.password)
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .literal_direction()
                     .key("remote-password-new");
             let confirm_input = layout::literal_field(&self.confirm)
@@ -530,7 +543,7 @@ impl DirectAccess {
                         state.direct.submit_password(backend, wake);
                     }
                 })
-                .build(field_kit(layout::dark()))
+                .build(&field_kit(layout::dark()))
                 .key("remote-password-confirm");
 
             card = card

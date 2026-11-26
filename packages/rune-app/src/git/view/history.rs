@@ -8,7 +8,7 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
             layout::hinted_field(&ui.filter, name)
                 .label(name)
                 .on_edit(edit(s, |ui| &mut ui.filter))
-                .build(field_kit(dark()))
+                .build(&field_kit(dark()))
                 .key("git-filter"),
         ),
     );

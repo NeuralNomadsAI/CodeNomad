@@ -90,10 +90,11 @@ impl Reader {
     pub(super) fn demand(&mut self, reading: Option<&ReadingLane>) {
         if let Some(reading) = reading {
             let want = reading.demand.current();
-            if want.generation != self.generation {
+            let closed = reading.demand.is_closed();
+            if want.generation != self.generation || (closed && self.active_reader) {
                 self.generation = want.generation;
-                self.active_reader = want.target.is_some();
-                self.anchored = want.target;
+                self.active_reader = !closed && want.target.is_some();
+                self.anchored = if closed { None } else { want.target };
                 self.historical = false;
                 self.resident = Vec::new();
                 self.known = HashSet::new();
@@ -147,6 +148,24 @@ impl Reader {
         self.execution_ended_at = None;
     }
 
+    pub(super) fn next_sync_at(
+        &self,
+        opened: bool,
+        wire: &stream::State,
+        reading: Option<&ReadingLane>,
+    ) -> Option<Instant> {
+        (self.active_reader
+            && reading.is_none_or(|reading| !reading.demand.is_closed())
+            && self.dirty
+            && !self.parked
+            && opened
+            && wire.upstream.load(SeqCst)
+            && !wire.is_stream_closed()
+            && !wire.is_placement_changed()
+            && !self.historical)
+            .then_some(self.quiet)
+    }
+
     pub(super) async fn sync(
         &mut self,
         lane: &Lane<'_>,
@@ -161,13 +180,9 @@ impl Reader {
             out,
             wake,
         } = *lane;
-        if self.active_reader
-            && self.dirty
-            && !self.parked
-            && opened
-            && wire.upstream.load(SeqCst)
-            && !self.historical
-            && Instant::now() >= self.quiet
+        if self
+            .next_sync_at(opened, wire, reading)
+            .is_some_and(|quiet| Instant::now() >= quiet)
             && rx.is_empty()
         {
             let stamp = wire.version.load(SeqCst);
@@ -431,7 +446,7 @@ impl Reader {
                             Ok(true)
                         )
                     {
-                        wire.cancelled.store(true, SeqCst);
+                        wire.cancel();
                         publish(out, wake, Event::WorkspaceMissing).await;
                         return Ok(Turn::Stop);
                     }

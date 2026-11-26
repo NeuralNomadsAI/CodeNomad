@@ -1,5 +1,5 @@
 use crate::{
-    backend::{Backend, read_json_limited},
+    backend::{Backend, read_json, read_json_limited},
     settings::info::listener_origin,
 };
 use reqwest::Url;
@@ -402,7 +402,12 @@ pub async fn auth_status(backend: &Backend) -> Result<AuthStatus> {
     })
 }
 
-pub async fn set_password(backend: &Backend, password: &str) -> Result<AuthStatus> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PasswordSaved {
+    pub auth: Result<AuthStatus>,
+}
+
+pub async fn set_password(backend: &Backend, password: &str) -> Result<PasswordSaved> {
     let response = check_response(
         backend
             .client
@@ -420,12 +425,11 @@ pub async fn set_password(backend: &Backend, password: &str) -> Result<AuthStatu
         return Err(Error::SaveFailed);
     }
     // Saving a server password revokes the active session cookie; confirm current auth status
-    // rather than assuming the caller remains authenticated.
-    Ok(auth_status(backend).await.unwrap_or(AuthStatus {
-        authenticated: false,
-        username: clean_text(value["username"].as_str(), 128),
-        password_user_provided: value["passwordUserProvided"].as_bool().unwrap_or(true),
-    }))
+    // separately so explicit server errors on GET /api/auth/status are preserved without marking
+    // the password update itself as failed.
+    Ok(PasswordSaved {
+        auth: auth_status(backend).await,
+    })
 }
 
 /// Persists `server.listeningMode` through the Server config owner.
@@ -441,7 +445,7 @@ pub async fn set_listening_mode(backend: &Backend, mode: ListeningMode) -> Resul
         .await;
     match response {
         Ok(resp) if resp.status().is_success() => {
-            if let Ok(doc) = read_json_limited(resp, 65536).await
+            if let Ok(doc) = read_json(resp).await
                 && doc.is_object()
             {
                 return if matches_listening_mode(&doc, target) {
@@ -486,7 +490,7 @@ async fn confirm_listening_mode(
     let Ok(resp) = check_response(resp).await else {
         return Err(fallback);
     };
-    let Ok(doc) = read_json_limited(resp, 65536).await else {
+    let Ok(doc) = read_json(resp).await else {
         return Err(fallback);
     };
     if doc.is_object() && matches_listening_mode(&doc, target) {
@@ -545,9 +549,7 @@ async fn read_error_message(response: reqwest::Response) -> Option<String> {
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();
     while let Some(chunk) = stream.next().await {
-        let Ok(chunk) = chunk else {
-            break;
-        };
+        let chunk = chunk.ok()?;
         let take = chunk.len().min(MAX_ERROR_BYTES.saturating_sub(bytes.len()));
         bytes.extend_from_slice(&chunk[..take]);
         if bytes.len() >= MAX_ERROR_BYTES {
@@ -559,14 +561,21 @@ async fn read_error_message(response: reqwest::Response) -> Option<String> {
 }
 
 fn parse_error_message(content_type: Option<&str>, text: &str) -> Option<String> {
-    if let Ok(value) = serde_json::from_str::<Value>(text) {
+    let is_json =
+        content_type.is_some_and(|mime| mime == "application/json" || mime.ends_with("+json"));
+    if is_json {
+        let value = serde_json::from_str::<Value>(text).ok()?;
         return value["error"]
             .as_str()
             .or_else(|| value["message"].as_str())
             .and_then(|msg| clean_text(Some(msg), MAX_ERROR_CHARS));
     }
     if content_type == Some("text/plain") {
-        return clean_text(Some(text), MAX_ERROR_CHARS);
+        let trimmed = text.trim();
+        if trimmed.starts_with('<') || trimmed.starts_with('{') || trimmed.starts_with('[') {
+            return None;
+        }
+        return clean_text(Some(trimmed), MAX_ERROR_CHARS);
     }
     None
 }
@@ -727,11 +736,30 @@ mod tests {
             Some("Locked by CLI".into())
         );
         assert_eq!(
+            parse_error_message(
+                Some("application/problem+json"),
+                r#"{"message":"Policy active"}"#
+            ),
+            Some("Policy active".into())
+        );
+        assert_eq!(
             parse_error_message(Some("application/json"), r#"{"detail":"unexpected"}"#),
             None
         );
         assert_eq!(
+            parse_error_message(Some("text/html"), r#"{"error":"disguised"}"#),
+            None
+        );
+        assert_eq!(
             parse_error_message(Some("text/html"), "<html>502 Bad Gateway</html>"),
+            None
+        );
+        assert_eq!(
+            parse_error_message(Some("text/plain"), "<html>502 Bad Gateway</html>"),
+            None
+        );
+        assert_eq!(
+            parse_error_message(Some("text/plain"), r#"{"error":"truncated"#),
             None
         );
         assert_eq!(

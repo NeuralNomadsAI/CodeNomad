@@ -59,6 +59,16 @@ impl Editor {
         self.submitted = true;
     }
 
+    #[cfg(test)]
+    pub(in crate::settings) fn edit_text(&mut self, value: &str) {
+        self.text = TextEdit::new(value);
+    }
+
+    #[cfg(test)]
+    pub(in crate::settings) fn draft_text(&self) -> &str {
+        &self.text.text
+    }
+
     pub fn dismiss(&mut self) {
         if self.submitted {
             return;
@@ -205,7 +215,7 @@ impl Editor {
                     .invalid(!title_valid)
                     .disabled(disabled)
                     .on_edit(move |s| &mut access(s).title)
-                    .build(field_kit(dark))
+                    .build(&field_kit(dark))
                     .key("memory-title"),
             )
             .child(count(&self.title.text, 60))
@@ -224,7 +234,7 @@ impl Editor {
                     .label(body)
                     .disabled(disabled)
                     .on_edit(move |s| &mut access(s).text)
-                    .build(field_kit(dark))
+                    .build(&field_kit(dark))
                     .key("memory-text"),
             )
             .child(count(&self.text.text, 2000))
@@ -262,26 +272,27 @@ impl Editor {
                             access(s).confirmation = Some(Confirmation::Forget);
                         },
                     ))
+                    .children(revalidation_error.map(|_| {
+                        let retry = apply.clone();
+                        layout::button(
+                            t("settings.memory.retry"),
+                            self.submitted || review.loading(),
+                            move |s| {
+                                retry(s, Action::Retry);
+                            },
+                        )
+                    }))
                     .children(
-                        (revalidation_error.is_some() && self.error.is_none()).then(|| {
-                            let retry = apply.clone();
-                            layout::button(
-                                t("settings.memory.retry"),
-                                self.submitted || review.loading(),
-                                move |s| {
-                                    retry(s, Action::Retry);
-                                },
-                            )
-                        }),
-                    )
-                    .children(
-                        (error.is_some()
-                            && !(revalidation_error.is_some() && self.error.is_none()))
-                        .then(|| {
-                            layout::button(t("settings.memory.reload"), self.submitted, move |s| {
-                                access(s).confirmation = Some(Confirmation::Reload);
-                            })
-                        }),
+                        (self.error.is_some() || (!review.is_current(edit) && !self.submitted))
+                            .then(|| {
+                                layout::button(
+                                    t("settings.memory.reload"),
+                                    self.submitted,
+                                    move |s| {
+                                        access(s).confirmation = Some(Confirmation::Reload);
+                                    },
+                                )
+                            }),
                     ),
             );
         Some(chrome::embedded_section(

@@ -60,6 +60,10 @@ impl Observer {
         self.reading.lock().unwrap().clone()
     }
 
+    pub(crate) fn is_closed(&self) -> bool {
+        self.wake.is_closed()
+    }
+
     /// A bounded wake channel carries demand, never content or mutations. Even a rapid
     /// hide/show invalidates any read issued by the older observation.
     pub async fn changed_after(&self, generation: u64) -> Option<Reading> {

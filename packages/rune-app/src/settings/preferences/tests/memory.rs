@@ -135,12 +135,14 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         assert!(prefs.memory.review_writable(&edit));
         let mut editor = Editor::default();
         editor.open(edit.clone());
+        editor.edit_text("Edited before reauth");
         assert!(
             !prefs
                 .memory
                 .poll_editor(prefs.backend.as_ref(), &mut editor)
         );
         assert!(editor.shown());
+        assert_eq!(editor.draft_text(), "Edited before reauth");
 
         // Re-authenticate on the same server (new client_id, same base + server_identity).
         let reauthed = Backend::connect(&before.base, "").await.unwrap();
@@ -154,6 +156,7 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
                 .poll_editor(prefs.backend.as_ref(), &mut editor)
         );
         assert!(editor.shown());
+        assert_eq!(editor.draft_text(), "Edited before reauth");
         // The open edit must remain current while the fresh list is in flight (no false conflict).
         assert!(prefs.memory.review_is_current(&edit));
         assert!(!prefs.memory.review_writable(&edit));
@@ -192,20 +195,33 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
                 edit.clone(),
                 Some(Fields {
                     title: "Updated".into(),
-                    text: "Updated text".into(),
+                    text: editor.draft_text().to_owned(),
                     kind: codenomad_client::settings::memory::Kind::Fact,
                 }),
             ),
         );
         assert!(admitted);
+        editor.mark_submitted();
         let save_req = poll_next_request(&mut prefs, &listener).await;
         assert_eq!(save_req.first, "POST /api/memory HTTP/1.1");
         assert_eq!(save_req.body["operation"]["action"], "save");
         assert_eq!(save_req.body["operation"]["id"], "entry-1");
         assert_eq!(save_req.body["operation"]["revision"], rev);
+        assert_eq!(
+            save_req.body["operation"]["content"]["text"],
+            "Edited before reauth"
+        );
         save_req
             .reply(200, json!({"id": "entry-1", "revision": next_rev}))
             .await;
+        wait_until(|| {
+            prefs.poll();
+            prefs
+                .memory
+                .poll_editor(prefs.backend.as_ref(), &mut editor)
+        })
+        .await;
+        assert!(!editor.shown());
         let post_save_list = poll_next_request(&mut prefs, &listener).await;
         assert_eq!(post_save_list.first, "POST /api/memory HTTP/1.1");
         assert_eq!(post_save_list.body["operation"]["action"], "list");
@@ -217,7 +233,7 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
                 "id": "entry-1",
                 "title": "Updated",
                 "type": "fact",
-                "text": "Updated text",
+                "text": "Edited before reauth",
                 "createdAt": "2026-01-01T00:00:00Z",
                 "updatedAt": "2026-01-01T00:01:00Z",
                 "revision": next_rev,
@@ -233,10 +249,11 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         assert!(prefs.memory.review_is_current(&updated_edit));
         assert!(prefs.memory.review_writable(&updated_edit));
 
-        // Switching to a different server profile while a save is submitted must invalidate the
-        // review and close the stale editor instead of leaving it stuck on submitted = true.
+        // Switching to a different server profile while a real HTTP save POST is in flight must
+        // invalidate the review, close the stale editor, and ignore the late reply from profile A.
         let mut inflight_editor = Editor::default();
         inflight_editor.open(updated_edit.clone());
+        inflight_editor.edit_text("In-flight profile A edit");
         assert!(
             !prefs
                 .memory
@@ -248,12 +265,15 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
                 updated_edit.clone(),
                 Some(Fields {
                     title: "Stale".into(),
-                    text: "Stale text".into(),
+                    text: inflight_editor.draft_text().to_owned(),
                     kind: codenomad_client::settings::memory::Kind::Fact,
                 }),
             ),
         ));
         inflight_editor.mark_submitted();
+        let held_save_req = poll_next_request(&mut prefs, &listener).await;
+        assert_eq!(held_save_req.first, "POST /api/memory HTTP/1.1");
+        assert_eq!(held_save_req.body["operation"]["action"], "save");
         let other = Backend::connect(&before.base, "").await.unwrap();
         attest(&listener, &other, "profile-b").await;
         prefs.bind(Some(other));
@@ -264,6 +284,11 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
                 .memory
                 .poll_editor(prefs.backend.as_ref(), &mut inflight_editor)
         );
+        assert!(!inflight_editor.shown());
+        held_save_req
+            .reply(200, json!({"id": "entry-1", "revision": "c".repeat(64)}))
+            .await;
+        assert!(!prefs.memory.review_is_current(&updated_edit));
         assert!(!inflight_editor.shown());
     });
 }

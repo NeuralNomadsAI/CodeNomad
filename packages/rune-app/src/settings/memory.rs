@@ -48,6 +48,7 @@ impl Setting {
         if same {
             self.invalidate();
         } else {
+            self.review.revoke_authority();
             let owner_gen = self.owner_gen.wrapping_add(1);
             *self = Self {
                 visible: self.visible,
@@ -63,16 +64,24 @@ impl Setting {
         self.review.invalidate();
     }
 
+    pub fn poll_pending_writes(&mut self) -> bool {
+        self.review.poll_write()
+    }
+
     pub fn poll_review(
         &mut self,
         backend: &Backend,
         project: Option<&super::providers::Target>,
+        transport_lost: bool,
+        prefs_authority: &std::sync::Arc<std::sync::atomic::AtomicU64>,
         main: &Option<rune::Waker>,
         window: &Option<rune::Waker>,
     ) -> bool {
         self.review.poll(
             (self.visible && self.current == Some(true)).then_some(backend),
             project,
+            transport_lost,
+            prefs_authority,
             main,
             window,
         )

@@ -9,8 +9,14 @@ use rune_theme_codenomad::{
 };
 mod syntax;
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
 #[derive(Default)]
 pub(super) struct Editor {
+    authority: Arc<AtomicU64>,
     owner: Option<ServerOwner>,
     files: Option<Vec<api::File>>,
     active: Option<usize>,
@@ -71,7 +77,10 @@ impl Editor {
                     changed = true;
                 }
             } else {
+                self.authority.fetch_add(1, Ordering::SeqCst);
+                let authority = self.authority.clone();
                 *self = Self {
+                    authority,
                     owner: Some(ServerOwner::from_backend(backend)),
                     ..Self::default()
                 };
@@ -111,6 +120,12 @@ impl Editor {
         }
         self.owner
             .get_or_insert_with(|| ServerOwner::from_backend(backend));
+        if prefs.transport_lost() || !ServerOwner::backend_verified(backend) {
+            if self.read.take().is_some() {
+                changed = true;
+            }
+            return changed;
+        }
         if let Some((_, inbox)) = self.read.as_ref() {
             match inbox.try_recv() {
                 Ok(result) => {
@@ -263,6 +278,10 @@ impl Editor {
             .as_ref()
             .and_then(|o| o.server().map(str::to_owned));
         let prepared_gen = backend.client.drop_generation();
+        let prefs_auth = prefs.authority_handle();
+        let prefs_gen = prefs_auth.load(Ordering::SeqCst);
+        let editor_auth = self.authority.clone();
+        let editor_gen = editor_auth.load(Ordering::SeqCst);
         let payload = if self.crlf {
             draft.replace('\n', "\r\n")
         } else {
@@ -271,31 +290,33 @@ impl Editor {
         self.write = Some(inbox);
         self.notice = None;
         platform::spawn(async move {
-            let verified = if backend.client.tracks_server_attestation()
-                && (!ServerOwner::backend_verified(&backend)
-                    || backend.client.drop_generation() != prepared_gen)
-            {
-                backend.attest_server().await.is_ok()
+            let still_authorized = || {
+                prefs_auth.load(Ordering::SeqCst) == prefs_gen
+                    && editor_auth.load(Ordering::SeqCst) == editor_gen
                     && ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
                         .is_none_or(|id| backend.client.server_identity() == Some(id))
-            } else {
-                ServerOwner::backend_verified(&backend)
-                    && expected_server
-                        .as_deref()
-                        .is_none_or(|id| backend.client.server_identity() == Some(id))
             };
-            let saved = if !verified {
+            let verified = if prefs_auth.load(Ordering::SeqCst) != prefs_gen
+                || editor_auth.load(Ordering::SeqCst) != editor_gen
+            {
+                false
+            } else if backend.client.tracks_server_attestation()
+                && (!ServerOwner::backend_verified(&backend)
+                    || backend.client.drop_generation() != prepared_gen)
+            {
+                backend.attest_server().await.is_ok() && still_authorized()
+            } else {
+                still_authorized()
+            };
+            let saved = if !verified || !still_authorized() {
                 false
             } else {
                 match api::save(&backend, &id, &payload).await {
                     Ok(()) => true,
                     Err(_) => {
-                        ServerOwner::backend_verified(&backend)
-                            && expected_server
-                                .as_deref()
-                                .is_none_or(|id| backend.client.server_identity() == Some(id))
+                        still_authorized()
                             && api::read(&backend, &id)
                                 .await
                                 .is_ok_and(|content| content.exists && content.contents == payload)
@@ -348,7 +369,7 @@ impl Editor {
                         .disabled(waiting || !writable || self.confirm.is_some())
                         .on_edit(move |s| &mut edit(s).draft)
                         .on_change(move |s, _| edit(s).diagnose())
-                        .build(field_kit(layout::dark())),
+                        .build(&field_kit(layout::dark())),
                 )
                 .children(self.syntax_line.map(|line| {
                     text(t("settings.configFiles.syntaxLine").replace("{line}", &line.to_string()))

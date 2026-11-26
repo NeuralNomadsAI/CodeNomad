@@ -10,6 +10,10 @@ use codenomad_client::{
     settings::memory::{self, Entry, List, Scope},
 };
 use rune_theme_codenomad::Space;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 #[derive(Clone)]
 pub(in crate::settings) enum Action {
@@ -82,6 +86,7 @@ pub(super) struct Review {
     tidy_attempted: bool,
     tidy_failed: bool,
     unverified: bool,
+    authority: Arc<AtomicU64>,
     epoch: u64,
     seen: super::seen::Seen,
 }
@@ -102,8 +107,14 @@ impl Key {
 }
 
 impl Review {
+    pub fn revoke_authority(&self) {
+        self.authority.fetch_add(1, Ordering::SeqCst);
+    }
+
     pub fn begin_visit(&mut self) {
         self.seen.begin_visit();
+        self.tidy_attempted = false;
+        self.tidy_failed = false;
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -129,8 +140,9 @@ impl Review {
         }
         self.tidy = None;
         self.cleanup = None;
-        self.tidy_attempted = false;
-        self.tidy_failed = false;
+        if self.tidy_attempted {
+            self.tidy_failed = true;
+        }
     }
 
     pub fn invalidate(&mut self) {
@@ -150,6 +162,8 @@ impl Review {
                     && (scope != Scope::Project || project.is_some()) =>
             {
                 self.suspend();
+                self.tidy_attempted = false;
+                self.tidy_failed = false;
                 self.scope = Some(scope);
             }
             Action::Retry => self.invalidate(),
@@ -300,10 +314,27 @@ impl Review {
             .map(|(_, result)| *result)
     }
 
+    pub fn poll_write(&mut self) -> bool {
+        let Some(reply) = &self.write else {
+            return false;
+        };
+        let result = match reply.try_recv() {
+            Ok(result) => result,
+            Err(_) if reply.is_closed() => Err(UNAVAILABLE),
+            Err(_) => return false,
+        };
+        self.write = None;
+        self.write_result = self.writing.take().map(|edit| (edit, result));
+        self.invalidate();
+        true
+    }
+
     pub fn poll(
         &mut self,
         backend: Option<&Backend>,
         project: Option<&Target>,
+        transport_lost: bool,
+        prefs_authority: &Arc<AtomicU64>,
         main: &Option<rune::Waker>,
         window: &Option<rune::Waker>,
     ) -> bool {
@@ -321,8 +352,10 @@ impl Review {
                     (workspace.to_owned(), session.map(str::to_owned))
                 }),
             });
-        self.unverified = backend.is_some_and(|b| !ServerOwner::backend_verified(b));
-        let mut changed = false;
+        let was_unverified = self.unverified;
+        self.unverified =
+            transport_lost || backend.is_some_and(|b| !ServerOwner::backend_verified(b));
+        let mut changed = was_unverified != self.unverified;
         match (&mut self.key, next_key) {
             (Some(current), Some(next)) if current.same_target(&next) => {
                 if let Some(backend) = backend
@@ -344,26 +377,41 @@ impl Review {
             }
             (None, None) => {}
             (_, next) => {
+                let switching_owner = self
+                    .key
+                    .as_ref()
+                    .zip(next.as_ref())
+                    .is_some_and(|(old, new)| !old.owner.same_server(&new.owner));
+                if switching_owner {
+                    self.revoke_authority();
+                }
                 self.suspend();
                 self.key = next;
                 self.invalidate();
                 changed = true;
             }
         }
-        if let Some(reply) = &self.write {
-            let result = match reply.try_recv() {
-                Ok(result) => result,
-                Err(_) if reply.is_closed() => Err(UNAVAILABLE),
-                Err(_) => return changed,
-            };
-            self.write = None;
-            self.write_result = self.writing.take().map(|edit| (edit, result));
-            self.invalidate();
+        if self.poll_write() {
             changed = true;
+        }
+        if self.write.is_some() {
+            return changed;
         }
         let (Some(key), Some(backend)) = (&self.key, backend) else {
             return changed;
         };
+        // Never publish or start list reads while transport or attestation is unverified: keep
+        // the last attested snapshot so open drafts stay visible read-only until re-attested.
+        if self.unverified {
+            if self.flight.take().is_some() {
+                self.invalidate();
+                changed = true;
+            }
+            if !was_unverified {
+                self.invalidate();
+            }
+            return changed;
+        }
         if let Some((_, flight)) = &self.flight {
             let result = match flight.try_recv() {
                 Ok(result) => result,
@@ -384,7 +432,7 @@ impl Review {
             && let Some((edit, fields)) = self.pending.take()
         {
             if self.writable(&edit) && key.owner.verified_for_write(backend) {
-                self.start_write(backend, edit, fields, main, window);
+                self.start_write(backend, prefs_authority, edit, fields, main, window);
             } else {
                 self.write_result = Some((edit, Err("settings.memory.error.conflict")));
             }
@@ -419,6 +467,7 @@ impl Review {
     fn start_write(
         &mut self,
         backend: &Backend,
+        prefs_authority: &Arc<AtomicU64>,
         edit: Edit,
         fields: Option<Fields>,
         main: &Option<rune::Waker>,
@@ -447,28 +496,37 @@ impl Review {
         }
         let expected_server = edit.key.owner.server().map(str::to_owned);
         let prepared_gen = backend.client.drop_generation();
+        let prefs_auth = prefs_authority.clone();
+        let prefs_gen = prefs_auth.load(Ordering::SeqCst);
+        let review_auth = self.authority.clone();
+        let review_gen = review_auth.load(Ordering::SeqCst);
         let (out, reply) = bounded(1);
         self.write_result = None;
         self.writing = Some(edit);
         self.write = Some(reply);
         let (backend, main, window) = (backend.clone(), main.clone(), window.clone());
         platform::spawn(async move {
-            let verified = if backend.client.tracks_server_attestation()
-                && (!ServerOwner::backend_verified(&backend)
-                    || backend.client.drop_generation() != prepared_gen)
-            {
-                backend.attest_server().await.is_ok()
+            let still_authorized = || {
+                prefs_auth.load(Ordering::SeqCst) == prefs_gen
+                    && review_auth.load(Ordering::SeqCst) == review_gen
                     && ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
                         .is_none_or(|id| backend.client.server_identity() == Some(id))
-            } else {
-                ServerOwner::backend_verified(&backend)
-                    && expected_server
-                        .as_deref()
-                        .is_none_or(|id| backend.client.server_identity() == Some(id))
             };
-            let result = if !verified {
+            let verified = if prefs_auth.load(Ordering::SeqCst) != prefs_gen
+                || review_auth.load(Ordering::SeqCst) != review_gen
+            {
+                false
+            } else if backend.client.tracks_server_attestation()
+                && (!ServerOwner::backend_verified(&backend)
+                    || backend.client.drop_generation() != prepared_gen)
+            {
+                backend.attest_server().await.is_ok() && still_authorized()
+            } else {
+                still_authorized()
+            };
+            let result = if !verified || !still_authorized() {
                 Err(UNAVAILABLE)
             } else {
                 let context = workspace
