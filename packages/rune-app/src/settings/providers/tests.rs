@@ -982,8 +982,65 @@ fn command_external_snapshotted_methods_and_absent_optional_fields() {
         assert_eq!(ext.body["answer"], json!({}));
         ext.reply(204, json!({})).await;
         poll_until(&mut rt, 3.0, |h| h.catalog.manager.connect.is_none());
+        reply_catalog(&http, integrations.clone(), json!([]), json!([]), None).await;
+        poll_until(&mut rt, 3.0, |h| !h.catalog.manager.catalog_flight_active());
 
-        // Hidden tab cancels an in-flight account mutation immediately on authority revocation.
+        // Typing into optional text and custom multiselect fields then clearing them sends explicit
+        // empty values ("" and []), distinguishing cleared edits from untouched optional fields.
+        click(&mut rt, "providers-connect-button", 3.5);
+        rt.update(|h, _| {
+            h.catalog.manager.select_method(1);
+            *h.catalog.manager.form_text_edit_mut("optional_note") = rune::TextEdit::new("hello");
+            *h.catalog.manager.form_text_edit_mut("optional_note") = rune::TextEdit::new("");
+            *h.catalog.manager.form_text_edit_mut("custom_tags") = rune::TextEdit::new("tag1");
+            *h.catalog.manager.form_text_edit_mut("custom_tags") = rune::TextEdit::new("");
+        });
+        rt.frame(3.5);
+        click(&mut rt, "provider-auth-continue", 3.5);
+        assert!(tick(&mut rt, 3.5));
+        let ext_cleared = http.accept().await;
+        assert_eq!(ext_cleared.body["methodID"], "ext");
+        assert_eq!(
+            ext_cleared.body["answer"],
+            json!({ "optional_note": "", "custom_tags": [] })
+        );
+        ext_cleared.reply(204, json!({})).await;
+        poll_until(&mut rt, 3.5, |h| h.catalog.manager.connect.is_none());
+        reply_catalog(&http, integrations.clone(), json!([]), json!([]), None).await;
+        poll_until(&mut rt, 3.5, |h| !h.catalog.manager.catalog_flight_active());
+
+        // Pre-cancelled SendGate prevents OAuth and command start POSTs from touching the server.
+        let gate = codenomad_client::settings::provider_auth::SendGate::new();
+        gate.cancel();
+        assert!(
+            codenomad_client::settings::provider_auth::oauth_connect(
+                &http.backend,
+                "ws1",
+                "/repo/a",
+                "acme",
+                "oauth",
+                None,
+                &gate,
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            codenomad_client::settings::provider_auth::command_connect(
+                &http.backend,
+                "ws1",
+                "/repo/a",
+                "acme",
+                "cli",
+                &gate,
+            )
+            .await
+            .is_err()
+        );
+        http.quiet().await;
+
+        // Hidden tab cancels an in-flight account mutation immediately on authority revocation
+        // and aborts the underlying HTTP socket.
         let http2 = Http::new().await;
         let mut rt2 = make_rt(http2.backend.clone());
         assert!(tick(&mut rt2, 1.0));
@@ -1004,6 +1061,14 @@ fn command_external_snapshotted_methods_and_absent_optional_fields() {
         click(&mut rt2, "provider-account-remove-openai", 1.0);
         assert!(tick(&mut rt2, 1.0));
         assert!(rt2.state.catalog.manager.any_account_busy());
+        let del_req = http2.accept().await;
+        assert!(
+            del_req
+                .header
+                .starts_with("DELETE /workspaces/ws1/instance/api/credential/cred_1 "),
+            "{}",
+            del_req.header
+        );
         let app_state = crate::init();
         rt2.update(|h, _| {
             let moves = codenomad_client::stream::ProviderMoves::Sessions(vec![(
@@ -1023,6 +1088,7 @@ fn command_external_snapshotted_methods_and_absent_optional_fields() {
         assert!(tick_with_visibility(&mut rt2, 1.1, false));
         assert!(!rt2.state.catalog.manager.any_account_busy());
         assert!(!rt2.state.catalog.manager.catalog_flight_active());
+        del_req.disconnected().await;
     });
 }
 
@@ -1174,12 +1240,12 @@ fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_label
         });
         click(&mut rt, "provider-auth-close", 2.5);
 
-        // Hidden tab (visible=false) pauses passive catalog refresh while keeping an active OAuth
-        // attempt alive, and Catalogue ProviderMoves revokes authority immediately (sending DELETE
-        // for the active attempt BEFORE reload settles!).
+        // Opening a foreground OAuth popup tab immediately hides the originating tab (visible=false)
+        // before the next poll: the queued OAuth POST must still dispatch while hidden, passive
+        // catalog refresh must stay paused, and ProviderMoves must revoke authority immediately.
         click(&mut rt, "provider-account-add-openai", 3.0);
         click(&mut rt, "provider-auth-continue", 3.0);
-        assert!(tick(&mut rt, 3.0));
+        assert!(tick_with_visibility(&mut rt, 3.0, false));
         let post_move = http.accept().await;
         post_move
             .reply(
@@ -1195,13 +1261,22 @@ fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_label
                 }),
             )
             .await;
-        poll_until(&mut rt, 3.0, |h| {
-            h.catalog
-                .manager
-                .connect
-                .as_ref()
-                .is_some_and(|f| f.stage == manager::AuthStage::Waiting)
-        });
+        let deadline_hidden = Instant::now() + Duration::from_secs(3);
+        while !rt
+            .state
+            .catalog
+            .manager
+            .connect
+            .as_ref()
+            .is_some_and(|f| f.stage == manager::AuthStage::Waiting)
+        {
+            assert!(
+                Instant::now() < deadline_hidden,
+                "hidden OAuth submit did not enter Waiting"
+            );
+            let _ = tick_with_visibility(&mut rt, 3.0, false);
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
         let st_move = http.accept().await;
         st_move
             .reply(
@@ -1209,7 +1284,15 @@ fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_label
                 json!({ "location": { "directory": "/repo/a" }, "data": { "status": "pending" } }),
             )
             .await;
-        poll_until(&mut rt, 3.0, |h| !h.catalog.manager.poll_flight_active());
+        let deadline_poll = Instant::now() + Duration::from_secs(3);
+        while rt.state.catalog.manager.poll_flight_active() {
+            assert!(
+                Instant::now() < deadline_poll,
+                "hidden OAuth status poll did not settle"
+            );
+            let _ = tick_with_visibility(&mut rt, 3.0, false);
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
 
         // Passive invalidation while hidden (visible=false) does NOT launch a catalog GET.
         rt.update(|h, _| {

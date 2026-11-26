@@ -40,11 +40,7 @@ pub(super) fn view<S: 'static>(
                     .key(format!("provider-form-link-{}", field.key)),
                 );
                 if catalog.manager.external_link_failed(&field.key) {
-                    block = block.child(
-                        text(t("settings.providers.oauth.popupBlocked"))
-                            .wrap()
-                            .role("alert"),
-                    );
+                    block = block.child(text(t("toastHistory.openLinkError")).wrap().role("alert"));
                 }
                 if let Some(desc) = &field.description {
                     block = block.child(text(desc).wrap().text_role(TextRole::Small));

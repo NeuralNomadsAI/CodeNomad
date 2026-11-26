@@ -793,6 +793,64 @@ pub async fn connect_external(
     check_empty_response(response).await
 }
 
+/// Coordinates cancellation with the initial synchronous `poll` of an OAuth/command start POST.
+///
+/// The worker locks this gate across checking cancellation and executing the first `poll(cx)` of
+/// `request.send()`, so `cancel()` either blocks the POST before `send()` is ever polled or
+/// synchronizes after dispatch is committed (letting `AuthHandover` cancel any returned `attemptID`).
+#[derive(Default)]
+pub struct SendGate {
+    state: std::sync::Mutex<SendGateState>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum SendGateState {
+    #[default]
+    Pending,
+    Dispatched,
+    Cancelled,
+}
+
+impl SendGate {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        *self.state.lock().unwrap() = SendGateState::Cancelled;
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        *self.state.lock().unwrap() == SendGateState::Cancelled
+    }
+}
+
+async fn send_gated(
+    request: reqwest::RequestBuilder,
+    gate: &SendGate,
+) -> std::result::Result<reqwest::Response, AuthError> {
+    use std::future::Future;
+    let mut send_fut = std::pin::pin!(request.send());
+    let immediate = std::future::poll_fn(|cx| {
+        let mut state = gate.state.lock().unwrap();
+        if *state == SendGateState::Cancelled {
+            return std::task::Poll::Ready(Err(AuthError::Failed));
+        }
+        *state = SendGateState::Dispatched;
+        match send_fut.as_mut().poll(cx) {
+            std::task::Poll::Ready(res) => {
+                std::task::Poll::Ready(res.map(Some).map_err(|_| AuthError::Failed))
+            }
+            std::task::Poll::Pending => std::task::Poll::Ready(Ok(None)),
+        }
+    })
+    .await?;
+    match immediate {
+        Some(response) => Ok(response),
+        None => send_fut.await.map_err(|_| AuthError::Failed),
+    }
+}
+
 pub async fn oauth_connect(
     backend: &Backend,
     workspace: &str,
@@ -800,8 +858,11 @@ pub async fn oauth_connect(
     integration_id: &str,
     method_id: &str,
     answer: Option<Value>,
-    cancelled: &crate::Receiver<()>,
+    gate: &SendGate,
 ) -> std::result::Result<OAuthAttempt, AuthError> {
+    if gate.is_cancelled() {
+        return Err(AuthError::Failed);
+    }
     let url = instance_url(
         backend,
         workspace,
@@ -817,10 +878,7 @@ pub async fn oauth_connect(
         .post(url)
         .query(&[("location[directory]", directory)])
         .json(&Value::Object(body));
-    if cancelled.is_closed() {
-        return Err(AuthError::Failed);
-    }
-    let response = request.send().await.map_err(|_| AuthError::Failed)?;
+    let response = send_gated(request, gate).await?;
     let value = check_json_response(response).await?;
     verify_response_location(&value, directory)?;
     let data = &value["data"];
@@ -938,8 +996,11 @@ pub async fn command_connect(
     directory: &str,
     integration_id: &str,
     method_id: &str,
-    cancelled: &crate::Receiver<()>,
+    gate: &SendGate,
 ) -> std::result::Result<String, AuthError> {
+    if gate.is_cancelled() {
+        return Err(AuthError::Failed);
+    }
     let url = instance_url(
         backend,
         workspace,
@@ -950,10 +1011,7 @@ pub async fn command_connect(
         .post(url)
         .query(&[("location[directory]", directory)])
         .json(&json!({ "methodID": method_id }));
-    if cancelled.is_closed() {
-        return Err(AuthError::Failed);
-    }
-    let response = request.send().await.map_err(|_| AuthError::Failed)?;
+    let response = send_gated(request, gate).await?;
     let value = check_json_response(response).await?;
     verify_response_location(&value, directory)?;
     clean_token(&value["data"]["attemptID"]).ok_or(AuthError::Failed)
@@ -1202,6 +1260,17 @@ fn classify_error_body(status: u16, body: Option<&Value>) -> AuthError {
         return AuthError::Unsupported;
     }
     if let Some(body) = body {
+        let is_server_rs_route_404 = status == 404
+            && body.as_object().is_some_and(|obj| {
+                obj.len() == 1
+                    && obj
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| s.eq_ignore_ascii_case("not found"))
+            });
+        if is_server_rs_route_404 {
+            return AuthError::Unsupported;
+        }
         let message = body["data"]["message"]
             .as_str()
             .or_else(|| body["error"]["data"]["message"].as_str())
@@ -1209,10 +1278,7 @@ fn classify_error_body(status: u16, body: Option<&Value>) -> AuthError {
             .or_else(|| body["message"].as_str())
             .or_else(|| body["error"].as_str());
         if let Some(msg) = message.and_then(|s| sanitize_str(s, MAX_ERROR_LEN)) {
-            if status == 404
-                && (msg.eq_ignore_ascii_case("not found")
-                    || (msg.starts_with("Route ") && msg.ends_with(" not found")))
-            {
+            if status == 404 && msg.starts_with("Route ") && msg.ends_with(" not found") {
                 return AuthError::Unsupported;
             }
             return AuthError::Message(msg);
@@ -1852,6 +1918,14 @@ mod tests {
                 Some(&json!({ "data": { "message": "Attempt expired" } }))
             ),
             AuthError::Message("Attempt expired".into())
+        );
+        assert_eq!(
+            classify_error_body(404, Some(&json!({ "data": { "message": "Not found" } }))),
+            AuthError::Message("Not found".into())
+        );
+        assert_eq!(
+            classify_error_body(404, Some(&json!({ "error": { "message": "Not found" } }))),
+            AuthError::Message("Not found".into())
         );
         assert_eq!(
             classify_error_body(404, Some(&json!({ "error": "Not found" }))),

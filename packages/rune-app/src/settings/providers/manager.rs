@@ -217,7 +217,12 @@ enum AccountFlightOutcome {
 }
 
 type CatalogFlight = (Sender<()>, Receiver<Result<CatalogSnapshot, AuthError>>);
-type AuthFlight = (u64, Sender<()>, Arc<Mutex<AuthHandover>>);
+type AuthFlight = (
+    u64,
+    Sender<()>,
+    Arc<provider_auth::SendGate>,
+    Arc<Mutex<AuthHandover>>,
+);
 type PollFlight = (u64, Sender<()>, Receiver<Result<AttemptPoll, AuthError>>);
 type AccountFlight = (
     AccountAction,
@@ -800,9 +805,11 @@ impl Manager {
 
     #[cfg(test)]
     pub(super) fn auth_handover_ready(&self) -> bool {
-        self.auth_flight.as_ref().is_some_and(|(_, _, handover)| {
-            matches!(*handover.lock().unwrap(), AuthHandover::Ready(_))
-        })
+        self.auth_flight
+            .as_ref()
+            .is_some_and(|(_, _, _, handover)| {
+                matches!(*handover.lock().unwrap(), AuthHandover::Ready(_))
+            })
     }
 
     fn cancel_account_flight(&mut self) {
@@ -822,7 +829,8 @@ impl Manager {
                 flow.provider_id.clone(),
             ))
         });
-        if let Some((_, cancel_tx, handover)) = self.auth_flight.take() {
+        if let Some((_, cancel_tx, send_gate, handover)) = self.auth_flight.take() {
+            send_gate.cancel();
             drop(cancel_tx);
             let taken = std::mem::replace(&mut *handover.lock().unwrap(), AuthHandover::Cancelled);
             if let (
@@ -988,11 +996,10 @@ impl Manager {
         }
 
         let location_fresh = self.snapshot_rev == Some(desired_rev) && self.flight.is_none();
-        if visible && location_fresh {
+        if location_fresh {
             changed |= self.start_pending_account(backend, workspace, wake);
         }
-        changed |=
-            self.drive_connect_flow(target, visible && location_fresh, now, wake, tx, access);
+        changed |= self.drive_connect_flow(target, location_fresh, now, wake, tx, access);
         changed
     }
 
@@ -1203,7 +1210,7 @@ impl Manager {
 
     fn poll_auth_flight(&mut self, now: f64, tx: &mut Tx) -> bool {
         let outcome = {
-            let Some((_, _, handover)) = &self.auth_flight else {
+            let Some((_, _, _, handover)) = &self.auth_flight else {
                 return false;
             };
             let mut slot = handover.lock().unwrap();
@@ -1215,7 +1222,7 @@ impl Manager {
                 _ => return false,
             }
         };
-        let (seq, _, _) = self.auth_flight.take().unwrap();
+        let (seq, _, _, _) = self.auth_flight.take().unwrap();
         let Some(flow) = &mut self.connect else {
             return true;
         };
@@ -1453,13 +1460,16 @@ impl Manager {
             flow.active_workspace = Some(workspace.to_owned());
             flow.active_backend = Some(backend.clone());
             let (cancel_tx, cancelled) = bounded(1);
+            let send_gate = Arc::new(provider_auth::SendGate::new());
+            let send_gate_cl = send_gate.clone();
             let handover = Arc::new(Mutex::new(AuthHandover::Pending));
             let handover_cl = handover.clone();
             let (backend_cl, ws_cl, wake_cl) =
                 (backend.clone(), workspace.to_owned(), wake.clone());
-            self.auth_flight = Some((seq, cancel_tx, handover));
+            self.auth_flight = Some((seq, cancel_tx, send_gate, handover));
             platform::spawn(async move {
-                if cancelled.is_closed()
+                if send_gate_cl.is_cancelled()
+                    || cancelled.is_closed()
                     || matches!(*handover_cl.lock().unwrap(), AuthHandover::Cancelled)
                 {
                     return;
@@ -1507,9 +1517,9 @@ impl Manager {
                             Err(err) => AuthFlightOutcome::Failed(err),
                         }
                     }
-                    // OAuth/command POSTs check `cancelled` immediately before `execute`; once
-                    // dispatched, they finish reading the reply so any server-created `attemptID`
-                    // can be cancelled via `DELETE` instead of being leaked by dropping the socket.
+                    // OAuth/command POSTs acquire `SendGate` across checking cancellation and the
+                    // initial synchronous `poll` of `request.send()`; once dispatched, they finish
+                    // reading the reply so any server-created `attemptID` is cancelled via `DELETE`.
                     AuthMethod::OAuth { id, .. } => {
                         match provider_auth::oauth_connect(
                             &backend_cl,
@@ -1518,7 +1528,7 @@ impl Manager {
                             &provider_id,
                             &id,
                             answer,
-                            &cancelled,
+                            &send_gate_cl,
                         )
                         .await
                         {
@@ -1532,7 +1542,7 @@ impl Manager {
                         &directory,
                         &provider_id,
                         &id,
-                        &cancelled,
+                        &send_gate_cl,
                     )
                     .await
                     {
@@ -1603,11 +1613,12 @@ impl Manager {
                 flow.error = None;
                 let provider_id = flow.provider_id.clone();
                 let (cancel_tx, cancelled) = bounded(1);
+                let send_gate = Arc::new(provider_auth::SendGate::new());
                 let handover = Arc::new(Mutex::new(AuthHandover::Pending));
                 let handover_cl = handover.clone();
                 let (backend_cl, ws_cl, wake_cl) =
                     (backend.clone(), workspace.to_owned(), wake.clone());
-                self.auth_flight = Some((seq, cancel_tx, handover));
+                self.auth_flight = Some((seq, cancel_tx, send_gate, handover));
                 platform::spawn(async move {
                     if matches!(*handover_cl.lock().unwrap(), AuthHandover::Cancelled) {
                         return;
