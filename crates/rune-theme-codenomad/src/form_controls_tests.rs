@@ -31,15 +31,16 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
         col()
             .w_full()
             .h_full()
-            .child(form_header("Question", "Confirm deployment"))
+            .child(form_header("Question", "Confirm deployment", false))
             .child(form_error("Unsupported form"))
-            .child(field_heading("Environment").key("field-heading"))
+            .child(field_heading("Environment", true).key("field-heading"))
             .child(field_description("Choose a target").key("field-description"))
             .child(radio_group(
                 "radio-grp",
                 "Choice",
                 None,
                 false,
+                true,
                 vec![
                     radio_option(
                         "opt-a",
@@ -74,6 +75,7 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                 "check-grp",
                 "Tags",
                 None,
+                true,
                 vec![
                     checkbox_option(
                         "chk-a",
@@ -108,6 +110,11 @@ fn assert_palette_controls(label: &str, dark: bool) {
     let group = node(&tree, "radio-grp").unwrap();
     assert_eq!(group["role"], "radio-group");
     assert_eq!(group["name"], "Choice");
+    assert!(has_state(group, "required"), "{group}");
+
+    let check_group = node(&tree, "check-grp").unwrap();
+    assert_eq!(check_group["role"], "group");
+    assert!(has_state(check_group, "required"), "{check_group}");
 
     let opt_a = node(&tree, "opt-a").unwrap();
     assert_eq!(opt_a["role"], "radio-button");
@@ -202,12 +209,13 @@ fn assert_palette_controls(label: &str, dark: bool) {
     rt.frame(now);
     let els = rt.elements();
 
-    // Form header, error banner, field heading, and field description meet >= 4.5:1 against base.
+    // Form header, error banner, required field heading + marker, and field description meet >= 4.5:1 against base.
     for key in [
         "form-eyebrow",
         "form-title",
         "form-unsupported",
-        "field-heading",
+        "heading-text",
+        "required-marker",
         "field-description",
     ] {
         let text_el = els
@@ -222,7 +230,7 @@ fn assert_palette_controls(label: &str, dark: bool) {
         );
     }
 
-    // Enabled Clear control meets >= 4.5:1 text contrast against both painted rest and hover fills.
+    // Enabled Clear control meets >= 4.5:1 text contrast and >= 3:1 boundary contrast at rest and hover.
     {
         let clear = els
             .iter()
@@ -241,10 +249,21 @@ fn assert_palette_controls(label: &str, dark: bool) {
             label_ratio >= 4.5,
             "{label}/clear-btn label text contrast below 4.5:1: {label_ratio:.2}"
         );
+        let clear_border = clear.border_color.expect("clear-btn border_color");
+        let rest_fill = painted_card_fill(&rt, "clear-btn");
+        let hover_fill = painted_hover_fills["clear-btn"];
+        let rest_boundary = worst_contrast(rest_fill, &[base])
+            .max(worst_contrast(clear_border, &[base, rest[0], rest[1]]));
+        let hover_boundary = worst_contrast(hover_fill, &[base])
+            .max(worst_contrast(clear_border, &[base, hover[0], hover[1]]));
+        assert!(
+            rest_boundary >= 3.0 && hover_boundary >= 3.0,
+            "{label}/clear-btn boundary contrast below 3:1: rest={rest_boundary:.2} hover={hover_boundary:.2} (border={clear_border:?}, rest={rest_fill:?}, hover={hover_fill:?}, base={base:?})"
+        );
     }
 
     // Unchecked radio and checkbox indicator outlines (>= 3:1) and option copy (>= 4.5:1)
-    // against actual painted indicator fill, rest card fill, and hovered card fill.
+    // against actual composited indicator pixels, rest card fill, and hovered card fill.
     for key in ["opt-b", "chk-a"] {
         let card = els.iter().find(|e| e.key.as_deref() == Some(key)).unwrap();
         let indicator = els
@@ -252,10 +271,13 @@ fn assert_palette_controls(label: &str, dark: bool) {
             .find(|e| e.key.as_deref() == Some("indicator") && e.path.starts_with(&card.path))
             .unwrap();
         let border = indicator.border_color.expect("unchecked outline border");
-        let fill = effective_backgrounds(indicator.fill, base);
         let rest = effective_backgrounds(painted_card_fill(&rt, key), base);
         let hover = effective_backgrounds(painted_hover_fills[key], base);
-        let backgrounds = [fill[0], fill[1], rest[0], rest[1], hover[0], hover[1]];
+        let card_bgs = [rest[0], rest[1], hover[0], hover[1]];
+        let nested_fill = composite_over(indicator.fill, &card_bgs);
+        let mut backgrounds = Vec::with_capacity(nested_fill.len() + card_bgs.len());
+        backgrounds.extend_from_slice(&nested_fill);
+        backgrounds.extend_from_slice(&card_bgs);
         let ratio = worst_contrast(border, &backgrounds);
         assert!(
             ratio >= 3.0,
@@ -312,7 +334,7 @@ fn assert_palette_controls(label: &str, dark: bool) {
         }
     }
 
-    // Checked radio indicator border and inner mark meet WCAG 3:1 in linear RGB.
+    // Checked radio indicator border and inner mark meet WCAG 3:1 against composited nested pixels.
     {
         let card = els
             .iter()
@@ -327,21 +349,25 @@ fn assert_palette_controls(label: &str, dark: bool) {
             .find(|e| e.key.as_deref() == Some("mark") && e.path.starts_with(&card.path))
             .unwrap();
         let border = indicator.border_color.expect("checked radio border");
-        let fill = effective_backgrounds(indicator.fill, base);
-        let rest = effective_backgrounds(card.fill, base);
-        let border_ratio = worst_contrast(border, &[fill[0], fill[1], rest[0], rest[1]]);
+        let rest = effective_backgrounds(painted_card_fill(&rt, "opt-a"), base);
+        let fill = composite_over(indicator.fill, &rest);
+        let mut border_bgs = Vec::with_capacity(fill.len() + rest.len());
+        border_bgs.extend_from_slice(&fill);
+        border_bgs.extend_from_slice(&rest);
+        let border_ratio = worst_contrast(border, &border_bgs);
         assert!(
             border_ratio >= 3.0,
             "{label}/opt-a checked radio border contrast below 3:1: {border_ratio:.2}"
         );
-        let mark_ratio = worst_contrast(mark.fill, &[fill[0], fill[1]]);
+        let mark_ratio = worst_contrast(mark.fill, &fill);
         assert!(
             mark_ratio >= 3.0,
             "{label}/opt-a checked radio mark contrast below 3:1: {mark_ratio:.2}"
         );
     }
 
-    // Checked checkbox indicator is distinguishable from the card and its checkmark meets >= 3:1.
+    // Checked checkbox indicator is distinguishable from the card and its checkmark meets >= 3:1
+    // against actual composited nested pixels (no translucent double-coating).
     {
         let card = els
             .iter()
@@ -356,12 +382,13 @@ fn assert_palette_controls(label: &str, dark: bool) {
             .find(|e| e.key.as_deref() == Some("mark") && e.path.starts_with(&card.path))
             .unwrap();
         let border = indicator.border_color.expect("checked checkbox border");
-        let fill = effective_backgrounds(indicator.fill, base);
-        let rest = effective_backgrounds(card.fill, base);
-        let box_visible = worst_contrast(indicator.fill, &rest).max(worst_contrast(
-            border,
-            &[fill[0], fill[1], rest[0], rest[1]],
-        ));
+        let rest = effective_backgrounds(painted_card_fill(&rt, "chk-b"), base);
+        let fill = composite_over(indicator.fill, &rest);
+        let mut border_bgs = Vec::with_capacity(fill.len() + rest.len());
+        border_bgs.extend_from_slice(&fill);
+        border_bgs.extend_from_slice(&rest);
+        let box_visible =
+            worst_contrast(indicator.fill, &rest).max(worst_contrast(border, &border_bgs));
         assert!(
             box_visible >= 3.0,
             "{label}/chk-b checked checkbox box contrast below 3:1: {box_visible:.2}"
@@ -369,10 +396,10 @@ fn assert_palette_controls(label: &str, dark: bool) {
         let mark_color = mark
             .text_color
             .unwrap_or_else(|| checked_checkbox_colors(t, card.fill).2);
-        let mark_ratio = worst_contrast(mark_color, &[fill[0], fill[1]]);
+        let mark_ratio = worst_contrast(mark_color, &fill);
         assert!(
             mark_ratio >= 3.0,
-            "{label}/chk-b checked checkbox mark contrast below 3:1: {mark_ratio:.2}"
+            "{label}/chk-b checked checkbox mark contrast below 3:1: {mark_ratio:.2} (mark={mark_color:?}, nested_fill={fill:?})"
         );
     }
 
@@ -589,4 +616,67 @@ fn radio_and_checkbox_options_meet_contrast_focus_and_wrapping_across_all_palett
             );
         });
     }
+
+    // Verify translucent double-coat regression palette (#3C3C3C surfaces, #909090 muted,
+    // #A8A8A8 primary, #9A9A9A accent in dark mode) keeps checked checkbox mark >= 3:1.
+    let mid_grey_dark = ColorSchemeColors::default_custom()
+        .with(ColorField::SurfaceBase, "#3C3C3C")
+        .unwrap()
+        .with(ColorField::SurfaceSecondary, "#3C3C3C")
+        .unwrap()
+        .with(ColorField::TextMuted, "#909090")
+        .unwrap()
+        .with(ColorField::TextPrimary, "#A8A8A8")
+        .unwrap()
+        .with(ColorField::AccentPrimary, "#9A9A9A")
+        .unwrap();
+    let custom_mid_grey = palettes::custom(Some("mid-grey-dark"), true, false, mid_grey_dark);
+    palettes::with_resolved(Some(custom_mid_grey), || {
+        assert_palette_controls("custom-mid-grey-dark", true);
+    });
+}
+
+#[test]
+fn reduced_tab_order_reaches_radios_clear_and_checkboxes_with_full_keyboard_access_off() {
+    let demo = Demo {
+        radio: 0,
+        checked_a: false,
+        checked_b: true,
+    };
+    let mut rt = Runtime::new(demo, demo_view, (240.0, 640.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    rt.set_full_keyboard_access(false);
+
+    let focused = |rt: &mut Runtime<Demo>| -> Option<String> {
+        let mut key = None;
+        rt.update(|_, tx| key = tx.focused().map(str::to_owned));
+        key
+    };
+    let send = |rt: &mut Runtime<Demo>, key: Key| {
+        let ev = KeyEvent {
+            key,
+            mods: Mods::default(),
+        };
+        rt.key(ev.clone());
+        rt.key_up(ev);
+        rt.frame(1.0 / 60.0);
+    };
+
+    send(&mut rt, Key::Tab);
+    assert_eq!(focused(&mut rt).as_deref(), Some("opt-a"));
+
+    // Arrow key inside radio group still moves focus and selects opt-b.
+    send(&mut rt, Key::Down);
+    assert_eq!(focused(&mut rt).as_deref(), Some("opt-b"));
+    assert_eq!(rt.state.radio, 1);
+
+    // Tab advances through Clear button and both checkboxes with Full Keyboard Access off.
+    send(&mut rt, Key::Tab);
+    assert_eq!(focused(&mut rt).as_deref(), Some("clear-btn"));
+    send(&mut rt, Key::Tab);
+    assert_eq!(focused(&mut rt).as_deref(), Some("chk-a"));
+    send(&mut rt, Key::Enter);
+    assert!(rt.state.checked_a, "Enter must toggle focused checkbox");
+    send(&mut rt, Key::Tab);
+    assert_eq!(focused(&mut rt).as_deref(), Some("chk-b"));
 }

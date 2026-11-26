@@ -65,6 +65,10 @@ pub fn multi_option_key(field_key: &str, value: &str) -> String {
     )
 }
 
+pub fn preserved_custom_option_key(field_key: &str, index: usize) -> String {
+    format!("multi-custom:{}:{field_key}:{index}", field_key.len())
+}
+
 pub fn field_group_key(field_key: &str) -> String {
     format!("form-group:{}:{field_key}", field_key.len())
 }
@@ -118,24 +122,68 @@ fn is_line_editable_custom(value: &str) -> bool {
     !value.contains(['\n', '\r']) && value.trim() == value
 }
 
-/// Whether an active field cannot be satisfied by any valid user action (for example a required
-/// closed choice whose declared options are empty or all normalize away).
+fn string_value_satisfies_bounds(field: &Value, raw: &str) -> bool {
+    let n = raw.encode_utf16().count() as u64;
+    n <= 20_000
+        && !field["minLength"].as_u64().is_some_and(|m| n < m)
+        && !field["maxLength"].as_u64().is_some_and(|m| n > m)
+}
+
+/// Whether an active field requires a non-empty answer before submission.
+pub fn field_required(field: &Value) -> bool {
+    field["required"] == true
+        || (field["type"] == "multiselect" && field["minItems"].as_u64().is_some_and(|m| m > 0))
+}
+
+/// Whether an active field cannot be satisfied by any valid user action using the exact same
+/// bounds enforced by `value()` (e.g. empty/normalized-away required closed choices, contradictory
+/// `minItems`/`maxItems` or `minLength`/`maxLength`, or closed options exceeding the 20,000 UTF-16
+/// code-unit limit).
 pub fn field_unanswerable(field: &Value) -> bool {
     match field["type"].as_str() {
         Some("string") if has_declared_options(field) && field["custom"] != true => {
             field["required"] == true
-                && !normalized_options(field).iter().any(|opt| {
-                    let n = opt.value.encode_utf16().count() as u64;
-                    !field["minLength"].as_u64().is_some_and(|m| n < m)
-                        && !field["maxLength"].as_u64().is_some_and(|m| n > m)
-                })
+                && !normalized_options(field)
+                    .iter()
+                    .any(|opt| string_value_satisfies_bounds(field, opt.value))
         }
-        Some("multiselect") if field["custom"] != true => {
-            let valid_count = normalized_options(field).len() as u64;
-            (field["required"] == true && valid_count == 0)
-                || field["minItems"]
-                    .as_u64()
-                    .is_some_and(|m| m > valid_count || m > 32)
+        Some("string") => {
+            if field["required"] != true {
+                return false;
+            }
+            let min_len = field["minLength"].as_u64().unwrap_or(1).max(1);
+            let max_len = field["maxLength"].as_u64().unwrap_or(20_000).min(20_000);
+            min_len > max_len
+        }
+        Some("multiselect") => {
+            let min_needed = field["minItems"]
+                .as_u64()
+                .unwrap_or(0)
+                .max(u64::from(field["required"] == true));
+            let max_allowed = field["maxItems"].as_u64().unwrap_or(32).min(32);
+            if field["custom"] == true {
+                min_needed > max_allowed
+            } else {
+                let valid_count = normalized_options(field)
+                    .iter()
+                    .filter(|opt| opt.value.encode_utf16().count() <= 20_000)
+                    .count() as u64;
+                min_needed > valid_count.min(max_allowed)
+            }
+        }
+        Some("number") => {
+            field["required"] == true
+                && matches!(
+                    (field["minimum"].as_f64(), field["maximum"].as_f64()),
+                    (Some(min), Some(max)) if min.is_finite() && max.is_finite() && min > max
+                )
+        }
+        Some("integer") => {
+            field["required"] == true
+                && matches!(
+                    (field["minimum"].as_f64(), field["maximum"].as_f64()),
+                    (Some(min), Some(max)) if min.is_finite() && max.is_finite() && min.ceil() > max.floor()
+                )
         }
         _ => false,
     }
@@ -147,6 +195,9 @@ pub struct Draft {
     pub choice: Option<String>,
     pub selected: BTreeSet<String>,
     pub preserved_custom: Vec<String>,
+    pub preserved_custom_selected: BTreeSet<String>,
+    pub declared_options: Option<BTreeSet<String>>,
+    pub prior_choice_values: BTreeSet<String>,
     pub kind: Option<FieldKind>,
     pub dirty: bool,
 }
@@ -173,6 +224,12 @@ impl Draft {
         }
         self.dirty = true;
     }
+    pub fn toggle_preserved_custom(&mut self, value: &str) {
+        if !self.preserved_custom_selected.remove(value) {
+            self.preserved_custom_selected.insert(value.into());
+        }
+        self.dirty = true;
+    }
     pub fn editor(&mut self) -> &mut TextEdit {
         self.dirty = true;
         &mut self.edit
@@ -193,6 +250,9 @@ impl Default for Draft {
             choice: None,
             selected: BTreeSet::new(),
             preserved_custom: Vec::new(),
+            preserved_custom_selected: BTreeSet::new(),
+            declared_options: None,
+            prior_choice_values: BTreeSet::new(),
             kind: None,
             dirty: false,
         }
@@ -200,9 +260,20 @@ impl Default for Draft {
 }
 pub type Drafts = HashMap<(String, String), Draft>;
 
+fn declared_option_set(field: &Value) -> Option<BTreeSet<String>> {
+    has_declared_options(field).then(|| {
+        normalized_options(field)
+            .into_iter()
+            .map(|o| o.value.to_string())
+            .collect()
+    })
+}
+
 fn fresh_draft(field: &Value) -> Draft {
+    let declared = declared_option_set(field);
     let mut d = Draft {
         kind: Some(field_kind(field)),
+        declared_options: declared.clone(),
         ..Default::default()
     };
     let value = &field["default"];
@@ -222,6 +293,7 @@ fn fresh_draft(field: &Value) -> Draft {
                 } else if allow_custom && seen_custom.insert(raw.to_string()) {
                     if hidden || !is_line_editable_custom(raw) {
                         d.preserved_custom.push(raw.to_string());
+                        d.preserved_custom_selected.insert(raw.to_string());
                     } else {
                         editable_custom.push(raw);
                     }
@@ -232,10 +304,14 @@ fn fresh_draft(field: &Value) -> Draft {
             }
         }
     } else if field["type"] == "string" && has_declared_options(field) {
+        if let Some(opts) = &declared {
+            d.prior_choice_values.extend(opts.iter().cloned());
+        }
         if let Some(raw) = value.as_str().filter(|v| !v.is_empty()) {
             let allowed = normalized_options(field);
             if allowed.iter().any(|opt| opt.value == raw) {
                 d.choice = Some(raw.to_string());
+                d.prior_choice_values.insert(raw.to_string());
             } else if field["custom"] == true {
                 d.custom = TextEdit::new(raw);
             }
@@ -269,23 +345,39 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 continue;
             };
             // Reseed incompatible drafts on field-kind transitions and never migrate a wire choice
-            // identifier into a visible text editor.
+            // identifier or prior choice default into a visible text editor.
             if let Some(prev) = draft.kind
                 && prev != kind
             {
                 match (prev, kind) {
                     (FieldKind::StringOptions, FieldKind::StringFree) => {
+                        let mut choice_provenance = std::mem::take(&mut draft.prior_choice_values);
+                        if let Some(prev_opts) = draft.declared_options.take() {
+                            choice_provenance.extend(prev_opts);
+                        }
+                        if let Some(prev_choice) = draft.choice.take() {
+                            choice_provenance.insert(prev_choice);
+                        }
                         let authored = std::mem::take(&mut draft.custom.text);
-                        if authored.is_empty() {
-                            *draft = fresh_draft(field);
+                        if !authored.is_empty() {
+                            draft.edit = TextEdit::new(authored);
+                            draft.custom = TextEdit::new("");
+                            draft.selected.clear();
+                            draft.preserved_custom.clear();
+                            draft.preserved_custom_selected.clear();
+                            draft.prior_choice_values = choice_provenance;
+                            draft.kind = Some(kind);
                             continue;
                         }
-                        draft.edit = TextEdit::new(authored);
-                        draft.custom = TextEdit::new("");
-                        draft.choice = None;
-                        draft.selected.clear();
-                        draft.preserved_custom.clear();
-                        draft.kind = Some(kind);
+                        let mut next = fresh_draft(field);
+                        if field["default"]
+                            .as_str()
+                            .is_some_and(|raw| choice_provenance.contains(raw))
+                        {
+                            next.edit = TextEdit::new("");
+                        }
+                        next.prior_choice_values = choice_provenance;
+                        *draft = next;
                         continue;
                     }
                     (FieldKind::StringFree, FieldKind::StringOptions) => {
@@ -304,8 +396,9 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.kind = Some(kind);
             }
 
-            // Reconcile retained drafts against the field's current schema without replacing an
-            // unchanged TextEdit (so cursor and selection survive identical refreshes).
+            // Reconcile retained drafts against the field's current schema without mutating
+            // untouched editors or selecting options that were already declared before refresh.
+            let current_options = declared_option_set(field);
             if kind == FieldKind::Multiselect {
                 if !draft.edit.text.is_empty() {
                     draft.edit = TextEdit::new("");
@@ -314,29 +407,46 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 let allowed = normalized_options(field);
                 let allow_custom = field["custom"] == true;
                 let hidden = field["hidden"] == true;
+                let prev_options = draft.declared_options.as_ref();
+                let is_newly_declared = |val: &str| {
+                    allowed.iter().any(|opt| opt.value == val)
+                        && prev_options.is_none_or(|prev| !prev.contains(val))
+                };
                 if has_declared_options(field) {
                     draft.selected.retain(|selected| {
                         allowed.iter().any(|opt| opt.value == selected.as_str())
                     });
                 }
                 let mut remaining_preserved = Vec::new();
+                let mut remaining_preserved_selected = BTreeSet::new();
                 let mut newly_editable = Vec::new();
                 for item in std::mem::take(&mut draft.preserved_custom) {
-                    if allowed.iter().any(|opt| opt.value == item.as_str()) {
-                        draft.selected.insert(item);
+                    let was_selected = draft.preserved_custom_selected.contains(&item);
+                    if is_newly_declared(&item) {
+                        if was_selected {
+                            draft.selected.insert(item);
+                        }
+                    } else if allowed.iter().any(|opt| opt.value == item.as_str()) {
+                        // Already declared: declared checkboxes own its selection state.
                     } else if allow_custom {
                         if !hidden
                             && !draft.dirty
                             && draft.custom.text.is_empty()
                             && is_line_editable_custom(&item)
                         {
-                            newly_editable.push(item);
+                            if was_selected {
+                                newly_editable.push(item);
+                            }
                         } else {
+                            if was_selected {
+                                remaining_preserved_selected.insert(item.clone());
+                            }
                             remaining_preserved.push(item);
                         }
                     }
                 }
                 draft.preserved_custom = remaining_preserved;
+                draft.preserved_custom_selected = remaining_preserved_selected;
                 if !newly_editable.is_empty() {
                     draft.custom = TextEdit::new(newly_editable.join("\n"));
                 }
@@ -348,8 +458,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                         let mut promoted = false;
                         for line in draft.custom.text.lines() {
                             let trimmed = line.trim();
-                            if !trimmed.is_empty() && allowed.iter().any(|opt| opt.value == trimmed)
-                            {
+                            if !trimmed.is_empty() && is_newly_declared(trimmed) {
                                 draft.selected.insert(trimmed.to_string());
                                 promoted = true;
                             } else {
@@ -367,8 +476,17 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
             } else if kind == FieldKind::StringOptions {
                 draft.selected.clear();
                 draft.preserved_custom.clear();
+                draft.preserved_custom_selected.clear();
                 let allowed = normalized_options(field);
                 let allow_custom = field["custom"] == true;
+                let prev_options = draft.declared_options.as_ref();
+                let is_newly_declared = |val: &str| {
+                    allowed.iter().any(|opt| opt.value == val)
+                        && prev_options.is_none_or(|prev| !prev.contains(val))
+                };
+                if let Some(opts) = &current_options {
+                    draft.prior_choice_values.extend(opts.iter().cloned());
+                }
                 if draft
                     .choice
                     .as_deref()
@@ -389,10 +507,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                     }
                 }
                 if !draft.custom.text.is_empty() {
-                    if allowed
-                        .iter()
-                        .any(|opt| opt.value == draft.custom.text.as_str())
-                    {
+                    if is_newly_declared(draft.custom.text.as_str()) {
                         draft.choice = Some(draft.custom.text.clone());
                         draft.custom = TextEdit::new("");
                     } else if !allow_custom {
@@ -402,6 +517,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
             } else {
                 draft.selected.clear();
                 draft.preserved_custom.clear();
+                draft.preserved_custom_selected.clear();
                 draft.choice = None;
                 if kind == FieldKind::StringFree
                     && draft.edit.text.is_empty()
@@ -413,6 +529,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                     draft.custom = TextEdit::new("");
                 }
             }
+            draft.declared_options = current_options;
         }
     }
 }
@@ -546,6 +663,9 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
             let mut values = d.selected.clone();
             if field["custom"] == true {
                 for item in &d.preserved_custom {
+                    if !d.preserved_custom_selected.contains(item) {
+                        continue;
+                    }
                     if item.encode_utf16().count() > 20_000 {
                         return Err(());
                     }
@@ -561,6 +681,12 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
                         .filter(|v| !v.is_empty() && !is_declared(v))
                         .map(str::to_string),
                 );
+            }
+            if values
+                .iter()
+                .any(|item| item.encode_utf16().count() > 20_000)
+            {
+                return Err(());
             }
             let count = values.len() as u64;
             if count > 32

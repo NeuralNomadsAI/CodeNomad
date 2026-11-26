@@ -56,27 +56,32 @@ pub fn fields(s: &State, form: &Form) -> El {
     let scope = s.input_scope.clone();
     let locked = a.forms_mutating();
     let supported = agent_forms::supported(form);
-    let mut body = col()
-        .full_width()
-        .separate(Space::Sm)
-        .child(form_controls::form_header(
-            t("permissionApproval.kind.question"),
-            &form.title,
-        ));
     let values = agent_forms::values(form, &a.drafts);
     let has_unanswerable_active = form
         .fields
         .iter()
         .any(|f| agent_forms::active(f, &values) && agent_forms::field_unanswerable(f));
-    if !supported || has_unanswerable_active {
-        body = body.child(form_controls::form_error(t("rune.unsupported_question")))
-    }
     let visible: Vec<&serde_json::Value> = form
         .fields
         .iter()
         .filter(|f| f["hidden"] != true && agent_forms::active(f, &values))
         .collect();
     let visible_count = visible.len();
+    let header_required = visible_count == 1
+        && field_title(visible[0]).is_none()
+        && !form.title.trim().is_empty()
+        && agent_forms::field_required(visible[0]);
+    let mut body = col()
+        .full_width()
+        .separate(Space::Sm)
+        .child(form_controls::form_header(
+            t("permissionApproval.kind.question"),
+            &form.title,
+            header_required,
+        ));
+    if !supported || has_unanswerable_active {
+        body = body.child(form_controls::form_error(t("rune.unsupported_question")))
+    }
     let untitled_count = visible.iter().filter(|f| field_title(f).is_none()).count();
     let mut untitled_ordinal = 0usize;
     for field in visible {
@@ -88,11 +93,12 @@ pub fn fields(s: &State, form: &Form) -> El {
         if field_title(field).is_none() {
             untitled_ordinal += 1;
         }
+        let required = agent_forms::field_required(field);
         let (field_name, show_heading) =
             field_caption(field, form, visible_count, untitled_count, untitled_ordinal);
         let field_desc = field_description(field);
         if show_heading {
-            body = body.child(form_controls::field_heading(&field_name));
+            body = body.child(form_controls::field_heading(&field_name, required));
         }
         if let Some(desc) = field_desc {
             body = body.child(form_controls::field_description(desc));
@@ -132,6 +138,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                     &field_name,
                     field_desc,
                     true,
+                    required,
                     items,
                 ));
             }
@@ -177,6 +184,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                         &field_name,
                         field_desc,
                         false,
+                        required,
                         items,
                     ));
                     if field["required"] != true {
@@ -243,38 +251,63 @@ pub fn fields(s: &State, form: &Form) -> El {
             }
             Some("multiselect") => {
                 let valid = agent_forms::normalized_options(field);
-                if !valid.is_empty() {
-                    let items: Vec<El> = valid
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, option)| {
-                            let label = option_label(option, index);
-                            let checked = d.selected.contains(option.value);
-                            let value = option.value.to_string();
-                            let id = identity.clone();
-                            form_controls::checkbox_option(
-                                &agent_forms::multi_option_key(key, &value),
-                                &label,
-                                option.description,
-                                checked,
-                                locked,
-                                crate::screen::action(&scope, move |s: &mut State| {
-                                    if let Some(d) = s
-                                        .agent
-                                        .as_mut()
-                                        .filter(|a| !a.forms_mutating())
-                                        .and_then(|a| a.drafts.get_mut(&id))
-                                    {
-                                        d.toggle(&value)
-                                    }
-                                }),
-                            )
-                        })
-                        .collect();
+                let mut items: Vec<El> = valid
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, option)| {
+                        let label = option_label(option, index);
+                        let checked = d.selected.contains(option.value);
+                        let value = option.value.to_string();
+                        let id = identity.clone();
+                        form_controls::checkbox_option(
+                            &agent_forms::multi_option_key(key, &value),
+                            &label,
+                            option.description,
+                            checked,
+                            locked,
+                            crate::screen::action(&scope, move |s: &mut State| {
+                                if let Some(d) = s
+                                    .agent
+                                    .as_mut()
+                                    .filter(|a| !a.forms_mutating())
+                                    .and_then(|a| a.drafts.get_mut(&id))
+                                {
+                                    d.toggle(&value)
+                                }
+                            }),
+                        )
+                    })
+                    .collect();
+                if field["custom"] == true {
+                    for (index, raw) in d.preserved_custom.iter().enumerate() {
+                        let checked = d.preserved_custom_selected.contains(raw);
+                        let value = raw.clone();
+                        let id = identity.clone();
+                        items.push(form_controls::checkbox_option(
+                            &agent_forms::preserved_custom_option_key(key, index),
+                            raw,
+                            None,
+                            checked,
+                            locked,
+                            crate::screen::action(&scope, move |s: &mut State| {
+                                if let Some(d) = s
+                                    .agent
+                                    .as_mut()
+                                    .filter(|a| !a.forms_mutating())
+                                    .and_then(|a| a.drafts.get_mut(&id))
+                                {
+                                    d.toggle_preserved_custom(&value)
+                                }
+                            }),
+                        ));
+                    }
+                }
+                if !items.is_empty() {
                     body = body.child(form_controls::checkbox_group(
                         &group_key,
                         &field_name,
                         field_desc,
+                        required,
                         items,
                     ));
                 }

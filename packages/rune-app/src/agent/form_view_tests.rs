@@ -1271,3 +1271,317 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
         });
     }
 }
+
+#[test]
+fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible_bounds_and_required_groups()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. Reduced Tab order (macOS Full Keyboard Access off) still visits radios & checkboxes,
+        // and required choice groups expose requiredness both visibly (*) and accessibly ("required").
+        let form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r6-a11y".into(),
+            title: "Choices".into(),
+            fields: vec![
+                json!({
+                    "key": "req_radio",
+                    "title": "Required target",
+                    "type": "string",
+                    "required": true,
+                    "options": [
+                        {"value": "a", "label": "Alpha"},
+                        {"value": "b", "label": "Beta"}
+                    ]
+                }),
+                json!({
+                    "key": "opt_radio",
+                    "title": "Optional target",
+                    "type": "string",
+                    "options": [{"value": "c", "label": "Gamma"}]
+                }),
+                json!({
+                    "key": "req_multi",
+                    "title": "Required tags",
+                    "type": "multiselect",
+                    "required": true,
+                    "options": [{"value": "x", "label": "Tag X"}]
+                }),
+                json!({
+                    "key": "opt_multi",
+                    "title": "Optional tags",
+                    "type": "multiselect",
+                    "options": [{"value": "y", "label": "Tag Y"}]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(form);
+        let mut rt = Runtime::new(state, render_form, (420.0, 960.0), Env::new(false, 1.0));
+        rt.frame(0.0);
+        rt.set_full_keyboard_access(false);
+        let tree = rt.accessibility_json();
+        assert!(has_state(
+            find_node(&tree, &agent_forms::field_group_key("req_radio")).unwrap(),
+            "required"
+        ));
+        assert!(!has_state(
+            find_node(&tree, &agent_forms::field_group_key("opt_radio")).unwrap(),
+            "required"
+        ));
+        assert!(has_state(
+            find_node(&tree, &agent_forms::field_group_key("req_multi")).unwrap(),
+            "required"
+        ));
+        assert!(!has_state(
+            find_node(&tree, &agent_forms::field_group_key("opt_multi")).unwrap(),
+            "required"
+        ));
+        let required_markers = rt
+            .elements()
+            .into_iter()
+            .filter(|e| {
+                e.key.as_deref() == Some("required-marker") && e.text.as_deref() == Some("*")
+            })
+            .count();
+        assert_eq!(
+            required_markers, 2,
+            "exactly the two required choice fields must display a visible required marker"
+        );
+
+        let alpha_key = agent_forms::string_option_key("req_radio", "a");
+        let beta_key = agent_forms::string_option_key("req_radio", "b");
+        let gamma_key = agent_forms::string_option_key("opt_radio", "c");
+        let tag_x_key = agent_forms::multi_option_key("req_multi", "x");
+        press_key(&mut rt, Key::Tab);
+        assert_eq!(focused_key(&mut rt).as_deref(), Some(alpha_key.as_str()));
+        press_key(&mut rt, Key::Down);
+        assert_eq!(focused_key(&mut rt).as_deref(), Some(beta_key.as_str()));
+        press_key(&mut rt, Key::Tab);
+        assert_eq!(focused_key(&mut rt).as_deref(), Some(gamma_key.as_str()));
+        press_key(&mut rt, Key::Tab);
+        assert_eq!(focused_key(&mut rt).as_deref(), Some(tag_x_key.as_str()));
+        press_key(&mut rt, Key::Enter);
+        let after_enter = rt.accessibility_json();
+        assert!(has_state(
+            find_node(&after_enter, &tag_x_key).unwrap(),
+            "checked"
+        ));
+
+        // 2. Identical refresh must NOT silently select an already-declared unchecked option when
+        // its wire value appears in custom text (for both multiselect and string-with-options).
+        let id_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r6-ident".into(),
+            title: "Identical refresh".into(),
+            fields: vec![
+                json!({
+                    "key": "multi_env",
+                    "title": "Environments",
+                    "type": "multiselect",
+                    "custom": true,
+                    "options": [{"value": "prod", "label": "Production"}]
+                }),
+                json!({
+                    "key": "radio_env",
+                    "title": "Primary",
+                    "type": "string",
+                    "custom": true,
+                    "options": [{"value": "prod", "label": "Production"}]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(id_form);
+        let mut id_rt = Runtime::new(state, render_form, (420.0, 760.0), Env::new(false, 1.0));
+        id_rt.frame(0.0);
+        id_rt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            let md = a
+                .drafts
+                .get_mut(&("form-r6-ident".into(), "multi_env".into()))
+                .unwrap();
+            md.custom_editor().text = "prod".into();
+            md.custom.anchor = 0;
+            md.custom.focus = 4;
+            let rd = a
+                .drafts
+                .get_mut(&("form-r6-ident".into(), "radio_env".into()))
+                .unwrap();
+            rd.custom_editor().text = "prod".into();
+            rd.custom.anchor = 1;
+            rd.custom.focus = 3;
+        });
+        id_rt.frame(1.0 / 60.0);
+        // Apply identical snapshot refresh.
+        id_rt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        id_rt.frame(2.0 / 60.0);
+        {
+            let a = id_rt.state.agent.as_ref().unwrap();
+            let md = &a.drafts[&("form-r6-ident".into(), "multi_env".into())];
+            assert!(!md.selected.contains("prod"));
+            assert_eq!(md.custom.text, "prod");
+            assert_eq!((md.custom.anchor, md.custom.focus), (0, 4));
+            let rd = &a.drafts[&("form-r6-ident".into(), "radio_env".into())];
+            assert_eq!(rd.choice, None);
+            assert_eq!(rd.custom.text, "prod");
+            assert_eq!((rd.custom.anchor, rd.custom.focus), (1, 3));
+            let ans = agent_forms::answer(&a.forms[0], &a.drafts).expect("optional answers");
+            assert_eq!(ans["multi_env"], json!([]));
+        }
+
+        // 3. Removing options from a closed string whose default matched an option wire value
+        // must NOT leak that wire value into the replacement textbox.
+        let prov_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r6-prov".into(),
+            title: "Default provenance".into(),
+            fields: vec![json!({
+                "key": "env",
+                "title": "Environment",
+                "type": "string",
+                "default": "internal_prod",
+                "options": [{"value": "internal_prod", "label": "Production"}]
+            })],
+        };
+        let (state, _rx) = state_with_form(prov_form);
+        let mut prt = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+        prt.frame(0.0);
+        prt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields = vec![json!({
+                "key": "env",
+                "title": "Environment",
+                "type": "string",
+                "default": "internal_prod"
+            })];
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        prt.frame(1.0 / 60.0);
+        let ptree = prt.accessibility_json();
+        assert_eq!(
+            find_input(&ptree, "field-env")["value"]
+                .as_str()
+                .unwrap_or(""),
+            "",
+            "prior choice wire default must not appear in free-text input after options are removed"
+        );
+        assert!(
+            !prt.elements().iter().any(|e| e
+                .text
+                .as_deref()
+                .is_some_and(|t| t.contains("internal_prod"))),
+            "prior choice wire default must not appear visibly"
+        );
+
+        // 4. Visible multiline multiselect default with maxItems:1 is inspectable and removable
+        // so selecting a declared option enables Answer cleanly.
+        let max1_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r6-max1".into(),
+            title: "Single slot".into(),
+            fields: vec![json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "custom": true,
+                "maxItems": 1,
+                "options": [{"value": "prod", "label": "Production"}],
+                "default": ["team\nlocal"]
+            })],
+        };
+        let (state, _rx) = state_with_form(max1_form);
+        let mut m1 = Runtime::new(state, render_form, (420.0, 640.0), Env::new(false, 1.0));
+        m1.frame(0.0);
+        let custom_box_key = agent_forms::preserved_custom_option_key("tags", 0);
+        let prod_box_key = agent_forms::multi_option_key("tags", "prod");
+        let m1_tree = m1.accessibility_json();
+        let custom_box =
+            find_node(&m1_tree, &custom_box_key).expect("visible structured default checkbox");
+        assert_eq!(custom_box["role"], "check-box");
+        assert_eq!(custom_box["name"], "team\nlocal");
+        assert!(has_state(custom_box, "checked"));
+        assert!(!has_state(
+            find_node(&m1_tree, "answer-question").unwrap(),
+            "disabled"
+        ));
+        // Checking Production while multiline default is still checked exceeds maxItems:1.
+        tap(&mut m1, &prod_box_key);
+        assert!(has_state(
+            find_node(&m1.accessibility_json(), "answer-question").unwrap(),
+            "disabled"
+        ));
+        // Unchecking the structured multiline default frees the slot and enables Answer with ["prod"].
+        tap(&mut m1, &custom_box_key);
+        let after_remove = m1.accessibility_json();
+        assert!(has_state(
+            find_node(&after_remove, &custom_box_key).unwrap(),
+            "unchecked"
+        ));
+        assert!(!has_state(
+            find_node(&after_remove, "answer-question").unwrap(),
+            "disabled"
+        ));
+        let a = m1.state.agent.as_ref().unwrap();
+        assert_eq!(
+            agent_forms::answer(&a.forms[0], &a.drafts).unwrap()["tags"],
+            json!(["prod"])
+        );
+
+        // 5. Impossible bounds (minItems:2, maxItems:1; or required closed string exceeding
+        // 20,000 UTF-16 code units) are flagged unsupported and surface the localized error.
+        let oversized = "x".repeat(20_001);
+        for impossible_field in [
+            json!({
+                "key": "bad_minmax",
+                "title": "Contradictory",
+                "type": "multiselect",
+                "minItems": 2,
+                "maxItems": 1,
+                "options": [
+                    {"value": "a", "label": "A"},
+                    {"value": "b", "label": "B"}
+                ]
+            }),
+            json!({
+                "key": "oversized_closed",
+                "title": "Too long",
+                "type": "string",
+                "required": true,
+                "options": [{"value": oversized, "label": "Giant"}]
+            }),
+        ] {
+            let imp_form = Form {
+                tool: None,
+                infer_websearch: false,
+                id: "form-r6-impossible".into(),
+                title: "Impossible".into(),
+                fields: vec![impossible_field.clone()],
+            };
+            assert!(
+                agent_forms::field_unanswerable(&impossible_field),
+                "impossible constraints must be flagged unanswerable"
+            );
+            assert!(
+                !agent_forms::supported(&imp_form),
+                "form with unconditional impossible field must be unsupported"
+            );
+            let (state, _rx) = state_with_form(imp_form);
+            let mut irt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+            irt.frame(0.0);
+            let itree = irt.accessibility_json();
+            assert_eq!(
+                find_node(&itree, "form-unsupported").unwrap()["name"],
+                "Unsupported form"
+            );
+            assert!(has_state(
+                find_node(&itree, "answer-question").unwrap(),
+                "disabled"
+            ));
+        }
+    });
+}
