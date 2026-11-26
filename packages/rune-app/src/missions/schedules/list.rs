@@ -1,8 +1,9 @@
 //! Panel-owned bounded schedule pages, off-page point reads, capability probes
 //! and pre-dispatch verification.
 use super::{
-    ScheduleConfirmation, ScheduleGesture as G, ScheduleHoldEvent as Ev, ScheduleHoldKey as Key,
-    ScheduleHoldPhase as Phase, ScheduleHolds, push_auth_expired,
+    AuthSink, ScheduleConfirmation, ScheduleGesture as G, ScheduleHoldEvent as Ev,
+    ScheduleHoldKey as Key, ScheduleHoldPhase as Phase, ScheduleHolds, push_auth_expired,
+    push_auth_sink,
 };
 use crate::platform::{self, reads::Reads};
 use codenomad_client::{
@@ -52,7 +53,7 @@ impl<T: Send + 'static, M> Flight<T, M> {
         meta: M,
         backend: Backend,
         wake: Wake,
-        auth_tx: Sender<Backend>,
+        auth_sink: AuthSink,
         is_auth: fn(&T) -> bool,
         f: impl FnOnce(Receiver<()>) -> Fut,
     ) -> Self {
@@ -62,7 +63,7 @@ impl<T: Send + 'static, M> Flight<T, M> {
         platform::spawn(async move {
             if let Some(v) = fut.await {
                 if is_auth(&v) {
-                    let _ = auth_tx.try_send(auth_backend);
+                    push_auth_sink(&auth_sink, auth_backend);
                     wake();
                 }
                 if out.send(v).await.is_ok() {
@@ -75,7 +76,7 @@ impl<T: Send + 'static, M> Flight<T, M> {
     fn bg<Fut: PlatformFut<T>>(
         meta: M,
         ctx: ScheduleCtx<'_>,
-        auth_tx: Sender<Backend>,
+        auth_sink: AuthSink,
         is_auth: fn(&T) -> bool,
         f: impl FnOnce(Backend, Option<String>, Receiver<()>) -> Fut + Send + 'static,
     ) -> Self {
@@ -88,7 +89,7 @@ impl<T: Send + 'static, M> Flight<T, M> {
             meta,
             ctx.backend.clone(),
             ctx.wake.clone(),
-            auth_tx,
+            auth_sink,
             is_auth,
             move |c| async move {
                 let _p = r.background(&c).await?;
@@ -163,13 +164,11 @@ pub(crate) struct Schedules {
     pending_pre: Option<(Pre, Backend, PreOut)>,
     pub(crate) feedback: Option<(String, &'static str)>,
     pub(crate) instructions_open: HashSet<String>,
-    auth_tx: Sender<Backend>,
-    auth_rx: Receiver<Backend>,
+    auth_sink: AuthSink,
     auth_expired: Vec<Backend>,
 }
 impl Default for Schedules {
     fn default() -> Self {
-        let (auth_tx, auth_rx) = bounded(16);
         Self {
             visible: false,
             generation: 0,
@@ -191,16 +190,15 @@ impl Default for Schedules {
             pending_pre: None,
             feedback: None,
             instructions_open: HashSet::new(),
-            auth_tx,
-            auth_rx,
+            auth_sink: AuthSink::default(),
             auth_expired: Vec::new(),
         }
     }
 }
 
 impl Schedules {
-    pub(crate) fn bind_auth(&mut self, tx: Sender<Backend>) {
-        self.auth_tx = tx;
+    pub(crate) fn bind_auth(&mut self, sink: AuthSink) {
+        self.auth_sink = sink;
     }
     pub(crate) fn visible(&self) -> bool {
         self.visible
@@ -495,17 +493,21 @@ impl Schedules {
         }
     }
 
-    fn drain_auth_channel(&mut self) -> bool {
-        let mut got = false;
-        while let Ok(b) = self.auth_rx.try_recv() {
+    fn drain_auth_sink(&mut self) -> bool {
+        let pending = self
+            .auth_sink
+            .lock()
+            .map(|mut list| std::mem::take(&mut *list))
+            .unwrap_or_default();
+        let got = !pending.is_empty();
+        for b in pending {
             push_auth_expired(&mut self.auth_expired, b);
-            got = true;
         }
         got
     }
 
     pub(crate) fn poll(&mut self, holds: &mut ScheduleHolds, ctx: ScheduleCtx<'_>) -> bool {
-        let mut changed = self.drain_auth_channel();
+        let mut changed = self.drain_auth_sink();
         if let Some(((append, _limit, epoch), b, res)) = ready(&mut self.list_flight) {
             changed = true;
             let owed = std::mem::take(&mut self.list_owed);
@@ -675,6 +677,11 @@ impl Schedules {
                         return;
                     };
                     if let Some(slot) = self.rows.iter_mut().find(|x| x.id == doc.id) {
+                        if slot.revision > doc.revision {
+                            self.feedback =
+                                Some((m.key.schedule_id, "missions.scheduleList.conflict"));
+                            return;
+                        }
                         *slot = doc.clone();
                     }
                     if !doc.owns_directory(ctx.directory) {
@@ -771,7 +778,7 @@ impl Schedules {
     }
 
     pub(crate) fn drain_auth_expired(&mut self) -> Vec<Backend> {
-        self.drain_auth_channel();
+        self.drain_auth_sink();
         std::mem::take(&mut self.auth_expired)
     }
 
@@ -825,7 +832,7 @@ impl Schedules {
                 self.point_flight = Some(Flight::bg(
                     (id, self.generation),
                     ctx,
-                    self.auth_tx.clone(),
+                    self.auth_sink.clone(),
                     is_read_auth,
                     move |b, d, c| async move {
                         b.mission_schedule_read(&mid, d.as_deref(), None, &c).await
@@ -851,7 +858,7 @@ impl Schedules {
         self.list_flight = Some(Flight::bg(
             (append, lim, self.generation),
             ctx,
-            self.auth_tx.clone(),
+            self.auth_sink.clone(),
             is_fetch_auth,
             move |b, d, c| async move {
                 b.mission_schedules_page(after.as_deref(), lim, d.as_deref(), &c)
@@ -864,7 +871,7 @@ impl Schedules {
         self.cap_flight = Some(Flight::bg(
             self.generation,
             ctx,
-            self.auth_tx.clone(),
+            self.auth_sink.clone(),
             is_fetch_auth,
             move |b, d, c| async move { b.mission_schedule_capability(d.as_deref(), &c).await },
         ));
@@ -881,7 +888,7 @@ impl Schedules {
             m,
             ctx.backend.clone(),
             ctx.wake.clone(),
-            self.auth_tx.clone(),
+            self.auth_sink.clone(),
             is_pre_auth,
             move |c| async move {
                 let read = if do_read {

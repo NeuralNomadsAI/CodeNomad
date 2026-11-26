@@ -60,7 +60,7 @@ impl H {
             wake,
         )
         .with_owner_scope("/owned".into())
-        .with_schedule_auth(holds.auth_sender());
+        .with_schedule_auth(holds.auth_sink());
         Self {
             http,
             panel,
@@ -293,10 +293,13 @@ fn guards_auth_cancel_pre_races_confirmation_generation_roots_and_refusal() {
         s.show(true);
         s.refresh(c);
         let r1 = h.http.accept().await;
+        while h.done.try_recv().is_ok() {}
         r1.reply(401, js(r#"{"error":"unauthorized"}"#)).await;
-        let _ = tokio::time::timeout(std::time::Duration::from_millis(100), h.done.recv()).await;
+        h.done.recv().await.unwrap();
         h.panel.schedules.suspend();
-        assert_eq!(h.panel.drain_auth_expired().len(), 1);
+        let mut exp = h.panel.drain_auth_expired();
+        exp.extend(h.holds.drain_auth_expired());
+        assert_eq!(exp.len(), 1);
 
         let foreign = row_root("msn_other", "Foreign root", "running", 2, "null", "/other");
         let s1 = row("msn_s1", "Alpha nightly", "running", 7, "null");
@@ -525,11 +528,40 @@ fn r2_activation_proof_confirm_401_stale_invalidation_and_page_step_down() {
         h.drain_one().await;
         assert!(!h.panel.schedules.is_fresh("msn_s1"));
         let fresh_req = h.http.accept().await;
-        fresh_req.reply(200, list(vec![s1], None)).await;
+        fresh_req.reply(200, list(vec![s1.clone()], None)).await;
         h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_s1"))
             .await;
 
-        // R3 #1: 401 decoded right as panel drops on tab close still reaches window-scoped ScheduleHolds
+        // R4 #2: pre-check returning rev 7 must not overwrite rev 8 already published in rows
+        assert!(h.act(G::Action(A::Resume)));
+        h.http.accept().await.reply(200, rdoc(s1.clone())).await;
+        let cap_req = h.http.accept().await;
+        let s1_rev8 =
+            UnifiedSchedule::from_value(&row("msn_s1", "Alpha nightly", "paused", 8, "null"))
+                .unwrap();
+        *h.panel
+            .schedules
+            .rows
+            .iter_mut()
+            .find(|r| r.id == "msn_s1")
+            .unwrap() = s1_rev8;
+        cap_req.reply(200, cap_body(true)).await;
+        h.pump(|p, _| p.schedules.feedback_for("msn_s1") == Some("missions.scheduleList.conflict"))
+            .await;
+        assert_eq!(
+            h.panel
+                .schedules
+                .rows
+                .iter()
+                .find(|r| r.id == "msn_s1")
+                .unwrap()
+                .revision,
+            8
+        );
+        assert!(h.holds.get(&h.key("msn_s1")).is_none());
+        h.http.quiet().await;
+
+        // R3 #1 / R4 #1: 401 decoded right as panel drops on tab close still reaches window-scoped ScheduleHolds
         h.panel.schedules.clear_selection();
         let (s, c) = h.panel.schedule_parts();
         s.refresh(c);
@@ -537,8 +569,9 @@ fn r2_activation_proof_confirm_401_stale_invalidation_and_page_step_down() {
         let mut holds = h.holds;
         let done = h.done;
         let mut panel = h.panel;
+        while done.try_recv().is_ok() {}
         req.reply(401, js(r#"{"error":"unauthorized"}"#)).await;
-        let _ = tokio::time::timeout(std::time::Duration::from_millis(100), done.recv()).await;
+        done.recv().await.unwrap();
         panel.suspend();
         drop(panel);
         let (changed, _) = holds.poll(None, &[]);

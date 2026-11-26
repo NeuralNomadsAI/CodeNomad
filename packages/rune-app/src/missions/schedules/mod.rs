@@ -11,7 +11,7 @@ pub(crate) use view::{confirmation, detail_section, list_section};
 
 use crate::platform;
 use codenomad_client::{
-    Receiver, Sender, TryRecvError, Wake,
+    Receiver, TryRecvError, Wake,
     backend::Backend,
     bounded,
     missions::{
@@ -19,7 +19,17 @@ use codenomad_client::{
         ScheduleReadOutcome as ReadOut, UnifiedSchedule, classify_schedule_control_read,
     },
 };
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+
+pub(crate) type AuthSink = Arc<Mutex<Vec<Backend>>>;
+pub(super) fn push_auth_sink(sink: &AuthSink, b: Backend) {
+    if let Ok(mut list) = sink.lock() {
+        push_auth_expired(&mut list, b);
+    }
+}
 
 pub(crate) const HOLD_CAPACITY: usize = 128;
 
@@ -124,35 +134,27 @@ struct Entry {
     flight: Option<(Backend, Receiver<Reply>)>,
 }
 
+#[derive(Default)]
 pub(crate) struct ScheduleHolds {
     entries: HashMap<ScheduleHoldKey, Entry>,
     pub confirmation: Option<ScheduleConfirmation>,
-    auth_tx: Sender<Backend>,
-    auth_rx: Receiver<Backend>,
+    auth_sink: AuthSink,
     auth_expired: Vec<Backend>,
-}
-impl Default for ScheduleHolds {
-    fn default() -> Self {
-        let (auth_tx, auth_rx) = bounded(16);
-        Self {
-            entries: HashMap::new(),
-            confirmation: None,
-            auth_tx,
-            auth_rx,
-            auth_expired: Vec::new(),
-        }
-    }
 }
 
 impl ScheduleHolds {
-    pub(crate) fn auth_sender(&self) -> Sender<Backend> {
-        self.auth_tx.clone()
+    pub(crate) fn auth_sink(&self) -> AuthSink {
+        Arc::clone(&self.auth_sink)
     }
-    fn drain_auth_channel(&mut self) -> bool {
-        let mut got = false;
-        while let Ok(b) = self.auth_rx.try_recv() {
+    fn drain_auth_sink(&mut self) -> bool {
+        let pending = self
+            .auth_sink
+            .lock()
+            .map(|mut list| std::mem::take(&mut *list))
+            .unwrap_or_default();
+        let got = !pending.is_empty();
+        for b in pending {
             push_auth_expired(&mut self.auth_expired, b);
-            got = true;
         }
         got
     }
@@ -219,7 +221,7 @@ impl ScheduleHolds {
         changed
     }
     pub(crate) fn drain_auth_expired(&mut self) -> Vec<Backend> {
-        self.drain_auth_channel();
+        self.drain_auth_sink();
         std::mem::take(&mut self.auth_expired)
     }
 
@@ -290,7 +292,7 @@ impl ScheduleHolds {
         active: Option<&ActiveScheduleView<'_>>,
         exp: &[Backend],
     ) -> (bool, Vec<ScheduleHoldEvent>) {
-        let (mut changed, mut evs) = (self.drain_auth_channel(), Vec::new());
+        let (mut changed, mut evs) = (self.drain_auth_sink(), Vec::new());
         for key in self.entries.keys().cloned().collect::<Vec<_>>() {
             let Some(e) = self.entries.get_mut(&key) else {
                 continue;

@@ -138,8 +138,8 @@ impl Panel {
         self
     }
 
-    pub(crate) fn with_schedule_auth(mut self, tx: Sender<Backend>) -> Self {
-        self.schedules.bind_auth(tx);
+    pub(crate) fn with_schedule_auth(mut self, sink: super::schedules::AuthSink) -> Self {
+        self.schedules.bind_auth(sink);
         self
     }
 
