@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { BARE_PATH_MAX_CANDIDATES, barePathCandidates } from "./markdown-bare-paths"
+import { BARE_PATH_MAX_CANDIDATES, barePathCandidates, inlineCodeCandidates } from "./markdown-bare-paths"
 
 const readings = (text: string) => barePathCandidates(text).flatMap(candidate =>
   candidate.integral ? [candidate.integral, ...candidate.pieces] : candidate.pieces)
@@ -151,5 +151,32 @@ describe("bare path candidates", () => {
     // space-free segment stays a legal candidate that existence gating
     // decides — it links only when that file exists in the worktree.
     assert.deepEqual(hrefs("my file.md"), ["file.md"])
+  })
+})
+
+describe("inline code candidates", () => {
+  it("offers the code span's whole content as one exact reading", () => {
+    const [candidate] = inlineCodeCandidates("src/app.ts")
+    assert.equal(candidate.integral?.href, "src/app.ts")
+    assert.deepEqual(candidate.pieces, [])
+  })
+
+  it("never falls back from a missing or URL-shaped span to same-named files", () => {
+    assert.deepEqual(inlineCodeCandidates("docs/不存在README.md")
+      .flatMap(candidate => candidate.integral ? [candidate.integral, ...candidate.pieces] : candidate.pieces)
+      .map(piece => piece.href), ["docs/不存在README.md"])
+    assert.deepEqual(inlineCodeCandidates("https://example.test/guide#README.md"), [])
+    assert.deepEqual(inlineCodeCandidates("npm run build"), [])
+    assert.deepEqual(inlineCodeCandidates("useState"), [])
+  })
+
+  it("trims surrounding spaces and trailing punctuation", () => {
+    const [candidate] = inlineCodeCandidates("  src/app.ts. ")
+    assert.equal(candidate.integral?.href, "src/app.ts")
+  })
+
+  it("recognizes spans whose edges are hyphen-glued CJK segments", () => {
+    const [candidate] = inlineCodeCandidates("前端-v2/run-测试")
+    assert.equal(candidate.integral?.href, "前端-v2/run-测试")
   })
 })

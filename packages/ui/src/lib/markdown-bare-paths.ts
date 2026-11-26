@@ -125,3 +125,16 @@ export function barePathCandidates(text: string): BarePathCandidate[] {
   }
   return candidates
 }
+
+/** An inline code span is one exact reference, not prose: its whole trimmed
+ * content is a single candidate with no fallback readings, so a missing or
+ * URL-shaped span never links a same-named local file, and hyphen-glued
+ * script segments (`前端-v2/run-测试`) convert whole. Prose nodes keep the
+ * glue-and-connector grammar of `barePathCandidates`. */
+export function inlineCodeCandidates(text: string): BarePathCandidate[] {
+  const lead = text.length - text.trimStart().length
+  const href = text.trim().replace(TRAILING_PUNCTUATION, "")
+  if (!href || !gated(href)) return []
+  const start = lead, end = lead + href.length
+  return [{ start, end, integral: { start, end, href }, pieces: [] }]
+}

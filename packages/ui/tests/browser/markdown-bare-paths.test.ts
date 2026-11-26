@@ -46,6 +46,12 @@ test("bare paths link exactly the files that exist", { timeout: 60_000 }, async 
     await page.waitForFunction(() => (window as any).fixture.count("脚本/启动") === 1)
     await page.waitForFunction(() => (window as any).fixture.count("项目/v2/启动") === 1)
     await page.waitForFunction(() => (window as any).fixture.count("/fixture-root/README.md") === 2)
+    await page.waitForFunction(() => (window as any).fixture.count("前端-v2/run-测试") === 1)
+
+    // An inline-code span is one exact reference: a missing CJK-named span and
+    // a URL-shaped span never fall back to linking the same-named local file.
+    assert.equal(await page.evaluate(() => (window as any).fixture.count("docs/不存在README.md")), 0)
+    assert.equal(await page.evaluate(() => (window as any).fixture.count("README.md")), 3)
 
     // Missing files, directories, worktree escapes and prose false positives never convert.
     assert.equal(await page.evaluate(() => (window as any).fixture.count("src/gone.ts")), 0)
@@ -56,7 +62,7 @@ test("bare paths link exactly the files that exist", { timeout: 60_000 }, async 
     // The hand-written markdown link keeps its own anchor; inline code gains a
     // link while fenced code blocks stay plain text.
     assert.equal(await page.evaluate(() => (window as any).fixture.count("./README.md")), 1)
-    assert.equal(await page.evaluate(() => (window as any).fixture.codeLinks()), 2)
+    assert.equal(await page.evaluate(() => (window as any).fixture.codeLinks()), 3)
     assert.equal(await page.locator("#main-root pre a").count(), 0)
 
     // Wrapped anchors route like hand-written ones and carry the same hint,

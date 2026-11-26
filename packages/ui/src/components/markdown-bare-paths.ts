@@ -6,7 +6,7 @@
 
 import { backendOf } from "../lib/backend-client"
 import { backgroundReads } from "../lib/background-read-queue"
-import { barePathCandidates, type BarePathCandidate, type BarePathPiece } from "../lib/markdown-bare-paths"
+import { barePathCandidates, inlineCodeCandidates, type BarePathCandidate, type BarePathPiece } from "../lib/markdown-bare-paths"
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
 import { canOpenLocalPaths } from "../lib/workspace-open"
 import type { SessionLinkBase, SessionLinkTitles } from "./markdown-session-links"
@@ -173,7 +173,14 @@ const walkHits = (container: ParentNode) => {
   })
   const hits: Array<{ node: Text; candidates: BarePathCandidate[] }> = []
   for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
-    const candidates = barePathCandidates(node.nodeValue ?? "")
+    // An inline code span (a `code` ancestor that survived the skip list, so
+    // neither fenced `pre` content nor an existing link) is one exact
+    // reference: the wrap pass probes its whole content and never falls back
+    // to split pieces. Prose nodes keep the glue-and-connector grammar.
+    const inlineCode = (node as Text).parentElement!.closest("code")
+    const candidates = inlineCode
+      ? inlineCodeCandidates(node.nodeValue ?? "")
+      : barePathCandidates(node.nodeValue ?? "")
     if (candidates.length) hits.push({ node, candidates })
   }
   return hits

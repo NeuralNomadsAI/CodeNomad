@@ -35,6 +35,7 @@ serverApi.listWorkspaceFiles = (async (_id: string, relativePath = ".", director
   if (relativePath === "docs") return entries([["算法工作台MVP-design.md", "file"]])
   if (relativePath === "脚本") return entries([["启动", "file"]])
   if (relativePath === "项目/v2") return entries([["启动", "file"]])
+  if (relativePath === "前端-v2") return entries([["run-测试", "file"]])
   if (relativePath === ".") return entries([["README.md", "file"], ["src", "directory"], ["docs", "directory"], ["设计.md", "file"]])
   if (relativePath === "and") throw new Error("no such directory")
   return []
@@ -61,6 +62,8 @@ const initialText = [
   "放进 项目/v2/启动 里。",
   "File:/fixture-root/README.md 也行。",
   "路徑在 `https://example.com/资料README.md`。",
+  "缺的不連：`docs/不存在README.md`；URL `https://example.test/guide#README.md` 也不連。",
+  "`前端-v2/run-测试` 存在。",
   "```\nsrc/app.ts\n```",
 ].join("\n\n")
 
