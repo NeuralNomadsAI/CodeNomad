@@ -126,7 +126,9 @@ run of a paused or done row whose program is no longer running in this process.
 A code auxiliary that settles the last passage reconciles cleanup within its own run:
 with no carrier turn its carrier is quiet, so its row, carrier and index are removed
 before its program returns, and OpenCode's count of the removed row writes nothing.
-A retained retiring auxiliary's run asks the cleanup-only maintenance RPC directly.
+A retained retiring auxiliary's run asks the maintenance RPC for that cleanup directly.
+A reconciliation run that cannot recover a prior claim while an owner control is
+pending asks it to settle that control, then recovers the same claim again.
 
 A run Missions consumed but OpenCode had not yet counted when the service stopped is
 retried by OpenCode once its row is due again while active, and then counted. If the
@@ -188,7 +190,8 @@ The principal preparation is written by the `admit` RPC under document exclusion
 while the Code Mode program runs. A separate fixed maintenance
 RPC receives bounded public terminal hints from learned pure carrier/installation
 data. It rechecks native quiescence in a new HTTP graph before cleaning a carrier
-that was active during its own wake. It never uses status reads as mutations or
+that was active during its own wake. On a live schedule it only settles a pending
+owner control, with no quiescence check. It never uses status reads as mutations or
 resends a prior dispatch claim. The subscription, its maximum 128 pending hints
 and temporary debounce fibers belong to the plugin Scope.
 

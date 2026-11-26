@@ -171,7 +171,7 @@ Some coordination and recovery actions need the CodeNomad backend.
 
 One-time **Pause** lets current steps finish without starting new work. **Interrupt now** requests immediate interruption. **Stop** is terminal and asks for confirmation. Native schedule Pause closes future admission and requests interruption of its current passage. Tool effects may continue after an interruption; inspect partial results.
 
-Keep an unconfirmed action's original request: while a native schedule or editor view is open, CodeNomad rereads it automatically until it settles and automatically retries only an exact recorded partial preparation. Use **Check status** for one-time Mission controls or daily schedules, and **Refresh mission map** for ordinary one-time creation when offered; do not create a replacement to bypass uncertainty.
+Keep an unconfirmed action's original request: while a native schedule or editor view is open, CodeNomad rereads it automatically until it settles and automatically retries only an exact recorded partial preparation. Use **Check status** for one-time Mission controls or daily schedules, and **Refresh mission map** for ordinary one-time creation when offered; do not create a replacement to bypass uncertainty. A native schedule offers **Check status** in its **More actions** menu.
 
 An interrupted or failed one-time Mission can offer **Recover interrupted mission**. Eligible tasks offer missing-report recovery.
 

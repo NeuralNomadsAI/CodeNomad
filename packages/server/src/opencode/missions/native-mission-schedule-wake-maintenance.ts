@@ -85,7 +85,8 @@ export async function reconcileNativeMissionScheduleMaintenance(doc: MissionDocu
   return { complete }
 }
 
-/** Maintenance reconciles saved technical cleanup only. The terminal event is a
+/** Maintenance reconciles saved technical cleanup and, on a live schedule, a pending
+ * owner control. The terminal event is a
  * hint; current native active/claim/inbox/child coverage decides removal. */
 export function nativeMissionScheduleMaintenanceHandler(ctx: Plugin.Context) {
   const invocation = nativeInvocation()
