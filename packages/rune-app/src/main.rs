@@ -278,6 +278,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)
+        && !workspace::mission_has_reader(s)
         && let Some(reader) = &mut s.reader
     {
         reader.renderer_ready(tx);

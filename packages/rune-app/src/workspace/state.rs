@@ -28,10 +28,11 @@ pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
 };
 pub(crate) use panel_state::{
-    deliver_detached_events, detached_workspace_ids, has_detached_panels,
-    has_unopened_detached_panels, mission_confirmation, mission_event, mission_observation_project,
-    mission_panel, mission_supported, missions_composing, reconcile_detached_online,
-    right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
+    close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
+    has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_reader,
+    mission_observation_project, mission_panel, mission_reader, mission_supported,
+    missions_composing, reconcile_detached_online, restore_mission_reader_focus, right_panel_tab,
+    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_mission_briefing,
     suspend_missions,
 };
 pub use polling::{file_draft_status, poll, poll_file_drafts, status};
@@ -106,6 +107,7 @@ pub(crate) fn revoke_cached_sessions(s: &mut State) {
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
     mission_lifecycle: crate::missions::Lifecycle,
+    mission_briefing: crate::missions::BriefingRequests,
     entries: Vec<Entry>,
     active: usize,
     next_key: u64,
@@ -246,6 +248,7 @@ impl Ui {
         Self {
             openings: Default::default(),
             mission_lifecycle: Default::default(),
+            mission_briefing: Default::default(),
             entries: vec![entry("tab-0".into(), Tab::Blank)],
             active: 0,
             next_key: 1,

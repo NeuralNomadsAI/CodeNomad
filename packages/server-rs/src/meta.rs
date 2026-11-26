@@ -26,7 +26,7 @@ async fn read(State(app): State<Shared>, channel: Option<Extension<tls::Channel>
     if channel.is_some() {
         // SideCar content stays host-only: the direct HTTPS opt-in is not served here.
         (meta["localRequest"], meta["sidecarsAllowed"]) = (json!(false), json!(false));
-        if app.devices.as_ref().is_none_or(|devices| !devices.lock().unwrap().previews_allowed()) {
+        if app.devices.as_ref().is_none_or(|devices| !devices.lock().unwrap().previews_allowed_for_remote()) {
             meta["previewsUnavailable"] = json!(true);
         }
     }
@@ -50,6 +50,7 @@ pub fn document(
         "sidecars",
         "service-usage",
         "provider-usage",
+        "remote-control",
         "settings-atomic-patches",
         "conversation-permissions",
     ];

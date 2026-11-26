@@ -468,10 +468,7 @@ pub fn render<S, T>(
     palette: Option<&'static crate::palettes::Palette>,
     build: impl FnOnce(&mut Cx<S>) -> T,
 ) -> T {
-    crate::palettes::with_palette(palette, || {
-        cx.foreground(tokens(dark).color("text-primary"));
-        layout::with_appearance(dark, || build(cx))
-    })
+    crate::palettes::with_palette(palette, || layout::render_with_dark(cx, dark, build))
 }
 
 pub fn frame(sidebar: El, body: El, overlays: Vec<El>) -> El {

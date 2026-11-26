@@ -46,6 +46,8 @@ pub fn remote_routes() -> Router<Shared> {
 /// Device management, bootstrap and password pages, served on the loopback listener only.
 pub fn local_routes() -> Router<Shared> {
     Router::new()
+        .route("/api/remote-control/start", post(crate::remote_control::start_route))
+        .route("/api/remote-control", delete(crate::remote_control::stop_route))
         .route("/api/remote-control/pairings", post(devices::issue).layer(DefaultBodyLimit::max(4096)))
         .route("/api/remote-control/devices", get(devices::list))
         .route("/api/remote-control/devices/{id}", delete(devices::revoke))
@@ -476,10 +478,10 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         )
             .into_response());
     }
-    if path == "/api/remote-control/server-pair"
-        || path == "/api/remote-control/pair"
-        || req.headers().contains_key("x-codenomad-server-pairing")
-    {
+    if path == "/api/remote-control/pair" || path == "/remote-pair" {
+        return Err(error(Status::NOT_FOUND, "Not found"));
+    }
+    if path == "/api/remote-control/server-pair" || req.headers().contains_key("x-codenomad-server-pairing") {
         return Err(error(Status::FORBIDDEN, "Server pairing request rejected"));
     }
     let origin = req.headers().get(header::ORIGIN).cloned();

@@ -41,6 +41,7 @@ pub struct App {
     pub events: events::Hub,
     pub extension_jobs: Arc<Semaphore>,
     pub devices: Option<Lock<auth::devices::Devices>>,
+    pub remote_control: crate::remote_control::Manager,
     pub opened: Notify,
     pub workspace_closed: Notify,
     pub favorite_source: Uuid,
@@ -113,6 +114,7 @@ impl App {
         calendar_profile: Option<PathBuf>,
     ) -> Self {
         let mission_bridge = missions::run::new_token();
+        let remote_control = crate::remote_control::Manager::new(&data);
         Self {
             releases: crate::meta::releases::Monitor::new(&settings),
             sidecars: Lock::new(crate::sidecars::load(&settings.owner(crate::settings::Kind::Config, "server"))),
@@ -136,6 +138,7 @@ impl App {
             events: Default::default(),
             extension_jobs: Arc::new(Semaphore::new(2)),
             devices,
+            remote_control,
             opened: Notify::new(),
             workspace_closed: Notify::new(),
             favorite_source: Uuid::new_v4(),

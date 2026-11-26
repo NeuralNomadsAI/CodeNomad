@@ -221,21 +221,24 @@ pub fn panel_tabs<S: 'static>(
 pub fn open_titlebar_menu<S: 'static>(
     tx: &mut Tx,
     anchor: &str,
+    look: crate::layout::PopupMenuLook,
     items: impl IntoIterator<Item = (&'static str, &'static str, bool, bool)>,
     pick: impl FnOnce(&mut S, Option<&str>, &mut Tx) + 'static,
 ) {
     #[cfg(target_os = "windows")]
     tx.popup_menu(
-        rune::PopupMenu::new().items(items.into_iter().map(|(id, name, enabled, checked)| {
-            rune::PopupItem::new(id, name)
-                .enabled(enabled)
-                .checked(checked)
-        })),
+        rune::PopupMenu::new()
+            .style(look.into_style())
+            .items(items.into_iter().map(|(id, name, enabled, checked)| {
+                rune::PopupItem::new(id, name)
+                    .enabled(enabled)
+                    .checked(checked)
+            })),
         anchor,
         pick,
     );
     #[cfg(not(target_os = "windows"))]
-    let _ = (tx, anchor, items, pick);
+    let _ = (tx, anchor, look, items, pick);
 }
 
 pub fn frame() -> El {

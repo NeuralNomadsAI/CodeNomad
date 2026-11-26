@@ -1,9 +1,13 @@
 //! /workspaces/:id/instance/*: the allowlisted relay to the daemon, confined to the workspace's
 //! locations and sessions.
+#[cfg(test)]
+mod background_tests;
 mod defer_media;
 mod dispatch;
 mod guards;
 mod mutation;
+#[cfg(test)]
+mod stack_tests;
 
 pub use guards::verify_mutation;
 
@@ -29,15 +33,19 @@ pub(super) fn before_dispatch_error((status, body): Error) -> Response {
 }
 
 pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Response, Error> {
+    Box::pin(relay_inner(app, request)).await
+}
+
+async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     let send_input = is_send_input_request(request.method(), request.uri().path());
-    match prepare_relay(app, request).await {
+    match Box::pin(prepare_relay(app, request)).await {
         Ok(PreparedRelay::Response(mut response)) => {
             if send_input && !response.status().is_success() {
                 response.headers_mut().insert("x-codenomad-before-dispatch", header::HeaderValue::from_static("1"));
             }
             Ok(response)
         }
-        Ok(PreparedRelay::Dispatch(ctx)) => dispatch::dispatch_upstream(ctx).await,
+        Ok(PreparedRelay::Dispatch(ctx)) => Box::pin(dispatch::dispatch_upstream(*ctx)).await,
         Err(err) if send_input => Ok(before_dispatch_error(err)),
         Err(err) => Err(err),
     }
@@ -66,7 +74,7 @@ fn is_send_input_request(method: &Method, path: &str) -> bool {
 
 enum PreparedRelay {
     Response(Response),
-    Dispatch(dispatch::DispatchContext),
+    Dispatch(Box<dispatch::DispatchContext>),
 }
 
 async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, Error> {
@@ -188,7 +196,8 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
     let mut translated_directories = std::collections::BTreeMap::new();
     let mut prompt_locations = Vec::new();
     for directory in prompt_directories {
-        let (translated, live, observed) = super::prompt::observe_directory(&app, &workspace, &directory).await?;
+        let (translated, live, observed) =
+            Box::pin(super::prompt::observe_directory(&app, &workspace, &directory)).await?;
         translated_directories.insert(directory.clone(), translated.directory.clone());
         prompt_locations.push((directory, translated, (live, observed)));
     }
@@ -237,7 +246,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         if let Some(translated) = translated_directories.get(raw) {
             Some(translated.clone())
         } else {
-            let (location, live, observed) = super::prompt::observe_directory(&app, &workspace, raw).await?;
+            let (location, live, observed) = Box::pin(super::prompt::observe_directory(&app, &workspace, raw)).await?;
             let translated = location.directory.clone();
             prompt_locations.push((raw.clone(), location, (live, observed)));
             Some(translated)
@@ -586,7 +595,8 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
                     return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
                 }
             } else {
-                let (context, live, observed) = super::prompt::observe_directory(&app, &workspace, raw).await?;
+                let (context, live, observed) =
+                    Box::pin(super::prompt::observe_directory(&app, &workspace, raw)).await?;
                 if prompt_locations.iter().any(|(_, location, _)| location != &context) {
                     return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
                 }
@@ -724,7 +734,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         input_checkout: &input_checkout,
     };
     let mutation::PreparedMutation { fork, root_permissions, input, rules_lock, mutation, receipt } =
-        match mutation::prepare_mutation(mutation::MutationContext {
+        match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
             recheck: &recheck,
             head: &head,
             route,
@@ -740,7 +750,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
             explicit,
             session_list,
             target: &mut target,
-        })
+        }))
         .await?
         {
             mutation::MutationOutcome::Ready(prepared) => prepared,
@@ -795,9 +805,9 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
     }
     if send_input {
         if command && let Some(Value::Object(input)) = &input {
-            super::prompt::validate(&app, &workspace, input).await?;
+            Box::pin(super::prompt::validate(&app, &workspace, input)).await?;
         }
-        match recheck.verify().await {
+        match Box::pin(recheck.verify()).await {
             Ok(_) => {}
             Err(e) if e.0 == Status::UNAUTHORIZED => {
                 return Ok(PreparedRelay::Response(crate::auth::unauthorized_before_dispatch()));
@@ -809,7 +819,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         return Err(if send_input { super::pre_dispatch_unavailable() } else { upstream_error() });
     }
     if let Some(session) = defer_media {
-        return defer_media::stream_deferred_message_list(defer_media::DeferContext {
+        return Box::pin(defer_media::stream_deferred_message_list(defer_media::DeferContext {
             app: &app,
             workspace: &workspace,
             endpoint: &endpoint,
@@ -821,7 +831,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
             initial_identity: &initial_identity,
             input_checkout: &input_checkout,
             upstream,
-        })
+        }))
         .await
         .map(PreparedRelay::Response);
     }
@@ -830,7 +840,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
     let route = route.to_owned();
     let id = id.to_owned();
     let dispatch_session = session.map(str::to_owned);
-    Ok(PreparedRelay::Dispatch(dispatch::DispatchContext {
+    Ok(PreparedRelay::Dispatch(Box::new(dispatch::DispatchContext {
         app,
         workspace,
         endpoint,
@@ -853,7 +863,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         receipt,
         mutation,
         rules_lock,
-    }))
+    })))
 }
 
 #[cfg(test)]

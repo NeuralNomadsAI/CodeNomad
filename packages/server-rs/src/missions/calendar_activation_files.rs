@@ -1,4 +1,4 @@
-use super::{Settings, activation_pending, capability, refusal, target_position, unavailable};
+use super::{Settings, activation_pending, capability, target_position, unavailable};
 use crate::{
     Error, files::node_path::Style,
     subagent_depth::{document::{self, Document}, fs, jsonc::{self, J, Text}, resolve_targets},
@@ -28,7 +28,8 @@ fn text_hash(text: &[u16]) -> String {
     hash(jsonc::string(text).as_bytes())
 }
 
-fn explicit_off(d: &Document) -> Result<bool, Error> {
+fn explicit_off(d: &Document) -> Result<Option<&'static str>, Error> {
+    let top = document::read(d, &["automations"]).map_err(|_| unavailable())?;
     let field = |key| document::read(d, &["experimental", key]).map_err(|_| unavailable());
     let primary = field("automations")?;
     let alias = field("schedules")?;
@@ -38,39 +39,36 @@ fn explicit_off(d: &Document) -> Result<bool, Error> {
     {
         return Err(unavailable());
     }
-    Ok(primary.or(alias) == Some(J::Bool(false)))
+    if top == Some(J::Bool(false)) {
+        return Ok(Some("automations-setting"));
+    }
+    if primary.or(alias) == Some(J::Bool(false)) {
+        return Ok(Some("experimental-block"));
+    }
+    Ok(None)
 }
 
 impl View {
-    pub(super) fn load(dir: String, config: capability::ConfigEntries, mut settings: Settings) -> Result<Self, Error> {
+    pub(super) fn load(dir: String, config: capability::ConfigEntries, flag: Value) -> Result<Self, Error> {
         let capability::ConfigEntries { entries, experimental } = config;
         let style = Style::host();
         let global = entries.iter().find(|e| e["type"] == "directory").and_then(super::path).ok_or_else(unavailable)?;
         if !style.valid_absolute(&dir) || !style.valid_absolute(global) {
             return Err(unavailable());
         }
-        let documents = resolve_targets(style, global, &dir, &entries, true).map_err(|_| unavailable())?
+        let loaded = resolve_targets(style, global, &dir, &entries, true).map_err(|_| unavailable())?
             .into_iter().map(|target| {
                 let doc = fs::load(&target.io).map_err(|_| unavailable())?;
                 if target.project && !style.contains(&dir, &doc.write) {
                     return Err(unavailable());
                 }
-                if explicit_off(&doc)? && settings.refusal.is_none() {
-                    settings.refusal = Some(refusal("explicit-off", "experimental-block",
-                        if target.project { "project" } else { "global" }, Some(&target.path)));
-                }
-                Ok((target.project, target.path, doc))
+                let off = explicit_off(&doc)?;
+                Ok((target.project, target.path, doc, off))
             }).collect::<Result<Vec<_>, Error>>()?;
-        if !settings.enabled && settings.refusal.is_none() {
-            if let Some((_, path, _)) = documents.iter().find(|(project, _, _)| *project) {
-                let (_, after) = target_position(style, &entries, path, &dir).ok_or_else(unavailable)?;
-                if let Some(imposed) = entries[after..].iter().find(|entry| capability::experimental(entry).is_some()) {
-                    settings.refusal = Some(refusal("masked", "experimental-block", "imposed", super::path(imposed)));
-                } else {
-                    settings.target = Some(path.clone());
-                }
-            }
-        }
+        let summary: Vec<(bool, &str, Option<&'static str>)> =
+            loaded.iter().map(|(project, path, _, off)| (*project, path.as_str(), *off)).collect();
+        let settings = Settings::from_documents(style, &entries, &flag, &dir, &summary).ok_or_else(unavailable)?;
+        let documents = loaded.into_iter().map(|(project, path, doc, _)| (project, path, doc)).collect();
         Ok(Self { dir, entries, experimental, documents, settings })
     }
 
@@ -83,6 +81,9 @@ impl View {
     pub(super) fn planned(&self) -> Result<Option<Edit>, Error> {
         if self.settings.enabled {
             return Ok(None);
+        }
+        if self.settings.refusal.is_some() || self.settings.target.is_none() {
+            return Err(unavailable());
         }
         let (project, path, doc) = self.documents.iter().find(|(project, _, _)| *project).ok_or_else(unavailable)?;
         let (before, _) = target_position(Style::host(), &self.entries, path, &self.dir).ok_or_else(unavailable)?;

@@ -136,10 +136,13 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     let InputRecheck { app, workspace, endpoint, principal, session, directory, actual, .. } = *recheck;
     let create = route == "/api/session" && head.method == Method::POST;
     let fork = session.is_some() && route.ends_with("/fork") && head.method == Method::POST;
+    let background =
+        route.starts_with("/api/session/") && route.ends_with("/background") && head.method == Method::POST;
     let permissions_patch = session.is_some() && head.method == Method::PATCH;
     let mut root_permissions = None;
     let mut input = None;
     if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH) {
+        let mut body_empty = false;
         let data: Value = if let Some(data) = prompt_input.take() {
             data
         } else {
@@ -150,6 +153,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             )
             .await?;
             if contents.is_empty() {
+                body_empty = true;
                 json!({})
             } else {
                 if !head
@@ -198,6 +202,8 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 &["title", "location", "agent", "model"]
             } else if fork {
                 &["before"]
+            } else if background {
+                &[]
             } else if permissions_patch {
                 &["permissions"]
             } else if route.ends_with("/agent") {
@@ -225,7 +231,9 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                     data.insert("permissions".into(), block.clone());
                 }
             }
-            input = Some(Value::Object(data));
+            if !(background && body_empty) {
+                input = Some(Value::Object(data));
+            }
         }
     }
     let rules_lock = if permissions_patch {
@@ -435,6 +443,9 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             .map_err(|e| if e.0 == Status::NOT_FOUND { foreign() } else { e })?;
         if actual.as_ref().is_none_or(|record| !same_target(record, &fresh)) {
             return Err(foreign());
+        }
+        if marker(&fresh) {
+            return Err(carrier_denied());
         }
         if !crate::sessions::permission_mode::workspace_current(app, workspace) {
             return Err(foreign());

@@ -26,7 +26,7 @@ fn bad(message: &str) -> Error {
     error(Status::BAD_REQUEST, message)
 }
 fn valid(s: &str, max: usize) -> bool {
-    !s.is_empty() && s.len() <= max && !s.chars().any(char::is_control)
+    !s.is_empty() && s.encode_utf16().count() <= max && !s.chars().any(char::is_control)
 }
 fn digest(s: &str) -> bool {
     s.len() == 43 && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
@@ -386,5 +386,16 @@ mod tests {
             })
         );
         assert!(admission_projection(&snapshot, &json!("msn_missing")).get("mission").is_none());
+    }
+
+    #[test]
+    fn valid_counts_utf16_code_units() {
+        let accented = "é".repeat(240);
+        assert_eq!(accented.len(), 480);
+        assert!(valid(&accented, 240));
+        assert!(!valid(&"é".repeat(241), 240));
+        // Surrogate pair (U+1F980) takes 2 UTF-16 code units.
+        assert!(valid(&"🦀".repeat(120), 240));
+        assert!(!valid(&"🦀".repeat(121), 240));
     }
 }

@@ -106,7 +106,8 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
                         s.dialog = false;
                     },
                 )
-                .key("dialog-cancel");
+                .key("dialog-cancel")
+                .autofocus();
                 let second = layout::button_tx(
                     t("directoryBrowser.openCurrent"),
                     false,

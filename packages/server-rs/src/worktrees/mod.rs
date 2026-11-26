@@ -11,6 +11,10 @@ pub(crate) fn inventory_revision(app: &App) -> u64 {
     inventory::revision(app)
 }
 
+pub(crate) fn event_inventory_revision(app: &App, workspace_id: uuid::Uuid) -> (u64, u64) {
+    inventory::event_revision(app, workspace_id)
+}
+
 pub fn routes() -> axum::Router<Shared> {
     use axum::routing::{delete, get, post};
     axum::Router::new()
@@ -27,7 +31,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::{io::ErrorKind, time::Duration};
+use std::io::ErrorKind;
 
 use crate::{App, Error, Shared, Workspace, error};
 
@@ -143,7 +147,34 @@ pub async fn native_project(app: &App, workspace: &Workspace, project: &str) -> 
     if !crate::opencode::valid_id(project) || project == "global" {
         return Ok(false);
     }
-    Ok(crate::worktrees::linked::catalogue(app, workspace, false).await.is_ok_and(|c| c.project == project))
+    let hit = match inventory::http_read(app, workspace, inventory::ReadMode::Validated).await {
+        Ok(hit) => hit,
+        Err(_) => return Ok(false),
+    };
+    let check_live = |cat: &std::sync::Arc<linked::Catalogue>, path: &std::path::Path| {
+        let cat = std::sync::Arc::clone(cat);
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || cat.root_live_for(&path))
+    };
+    if let inventory::HttpSnapshot::Git(cat) = hit.snapshot {
+        let live = !hit.from_cache || check_live(&cat, &workspace.path).await.unwrap_or(false);
+        if live {
+            if cat.project == project {
+                return Ok(true);
+            }
+            if !hit.from_cache || hit.refreshed_on_miss {
+                return Ok(false);
+            }
+        }
+        let retry_mode =
+            if live { inventory::ReadMode::RefreshOnMiss(hit.generation) } else { inventory::ReadMode::Fresh };
+        let refreshed = match inventory::http_read(app, workspace, retry_mode).await {
+            Ok(res) => res,
+            Err(_) => return Ok(false),
+        };
+        return Ok(refreshed.snapshot.catalogue().is_some_and(|c| c.project == project));
+    }
+    Ok(false)
 }
 
 pub async fn list(
@@ -156,53 +187,12 @@ pub async fn list(
         return Err(error(Status::BAD_REQUEST, "Invalid worktree query"));
     }
     let workspace = app.workspace(&id)?;
-    let initial_revision = inventory::revision(&app);
-    let git = match inventory::probe_root_checkout(&workspace).await? {
-        inventory::RootCheckout::NonGit => true,
-        inventory::RootCheckout::MissingGit => false,
-        inventory::RootCheckout::Git(res) => {
-            let mut prechecked = Some(*res?);
-            let fresh = input.fresh.as_deref() != Some("false");
-            let endpoint = app
-                .native
-                .acquire(tokio::time::Instant::now() + Duration::from_secs(12))
-                .await
-                .map_err(|_| crate::opencode::upstream_error())?;
-            // Match TS `worktree-inventory.ts:61-85`: discard any scan invalidated by a concurrent
-            // `worktree.updated` event and retry until a current inventory settles.
-            for attempt in 0..4 {
-                let revision = if attempt == 0 { initial_revision } else { inventory::revision(&app) };
-                let catalogue = match inventory::catalogue_at_with_local(
-                    &app,
-                    &workspace,
-                    fresh,
-                    Some(&endpoint),
-                    Duration::from_secs(12),
-                    prechecked.take(),
-                )
-                .await
-                {
-                    Ok(cat) => std::sync::Arc::new(cat),
-                    Err(_) if inventory::revision(&app) != revision => continue,
-                    Err(err) => return Err(err),
-                };
-                if inventory::revision(&app) != revision {
-                    continue;
-                }
-                // Store under `(workspace.id, fresh)` only so `fresh = true` scans never populate
-                // the separate non-refresh SSE routing cache `(workspace.id, false)` (TS `manager.ts:467-503`).
-                inventory::store_if_current(
-                    &app,
-                    workspace.id,
-                    fresh,
-                    &endpoint,
-                    revision,
-                    std::sync::Arc::clone(&catalogue),
-                );
-                return Ok(Json(catalogue.response()).into_response());
-            }
-            return Err(crate::opencode::upstream_error());
-        }
+    let mode =
+        if input.fresh.as_deref() == Some("true") { inventory::ReadMode::Fresh } else { inventory::ReadMode::Cached };
+    let git = match inventory::http_list(&app, &workspace, mode).await? {
+        inventory::HttpSnapshot::Git(catalogue) => return Ok(Json(catalogue.response()).into_response()),
+        inventory::HttpSnapshot::NonGit => true,
+        inventory::HttpSnapshot::MissingGit => false,
     };
     app.workspace(&id)?;
     let mut root = json!({"slug":"root","kind":"root","directory":workspace.path,"serviceDirectory":workspace.location["directory"]});
@@ -285,14 +275,11 @@ pub async fn placement_verified(
         return Ok(VerifiedPlacement { slug: "root".into(), tree: None });
     }
     let owned = if path.starts_with(&app.scope) {
-        match crate::worktrees::linked::catalogue(app, w, false).await {
-            Ok(c) => {
-                let dir_owned = directory.to_owned();
-                tokio::task::spawn_blocking(move || c.by_directory(&dir_owned).cloned()).await.unwrap_or(None)
-            }
+        match lookup_owned_tree(app, w, directory).await {
+            Ok(tree) => tree,
             // Without a Git catalogue only the opened folder is authority, and
             // the reference's strict read reaches no verdict elsewhere.
-            Err(_) => return Err(false),
+            Err(()) => return Err(false),
         }
     } else {
         None
@@ -305,6 +292,40 @@ pub async fn placement_verified(
     Err(!path.starts_with(&w.path) && crate::worktrees::linked::readable_checkout(&path).await)
 }
 
+async fn lookup_owned_tree(app: &App, w: &Workspace, directory: &str) -> Result<Option<linked::Tree>, ()> {
+    let hit = inventory::http_read(app, w, inventory::ReadMode::Validated).await.map_err(|_| ())?;
+    let Some(cat) = hit.snapshot.catalogue() else {
+        return Err(());
+    };
+    let (found, root_live) = {
+        let cat = std::sync::Arc::clone(&cat);
+        let dir = directory.to_owned();
+        let opened = w.path.clone();
+        let check_root = hit.from_cache;
+        tokio::task::spawn_blocking(move || {
+            let live = !check_root || cat.root_live_for(&opened);
+            let tree = if live { cat.by_directory(&dir).cloned() } else { None };
+            (tree, live)
+        })
+        .await
+        .unwrap_or((None, false))
+    };
+    if found.is_some() {
+        return Ok(found);
+    }
+    if hit.from_cache && (!root_live || !hit.refreshed_on_miss) {
+        let retry_mode =
+            if root_live { inventory::ReadMode::RefreshOnMiss(hit.generation) } else { inventory::ReadMode::Fresh };
+        let fresh = inventory::http_read(app, w, retry_mode).await.map_err(|_| ())?;
+        let Some(cat) = fresh.snapshot.catalogue() else {
+            return Err(());
+        };
+        let dir = directory.to_owned();
+        return Ok(tokio::task::spawn_blocking(move || cat.by_directory(&dir).cloned()).await.unwrap_or(None));
+    }
+    Ok(None)
+}
+
 pub async fn owns(app: &App, w: &Workspace, directory: &str) -> bool {
     if w.location["directory"] == directory && dunce::canonicalize(directory).ok().as_ref() == Some(&w.path) {
         return true;
@@ -312,7 +333,7 @@ pub async fn owns(app: &App, w: &Workspace, directory: &str) -> bool {
     if !crate::files::paths::canonical(&app.scope, directory).is_some_and(|path| path.starts_with(&app.scope)) {
         return false;
     }
-    crate::worktrees::linked::catalogue(app, w, false).await.ok().is_some_and(|c| c.by_directory(directory).is_some())
+    lookup_owned_tree(app, w, directory).await.ok().flatten().is_some()
 }
 
 #[cfg(test)]
