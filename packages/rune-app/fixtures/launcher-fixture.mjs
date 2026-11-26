@@ -128,15 +128,35 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
     process.exit(finalResult)
   }
   worker.stdin?.on('error',()=>{})
-  let pendingStdoutWrites=0,stdoutFlushWaiter
-  const checkStdoutFlushed=()=>{if(pendingStdoutWrites===0&&stdoutFlushWaiter){const r=stdoutFlushWaiter;stdoutFlushWaiter=undefined;r()}}
+  let pendingStdoutWrites=0,stdoutFlushWaiter,stdoutForwardError,stdoutDrainTimer
+  const checkStdoutFlushed=()=>{if((pendingStdoutWrites===0||stdoutForwardError)&&stdoutFlushWaiter){const r=stdoutFlushWaiter;stdoutFlushWaiter=undefined;r()}}
+  const onStdoutError=error=>{
+    if(stdoutDrainTimer){clearTimeout(stdoutDrainTimer);stdoutDrainTimer=undefined}
+    stdoutForwardError??=error
+    worker.stdout?.resume()
+    checkStdoutFlushed()
+  }
+  process.stdout.on('error',onStdoutError)
   const forwardStdout=chunk=>{
-    if(!chunk.length)return
+    if(!chunk.length||stdoutForwardError)return
     pendingStdoutWrites++
-    const ok=process.stdout.write(chunk,()=>{pendingStdoutWrites--;checkStdoutFlushed()})
-    if(!ok&&worker.stdout&&!worker.stdout.destroyed){
+    const ok=process.stdout.write(chunk,err=>{
+      pendingStdoutWrites--
+      if(err)onStdoutError(err)
+      else checkStdoutFlushed()
+    })
+    if(!ok&&worker.stdout&&!worker.stdout.destroyed&&!stdoutDrainTimer){
       worker.stdout.pause()
-      process.stdout.once('drain',()=>{worker.stdout?.resume()})
+      const onDrain=()=>{
+        if(stdoutDrainTimer){clearTimeout(stdoutDrainTimer);stdoutDrainTimer=undefined}
+        worker.stdout?.resume()
+      }
+      process.stdout.once('drain',onDrain)
+      stdoutDrainTimer=setTimeout(()=>{
+        stdoutDrainTimer=undefined
+        process.stdout.off('drain',onDrain)
+        onStdoutError(Error('Timed out draining forwarded worker stdout'))
+      },5000)
     }
   }
   const stdoutTap=createWorkerStdoutTap(workerToken,forwardStdout)
@@ -192,12 +212,17 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   process.off('SIGINT',stop)
   process.off('SIGTERM',stop)
   stdoutTap.flush()
-  if(pendingStdoutWrites>0){
+  if(pendingStdoutWrites>0&&!stdoutForwardError){
     let t
     try{await Promise.race([new Promise(r=>{stdoutFlushWaiter=r;checkStdoutFlushed()}),new Promise(r=>{t=setTimeout(r,5000)})])}
     finally{clearTimeout(t)}
+    if(pendingStdoutWrites>0&&!stdoutForwardError){
+      stdoutForwardError=Error('Timed out flushing forwarded worker stdout')
+    }
   }
-  const finalResult=publishWorkerProof({workerProfile,exit,workerStarted:stdoutTap.hasStarted(),unconfirmedStop,stopError,outerSignal})
+  if(stdoutDrainTimer){clearTimeout(stdoutDrainTimer);stdoutDrainTimer=undefined}
+  process.stdout.off('error',onStdoutError)
+  const finalResult=publishWorkerProof({workerProfile,exit,workerStarted:stdoutTap.hasStarted(),unconfirmedStop,stopError,stdoutForwardError,outerSignal})
   process.exit(finalResult)
 }
 const webMissions=process.argv.includes('--web-missions')
@@ -727,12 +752,16 @@ async function restartWeb(previous,uiOrigin){
   return {http,value:{older,witness:(await opened.json()).id,serverPid:await host.pid()}}
 }
 const clientStopPromises=new WeakMap()
+const clientClosedPromises=new WeakMap()
+const activeClientStops=new Set()
 let clientStopError,interruptedSignal,abortClientWait
 const stopClientOnce=child=>{
   if(!child)return Promise.resolve()
   let stopPromise=clientStopPromises.get(child)
   if(!stopPromise){
-    const stopped=child===webState.client&&webState.clientClosed?webState.clientClosed:new Promise(resolve=>child.once('close',resolve))
+    const stopped=clientClosedPromises.get(child)
+      ??(child===webState.client?webState.clientClosed:undefined)
+      ??(child.exitCode!==null||child.signalCode!==null?Promise.resolve(child.exitCode??1):new Promise(resolve=>child.once('close',resolve)))
     stopPromise=(async()=>{
       try{
         if(child===webState.client&&webState.clientUseIpc&&process.platform==='win32'){
@@ -752,6 +781,7 @@ const stopClientOnce=child=>{
       }
     })()
     clientStopPromises.set(child,stopPromise)
+    activeClientStops.add(stopPromise)
   }
   return stopPromise
 }
@@ -785,6 +815,9 @@ function finalize(){
     client??=webState.client
     if(client&&client.exitCode===null&&client.signalCode===null){
       await stopClientOnce(client)
+    }
+    if(activeClientStops.size>0){
+      await Promise.all([...activeClientStops])
     }
     const activeLease=webState.deviceLease??(!leaseOpenFailed?webState.pendingDeviceLease:undefined)
     if(activeLease){
@@ -907,6 +940,7 @@ try{
       client=spawnFixtureChild(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...clientEnv,RUNE_BACKEND:`${clientRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
       webState.clientStartedBy=new Date()
       const stageClosed=new Promise((resolve,reject)=>{client.on('close',resolve);client.on('error',reject)})
+      clientClosedPromises.set(client,stageClosed.catch(()=>1))
       clientRelay.allowClientPid(fixtureChildPid(client),stageClosed)
       client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
       const timer=setTimeout(()=>client.kill(),120000)
@@ -935,8 +969,10 @@ try{
     const args=gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'
     client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...clientEnv,RUNE_BACKEND:`${clientRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
     webState.clientStartedBy=new Date()
-    const clientClosed=new Promise(resolve=>client.once('exit',resolve))
-    clientRelay.allowClientPid(fixtureChildPid(client),clientClosed)
+    const clientClosed=new Promise((resolve,reject)=>{client.once('close',code=>resolve(code??1));client.once('error',reject)})
+    clientClosedPromises.set(client,clientClosed.catch(()=>1))
+    webState.clientClosed=clientClosed
+    clientRelay.allowClientPid(fixtureChildPid(client),clientClosed.catch(()=>1))
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }

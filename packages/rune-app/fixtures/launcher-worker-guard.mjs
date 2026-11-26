@@ -78,13 +78,13 @@ export function createWorkerStdoutTap(token, write) {
   }
 }
 
-export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop = false, stopError = null, outerSignal = null, proof = null }) {
+export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop = false, stopError = null, stdoutForwardError = null, outerSignal = null, proof = null }) {
   const spawnError = exit?.error ?? (!workerStarted && exit && exit.code !== 86
     ? new Error(`Owned worker did not start (supervisor exit code=${exit.code}, signal=${exit.signal})`)
     : null)
   const workerExited = exit !== null && !spawnError && !unconfirmedStop && exit.code !== 86 && exit.signal === null && !stopError
   const workerCode = exit && !spawnError ? (exit.code ?? (exit.signal === 'SIGINT' ? 130 : exit.signal === 'SIGTERM' ? 143 : 1)) : null
-  const supervisorFailed = !workerExited || workerCode !== 0 || Boolean(exit?.signal) || Boolean(spawnError) || Boolean(stopError)
+  const supervisorFailed = !workerExited || workerCode !== 0 || Boolean(exit?.signal) || Boolean(spawnError) || Boolean(stopError) || Boolean(stdoutForwardError)
   const interrupted = outerSignal ?? proof?.interruptedSignal ?? exit?.signal ?? (workerCode === 130 ? 'SIGINT' : workerCode === 143 ? 'SIGTERM' : null)
   const finalResult = proof?.result === 0 && !supervisorFailed && !interrupted ? 0 : 1
   const workerStopError = stopError
@@ -102,18 +102,19 @@ export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop
     workerExitSignal: exit && !spawnError ? exit.signal : null,
     ...(workerStopError ? { workerStopError } : {}),
     ...(spawnError ? { workerSpawnError: String(spawnError?.message ?? spawnError) } : {}),
+    ...(stdoutForwardError ? { stdoutForwardError: String(stdoutForwardError?.message ?? stdoutForwardError) } : {}),
   }
 }
 
-export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfirmedStop = false, stopError = null, outerSignal = null }) {
+export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfirmedStop = false, stopError = null, stdoutForwardError = null, outerSignal = null }) {
   assert.equal(typeof workerStarted, 'boolean', 'workerStarted must be a boolean')
   const workerProofFile = path.join(workerProfile, 'proof.worker.json.tmp')
   const supervisorProofTmp = path.join(workerProfile, 'proof.supervisor.json.tmp')
   const proofFile = path.join(workerProfile, 'proof.json')
   let proof
   try { proof = JSON.parse(readFileSync(workerProofFile, 'utf8')) } catch {}
-  const verdict = evaluateWorkerExit({ exit, workerStarted, unconfirmedStop, stopError, outerSignal, proof })
-  const { workerExited, interrupted, finalResult, workerExitCode, workerExitSignal, workerStopError, workerSpawnError } = verdict
+  const verdict = evaluateWorkerExit({ exit, workerStarted, unconfirmedStop, stopError, stdoutForwardError, outerSignal, proof })
+  const { workerExited, interrupted, finalResult, workerExitCode, workerExitSignal, workerStopError, workerSpawnError, stdoutForwardError: formattedStdoutError } = verdict
   const finalProof = {
     ...(proof ?? { profile: workerProfile }),
     result: finalResult,
@@ -123,6 +124,7 @@ export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfi
     workerExitSignal,
     ...(workerStopError ? { workerStopError } : {}),
     ...(workerSpawnError ? { workerSpawnError } : {}),
+    ...(formattedStdoutError ? { stdoutForwardError: formattedStdoutError } : {}),
   }
   writeFileSync(supervisorProofTmp, JSON.stringify(finalProof, null, 2))
   renameSync(supervisorProofTmp, proofFile)

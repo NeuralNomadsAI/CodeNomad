@@ -101,6 +101,15 @@ test('evaluateWorkerExit marks spawn errors, supervisor code 86, and unconfirmed
   assert.equal(clean.workerExited, true)
   assert.equal(clean.workerExitCode, 0)
   assert.equal(clean.finalResult, 0)
+
+  const truncatedStdout = evaluateWorkerExit({
+    exit: { code: 0, signal: null },
+    stdoutForwardError: new Error('Timed out draining forwarded worker stdout'),
+    proof: { result: 0 },
+  })
+  assert.equal(truncatedStdout.workerExited, true)
+  assert.equal(truncatedStdout.stdoutForwardError, 'Timed out draining forwarded worker stdout')
+  assert.equal(truncatedStdout.finalResult, 1)
 })
 
 test('validateOwnedWorkerProfile rejects links and createWorkerStdoutTap authenticates worker startup over pipe', async () => {
