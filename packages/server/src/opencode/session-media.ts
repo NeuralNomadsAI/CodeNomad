@@ -42,8 +42,9 @@ export function toolFile(message: unknown, part: number, index: number): unknown
  * Replaces, in place, tool images whose data URI exceeds INLINE_MEDIA_LIMIT in
  * native messages with their session-media path. The digest pins the exact bytes.
  */
-export function deferToolMedia(messages: unknown, scope: { workspaceId: string; sessionId: string }): void {
-  if (!Array.isArray(messages)) return
+export function deferToolMedia(messages: unknown, scope: { workspaceId: string; sessionId: string }): boolean {
+  if (!Array.isArray(messages)) return false
+  let changed = false
   for (const message of messages) {
     if (message?.type !== "assistant" || typeof message.id !== "string" || !Array.isArray(message.content)) continue
     message.content.forEach((tool: { type?: unknown; state?: { content?: unknown } } | null, part: number) => {
@@ -52,9 +53,13 @@ export function deferToolMedia(messages: unknown, scope: { workspaceId: string; 
         if (!isRenderableToolImage(file) || file.uri.length <= INLINE_MEDIA_LIMIT) return
         try {
           const reference = sessionMediaPath({ ...scope, messageId: message.id, part, index, digest: mediaDigest(file.uri) })
-          if (parseSessionMediaPath(reference)) file.uri = reference
+          if (parseSessionMediaPath(reference)) {
+            file.uri = reference
+            changed = true
+          }
         } catch (error) { if (!(error instanceof URIError)) throw error }
       })
     })
   }
+  return changed
 }

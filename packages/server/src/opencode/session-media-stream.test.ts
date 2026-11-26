@@ -97,3 +97,42 @@ test("deferToolMediaStream streams an oversized single message raw without skipp
     `/api/workspaces/w/session-media/s/normal/1/0/${normalDigest}`,
   )
 })
+
+test("deferToolMediaStream packs 1-byte chunks into bounded slabs and preserves unchanged bytes verbatim", async () => {
+  const bigUri = `data:image/png;base64,${"D".repeat(INLINE_MEDIA_LIMIT + 512)}`
+  const digest = mediaDigest(bigUri)
+  // Unchanged message exceeds INLINE_MEDIA_LIMIT and contains a > 2^53 integer that JSON.parse would round.
+  const unchangedRaw = `{"id":"keep","type":"assistant","meta":{"big":9007199254740993},"content":[{"type":"text","text":"${"z".repeat(INLINE_MEDIA_LIMIT + 100)}"}]}`
+  const projectedRaw = JSON.stringify(makeMessage("proj", bigUri))
+  const raw = Buffer.from(`{"data":[${unchangedRaw},${projectedRaw}]}`, "utf8")
+  // Deliver 1 byte at a time across > 64 KiB to exercise fixed slab packing.
+  const singleByteChunks = Array.from({ length: raw.byteLength }, (_, i) => raw.subarray(i, i + 1))
+  const out = await collect(
+    deferToolMediaStream(makeStream(singleByteChunks), { workspaceId: "w", sessionId: "s" }, 128 * 1024),
+  )
+  assert.ok(out.includes('"big":9007199254740993'), "unchanged message bytes must be preserved verbatim")
+  assert.ok(out.includes(`/api/workspaces/w/session-media/s/proj/1/0/${digest}`))
+})
+
+test("deferToolMediaStream immediately cancels a stalled upstream reader when destroyed", async () => {
+  let cancelled = false
+  let resolvePull!: () => void
+  const stalled = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(Buffer.from('{"data":[{"id":"m1",', "utf8"))
+    },
+    pull() {
+      return new Promise<void>(resolve => { resolvePull = resolve })
+    },
+    cancel() {
+      cancelled = true
+      resolvePull?.()
+    },
+  })
+  const stream = deferToolMediaStream(stalled, { workspaceId: "w", sessionId: "s" })
+  stream.resume()
+  await new Promise(resolve => setImmediate(resolve))
+  stream.destroy()
+  await new Promise<void>(resolve => stream.once("close", resolve))
+  assert.equal(cancelled, true)
+})
