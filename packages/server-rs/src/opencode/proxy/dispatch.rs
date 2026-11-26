@@ -30,6 +30,7 @@ pub(super) struct DispatchContext {
     pub root_permissions: Option<Value>,
     pub receipt: Option<crate::sessions::receipts::Prepared>,
     pub mutation: Option<crate::worktrees::fence::Entered>,
+    pub account_manual: Option<crate::provider_usage::selection::ManualGuard>,
     pub rules_lock: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
@@ -51,6 +52,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         root_permissions,
         receipt,
         mutation,
+        account_manual,
         rules_lock,
     } = ctx;
     let dispatched_mutation = mutation.is_some();
@@ -341,6 +343,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     dispatched_mutation,
                     unauthorized,
                     invalidate,
+                    account_manual,
                     false,
                 ),
                 |(
@@ -352,6 +355,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     dispatched_mutation,
                     unauthorized,
                     invalidate,
+                    account_manual,
                     done,
                 )| async move {
                     if done {
@@ -371,6 +375,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                                     dispatched_mutation,
                                     unauthorized,
                                     invalidate,
+                                    account_manual,
                                     true,
                                 ),
                             ));
@@ -387,6 +392,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                                     dispatched_mutation,
                                     unauthorized,
                                     invalidate,
+                                    account_manual,
                                     true,
                                 ),
                             ));
@@ -403,6 +409,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                                     dispatched_mutation,
                                     unauthorized,
                                     invalidate,
+                                    account_manual,
                                     true,
                                 ),
                             ));
@@ -421,6 +428,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                                 dispatched_mutation,
                                 unauthorized,
                                 invalidate,
+                                account_manual,
                                 false,
                             ),
                         )

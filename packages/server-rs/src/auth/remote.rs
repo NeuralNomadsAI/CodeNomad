@@ -41,7 +41,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET PUT DELETE",r"^/api/storage/instances/[^/]+$"),
     ("PATCH",r"^/api/storage/(?:state/ui|config/[^/]+)$"),
     ("GET",r"^/api/(?:remote-control/status|config-files|opencode/update)$"),
-    ("GET",r"^/api/workspaces/[^/]+/provider-accounts/[^/]+$"),
+    ("GET PUT",r"^/api/workspaces/[^/]+/provider-accounts/[^/]+$"),
     ("GET PUT",r"^/api/config-files/[^/]+/content$"),
     ("POST",r"^/api/storage/binaries/validate$"),
     ("POST",r"^/api/(?:client-connections/pong|workspaces(?:/creation/cancel|/[^/]+/creation/release)?)$"),

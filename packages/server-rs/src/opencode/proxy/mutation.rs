@@ -8,7 +8,10 @@ use axum::{
 };
 use serde_json::{Value, json};
 
-use super::guards::{carrier_denied, directory_identity, foreign, marker, one_location, same_target, schedule_input};
+use super::guards::{
+    carrier_denied, directory_identity, foreign, is_account_mutation, is_json_content_type, marker, one_location,
+    same_target, schedule_input,
+};
 use crate::missions::human_answer;
 use crate::opencode::{Endpoint, controls, upstream_error};
 use crate::{Error, Shared, Workspace, error, not_found, unavailable};
@@ -19,6 +22,7 @@ pub(super) struct PreparedMutation {
     pub input: Option<Value>,
     pub rules_lock: Option<tokio::sync::OwnedMutexGuard<()>>,
     pub mutation: Option<crate::worktrees::fence::Entered>,
+    pub account_manual: Option<crate::provider_usage::selection::ManualGuard>,
     pub receipt: Option<crate::sessions::receipts::Prepared>,
 }
 
@@ -96,6 +100,7 @@ pub(super) struct MutationContext<'a> {
         &'a [(String, crate::opencode::prompt::Location, (Arc<std::sync::atomic::AtomicBool>, tokio::time::Instant))],
     pub trace_fence: bool,
     pub explicit: bool,
+    pub location_context_dir: Option<&'a str>,
     pub session_list: bool,
     pub target: &'a mut reqwest::Url,
 }
@@ -115,6 +120,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         prompt_locations,
         trace_fence,
         explicit,
+        location_context_dir,
         session_list,
         target,
     } = ctx;
@@ -124,6 +130,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     let revert_stage = session.is_some() && route.ends_with("/revert/stage") && head.method == Method::POST;
     let background =
         route.starts_with("/api/session/") && route.ends_with("/background") && head.method == Method::POST;
+    let account_mutation = is_account_mutation(route, &head.method);
     let inbox_patch = session.is_some()
         && head.method == Method::PATCH
         && route.strip_prefix("/api/session/").and_then(|r| r.split_once("/inbox/")).is_some_and(|(sid, item)| {
@@ -134,6 +141,8 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/'));
     let mut root_permissions = None;
     let mut input = None;
+    let mut account_body_dirs: Vec<String> = Vec::new();
+    let mut has_body_location = false;
     if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE) {
         let mut body_empty = false;
         let data: Value = if let Some(data) = prompt_input.take() {
@@ -149,13 +158,18 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 body_empty = true;
                 json!({})
             } else {
-                if !head
-                    .headers
-                    .get(header::CONTENT_TYPE)
-                    .is_some_and(|v| v.as_bytes().starts_with(b"application/json"))
-                {
+                let valid_ct = if account_mutation {
+                    is_json_content_type(&head.headers)
+                } else {
+                    head.headers
+                        .get(header::CONTENT_TYPE)
+                        .is_some_and(|v| v.as_bytes().starts_with(b"application/json"))
+                };
+                if !valid_ct {
                     return Err(if control.is_some() {
                         controls::invalid("Invalid session control")
+                    } else if account_mutation {
+                        error(Status::BAD_REQUEST, "Invalid request body")
                     } else {
                         error(Status::BAD_REQUEST, "Session request requires a JSON object")
                     });
@@ -170,6 +184,21 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             control.validate(&data, &target)?;
             if head.method != Method::DELETE {
                 input = Some(data);
+            }
+        } else if account_mutation {
+            let Value::Object(data) = data else {
+                return Err(error(Status::BAD_REQUEST, "Invalid request body"));
+            };
+            if schedule_input(&data) {
+                return Err(carrier_denied());
+            }
+            let opened = workspace.location["directory"].as_str().ok_or_else(upstream_error)?;
+            account_body_dirs =
+                validate_account_body_locations(app, workspace, &data, opened, location_context_dir).await?;
+            has_body_location = !account_body_dirs.is_empty();
+            validate_account_body(route, &head.method, &data, body_empty)?;
+            if head.method != Method::DELETE && !body_empty {
+                input = Some(Value::Object(data));
             }
         } else {
             let Value::Object(mut data) = data else {
@@ -299,6 +328,20 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             }
             checkouts.push(key);
         }
+        for raw in &account_body_dirs {
+            let physical = match crate::files::paths::canonical(&app.scope, raw) {
+                Some(physical) => physical,
+                None => {
+                    let target = crate::worktrees::ownership::resolve_directory(raw)
+                        .unwrap_or_else(|| std::path::PathBuf::from(raw));
+                    if fence::is_blocked(&fence::identity(&target)) {
+                        return Err(error(Status::CONFLICT, "Worktree deletion is in progress"));
+                    }
+                    return Err(foreign());
+                }
+            };
+            checkouts.push(fence::identity(&fence::checkout_root(&app.scope, &physical)));
+        }
         checkouts.extend(session.map(fence::session));
         if trace_fence {
             eprintln!("mutation-fence prompt {session:?}: admit");
@@ -325,10 +368,16 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         if create && !crate::worktrees::owns(app, workspace, directory).await {
             return Err(foreign());
         }
+        for raw in &account_body_dirs {
+            if !crate::worktrees::owns(app, workspace, raw).await {
+                return Err(foreign());
+            }
+        }
         Some(permit)
     } else {
         None
     };
+    let account_manual = account_mutation.then(|| app.provider_usage.accounts.manual_fence(endpoint));
     if send_input {
         let session = session.ok_or_else(upstream_error)?;
         let mut url = endpoint.url.clone();
@@ -364,6 +413,10 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         }
         // `syncSessionMemoryContext`: advisory, bounded to its own 2 s budget.
         crate::memory::sync(app, endpoint, session, || async { recheck.verify().await.is_ok() }).await;
+        crate::provider_usage::selection::before_send(app, endpoint, principal, session, |dir| async move {
+            dir == directory && recheck.verify().await.is_ok()
+        })
+        .await?;
         let fresh = recheck.verify().await?;
         #[cfg(test)]
         crate::worktrees::fence_test_trace::record("permission rules", "waiting for send refresh");
@@ -374,7 +427,13 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         #[cfg(test)]
         crate::worktrees::fence_test_trace::record("permission rules", "send refresh finished");
     }
-    if !explicit && !create && session.is_none() && !matches!(route, "/api/project" | "/api/session/active") {
+    if !explicit
+        && !has_body_location
+        && !create
+        && session.is_none()
+        && !matches!(route, "/api/project" | "/api/session/active")
+        && !route.starts_with("/api/credential/")
+    {
         target.query_pairs_mut().append_pair(if session_list { "directory" } else { "location[directory]" }, directory);
     }
 
@@ -441,5 +500,192 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             return Err(upstream_error());
         }
     }
-    Ok(MutationOutcome::Ready(PreparedMutation { fork, root_permissions, input, rules_lock, mutation, receipt }))
+    Ok(MutationOutcome::Ready(PreparedMutation {
+        fork,
+        root_permissions,
+        input,
+        rules_lock,
+        mutation,
+        account_manual,
+        receipt,
+    }))
+}
+
+async fn validate_account_body_locations(
+    app: &Shared,
+    workspace: &Workspace,
+    data: &serde_json::Map<String, Value>,
+    opened: &str,
+    location_context_dir: Option<&str>,
+) -> Result<Vec<String>, Error> {
+    let invalid_loc = || error(Status::BAD_REQUEST, "Location does not belong to workspace");
+    if data.contains_key("workspace") || data.contains_key("workspaceID") {
+        return Err(invalid_loc());
+    }
+    let mut dirs = Vec::new();
+    if let Some(dir_val) = data.get("directory") {
+        let dir = dir_val
+            .as_str()
+            .filter(|s| !s.trim().is_empty() && !s.contains('\0') && s.encode_utf16().count() <= 4096)
+            .ok_or_else(invalid_loc)?;
+        dirs.push(dir.to_owned());
+    }
+    if let Some(loc_val) = data.get("location")
+        && !loc_val.is_null()
+    {
+        let loc = loc_val.as_object().ok_or_else(invalid_loc)?;
+        if loc.contains_key("workspace") || loc.contains_key("workspaceID") {
+            return Err(invalid_loc());
+        }
+        if loc.keys().any(|k| k != "directory") {
+            return Err(invalid_loc());
+        }
+        let dir = match loc.get("directory") {
+            Some(v) => v
+                .as_str()
+                .filter(|s| !s.trim().is_empty() && !s.contains('\0') && s.encode_utf16().count() <= 4096)
+                .ok_or_else(invalid_loc)?,
+            None => opened,
+        };
+        dirs.push(dir.to_owned());
+    }
+    for dir in &dirs {
+        if !crate::worktrees::owns(app, workspace, dir).await {
+            return Err(foreign());
+        }
+        if let Some(ctx_dir) = location_context_dir {
+            let lhs = crate::files::paths::canonical(&app.scope, dir);
+            let rhs = crate::files::paths::canonical(&app.scope, ctx_dir);
+            if lhs.is_none() || lhs != rhs {
+                return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
+            }
+        }
+    }
+    Ok(dirs)
+}
+
+fn validate_account_body(
+    route: &str,
+    method: &Method,
+    data: &serde_json::Map<String, Value>,
+    body_empty: bool,
+) -> Result<(), Error> {
+    let invalid = || error(Status::BAD_REQUEST, "Invalid request body");
+    let check_optional_label = |data: &serde_json::Map<String, Value>| -> Result<(), Error> {
+        if let Some(v) = data.get("label")
+            && !v.is_null()
+            && !v.as_str().is_some_and(|s| s.encode_utf16().count() <= 512 && !s.contains('\0'))
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    };
+    let check_optional_answer = |data: &serde_json::Map<String, Value>| -> Result<(), Error> {
+        if let Some(v) = data.get("answer")
+            && !v.is_null()
+            && !v.is_object()
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    };
+    if let Some(rest) = route.strip_prefix("/api/credential/") {
+        return match *method {
+            Method::PATCH => {
+                if body_empty || data.keys().any(|k| !matches!(k.as_str(), "label" | "location")) {
+                    return Err(invalid());
+                }
+                if !data
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.trim().is_empty() && s.encode_utf16().count() <= 256 && !s.contains('\0'))
+                {
+                    return Err(invalid());
+                }
+                Ok(())
+            }
+            Method::POST if rest.ends_with("/activate") => {
+                if !body_empty && data.keys().any(|k| k != "location") {
+                    return Err(invalid());
+                }
+                Ok(())
+            }
+            Method::DELETE => {
+                if !body_empty && data.keys().any(|k| k != "location") {
+                    return Err(invalid());
+                }
+                Ok(())
+            }
+            _ => Err(invalid()),
+        };
+    }
+    let Some((_, tail)) = route.strip_prefix("/api/integration/").and_then(|r| r.split_once("/connect/")) else {
+        return Err(invalid());
+    };
+    match (method, tail) {
+        (m, "key") if *m == Method::POST => {
+            if body_empty || data.keys().any(|k| !matches!(k.as_str(), "key" | "answer" | "label" | "location")) {
+                return Err(invalid());
+            }
+            if !data
+                .get("key")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty() && s.len() <= 65_536 && !s.contains('\0'))
+            {
+                return Err(invalid());
+            }
+            check_optional_answer(data)?;
+            check_optional_label(data)?;
+            Ok(())
+        }
+        (m, "oauth" | "external") if *m == Method::POST => {
+            if body_empty || data.keys().any(|k| !matches!(k.as_str(), "methodID" | "answer" | "label" | "location")) {
+                return Err(invalid());
+            }
+            if !data
+                .get("methodID")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty() && s.encode_utf16().count() <= 256 && !s.contains('\0'))
+            {
+                return Err(invalid());
+            }
+            check_optional_answer(data)?;
+            check_optional_label(data)?;
+            Ok(())
+        }
+        (m, "command") if *m == Method::POST => {
+            if body_empty || data.keys().any(|k| !matches!(k.as_str(), "methodID" | "label" | "location")) {
+                return Err(invalid());
+            }
+            if !data
+                .get("methodID")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty() && s.encode_utf16().count() <= 256 && !s.contains('\0'))
+            {
+                return Err(invalid());
+            }
+            check_optional_label(data)?;
+            Ok(())
+        }
+        (m, t) if *m == Method::POST && t.starts_with("oauth/") && t.ends_with("/complete") => {
+            if body_empty || data.keys().any(|k| !matches!(k.as_str(), "code" | "location")) {
+                return Err(invalid());
+            }
+            if !data
+                .get("code")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty() && s.len() <= 16_384 && !s.contains('\0'))
+            {
+                return Err(invalid());
+            }
+            Ok(())
+        }
+        (m, t) if *m == Method::DELETE && (t.starts_with("oauth/") || t.starts_with("command/")) => {
+            if !body_empty && data.keys().any(|k| k != "location") {
+                return Err(invalid());
+            }
+            Ok(())
+        }
+        _ => Err(invalid()),
+    }
 }

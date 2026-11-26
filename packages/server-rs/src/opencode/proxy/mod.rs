@@ -1,6 +1,8 @@
 //! /workspaces/:id/instance/*: the allowlisted relay to the daemon, confined to the workspace's
 //! locations and sessions.
 #[cfg(test)]
+mod account_tests;
+#[cfg(test)]
 mod background_tests;
 mod defer_media;
 mod dispatch;
@@ -18,7 +20,7 @@ use std::time::Duration;
 use axum::{
     Json,
     extract::{Request, State},
-    http::{Method, StatusCode as Status, header},
+    http::{HeaderValue, Method, StatusCode as Status, header},
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
@@ -26,12 +28,41 @@ use serde_json::{Value, json};
 use super::{SESSION_LOCATED_ELSEWHERE, SESSION_PLACEMENT_HEADER, controls, upstream_error};
 use crate::{Error, Shared, error, not_found, unavailable};
 use guards::{
-    ALLOWED, carrier_denied, foreign, guarded, is_hop_by_hop_connection_token, parse_location_context,
-    resolve_media_path_async, safe_route, schedule_input,
+    ALLOWED, carrier_denied, foreign, guarded, is_account_no_store_route, is_hop_by_hop_connection_token,
+    parse_location_context, resolve_media_path_async, safe_route, schedule_input, valid_segment,
 };
 
+fn is_account_proxy_path(path: &str, method: &Method) -> bool {
+    let Some(suffix) =
+        path.strip_prefix("/workspaces/").and_then(|t| t.split_once('/')).and_then(|(_, s)| s.strip_prefix("instance"))
+    else {
+        return false;
+    };
+    if let Some(route) = safe_route(suffix) {
+        let route = route.trim_end_matches('/');
+        if is_account_no_store_route(route, method) {
+            return true;
+        }
+    }
+    let trimmed = suffix.trim_end_matches('/');
+    trimmed == "/api/credential"
+        || trimmed.starts_with("/api/credential/")
+        || (trimmed.starts_with("/api/integration/") && trimmed.contains("/connect/"))
+}
+
 pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Response, Error> {
-    Box::pin(relay_inner(app, request)).await
+    let no_store = is_account_proxy_path(request.uri().path(), request.method());
+    let result = Box::pin(relay_inner(app, request)).await;
+    if no_store {
+        let mut response = match result {
+            Ok(response) => response,
+            Err(err) => err.into_response(),
+        };
+        response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        Ok(response)
+    } else {
+        result
+    }
 }
 
 async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
@@ -44,6 +75,12 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     let workspace = app.workspace(id)?;
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.trim_end_matches('/');
+    if (route.starts_with("/api/credential/")
+        || (route.starts_with("/api/integration/") && route.contains("/connect/")))
+        && route.trim_start_matches('/').split('/').any(|seg| !valid_segment(seg))
+    {
+        return Err(invalid());
+    }
     let prompt = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/prompt");
     let command = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/command");
     let send_input = prompt || command;
@@ -539,6 +576,8 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     } else {
         target.set_query(head.uri.query());
     }
+    let location_context_dir =
+        parsed_location_context.as_ref().and_then(|v| v["directory"].as_str()).map(str::to_owned);
     if let Some(context) = parsed_location_context {
         if send_input {
             let raw = super::prompt::context(&context)?;
@@ -685,7 +724,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         initial_identity: &initial_identity,
         input_checkout: &input_checkout,
     };
-    let mutation::PreparedMutation { fork, root_permissions, input, rules_lock, mutation, receipt } =
+    let mutation::PreparedMutation { fork, root_permissions, input, rules_lock, mutation, account_manual, receipt } =
         match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
             recheck: &recheck,
             head: &head,
@@ -700,6 +739,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             prompt_locations: &prompt_locations,
             trace_fence,
             explicit: explicit || global_form_directory.is_some(),
+            location_context_dir: location_context_dir.as_deref(),
             session_list,
             target: &mut target,
         }))
@@ -802,6 +842,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         root_permissions,
         receipt,
         mutation,
+        account_manual,
         rules_lock,
     }))
     .await

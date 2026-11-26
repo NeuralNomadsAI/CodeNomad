@@ -224,7 +224,13 @@ impl Http {
         self.fixture.as_ref().map(|_| ("fixture-client-id", "fixture-client-secret"))
     }
     pub fn open() -> Result<Self, reqwest::Error> {
-        let fixture = crate::bench::provider_fixture();
+        Self::open_with_fixture(crate::bench::provider_fixture())
+    }
+    #[cfg(test)]
+    pub fn with_fixture(fixture: Url) -> Result<Self, reqwest::Error> {
+        Self::open_with_fixture(Some(fixture))
+    }
+    fn open_with_fixture(fixture: Option<Url>) -> Result<Self, reqwest::Error> {
         let client = || Client::builder().no_proxy().timeout(Duration::from_secs(15)).user_agent("node");
         let strict = client().redirect(Policy::none()).build()?;
         let plain = client()

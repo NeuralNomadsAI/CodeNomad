@@ -2,6 +2,10 @@
 mod accounts;
 mod google;
 mod plans;
+mod quota_marks;
+pub(crate) mod selection;
+#[cfg(test)]
+mod selection_tests;
 mod shared;
 mod special;
 mod subscriptions;
@@ -9,7 +13,7 @@ mod xai;
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, LazyLock, Mutex, Weak},
+    sync::{Arc, Mutex, OnceLock, Weak},
     time::Duration,
 };
 
@@ -33,28 +37,44 @@ use crate::{
 };
 
 pub struct State {
-    http: LazyLock<Http>,
+    http: OnceLock<Http>,
     cache: Mutex<VecDeque<Cached>>,
     flights: Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
     codex: Mutex<VecDeque<Cached>>,
     google: Mutex<VecDeque<google::Token>>,
     claude: Mutex<HashMap<&'static str, subscriptions::ClaudeRead>>,
+    pub(crate) accounts: selection::AccountService,
 }
 impl Default for State {
     fn default() -> Self {
         Self {
-            http: LazyLock::new(|| Http::open().expect("Provider usage client unavailable")),
+            http: OnceLock::new(),
             cache: Default::default(),
             flights: Default::default(),
             codex: Default::default(),
             google: Default::default(),
             claude: Default::default(),
+            accounts: selection::AccountService::default(),
         }
     }
 }
 impl State {
-    fn http(&self) -> &Http {
-        &self.http
+    #[cfg(test)]
+    pub(crate) fn with_test_accounts(fixture: reqwest::Url, settle: Duration) -> Self {
+        let http = OnceLock::new();
+        let _ = http.set(Http::with_fixture(fixture).expect("Test fixture client unavailable"));
+        Self {
+            http,
+            cache: Default::default(),
+            flights: Default::default(),
+            codex: Default::default(),
+            google: Default::default(),
+            claude: Default::default(),
+            accounts: selection::AccountService::with_settle(settle),
+        }
+    }
+    pub(super) fn http(&self) -> &Http {
+        self.http.get_or_init(|| Http::open().expect("Provider usage client unavailable"))
     }
     fn flight(&self, identity: &str) -> Arc<AsyncMutex<()>> {
         let mut flights = self.flights.lock().unwrap();
@@ -151,9 +171,10 @@ fn resolve(id: &str) -> Option<&'static Provider> {
         .find(|p| p.id.eq_ignore_ascii_case(id) || p.aliases.iter().any(|a| a.eq_ignore_ascii_case(id)))
 }
 pub fn routes() -> Router<Shared> {
-    Router::new()
-        .route("/api/usage/{provider}", get(route))
-        .route("/api/workspaces/{id}/provider-accounts/{integration}", get(accounts::route))
+    Router::new().route("/api/usage/{provider}", get(route)).route(
+        "/api/workspaces/{id}/provider-accounts/{integration}",
+        get(accounts::get_route).put(accounts::put_route),
+    )
 }
 
 struct Query {
