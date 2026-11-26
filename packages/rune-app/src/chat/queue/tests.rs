@@ -11,6 +11,7 @@ fn queued(id: &str, delivery: Delivery, text: &str) -> QueuedPrompt {
         text: text.into(),
         parts: vec![],
         created: Some(1),
+        editable: true,
     }
 }
 
@@ -193,10 +194,22 @@ fn queued_prompt_gestures_guard_double_submit_recover_from_errors_and_edit_draft
         })
         .await;
         assert!(
-            !rt.state.transcript_display.queue.contains("q1"),
+            !rt.state
+                .transcript_display
+                .queue
+                .items()
+                .iter()
+                .any(|item| item.id == "q1"),
             "edited item leaves queue"
         );
-        assert!(rt.state.transcript_display.queue.contains("q2"));
+        assert!(
+            rt.state
+                .transcript_display
+                .queue
+                .items()
+                .iter()
+                .any(|item| item.id == "q2")
+        );
         http.quiet().await;
     });
 }
@@ -286,7 +299,12 @@ fn displaced_authoritative_sync_preserves_detached_anchor_and_deduplicates_pendi
     settle(&mut rt);
 
     assert!(
-        !rt.state.transcript_display.queue.contains("q-move"),
+        !rt.state
+            .transcript_display
+            .queue
+            .items()
+            .iter()
+            .any(|item| item.id == "q-move"),
         "committed row is pruned from pending queue"
     );
     assert_eq!(rt.state.messages[4].id, "q-move");
@@ -328,10 +346,11 @@ fn stale_scope_ignores_late_queued_prompt_completion() {
         .await;
         let req = http.accept().await;
 
-        // Scope changes before response arrives (reconnect / tab switch).
+        // Scope changes to another conversation before response arrives.
         rt.update(|s, _| {
-            s.renew_scope();
-            s.transcript_display.queue.offline();
+            let mut other = http.backend.clone();
+            other.session = "other-session".into();
+            s.transcript_display.queue.bind(other);
         });
         req.reply(500, json!({"error": "late"})).await;
         wait_queue(&mut rt, "stale cleared", |s| {
@@ -340,8 +359,146 @@ fn stale_scope_ignores_late_queued_prompt_completion() {
         .await;
         assert!(
             !rt.state.transcript_display.queue.has_error(),
-            "late error from expired scope must not leak into current scope"
+            "late error from expired conversation must not leak into current conversation"
         );
-        assert!(rt.state.transcript_display.queue.contains("q1"));
     });
+}
+
+#[test]
+fn edit_preserves_prompt_in_recovery_slot_when_draft_changes_or_tab_suspends() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let mut s = crate::init();
+        s.phase = Phase::Streaming;
+        s.messages = vec![user_row("u1", "First")];
+        s.transcript_display.queue.fixture_set(
+            Some(http.backend.clone()),
+            vec![queued("q1", Delivery::Queue, "Preserve me")],
+        );
+        let mut rt = runtime(s);
+
+        click(&mut rt, "queued-edit-q1");
+        wait_queue(&mut rt, "edit delete dispatch", |s| {
+            s.transcript_display.queue.pending()
+        })
+        .await;
+        let req = http.accept().await;
+        assert!(
+            req.header
+                .starts_with("DELETE /workspaces/owned/instance/api/session/session/inbox/q1 ")
+        );
+
+        // User types into the composer AND tab suspends/goes offline while DELETE is in flight.
+        rt.update(|s, _| {
+            s.draft.replace_text("new draft");
+            s.renew_scope();
+            s.transcript_display.queue.suspend();
+            s.transcript_display.queue.offline();
+        });
+        req.reply(204, json!(null)).await;
+        wait_queue(&mut rt, "edit settled into recovery slot", |s| {
+            !s.transcript_display.queue.pending()
+        })
+        .await;
+        assert_eq!(rt.state.draft.text, "new draft");
+        assert_eq!(
+            rt.state.transcript_display.queue.saved_edit(),
+            Some("Preserve me"),
+            "edited prompt must be kept in recovery slot when draft is non-empty"
+        );
+        settle(&mut rt);
+        assert!(rt.find("queued-edit-recovery").is_some());
+        assert!(rt.find("queued-edit-copy").is_some());
+        assert!(rt.find("queued-edit-discard").is_some());
+
+        // Clicking Restore while draft is non-empty must NOT overwrite the current draft.
+        click(&mut rt, "queued-edit-restore");
+        assert_eq!(rt.state.draft.text, "new draft");
+        assert_eq!(
+            rt.state.transcript_display.queue.saved_edit(),
+            Some("Preserve me")
+        );
+
+        // Clearing the draft enables Restore, which moves the saved prompt into the composer.
+        rt.update(|s, _| s.draft.replace_text(""));
+        settle(&mut rt);
+        click(&mut rt, "queued-edit-restore");
+        assert_eq!(rt.state.draft.text, "Preserve me");
+        assert_eq!(rt.state.transcript_display.queue.saved_edit(), None);
+    });
+}
+
+#[test]
+fn non_editable_attachment_prompt_disables_edit_and_omits_download_and_committed_wins_overlap() {
+    let mut s = crate::init();
+    s.phase = Phase::Streaming;
+    s.messages = vec![
+        user_row("m1", "Committed first"),
+        user_row("m2", "Committed second"),
+    ];
+    let attachment_item = QueuedPrompt {
+        id: "q-att".into(),
+        delivery: Delivery::Queue,
+        text: "With file".into(),
+        parts: vec![Part::File(crate::content::File {
+            id: "f1".into(),
+            reference: Some(crate::content::Reference {
+                message: "q-att".into(),
+                ordinal: 0,
+                sha256: "abc123".into(),
+            }),
+            picture: None,
+            mime: "text/plain".into(),
+            name: Some("notes.txt".into()),
+        })],
+        created: Some(2),
+        editable: false,
+    };
+    let overlap_item = queued("m1", Delivery::Queue, "Stale pending copy");
+    s.transcript_display.queue.fixture_set(
+        Some(Backend::unauthenticated("http://127.0.0.1:9").unwrap()),
+        vec![overlap_item, attachment_item],
+    );
+    let mut rt = runtime(s);
+
+    // Committed row m1 takes precedence: no QUEUED badge or queue buttons for m1.
+    assert!(rt.find("queued-badge-m1").is_none());
+    assert!(rt.find("queued-delivery-m1").is_none());
+    // Non-editable attachment prompt disables Edit and omits dead download button.
+    click(&mut rt, "queued-edit-q-att");
+    assert!(
+        !rt.state.transcript_display.queue.pending(),
+        "non-editable prompt must not dispatch Edit"
+    );
+    assert!(
+        rt.find("download-f1").is_none(),
+        "queued deferred attachment must not render a dead download button"
+    );
+
+    // Event::InboxFailed marks cached queue rows inert and announces an error.
+    let (ev_tx, ev_rx) = bounded(4);
+    rt.update(|s, _| s.incoming = Some(ev_rx));
+    ev_tx.try_send(Event::InboxFailed).unwrap();
+    rt.update(|s, tx| {
+        assert!(crate::chat::events::poll_chat(s, 4));
+        assert!(poll(s, tx));
+    });
+    settle(&mut rt);
+    assert!(rt.state.transcript_display.queue.is_stale());
+    assert!(rt.state.transcript_display.queue.has_error());
+    click(&mut rt, "queued-delivery-q-att");
+    assert!(
+        !rt.state.transcript_display.queue.pending(),
+        "cached queue actions must be inert after inbox failure"
+    );
+
+    // Authoritative empty Event::Inbox clears cached rows and stale error.
+    ev_tx.try_send(Event::Inbox(Vec::new())).unwrap();
+    rt.update(|s, _| {
+        assert!(crate::chat::events::poll_chat(s, 4));
+    });
+    settle(&mut rt);
+    assert!(!rt.state.transcript_display.queue.is_stale());
+    assert!(rt.state.transcript_display.queue.items().is_empty());
+    assert!(rt.find("queued-badge-q-att").is_none());
 }

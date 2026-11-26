@@ -145,6 +145,14 @@ pub fn skill_chip(skill: &crate::content::Skill) -> rune::El {
 }
 
 pub fn file_chip(s: &State, file: &crate::content::File) -> rune::El {
+    file_chip_inner(s, file, true)
+}
+
+pub fn file_chip_static(s: &State, file: &crate::content::File) -> rune::El {
+    file_chip_inner(s, file, false)
+}
+
+fn file_chip_inner(s: &State, file: &crate::content::File, downloadable: bool) -> rune::El {
     use rune_theme_codenomad::{Space, attachment, layout::Layout, workspace_tree::icons};
     let icon = if file.mime.starts_with("image/") {
         &icons::IMAGE
@@ -158,7 +166,7 @@ pub fn file_chip(s: &State, file: &crate::content::File) -> rune::El {
     let button = file
         .reference
         .clone()
-        .filter(|_| platform::attachment_export_available())
+        .filter(|_| downloadable && platform::attachment_export_available())
         .map(|reference| {
             let label = download_label(name);
             let name = name.to_owned();

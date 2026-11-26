@@ -3,7 +3,7 @@ use crate::{
     Message,
     backend::{Backend, read_json_limited},
     content::{self, Part},
-    history::{Result, WINDOW_BYTES, valid_id},
+    history::{Result, valid_id},
     prompt::Delivery,
 };
 use serde_json::{Value, json};
@@ -12,6 +12,8 @@ use std::{collections::HashSet, time::Duration};
 const DEADLINE: Duration = Duration::from_secs(15);
 pub const MAX_ITEMS: usize = 256;
 const MAX_TEXT_BYTES: usize = 256 * 1024;
+/// Accommodates a legal 20 MiB base64 attachment bundle (~26.7 MiB) plus JSON envelope overhead.
+const MAX_INBOX_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueuedPrompt {
@@ -20,6 +22,7 @@ pub struct QueuedPrompt {
     pub text: String,
     pub parts: Vec<Part>,
     pub created: Option<u64>,
+    pub editable: bool,
 }
 
 impl QueuedPrompt {
@@ -61,6 +64,34 @@ fn delivery_str(delivery: Delivery) -> &'static str {
     }
 }
 
+fn payload_is_plain_text(payload: &Value, display_text: &str) -> bool {
+    let Some(submitted_text) = payload["text"].as_str() else {
+        return false;
+    };
+    if submitted_text.trim().is_empty() || submitted_text != display_text {
+        return false;
+    }
+    let array_empty = |key: &str| {
+        payload
+            .get(key)
+            .is_none_or(|value| value.is_null() || value.as_array().is_some_and(Vec::is_empty))
+    };
+    if !array_empty("files")
+        || !array_empty("attachments")
+        || !array_empty("skills")
+        || !array_empty("agents")
+    {
+        return false;
+    }
+    match payload.get("metadata") {
+        None | Some(Value::Null) => true,
+        Some(Value::Object(map)) => map
+            .iter()
+            .all(|(key, value)| key == "displayText" && value.as_str() == Some(submitted_text)),
+        _ => false,
+    }
+}
+
 fn decode_user_item(id: &str, item: &Value, created: Option<u64>) -> Result<Option<QueuedPrompt>> {
     if item["type"] != "user" {
         return Ok(None);
@@ -70,15 +101,17 @@ fn decode_user_item(id: &str, item: &Value, created: Option<u64>) -> Result<Opti
     if !payload.is_object() {
         return Err("invalid inbox payload".into());
     }
+    let parts = content::decode_user_payload(id, payload)?;
     let text = payload["metadata"]["displayText"]
         .as_str()
         .filter(|text| !text.is_empty())
         .or_else(|| payload["text"].as_str())
+        .or_else(|| (!parts.is_empty()).then_some(""))
         .ok_or("invalid inbox prompt text")?;
     if text.len() > MAX_TEXT_BYTES {
         return Err("inbox prompt text exceeds limit".into());
     }
-    let parts = content::decode_user_payload(id, payload)?;
+    let editable = parts.is_empty() && payload_is_plain_text(payload, text);
     let created = created.or_else(|| item["time"]["created"].as_u64());
     Ok(Some(QueuedPrompt {
         id: id.into(),
@@ -86,6 +119,7 @@ fn decode_user_item(id: &str, item: &Value, created: Option<u64>) -> Result<Opti
         text: text.into(),
         parts,
         created,
+        editable,
     }))
 }
 
@@ -160,7 +194,7 @@ impl Backend {
         ) {
             return Ok(None);
         }
-        let value = read_json_limited(response.error_for_status()?, WINDOW_BYTES).await?;
+        let value = read_json_limited(response.error_for_status()?, MAX_INBOX_BYTES).await?;
         decode_list(&value).map(Some)
     }
 

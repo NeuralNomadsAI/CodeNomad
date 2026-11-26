@@ -132,6 +132,7 @@ struct FixtureState {
     sse_connections: usize,
     older_cursor: Option<Value>,
     newer_cursor: Option<Value>,
+    hold_inbox: Option<(Arc<AtomicBool>, Arc<AtomicBool>)>,
 }
 
 impl FixtureState {
@@ -151,6 +152,7 @@ impl FixtureState {
             sse_connections: 0,
             older_cursor: None,
             newer_cursor: None,
+            hold_inbox: None,
         }
     }
 
@@ -331,10 +333,24 @@ fn serve_socket(
             )
         } else if method == "GET" && path == "/workspaces/ws/instance/api/session/ses/inbox" {
             st.inbox_calls += 1;
-            if st.inbox_status == 200 {
-                (200, json!({"data": st.inbox}))
+            let hold = st.hold_inbox.take();
+            let reply_status = st.inbox_status;
+            let reply_inbox = st.inbox.clone();
+            drop(st);
+            if let Some((entered, release)) = hold {
+                entered.store(true, SeqCst);
+                let deadline = std::time::Instant::now() + Duration::from_secs(4);
+                while !release.load(SeqCst)
+                    && !stop.load(SeqCst)
+                    && std::time::Instant::now() < deadline
+                {
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            if reply_status == 200 {
+                (200, json!({"data": reply_inbox}))
             } else {
-                (st.inbox_status, json!({"error": "unavailable"}))
+                (reply_status, json!({"error": "unavailable"}))
             }
         } else if method == "PATCH"
             && path.starts_with("/workspaces/ws/instance/api/session/ses/inbox/")
@@ -694,6 +710,243 @@ fn pagination_detects_reordered_overlap_and_schedules_authoritative_resync() {
         .await;
         assert_eq!(offered, vec!["m2", "m1", "m3"]);
         assert_eq!(resynced, vec!["m2", "m1", "m3"]);
+
+        let _ = cmd_tx.send(Command::Close).await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+    });
+}
+
+#[test]
+fn decode_marks_only_lossless_plain_text_prompts_editable_and_accepts_attachment_only() {
+    let list = json!({
+        "data": [
+            {"id": "plain", "type": "user", "delivery": "queue", "payload": {"text": "Plain follow-up"}},
+            {"id": "with_display", "type": "user", "delivery": "queue", "payload": {"text": "expanded", "metadata": {"displayText": "[Pasted #1]"}}},
+            {"id": "with_agent", "type": "user", "delivery": "queue", "payload": {"text": "@coder check", "agents": [{"name": "coder"}]}},
+            {"id": "att_only", "type": "user", "delivery": "steer", "payload": {"files": [{"name": "a.txt", "mime": "text/plain", "source": {"type": "uri", "uri": "file:///a.txt"}}]}}
+        ]
+    });
+    let items = inbox::decode_list(&list).unwrap();
+    assert_eq!(items.len(), 4);
+    assert!(items[0].editable);
+    assert!(!items[1].editable);
+    assert!(!items[2].editable);
+    assert!(!items[3].editable);
+    assert_eq!(items[3].text, "");
+    assert_eq!(items[3].parts.len(), 1);
+}
+
+#[test]
+fn background_inbox_read_does_not_block_streaming_or_stall_and_generation_switch_clears_stale() {
+    run(async {
+        let entered = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let mut initial = FixtureState::new(
+            vec![user_json("u1", "start"), assistant_json("a1", "hi", false)],
+            vec![inbox_json("q1", "steer", "promoted")],
+        );
+        initial.hold_inbox = Some((entered.clone(), release.clone()));
+        let server = LoopbackServer::start(initial);
+        let backend = server.backend();
+        let (out_tx, out_rx) = bounded(64);
+        let (cmd_tx, cmd_rx) = bounded(16);
+        let (demand_tx, demand_rx) = demand::open();
+        let gen1 = demand_tx.publish(Some(demand::Target::Latest));
+        let (reader_tx, reader_rx) = bounded(64);
+        let reading = ReadingLane {
+            demand: demand_rx,
+            events: reader_tx,
+            connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        };
+        let wake: crate::Wake = Arc::new(|| {});
+        let task = tokio::spawn(recovery::run_with_reading(
+            backend,
+            out_tx,
+            cmd_rx,
+            wake,
+            Some(reading),
+        ));
+
+        // Initial history sync completes while GET /inbox is held open in the background.
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen1 && matches!(event, Event::ReaderSync { .. })
+        })
+        .await;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !entered.load(SeqCst) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("background GET /inbox must start");
+
+        // While GET /inbox is held, send a live streaming delta and verify it arrives immediately.
+        server.state.lock().unwrap().emit_native(json!({
+            "type": "session.text.delta",
+            "data": {
+                "sessionID": "ses",
+                "assistantMessageID": "a1",
+                "ordinal": 0,
+                "delta": " live-chunk"
+            }
+        }));
+        let saw_delta = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok((_, _, Event::Text(id, _))) = reader_rx.recv().await
+                    && id == "a1"
+                {
+                    return true;
+                }
+            }
+        })
+        .await
+        .unwrap_or(false);
+        assert!(
+            saw_delta,
+            "held background inbox GET must not block live streaming text deltas"
+        );
+
+        // Release GET /inbox: unrelated text delta must NOT reject or stall the inbox result.
+        release.store(true, SeqCst);
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen1
+                && matches!(event, Event::Inbox(items) if items.len() == 1 && items[0].id == "q1")
+        })
+        .await;
+
+        // Lone session.inbox.enqueued with zero subsequent SSE frames wakes via inbox_deadline.
+        {
+            let mut st = server.state.lock().unwrap();
+            st.inbox = vec![
+                inbox_json("q1", "steer", "promoted"),
+                inbox_json("q2", "queue", "lone enqueue"),
+            ];
+            st.emit_native(json!({
+                "type": "session.inbox.enqueued",
+                "created": 100,
+                "data": {
+                    "sessionID": "ses",
+                    "inboxID": "q2",
+                    "item": {
+                        "id": "q2",
+                        "type": "user",
+                        "delivery": "queue",
+                        "payload": {"text": "lone enqueue"}
+                    }
+                }
+            }));
+        }
+        let calls_before = server.state.lock().unwrap().inbox_calls;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while server.state.lock().unwrap().inbox_calls <= calls_before {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("lone enqueue must wake the loop and fetch authoritative inbox order");
+
+        // Hold an old-generation GET /inbox across generation switch; new generation returns empty [].
+        let old_entered = Arc::new(AtomicBool::new(false));
+        let old_release = Arc::new(AtomicBool::new(false));
+        {
+            let mut st = server.state.lock().unwrap();
+            st.inbox = vec![inbox_json("q-stale", "queue", "from old gen")];
+            st.hold_inbox = Some((old_entered.clone(), old_release.clone()));
+        }
+        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !old_entered.load(SeqCst) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("old-gen GET /inbox must start");
+
+        // Switch generation and clear server inbox to empty [].
+        server.state.lock().unwrap().inbox.clear();
+        let gen2 = demand_tx.publish(Some(demand::Target::Latest));
+        assert!(gen2 > gen1);
+        // Release the late old-generation reply; it must be discarded and gen2 must emit empty [].
+        old_release.store(true, SeqCst);
+        let mut saw_gen2_empty = false;
+        recv_reader(&reader_rx, |seen_gen, event| {
+            if seen_gen == gen2
+                && let Event::Inbox(items) = event
+            {
+                assert!(
+                    items.is_empty(),
+                    "late old-generation inbox items must never leak into new generation"
+                );
+                saw_gen2_empty = true;
+                return true;
+            }
+            false
+        })
+        .await;
+        assert!(saw_gen2_empty);
+
+        // Persistent inbox failure emits Event::InboxFailed after bounded retries.
+        server.state.lock().unwrap().inbox_status = 500;
+        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen2 && matches!(event, Event::InboxFailed)
+        })
+        .await;
+        drop(out_rx);
+        let _ = cmd_tx.send(Command::Close).await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+    });
+}
+
+#[test]
+fn persistent_inbox_history_overlap_prefers_committed_and_bounds_repairs() {
+    run(async {
+        // Server persistently reports already-committed u1 inside /inbox alongside q2.
+        let initial = FixtureState::new(
+            vec![user_json("u1", "committed")],
+            vec![
+                inbox_json("u1", "queue", "stale duplicate"),
+                inbox_json("q2", "queue", "real queued"),
+            ],
+        );
+        let server = LoopbackServer::start(initial);
+        let backend = server.backend();
+        let (out_tx, _out_rx) = bounded(64);
+        let (cmd_tx, cmd_rx) = bounded(16);
+        let (demand_tx, demand_rx) = demand::open();
+        let gen1 = demand_tx.publish(Some(demand::Target::Latest));
+        let (reader_tx, reader_rx) = bounded(64);
+        let reading = ReadingLane {
+            demand: demand_rx,
+            events: reader_tx,
+            connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        };
+        let wake: crate::Wake = Arc::new(|| {});
+        let task = tokio::spawn(recovery::run_with_reading(
+            backend,
+            out_tx,
+            cmd_rx,
+            wake,
+            Some(reading),
+        ));
+
+        // Published Event::Inbox must suppress committed u1 and retain only q2.
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen1
+                && matches!(event, Event::Inbox(items) if items.len() == 1 && items[0].id == "q2")
+        })
+        .await;
+
+        // Even after several SyncInbox triggers with persistent overlap, history repair stays bounded.
+        for _ in 0..4 {
+            cmd_tx.send(Command::SyncInbox).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(60)).await;
+        }
+        let page_calls = server.state.lock().unwrap().page_calls;
+        assert!(
+            page_calls <= 4,
+            "persistent overlap must stay bounded, saw {page_calls} page calls"
+        );
 
         let _ = cmd_tx.send(Command::Close).await;
         let _ = tokio::time::timeout(Duration::from_secs(2), task).await;

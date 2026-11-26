@@ -529,10 +529,15 @@ fn drain_chat(
                     s.messages.push(m.into());
                 }
             }
-            Event::Inbox(items) => {
+            Event::Inbox(mut items) => {
+                items.retain(|item| !s.messages.iter().any(|row| row.id == item.id));
+                chat::reader::preserve_anchor_on_inbox_change(s, &items);
                 if !s.transcript_display.queue.set_items(items) {
                     continue;
                 }
+            }
+            Event::InboxFailed => {
+                s.transcript_display.queue.failed();
             }
             Event::PromptAcknowledged { attempted, outcome } => {
                 composer::acknowledge(s, &attempted, outcome);

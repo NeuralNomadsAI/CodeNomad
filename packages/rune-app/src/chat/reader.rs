@@ -706,6 +706,33 @@ pub(crate) fn preserve_anchor_on_displacement(
     }
 }
 
+pub(crate) fn preserve_anchor_on_inbox_change(
+    s: &mut State,
+    next: &[codenomad_client::inbox::QueuedPrompt],
+) {
+    if s.history_detached
+        || s.reader
+            .as_ref()
+            .is_none_or(|reader| reader.is_resuming() || reader.has_pending_scroll())
+    {
+        return;
+    }
+    let history_bounds = s.tool_diff_preferences.history_bounds.get();
+    let cached_gap = s.reader.as_ref().is_some_and(|reader| reader.gap);
+    let Bookmark::Message { id, offset } = s
+        .transcript_display
+        .reading()
+        .live_bookmark(history_bounds, cached_gap)
+    else {
+        return;
+    };
+    if next.iter().any(|item| item.id == id)
+        && let Some(reader) = &mut s.reader
+    {
+        reader.anchor_in_place(Bookmark::Message { id, offset });
+    }
+}
+
 pub(crate) fn suspend(s: &mut State) {
     let width = s.tool_diff_preferences.history_width();
     let history_bounds = s.tool_diff_preferences.history_bounds.get();

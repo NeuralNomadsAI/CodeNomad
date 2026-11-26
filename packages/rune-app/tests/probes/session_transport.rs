@@ -157,6 +157,7 @@ pub fn contract() {
             | Event::PromptAcknowledged { .. }
             | Event::Tool(..)
             | Event::Inbox(_)
+            | Event::InboxFailed
             | Event::PagingFailed => {}
             Event::Message(message) => {
                 assert!(

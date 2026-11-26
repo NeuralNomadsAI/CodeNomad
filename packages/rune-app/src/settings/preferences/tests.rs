@@ -771,6 +771,20 @@ async fn request(listener: &TcpListener) -> Request {
     request_with_timeout(listener, Duration::from_secs(3)).await
 }
 
+async fn request_raw(listener: &TcpListener) -> Request {
+    let deadline = Duration::from_secs(3);
+    timeout(deadline, async {
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            if let Some(req) = try_read_request(socket, deadline).await {
+                return req;
+            }
+        }
+    })
+    .await
+    .unwrap()
+}
+
 async fn request_with_timeout(listener: &TcpListener, deadline: Duration) -> Request {
     timeout(deadline, async {
         loop {

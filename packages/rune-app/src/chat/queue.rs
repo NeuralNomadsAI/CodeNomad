@@ -13,7 +13,6 @@ use rune_theme_codenomad::{
     Space, TextRole, attachment,
     layout::{self, Layout},
 };
-use std::rc::{Rc, Weak};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
@@ -22,12 +21,15 @@ mod tests;
 pub(crate) struct Queue {
     backend: Option<Backend>,
     items: Vec<QueuedPrompt>,
+    stale: bool,
     busy: Option<Job>,
+    saved_edit: Option<String>,
     error: Option<&'static str>,
+    announce_error: Option<&'static str>,
 }
 
 struct Job {
-    scope: Weak<()>,
+    owner: Backend,
     cancel: Sender<()>,
     returned: Receiver<codenomad_client::history::Result<Outcome>>,
 }
@@ -44,44 +46,68 @@ enum Outcome {
     Removed { id: String },
 }
 
+fn same_conversation(a: &Backend, b: &Backend) -> bool {
+    a.workspace == b.workspace
+        && a.session == b.session
+        && a.client.same_connection(&b.client)
+        && a.session_directory == b.session_directory
+}
+
 impl Queue {
     pub(super) fn bind(&mut self, backend: Backend) {
-        if !self.backend.as_ref().is_some_and(|old| {
-            old.workspace == backend.workspace
-                && old.session == backend.session
-                && old.client.same_connection(&backend.client)
-                && old.session_directory == backend.session_directory
-        }) {
+        if !self
+            .backend
+            .as_ref()
+            .is_some_and(|old| same_conversation(old, &backend))
+        {
+            if let Some(job) = self.busy.take() {
+                job.cancel.close();
+            }
             *self = Self {
                 backend: Some(backend),
                 ..Self::default()
             };
+        } else {
+            self.backend = Some(backend);
         }
     }
 
     pub(super) fn suspend(&mut self) {
-        if let Some(job) = &mut self.busy {
-            job.cancel.close();
-            job.scope = Weak::new();
-        }
+        self.stale = true;
     }
 
     pub(super) fn offline(&mut self) {
-        self.suspend();
+        self.stale = true;
     }
 
     pub(super) fn clear(&mut self) {
-        self.suspend();
+        if let Some(job) = self.busy.take() {
+            job.cancel.close();
+        }
         self.items.clear();
+        self.stale = false;
+        self.saved_edit = None;
         self.error = None;
+        self.announce_error = None;
     }
 
     pub(super) fn set_items(&mut self, items: Vec<QueuedPrompt>) -> bool {
-        if self.items == items {
+        let was_stale = std::mem::replace(&mut self.stale, false);
+        let cleared_read_error = self.error == Some("promptQueue.error.message");
+        if cleared_read_error {
+            self.error = None;
+        }
+        if self.items == items && !was_stale && !cleared_read_error {
             return false;
         }
         self.items = items;
         true
+    }
+
+    pub(super) fn failed(&mut self) {
+        self.stale = true;
+        self.error = Some("promptQueue.error.message");
+        self.announce_error = Some("promptQueue.error.message");
     }
 
     pub(super) fn prune_committed(&mut self, committed: &[crate::history::Row]) -> bool {
@@ -95,12 +121,12 @@ impl Queue {
         &self.items
     }
 
-    pub(super) fn contains(&self, id: &str) -> bool {
-        self.items.iter().any(|item| item.id == id)
-    }
-
     pub(super) fn has_error(&self) -> bool {
         self.error.is_some()
+    }
+
+    pub(super) fn has_saved_edit(&self) -> bool {
+        self.saved_edit.is_some()
     }
 
     pub(crate) fn pending(&self) -> bool {
@@ -108,10 +134,23 @@ impl Queue {
     }
 
     #[cfg(test)]
+    pub(crate) fn is_stale(&self) -> bool {
+        self.stale
+    }
+
+    #[cfg(test)]
+    pub(crate) fn saved_edit(&self) -> Option<&str> {
+        self.saved_edit.as_deref()
+    }
+
+    #[cfg(test)]
     pub(crate) fn fixture_set(&mut self, backend: Option<Backend>, items: Vec<QueuedPrompt>) {
         self.backend = backend;
         self.items = items;
+        self.stale = false;
+        self.saved_edit = None;
         self.error = None;
+        self.announce_error = None;
     }
 }
 
@@ -122,6 +161,7 @@ fn available(s: &State) -> bool {
         && !crate::git::placement_unconfirmed(s)
         && crate::workspace::input_ready(s)
         && s.reader.as_ref().is_none_or(|reader| !reader.blocks_send())
+        && !s.transcript_display.queue.stale
         && !s.transcript_display.queue.pending()
         && s.transcript_display.queue.backend.is_some()
 }
@@ -134,7 +174,18 @@ fn empty_draft(s: &State) -> bool {
 }
 
 fn start(s: &mut State, intent: Intent) {
-    if !available(s) || matches!(&intent, Intent::Edit { .. }) && !empty_draft(s) {
+    if !available(s) {
+        return;
+    }
+    if let Intent::Edit { id, .. } = &intent
+        && (!empty_draft(s)
+            || !s
+                .transcript_display
+                .queue
+                .items
+                .iter()
+                .any(|item| &item.id == id && item.editable))
+    {
         return;
     }
     let owner = &mut s.transcript_display.queue;
@@ -144,8 +195,9 @@ fn start(s: &mut State, intent: Intent) {
     let (cancel, cancelled) = bounded(1);
     let (done, returned) = bounded(1);
     owner.error = None;
+    owner.announce_error = None;
     owner.busy = Some(Job {
-        scope: Rc::downgrade(&s.input_scope),
+        owner: backend.clone(),
         cancel,
         returned,
     });
@@ -176,18 +228,35 @@ fn start(s: &mut State, intent: Intent) {
     });
 }
 
+fn restore_draft(s: &mut State, text: &str, tx: &mut Tx) {
+    s.draft.replace_text(text);
+    s.composer.picker.changed(&s.draft, &s.reads, &s.wake);
+    tx.focus("composer", false);
+    crate::workspace::capture(s);
+}
+
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
+    let mut changed = false;
+    if let Some(error) = s.transcript_display.queue.announce_error.take() {
+        layout::announce_alert(tx, t(error));
+        changed = true;
+    }
     let Some(job) = &s.transcript_display.queue.busy else {
-        return false;
+        return changed;
     };
     let result = match job.returned.try_recv() {
         Ok(result) => Some(result),
         Err(codenomad_client::TryRecvError::Closed) => None,
-        Err(codenomad_client::TryRecvError::Empty) => return false,
+        Err(codenomad_client::TryRecvError::Empty) => return changed,
     };
-    let current = job.scope.ptr_eq(&Rc::downgrade(&s.input_scope)) && !s.screen.is_launcher();
+    let same_session = s
+        .transcript_display
+        .queue
+        .backend
+        .as_ref()
+        .is_some_and(|current| same_conversation(&job.owner, current));
     s.transcript_display.queue.busy = None;
-    if !current {
+    if !same_session {
         return true;
     }
     if let Some(commands) = &s.commands {
@@ -212,11 +281,11 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 .items
                 .retain(|item| item.id != id);
             s.revision += 1;
-            if empty_draft(s) {
-                s.draft.replace_text(&text);
-                s.composer.picker.changed(&s.draft, &s.reads, &s.wake);
-                tx.focus("composer", false);
-                crate::workspace::capture(s);
+            if !s.screen.is_launcher() && empty_draft(s) {
+                s.transcript_display.queue.saved_edit = None;
+                restore_draft(s, &text, tx);
+            } else {
+                s.transcript_display.queue.saved_edit = Some(text);
             }
         }
         Some(Ok(Outcome::Removed { id })) => {
@@ -227,14 +296,17 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             s.revision += 1;
         }
         Some(Err(err)) => {
-            s.transcript_display.queue.error = Some(if err.is::<InboxUnavailable>() {
+            let key = if err.is::<InboxUnavailable>() {
                 "session.messageActions.serverUnavailable"
             } else {
                 "promptQueue.error.message"
-            });
+            };
+            s.transcript_display.queue.error = Some(key);
+            layout::announce_alert(tx, t(key));
         }
         None => {
             s.transcript_display.queue.error = Some("promptQueue.error.message");
+            layout::announce_alert(tx, t("promptQueue.error.message"));
         }
     }
     true
@@ -279,7 +351,7 @@ pub(super) fn message(s: &State, item: &QueuedPrompt) -> El {
         .child(
             layout::button_tx(
                 t("promptQueue.actions.edit"),
-                !can_act || !empty_draft(s),
+                !can_act || !item.editable || !empty_draft(s),
                 screen::action_tx(&s.input_scope, {
                     let id = id.clone();
                     let text = item.text.clone();
@@ -336,7 +408,7 @@ pub(super) fn message(s: &State, item: &QueuedPrompt) -> El {
     for part in &item.parts {
         let body = match part {
             Part::Skill(skill) => Some(super::attachments::skill_chip(skill)),
-            Part::File(file) => Some(super::attachments::file_chip(s, file)),
+            Part::File(file) => Some(super::attachments::file_chip_static(s, file)),
             _ => None,
         };
         if let Some(body) = body {
@@ -344,6 +416,50 @@ pub(super) fn message(s: &State, item: &QueuedPrompt) -> El {
         }
     }
     view
+}
+
+pub(in crate::chat) fn recovery(s: &State) -> Option<El> {
+    let saved = s.transcript_display.queue.saved_edit.as_ref()?;
+    let copy_text = saved.clone();
+    Some(
+        layout::action_row()
+            .key("queued-edit-recovery")
+            .child(
+                layout::button_tx(
+                    t("promptQueue.actions.edit"),
+                    !empty_draft(s),
+                    screen::action_tx(&s.input_scope, |s, tx| {
+                        if !empty_draft(s) {
+                            return;
+                        }
+                        if let Some(text) = s.transcript_display.queue.saved_edit.take() {
+                            restore_draft(s, &text, tx);
+                        }
+                    }),
+                )
+                .key("queued-edit-restore"),
+            )
+            .child(
+                layout::button_tx(
+                    t("messageItem.actions.copy"),
+                    false,
+                    screen::action_tx(&s.input_scope, move |_, tx| {
+                        tx.copy(copy_text.clone());
+                    }),
+                )
+                .key("queued-edit-copy"),
+            )
+            .child(
+                layout::button(
+                    t("promptQueue.actions.cancelEdit"),
+                    false,
+                    screen::action(&s.input_scope, |s| {
+                        s.transcript_display.queue.saved_edit = None;
+                    }),
+                )
+                .key("queued-edit-discard"),
+            ),
+    )
 }
 
 pub(in crate::chat) fn error(s: &State) -> Option<El> {

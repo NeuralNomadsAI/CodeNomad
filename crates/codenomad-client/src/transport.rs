@@ -152,6 +152,7 @@ pub enum Event {
     AnchorFailed(u64),
     Message(Message),
     Inbox(Vec<crate::inbox::QueuedPrompt>),
+    InboxFailed,
     PromptAcknowledged {
         attempted: String,
         outcome: PromptOutcome,

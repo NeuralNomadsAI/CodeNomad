@@ -50,6 +50,13 @@ async fn start(
     );
     status.reply(200, json!({"data":{}})).await;
     until(&events, |event| matches!(event, Event::Sync(_))).await;
+    let inbox = request_raw(listener).await;
+    assert_eq!(
+        inbox.first,
+        "GET /workspaces/project/instance/api/session/session/inbox HTTP/1.1"
+    );
+    inbox.reply(200, json!({"data":[]})).await;
+    until(&events, |event| matches!(event, Event::Inbox(_))).await;
     (sse, commands, events)
 }
 

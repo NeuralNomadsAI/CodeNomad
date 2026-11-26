@@ -62,13 +62,13 @@ pub fn rows(s: &State) -> El {
         s.transcript_display.queue.items()
     };
     let mut order = Vec::with_capacity(visible.len() + pending.len());
-    for (index, row) in visible.iter().enumerate() {
-        if pending.is_empty() || !s.transcript_display.queue.contains(&row.id) {
-            order.push(RowSource::Committed(index));
-        }
+    for index in 0..visible.len() {
+        order.push(RowSource::Committed(index));
     }
-    for index in 0..pending.len() {
-        order.push(RowSource::Pending(index));
+    for (index, item) in pending.iter().enumerate() {
+        if !visible.iter().any(|row| row.id == item.id) {
+            order.push(RowSource::Pending(index));
+        }
     }
     let keys = std::rc::Rc::new(order);
     let rows = keys.clone();

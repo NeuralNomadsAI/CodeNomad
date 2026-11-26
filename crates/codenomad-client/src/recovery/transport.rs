@@ -1,7 +1,7 @@
 //! Serialized command and SSE transport, epoch ownership and reconnect scheduling.
 use super::{
     Input, ReadingLane,
-    reader::{Lane, Reader, Turn, can_restart, reader_event},
+    reader::{InboxReply, Lane, Reader, Turn, can_restart, reader_event},
     receipts,
 };
 use crate::{
@@ -60,9 +60,64 @@ pub(crate) async fn run_with_reading(
     let mut retry = None;
     let mut attempts = 0u32;
     let mut reader = Reader::new();
+    let (inbox_tx, inbox_rx) = crate::bounded::<InboxReply>(8);
     loop {
-        let input = runtime::recv_timeout(&rx, Duration::from_millis(25)).await;
+        let upstream = wire.upstream.load(SeqCst);
+        let now = Instant::now();
+        let next_deadline = [
+            retry,
+            reader.history_deadline(opened, upstream),
+            reader.inbox_deadline(opened, upstream),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        let wait = next_deadline
+            .map(|at| {
+                at.saturating_duration_since(now)
+                    .min(Duration::from_millis(25))
+            })
+            .unwrap_or(Duration::from_millis(25));
+        let (input, inbox_reply) = if let Ok(reply) = inbox_rx.try_recv() {
+            (None, Some(reply))
+        } else {
+            futures_lite::future::race(
+                async { (runtime::recv_timeout(&rx, wait).await, None) },
+                async {
+                    match inbox_rx.recv().await {
+                        Ok(reply) => (None, Some(reply)),
+                        Err(_) => (runtime::recv_timeout(&rx, wait).await, None),
+                    }
+                },
+            )
+            .await
+        };
         reader.demand(reading);
+        if let Some(reply) = inbox_reply {
+            let lane = Lane {
+                backend: &backend,
+                reading,
+                rx: &rx,
+                wire: &wire,
+                out: &out,
+                wake: &wake,
+            };
+            match reader
+                .finish_inbox_read(
+                    &lane,
+                    epoch,
+                    reply.epoch,
+                    reply.generation,
+                    reply.seq,
+                    reply.result,
+                )
+                .await?
+            {
+                Turn::Process => {}
+                Turn::Next => continue,
+                Turn::Stop => return Ok(()),
+            }
+        }
         if retry.is_some_and(|at| Instant::now() >= at) {
             retry = None;
             connection_closed = false;
@@ -91,10 +146,8 @@ pub(crate) async fn run_with_reading(
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now() + Duration::from_millis(100);
-                reader.inbox_dirty = reader.active_reader;
-                reader.inbox_supported = true;
-                reader.inbox_retries = 0;
-                reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                reader.inbox_published = false;
+                reader.schedule_inbox_sync(Duration::from_millis(100));
             }
             Some(Input::Closed(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
@@ -102,6 +155,8 @@ pub(crate) async fn run_with_reading(
                 connection_closed = true;
                 connection_lost = true;
                 reader.dirty = true;
+                reader.invalidate_inbox_flight();
+                reader.inbox_published = false;
                 publish(&out, &wake, Event::ConnectionLost).await;
                 attempts = attempts.saturating_add(1);
                 retry =
@@ -120,6 +175,8 @@ pub(crate) async fn run_with_reading(
             Some(Input::Unavailable(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
                 reader.dirty = true;
+                reader.invalidate_inbox_flight();
+                reader.inbox_published = false;
                 if reading.is_some() || !reader.historical {
                     publish(&out, &wake, Event::Reconnecting).await;
                 }
@@ -181,20 +238,15 @@ pub(crate) async fn run_with_reading(
                 }
             }
             Some(Input::Command(Command::SyncInbox)) => {
-                reader.inbox_dirty = reader.active_reader;
-                reader.inbox_supported = true;
-                reader.inbox_retries = 0;
-                reader.inbox_quiet = Instant::now();
+                reader.schedule_inbox_sync(Duration::ZERO);
             }
             Some(Input::Command(Command::Latest)) => {
                 reader.clear_window();
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now();
-                reader.inbox_dirty = reader.active_reader;
-                reader.inbox_supported = true;
-                reader.inbox_retries = 0;
-                reader.inbox_quiet = Instant::now();
+                reader.inbox_published = false;
+                reader.schedule_inbox_sync(Duration::ZERO);
                 if connection_closed {
                     retry = Some(Instant::now());
                 }
@@ -226,10 +278,7 @@ pub(crate) async fn run_with_reading(
                 if !matches!(outcome, PromptOutcome::Rejected)
                     && (reader.busy || prompt.delivery == Some(crate::prompt::Delivery::Queue))
                 {
-                    reader.inbox_dirty = reader.active_reader;
-                    reader.inbox_supported = true;
-                    reader.inbox_retries = 0;
-                    reader.inbox_quiet = Instant::now() + Duration::from_millis(50);
+                    reader.schedule_inbox_sync(Duration::from_millis(50));
                 }
                 if !matches!(outcome, PromptOutcome::Rejected)
                     && !reader.busy
@@ -349,31 +398,35 @@ pub(crate) async fn run_with_reading(
                             "session.inbox.enqueued" => {
                                 if let Some(item) = crate::inbox::decode_enqueued(&native) {
                                     let collides = reader.known.contains(&item.id);
-                                    if let Some(existing) =
-                                        reader.inbox.iter_mut().find(|row| row.id == item.id)
+                                    if !collides {
+                                        if let Some(existing) =
+                                            reader.inbox.iter_mut().find(|row| row.id == item.id)
+                                        {
+                                            *existing = item;
+                                        } else if reader.inbox.len() < crate::inbox::MAX_ITEMS {
+                                            reader.inbox.push(item);
+                                        }
+                                        reader_event(
+                                            reading,
+                                            reader.generation,
+                                            &out,
+                                            &wake,
+                                            Event::Inbox(reader.inbox.clone()),
+                                        )
+                                        .await;
+                                    } else if !reader.historical && reader.inbox_overlap_repairs < 2
                                     {
-                                        *existing = item;
-                                    } else if reader.inbox.len() < crate::inbox::MAX_ITEMS {
-                                        reader.inbox.push(item);
-                                    }
-                                    reader_event(
-                                        reading,
-                                        reader.generation,
-                                        &out,
-                                        &wake,
-                                        Event::Inbox(reader.inbox.clone()),
-                                    )
-                                    .await;
-                                    reader.inbox_dirty = true;
-                                    reader.inbox_quiet =
-                                        Instant::now() + Duration::from_millis(100);
-                                    if collides && !reader.historical {
+                                        reader.inbox_overlap_repairs += 1;
                                         reader.dirty = true;
                                         reader.quiet = Instant::now();
                                     }
-                                } else if !reader.historical {
-                                    reader.dirty = true;
-                                    reader.quiet = Instant::now() + Duration::from_millis(100);
+                                    reader.schedule_inbox_sync(Duration::from_millis(100));
+                                } else {
+                                    reader.schedule_inbox_sync(Duration::from_millis(100));
+                                    if !reader.historical {
+                                        reader.dirty = true;
+                                        reader.quiet = Instant::now() + Duration::from_millis(100);
+                                    }
                                 }
                             }
                             "session.inbox.delivery.changed" => {
@@ -392,8 +445,7 @@ pub(crate) async fn run_with_reading(
                                     )
                                     .await;
                                 }
-                                reader.inbox_dirty = true;
-                                reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                                reader.schedule_inbox_sync(Duration::from_millis(100));
                             }
                             "session.inbox.delivered" => {
                                 if let Some(inbox_id) = crate::inbox::decode_inbox_id(&native) {
@@ -410,8 +462,7 @@ pub(crate) async fn run_with_reading(
                                         .await;
                                     }
                                 }
-                                reader.inbox_dirty = true;
-                                reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                                reader.schedule_inbox_sync(Duration::from_millis(100));
                                 reader.dirty = true;
                                 reader.quiet = Instant::now() + Duration::from_millis(100);
                             }
@@ -433,8 +484,7 @@ pub(crate) async fn run_with_reading(
                                         .await;
                                     }
                                 }
-                                reader.inbox_dirty = true;
-                                reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                                reader.schedule_inbox_sync(Duration::from_millis(100));
                                 if was_known || !reader.historical {
                                     reader.dirty = true;
                                     reader.quiet = Instant::now() + Duration::from_millis(100);
@@ -526,8 +576,7 @@ pub(crate) async fn run_with_reading(
                     "session.step.started" => {
                         reader.execution_settlement = 0;
                         if !reader.inbox.is_empty() {
-                            reader.inbox_dirty = true;
-                            reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                            reader.schedule_inbox_sync(Duration::from_millis(100));
                         }
                         let mut reconciled = false;
                         let turn_start = reader
@@ -819,10 +868,8 @@ pub(crate) async fn run_with_reading(
                     "server.connected" => {
                         reader.dirty = true;
                         reader.quiet = Instant::now() + Duration::from_millis(100);
-                        reader.inbox_dirty = true;
-                        reader.inbox_supported = true;
-                        reader.inbox_retries = 0;
-                        reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                        reader.inbox_published = false;
+                        reader.schedule_inbox_sync(Duration::from_millis(100));
                     }
                     _ => {}
                 }
@@ -843,5 +890,6 @@ pub(crate) async fn run_with_reading(
         ) {
             return Ok(());
         }
+        reader.maybe_start_inbox(epoch, &backend, &wire, opened, &inbox_tx);
     }
 }
