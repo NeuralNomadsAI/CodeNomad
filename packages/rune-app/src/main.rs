@@ -75,6 +75,7 @@ struct State {
     workspace: Option<workspace::Ui>,
     shell: shell::Panels,
     status_permissions: shell::status_permissions::Permissions,
+    status_services: shell::status_services::Services,
     status_usage: shell::status_usage::Panel,
     chat_title: String,
     messages: Vec<history::Row>,
@@ -94,7 +95,7 @@ struct State {
     history_error: bool,
     history_detached: bool,
 }
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum Phase {
     Loading,
     Ready,
@@ -142,6 +143,7 @@ fn init() -> State {
         workspace: None,
         shell: Default::default(),
         status_permissions: Default::default(),
+        status_services: Default::default(),
         status_usage: Default::default(),
         chat_title: String::new(),
         messages: vec![],
@@ -251,18 +253,47 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 }
 
 fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
+    chat::reader::expire_sync_undo(s, tx.clock());
     let gesture = timeline::poll_edge(s, tx);
-    let chat = !timeline::input_precedes_admission(s, tx) && poll_chat(s, 64);
-    shell::notifications::collect(s, workspace::notification_target);
-    if !s.screen.is_launcher()
+    let conversation_visible = !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)
-        && !workspace::mission_has_reader(s)
-        && let Some(reader) = &mut s.reader
+        && !workspace::mission_has_reader(s);
+    let defer_reader_sync = conversation_visible && !s.messages.is_empty();
+    let chat = !timeline::input_precedes_admission(s, tx)
+        && chat::events::poll_chat_for_window(s, 64, defer_reader_sync, tx.clock());
+    shell::notifications::collect(s, workspace::notification_target);
+    if s.reader
+        .as_ref()
+        .is_some_and(chat::reader::Reader::has_deferred_sync)
     {
-        reader.renderer_ready(tx);
+        tx.wake_after(std::time::Duration::ZERO);
     }
-    let mut changed = gesture | chat | transcript_state::Display::poll(s, chat, now, tx);
+    let wait_manual_probe = conversation_visible && chat::reader::take_manual_probe_wait(s, tx);
+    if wait_manual_probe {
+        tx.wake_after(std::time::Duration::ZERO);
+    }
+    let history_width = s.tool_diff_preferences.history_width();
+    let wait_rail_layout = !wait_manual_probe
+        && conversation_visible
+        && s.reader
+            .as_ref()
+            .is_some_and(chat::reader::Reader::has_pending_scroll)
+        && timeline::rail_layout_pending(s, history_width);
+    if wait_rail_layout {
+        tx.wake_after(std::time::Duration::ZERO);
+    }
+    let restored = !wait_manual_probe
+        && !wait_rail_layout
+        && conversation_visible
+        && (!s
+            .reader
+            .as_ref()
+            .is_some_and(chat::reader::Reader::awaits_history_width)
+            || history_width > 0.0)
+        && chat::reader::renderer_ready(s, tx);
+    let mut changed = gesture | chat | restored | transcript_state::Display::poll(s, chat, now, tx);
+    changed |= chat::ToolDiffPreferences::sync_focused_agent_control(s, tx.focused());
     changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
@@ -275,6 +306,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         changed |= platform::pairing::poll(s, tx);
     }
+    changed |= shell::poll(s, tx);
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
     let transcript_revision = s.revision;
@@ -288,6 +320,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         changed |= settings::poll_stats(s, now, tx);
     }
     changed |= shell::status_permissions::poll(s, tx);
+    changed |= shell::status_services::poll(s, now, tx);
     changed |= shell::status_usage::poll(s, now, tx);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
@@ -306,6 +339,9 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     platform::launch::sync(s);
     workspace::capture_files_mode(s);
+    if changed {
+        workspace::enforce_memory_budget(s);
+    }
     timeline::poll_reveal(s, tx, changed);
     if changed {
         tx.instant();

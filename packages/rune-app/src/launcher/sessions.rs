@@ -485,6 +485,7 @@ fn clear_conversation_only(s: &mut State) {
     s.transcript_display.pictures.clear();
     s.transcript_display.usage_family = Default::default();
     s.status_permissions.attach(None);
+    s.status_services.attach(None);
     s.status_usage.invalidate();
     s.history_detached = false;
     s.messages.clear();
@@ -621,8 +622,7 @@ fn bind_at(
             crate::files::bind(s, &b);
         } else {
             // This is the same owned occurrence and session; the in-flight reply guard stays live.
-            agent.online = false;
-            agent.pending_known = false;
+            agent.mark_offline();
             if s.phase == Phase::Failed {
                 crate::git::close_preview(s);
                 if let Some(files) = &mut s.files {

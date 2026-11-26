@@ -89,6 +89,43 @@ impl Detail {
     pub fn clear(&mut self) {
         *self = Self::default();
     }
+
+    pub fn retained_bytes(&self) -> usize {
+        let Some(snapshot) = &self.snapshot else {
+            return 0;
+        };
+        let tasks = snapshot.tasks.iter().fold(0usize, |total, task| {
+            total
+                .saturating_add(task.id.len())
+                .saturating_add(task.key.len())
+                .saturating_add(task.title.len())
+                .saturating_add(task.role().len())
+                .saturating_add(128)
+        });
+        let reports = snapshot.reports.iter().fold(0usize, |total, (id, report)| {
+            total
+                .saturating_add(id.len())
+                .saturating_add(report.task_key.len())
+                .saturating_add(report.session_id.len())
+                .saturating_add(report.excerpt().map_or(0, str::len))
+                .saturating_add(128)
+        });
+        tasks.saturating_add(reports)
+    }
+
+    pub fn evict_snapshot(&mut self) -> usize {
+        let before = self.retained_bytes();
+        if before == 0 {
+            return 0;
+        }
+        self.cancel();
+        self.snapshot = None;
+        self.looked_up.clear();
+        if !self.id.is_empty() {
+            self.pending = Some(Demand::Refresh);
+        }
+        before
+    }
     pub fn cancel(&mut self) {
         self.active = None;
         self.staged = None;

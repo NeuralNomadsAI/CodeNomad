@@ -54,6 +54,10 @@ fn launch(s: &mut crate::State, startup: Startup, anchor: Option<String>) {
         Startup::Bound(backend) => Some(backend),
         Startup::Configured { .. } => None,
     });
+    s.status_services.attach(match &startup {
+        Startup::Bound(backend) => Some(backend),
+        Startup::Configured { .. } => None,
+    });
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);
@@ -69,7 +73,14 @@ fn launch(s: &mut crate::State, startup: Startup, anchor: Option<String>) {
             if let Some(id) = anchor {
                 reader.resume(super::reading::Bookmark::Message { id, offset: 0.0 });
             } else if let Some(previous) = &s.reader {
-                reader.resume(previous.bookmark(s.transcript_display.reading_mut()));
+                let width = s.tool_diff_preferences.history_width();
+                let history_bounds = s.tool_diff_preferences.history_bounds.get();
+                reader.resume_from(
+                    previous,
+                    s.transcript_display.reading_mut(),
+                    width,
+                    history_bounds,
+                );
             }
             s.reader = Some(reader);
             Some(lane)
