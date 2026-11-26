@@ -83,12 +83,18 @@ pub(super) fn collect_blocks(
         push(&mut blocks, &mut left, body);
     }
     for part in parts {
+        if left == 0 || blocks.len() == 32 {
+            break;
+        }
         match part {
             Part::Text(text) => push(&mut blocks, &mut left, &text.text),
             Part::Reasoning(part) => push(&mut blocks, &mut left, &part.text),
             Part::Tool(tool) => {
                 push(&mut blocks, &mut left, &tool.name);
                 for text in [&tool.output, &tool.error] {
+                    if left == 0 || blocks.len() == 32 {
+                        break;
+                    }
                     if ansi::present(text) {
                         let masked = ansi::plain_text_bounded(text, left);
                         push(&mut blocks, &mut left, &masked);

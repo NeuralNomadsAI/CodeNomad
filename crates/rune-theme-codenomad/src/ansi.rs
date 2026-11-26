@@ -69,26 +69,6 @@ struct Style {
     overline: bool,
 }
 
-fn is_regional_indicator(c: char) -> bool {
-    matches!(c, '\u{1F1E6}'..='\u{1F1FF}')
-}
-
-fn is_grapheme_extender(c: char) -> bool {
-    matches!(
-        c,
-        '\u{0300}'..='\u{036F}'
-            | '\u{1AB0}'..='\u{1AFF}'
-            | '\u{1DC0}'..='\u{1DFF}'
-            | '\u{200C}'..='\u{200D}'
-            | '\u{20D0}'..='\u{20FF}'
-            | '\u{FE00}'..='\u{FE0F}'
-            | '\u{FE20}'..='\u{FE2F}'
-            | '\u{1F3FB}'..='\u{1F3FF}'
-            | '\u{E0020}'..='\u{E007F}'
-            | '\u{E0100}'..='\u{E01EF}'
-    )
-}
-
 #[derive(Clone, Default)]
 struct Log {
     text: String,
@@ -97,9 +77,6 @@ struct Log {
     style: Style,
     pending_cr: bool,
     column: usize,
-    line_non_ascii: usize,
-    prev_char: char,
-    regional_indicator_odd: bool,
     text_limit: Option<usize>,
 }
 
@@ -140,8 +117,6 @@ impl Log {
                 });
                 self.text.extend(std::iter::repeat_n(' ', spaces));
                 self.column = 0;
-                self.prev_char = '\t';
-                self.regional_indicator_odd = false;
             }
             '\n' => self.newline(),
             _ => {
@@ -150,22 +125,7 @@ impl Log {
                     // alignment holds and concealed text never enters display, search, or copy.
                     self.text.push(' ');
                     self.column += 1;
-                    self.prev_char = ' ';
-                    self.regional_indicator_odd = false;
                     return;
-                }
-                let ri = is_regional_indicator(c);
-                let safe_break = self.prev_char != '\u{200D}'
-                    && !is_grapheme_extender(c)
-                    && !(ri && self.regional_indicator_odd);
-                // Split display lines at grapheme boundaries before non-ASCII font routing
-                // can exhaust Parley's u16 per-paragraph style table.
-                if self.text_limit.is_none()
-                    && self.line_non_ascii >= MAX_LINE_NON_ASCII
-                    && (c.is_ascii()
-                        || (safe_break && self.line_non_ascii >= MAX_LINE_NON_ASCII + 64))
-                {
-                    self.newline();
                 }
                 if let Some(limit) = self.text_limit
                     && self.text.len() + c.len_utf8() > limit
@@ -175,11 +135,6 @@ impl Log {
                 }
                 self.text.push(c);
                 self.column += 1;
-                if !c.is_ascii() && safe_break {
-                    self.line_non_ascii += 1;
-                }
-                self.prev_char = c;
-                self.regional_indicator_odd = ri && !self.regional_indicator_odd;
             }
         }
     }
@@ -192,13 +147,13 @@ impl Log {
         self.text.push('\n');
         self.start = self.text.len();
         self.column = 0;
-        self.line_non_ascii = 0;
-        self.prev_char = '\n';
-        self.regional_indicator_odd = false;
     }
 
     fn literal(&mut self, text: &str) {
         for c in text.chars() {
+            if self.at_limit() {
+                break;
+            }
             match c {
                 '\r' => {
                     if self.pending_cr {
@@ -415,7 +370,66 @@ fn flush_decoration(
     }
 }
 
-fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>, Vec<Strike>) {
+// Split paragraphs with > MAX_LINE_NON_ASCII non-ASCII graphemes on exact UAX #29
+// boundaries (matching Rune's fallback::routes) so per-paragraph font routes stay
+// well below Parley's u16 style table limit without ever splitting a grapheme.
+fn split_dense_non_ascii(log: &mut Log) {
+    use unicode_segmentation::UnicodeSegmentation;
+    let mut cuts = Vec::new();
+    let mut offset = 0;
+    for line in log.text.split('\n') {
+        if line.bytes().filter(|&b| b >= 0xc0).count() > MAX_LINE_NON_ASCII {
+            let mut non_ascii_graphemes = 0_usize;
+            for (rel, grapheme) in line.grapheme_indices(true) {
+                if non_ascii_graphemes >= MAX_LINE_NON_ASCII {
+                    cuts.push(offset + rel);
+                    non_ascii_graphemes = 0;
+                }
+                if !grapheme.is_ascii() {
+                    non_ascii_graphemes += 1;
+                }
+            }
+        }
+        offset += line.len() + 1;
+    }
+    if cuts.is_empty() {
+        return;
+    }
+    let mut text = String::with_capacity(log.text.len() + cuts.len());
+    let mut prev = 0;
+    for &cut in &cuts {
+        text.push_str(&log.text[prev..cut]);
+        text.push('\n');
+        prev = cut;
+    }
+    text.push_str(&log.text[prev..]);
+    log.text = text;
+
+    let mut runs = Vec::with_capacity(log.runs.len() + cuts.len());
+    let mut cut_idx = 0;
+    for (range, style) in std::mem::take(&mut log.runs) {
+        while cut_idx < cuts.len() && cuts[cut_idx] <= range.start {
+            cut_idx += 1;
+        }
+        let mut cur = range.start;
+        let mut local_cut = cut_idx;
+        while local_cut < cuts.len() && cuts[local_cut] < range.end {
+            let cut = cuts[local_cut];
+            if cur < cut {
+                runs.push((cur + local_cut..cut + local_cut, style));
+            }
+            cur = cut;
+            local_cut += 1;
+        }
+        if cur < range.end {
+            runs.push((cur + local_cut..range.end + local_cut, style));
+        }
+    }
+    log.runs = runs;
+}
+
+fn styled(mut log: Log) -> (String, Vec<Span>, Vec<Strike>, Vec<Strike>) {
+    split_dense_non_ascii(&mut log);
     let mut spans: Vec<Span> = Vec::with_capacity(log.runs.len().min(INK_SPAN_LIMIT));
     let mut strikes: Vec<Strike> = vec![];
     let mut overlines: Vec<Strike> = vec![];
@@ -789,51 +803,65 @@ mod tests {
 
     #[test]
     fn combined_ansi_layout_spans_and_emoji_routes_never_overflow_parley_styles() {
-        // Verify the per-paragraph Parley style budget invariant on extreme combined inputs
-        // (10,000 alternating ANSI bg spans + 56,000 emoji pairs, and 66,000 emoji pairs).
+        use unicode_segmentation::UnicodeSegmentation;
+        // Verify the per-paragraph Parley style budget invariant on extreme combined inputs:
+        // 10,000 alternating ANSI bg spans + 56,000 emoji pairs, 66,000 emoji pairs, and
+        // 65,536 ASCII+ZWJ+watch sequences where UAX #29 isolates each watch as an emoji route.
         let huge_combined = format!(
             "{}{}END",
             "\u{1b}[44mA\u{1b}[45mB".repeat(5_000),
             "A🦀".repeat(56_000)
         );
         let huge_emoji = format!("\u{1b}[31m{}END", "A🦀".repeat(66_000));
-        for source in [&huge_combined, &huge_emoji] {
+        let zwj_watches = format!("\u{1b}[31m{}END", "A\u{200d}⌚".repeat(65_536));
+        for source in [&huge_combined, &huge_emoji, &zwj_watches] {
             let (text, spans, _, _) = styled(parse(source));
             assert!(text.ends_with("END"));
             assert!(text.contains('\n'), "dense non-ASCII line must split");
             let mut offset = 0;
             for line in text.split('\n') {
                 let end = offset + line.len();
-                let non_ascii = line.bytes().filter(|&b| b >= 0xc0).count();
+                let non_ascii_graphemes = line.graphemes(true).filter(|g| !g.is_ascii()).count();
+                assert!(
+                    non_ascii_graphemes <= MAX_LINE_NON_ASCII,
+                    "paragraph exceeded MAX_LINE_NON_ASCII graphemes: {non_ascii_graphemes}"
+                );
                 let layout_on_line = spans
                     .iter()
                     .filter(|s| {
                         affects_layout(s) && (s.start as usize) < end && (s.end as usize) > offset
                     })
                     .count();
-                let estimated_styles = non_ascii * PARLEY_STYLES_PER_NON_ASCII
+                let estimated_styles = non_ascii_graphemes * PARLEY_STYLES_PER_NON_ASCII
                     + layout_on_line * PARLEY_STYLES_PER_SPAN;
                 assert!(
-                    estimated_styles <= PARLEY_STYLE_LIMIT + 64 * PARLEY_STYLES_PER_NON_ASCII,
-                    "paragraph exceeded Parley style budget: non_ascii={non_ascii}, layout={layout_on_line}"
+                    estimated_styles <= PARLEY_STYLE_LIMIT,
+                    "paragraph exceeded Parley style budget: graphemes={non_ascii_graphemes}, layout={layout_on_line}"
                 );
                 offset = end + 1;
             }
         }
-        // Exercise the real Rune/Parley runtime across both line-layout capping and line splitting.
-        let runtime_source = format!(
-            "{}{}END",
-            "\u{1b}[44mA\u{1b}[45mB".repeat(5_000),
-            "A🦀".repeat(MAX_LINE_NON_ASCII + 256)
-        );
-        let mut rt = rune::Runtime::new(
-            runtime_source,
-            |source, _| code(source, false),
-            (640.0, 360.0),
-            rune::Env::new(false, 1.0),
-        );
-        rt.frame(0.0);
-        assert!(rt.accessibility_json().to_string().contains("END"));
+        // Exercise the real Rune/Parley runtime across line-layout capping, emoji, and ZWJ splits.
+        for runtime_source in [
+            format!(
+                "{}{}END",
+                "\u{1b}[44mA\u{1b}[45mB".repeat(5_000),
+                "A🦀".repeat(MAX_LINE_NON_ASCII + 256)
+            ),
+            format!(
+                "\u{1b}[31m{}END",
+                "A\u{200d}⌚".repeat(MAX_LINE_NON_ASCII + 256)
+            ),
+        ] {
+            let mut rt = rune::Runtime::new(
+                runtime_source,
+                |source, _| code(source, false),
+                (640.0, 360.0),
+                rune::Env::new(false, 1.0),
+            );
+            rt.frame(0.0);
+            assert!(rt.accessibility_json().to_string().contains("END"));
+        }
     }
 
     #[test]
@@ -874,14 +902,24 @@ mod tests {
 
     #[test]
     fn dense_non_ascii_line_breaks_never_split_zwj_or_combining_graphemes() {
-        let zwj = format!("{}👩\u{200d}💻after", "é".repeat(MAX_LINE_NON_ASCII + 63));
-        let zwj_text = parse(&zwj).text;
-        assert!(
-            zwj_text.contains("👩\u{200d}💻"),
-            "ZWJ emoji sequence must stay intact across paragraph splits"
-        );
+        for count in [MAX_LINE_NON_ASCII, MAX_LINE_NON_ASCII + 63] {
+            let zwj = format!("{}👩\u{200d}💻after", "é".repeat(count));
+            let (zwj_text, _, _, _) = styled(parse(&zwj));
+            assert!(zwj_text.contains('\n'));
+            assert!(
+                zwj_text.contains("👩\u{200d}💻"),
+                "ZWJ emoji sequence must stay intact across paragraph splits"
+            );
+            let hebrew = format!("{}א\u{05b0}after", "é".repeat(count));
+            let (hebrew_text, _, _, _) = styled(parse(&hebrew));
+            assert!(hebrew_text.contains('\n'));
+            assert!(
+                hebrew_text.contains("א\u{05b0}"),
+                "Hebrew combining point must stay attached to its base letter across splits"
+            );
+        }
         let combining = format!("e{}", "\u{0301}".repeat(MAX_LINE_NON_ASCII + 65));
-        let combining_text = parse(&combining).text;
+        let (combining_text, _, _, _) = styled(parse(&combining));
         assert!(
             !combining_text.contains('\n'),
             "a single combining grapheme must not be split by synthetic line breaks"
@@ -1271,7 +1309,8 @@ mod tests {
         );
         assert!(!partial_strikes.is_empty() && !partial_overlines.is_empty());
 
-        // Full-line strikes/overlines take range_boxes's O(1) fast path and are not throttled by line length.
+        // Full-line strikes/overlines take range_boxes's per-visual-row fast path (linear in
+        // line length rather than quadratic in shaped runs).
         let line = format!("\u{1b}[9;53m{}\u{1b}[0m\n", "X".repeat(3_000));
         let full = line.repeat(3);
         let (full_text, _, full_strikes, full_overlines) = styled(parse(&full));
@@ -1288,7 +1327,7 @@ mod tests {
 
         // A single partial strike/overline on a heavily fragmented line (Latin/emoji or dense
         // layout spans later on the same line) is throttled before range_boxes's O(R^2) walk,
-        // while a full-line strike on the same fragmented line still uses the O(1) fast path.
+        // while a full-line strike on the same fragmented line stays linear in line length.
         let fragmented_partial = format!("\u{1b}[9;53mHIT\u{1b}[29;55m{}", "A🦀".repeat(1_000));
         let (_, _, frag_strikes, frag_overlines) = styled(parse(&fragmented_partial));
         assert!(frag_strikes.is_empty() && frag_overlines.is_empty());
