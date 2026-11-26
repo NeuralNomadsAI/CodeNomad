@@ -1,7 +1,8 @@
 //! JSON parsing for plugin controls and native plugin inventory snapshots.
 use super::{
-    ActivationControl, ConfigScope, ConfiguredRule, ConfiguredSource, ControlTarget, MAX_ITEMS,
-    RuntimeEntry, RuntimeSource, RuntimeState, Scope, ScopeRuleState, Snapshot, valid_revision,
+    ActivationControl, ConfigScope, ConfiguredRule, ConfiguredSource, ControlTarget,
+    ControllingRule, MAX_ITEMS, RuntimeEntry, RuntimeSource, RuntimeState, Scope, ScopeRuleState,
+    Snapshot, location_matches, valid_revision,
 };
 use crate::history::Result;
 use serde_json::Value;
@@ -11,7 +12,7 @@ pub(crate) fn parse_snapshot(value: &Value, expected_directory: &str) -> Result<
         .as_str()
         .filter(|p| crate::absolute_server_path(p))
         .ok_or("Invalid plugin controls Location")?;
-    if !crate::same_server_path(expected_directory, dir) {
+    if !location_matches(expected_directory, dir) {
         return Err("Plugin controls Location mismatch".into());
     }
     let runtime = parse_runtime_entries(&value["runtime"])?;
@@ -73,9 +74,12 @@ fn parse_runtime_entry(item: &Value) -> Result<RuntimeEntry> {
         Some("failed") => RuntimeState::Failed {
             error: item["state"]["error"]
                 .as_str()
-                .unwrap_or("Failed")
-                .to_owned(),
-            error_ref: item["state"]["ref"].as_str().map(str::to_owned),
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+            error_ref: item["state"]["ref"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
         },
         _ => return Err("Invalid plugin runtime state".into()),
     };
@@ -158,6 +162,7 @@ fn parse_sources(value: &Value) -> Result<Vec<ConfiguredSource>> {
             path: item["path"].as_str().map(str::to_owned),
             entry_index,
             plugin_id: item["pluginId"].as_str().map(str::to_owned),
+            managed_by_codenomad: item["managedBy"].as_str() == Some("codenomad"),
             expected_revision: item["expectedRevision"]
                 .as_str()
                 .filter(|r| valid_revision(r))
@@ -198,6 +203,17 @@ fn parse_controls(value: &Value) -> Result<Vec<ActivationControl>> {
             .as_str()
             .and_then(ScopeRuleState::parse)
             .ok_or("Invalid control project state")?;
+        let controlling_rule = item.get("controllingRule").and_then(|rule| {
+            let selector = rule["selector"].as_str().filter(|s| !s.is_empty())?;
+            let enabled = rule["enabled"].as_bool()?;
+            let scope = rule["scope"].as_str().and_then(ConfigScope::parse)?;
+            Some(ControllingRule {
+                selector: selector.to_owned(),
+                enabled,
+                scope,
+                path: rule["path"].as_str().map(str::to_owned),
+            })
+        });
         out.push(ActivationControl {
             id: id.to_owned(),
             managed_by_codenomad: item["managedBy"].as_str() == Some("codenomad"),
@@ -206,6 +222,7 @@ fn parse_controls(value: &Value) -> Result<Vec<ActivationControl>> {
             effective,
             global,
             project,
+            controlling_rule,
             orphan: item["orphan"] == Value::Bool(true),
         });
     }

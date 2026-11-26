@@ -142,6 +142,26 @@ pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceE
         "filesystem.changed" => Some(WorkspaceEvent::NativeFilesystemChanged {
             workspace_id: id.into(),
         }),
+        "plugin.updated" => {
+            let directory = value["event"]["location"]["directory"]
+                .as_str()
+                .filter(|p| crate::absolute_server_path(p))
+                .map(str::to_owned);
+            Some(WorkspaceEvent::PluginsChanged {
+                workspace_id: Some(id.into()),
+                directory,
+            })
+        }
+        "config.updated" => Some(WorkspaceEvent::ServicesConfigChanged {
+            workspace_id: id.into(),
+        }),
+        "mcp.status.changed"
+        | "mcp.resources.changed"
+        | "integration.updated"
+        | "credential.updated"
+        | "credential.switched" => Some(WorkspaceEvent::McpStatusChanged {
+            workspace_id: Some(id.into()),
+        }),
         _ => None,
     }
 }

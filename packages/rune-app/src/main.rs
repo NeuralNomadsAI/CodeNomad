@@ -284,7 +284,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         changed |= settings::poll_stats(s, now, tx);
     }
     changed |= shell::status_permissions::poll(s, tx);
-    changed |= shell::status_services::poll(s, tx);
+    changed |= shell::status_services::poll(s, now, tx);
     changed |= shell::status_usage::poll(s, now, tx);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {

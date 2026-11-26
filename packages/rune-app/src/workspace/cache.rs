@@ -95,11 +95,18 @@ impl Cache {
             files.event(event.clone());
             delivered = true;
         }
+        if self.status_services.workspace_id() == Some(target) {
+            self.status_services.event(event);
+            delivered = true;
+        }
         delivered
     }
 
     pub(super) fn has_detached_panels(&self) -> bool {
-        self.is_detached() && (self.git.owner.is_some() || self.files.is_some())
+        self.is_detached()
+            && (self.git.owner.is_some()
+                || self.files.is_some()
+                || self.status_services.workspace_id().is_some())
     }
 
     pub(super) fn collect_detached_workspace_ids(
@@ -114,6 +121,9 @@ impl Cache {
         }
         if let Some(files) = &self.files {
             out.insert(files.workspace_id().to_owned());
+        }
+        if let Some(id) = self.status_services.workspace_id() {
+            out.insert(id.to_owned());
         }
     }
 
@@ -140,6 +150,13 @@ impl Cache {
                 files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
                 changed = true;
             }
+        }
+        if let Some(id) = self.status_services.workspace_id().map(str::to_owned)
+            && !live.contains(id.as_str())
+        {
+            self.status_services
+                .event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id: id });
+            changed = true;
         }
         changed
     }
@@ -195,6 +212,27 @@ impl Cache {
                 None => {}
             }
         }
+        if let Some(id) = self.status_services.workspace_id().map(str::to_owned) {
+            match live {
+                Some(live)
+                    if !opened_after.contains(id.as_str()) && !live.contains(id.as_str()) =>
+                {
+                    self.status_services.event(
+                        &codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id: id },
+                    );
+                    changed = true;
+                }
+                Some(_) => {
+                    self.status_services.online(true);
+                    changed = true;
+                }
+                None if opened_after.contains(id.as_str()) => {
+                    self.status_services.online(true);
+                    changed = true;
+                }
+                None => {}
+            }
+        }
         changed
     }
 
@@ -209,6 +247,10 @@ impl Cache {
         }
         if let Some(files) = &mut self.files {
             files.online(online);
+            changed = true;
+        }
+        if self.status_services.workspace_id().is_some() {
+            self.status_services.online(online);
             changed = true;
         }
         changed

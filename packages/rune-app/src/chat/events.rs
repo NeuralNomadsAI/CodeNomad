@@ -112,10 +112,19 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::PluginsChanged {
                 directory,
+                ..
             }) => {
                 s.status_services.invalidate_plugins(directory.as_deref());
             }
-            Event::Workspace(codenomad_client::transport::WorkspaceEvent::McpStatusChanged) => {
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::McpStatusChanged {
+                ..
+            }) => {
+                s.status_services.invalidate_mcp();
+            }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::ServicesConfigChanged { .. },
+            ) => {
+                s.status_services.invalidate_plugins(None);
                 s.status_services.invalidate_mcp();
             }
             Event::Workspace(

@@ -75,10 +75,16 @@ pub(super) fn next_observer() -> u64 {
     next_id()
 }
 
-pub(super) fn try_begin(kind: Kind, base: &str, observer: u64, wake: Waker) -> Option<Guard> {
+pub(super) fn try_begin(
+    kind: Kind,
+    base: &str,
+    expected_settled: u64,
+    observer: u64,
+    wake: Waker,
+) -> Option<Guard> {
     let mut map = registry().lock().unwrap_or_else(|e| e.into_inner());
     let entry = map.entry((kind.clone(), base.to_owned())).or_default();
-    if entry.in_flight.is_some() {
+    if entry.in_flight.is_some() || entry.settled_id != expected_settled {
         return None;
     }
     let id = next_id();
@@ -91,6 +97,22 @@ pub(super) fn try_begin(kind: Kind, base: &str, observer: u64, wake: Waker) -> O
         id,
         settled: false,
     })
+}
+
+pub(super) fn settled_id(kind: &Kind, base: &str) -> u64 {
+    let map = registry().lock().unwrap_or_else(|e| e.into_inner());
+    map.get(&(kind.clone(), base.to_owned()))
+        .map_or(0, |entry| entry.settled_id)
+}
+
+pub(super) fn mcp_generations(base: &str) -> HashMap<String, u64> {
+    let map = registry().lock().unwrap_or_else(|e| e.into_inner());
+    map.iter()
+        .filter_map(|((kind, key_base), entry)| match kind {
+            Kind::McpServer(name) if key_base == base => Some((name.clone(), entry.settled_id)),
+            _ => None,
+        })
+        .collect()
 }
 
 pub(super) fn observe(kind: &Kind, base: &str, observer: u64, wake: &Waker) -> Observation {

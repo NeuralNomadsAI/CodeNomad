@@ -23,9 +23,20 @@ fn parses_mcp_snapshot_and_validates_location() {
     assert_eq!(snap.servers[0].status, McpState::Running);
     assert_eq!(
         snap.servers[1].status,
-        McpState::Error("connection refused".into())
+        McpState::Error(Some("connection refused".into()))
     );
     assert_eq!(snap.servers[2].status, McpState::Stopped);
+    let wsl = parse_mcp_snapshot(&doc, Some(r"\\wsl.localhost\Ubuntu\repo\work")).unwrap();
+    assert_eq!(wsl.directory, "/repo/work");
+    let no_msg = parse_mcp_snapshot(
+        &json!({
+            "location": { "directory": "/repo/work" },
+            "data": [{ "name": "broken", "status": { "status": "failed" } }]
+        }),
+        Some("/repo/work"),
+    )
+    .unwrap();
+    assert_eq!(no_msg.servers[0].status, McpState::Error(None));
     assert!(parse_mcp_snapshot(&doc, Some("/repo/other")).is_err());
     assert!(
         parse_mcp_snapshot(
@@ -158,6 +169,7 @@ fn parses_plugin_controls_snapshot_and_computes_inheritance_and_removals() {
 fn distinguishes_route_not_found_from_domain_404_and_maps_error_keys() {
     assert!(is_route_not_found_body("404 Not Found"));
     assert!(is_route_not_found_body(r#"{"message":"Not Found"}"#));
+    assert!(is_route_not_found_body(r#"{"error":"Not found"}"#));
     assert!(is_route_not_found_body(
         r#"{"statusCode":404,"error":"Not Found","message":"Route GET:/api/workspaces/ws/plugin-controls not found"}"#
     ));
@@ -182,4 +194,89 @@ fn distinguishes_route_not_found_from_domain_404_and_maps_error_keys() {
         ActionError::Conflict.activation_i18n_key(),
         "instanceServiceStatus.plugins.errors.conflict"
     );
+}
+
+#[test]
+fn excludes_managed_codenomad_plugins_from_ordinary_controls_and_surfaces_attention() {
+    let doc = json!({
+        "location": { "directory": "/home/u/repo" },
+        "runtime": [
+            {
+                "key": "managed-failed",
+                "id": "codenomad.design",
+                "managedBy": "codenomad",
+                "source": { "type": "local", "path": "/opt/design.js" },
+                "features": { "server": true },
+                "state": { "status": "failed" }
+            }
+        ],
+        "configured": {
+            "rules": [],
+            "sources": [
+                {
+                    "target": "codenomad-managed-pkg",
+                    "scope": "global",
+                    "path": "/home/opencode.jsonc",
+                    "entryIndex": 0,
+                    "managedBy": "codenomad",
+                    "expectedRevision": REV_A
+                }
+            ]
+        },
+        "controls": [
+            {
+                "id": "codenomad.missions",
+                "managedBy": "codenomad",
+                "builtin": false,
+                "effective": "disabled",
+                "global": "disabled",
+                "project": "default",
+                "controllingRule": {
+                    "selector": "codenomad.missions",
+                    "enabled": false,
+                    "scope": "global",
+                    "path": "/home/opencode.jsonc"
+                }
+            },
+            {
+                "id": "codenomad.memory",
+                "managedBy": "codenomad",
+                "builtin": false,
+                "effective": "disabled",
+                "global": "default",
+                "project": "disabled",
+                "controllingRule": {
+                    "selector": "codenomad.memory",
+                    "enabled": false,
+                    "scope": "project",
+                    "path": "/home/u/repo/opencode.jsonc"
+                }
+            }
+        ],
+        "targets": [
+            { "scope": "global", "path": "/home/opencode.jsonc", "exists": true, "expectedRevision": REV_A },
+            { "scope": "project", "path": "/home/u/repo/opencode.jsonc", "exists": true, "expectedRevision": REV_A }
+        ]
+    });
+    let snap = parse_snapshot(&doc, r"\\wsl$\Ubuntu\home\u\repo").unwrap();
+    assert_eq!(snap.directory, "/home/u/repo");
+    assert_eq!(snap.visible_controls().count(), 0);
+    assert_eq!(snap.unmatched_runtime().count(), 0);
+    assert!(snap.unmatched_sources().is_empty());
+    assert!(
+        snap.removable_for_target("codenomad-managed-pkg")
+            .is_empty()
+    );
+    assert!(snap.removable_for_control(&snap.controls[1]).is_empty());
+
+    let attention = snap.system_attention_entries();
+    // codenomad.missions disabled explicitly in global is omitted; memory (disabled), design (failed) and source (unconfirmed) appear.
+    assert_eq!(attention.len(), 3);
+    assert_eq!(attention[0].name, "codenomad.memory");
+    assert_eq!(attention[0].kind, super::SystemAttentionKind::Disabled);
+    assert_eq!(attention[0].reenable_scope, Some(Scope::Project));
+    assert_eq!(attention[1].name, "codenomad.design");
+    assert_eq!(attention[1].kind, super::SystemAttentionKind::Failed);
+    assert_eq!(attention[2].name, "codenomad-managed-pkg");
+    assert_eq!(attention[2].kind, super::SystemAttentionKind::Unconfirmed);
 }

@@ -1,12 +1,16 @@
-//! Right-panel Status: Plugins section view (switches, row actions, add-source form).
-use super::plugins::PluginsPanel;
+//! Right-panel Status: Plugins section view (switches, row actions, pending install state).
+use super::{
+    plugins::PluginsPanel,
+    plugins_cards::{add_source_panel, remove_confirm_card, system_attention_block},
+};
 use crate::{State, screen, strings::t};
 use codenomad_client::plugins::{
-    ActivationControl, RemovalTarget, RuntimeEntry, RuntimeSource, RuntimeState, Scope, Snapshot,
+    ActivationControl, ConfigScope, RemovalTarget, RuntimeEntry, RuntimeSource, RuntimeState,
+    Scope, ScopeRuleState, Snapshot,
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, field_kit,
+    Space, TextRole,
     layout::{self, Layout},
     settings, shell,
 };
@@ -36,12 +40,23 @@ pub(super) fn view(s: &State) -> Option<El> {
             );
         }
 
+        if let Some(snap) = &panel.snapshot
+            && let Some(attention) = system_attention_block(s, panel, snap)
+        {
+            body = body.child(attention);
+        }
+
         if panel.add_open && controls_available {
             body = body.child(add_source_panel(s, panel, locked));
         }
 
         if let Some(confirm) = &panel.confirm_remove {
-            body = body.child(remove_confirm_card(s, confirm, locked));
+            body = body.child(remove_confirm_card(
+                s,
+                &confirm.removal,
+                locked,
+                panel.remove_ready(),
+            ));
         }
 
         if panel.snapshot.is_none() {
@@ -52,12 +67,7 @@ pub(super) fn view(s: &State) -> Option<El> {
             } else {
                 "instanceServiceStatus.plugins.loading"
             };
-            let el = text(t(status_key)).wrap();
-            body = body.child(if panel.failed && !reading && !panel.unsupported {
-                el.role("alert")
-            } else {
-                el.role("status")
-            });
+            body = body.child(text(t(status_key)).wrap().role("status"));
         } else if let Some(snap) = &panel.snapshot {
             body = body.child(rows_list(s, panel, snap, locked));
         }
@@ -85,7 +95,7 @@ fn header_row(
     let mut actions = layout::action_row().child(
         layout::button(
             t("instanceServiceStatus.plugins.refresh"),
-            reading || panel.write_active || !panel.online,
+            !panel.online || reading || panel.write_active,
             screen::action(&s.input_scope, |s| {
                 s.status_services.plugins.request_refresh();
             }),
@@ -95,18 +105,23 @@ fn header_row(
     if controls_available {
         actions = actions.child(
             layout::button(
-                t("instanceServiceStatus.plugins.sources.addPlugin"),
+                t("instanceServiceStatus.plugins.sources.add"),
                 locked,
                 screen::action(&s.input_scope, |s| {
                     s.status_services.plugins.open_add();
                 }),
             )
             .expanded(panel.add_open)
-            .key("plugins-add-open"),
+            .key("plugins-add-toggle"),
         );
     }
     let mut header = col().full_width().separate(Space::Xs).child(actions);
-    if controls_available {
+    if controls_available
+        && panel
+            .snapshot
+            .as_ref()
+            .is_some_and(|snap| snap.visible_controls().next().is_some())
+    {
         let project_available = panel
             .snapshot
             .as_ref()
@@ -124,178 +139,20 @@ fn header_row(
     header
 }
 
-fn add_source_panel(s: &State, panel: &PluginsPanel, locked: bool) -> El {
-    let project_available = panel
-        .snapshot
-        .as_ref()
-        .is_some_and(Snapshot::project_available);
-    let can_submit = !locked && !panel.add_spec.text.trim().is_empty();
-    let scope_help = if panel.add_scope == Scope::Project {
-        format!(
-            "{}\n{}",
-            t("instanceServiceStatus.plugins.sources.trust"),
-            t("instanceServiceStatus.plugins.sources.projectWarning")
-        )
-    } else {
-        t("instanceServiceStatus.plugins.sources.trust").to_owned()
-    };
-    let info = settings::info_tip(
-        t("instanceServiceStatus.plugins.sources.addTitle"),
-        &scope_help,
-        panel.add_info_open,
-        screen::action(&s.input_scope, |s| {
-            s.status_services.plugins.add_info_open = !s.status_services.plugins.add_info_open;
-        }),
-    )
-    .key("plugins-add-info");
-
-    let edit_scope = s.input_scope.clone();
-    let input = layout::hinted_field(
-        &panel.add_spec,
-        t("instanceServiceStatus.plugins.sources.specPlaceholder"),
-    )
-    .label(t("instanceServiceStatus.plugins.sources.spec"))
-    .disabled(locked)
-    .on_edit(move |s: &mut State| {
-        if s.current_scope(&edit_scope) {
-            &mut s.status_services.plugins.add_spec
-        } else {
-            s.rejected_edit = rune::TextEdit::new("");
-            &mut s.rejected_edit
-        }
-    })
-    .on_submit(screen::action_tx(&s.input_scope, |s, _| {
-        let wake = s.wake.clone();
-        s.status_services.plugins.submit_add(&wake);
-    }));
-
-    let mut form = col()
-        .full_width()
-        .separate(Space::Xs)
-        .child(shell::service_heading_row(
-            t("instanceServiceStatus.plugins.sources.addTitle"),
-            [
-                info,
-                layout::button(
-                    t("settings.providers.actions.close"),
-                    locked,
-                    screen::action(&s.input_scope, |s| {
-                        s.status_services.plugins.open_add();
-                    }),
-                )
-                .key("plugins-add-close"),
-            ],
-        ))
-        .child(
-            input
-                .build(field_kit(layout::dark()))
-                .literal_direction()
-                .key("plugins-add-spec"),
-        )
-        .child(
-            layout::action_row()
-                .child(
-                    layout::button(
-                        t(Scope::Global.i18n_key()),
-                        locked,
-                        screen::action(&s.input_scope, |s| {
-                            s.status_services.plugins.set_add_scope(Scope::Global);
-                        }),
-                    )
-                    .checked(panel.add_scope == Scope::Global)
-                    .key("plugins-add-scope-global"),
-                )
-                .child(
-                    layout::button(
-                        t(Scope::Project.i18n_key()),
-                        locked || !project_available,
-                        screen::action(&s.input_scope, |s| {
-                            s.status_services.plugins.set_add_scope(Scope::Project);
-                        }),
-                    )
-                    .checked(panel.add_scope == Scope::Project)
-                    .key("plugins-add-scope-project"),
-                ),
-        );
-    if let Some(err) = &panel.add_error {
-        form = form.child(text(err).wrap().role("alert"));
-    }
-    let submit_label = if panel.write_active {
-        t("instanceServiceStatus.plugins.sources.adding")
-    } else {
-        t("instanceServiceStatus.plugins.sources.submit")
-    };
-    form = form.child(
-        settings::primary_action(
-            submit_label,
-            !can_submit,
-            screen::action(&s.input_scope, |s| {
-                let wake = s.wake.clone();
-                s.status_services.plugins.submit_add(&wake);
-            }),
-        )
-        .key("plugins-add-submit"),
-    );
-    settings::card(form)
-}
-
-fn remove_confirm_card(s: &State, removal: &RemovalTarget, locked: bool) -> El {
-    let scope_label = t(removal.scope.i18n_key());
-    let action = t("instanceServiceStatus.plugins.sources.remove").replace("{scope}", scope_label);
-    let mut detail = format!(
-        "{}\n{}",
-        removal.target,
-        t("instanceServiceStatus.plugins.sources.removeWarning")
-    );
-    if removal.scope == Scope::Global {
-        detail.push('\n');
-        detail.push_str(t(
-            "instanceServiceStatus.plugins.sources.removeGlobalWarning",
-        ));
-    }
-    detail.push('\n');
-    detail.push_str(t("instanceServiceStatus.plugins.sources.removeRecovery"));
-    settings::card(
-        col()
-            .full_width()
-            .separate(Space::Xs)
-            .role("group")
-            .label(&action)
-            .child(text(&action).text_role(TextRole::Button).role("heading"))
-            .child(text(&detail).wrap())
-            .child(
-                layout::action_row()
-                    .child(
-                        settings::primary_action(
-                            &action,
-                            locked,
-                            screen::action(&s.input_scope, |s| {
-                                let wake = s.wake.clone();
-                                s.status_services.plugins.confirm_and_remove(&wake);
-                            }),
-                        )
-                        .key("plugins-remove-confirm"),
-                    )
-                    .child(
-                        layout::button(
-                            t("settings.providers.actions.close"),
-                            locked,
-                            screen::action(&s.input_scope, |s| {
-                                s.status_services.plugins.cancel_remove_confirm();
-                            }),
-                        )
-                        .key("plugins-remove-cancel"),
-                    ),
-            ),
-    )
-    .key("plugins-remove-dialog")
-}
-
 fn rows_list(s: &State, panel: &PluginsPanel, snap: &Snapshot, locked: bool) -> El {
     let controls: Vec<&ActivationControl> = snap.visible_controls().collect();
     let unmatched_rt: Vec<&RuntimeEntry> = snap.unmatched_runtime().collect();
-    let unmatched_src = snap.unmatched_sources();
-    if controls.is_empty() && unmatched_rt.is_empty() && unmatched_src.is_empty() {
+    let mut pending_targets: Vec<&str> = snap
+        .unmatched_sources()
+        .into_iter()
+        .map(|src| src.target.as_str())
+        .collect();
+    for spec in panel.pending_specs_for(snap) {
+        if !pending_targets.contains(&spec) {
+            pending_targets.push(spec);
+        }
+    }
+    if controls.is_empty() && unmatched_rt.is_empty() && pending_targets.is_empty() {
         return text(t("instanceServiceStatus.plugins.empty"))
             .wrap()
             .role("status");
@@ -307,30 +164,44 @@ fn rows_list(s: &State, panel: &PluginsPanel, snap: &Snapshot, locked: bool) -> 
     for entry in unmatched_rt {
         list = list.child(runtime_row(s, panel, snap, entry, locked));
     }
-    for source in unmatched_src {
-        let removals = snap.removable_for_target(&source.target);
-        let details =
-            t("instanceServiceStatus.plugins.source.package").replace("{source}", &source.target);
+    for target in pending_targets {
+        let installing = panel.is_install_pending(&snap.directory, target);
+        let removals = snap.removable_for_target(target);
+        let details = t("instanceServiceStatus.plugins.source.package").replace("{source}", target);
+        let status_key = if installing {
+            "instanceServiceStatus.plugins.sources.pendingLabel"
+        } else {
+            "instanceServiceStatus.plugins.sources.unconfirmedLabel"
+        };
+        let mut trailing = vec![
+            text(t(status_key))
+                .text_role(TextRole::Small)
+                .role("status"),
+        ];
+        if !installing {
+            trailing.push(
+                layout::button(
+                    t("settings.providers.refresh"),
+                    !panel.online || panel.reading() || panel.write_active,
+                    screen::action(&s.input_scope, |s| {
+                        s.status_services.plugins.request_refresh();
+                    }),
+                )
+                .key(format!("plugin-src-refresh-{target}")),
+            );
+        }
         let mut item = col()
             .full_width()
             .separate(Space::Xs)
             .role("group")
-            .label(&source.target)
+            .label(target)
             .help(&details)
             .description(&details)
-            .child(shell::service_row(
-                None,
-                &source.target,
-                [
-                    text(t("instanceServiceStatus.plugins.sources.unconfirmedLabel"))
-                        .text_role(TextRole::Small)
-                        .role("status"),
-                ],
-            ));
+            .child(shell::service_row(None, target, trailing));
         if snap.controls_available && !removals.is_empty() {
             item = item.child(row_actions(s, panel, None, &removals, locked));
         }
-        list = list.child(item.key(format!("plugin-src-{}", source.target)));
+        list = list.child(item.key(format!("plugin-src-{target}")));
     }
     list
 }
@@ -352,7 +223,23 @@ fn control_row(
         .as_ref()
         .is_some_and(|r| matches!(r.state, RuntimeState::Failed { .. }));
 
-    let mut trailing = Vec::new();
+    let info_key = format!("ctrl:{}", control.id);
+    let info_key_toggle = info_key.clone();
+    let info_label =
+        t("instanceServiceStatus.plugins.system.details").replace("{name}", &control.id);
+    let mut trailing = vec![
+        settings::info_tip(
+            &info_label,
+            &details,
+            panel.open_info_key.as_deref() == Some(info_key.as_str()),
+            screen::action(&s.input_scope, move |s| {
+                s.status_services
+                    .plugins
+                    .toggle_info(info_key_toggle.clone());
+            }),
+        )
+        .key(format!("plugin-info-{}", control.id)),
+    ];
     if let Some(ver) = &version {
         trailing.push(text(ver).text_role(TextRole::Small));
     }
@@ -396,7 +283,22 @@ fn runtime_row(
 ) -> El {
     let title = entry.id.as_deref().unwrap_or(&entry.key);
     let details = runtime_details(entry);
-    let mut trailing = Vec::new();
+    let info_key = format!("rt:{}", entry.key);
+    let info_key_toggle = info_key.clone();
+    let info_label = t("instanceServiceStatus.plugins.system.details").replace("{name}", title);
+    let mut trailing = vec![
+        settings::info_tip(
+            &info_label,
+            &details,
+            panel.open_info_key.as_deref() == Some(info_key.as_str()),
+            screen::action(&s.input_scope, move |s| {
+                s.status_services
+                    .plugins
+                    .toggle_info(info_key_toggle.clone());
+            }),
+        )
+        .key(format!("plugin-rt-info-{}", entry.key)),
+    ];
     if let Some(ver) = entry.display_version() {
         trailing.push(text(&ver).text_role(TextRole::Small));
     }
@@ -450,7 +352,7 @@ fn scope_switch(
         "{name}",
         &format!("{} — {}", control.id, t(scope.i18n_key())),
     );
-    shell::compact_switch(
+    let mut sw = shell::compact_switch(
         &aria,
         checked,
         locked || !available,
@@ -465,7 +367,12 @@ fn scope_switch(
             );
         }),
     )
-    .key(format!("plugin-switch-{}-{}", control.id, scope.as_str()))
+    .key(format!("plugin-switch-{}-{}", control.id, scope.as_str()));
+    if scope == Scope::Global && control.project != ScopeRuleState::Default {
+        let hint = t("instanceServiceStatus.plugins.globalOverridden");
+        sw = sw.help(hint).description(hint);
+    }
+    sw
 }
 
 fn row_actions(
@@ -506,25 +413,22 @@ fn row_actions(
             )
             .help(help)
             .description(help)
-            .key(format!(
-                "plugin-pkg-{}-{target}",
-                if is_update { "update" } else { "check" }
-            )),
+            .key(format!("plugin-pkg-{target}")),
         );
     }
     for removal in removals {
         let scope_label = t(removal.scope.i18n_key());
         let label =
             t("instanceServiceStatus.plugins.sources.remove").replace("{scope}", scope_label);
-        let target = removal.clone();
+        let item = removal.clone();
         actions = actions.child(
-            layout::button(
+            layout::button_tx(
                 &label,
                 locked,
-                screen::action(&s.input_scope, move |s| {
+                screen::action_tx(&s.input_scope, move |s, tx| {
                     s.status_services
                         .plugins
-                        .request_remove_confirm(target.clone());
+                        .request_remove_confirm(item.clone(), tx);
                 }),
             )
             .key(format!(
@@ -541,21 +445,34 @@ fn control_details(control: &ActivationControl, snap: &Snapshot) -> String {
     let mut lines =
         vec![t("instanceServiceStatus.plugins.kind.plugin").replace("{id}", &control.id)];
     if let Some(rt) = &control.runtime {
-        lines.push(runtime_details(rt));
+        lines.extend(runtime_detail_lines(rt));
+        if rt.gui_feature {
+            let non_global = snap.configured_sources.iter().any(|src| {
+                src.scope != ConfigScope::Global
+                    && (src.plugin_id.as_deref() == Some(control.id.as_str())
+                        || matches!(&rt.source, RuntimeSource::Package { target, .. } if target == &src.target))
+            });
+            if non_global {
+                lines.push(t("instanceServiceStatus.plugins.sources.guiGlobalOnly").to_owned());
+            }
+        }
     }
-    if control.project != codenomad_client::plugins::ScopeRuleState::Default {
+    if control.project != ScopeRuleState::Default {
         lines.push(t("instanceServiceStatus.plugins.globalOverridden").to_owned());
-    }
-    for target in &snap.targets {
-        lines.push(format!("{} — {}", t(target.scope.i18n_key()), target.path));
-    }
-    if !snap.project_available() {
-        lines.push(t("instanceServiceStatus.plugins.scope.unavailable").to_owned());
     }
     lines.join("\n")
 }
 
 fn runtime_details(entry: &RuntimeEntry) -> String {
+    let mut lines = Vec::new();
+    if let Some(id) = &entry.id {
+        lines.push(t("instanceServiceStatus.plugins.kind.plugin").replace("{id}", id));
+    }
+    lines.extend(runtime_detail_lines(entry));
+    lines.join("\n")
+}
+
+fn runtime_detail_lines(entry: &RuntimeEntry) -> Vec<String> {
     let mut lines = Vec::new();
     match &entry.source {
         RuntimeSource::Package {
@@ -568,9 +485,9 @@ fn runtime_details(entry: &RuntimeEntry) -> String {
             lines.push(
                 t("instanceServiceStatus.plugins.source.package").replace("{source}", target),
             );
-            if let Some(v) = version {
+            if let Some(ver) = version {
                 lines.push(
-                    t("instanceServiceStatus.plugins.sources.version").replace("{version}", v),
+                    t("instanceServiceStatus.plugins.sources.version").replace("{version}", ver),
                 );
             }
             if let Some(rev) = revision {
@@ -592,14 +509,18 @@ fn runtime_details(entry: &RuntimeEntry) -> String {
             lines.push(t("instanceServiceStatus.plugins.source.sdk").to_owned());
         }
     }
-    if entry.gui_feature {
-        lines.push(t("instanceServiceStatus.plugins.sources.guiGlobalOnly").to_owned());
-    }
     if let RuntimeState::Failed { error, error_ref } = &entry.state {
-        lines.push(error.clone());
-        if let Some(r) = error_ref {
-            lines.push(t("instanceServiceStatus.plugins.sources.failureRef").replace("{ref}", r));
+        let failed = t("instanceServiceStatus.plugins.runtime.failed");
+        if let Some(detail) = error {
+            lines.push(format!("{failed} — {detail}"));
+        } else {
+            lines.push(failed.to_owned());
+        }
+        if let Some(reference) = error_ref {
+            lines.push(
+                t("instanceServiceStatus.plugins.sources.failureRef").replace("{ref}", reference),
+            );
         }
     }
-    lines.join("\n")
+    lines
 }

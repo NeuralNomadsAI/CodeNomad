@@ -115,7 +115,7 @@ pub enum RuntimeSource {
 pub enum RuntimeState {
     Active,
     Failed {
-        error: String,
+        error: Option<String>,
         error_ref: Option<String>,
     },
 }
@@ -164,7 +164,16 @@ pub struct ConfiguredSource {
     pub path: Option<String>,
     pub entry_index: u64,
     pub plugin_id: Option<String>,
+    pub managed_by_codenomad: bool,
     pub expected_revision: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ControllingRule {
+    pub selector: String,
+    pub enabled: bool,
+    pub scope: ConfigScope,
+    pub path: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -176,6 +185,7 @@ pub struct ActivationControl {
     pub effective: ScopeRuleState,
     pub global: ScopeRuleState,
     pub project: ScopeRuleState,
+    pub controlling_rule: Option<ControllingRule>,
     pub orphan: bool,
 }
 
@@ -225,6 +235,27 @@ pub struct Snapshot {
     pub targets: Vec<ControlTarget>,
 }
 
+const MISSIONS_PLUGIN_ID: &str = "codenomad.missions";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SystemAttentionKind {
+    Disabled,
+    Failed,
+    Unconfirmed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SystemAttentionEntry {
+    pub key: String,
+    pub name: String,
+    pub kind: SystemAttentionKind,
+    pub controlling_scope: Option<ConfigScope>,
+    pub reenable_scope: Option<Scope>,
+    pub control_id: Option<String>,
+    pub runtime: Option<RuntimeEntry>,
+    pub scopes: Vec<(ConfigScope, Option<String>)>,
+}
+
 impl Snapshot {
     pub fn project_available(&self) -> bool {
         self.targets.iter().any(|t| t.scope == Scope::Project)
@@ -239,12 +270,15 @@ impl Snapshot {
     }
 
     pub fn visible_controls(&self) -> impl Iterator<Item = &ActivationControl> {
-        self.controls.iter().filter(|c| !c.builtin)
+        self.controls
+            .iter()
+            .filter(|c| !c.builtin && !c.managed_by_codenomad)
     }
 
     pub fn unmatched_runtime(&self) -> impl Iterator<Item = &RuntimeEntry> {
         self.runtime.iter().filter(|entry| {
-            !matches!(entry.source, RuntimeSource::Builtin)
+            !entry.managed_by_codenomad
+                && !matches!(entry.source, RuntimeSource::Builtin)
                 && entry
                     .id
                     .as_deref()
@@ -255,6 +289,9 @@ impl Snapshot {
     pub fn unmatched_sources(&self) -> Vec<&ConfiguredSource> {
         let mut seen = Vec::new();
         for source in &self.configured_sources {
+            if source.managed_by_codenomad {
+                continue;
+            }
             let claimed = source
                 .plugin_id
                 .as_deref()
@@ -274,7 +311,183 @@ impl Snapshot {
         seen
     }
 
+    pub fn system_attention_entries(&self) -> Vec<SystemAttentionEntry> {
+        use std::collections::{HashMap, HashSet};
+        let mut order: Vec<String> = Vec::new();
+        let mut by_key: HashMap<
+            String,
+            (String, Option<&ActivationControl>, Option<&RuntimeEntry>),
+        > = HashMap::new();
+        let mut represented_targets: HashSet<String> = HashSet::new();
+        let mut represented_keys: HashSet<String> = HashSet::new();
+
+        for control in &self.controls {
+            if !control.managed_by_codenomad {
+                continue;
+            }
+            if let Some(rt) = &control.runtime {
+                match &rt.source {
+                    RuntimeSource::Package { target, .. } => {
+                        represented_targets.insert(target.clone());
+                    }
+                    RuntimeSource::Local { path } => {
+                        represented_targets.insert(path.clone());
+                    }
+                    _ => {}
+                }
+                represented_keys.insert(rt.key.clone());
+            }
+            let key = format!("id:{}", control.id);
+            if !by_key.contains_key(&key) {
+                order.push(key.clone());
+            }
+            by_key.insert(
+                key,
+                (control.id.clone(), Some(control), control.runtime.as_ref()),
+            );
+        }
+
+        for rt in &self.runtime {
+            if !rt.managed_by_codenomad || represented_keys.contains(&rt.key) {
+                continue;
+            }
+            let name = rt.id.clone().unwrap_or_else(|| match &rt.source {
+                RuntimeSource::Package { target, .. } => target.clone(),
+                RuntimeSource::Local { path } => path.clone(),
+                _ => rt.key.clone(),
+            });
+            let key = match &rt.id {
+                Some(id) => format!("id:{id}"),
+                None => format!("target:{name}"),
+            };
+            match &rt.source {
+                RuntimeSource::Package { target, .. } => {
+                    represented_targets.insert(target.clone());
+                }
+                RuntimeSource::Local { path } => {
+                    represented_targets.insert(path.clone());
+                }
+                _ => {}
+            }
+            by_key.entry(key).or_insert_with_key(|k| {
+                order.push(k.clone());
+                (name, None, Some(rt))
+            });
+        }
+
+        for source in &self.configured_sources {
+            if !source.managed_by_codenomad || represented_targets.contains(&source.target) {
+                continue;
+            }
+            if let Some(pid) = &source.plugin_id
+                && by_key.contains_key(&format!("id:{pid}"))
+            {
+                continue;
+            }
+            let key = format!("target:{}", source.target);
+            by_key.entry(key).or_insert_with_key(|k| {
+                let name = source
+                    .plugin_id
+                    .clone()
+                    .unwrap_or_else(|| source.target.clone());
+                order.push(k.clone());
+                (name, None, None)
+            });
+        }
+
+        let mut out = Vec::new();
+        for key in order {
+            let Some((name, control, runtime)) = by_key.remove(&key) else {
+                continue;
+            };
+            if key == format!("id:{MISSIONS_PLUGIN_ID}")
+                && let Some(ctrl) = control
+                && ctrl.effective == ScopeRuleState::Disabled
+                && ctrl.controlling_rule.as_ref().is_some_and(|rule| {
+                    rule.scope == ConfigScope::Global
+                        && rule.selector == MISSIONS_PLUGIN_ID
+                        && !rule.enabled
+                })
+            {
+                continue;
+            }
+            let disabled = control.is_some_and(|c| c.effective == ScopeRuleState::Disabled);
+            let active = runtime.is_some_and(|r| matches!(r.state, RuntimeState::Active));
+            if !disabled && active {
+                continue;
+            }
+            let kind = if disabled {
+                SystemAttentionKind::Disabled
+            } else if runtime.is_some_and(|r| matches!(r.state, RuntimeState::Failed { .. })) {
+                SystemAttentionKind::Failed
+            } else {
+                SystemAttentionKind::Unconfirmed
+            };
+            let controlling_scope = control
+                .and_then(|c| c.controlling_rule.as_ref())
+                .map(|r| r.scope);
+            let reenable_scope = if disabled {
+                match controlling_scope.and_then(ConfigScope::control_scope) {
+                    Some(scope) if self.scope_available(scope) => Some(scope),
+                    _ if self.project_available() => Some(Scope::Project),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let rt_target = runtime.and_then(|r| match &r.source {
+                RuntimeSource::Package { target, .. } => Some(target.as_str()),
+                RuntimeSource::Local { path } => Some(path.as_str()),
+                _ => None,
+            });
+            let mut scopes = Vec::new();
+            for src in &self.configured_sources {
+                if !src.managed_by_codenomad {
+                    continue;
+                }
+                let matches_entry = src.plugin_id.as_deref() == Some(name.as_str())
+                    || rt_target == Some(src.target.as_str())
+                    || format!("target:{}", src.target) == key;
+                if matches_entry {
+                    let record = (
+                        src.scope,
+                        src.path.clone().or_else(|| Some(src.target.clone())),
+                    );
+                    if !scopes.contains(&record) {
+                        scopes.push(record);
+                    }
+                }
+            }
+            if let Some(rule) = control.and_then(|c| c.controlling_rule.as_ref()) {
+                let path = rule.path.clone().or_else(|| {
+                    rule.scope
+                        .control_scope()
+                        .and_then(|s| self.target_for(s))
+                        .map(|t| t.path.clone())
+                });
+                let record = (rule.scope, path);
+                if !scopes.contains(&record) {
+                    scopes.push(record);
+                }
+            }
+            out.push(SystemAttentionEntry {
+                key,
+                name,
+                kind,
+                controlling_scope,
+                reenable_scope,
+                control_id: control.map(|c| c.id.clone()),
+                runtime: runtime.cloned(),
+                scopes,
+            });
+        }
+        out
+    }
+
     pub fn removable_for_control(&self, control: &ActivationControl) -> Vec<RemovalTarget> {
+        if control.managed_by_codenomad {
+            return Vec::new();
+        }
         let pkg_target = control.runtime.as_ref().and_then(|r| match &r.source {
             RuntimeSource::Package { target, .. } => Some(target.as_str()),
             _ => None,
@@ -321,6 +534,9 @@ impl Snapshot {
     fn removable_sources(&self, matches: impl Fn(&ConfiguredSource) -> bool) -> Vec<RemovalTarget> {
         let mut out = Vec::new();
         for source in &self.configured_sources {
+            if source.managed_by_codenomad {
+                continue;
+            }
             let Some(scope) = source.scope.control_scope() else {
                 continue;
             };
@@ -410,4 +626,29 @@ impl ActionError {
 
 pub(crate) fn valid_revision(rev: &str) -> bool {
     rev.len() == 64 && rev.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+pub fn location_matches(requested: &str, returned: &str) -> bool {
+    crate::same_server_path(requested, returned)
+        || wsl_posix_alias(requested).is_some_and(|posix| crate::same_server_path(&posix, returned))
+        || wsl_posix_alias(returned).is_some_and(|posix| crate::same_server_path(requested, &posix))
+}
+
+fn wsl_posix_alias(path: &str) -> Option<String> {
+    let rest = path.strip_prefix("\\\\")?;
+    let mut parts = rest.split(['\\', '/']);
+    let host = parts.next()?;
+    if !host.eq_ignore_ascii_case("wsl$") && !host.eq_ignore_ascii_case("wsl.localhost") {
+        return None;
+    }
+    let distro = parts.next()?;
+    if distro.is_empty() {
+        return None;
+    }
+    let tail: Vec<&str> = parts.filter(|seg| !seg.is_empty()).collect();
+    if tail.is_empty() {
+        Some("/".to_owned())
+    } else {
+        Some(format!("/{}", tail.join("/")))
+    }
 }

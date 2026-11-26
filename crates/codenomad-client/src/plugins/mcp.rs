@@ -13,7 +13,7 @@ use serde_json::Value;
 pub enum McpState {
     Running,
     Stopped,
-    Error(String),
+    Error(Option<String>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,12 +32,20 @@ pub async fn load_mcp(backend: &Backend, directory: Option<&str>) -> Result<Opti
     if !valid_id(&backend.workspace) {
         return Err("Invalid workspace identifier".into());
     }
-    let requested = directory.or(backend.session_directory.as_deref());
-    if let Some(dir) = requested
-        && !crate::absolute_server_path(dir)
-    {
-        return Err("Invalid MCP Location".into());
-    }
+    let resolved = if let Some(dir) = directory.or(backend.session_directory.as_deref()) {
+        if !crate::absolute_server_path(dir) {
+            return Err("Invalid MCP Location".into());
+        }
+        Some(dir.to_owned())
+    } else if valid_id(&backend.session) {
+        let dir = backend.prompt_directory().await?;
+        if !crate::absolute_server_path(&dir) {
+            return Err("Invalid MCP session Location".into());
+        }
+        Some(dir)
+    } else {
+        None
+    };
     let mut request = backend
         .client
         .get(format!(
@@ -45,7 +53,7 @@ pub async fn load_mcp(backend: &Backend, directory: Option<&str>) -> Result<Opti
             backend.base, backend.workspace
         ))
         .timeout(REQUEST_TIMEOUT);
-    if let Some(dir) = requested {
+    if let Some(dir) = resolved.as_deref() {
         request = request.query(&[("location[directory]", dir)]);
     }
     #[cfg(target_arch = "wasm32")]
@@ -55,7 +63,7 @@ pub async fn load_mcp(backend: &Backend, directory: Option<&str>) -> Result<Opti
         return Ok(None);
     };
     let value = read_json_limited(response, MAX_RESPONSE_BYTES).await?;
-    Ok(Some(parse_mcp_snapshot(&value, requested)?))
+    Ok(Some(parse_mcp_snapshot(&value, resolved.as_deref())?))
 }
 
 pub async fn toggle_mcp(
@@ -107,7 +115,7 @@ pub(crate) fn parse_mcp_snapshot(value: &Value, requested: Option<&str>) -> Resu
         .filter(|p| crate::absolute_server_path(p))
         .ok_or("Invalid MCP Location")?;
     if let Some(req) = requested
-        && !crate::same_server_path(req, dir)
+        && !super::location_matches(req, dir)
     {
         return Err("MCP Location mismatch".into());
     }
@@ -128,8 +136,8 @@ pub(crate) fn parse_mcp_snapshot(value: &Value, requested: Option<&str>) -> Resu
             Some("failed") => McpState::Error(
                 item["status"]["error"]
                     .as_str()
-                    .unwrap_or("Failed")
-                    .to_owned(),
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned),
             ),
             Some(_) => McpState::Stopped,
             None => return Err("Missing MCP server status".into()),

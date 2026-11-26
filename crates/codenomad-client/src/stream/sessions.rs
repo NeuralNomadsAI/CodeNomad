@@ -85,18 +85,29 @@ pub(super) async fn relay(
                     .map(str::to_owned);
                 out.send(Input::Workspace(
                     epoch,
-                    WorkspaceEvent::PluginsChanged { directory },
+                    WorkspaceEvent::PluginsChanged {
+                        workspace_id: Some(b.workspace.clone()),
+                        directory,
+                    },
                 ))
                 .await?;
             }
             Some("config.updated") => {
                 out.send(Input::Workspace(
                     epoch,
-                    WorkspaceEvent::PluginsChanged { directory: None },
+                    WorkspaceEvent::PluginsChanged {
+                        workspace_id: Some(b.workspace.clone()),
+                        directory: None,
+                    },
                 ))
                 .await?;
-                out.send(Input::Workspace(epoch, WorkspaceEvent::McpStatusChanged))
-                    .await?;
+                out.send(Input::Workspace(
+                    epoch,
+                    WorkspaceEvent::McpStatusChanged {
+                        workspace_id: Some(b.workspace.clone()),
+                    },
+                ))
+                .await?;
             }
             Some(
                 "mcp.status.changed"
@@ -105,8 +116,13 @@ pub(super) async fn relay(
                 | "credential.updated"
                 | "credential.switched",
             ) => {
-                out.send(Input::Workspace(epoch, WorkspaceEvent::McpStatusChanged))
-                    .await?;
+                out.send(Input::Workspace(
+                    epoch,
+                    WorkspaceEvent::McpStatusChanged {
+                        workspace_id: Some(b.workspace.clone()),
+                    },
+                ))
+                .await?;
             }
             _ => {}
         }

@@ -40,9 +40,15 @@ pub enum WorkspaceEvent {
     MentionsChanged,
     ComposerCataloguesChanged,
     PluginsChanged {
+        workspace_id: Option<String>,
         directory: Option<String>,
     },
-    McpStatusChanged,
+    McpStatusChanged {
+        workspace_id: Option<String>,
+    },
+    ServicesConfigChanged {
+        workspace_id: String,
+    },
     MemoryChanged,
     ProvidersChanged {
         workspace_id: String,

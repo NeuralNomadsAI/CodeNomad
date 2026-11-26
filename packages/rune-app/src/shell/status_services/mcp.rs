@@ -14,9 +14,10 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     settings, shell,
 };
+use std::collections::{HashMap, HashSet};
 
 enum ReadOutcome {
-    Snapshot(McpSnapshot),
+    Snapshot(McpSnapshot, HashMap<String, u64>),
     Unsupported,
     Failed,
 }
@@ -29,7 +30,9 @@ pub(super) struct McpPanel {
     visible: bool,
     dirty: bool,
     location_unconfirmed: bool,
-    read: Option<(Sender<()>, Receiver<ReadOutcome>)>,
+    confirmed_generations: HashMap<String, u64>,
+    unconfirmed_servers: HashSet<String>,
+    read: Option<(Sender<()>, Receiver<ReadOutcome>, HashMap<String, u64>)>,
     pending_toggles: Vec<(String, String, u64)>,
     pub(super) snapshot: Option<McpSnapshot>,
     pub(super) unsupported: bool,
@@ -48,6 +51,8 @@ impl Default for McpPanel {
             visible: false,
             dirty: false,
             location_unconfirmed: false,
+            confirmed_generations: HashMap::new(),
+            unconfirmed_servers: HashSet::new(),
             read: None,
             pending_toggles: Vec::new(),
             snapshot: None,
@@ -83,7 +88,7 @@ impl McpPanel {
         }
     }
 
-    fn same_scope(&self, next: &Backend) -> bool {
+    pub(super) fn same_scope(&self, next: &Backend) -> bool {
         self.backend.as_ref().is_some_and(|prev| {
             prev.base == next.base
                 && prev.workspace == next.workspace
@@ -91,6 +96,13 @@ impl McpPanel {
                 && prev.session_directory == next.session_directory
                 && prev.client.same_connection(&next.client)
         })
+    }
+
+    pub(super) fn workspace_id(&self) -> Option<&str> {
+        self.backend
+            .as_ref()
+            .map(|b| b.workspace.as_str())
+            .filter(|id| !id.is_empty())
     }
 
     pub(super) fn online(&mut self, online: bool) {
@@ -169,6 +181,7 @@ impl McpPanel {
             || self.location_unconfirmed
             || self.unsupported
             || self.write_unsupported
+            || self.unconfirmed_servers.contains(&server)
         {
             return;
         }
@@ -178,16 +191,25 @@ impl McpPanel {
         let Some(directory) = self.snapshot.as_ref().map(|s| s.directory.clone()) else {
             return;
         };
+        let expected = self
+            .confirmed_generations
+            .get(&server)
+            .copied()
+            .unwrap_or(0);
         let Some(guard) = barrier::try_begin(
             Kind::McpServer(server.clone()),
             &backend.base,
+            expected,
             self.observer,
             wake.clone(),
         ) else {
+            self.unconfirmed_servers.insert(server);
+            self.dirty = true;
             return;
         };
         self.action_error = None;
         self.read = None;
+        self.unconfirmed_servers.insert(server.clone());
         self.pending_toggles
             .push((server.clone(), backend.base.clone(), guard.id()));
         platform::spawn(async move {
@@ -208,8 +230,9 @@ impl McpPanel {
                 match outcome {
                     Ok(()) => {}
                     Err(ActionError::Unsupported) => self.write_unsupported = true,
-                    Err(_) => self.action_error = Some(server),
+                    Err(_) => self.action_error = Some(server.clone()),
                 }
+                self.unconfirmed_servers.insert(server);
                 self.dirty = true;
                 changed = true;
             } else {
@@ -220,26 +243,65 @@ impl McpPanel {
             && let Some(snap) = &self.snapshot
         {
             for server in &snap.servers {
-                let _ = barrier::observe(
-                    &Kind::McpServer(server.name.clone()),
-                    &backend.base,
-                    self.observer,
-                    wake,
-                );
+                let kind = Kind::McpServer(server.name.clone());
+                let obs = barrier::observe(&kind, &backend.base, self.observer, wake);
+                let confirmed = self
+                    .confirmed_generations
+                    .get(&server.name)
+                    .copied()
+                    .unwrap_or(0);
+                let in_flight_covers = self.read.as_ref().is_some_and(|(_, _, gens)| {
+                    gens.get(&server.name).copied().unwrap_or(0) == obs.settled_id
+                });
+                if obs.active || obs.settled_id != confirmed {
+                    if self.unconfirmed_servers.insert(server.name.clone()) {
+                        changed = true;
+                    }
+                    if !obs.active && !in_flight_covers {
+                        self.dirty = true;
+                    }
+                }
             }
         }
 
-        if let Some((_, rx)) = &self.read {
+        if let Some((_, rx, _)) = &self.read {
             match rx.try_recv() {
                 Ok(outcome) => {
                     self.read = None;
                     if !self.dirty {
                         match outcome {
-                            ReadOutcome::Snapshot(snap) => {
+                            ReadOutcome::Snapshot(snap, read_gens) => {
+                                let base = self.backend.as_ref().map(|b| b.base.as_str());
+                                let mut need_reread = false;
+                                for server in &snap.servers {
+                                    let at_read = read_gens.get(&server.name).copied().unwrap_or(0);
+                                    let live = base.map_or(0, |b| {
+                                        barrier::settled_id(
+                                            &Kind::McpServer(server.name.clone()),
+                                            b,
+                                        )
+                                    });
+                                    let active = base.is_some_and(|b| {
+                                        barrier::is_active(&Kind::McpServer(server.name.clone()), b)
+                                    });
+                                    if !active && live == at_read {
+                                        self.confirmed_generations
+                                            .insert(server.name.clone(), at_read);
+                                        self.unconfirmed_servers.remove(&server.name);
+                                    } else {
+                                        self.unconfirmed_servers.insert(server.name.clone());
+                                        if !active {
+                                            need_reread = true;
+                                        }
+                                    }
+                                }
                                 self.snapshot = Some(snap);
                                 self.unsupported = false;
                                 self.failed = false;
                                 self.location_unconfirmed = false;
+                                if need_reread {
+                                    self.dirty = true;
+                                }
                             }
                             ReadOutcome::Unsupported => {
                                 self.snapshot = None;
@@ -273,8 +335,9 @@ impl McpPanel {
         {
             let (cancel, cancelled) = bounded(1);
             let (out, rx) = bounded(1);
+            let read_gens = barrier::mcp_generations(&backend.base);
             self.dirty = false;
-            self.read = Some((cancel, rx));
+            self.read = Some((cancel, rx, read_gens.clone()));
             let (reads, wake) = (reads.clone(), wake.clone());
             platform::spawn(async move {
                 let Some(_slot) = reads.background(&cancelled).await else {
@@ -284,7 +347,7 @@ impl McpPanel {
                     platform::reads::cancellable(&cancelled, mcp::load_mcp(&backend, None)).await
                 {
                     let outcome = match result {
-                        Ok(Some(snap)) => ReadOutcome::Snapshot(snap),
+                        Ok(Some(snap)) => ReadOutcome::Snapshot(snap, read_gens),
                         Ok(None) => ReadOutcome::Unsupported,
                         Err(_) => ReadOutcome::Failed,
                     };
@@ -350,7 +413,8 @@ pub(super) fn view(s: &State) -> Option<El> {
                 let disabled = pending
                     || !panel.online
                     || panel.location_unconfirmed
-                    || panel.write_unsupported;
+                    || panel.write_unsupported
+                    || panel.unconfirmed_servers.contains(&server.name);
                 let server_name = server.name.clone();
                 let next_connect = !running;
                 let aria =
@@ -377,7 +441,10 @@ pub(super) fn view(s: &State) -> Option<El> {
                         .key(format!("mcp-switch-{}", server.name))],
                     ));
                 if let McpState::Error(err) = &server.status {
-                    item = item.child(text(err).wrap().role("alert"));
+                    let message = err
+                        .as_deref()
+                        .unwrap_or_else(|| t("instanceServiceStatus.plugins.runtime.failed"));
+                    item = item.child(text(message).wrap().role("alert"));
                 }
                 body = body.child(item.key(format!("mcp-row-{}", server.name)));
             }

@@ -84,10 +84,14 @@ pub(crate) fn is_route_not_found_body(text: &str) -> bool {
     };
     if let Some(object) = value.as_object()
         && object.len() == 1
-        && object
+        && (object
             .get("message")
             .and_then(Value::as_str)
             .is_some_and(|msg| msg.eq_ignore_ascii_case("Not Found"))
+            || object
+                .get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|msg| msg.eq_ignore_ascii_case("Not Found")))
     {
         return true;
     }
@@ -181,7 +185,7 @@ pub async fn load(backend: &Backend, directory: Option<&str>) -> Result<Option<S
         .as_str()
         .filter(|p| crate::absolute_server_path(p))
         .ok_or("Invalid plugin inventory Location")?;
-    if !crate::same_server_path(&dir, returned_dir) {
+    if !super::location_matches(&dir, returned_dir) {
         return Err("Plugin inventory Location mismatch".into());
     }
     let runtime = parse_runtime_entries(&doc["data"])?;
