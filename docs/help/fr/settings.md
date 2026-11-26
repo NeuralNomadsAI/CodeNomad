@@ -76,7 +76,7 @@ Faites glisser le bord intérieur d’un panneau ancré pour le redimensionner.
 2. Ouvrez **Personnaliser le panneau droit** dans le panneau droit. Utilisez les cases pour choisir les onglets intégrés et sections Statut ; au moins une section Statut reste visible. Faites glisser le pointeur sur ces cases pour en régler plusieurs d'un coup.
 3. Faites glisser les onglets du panneau droit pour les réordonner. Utilisez **Réinitialiser** pour restaurer les choix de disposition intégrée.
 
-Réordonnez toute section Statut par glisser-déposer ou avec les touches Haut/Bas. Le masquage et l’ordre persistent aux rechargements.
+Réordonnez toute section Statut en faisant glisser sa poignée ou avec les touches Haut/Bas. Le masquage et l’ordre persistent aux rechargements.
 
 Statut inclut les informations de tokens, Permissions, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Tant que la conversation a un [objectif](conversations.md#goal), une ligne d’objectif au-dessus de ces sections l’affiche ; cette ligne n’est pas une section et ne peut être ni masquée ni déplacée. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
 
