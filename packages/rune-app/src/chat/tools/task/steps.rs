@@ -587,7 +587,7 @@ pub(super) fn step_contains_link(
 ) -> bool {
     let (output_limit, output_key) = if is_task(step) {
         (PANE_LIMIT, format!("{row_key}-task-output"))
-    } else if step.name == "skill" {
+    } else if super::super::format::canonical_name(&step.name) == "skill" {
         (
             super::super::super::document::PROSE_LIMIT,
             format!("{row_key}-tool_output"),

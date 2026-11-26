@@ -993,3 +993,167 @@ fn running_webfetch_plain_text_and_hidden_inputs_per_card_toggle() {
             .contains("https://plain.test")
     );
 }
+
+#[test]
+fn webfetch_empty_oversized_and_collapsed_output_align_header_wrap_and_copy() {
+    let huge = "x".repeat(crate::chat::document::TOOL_LIMIT + 64);
+    let row = crate::history::decode_message(&json!({
+        "type":"assistant","id":"wf_chrome","time":{"completed":10000},"content":[
+            {"type":"tool","id":"wf_empty","name":"webfetch",
+             "state":{"status":"running","input":{"url":"https://empty.test"},
+                      "metadata":{"output":[[null, ""]]}}},
+            {"type":"tool","id":"wf_huge","name":"webfetch",
+             "state":{"status":"running","input":{"url":"https://huge.test"},
+                      "metadata":{"output":{"body":huge}}}},
+            {"type":"tool","id":"wf_ok","name":"webfetch",
+             "state":{"status":"completed","input":{"url":"https://ok.test"},
+                      "content":[{"type":"text","text":"fetched body"}]}}
+        ]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    let empty_key = super::tool_key("wf_chrome", "wf_empty");
+    let huge_key = super::tool_key("wf_chrome", "wf_huge");
+    let ok_key = super::tool_key("wf_chrome", "wf_ok");
+    for key in [&empty_key, &huge_key, &ok_key] {
+        Display::set_expanded(&mut state, key, true);
+    }
+    Display::set_expanded(&mut state, &format!("{ok_key}-tool_input"), true);
+    state.messages = vec![row.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            with_locale("en", || {
+                rune::col().children(s.messages[0].parts.iter().filter_map(|part| {
+                    let crate::content::Part::Tool(tool) = part else {
+                        return None;
+                    };
+                    Some(super::view(s, "wf_chrome", tool))
+                }))
+            })
+        },
+        (960.0, 1200.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    // Empty nested structured array renders neither copy nor wrap controls.
+    assert!(rt.find(&format!("{empty_key}-wrap")).is_none());
+    assert!(rt.find(&format!("copy-{empty_key}-output")).is_none());
+    // Oversized structured output keeps copy but hides header wrap because no code pane renders.
+    assert!(rt.find(&format!("{huge_key}-wrap")).is_none());
+    assert!(rt.find(&format!("copy-{huge_key}-output")).is_some());
+    // Collapsing the Output section while Input is visible hides the header wrap toggle.
+    assert!(rt.find(&format!("{ok_key}-wrap")).is_some());
+    let (ox, oy) = rt.find(&format!("toggle-{ok_key}-tool_output")).unwrap();
+    rt.pointer_down(ox, oy);
+    rt.pointer_up(ox, oy);
+    rt.frame(0.02);
+    assert!(rt.find(&format!("{ok_key}-wrap")).is_none());
+    let (ox, oy) = rt.find(&format!("toggle-{ok_key}-tool_output")).unwrap();
+    rt.pointer_down(ox, oy);
+    rt.pointer_up(ox, oy);
+    rt.frame(0.04);
+    assert!(rt.find(&format!("{ok_key}-wrap")).is_some());
+}
+
+#[test]
+fn opencode_prefixed_renderers_and_duration_preserve_zero_fps_idle() {
+    let start = unix_millis().saturating_sub(65_000);
+    let raw_skill = format!(
+        "# Prefixed Skill\n\n```rust\nlet ok = 1;\n```\n\n{}\n\nPREFIXED_TAIL",
+        "line\n".repeat(10_001)
+    );
+    let settled = crate::history::decode_message(&json!({
+        "type":"assistant","id":"p6","time":{"completed":10000},"content":[
+            {"type":"tool","id":"wf","name":"opencode_webfetch","time":{"ran":2000,"completed":5000},
+             "state":{"status":"completed","input":{"url":"https://example.test/p6\nline"},
+                      "content":[{"type":"text","text":"ok"}]}},
+            {"type":"tool","id":"inv_dup","name":"opencode_invalid",
+             "state":{"status":"error","input":{"tool":"opencode_invalid"}}},
+            {"type":"tool","id":"inv_wf","name":"opencode_invalid",
+             "state":{"status":"error","input":{"tool":"opencode_webfetch"}}},
+            {"type":"tool","id":"sk_run","name":"opencode_skill",
+             "state":{"status":"running","metadata":{"output":"HIDDEN_PARTIAL"}}},
+            {"type":"tool","id":"sk_done","name":"opencode_skill",
+             "state":{"status":"completed","content":[{"type":"text","text":raw_skill}]}}
+        ]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    let sk_run_key = super::tool_key("p6", "sk_run");
+    let sk_done_key = super::tool_key("p6", "sk_done");
+    Display::set_expanded(&mut state, &sk_run_key, true);
+    Display::set_expanded(&mut state, &sk_done_key, true);
+    state.messages = vec![settled.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            with_locale("en", || {
+                rune::col().children(s.messages[0].parts.iter().filter_map(|part| {
+                    let crate::content::Part::Tool(tool) = part else {
+                        return None;
+                    };
+                    Some(super::view(s, "p6", tool))
+                }))
+            })
+        },
+        (1160.0, 1200.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.contains("Fetch https://example.test/p6 line"),
+        "{tree}"
+    );
+    assert!(!tree.contains("Invalid Invalid"), "{tree}");
+    assert!(tree.contains("\"name\":\"Invalid Fetch\""), "{tree}");
+    assert!(!tree.contains("HIDDEN_PARTIAL"), "{tree}");
+    assert!(rt.find(&format!("copy-{sk_run_key}-output")).is_none());
+    assert!(tree.contains("Prefixed Skill") && !tree.contains("# Prefixed Skill"));
+    assert!(!tree.contains("PREFIXED_TAIL"));
+    assert!(rt.find(&format!("{sk_done_key}-wrap")).is_none());
+    assert!(
+        rt.find(&format!("{sk_done_key}-tool_output-code-0-wrap"))
+            .is_some()
+    );
+    // Settled cards (and running card without start time) schedule zero idle wakes.
+    let mut ticked = false;
+    rt.update(|s, tx| ticked = Display::poll(s, false, 0.01, tx));
+    assert!(!ticked);
+    assert!(rt.wake_deadline().is_none());
+
+    // A running webfetch card wakes at 1 Hz while live and returns to 0 fps idle once settled.
+    let running_wf = crate::history::decode_message(&json!({
+        "type":"assistant","id":"p6","content":[
+            {"type":"tool","id":"wf_live","name":"webfetch","time":{"ran":start},
+             "state":{"status":"running","input":{"url":"https://live.test"},
+                      "metadata":{"output":"streaming"}}}
+        ]
+    }))
+    .unwrap();
+    rt.state.phase = Phase::Streaming;
+    rt.state.messages = vec![running_wf.into()];
+    rt.frame(0.02);
+    rt.frame(0.02);
+    rt.update(|s, tx| ticked = Display::poll(s, false, 0.03, tx));
+    assert!(!ticked);
+    assert!(rt.wake_deadline().is_some());
+
+    let done_wf = crate::history::decode_message(&json!({
+        "type":"assistant","id":"p6","time":{"completed":start + 66_000},"content":[
+            {"type":"tool","id":"wf_live","name":"webfetch","time":{"ran":start,"completed":start + 66_000},
+             "state":{"status":"completed","input":{"url":"https://live.test"},
+                      "content":[{"type":"text","text":"done"}]}}
+        ]
+    }))
+    .unwrap();
+    rt.state.phase = Phase::Ready;
+    rt.state.messages = vec![done_wf.into()];
+    rt.frame(1.1);
+    rt.update(|s, tx| ticked = Display::poll(s, false, 1.15, tx));
+    assert!(!ticked);
+    assert!(rt.wake_deadline().is_none());
+}

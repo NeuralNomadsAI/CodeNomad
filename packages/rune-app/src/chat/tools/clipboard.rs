@@ -116,6 +116,10 @@ pub(super) fn copy(
                                 ));
                                 None
                             }
+                        } else if super::format::canonical_name(&tool.name) == "skill"
+                            && tool.status != "completed"
+                        {
+                            None
                         } else if let Some(async_key) = make_tool_key(1) {
                             Some(async_key)
                         } else if let Some(value) = super::format::structured_output(tool) {
@@ -136,13 +140,15 @@ pub(super) fn copy(
                                 );
                             }
                             None
-                        } else if tool.name == "todowrite"
+                        } else if super::format::canonical_name(&tool.name) == "todowrite"
                             && let Some(source) = todo::copy(tool)
                         {
                             tx.copy(source);
                             None
-                        } else if matches!(tool.name.as_str(), "apply_patch" | "patch")
-                            && let Some(source) = apply_patch::copy_all(Some(s), tool)
+                        } else if matches!(
+                            super::format::canonical_name(&tool.name),
+                            "apply_patch" | "patch"
+                        ) && let Some(source) = apply_patch::copy_all(Some(s), tool)
                         {
                             tx.copy(source);
                             None

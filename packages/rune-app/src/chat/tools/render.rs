@@ -1,4 +1,4 @@
-use super::format::{error, input_json, output, path, title};
+use super::format::{Formatted, canonical_name, error, input_json, output, path, title};
 use super::{
     Tool, apply_patch,
     clipboard::{Section, copy},
@@ -25,15 +25,14 @@ use std::sync::Arc;
 
 pub(in crate::chat) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
     let key = tool_key(message, &tool.id);
-    if matches!(
-        tool.name.as_str(),
-        "apply_patch" | "execute" | "question" | "skill"
-    ) || task::is_task(tool)
+    let canonical = canonical_name(&tool.name);
+    if matches!(canonical, "apply_patch" | "execute" | "question" | "skill")
+        || task::is_task(tool)
         || !tool.pictures.is_empty()
     {
         return render(s, message, tool, &key).key(key);
     }
-    if tool.name == "edit" {
+    if canonical == "edit" {
         let mut parts = [""; 4];
         output(tool, &mut parts);
         if tool_diff::candidate(tool, parts[0]) {
@@ -88,7 +87,7 @@ pub(in crate::chat) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
 }
 
 fn is_patch(tool: &Tool) -> bool {
-    matches!(tool.name.as_str(), "apply_patch" | "patch")
+    matches!(canonical_name(&tool.name), "apply_patch" | "patch")
 }
 
 fn tool_query<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<Query<'a>> {
@@ -201,6 +200,7 @@ fn render_body(
                 && (tool.status == "error"
                     || settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) == "expanded"),
         );
+    let canonical = canonical_name(&tool.name);
     let is_task = task::is_task(tool);
     let can_watch_child = is_task
         && ancestors.len() < task::MAX_DEPTH
@@ -212,7 +212,7 @@ fn render_body(
         .as_ref()
         .map(|d| d.status)
         .unwrap_or(match tool.status.as_str() {
-            "completed" if tool.name == "execute" && tool.metadata["error"] == true => {
+            "completed" if canonical == "execute" && tool.metadata["error"] == true => {
                 "toolCall.status.error"
             }
             "completed" => "toolCall.status.completed",
@@ -221,13 +221,13 @@ fn render_body(
             "pending" | "streaming" => "toolCall.status.pending",
             _ => "toolCall.status.unknown",
         });
-    let title = if tool.name == "execute" {
+    let title = if canonical == "execute" {
         execute::title(tool)
-    } else if tool.name == "todowrite" {
+    } else if canonical == "todowrite" {
         todo::title(tool)
-    } else if tool.name == "question" {
+    } else if canonical == "question" {
         question::title(tool).into()
-    } else if tool.name == "apply_patch" {
+    } else if canonical == "apply_patch" {
         apply_patch::title(tool)
     } else {
         title(tool)
@@ -235,33 +235,60 @@ fn render_body(
     let toggle = key.to_owned();
     let mut parts = [""; 4];
     let pending = matches!(tool.status.as_str(), "pending" | "streaming");
+    let hide_pending_skill = canonical == "skill" && tool.status != "completed";
     let lang = output(tool, &mut parts);
     if is_task {
         parts[0] = task::output(tool, task_delivery.as_ref().and_then(|d| d.report));
-    } else if tool.name == "skill" && tool.status != "completed" {
+    } else if hide_pending_skill {
         parts = [""; 4];
     }
+    let owner_parent = ancestors.len().checked_sub(2).map(|i| ancestors[i]);
+    let tool_expand_key = (!hide_pending_skill)
+        .then(|| {
+            message
+                .strip_prefix("child:")
+                .and_then(|v| v.split_once(':'))
+                .and_then(|(child, row_id)| {
+                    s.transcript_display
+                        .children
+                        .tool_truncated(owner_parent, child, row_id, &tool.id)
+                        .then(|| super::children::ToolCopyKey {
+                            key: format!("copy-{key}-output"),
+                            parent: owner_parent.map(str::to_owned),
+                            child: child.to_owned(),
+                            row_id: row_id.to_owned(),
+                            call: tool.id.clone(),
+                            section: 1,
+                        })
+                })
+        })
+        .flatten();
+    let expanded_tool_output = tool_expand_key
+        .as_ref()
+        .and_then(|k| s.transcript_display.children.loaded_tool_output(k));
+    let is_tool_truncated = tool_expand_key.is_some();
     let report_truncated = task_delivery.as_ref().is_some_and(|d| d.report_truncated);
     let structured = super::format::structured_output(tool);
+    let structured_out = if !pending && expanded_tool_output.is_none() {
+        structured.map(|value| super::format::format_unknown(value, Some(TOOL_LIMIT)))
+    } else {
+        None
+    };
+    let has_structured_output = matches!(
+        structured_out,
+        Some(Formatted::Text(..) | Formatted::TooLarge)
+    );
     let has_output =
-        !pending && (structured.is_some() || parts.iter().any(|part| !part.trim().is_empty()));
-    let skill = tool.name == "skill" && tool.status == "completed" && has_output;
+        !pending && (has_structured_output || parts.iter().any(|part| !part.trim().is_empty()));
+    let skill =
+        canonical == "skill" && tool.status == "completed" && (has_output || is_tool_truncated);
     let result_list =
-        (expanded && !active && tool.name == "websearch" && tool.status == "completed")
+        (expanded && !active && canonical == "websearch" && tool.status == "completed")
             .then(|| search::view(s, parts[0]))
             .flatten();
     let rich_diff = !active && !nested && tool_diff::candidate(tool, parts[0]);
     let wrap_key = format!("{key}-wrap");
     let wrap = !s.transcript_display.toggled(&wrap_key);
-    let shared_wrap = expanded
-        && has_output
-        && !is_task
-        && !skill
-        && (tool.name != "apply_patch" || !apply_patch::has_patch(tool))
-        && !is_patch(tool)
-        && result_list.is_none()
-        && !rich_diff
-        && !matches!(tool.name.as_str(), "question" | "todowrite");
     // Per dev-docs/TRANSCRIPT.md, latestChildState drives both status and end time
     // across every launch/continuation card of the same background child.
     let timing = if let Some(delivery) = &task_delivery {
@@ -283,146 +310,128 @@ fn render_body(
             text(t(status)).text_role(TextRole::Label).role("status"),
         )
     };
-    let mut header = layout::action_row()
-        .child(
-            layout::button(
-                &title,
-                false,
-                screen::action(&s.input_scope, move |s| {
-                    Display::set_expanded(s, &toggle, !expanded);
-                    if is_task && expanded {
-                        super::children::Children::release(s, &toggle);
-                        s.transcript_display.clear_step_anchors(&toggle);
-                    }
-                }),
-            )
-            .key(format!("toggle-{key}"))
-            .expanded(expanded),
-        )
-        .child(status_el);
-    if is_task
-        && let Some(child_id) = task::watched_child(tool)
-        && crate::workspace::active_session(s) != Some(child_id)
-    {
-        let parent_ref = task::parent_child(message);
-        let unavailable = !s
-            .transcript_display
-            .children
-            .has_open_tab_fallback(s, child_id)
-            && s.transcript_display
-                .children
-                .unavailable(parent_ref, child_id);
-        let parent = parent_ref.map(str::to_owned);
-        let target = child_id.to_owned();
-        header = header.child(
-            layout::button_tx(
-                t("messageBlock.tool.goToSession.label"),
-                false,
-                screen::action_tx(&s.input_scope, move |s, tx| {
-                    super::children::Children::open_child(s, parent.as_deref(), &target, tx);
-                }),
-            )
-            .key(format!("goto-{key}"))
-            .disabled(unavailable || !crate::launcher::can_open_child_session(s)),
-        );
-    }
-    let owner_parent = ancestors.len().checked_sub(2).map(|i| ancestors[i]);
-    let tool_expand_key = message
-        .strip_prefix("child:")
-        .and_then(|v| v.split_once(':'))
-        .and_then(|(child, row_id)| {
-            s.transcript_display
-                .children
-                .tool_truncated(owner_parent, child, row_id, &tool.id)
-                .then(|| super::children::ToolCopyKey {
-                    key: format!("copy-{key}-output"),
-                    parent: owner_parent.map(str::to_owned),
-                    child: child.to_owned(),
-                    row_id: row_id.to_owned(),
-                    call: tool.id.clone(),
-                    section: 1,
-                })
-        });
-    let expanded_tool_output = tool_expand_key
-        .as_ref()
-        .and_then(|k| s.transcript_display.children.loaded_tool_output(k));
-    let is_tool_truncated = tool_expand_key.is_some();
-    let backgroundable = !nested
-        && tool.status == "running"
-        && matches!(
-            tool.name.to_ascii_lowercase().as_str(),
-            "bash" | "shell" | "task" | "subagent"
-        );
-    if backgroundable {
-        header = header.child(
-            layout::button(
-                t("promptInput.background.title"),
-                false,
-                screen::action(&s.input_scope, |s| {
-                    super::children::Children::background_session(s);
-                }),
-            )
-            .key(format!("background-{key}")),
-        );
-    }
-    if shared_wrap {
-        header = header.child(wrap_control(s, &wrap_key, wrap));
-    }
-    if has_output
-        || report_truncated
-        || is_tool_truncated
-        || !pending
-            && matches!(tool.name.as_str(), "apply_patch" | "patch")
-            && apply_patch::has_patch(tool)
-        || tool.name == "todowrite"
-            && tool.metadata["todos"]
-                .as_array()
-                .is_some_and(|todos| !todos.is_empty())
-    {
-        header = header.child(copy(s, message, key, &tool.id, Section::Output, ancestors));
-    }
     let input_key = format!("{key}-tool_input");
-    if !expanded && has_tool_input(tool) {
-        let open_card = key.to_owned();
-        let open_input = input_key.clone();
-        header = header.child(
-            layout::button(
-                t("toolCall.header.showInputTitle"),
-                false,
-                screen::action(&s.input_scope, move |s| {
-                    Display::set_expanded(s, &open_card, true);
-                    Display::set_expanded(s, &open_input, true);
-                }),
+    let make_header = |shared_wrap: bool| {
+        let mut header = layout::action_row()
+            .child(
+                layout::button(
+                    &title,
+                    false,
+                    screen::action(&s.input_scope, move |s| {
+                        Display::set_expanded(s, &toggle, !expanded);
+                        if is_task && expanded {
+                            super::children::Children::release(s, &toggle);
+                            s.transcript_display.clear_step_anchors(&toggle);
+                        }
+                    }),
+                )
+                .key(format!("toggle-{key}"))
+                .expanded(expanded),
             )
-            .key(format!("header-input-{key}")),
-        );
-    }
-    let mut block = col()
-        .full_width()
-        .pad(Space::Sm)
-        .separate(Space::Sm)
-        .inset_surface()
-        .child(header);
+            .child(status_el);
+        if is_task
+            && let Some(child_id) = task::watched_child(tool)
+            && crate::workspace::active_session(s) != Some(child_id)
+        {
+            let parent_ref = task::parent_child(message);
+            let unavailable = !s
+                .transcript_display
+                .children
+                .has_open_tab_fallback(s, child_id)
+                && s.transcript_display
+                    .children
+                    .unavailable(parent_ref, child_id);
+            let parent = parent_ref.map(str::to_owned);
+            let target = child_id.to_owned();
+            header = header.child(
+                layout::button_tx(
+                    t("messageBlock.tool.goToSession.label"),
+                    false,
+                    screen::action_tx(&s.input_scope, move |s, tx| {
+                        super::children::Children::open_child(s, parent.as_deref(), &target, tx);
+                    }),
+                )
+                .key(format!("goto-{key}"))
+                .disabled(unavailable || !crate::launcher::can_open_child_session(s)),
+            );
+        }
+        let backgroundable = !nested
+            && tool.status == "running"
+            && matches!(
+                canonical.to_ascii_lowercase().as_str(),
+                "bash" | "shell" | "task" | "subagent"
+            );
+        if backgroundable {
+            header = header.child(
+                layout::button(
+                    t("promptInput.background.title"),
+                    false,
+                    screen::action(&s.input_scope, |s| {
+                        super::children::Children::background_session(s);
+                    }),
+                )
+                .key(format!("background-{key}")),
+            );
+        }
+        if shared_wrap {
+            header = header.child(wrap_control(s, &wrap_key, wrap));
+        }
+        if has_output
+            || report_truncated
+            || is_tool_truncated
+            || !pending && is_patch(tool) && apply_patch::has_patch(tool)
+            || canonical == "todowrite"
+                && tool.metadata["todos"]
+                    .as_array()
+                    .is_some_and(|todos| !todos.is_empty())
+        {
+            header = header.child(copy(s, message, key, &tool.id, Section::Output, ancestors));
+        }
+        if !expanded && has_tool_input(tool) {
+            let open_card = key.to_owned();
+            let open_input = input_key.clone();
+            header = header.child(
+                layout::button(
+                    t("toolCall.header.showInputTitle"),
+                    false,
+                    screen::action(&s.input_scope, move |s| {
+                        Display::set_expanded(s, &open_card, true);
+                        Display::set_expanded(s, &open_input, true);
+                    }),
+                )
+                .key(format!("header-input-{key}")),
+            );
+        }
+        header
+    };
+    let make_block = |header: El| {
+        col()
+            .full_width()
+            .pad(Space::Sm)
+            .separate(Space::Sm)
+            .inset_surface()
+            .child(header)
+    };
     let diagnostics = || diagnostics::view(s, key, tool);
     if !expanded {
-        return block.children(diagnostics());
+        return make_block(make_header(false)).children(diagnostics());
     }
     let failure = render_error(s, message, key, tool, ancestors, query);
-    if tool.name == "question"
+    if canonical == "question"
         && let Some(questions) = question::view(s, key, tool)
     {
-        return block
+        return make_block(make_header(false))
             .child(questions)
             .children(media::tool(s, key, &tool.pictures))
             .children(diagnostics());
     }
-    if pending && tool.name != "todowrite" && tool.input.as_str().is_none_or(str::is_empty) {
-        return block
+    if pending && canonical != "todowrite" && tool.input.as_str().is_none_or(str::is_empty) {
+        return make_block(make_header(false))
             .child(text(t("toolCall.pending.waitingToRun")))
             .children(diagnostics());
     }
-    if tool.name == "todowrite" {
-        return block
+    if canonical == "todowrite" {
+        return make_block(make_header(false))
             .children(failure)
             .child(todo::view(tool))
             .children(media::tool(s, key, &tool.pictures))
@@ -476,9 +485,10 @@ fn render_body(
             }
         }
     }
-    let execute_details = (tool.name == "execute")
+    let execute_details = (canonical == "execute")
         .then(|| execute::view(s, key, tool, query))
         .flatten();
+    let mut pre_output = Vec::new();
     let mut input_visible = false;
     if has_tool_input(tool) {
         let input_mode = settings::transcript_mode(s, TranscriptRow::Inputs);
@@ -514,7 +524,7 @@ fn render_body(
         let show = show || input_matched;
         input_visible = show;
         let toggle = input_key.clone();
-        block = block.child(
+        pre_output.push(
             layout::button(
                 t(if show {
                     "toolCall.header.hideInputTitle"
@@ -530,33 +540,33 @@ fn render_body(
             .expanded(show),
         );
         if show {
-            block = block.child(copy(s, message, key, &tool.id, Section::Input, ancestors));
+            pre_output.push(copy(s, message, key, &tool.id, Section::Input, ancestors));
             if let Some(input) = input {
                 let limit = if input_matched {
                     document::search_limit(query)
                 } else {
                     TOOL_LIMIT
                 };
-                block = block.child(markdown::tool_pane(
-                    window(s, input_key, &[&input], limit, |shown, units| {
+                pre_output.push(markdown::tool_pane(
+                    window(s, input_key.clone(), &[&input], limit, |shown, units| {
                         markdown::search_code(shown, "json", units <= HIGHLIGHT_LIMIT, true, query)
                     }),
                     false,
                 ));
             } else {
-                block = block.child(text(t("toolCall.output.tooLarge")).key(input_key));
+                pre_output.push(text(t("toolCall.output.tooLarge")).key(input_key.clone()));
             }
         }
     }
     if let Some(details) = task_body.or(execute_details) {
-        block = block.child(details);
+        pre_output.push(details);
     }
-    let lang = if tool.name == "read" {
+    let lang = if canonical == "read" {
         markdown::language_for_path(path(tool))
     } else {
         lang
     };
-    let apply_patch_body = (!pending && tool.name == "apply_patch")
+    let apply_patch_body = (!pending && canonical == "apply_patch")
         .then(|| apply_patch::view(s, message, key, tool, query))
         .flatten();
     let has_apply_patch_body = apply_patch_body.is_some();
@@ -570,7 +580,7 @@ fn render_body(
     let output_expanded = if input_visible && has_collapsible_output && !active {
         let expanded = s.transcript_display.expanded(&output_section_key, true);
         let toggle = output_section_key.clone();
-        block = block.child(
+        pre_output.push(
             layout::button(
                 t("toolCall.io.output"),
                 false,
@@ -585,6 +595,17 @@ fn render_body(
     } else {
         true
     };
+    let has_renderable_output = (has_output || expanded_tool_output.is_some())
+        && !matches!(structured_out, Some(Formatted::TooLarge | Formatted::Empty));
+    let shared_wrap = output_expanded
+        && has_renderable_output
+        && !is_task
+        && !skill
+        && !is_patch(tool)
+        && result_list.is_none()
+        && !rich_diff
+        && !matches!(canonical, "question" | "todowrite");
+    let mut block = make_block(make_header(shared_wrap)).children(pre_output);
     if output_expanded {
         if let Some(patch) = apply_patch_body {
             block = block.child(patch);
@@ -599,21 +620,42 @@ fn render_body(
             }
             if skill {
                 let output_key = format!("{key}-tool_output");
+                let skill_source = expanded_tool_output.unwrap_or(parts[0]);
                 if probe {
-                    if let Some(q) = query
+                    if !skill_source.trim().is_empty()
+                        && let Some(q) = query
                         && let Some(claimed) = q.claimed
                         && !claimed.get()
-                        && document::skill_prose_matches(s, key, &output_key, parts[0], q)
+                        && document::skill_prose_matches(s, key, &output_key, skill_source, q)
                     {
                         claimed.set(true);
                     }
                 } else {
-                    block = block.child(markdown::tool_pane(
-                        document::prose_search(s, message, key, output_key, parts[0], query),
-                        false,
-                    ));
+                    if !skill_source.trim().is_empty() {
+                        block = block.child(markdown::tool_pane(
+                            document::prose_search(
+                                s,
+                                message,
+                                key,
+                                output_key.clone(),
+                                skill_source,
+                                query,
+                            ),
+                            false,
+                        ));
+                    }
+                    if let Some(expand_key) = tool_expand_key {
+                        block = append_child_truncation_footer(
+                            s,
+                            block,
+                            key,
+                            output_key,
+                            expand_key,
+                            expanded_tool_output.is_some(),
+                        );
+                    }
                 }
-            } else if tool.name == "apply_patch" && has_output && !is_tool_truncated {
+            } else if canonical == "apply_patch" && has_output && !is_tool_truncated {
                 let output_key = format!("{key}-tool_output");
                 if probe {
                     if let Some(q) = query
@@ -646,20 +688,15 @@ fn render_body(
                     ));
                 }
             } else if (has_output || is_tool_truncated) && !specialized_task {
-                let structured_out = if expanded_tool_output.is_some() {
-                    None
-                } else {
-                    structured.map(|value| super::format::format_unknown(value, Some(TOOL_LIMIT)))
-                };
-                if matches!(structured_out, Some(super::format::Formatted::TooLarge)) {
+                if matches!(structured_out, Some(Formatted::TooLarge)) {
                     block = block.child(text(t("toolCall.output.tooLarge")));
-                } else if !matches!(structured_out, Some(super::format::Formatted::Empty)) {
+                } else if !matches!(structured_out, Some(Formatted::Empty)) {
                     let (formatted, formatted_lang) =
-                        if let Some(super::format::Formatted::Text(text, lang)) = structured_out {
+                        if let Some(Formatted::Text(text, lang)) = structured_out {
                             (Some(text), lang)
                         } else {
                             (
-                                (tool.name == "execute"
+                                (canonical == "execute"
                                     && tool.status == "completed"
                                     && expanded_tool_output.is_none())
                                 .then(|| execute::formatted_output(parts[0]))
@@ -670,7 +707,7 @@ fn render_body(
                     let (parts, lang) = if let Some(full) = expanded_tool_output {
                         (
                             [full, "", "", ""],
-                            if tool.name == "apply_patch" {
+                            if canonical == "apply_patch" {
                                 "diff"
                             } else {
                                 lang
@@ -727,7 +764,7 @@ fn render_body(
                                             }
                                         },
                                     ),
-                                    matches!(tool.name.as_str(), "edit" | "write"),
+                                    matches!(canonical, "edit" | "write"),
                                 ))
                         };
                         block = block.child(if let Some(results) = result_list {
@@ -739,53 +776,21 @@ fn render_body(
                         });
                     }
                     if let Some(expand_key) = tool_expand_key {
-                        let copy_target = super::children::CopyKey::ToolSection(expand_key.clone());
-                        if expanded_tool_output.is_none() {
-                            let failed = s
-                                .transcript_display
-                                .children
-                                .expand_tool_failed(&expand_key);
-                            let reveal_key = output_key;
-                            block = block.child(
-                                layout::action_row()
-                                    .child(text(t("toolCall.output.tooLarge")).role("status"))
-                                    .child(
-                                        layout::button(
-                                            t("messageBlock.hiddenText.showAll"),
-                                            false,
-                                            screen::action(&s.input_scope, move |s| {
-                                                super::children::Children::expand_tool_output(
-                                                    s,
-                                                    expand_key.clone(),
-                                                );
-                                                Display::reveal_next(s, &reveal_key);
-                                            }),
-                                        )
-                                        .key(format!("expand-{key}-output")),
-                                    ),
-                            );
-                            if failed {
-                                block = block
-                                    .child(text(t("sessionList.loadError.retry")).role("status"));
-                            }
-                        }
-                        if s.transcript_display.children.copy_failed(&copy_target) {
-                            block = block
-                                .child(text(t("messageSection.quote.copyFailed")).role("status"));
-                        } else if s.transcript_display.children.copy_copied(&copy_target) {
-                            block = block
-                                .child(text(t("markdown.codeBlock.copy.copied")).role("status"));
-                        } else if s.transcript_display.children.copy_ready(&copy_target) {
-                            block = block
-                                .child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
-                        }
+                        block = append_child_truncation_footer(
+                            s,
+                            block,
+                            key,
+                            output_key,
+                            expand_key,
+                            expanded_tool_output.is_some(),
+                        );
                     }
                 }
             }
         }
     }
     block = block.children(failure);
-    if tool.name == "execute" {
+    if canonical == "execute" {
         block = block.children(execute::notice(tool));
     }
     let block = block
@@ -796,6 +801,50 @@ fn render_body(
     } else {
         block
     }
+}
+
+fn append_child_truncation_footer(
+    s: &State,
+    mut block: El,
+    key: &str,
+    output_key: String,
+    expand_key: super::children::ToolCopyKey,
+    expanded: bool,
+) -> El {
+    let copy_target = super::children::CopyKey::ToolSection(expand_key.clone());
+    if !expanded {
+        let failed = s
+            .transcript_display
+            .children
+            .expand_tool_failed(&expand_key);
+        let reveal_key = output_key;
+        block = block.child(
+            layout::action_row()
+                .child(text(t("toolCall.output.tooLarge")).role("status"))
+                .child(
+                    layout::button(
+                        t("messageBlock.hiddenText.showAll"),
+                        false,
+                        screen::action(&s.input_scope, move |s| {
+                            super::children::Children::expand_tool_output(s, expand_key.clone());
+                            Display::reveal_next(s, &reveal_key);
+                        }),
+                    )
+                    .key(format!("expand-{key}-output")),
+                ),
+        );
+        if failed {
+            block = block.child(text(t("sessionList.loadError.retry")).role("status"));
+        }
+    }
+    if s.transcript_display.children.copy_failed(&copy_target) {
+        block = block.child(text(t("messageSection.quote.copyFailed")).role("status"));
+    } else if s.transcript_display.children.copy_copied(&copy_target) {
+        block = block.child(text(t("markdown.codeBlock.copy.copied")).role("status"));
+    } else if s.transcript_display.children.copy_ready(&copy_target) {
+        block = block.child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
+    }
+    block
 }
 
 fn wrap_control(s: &State, key: &str, wrap: bool) -> El {

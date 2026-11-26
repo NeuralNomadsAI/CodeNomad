@@ -11,8 +11,63 @@ pub(super) fn string<'a>(value: &'a Value, keys: &[&str]) -> &'a str {
         .unwrap_or_default()
 }
 
+pub(super) fn canonical_name(name: &str) -> &str {
+    let trimmed = name.trim();
+    trimmed.strip_prefix("opencode_").unwrap_or(trimmed)
+}
+
+fn is_bidi_control(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
+pub(super) fn sanitize_header_text(raw: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut count = 0usize;
+    let mut pending_space = false;
+    let mut truncated = false;
+    for ch in raw.chars() {
+        if is_bidi_control(ch) || (ch.is_control() && !ch.is_whitespace()) {
+            continue;
+        }
+        if ch.is_whitespace() {
+            pending_space = !out.is_empty();
+            continue;
+        }
+        let needed = usize::from(pending_space) + 1;
+        if count + needed > max_chars {
+            truncated = true;
+            break;
+        }
+        if pending_space {
+            out.push(' ');
+            count += 1;
+            pending_space = false;
+        }
+        out.push(ch);
+        count += 1;
+    }
+    if truncated {
+        let keep = max_chars.saturating_sub(1);
+        while count > keep {
+            out.pop();
+            count -= 1;
+        }
+        while out.ends_with(' ') {
+            out.pop();
+        }
+        out.push('…');
+    }
+    out
+}
+
 pub(super) fn path(tool: &Tool) -> &str {
-    match tool.name.as_str() {
+    match canonical_name(&tool.name) {
         "read" => read::path(tool),
         "edit" => edit::path(tool),
         _ => write::path(tool),
@@ -56,19 +111,16 @@ pub(super) fn input_json(value: &Value, limit: usize, partial: bool) -> Option<S
 }
 
 pub(super) fn title(tool: &Tool) -> String {
-    let name = tool
-        .name
-        .trim()
-        .strip_prefix("opencode_")
-        .unwrap_or(tool.name.trim());
+    let name = canonical_name(&tool.name);
     let mut title = if name == "websearch" {
         name.into()
-    } else if name == "invalid" && !string(&tool.input, &["tool"]).trim().is_empty() {
-        format!(
-            "{} {}",
-            label("invalid"),
-            label(string(&tool.input, &["tool"]))
-        )
+    } else if name == "invalid" {
+        let requested = sanitize_header_text(string(&tool.input, &["tool"]), 250);
+        if requested.is_empty() || canonical_name(&requested) == "invalid" {
+            label("invalid")
+        } else {
+            format!("{} {}", label("invalid"), label(&requested))
+        }
     } else {
         label(name)
     };
@@ -85,9 +137,10 @@ pub(super) fn title(tool: &Tool) -> String {
         "webfetch" => string(&tool.input, &["url"]),
         _ => "",
     };
+    let summary = sanitize_header_text(summary, 250);
     if !summary.is_empty() {
         title.push(' ');
-        title.extend(summary.chars().take(250));
+        title.push_str(&summary);
     }
     if name == "websearch" {
         search::web_title(tool, &mut title);
@@ -110,8 +163,7 @@ pub(super) fn title(tool: &Tool) -> String {
 }
 
 pub(super) fn label(name: &str) -> String {
-    let trimmed = name.trim();
-    let normalized = trimmed.strip_prefix("opencode_").unwrap_or(trimmed);
+    let normalized = canonical_name(name);
     let key = match normalized {
         "" | "invalid" => "toolCall.renderer.toolName.invalid",
         "bash" | "shell" => "toolCall.renderer.toolName.shell",
@@ -119,13 +171,12 @@ pub(super) fn label(name: &str) -> String {
         "todowrite" => "toolCall.renderer.toolName.plan",
         "apply_patch" => "toolCall.renderer.toolName.applyPatch",
         _ => {
-            let mut chars = normalized.chars();
-            return chars
-                .next()
-                .into_iter()
-                .flat_map(char::to_uppercase)
-                .chain(chars.take(249))
-                .collect();
+            let clean = sanitize_header_text(normalized, 250);
+            let mut chars = clean.chars();
+            let Some(first) = chars.next() else {
+                return t("toolCall.renderer.toolName.invalid").into();
+            };
+            return first.to_uppercase().chain(chars).collect();
         }
     };
     t(key).into()
@@ -198,7 +249,10 @@ pub(super) fn format_unknown(value: &Value, limit: Option<usize>) -> Formatted {
 }
 
 pub(super) fn structured_output(tool: &Tool) -> Option<&Value> {
-    if tool.name != "webfetch" || tool.status == "completed" || !tool.output.is_empty() {
+    if canonical_name(&tool.name) != "webfetch"
+        || tool.status == "completed"
+        || !tool.output.is_empty()
+    {
         return None;
     }
     let value = tool.metadata.get("output")?;
@@ -209,18 +263,19 @@ pub(super) fn structured_output(tool: &Tool) -> Option<&Value> {
 }
 
 pub(super) fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
+    let name = canonical_name(&tool.name);
     let live = string(&tool.metadata, &["output", "preview"]);
     if shell::matches(tool) {
         *parts = shell::output(tool);
         "bash"
-    } else if tool.name == "edit" {
+    } else if name == "edit" {
         parts[0] = edit::output(tool, live);
         "diff"
-    } else if tool.name == "write" {
+    } else if name == "write" {
         let (content, language) = write::output(tool);
         parts[0] = content;
         language
-    } else if tool.name == "webfetch" {
+    } else if name == "webfetch" {
         parts[0] = if tool.status == "completed" {
             &tool.output
         } else {
@@ -267,4 +322,87 @@ fn format_unknown_skips_empty_nested_arrays_instead_of_marking_too_large() {
         format_unknown(&serde_json::json!(["ab", "cde"]), Some(4)),
         Formatted::TooLarge
     );
+}
+
+#[test]
+fn webfetch_and_invalid_titles_are_bounded_sanitized_and_deduplicated() {
+    let make_tool = |name: &str, input: Value| {
+        let row = crate::history::decode_message(&serde_json::json!({
+            "type": "assistant",
+            "id": "m",
+            "content": [{"type": "tool", "id": "t1", "name": name, "state": {"status": "completed", "input": input}}]
+        }))
+        .unwrap();
+        match row.parts.into_iter().next().unwrap() {
+            crate::content::Part::Tool(tool) => tool,
+            _ => panic!("expected tool part"),
+        }
+    };
+    crate::strings::with_locale("en", || {
+        assert_eq!(
+            title(&make_tool(
+                "opencode_webfetch",
+                serde_json::json!({"url": "https://example.test/a\nb\tc\u{202E}\x07"})
+            )),
+            "Fetch https://example.test/a b c"
+        );
+        let long_url = format!("https://example.test/{}", "x".repeat(300));
+        let long_title = title(&make_tool("webfetch", serde_json::json!({"url": long_url})));
+        let url_part = long_title.strip_prefix("Fetch ").unwrap();
+        assert_eq!(url_part.chars().count(), 250);
+        assert!(url_part.ends_with('…'));
+
+        assert_eq!(
+            title(&make_tool(
+                "webfetch",
+                serde_json::json!({"url": " \n\t\x00 "})
+            )),
+            "Fetch"
+        );
+        assert_eq!(
+            title(&make_tool(
+                "invalid",
+                serde_json::json!({"tool": "invalid"})
+            )),
+            "Invalid"
+        );
+        assert_eq!(
+            title(&make_tool(
+                "opencode_invalid",
+                serde_json::json!({"tool": "opencode_invalid"})
+            )),
+            "Invalid"
+        );
+        assert_eq!(
+            title(&make_tool(
+                "invalid",
+                serde_json::json!({"tool": " \n\x07 "})
+            )),
+            "Invalid"
+        );
+        assert_eq!(
+            title(&make_tool(
+                "invalid",
+                serde_json::json!({"tool": "bad\nname\u{202E}"})
+            )),
+            "Invalid Bad name"
+        );
+        let long_name = "tool_".to_owned() + &"z".repeat(300);
+        let invalid_long = title(&make_tool(
+            "invalid",
+            serde_json::json!({"tool": long_name}),
+        ));
+        let requested_part = invalid_long.strip_prefix("Invalid ").unwrap();
+        assert_eq!(requested_part.chars().count(), 250);
+        assert!(requested_part.ends_with('…'));
+    });
+}
+
+#[test]
+fn sanitize_header_text_handles_boundaries_without_trailing_ellipsis_on_exact_fit() {
+    assert_eq!(sanitize_header_text("abc   ", 3), "abc");
+    assert_eq!(sanitize_header_text("abcd", 3), "ab…");
+    assert_eq!(sanitize_header_text("ab c", 3), "ab…");
+    assert_eq!(sanitize_header_text("a bc", 3), "a…");
+    assert_eq!(sanitize_header_text("a\u{202E}b\x00c", 10), "abc");
 }

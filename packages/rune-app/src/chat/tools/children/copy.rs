@@ -258,14 +258,17 @@ impl Children {
                     match key.section {
                         0 => format::bounded_json(&tool.input, MAX_COPY_BYTES),
                         1 => {
-                            if let Some(value) = format::structured_output(tool) {
+                            let canonical = format::canonical_name(&tool.name);
+                            if canonical == "skill" && tool.status != "completed" {
+                                None
+                            } else if let Some(value) = format::structured_output(tool) {
                                 match format::format_unknown(value, Some(MAX_COPY_BYTES)) {
                                     format::Formatted::Text(source, _) => Some(source),
                                     _ => None,
                                 }
-                            } else if tool.name == "todowrite" {
+                            } else if canonical == "todowrite" {
                                 todo::copy(tool)
-                            } else if matches!(tool.name.as_str(), "apply_patch" | "patch") {
+                            } else if matches!(canonical, "apply_patch" | "patch") {
                                 apply_patch::copy_all(None, tool).or_else(|| {
                                     let mut parts = [""; 4];
                                     output(tool, &mut parts);
