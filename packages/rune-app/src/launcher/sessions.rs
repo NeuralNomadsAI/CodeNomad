@@ -50,7 +50,7 @@ impl Launcher {
         includes_linked: bool,
         reset_cursor: bool,
     ) {
-        if includes_linked || (authoritative && self.creation_uncertain_linked.is_none()) {
+        if includes_linked && self.creation_uncertain_linked.is_some() {
             self.creation_uncertain = false;
             self.creation_uncertain_linked = None;
             if self.error == Some("rune.create_error") {
@@ -211,7 +211,6 @@ pub fn create_blank(s: &mut State) {
     s.notifications.supersede_navigation();
     let ticket = s.notifications.navigation_ticket();
     crate::timeline::search::cancel_destination(s);
-    crate::workspace::fence_catalogue_for_create(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
@@ -266,7 +265,6 @@ pub fn create(s: &mut State, _: &mut Tx) {
     s.notifications.supersede_navigation();
     let ticket = s.notifications.navigation_ticket();
     crate::timeline::search::cancel_destination(s);
-    crate::workspace::fence_catalogue_for_create(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
