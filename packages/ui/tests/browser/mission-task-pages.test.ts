@@ -8,7 +8,6 @@ import path from "node:path"
 import type { MissionMap, MissionPanelMap, MissionReport, MissionTask } from "../../../server/src/api-types"
 import { compactMissionMap } from "../../../server/src/missions/mission-compact-map"
 import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
-import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { missionContentFixture, missionTaskFixture, missionTaskQuery, olderPluginMap, panelMissions } from "./mission-content-fixture"
 import { expandRow, missionToolbar } from "./mission-actions"
 
@@ -71,8 +70,6 @@ async function open(value: MissionMap, activity: Array<{ sessionId: string; stat
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project",
       missions: project ? (panelMissions([current]), [compactMissionMap(project(current))]) : panelMissions([current]), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: [{ missionId: current.id, actors: activity }] } } })
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project",
-      projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] }) })
     return route.fulfill({ json: {} })
   })
   await events.route(page)

@@ -2,7 +2,6 @@ import type { Plugin } from "@opencode/plugin"
 import type { NativeMissionSession } from "../../missions/control-types"
 import { followPresence } from "../desktop-plugin-presence"
 import { setupMissionsBusiness, setupMissionsPlugin, type MissionBusinessRoute } from "../missions-plugin"
-import { selectNativePassageBusiness, prepareNativePassageSession, retireNativePassageBusiness } from "./native-passage-business"
 import { readMissionConfigurations, resolveMissionProfileDefaults, sendMissionInput } from "../automation-plugin"
 import { isCleanupReason } from "../../missions/cleanup-projection"
 import { MissionJournal } from "../../missions/journal"
@@ -42,7 +41,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
         const own = author && name === "inspect" && (input.list || input.missionID)
           ? await author.control.listMissions(sessionID) : undefined
          if (author && own?.some(mission => mission.missionID === input.missionID)) return author
-        const selected = await documentBusiness?.select(sessionID) ?? await selectNativePassageBusiness(ctx, sessionID, humanGate)
+        const selected = await documentBusiness?.select(sessionID)
         if (selected && author && own && input.list) {
           return { ...selected, preparationAvailable: true, listMissions: async (offset, operationID) => {
             const use = (control: MissionBusinessRoute["control"]) => control.inspectTool(selected.readSessionID, { list: true }, operationID, undefined)
@@ -59,7 +58,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
            (sessionID, input) => sendMissionInput(sessionID, "project-control", input),
            (sessionID, input) => sendMissionInput(sessionID, "settings", input))
       const promptHook = await ctx.session.hook("prompt", async event => {
-        if (!await documentBusiness?.prepare(event.sessionID)) await prepareNativePassageSession(ctx, event.sessionID, humanGate)
+        await documentBusiness?.prepare(event.sessionID)
       })
         .catch(async error => { await disposeBusiness(); throw error })
       let disposePresence: (() => Promise<void>) | undefined
@@ -95,7 +94,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
       }, console.error, () => retainMissionWork(() => journal.snapshot(), () => journal.readHints(hintsShowWork))) }
       catch (error) { await disposeBusiness(); await promptHook.dispose(); index.dispose(); throw error }
       return async () => { ordinary = undefined; await disposeBusiness(); await promptHook.dispose();
-        retireNativePassageBusiness(ctx.location); await disposePresence?.(); index.dispose() }
+        await disposePresence?.(); index.dispose() }
     },
   }
 }

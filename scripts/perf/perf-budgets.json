@@ -172,7 +172,6 @@
     "lib/toggle-sweep.ts": 0.06,
     "lib/web-session-client-state.ts": 0.08,
     "server/src/missions/mission-schedule-carrier-identity.ts": 4.2,
-    "server/src/missions/recurrence-events.ts": 1,
     "stores/app-session-reconciliation.ts": 0.02,
     "stores/app-session-snapshot-merge.ts": 0.02,
     "stores/app-tabs.ts": 108.94,

@@ -335,7 +335,7 @@ export function MissionEditor(props: {
     if (scheduledWrite) {
       if (textLocked() || !structuralLocked() && (!policy() || !policyReady())) return
       if (!structuralLocked()) {
-        try { recurrenceStartText({ consigne: objective().trim(), template: template(), taskMode: taskMode() ?? "native" }) }
+        try { recurrenceStartText({ consigne: objective().trim() }) }
         catch { fail("objective", t("missions.recurrence.instructionsTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })); return }
       }
       if (missionCreationHold(identity())) { setAdopted(true); return }

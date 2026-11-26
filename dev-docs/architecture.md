@@ -56,7 +56,7 @@ Each workspace descriptor has its own optional `viewState` payload, normalized b
 | --- | --- |
 | `version: 1` | Envelope schema version. |
 | `previews[sessionId]` | Foreground `mode` (`chat`/`preview`). |
-| `missions` | Selected Mission/daily/native schedule, task, reader target, expanded rows and target-specific disclosures. |
+| `missions` | Selected Mission/native schedule, task, reader target, expanded rows and target-specific disclosures. |
 | `rightPanelTab` | Selected built-in or extension tab ID. |
 | `filesMode` | `workspace`, `changes` or `history`. |
 

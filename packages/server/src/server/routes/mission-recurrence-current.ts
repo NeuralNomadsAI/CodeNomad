@@ -1,8 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify"
 import { z } from "zod"
 import { projectMissionActivity } from "../../missions/activity"
-import { recurrenceIDSchema } from "../../missions/recurrence-contract"
-import { recurrenceCurrentContentInput, recurrenceCurrentContentPage, recurrenceCurrentPageInput } from "../../missions/recurrence-current"
+import { recurrenceCurrentContentInput, recurrenceCurrentContentPage, recurrenceCurrentPageInput, recurrenceIDSchema } from "../../missions/recurrence-current"
 import { missionCurrentIdentitySchema, type MissionCurrentIdentity } from "../../missions/mission-current-source"
 import { isMissionPanelPageResult, missionPanelBytes, MISSION_PANEL_PAGE_BYTES, MISSION_PANEL_REQUEST_BYTES } from "../../missions/mission-panel-page"
 import { readMissionPanelObservation } from "../../missions/mission-panel-observation"
@@ -17,7 +16,7 @@ type Deps = { workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocati
   worktreeDeletionFence?: WorktreeDeletionFence }
 type Params = { id: string; scheduleID: string; passageID?: string }
 const paramsSchema = z.object({ id: z.string().trim().min(1).max(200), scheduleID: recurrenceIDSchema, passageID: recurrenceIDSchema.optional() }).strict()
-const owner = z.enum(["daily", "scheduled"]).default("daily")
+const owner = z.literal("scheduled").default("scheduled")
 const querySchema = z.object({ owner, kind: z.enum(["overview", "task", "report", "change"]), itemId: z.string().min(1).max(240).optional(),
   section: z.enum(["summary", "objective", "notes", "evidence", "next", "brief", "artifact", "achieved", "ongoing", "obstacles"]).default("summary"),
   page: z.coerce.number().int().min(0).safe().default(0), revision: z.coerce.number().int().positive().safe().optional() }).strict()

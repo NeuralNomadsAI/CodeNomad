@@ -10,7 +10,7 @@ import { missionPanelPage } from "../../../server/src/missions/mission-panel-pag
 import type { MissionCurrentSource } from "../../../server/src/missions/mission-current-source"
 import { contentDigest } from "../../../server/src/missions/content-digest"
 
-const source: MissionCurrentSource = { owner: "daily", projectID: "project", scheduleID: "schedule", passageID: "passage", missionID: "msn_current", digest: "a".repeat(43) }
+const source: MissionCurrentSource = { owner: "scheduled", projectID: "project", scheduleID: "schedule", passageID: "passage", missionID: "msn_current", digest: "a".repeat(43) }
 const body = { missionID: source.missionID, kind: "task" as const, taskKey: "work", field: "brief", offset: 0 }
 function reply(input: any, value: unknown, passage: unknown = source) {
   return new Response(JSON.stringify(missionPanelPage({ source: "mission", field: "body", missionID: source.missionID, projectID: source.projectID, revision: 1,

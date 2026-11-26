@@ -126,9 +126,9 @@ for (const ingress of [false, true]) {
       ...["content", "tasks", "admission"].map(path => ["GET", `/api/workspaces/w/missions/m/${path}`] as [string, string]),
       ...["control", "recover", "schedule", "schedule-settings"].map(path => ["POST", `/api/workspaces/w/missions/m/${path}`] as [string, string]),
       ["POST", "/api/workspaces/w/missions/scheduled"], ["GET", "/api/workspaces/w/missions/scheduled/capabilities"],
-      ["GET", "/api/workspaces/w/missions/scheduled/requests/r"], ["POST", "/api/workspaces/w/missions/recurrence"],
-      ...["current", "current/p/content", "run-now/status", "passages/p"].map(path => ["GET", `/api/workspaces/w/missions/recurrence/s/${path}`] as [string, string]),
-      ...["current/p/page", "control", "control/status", "run-now"].map(path => ["POST", `/api/workspaces/w/missions/recurrence/s/${path}`] as [string, string]),
+      ["GET", "/api/workspaces/w/missions/scheduled/requests/r"],
+      ...["current", "current/p/content"].map(path => ["GET", `/api/workspaces/w/missions/recurrence/s/${path}`] as [string, string]),
+      ["POST", "/api/workspaces/w/missions/recurrence/s/current/p/page"],
       ["GET", "/api/workspaces/w/sessions/s/permission-mode"], ["PUT", "/api/workspaces/w/sessions/s/permission-mode"],
       ["POST", "/workspaces/w/instance/api/session/s/prompt"],
     ]

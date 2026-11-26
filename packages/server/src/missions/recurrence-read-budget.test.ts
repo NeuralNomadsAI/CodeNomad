@@ -1,13 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { recurrenceInputBudget, recurrenceReadBudget, recurrenceSourceContextLimit,
-  RECURRENCE_SOURCE_CONTEXT_HEADER, RECURRENCE_SOURCE_REFERENCE_RESERVE, assertRecurrenceDispatchFeasible } from "./recurrence-read-budget"
+import { recurrenceInputBudget, recurrenceSourceContextLimit, RECURRENCE_SOURCE_CONTEXT_HEADER, RECURRENCE_SOURCE_REFERENCE_RESERVE } from "./recurrence-read-budget"
 
-test("watched source limits bound payloads, not effect/inbox allocations", () => {
-  assert.deepEqual(recurrenceReadBudget(1), { sufficient: true, readLimit: 32 })
-  assert.equal(recurrenceReadBudget(32).sufficient, true)
-  for (const invalid of [-1, 33, 1.5, NaN]) assert.equal(recurrenceReadBudget(invalid).sufficient, false)
-})
 test("whole source text reserves exact reference, Location and cursor envelopes", () => {
   const config = { consigne: "Review", roots: [{ directory: "/project" }], watchedConversationIDs: ["session_one"] }
   const budget = recurrenceInputBudget(config)
@@ -15,9 +9,8 @@ test("whole source text reserves exact reference, Location and cursor envelopes"
   const text = config.consigne + RECURRENCE_SOURCE_CONTEXT_HEADER + JSON.stringify([{ conversationID: "session_one",
     directory: "/project", afterMessageID: null, limit: 32, messages }])
   assert(text.length <= budget.textMaximum)
-  assert.equal(assertRecurrenceDispatchFeasible(config), true)
   assert.equal(recurrenceInputBudget({ ...config, consigne: "x".repeat(budget.instructionsMaximum) }).sufficient, true)
-  assert.throws(() => assertRecurrenceDispatchFeasible({ ...config, consigne: "x".repeat(budget.instructionsMaximum + 1) }), /input capacity/)
+  assert.equal(recurrenceInputBudget({ ...config, consigne: "x".repeat(budget.instructionsMaximum + 1) }).sufficient, false)
 })
 test("quiet sources release text room without truncating full later source replies", () => {
   const config = { consigne: "Review", roots: [{ directory: "/project" }], watchedConversationIDs: ["session_one", "session_two"] }

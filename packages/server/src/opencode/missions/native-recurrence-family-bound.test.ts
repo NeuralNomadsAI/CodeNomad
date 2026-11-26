@@ -5,7 +5,7 @@ import { Context, Effect } from "effect"
 import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
 import { acquireNativePassageObservation } from "./native-passage-observation"
 import { passageFixture } from "./native-passage-test-fixture"
-import { observeNativePassageSettlement } from "./native-recurrence-settlement"
+import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
 
 type Fixture = Awaited<ReturnType<typeof passageFixture>>
 
@@ -29,12 +29,11 @@ function indexChildren(f: Fixture) {
   f.observation.children = async id => [...byParent.get(id) ?? []]
 }
 
-const observe = async (f: Fixture) => observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!,
-  storage: f.storage, native: f.observation, directory: f.root, current: () => true, signal: new AbortController().signal })
+const observe = (f: Fixture) => f.observe()
 
 async function settle(f: Fixture) {
-  const settled = (await observe(f))!
-  return f.calendar.finish("schedule", settled.result, 30, () => true, settled.expectedRevision)
+  const settled = (await observe(f))!, doc = await f.document()
+  return f.store.change(doc.id, doc.revision, () => true, next => changes.settle(next, f.passage.passageID, settled.outcome, f.at + 2000))
 }
 
 // Gatekeeper R8: a quiescent family of 33 (coordinator + 32 descendants) used to throw
@@ -42,66 +41,58 @@ async function settle(f: Fixture) {
 for (const [size, fanout] of [[31, 31], [32, 32], [33, 33], [200, 4]] as const)
   test(`a quiescent completed family of ${size + 1} sessions archives completed`, async () => {
     const f = await passageFixture()
-    try {
-      await f.start(); await f.finish()
-      addFamily(f, size, fanout)
-      const archived = await settle(f)
-      assert.equal(archived.pending, null)
-      assert.equal(archived.history.at(-1)?.result.outcome, "completed")
-    } finally { await f.dispose() }
+    await f.start(); await f.finish()
+    addFamily(f, size, fanout)
+    const archived = await settle(f)
+    assert.equal(archived.pending, null)
+    assert.equal(archived.history.at(-1)?.outcome, "completed")
   })
 
 test("one active, inbox-holding or tool-running descendant deep in a large family keeps the passage pending", async () => {
   const f = await passageFixture()
-  try {
-    await f.start(); await f.finish()
-    const deepest = addFamily(f, 120, 3).at(-1)!
-    for (const field of ["active", "inbox", "runningTools"] as const) {
-      const state = f.states.get(deepest)! as unknown as Record<string, unknown>
-      const before = state[field]
-      state[field] = field === "active" ? true : 1
-      assert.equal(await observe(f), undefined, `${field} descendant blocks`)
-      state[field] = before
-    }
-    f.pendingForm = true
-    assert.equal(await observe(f), undefined, "an applicable Form/permission/Shell blocks the large family")
-    f.pendingForm = false
-    assert.ok((await f.calendar.read("schedule"))!.pending, "still pending")
-    assert.equal((await settle(f)).history.at(-1)?.result.outcome, "completed")
-  } finally { await f.dispose() }
+  await f.start(); await f.finish()
+  const deepest = addFamily(f, 120, 3).at(-1)!
+  for (const field of ["active", "inbox", "runningTools"] as const) {
+    const state = f.states.get(deepest)! as unknown as Record<string, unknown>
+    const before = state[field]
+    state[field] = field === "active" ? true : 1
+    assert.equal(await observe(f), undefined, `${field} descendant blocks`)
+    state[field] = before
+  }
+  f.pendingForm = true
+  assert.equal(await observe(f), undefined, "an applicable Form/permission/Shell blocks the large family")
+  f.pendingForm = false
+  assert.ok((await f.document()).pending, "still pending")
+  assert.equal((await settle(f)).history.at(-1)?.outcome, "completed")
 })
 
 test("an unobservable descendant fails closed: no archive and no cursor advance", async () => {
   const f = await passageFixture()
-  try {
-    await f.start(); await f.finish()
-    const ids = addFamily(f, 40, 5)
-    f.states.delete(ids[37]) // listed as a child, but its native row cannot be read
-    const before = (await f.calendar.read("schedule"))!
-    await assert.rejects(observe(f), /Missing session/)
-    const after = (await f.calendar.read("schedule"))!
-    assert.equal(after.revision, before.revision)
-    assert.equal(after.pending?.passage.id, before.pending?.passage.id)
-    assert.equal(after.history.length, before.history.length)
-  } finally { await f.dispose() }
+  await f.start(); await f.finish()
+  const ids = addFamily(f, 40, 5)
+  f.states.delete(ids[37]) // listed as a child, but its native row cannot be read
+  const before = (await f.document())
+  await assert.rejects(observe(f), /Missing session/)
+  const after = (await f.document())
+  assert.equal(after.revision, before.revision)
+  assert.equal(after.pending?.id, before.pending?.id)
+  assert.equal(after.history.length, before.history.length)
 })
 
 test(`the whole-family ceiling is ${MAX_CONTROL_FAMILY_SESSIONS} sessions; beyond it coverage is unknown, never complete`, async () => {
   const f = await passageFixture()
-  try {
-    await f.start(); await f.finish()
-    addFamily(f, MAX_CONTROL_FAMILY_SESSIONS - 1, 64)
-    indexChildren(f)
-    const exact = (await observe(f))!
-    assert.equal(exact.result.outcome, "completed", "exactly the ceiling settles")
-    addFamily(f, MAX_CONTROL_FAMILY_SESSIONS, 64) // ids overwrite; one more descendant
-    indexChildren(f)
-    const before = (await f.calendar.read("schedule"))!
-    for (let wake = 0; wake < 2; wake++) await assert.rejects(observe(f), /Passage family capacity/)
-    const after = (await f.calendar.read("schedule"))!
-    assert.equal(after.revision, before.revision, "nothing archived; watched cursors unchanged")
-    assert.ok(after.pending)
-  } finally { await f.dispose() }
+  await f.start(); await f.finish()
+  addFamily(f, MAX_CONTROL_FAMILY_SESSIONS - 1, 64)
+  indexChildren(f)
+  const exact = (await observe(f))!
+  assert.equal(exact.outcome, "completed", "exactly the ceiling settles")
+  addFamily(f, MAX_CONTROL_FAMILY_SESSIONS, 64) // ids overwrite; one more descendant
+  indexChildren(f)
+  const before = (await f.document())
+  for (let wake = 0; wake < 2; wake++) await assert.rejects(observe(f), /Passage family capacity/)
+  const after = (await f.document())
+  assert.equal(after.revision, before.revision, "nothing archived; watched cursors unchanged")
+  assert.ok(after.pending)
 })
 
 test("real native SQL observation walks a 41-session family and bounds one parent's children", async () => {
@@ -134,17 +125,16 @@ test("real native SQL observation walks a 41-session family and bounds one paren
       ["@opencode/Shell", { list: () => Effect.succeed([]) }],
     ] as const) graph = Context.add(graph, tag(name), value)
     const native = await Effect.runPromise(acquireNativePassageObservation().pipe(Effect.provide(graph)))
-    const sqlObserve = async () => observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!, storage: f.storage,
-      native, directory: f.root, current: () => true, signal: new AbortController().signal })
+    const sqlObserve = () => f.observe(native)
     running.add("ses_sql_39")
     assert.equal(await sqlObserve(), undefined, "a natively running grandchild blocks")
     running.clear()
-    assert.equal((await sqlObserve())?.result.outcome, "completed", "41 quiescent sessions settle")
+    assert.equal((await sqlObserve())?.outcome, "completed", "41 quiescent sessions settle")
     const many = db.prepare("INSERT INTO session_v2 VALUES(?,'ses_sql_00','project',?,NULL,NULL)")
     db.exec("BEGIN")
     for (let i = 0; i < MAX_CONTROL_FAMILY_SESSIONS; i++) many.run(`ses_wide_${String(i).padStart(5, "0")}`, f.root)
     db.exec("COMMIT")
     await assert.rejects(native.children("ses_sql_00"), /family capacity/, "one bounded read beyond the ceiling is unknown")
     await assert.rejects(sqlObserve(), /family capacity/)
-  } finally { db.close(); await f.dispose() }
+  } finally { db.close() }
 })

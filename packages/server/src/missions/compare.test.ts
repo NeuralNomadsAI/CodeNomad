@@ -1,12 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import Fastify from "fastify"
 import { compareModelError, missionRoleProfile, type MissionProfiles } from "./playbook-profiles"
 import { validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact } from "./contracts"
 import type { MissionJsonValue, MissionMap, MissionTask } from "./model"
 import { buildAssignmentPrompt, getMissionRecipe } from "./recipes"
 import { prepareMissionCreation } from "../server/routes/mission-creation-pipeline"
-import { registerMissionRecurrenceCreate } from "../server/routes/mission-recurrence-create"
 import { MissionControl } from "./control"
 import type { MissionStorage } from "./journal"
 import type { NativeMissionSession } from "./control-types"
@@ -93,24 +91,15 @@ test("unknown creation model leaves judge on the native default, including creat
   assert.deepEqual((await f.control.inspect(f.root.id, { start }, "start")).mission, result.mission)
 })
 
-test("Compare refuses missing or identical models before HTTP/recurring admission; variants do not distinguish models", async () => {
-  const app = Fastify()
-  registerMissionRecurrenceCreate(app, { workspaceManager: {} as never, bridgeToken: "private-fixture", auth: {
-    isAuthEnabled: () => true, getSessionFromRequest: () => ({ sessionId: "fixture" }) } as never })
-  try {
-    for (const [value, code] of [[undefined, "compare-models-required"], [{ roles: { "model-a": a } }, "compare-models-required"],
-      [{ roles: { "model-a": a, "model-b": { model: { ...a.model, variant: "high" } } } }, "compare-models-identical"]] as const) {
-      assert.equal(compareModelError(value), code)
-      await assert.rejects(prepareMissionCreation({ manager: {} as never, workspaceID: "fixture", signal: new AbortController().signal,
-        request: { requestId: "compare", objective: "Compare", template: "compare", profiles: value } }), { status: 400, message: code })
-      const reply = await app.inject({ method: "POST", url: "/api/workspaces/fixture/missions/recurrence", payload: {
-        requestID: "compare", instructions: "Compare", template: "compare", clock: { time: "09:00", zone: "UTC" },
-        taskMode: "native", watchedConversationIDs: [], profiles: value } })
-      assert.equal(reply.json().code, code)
-    }
-    assert.equal(compareModelError(profiles), undefined)
-    assert.deepEqual(missionRoleProfile("compare", profiles, "comparator"), a)
-  } finally { await app.close() }
+test("Compare refuses missing or identical models before HTTP admission; variants do not distinguish models", async () => {
+  for (const [value, code] of [[undefined, "compare-models-required"], [{ roles: { "model-a": a } }, "compare-models-required"],
+    [{ roles: { "model-a": a, "model-b": { model: { ...a.model, variant: "high" } } } }, "compare-models-identical"]] as const) {
+    assert.equal(compareModelError(value), code)
+    await assert.rejects(prepareMissionCreation({ manager: {} as never, workspaceID: "fixture", signal: new AbortController().signal,
+      request: { requestId: "compare", objective: "Compare", template: "compare", profiles: value } }), { status: 400, message: code })
+  }
+  assert.equal(compareModelError(profiles), undefined)
+  assert.deepEqual(missionRoleProfile("compare", profiles, "comparator"), a)
 })
 
 test("Compare enforces byte-identical run briefs and frozen models at the common role policy", () => {

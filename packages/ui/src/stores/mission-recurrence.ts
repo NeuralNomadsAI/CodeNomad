@@ -1,6 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import type { MissionRecurrenceCurrent } from "../../../server/src/api-types"
-import { readRecurrenceScheduleChanged } from "../../../server/src/missions/recurrence-events"
 import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { backendEvents as serverEvents } from "../lib/server-events"
@@ -214,13 +213,13 @@ export function useMissionCurrentPassage(props: {
 
 serverEvents.on("instance.event", event => {
   if (event.type !== "instance.event") return
-  const schedule = readRecurrenceScheduleChanged(event.event), plugin = event.event.type === "plugin.updated"
+  const plugin = event.event.type === "plugin.updated"
   const changedJournal = isMissionChangedEvent(event.event), passage = changedJournal || isMissionActivityEvent(event.event)
-  if (!schedule && !plugin && !passage) return
+  if (!plugin && !passage) return
   // The native relay already validates placement; filesystem aliases are not UI authority.
   for (const entry of cache.values()) {
     if (entry.instanceId !== event.instanceId) continue
-    if (plugin || schedule?.scheduleID === entry.scheduleID || changedJournal) scheduleRefresh(entry)
+    if (plugin || changedJournal) scheduleRefresh(entry)
     // Activity matters only to a running passage, or to a read that has not shown one yet.
     else if (passage && (!entry.currentSnapshot || entry.currentSnapshot.passageID || entry.error)) scheduleRefresh(entry, "activity")
   }

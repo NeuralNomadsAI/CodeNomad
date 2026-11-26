@@ -1,9 +1,5 @@
-import type { MissionStorage } from "../../missions/journal"
-import type { RecurrenceDocument } from "../../missions/recurrence-contract"
-import { recurrencePassage } from "../../missions/recurrence-passage"
 import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
 import { isMissionTaskSession } from "../../missions/session-identity"
-import { passageSourceCursors, passageStartInput, type PassageSource } from "../../missions/recurrence-input"
 import type { MissionMap } from "../../missions/model"
 import { samePassageObservation, type NativePassageObservation, type PassageSessionObservation } from "./native-passage-observation"
 import { canonicalAuthority } from "../../missions/authority-protocol"
@@ -20,34 +16,6 @@ export async function passageFamilyRoots(native: Pick<NativePassageObservation, 
   const roots = [coordinatorSessionID]
   for (const id of new Set(actorIDs)) if (id !== coordinatorSessionID && !(await native.session(id)).parentID) roots.push(id)
   return roots
-}
-
-/** Native quiescence, not an allowlist or exact replay of tool/event history.
- * Background subagents are ordinary descendants and must also be inactive. */
-export async function observeNativePassageSettlement(input: {
-  document: RecurrenceDocument; storage: MissionStorage; native: NativePassageObservation;
-  directory: string; workspaceID?: string; current(): true; signal: AbortSignal;
-  /** Display-only uncertainty; this callback grants no execution authority. */
-  uncertain?(): void
-}) {
-  const { document: doc, native, signal } = input
-  if (!doc.pending?.admission) return undefined
-  const passage = recurrencePassage(input.storage, doc, input.current)
-  if (doc.pending.admission.conversationID !== passage.coordinatorSessionID) throw new Error("Passage coordinator differs")
-  const snapshot = await passage.journal.snapshot(), mission = snapshot.missions[0]
-  if (snapshot.missions.length !== 1 || snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable
-    || !mission || mission.id !== passage.missionID || mission.coordinatorSessionId !== passage.coordinatorSessionID)
-    throw new Error("Passage journal unavailable")
-  const frozen = await input.storage.get(passage.inputKey) as unknown as { sources: PassageSource[]; input: ReturnType<typeof passageStartInput> } | undefined
-  if (!frozen || !samePassageObservation(frozen.input, passageStartInput(doc, passage, frozen.sources)))
-    throw new Error("Passage frozen input unavailable")
-  const settled = await observePassageFamilySettlement({ ...input, projectID: doc.projectID, mission,
-    coordinatorSessionID: passage.coordinatorSessionID, messageID: passage.messageID })
-  if (!settled) return undefined
-  const result = { passageID: passage.passageID, messageID: passage.messageID, missionID: passage.missionID,
-    conversationID: passage.coordinatorSessionID, outcome: settled.outcome, ...(settled.interrupted ? { reason: "interrupted" as const } : {}), artifactMessageIDs: [],
-    cursors: settled.outcome === "completed" ? passageSourceCursors(frozen.sources) : [] }
-  return { result, expectedRevision: doc.revision }
 }
 
 /** Shared native H11 proof. Callers supply their own typed durable document and
@@ -121,9 +89,7 @@ export async function observePassageFamilySettlement(input: {
   }
   if (await native.requests([...seen])) return undefined
   signal.throwIfAborted(); input.current(); native.assertCurrent()
-  const interrupted = outcome === "ended-without-report" && family.some(session => session.terminal?.outcome === "interrupted"
-    && !session.historical)
-  return { outcome, interrupted, proof: { revision: mission.revision,
+  return { outcome, proof: { revision: mission.revision,
     familyDigest: stableToken(canonicalAuthority({ family, children: [...children] }, 16 * 1024 * 1024), 64) } }
 }
 

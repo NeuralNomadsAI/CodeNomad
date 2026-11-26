@@ -20,7 +20,7 @@ Alt ajan veya zamanlanmış çalıştırma dahil, projenin herhangi bir konuşma
 
 Ajanlar, projeye ait her konuşmadan sizin oluşturduklarınız dahil tüm Görevleri okuyabilir. Salt okunur görünümler işleri, sonuçları, temizliği, zamanlanmış çalıştırmaları ve kaynak seçeneklerini kapsar; görüntülemek işi başlatmaz veya yeniden denemez.
 
-Ajanlar ayrıca zamanlamayı tanılayabilir, açık OFF durumunu koruyarak ayarları hazırlayabilir, doğrulanmış kısmi düzenlemeyi özgün istekle sürdürebilir ve günlük zamanlamalar oluşturup yönetebilir.
+Ajanlar ayrıca zamanlamayı tanılayabilir, açık OFF durumunu koruyarak ayarları hazırlayabilir ve doğrulanmış kısmi düzenlemeyi özgün istekle sürdürebilir.
 
 **Yapılandırma**, kayıtlı hedefi, notları, rehberi, profilleri ve görev oturumlarını yükler; adı düzenlenebilir başlık olur. Alanları kontrol edin.
 
@@ -104,12 +104,6 @@ Seçilen program durumunu, sonraki uyanma/kontrolü, başlatılmış/başarılı
 
 Yerel Git başvurusunu izlemek için **Yerel dalda yeni commit'ler** seçeneğini kullanın. Uzak dal için **Uzak dalda yeni commit'ler** seçeneğini ve `dev` gibi bir dal adı girin. Kontrol, yerel fetch olmadan algılanan depoyu doğrudan okur. İki kontrol arasındaki birden fazla commit tek geçiş başlatır.
 
-### Mevcut günlük programlar {#existing-daily-schedules}
-
-Aracılar bu programları, başka bir çalışma ağacı da dahil olmak üzere aynı projeye ait herhangi bir konuşmadan bulabilir ve kontrol edebilir.
-
-Kendi kontrollerini ve saat dilimini korurlar. Hizmet yeniden başlayınca kesintiye uğramış günlük kayıtlar Devam gerektirir. Kaçırılan tüm günler yerine son uygun günü telafi ederler. Sonuçlar seçilen kayıttadır.
-
 ## Ağaç ve sonuçlar {#tracking}
 
 Şevron işleri açar; satıra tıklamak Görevi veya işi seçer. Eylemler başlıkta kalır. İşi olmayan Görevde şevron yoktur. Filtre yüklenen kayıtları daraltır. Tek seferlik ve tekrarlanan Görevler tek listede, en son etkinlik önce sıralanır; süren planlı çalıştırma en üsttedir.
@@ -146,7 +140,7 @@ CodeNomad çalışırken ajanlar kayıtlı proje konuşmalarını arayabilir. Ö
 
 ## Kapatma ve yeniden başlatma {#lifetime}
 
-CodeNomad'ı kapatmak yerel işi durdurmaz. Etkin yerel programlar hizmet/makine kullanılabilirken çalışabilir; sağlıklı takvimler hizmet yeniden başlatılınca sürer. Açık duraklamalar, durdurmalar ve belirsiz sonuçlar engellerini korur. Mevcut günlük kayıtlar Devam gerektirir.
+CodeNomad'ı kapatmak yerel işi durdurmaz. Etkin yerel programlar hizmet/makine kullanılabilirken çalışabilir; sağlıklı takvimler hizmet yeniden başlatılınca sürer. Açık duraklamalar, durdurmalar ve belirsiz sonuçlar engellerini korur.
 
 Bazı koordinasyon ve kurtarma işlemleri CodeNomad sunucusunu gerektirir.
 
@@ -154,7 +148,7 @@ Bazı koordinasyon ve kurtarma işlemleri CodeNomad sunucusunu gerektirir.
 
 Tek seferlik Duraklat, yeni iş başlatmadan mevcut adımları bitirir; hemen kesme, doğrudan kesinti ister. Durdur kalıcıdır ve onay gerekir. Programı duraklatmak gelecekteki başlatmaları kapatır ve mevcut geçişin kesilmesini ister. Araç etkileri devam edebilir.
 
-Doğrulanmamış asıl isteği koruyun: Yerel program görünümü veya düzenleyici açıkken CodeNomad sonuçlanana kadar isteği otomatik yeniden okur ve yalnızca tam olarak kaydedilmiş kısmi bir hazırlığı kendiliğinden yeniden dener. Sunulduğunda tek seferlik Görev denetimleri veya günlük programlar için **Durumu denetle**, sıradan tek seferlik oluşturma için **Görev haritasını yenile** seçeneğini kullanın; yerine başka işlem oluşturmayın. Yerel bir program, **Diğer eylemler** menüsünde **Durumu denetle** seçeneğini sunar.
+Doğrulanmamış asıl isteği koruyun: Yerel program görünümü veya düzenleyici açıkken CodeNomad sonuçlanana kadar isteği otomatik yeniden okur ve yalnızca tam olarak kaydedilmiş kısmi bir hazırlığı kendiliğinden yeniden dener. Sunulduğunda tek seferlik Görev denetimleri için **Durumu denetle**, sıradan tek seferlik oluşturma için **Görev haritasını yenile** seçeneğini kullanın; yerine başka işlem oluşturmayın. Yerel bir program, **Diğer eylemler** menüsünde **Durumu denetle** seçeneğini sunar.
 
 ## Düzenleme, silme ve konuşma temizliği {#cleanup}
 

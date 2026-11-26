@@ -180,7 +180,7 @@ export type NativeScheduledPassageRuntime = Effect.Success<ReturnType<typeof acq
 export type NativeScheduledPassageAcquirer = <T>(use: (runtime: NativeScheduledPassageRuntime, entry: Entry) => Promise<T>) => Promise<T>
 type PublicSessionReader = (sessionID: string) => Promise<{ id: string; parentID?: string; metadata?: unknown }>
 
-/** Public facade prefilter: ordinary/daily families never acquire private Core
+/** Public facade prefilter: ordinary families never acquire private Core
  * capabilities just to learn that their route belongs to another owner. */
 export async function isNativeScheduledPassageFamily(sessionID: string, read: PublicSessionReader): Promise<boolean> {
   const seen = new Set<string>()

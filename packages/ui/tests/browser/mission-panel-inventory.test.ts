@@ -8,7 +8,6 @@ import { missionPluginFixture, FIXTURE_PROJECT } from "../../../server/src/missi
 import { MissionJournal, parseMissionEvent } from "../../../server/src/missions/journal"
 import { registerMissionRoutes } from "../../../server/src/server/routes/missions"
 import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
-import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import path from "node:path"
 import { showSelection } from "./mission-actions"
 
@@ -87,7 +86,6 @@ async function open(extraForms: Array<{ id: string; sessionID: string; title: st
       if (held) { marksReady(); await marksGate }
       bytes.push(response.rawPayload.length); return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
     }
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: FIXTURE_PROJECT.id, projectCanonical: "/repo", location, schedules: [] }) })
     if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: FIXTURE_PROJECT.id, schedules: [] } })
     if (path.endsWith("/schedule") && request.method() === "GET") return route.fulfill({ json: { document: null, pending: false } })
     if (path.endsWith("/content")) {

@@ -19,8 +19,6 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { requestAdmission } from "../request-admission"
 import { registerMissionCreation } from "./mission-creation"
-import { registerMissionRecurrenceSnapshot } from "./mission-recurrence-snapshot"
-import { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { SettingsService } from "../../settings/service"
 import { registerMissionRecurrenceCurrent } from "./mission-recurrence-current"
 import { registerMissionPlaybookRoutes } from "./mission-playbooks"
@@ -88,8 +86,6 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   registerMissionScheduleList(app, deps)
   registerMissionScheduleActivation(app, deps)
   registerMissionScheduled(app, deps)
-  registerMissionRecurrenceSnapshot(app, deps)
-  registerMissionRecurrenceCreate(app, deps)
   registerMissionRecurrenceCurrent(app, deps)
   registerMissionPlaybookRoutes(app)
   // Opt-in bounded transport. A plugin without it stays unavailable: never fall back to

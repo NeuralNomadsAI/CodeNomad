@@ -121,7 +121,7 @@ test("a historical non-late report is explicitly identified as a previous attemp
 test("a current one-line remote summary has no Page 1 of 11 illusion and aligns with reader prose", async () => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } }), value = snapshot()
   value.missions[0].reports[0].summary = "Exact current summary"
-  const source = { owner: "daily" as const, projectID: "project", scheduleID: "schedule", passageID: "passage", missionID: "mission", digest: "a".repeat(43) }
+  const source = { owner: "scheduled" as const, projectID: "project", scheduleID: "schedule", passageID: "passage", missionID: "mission", digest: "a".repeat(43) }
   try {
     await page.route("**/api/**", route => {
       const path = new URL(route.request().url()).pathname

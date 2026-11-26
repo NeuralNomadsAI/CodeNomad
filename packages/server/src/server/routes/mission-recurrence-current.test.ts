@@ -25,7 +25,7 @@ async function fixture() {
   const calls: Array<{ method: string; input: unknown }> = []
   const envelope = () => ({ version: 1, ownerRevision: state.ownerRevision, projectID: state.foreignProject ? "foreign" : projectID, projectCanonical: location.directory,
     location, scheduleID: state.foreignSchedule ? "foreign" : scheduleID, passageID: state.nullPassage ? null : passageID,
-    ...(state.nullPassage ? {} : { source: { owner: "daily" as const, projectID, scheduleID, passageID, missionID, digest: "a".repeat(43) } }) })
+    ...(state.nullPassage ? {} : { source: { owner: "scheduled" as const, projectID, scheduleID, passageID, missionID, digest: "a".repeat(43) } }) })
   const client = {
     location: { get: async () => ({ project: { id: projectID, canonical: location.directory } }) },
     plugin: { list: async () => ({ data: state.plugin ? [{ id: "codenomad.missions", state: { status: "active" } }] : [] }) },
@@ -77,7 +77,7 @@ test("current recurrence route exposes real bounded native ancestry and exact-re
     const result = response.json()
     assert.equal(result.source.missionID, f.missionID)
     assert.equal(result.mission, undefined)
-    assert.deepEqual(f.calls, [{ method: "current", input: { scheduleID: "schedule", owner: "daily" } }, { method: "current", input: { scheduleID: "schedule", owner: "daily" } }])
+    assert.deepEqual(f.calls, [{ method: "current", input: { scheduleID: "schedule", owner: "scheduled" } }, { method: "current", input: { scheduleID: "schedule", owner: "scheduled" } }])
     const observed = await f.page({ source: "activity", missionID: f.missionID })
     assert.equal(observed.statusCode, 200, observed.body)
     assert.deepEqual(f.row(observed).activity.family, { state: "observed", members: [

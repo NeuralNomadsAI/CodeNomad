@@ -65,7 +65,7 @@ function json(value: unknown, request = true): unknown {
   return parsed
 }
 
-/** Public facade and exact KV only. Ordinary/daily sources do not discover or RPC. */
+/** Public facade and exact KV only. Ordinary sources do not discover or RPC. */
 async function source(ctx: Plugin.Context, sessionID: string, run: Run, current: () => true) {
   let root: Effect.Success<ReturnType<typeof ctx.session.get>> | undefined
   const owned = await isNativeScheduledPassageFamily(sessionID, async value => {

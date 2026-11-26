@@ -141,18 +141,9 @@ export interface MissionsPluginContext extends MissionCatalogClient {
         content(input: unknown): Promise<unknown>
         tasks(input: unknown): Promise<unknown>
         panelPage(input: unknown): Promise<unknown>
-        recurrenceSnapshot(input: unknown): Promise<unknown>
-        recurrenceList(input: unknown): Promise<unknown>
-        recurrenceControl(input: unknown): Promise<unknown>
-        recurrenceControlStatus(input: unknown): Promise<unknown>
-        recurrenceRunNow(input: unknown): Promise<unknown>
-        recurrenceRunNowStatus(input: unknown): Promise<unknown>
-        recurrenceRead(input: unknown): Promise<unknown>
-        recurrenceCreate(input: unknown): Promise<unknown>
         recurrenceCurrent(input: unknown): Promise<unknown>
         recurrenceCurrentPage(input: unknown): Promise<unknown>
         recurrenceCurrentContent(input: unknown): Promise<unknown>
-        recurrencePassageRead(input: unknown): Promise<unknown>
         lifecycle(input: unknown, context: MutationContext): Promise<unknown>
         recover(input: unknown, context: MutationContext): Promise<unknown>
         cleanupTarget(input: unknown): Promise<unknown>
@@ -295,18 +286,9 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       },
       // Bundled Effect entry replaces this at registration with the native
       // request-graph handlers. A Promise setup graph never has Job authority.
-      recurrenceSnapshot: async () => { throw new Error("Native recurrence graph unavailable") },
-      recurrenceList: async () => { throw new Error("Native recurrence graph unavailable") },
-      recurrenceControl: async () => { throw new Error("Native recurrence graph unavailable") },
-      recurrenceControlStatus: async () => { throw new Error("Native recurrence status unavailable") },
-      recurrenceRunNow: async () => { throw new Error("Native recurrence admission unavailable") },
-      recurrenceRunNowStatus: async () => { throw new Error("Native recurrence status unavailable") },
-      recurrenceRead: async () => { throw new Error("Native recurrence graph unavailable") },
-      recurrenceCreate: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCurrent: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCurrentPage: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCurrentContent: async () => { throw new Error("Native recurrence graph unavailable") },
-      recurrencePassageRead: async () => { throw new Error("Native recurrence reader graph unavailable") },
       recover: async (input, context) => {
         assertActive()
         const value = object(input)
@@ -357,15 +339,9 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       documentCapabilities: tracked(handlers.documentCapabilities),
       documentActivation: tracked(handlers.documentActivation),
       snapshot: tracked(handlers.snapshot), list: tracked(handlers.list), mission: tracked(handlers.mission), creationReceipt: tracked(handlers.creationReceipt),
-      content: tracked(handlers.content), tasks: tracked(handlers.tasks), panelPage: tracked(handlers.panelPage), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
-      recurrenceControl: tracked(handlers.recurrenceControl), recurrenceControlStatus: tracked(handlers.recurrenceControlStatus),
-      recurrenceRunNow: tracked(handlers.recurrenceRunNow), recurrenceRunNowStatus: tracked(handlers.recurrenceRunNowStatus),
-      recurrenceRead: tracked(handlers.recurrenceRead),
-      recurrenceList: tracked(handlers.recurrenceList),
-      recurrenceCreate: tracked(handlers.recurrenceCreate),
+      content: tracked(handlers.content), tasks: tracked(handlers.tasks), panelPage: tracked(handlers.panelPage),
       recurrenceCurrent: tracked(handlers.recurrenceCurrent), recurrenceCurrentContent: tracked(handlers.recurrenceCurrentContent),
       recurrenceCurrentPage: tracked(handlers.recurrenceCurrentPage),
-      recurrencePassageRead: tracked(handlers.recurrencePassageRead),
       recover: tracked(handlers.recover), lifecycle: tracked(handlers.lifecycle),
       cleanupTarget: tracked(handlers.cleanupTarget), create: tracked(handlers.create),
       update: tracked(handlers.update), delete: tracked(handlers.delete),
@@ -610,7 +586,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "schedule",
-        description: "List, read or control project schedules, including human-created schedules, from any owned conversation. list pages by after/limit; read optionally names an original requestID. capabilities diagnoses scheduling and explicit OFF; activate prepares settings, activation-read reads its original requestID/expectedRevision without Play. Mutations require a stable requestID and fresh expectedRevision. configure edits the complete configuration, including eligible one-time/schedule conversion; retry: true explicitly resumes only a positively confirmed partial original edit. Play/Resume preserve explicit OFF. You can select your own eligible root; adoption waits for an idle root and excludes followed/trigger sources. owner: daily selects daily documents: list/read, create with creation fields (paused, no missionID/revision), play/pause/resume/stop/run-now/check. Recover daily creation with read plus its original requestID and creation fields alone; absence stays pending. Other exact daily reads add receiptAction and expectedRevision; partial Pause/Stop accepts retry: true. On uncertainty read the original identity; never resend or replace it to evade a hold. Exact completed replays have no effects; changed inputs conflict. Stop is terminal; delete preserves conversations unless deleteManagedSessions: true. Keep one owning backend available.",
+        description: "List, read or control project schedules, including human-created schedules, from any owned conversation. list pages by after/limit; read optionally names an original requestID. capabilities diagnoses scheduling and explicit OFF; activate prepares settings, activation-read reads its original requestID/expectedRevision without Play. Mutations require a stable requestID and fresh expectedRevision. configure edits the complete configuration, including eligible one-time/schedule conversion; retry: true explicitly resumes only a positively confirmed partial original edit. Play/Resume preserve explicit OFF. You can select your own eligible root; adoption waits for an idle root and excludes followed/trigger sources. On uncertainty read the original identity; never resend or replace it to evade a hold. Exact completed replays have no effects; changed inputs conflict. Stop is terminal; delete preserves conversations unless deleteManagedSessions: true. Keep one owning backend available.",
         input: scheduleToolWire,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -816,7 +792,7 @@ const inspectSchema = {
   type: "object",
   properties: {
     missionID: { type: "string", description: "Mission to inspect; omit to use the caller's active mission." },
-    project: { ...projectReadWire, description: "Read-only project views, from any owned session. panel reads bounded summaries, cleanups and mission fields; current/current-page/current-content read a scheduled passage; passage reads archived daily results. sources discovers local branches, conversations, eligible coordinator roots or the detected forge repository. playbook reads exact steps, roles and prompts for template and optional taskMode (native by default). Use alone; continue each view's explicit pages/cursors." },
+    project: { ...projectReadWire, description: "Read-only project views, from any owned session. panel reads bounded summaries, cleanups and mission fields; current/current-page/current-content read a scheduled passage. sources discovers local branches, conversations, eligible coordinator roots or the detected forge repository. playbook reads exact steps, roles and prompts for template and optional taskMode (native by default). Use alone; continue each view's explicit pages/cursors." },
     taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$", description: "Read only this task: its status, revision, frontier and, for a live native task, its contract, exact current assignmentPrompt, observed native conversations and, for a Wayfinder decision, the qualifying human answers with ready-to-pass artifacts. Not with start." },
     taskOffset: { type: "integer", minimum: 0, description: "Read the map's tasks from this position when the map is too large for one result: its taskPage gives nextTaskOffset. Not with taskKey, list or start." },
     list: { type: "boolean", const: true, description: "List every Mission in the owned project, newest first. Use alone, or with listOffset." },

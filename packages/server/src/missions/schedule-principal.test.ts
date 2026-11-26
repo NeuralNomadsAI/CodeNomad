@@ -8,7 +8,7 @@ import { recurrenceControlProofSchema, recurrenceControlRequestDigest, recurrenc
 import { missionSchedulePayloadDigest, missionScheduleRequestSchema, missionScheduleRpcMethods } from "./mission-schedule-contract"
 import { automaticMissionStartID } from "./preparation-result"
 import { assertMissionScheduleAgentRequest } from "../opencode/missions/native-mission-schedule-authority"
-import { assertRecurrenceBridgeProof } from "../opencode/missions/native-recurrence-control"
+import { assertRecurrenceBridgeProof } from "../opencode/missions/native-mission-schedule-authority"
 import type { MissionDocument } from "./mission-document"
 
 const author = { coordinatorSessionID: "ses_author", missionID: "source_mission" }
@@ -78,7 +78,7 @@ test("agent controls stop at exact own creation and unconsumed first Play", asyn
     assert.throws(() => assertMissionScheduleAgentRequest(value, document()), /agent control refused/)
     await assert.rejects(assertRecurrenceBridgeProof({ ...proof(), action }, { allowAgent: true }), /agent control refused/)
   }
-  await assert.rejects(assertRecurrenceBridgeProof(proof()), /agent control refused/, "daily controls reject agents before bridge I/O")
+  await assert.rejects(assertRecurrenceBridgeProof(proof()), /agent control refused/, "agents need the explicit allowance, before bridge I/O")
 })
 
 test("creation metadata is create-only and is signed with the configuration", () => {
