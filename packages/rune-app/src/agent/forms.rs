@@ -68,9 +68,33 @@ pub fn multi_option_key(field_key: &str, value: &str) -> String {
 pub fn field_group_key(field_key: &str) -> String {
     format!("form-group:{}:{field_key}", field_key.len())
 }
+
+pub fn clear_option_key(field_key: &str) -> String {
+    format!("clear:{}:{field_key}", field_key.len())
+}
+
+pub fn valid_options_shape(field: &Value) -> bool {
+    match field["type"].as_str() {
+        Some("multiselect") => field
+            .get("options")
+            .and_then(Value::as_array)
+            .is_some_and(|v| v.len() <= 64),
+        _ => match field.get("options") {
+            None | Some(Value::Null) => true,
+            Some(Value::Array(v)) => v.len() <= 64,
+            Some(_) => false,
+        },
+    }
+}
+
+pub fn has_declared_options(field: &Value) -> bool {
+    field.get("options").is_some_and(Value::is_array)
+}
+
 pub struct Draft {
     pub edit: TextEdit,
     pub custom: TextEdit,
+    pub choice: Option<String>,
     pub selected: BTreeSet<String>,
     pub dirty: bool,
 }
@@ -78,6 +102,16 @@ impl Draft {
     pub fn choose(&mut self, value: &str) {
         self.edit = TextEdit::new(value);
         self.dirty = true;
+    }
+    pub fn choose_option(&mut self, value: &str) {
+        self.choice = Some(value.into());
+        self.custom = TextEdit::new("");
+        self.dirty = true;
+    }
+    pub fn clear_choice(&mut self) {
+        if self.choice.take().is_some() {
+            self.dirty = true;
+        }
     }
     pub fn toggle(&mut self, value: &str) {
         if !self.selected.remove(value) {
@@ -90,6 +124,9 @@ impl Draft {
         &mut self.edit
     }
     pub fn custom_editor(&mut self) -> &mut TextEdit {
+        if !self.custom.text.is_empty() {
+            self.choice = None;
+        }
         self.dirty = true;
         &mut self.custom
     }
@@ -99,6 +136,7 @@ impl Default for Draft {
         Self {
             edit: TextEdit::new(""),
             custom: TextEdit::new(""),
+            choice: None,
             selected: BTreeSet::new(),
             dirty: false,
         }
@@ -117,13 +155,38 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
             let draft = drafts.entry((form.id.clone(), key)).or_insert_with(|| {
                 let mut d = Draft::default();
                 let value = &field["default"];
-                if let Some(values) = value.as_array() {
-                    d.selected = values
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .filter(|v| !v.is_empty())
-                        .map(str::to_string)
-                        .collect();
+                if field["type"] == "multiselect" {
+                    if let Some(values) = value.as_array() {
+                        let allowed = normalized_options(field);
+                        let allow_custom = field["custom"] == true;
+                        let mut custom_defaults = Vec::new();
+                        let mut seen_custom = HashSet::new();
+                        for raw in values.iter().filter_map(Value::as_str) {
+                            if raw.is_empty() {
+                                continue;
+                            }
+                            if allowed.iter().any(|opt| opt.value == raw) {
+                                d.selected.insert(raw.to_string());
+                            } else if allow_custom {
+                                let trimmed = raw.trim();
+                                if !trimmed.is_empty() && seen_custom.insert(trimmed.to_string()) {
+                                    custom_defaults.push(trimmed.to_string());
+                                }
+                            }
+                        }
+                        if !custom_defaults.is_empty() {
+                            d.custom = TextEdit::new(custom_defaults.join("\n"));
+                        }
+                    }
+                } else if field["type"] == "string" && has_declared_options(field) {
+                    if let Some(raw) = value.as_str().filter(|v| !v.is_empty()) {
+                        let allowed = normalized_options(field);
+                        if allowed.iter().any(|opt| opt.value == raw) {
+                            d.choice = Some(raw.to_string());
+                        } else if field["custom"] == true {
+                            d.custom = TextEdit::new(raw);
+                        }
+                    }
                 } else if !value.is_null() {
                     d.edit = TextEdit::new(
                         value
@@ -136,13 +199,23 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 }
                 d
             });
-            // Keep seeded and retained multiselect selections aligned with normalized options
-            // so removed or empty-valued entries cannot leave an invisible un-clearable choice.
-            if field["type"] == "multiselect" && field["options"].as_array().is_some() {
+            // Keep seeded and retained option-backed selections aligned with normalized options
+            // so removed or empty-valued entries cannot leave an invisible un-clearable choice,
+            // while leaving custom free-text entries untouched.
+            if field["type"] == "multiselect" && has_declared_options(field) {
                 let allowed = normalized_options(field);
                 draft
                     .selected
                     .retain(|selected| allowed.iter().any(|opt| opt.value == selected.as_str()));
+            } else if field["type"] == "string" && has_declared_options(field) {
+                let allowed = normalized_options(field);
+                if draft
+                    .choice
+                    .as_deref()
+                    .is_some_and(|chosen| !allowed.iter().any(|opt| opt.value == chosen))
+                {
+                    draft.choice = None;
+                }
             }
         }
     }
@@ -179,16 +252,56 @@ pub fn supported(form: &Form) -> bool {
         }) && matches!(
             f["type"].as_str(),
             Some("string" | "number" | "integer" | "boolean" | "multiselect")
-        ) && f["options"].as_array().is_none_or(|v| v.len() <= 64)
+        ) && valid_options_shape(f)
     })
 }
 pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
+    if !valid_options_shape(field) {
+        return Err(());
+    }
     let text = d.edit.text.as_str();
-    if text.encode_utf16().count() > 20_000 || d.custom.text.encode_utf16().count() > 20_000 {
+    if text.encode_utf16().count() > 20_000
+        || d.custom.text.encode_utf16().count() > 20_000
+        || d.choice
+            .as_deref()
+            .is_some_and(|c| c.encode_utf16().count() > 20_000)
+    {
         return Err(());
     }
     match field["type"].as_str() {
         Some("string") => {
+            if has_declared_options(field) {
+                if !text.is_empty() {
+                    return Err(());
+                }
+                let allow_custom = field["custom"] == true;
+                let custom_text = d.custom.text.as_str();
+                if !allow_custom && !custom_text.is_empty() {
+                    return Err(());
+                }
+                let (selected_text, from_custom) = if allow_custom && !custom_text.is_empty() {
+                    (custom_text, true)
+                } else {
+                    (d.choice.as_deref().unwrap_or(""), false)
+                };
+                if selected_text.is_empty() && field["required"] != true {
+                    return Ok(None);
+                }
+                let n = selected_text.encode_utf16().count() as u64;
+                if (field["required"] == true && selected_text.is_empty())
+                    || field["minLength"].as_u64().is_some_and(|m| n < m)
+                    || field["maxLength"].as_u64().is_some_and(|m| n > m)
+                {
+                    return Err(());
+                }
+                if !from_custom {
+                    let options = normalized_options(field);
+                    if !options.iter().any(|o| o.value == selected_text) {
+                        return Err(());
+                    }
+                }
+                return Ok(Some(json!(selected_text)));
+            }
             if text.is_empty() && field["required"] != true {
                 return Ok(None);
             }
@@ -198,16 +311,6 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
                 || field["maxLength"].as_u64().is_some_and(|m| n > m)
             {
                 return Err(());
-            }
-            if field["custom"] != true
-                && field["options"]
-                    .as_array()
-                    .is_some_and(|raw| !raw.is_empty())
-            {
-                let options = normalized_options(field);
-                if !options.iter().any(|o| o.value == text) {
-                    return Err(());
-                }
             }
             Ok(Some(json!(text)))
         }

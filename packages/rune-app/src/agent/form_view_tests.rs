@@ -78,6 +78,25 @@ fn collect_names(tree: &Value, out: &mut Vec<String>) {
     }
 }
 
+fn collect_values(tree: &Value, out: &mut Vec<String>) {
+    if let Some(value) = tree["value"].as_str()
+        && !value.is_empty()
+    {
+        out.push(value.to_string());
+    }
+    if let Some(children) = tree["children"].as_array() {
+        for child in children {
+            collect_values(child, out);
+        }
+    }
+}
+
+fn focused_key(rt: &mut Runtime<State>) -> Option<String> {
+    let mut key = None;
+    rt.update(|_, tx| key = tx.focused().map(str::to_owned));
+    key
+}
+
 fn tap(rt: &mut Runtime<State>, key: &str) {
     let (x, y) = rt
         .find(key)
@@ -252,10 +271,20 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
                 "checked"
             ));
 
-            // Text fields carry human/localized accessible names, never raw keys.
-            let env_custom = find_input(&tree, "field-raw_env_key");
+            // Text fields carry human/localized accessible names, never raw keys, and selecting a
+            // radio never copies its raw wire value into the custom text input.
+            let env_custom = find_input(&tree, "custom-raw_env_key");
             assert_eq!(env_custom["name"], format!("Environment · {other_values}"));
             assert_eq!(env_custom["description"], "Pick deployment target");
+            assert_eq!(
+                env_custom["value"].as_str().unwrap_or(""),
+                "",
+                "selecting a radio must not populate the custom editor with its raw wire value"
+            );
+            assert!(
+                find_node(&tree, "field-raw_env_key").is_none(),
+                "option-backed string field must not render a duplicate field editor"
+            );
             let scopes_custom = find_input(&tree, "custom-raw_scopes_key");
             assert_eq!(scopes_custom["name"], format!("Scopes · {other_values}"));
             let untitled_input = find_input(&tree, "field-raw_untitled_key");
@@ -288,7 +317,7 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
             ));
             assert!(has_state(find_node(&tree, &api_key).unwrap(), "disabled"));
             assert!(has_state(
-                find_input(&tree, "field-raw_env_key"),
+                find_input(&tree, "custom-raw_env_key"),
                 "disabled"
             ));
             assert!(has_state(
@@ -410,12 +439,13 @@ fn option_keys_do_not_alias_and_keep_value_identity_across_reorders_and_replacem
         // Space activates the originally focused option ("c"), NOT the new occupant at index 0 ("d").
         assert_eq!(
             rt.state.agent.as_ref().unwrap().drafts[&("form-alias".into(), "a-b".into())]
-                .edit
-                .text,
-            "c"
+                .choice
+                .as_deref(),
+            Some("c")
         );
 
-        // Replacing "c" with "e" under the same form ID invalidates the old focused key cleanly.
+        // Replacing "c" with "e" under the same form ID moves focus to the non-answer header
+        // anchor (NOT surviving option "d" or replacement "e"), and prunes the removed choice.
         rt.update(|s, _| {
             let a = s.agent.as_mut().unwrap();
             a.forms[0].fields[0]["options"] = json!([
@@ -426,6 +456,11 @@ fn option_keys_do_not_alias_and_keep_value_identity_across_reorders_and_replacem
         });
         rt.frame(1.0 / 60.0);
         assert_eq!(
+            focused_key(&mut rt).as_deref(),
+            Some(rune_theme_codenomad::form_controls::FORM_FOCUS_ANCHOR),
+            "removing a focused choice must move focus to a non-answer target, never to a surviving option"
+        );
+        assert_eq!(
             crate::agent::focused_control_key(&rt.state, Some(&first_c)),
             None
         );
@@ -434,12 +469,12 @@ fn option_keys_do_not_alias_and_keep_value_identity_across_reorders_and_replacem
             Some((first_d.clone(), Some("pending-content-form-alias".into())))
         );
         press_key(&mut rt, Key::Text(" ".into()));
-        assert_ne!(
+        assert_eq!(
             rt.state.agent.as_ref().unwrap().drafts[&("form-alias".into(), "a-b".into())]
-                .edit
-                .text,
-            "e",
-            "Space after option replacement must not activate a different answer"
+                .choice
+                .as_deref(),
+            None,
+            "Space after removing the focused option must not select surviving option d or replacement e"
         );
     });
 }
@@ -516,6 +551,18 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
             );
         }
 
+        // Closed choice renders no textarea at all, only radios + optional Clear control.
+        assert!(
+            find_node(&tree, "field-choice").is_none()
+                && find_node(&tree, "custom-choice").is_none(),
+            "closed string choice must not render a textarea"
+        );
+        assert!(
+            find_node(&tree, "field-constrained_empty").is_none()
+                && find_node(&tree, "custom-constrained_empty").is_none(),
+            "closed string with empty/normalized-away options must not render a textarea"
+        );
+
         let radio_group = find_node(&tree, &agent_forms::field_group_key("choice")).unwrap();
         let radios = radio_group["children"].as_array().unwrap();
         // Empty option dropped, duplicate "prod" collapsed -> 3 distinct radios.
@@ -525,15 +572,37 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
         assert_eq!(radios[1]["name"], "Your answer 2");
         assert_eq!(radios[2]["name"], "Your answer 3");
 
-        // Tapping the blank-label option still stores and submits its raw protocol value.
+        // Tapping the blank-label option stores its raw protocol value in Draft::choice,
+        // submits it, and NEVER leaks it into visible text, accessible names, or accessible values.
         let raw_opt_key = agent_forms::string_option_key("choice", "internal_choice_key");
         tap(&mut rt, &raw_opt_key);
         assert_eq!(
             rt.state.agent.as_ref().unwrap().drafts[&("form-norm".into(), "choice".into())]
-                .edit
-                .text,
-            "internal_choice_key"
+                .choice
+                .as_deref(),
+            Some("internal_choice_key")
         );
+        let post_tree = rt.accessibility_json();
+        let mut post_names = Vec::new();
+        let mut post_values = Vec::new();
+        collect_names(&post_tree, &mut post_names);
+        collect_values(&post_tree, &mut post_values);
+        for leaked in ["internal_choice_key", "internal_unlabeled_key"] {
+            assert!(
+                !post_names.iter().any(|n| n.contains(leaked)),
+                "raw option value {leaked} leaked into accessible names after selection: {post_names:?}"
+            );
+            assert!(
+                !post_values.iter().any(|v| v.contains(leaked)),
+                "raw option value {leaked} leaked into accessible values after selection: {post_values:?}"
+            );
+            assert!(
+                !rt.elements()
+                    .iter()
+                    .any(|e| e.text.as_deref().is_some_and(|t| t.contains(leaked))),
+                "raw option value {leaked} leaked into visible text after selection"
+            );
+        }
 
         // Multiselect sanitized out "" and "stale_removed" so the form submits cleanly with ["alpha"].
         let a = rt.state.agent.as_ref().unwrap();
@@ -541,7 +610,23 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
         assert_eq!(answer["choice"], json!("internal_choice_key"));
         assert_eq!(answer["tags"], json!(["alpha"]));
 
-        // Non-custom string whose raw options all normalized away still rejects arbitrary free text.
+        // Optional closed choice can be cleared via its localized Clear button.
+        let clear_key = agent_forms::clear_option_key("choice");
+        let clear_node =
+            find_node(&post_tree, &clear_key).expect("clear button for optional choice");
+        assert_eq!(clear_node["name"], "Choice · Clear");
+        assert!(!has_state(clear_node, "disabled"));
+        tap(&mut rt, &clear_key);
+        let a = rt.state.agent.as_ref().unwrap();
+        let cleared_answer =
+            agent_forms::answer(&a.forms[0], &a.drafts).expect("cleared optional submits");
+        assert!(
+            cleared_answer.get("choice").is_none(),
+            "clearing an optional closed choice must omit it from the submitted answer"
+        );
+
+        // Non-custom string whose raw options normalized away OR explicit empty `options: []`
+        // must never accept arbitrary free text.
         rt.update(|s, _| {
             s.agent
                 .as_mut()
@@ -556,6 +641,93 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
             agent_forms::answer(&a.forms[0], &a.drafts).is_err(),
             "non-custom string with raw options must never accept arbitrary free text"
         );
+
+        let empty_closed = json!({
+            "key": "closed_empty",
+            "title": "Closed empty",
+            "type": "string",
+            "custom": false,
+            "options": []
+        });
+        let mut arbitrary_draft = agent_forms::Draft::default();
+        arbitrary_draft.edit = rune::edit::TextEdit::new("not allowed");
+        assert!(
+            agent_forms::value(&empty_closed, &arbitrary_draft).is_err(),
+            "explicit empty options array on closed string must reject arbitrary text"
+        );
+        let mut arbitrary_choice = agent_forms::Draft::default();
+        arbitrary_choice.choice = Some("not allowed".into());
+        assert!(
+            agent_forms::value(&empty_closed, &arbitrary_choice).is_err(),
+            "explicit empty options array on closed string must reject arbitrary choice"
+        );
+
+        // Malformed option shapes (missing or non-array multiselect options, non-array string options)
+        // must be rejected by both supported() and value().
+        for malformed in [
+            json!({"key": "bad_multi_missing", "type": "multiselect"}),
+            json!({"key": "bad_multi_str", "type": "multiselect", "options": "nope"}),
+            json!({"key": "bad_str_obj", "type": "string", "options": {"a": 1}}),
+        ] {
+            let bad_form = Form {
+                tool: None,
+                infer_websearch: false,
+                id: "form-bad-opt".into(),
+                title: "Bad".into(),
+                fields: vec![malformed.clone()],
+            };
+            assert!(
+                !agent_forms::supported(&bad_form),
+                "malformed options shape must be unsupported: {malformed}"
+            );
+            assert!(
+                agent_forms::value(&malformed, &agent_forms::Draft::default()).is_err(),
+                "malformed options shape must fail validation: {malformed}"
+            );
+        }
+
+        // Custom multiselect with options: [] and default: ["team-local"] preserves custom defaults
+        // (including hidden required fields), and refresh prunes only stale option-backed picks.
+        let custom_multi_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-custom-multi".into(),
+            title: "Custom tags".into(),
+            fields: vec![
+                json!({
+                    "key": "hidden_tags",
+                    "type": "multiselect",
+                    "custom": true,
+                    "hidden": true,
+                    "required": true,
+                    "options": [],
+                    "default": ["", "team-local"]
+                }),
+                json!({
+                    "key": "mixed_tags",
+                    "title": "Mixed",
+                    "type": "multiselect",
+                    "custom": true,
+                    "options": [{"value": "opt_a", "label": "Opt A"}],
+                    "default": ["opt_a", "custom-keep"]
+                }),
+            ],
+        };
+        let mut custom_drafts = agent_forms::Drafts::default();
+        agent_forms::seed(&[custom_multi_form.clone()], &mut custom_drafts);
+        let ans = agent_forms::answer(&custom_multi_form, &custom_drafts)
+            .expect("custom multiselect defaults must submit cleanly");
+        assert_eq!(ans["hidden_tags"], json!(["team-local"]));
+        assert_eq!(ans["mixed_tags"], json!(["custom-keep", "opt_a"]));
+
+        // Refresh removes opt_a from options: stale option-backed pick is pruned while custom-keep survives.
+        let mut refreshed = custom_multi_form;
+        refreshed.fields[1]["options"] = json!([{"value": "opt_b", "label": "Opt B"}]);
+        agent_forms::seed(&[refreshed.clone()], &mut custom_drafts);
+        let refreshed_ans = agent_forms::answer(&refreshed, &custom_drafts)
+            .expect("custom default survives option refresh");
+        assert_eq!(refreshed_ans["hidden_tags"], json!(["team-local"]));
+        assert_eq!(refreshed_ans["mixed_tags"], json!(["custom-keep"]));
     });
 }
 
@@ -626,7 +798,7 @@ fn multiple_untitled_fields_render_distinct_visible_localized_captions_and_descr
                 second_caption
             );
             assert_eq!(
-                find_input(&tree, "field-raw_first")["name"],
+                find_input(&tree, "custom-raw_first")["name"],
                 format!("{first_caption} · {other_values}")
             );
             assert_eq!(

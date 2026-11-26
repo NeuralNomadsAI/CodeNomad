@@ -76,17 +76,77 @@ fn worst_contrast(fg: Color, backgrounds: &[Color]) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
+fn try_contrasting_color(
+    t: &Tokens,
+    candidates: &[&str],
+    backgrounds: &[Color],
+    min_ratio: f64,
+) -> Option<Color> {
+    for &token in candidates {
+        let candidate = t.color(token);
+        if worst_contrast(candidate, backgrounds) >= min_ratio {
+            return Some(candidate);
+        }
+    }
+    const FALLBACKS: [Color; 8] = [
+        Color::BLACK,
+        Color::WHITE,
+        Color {
+            r: 0.12,
+            g: 0.12,
+            b: 0.12,
+            a: 1.0,
+        },
+        Color {
+            r: 0.16,
+            g: 0.16,
+            b: 0.16,
+            a: 1.0,
+        },
+        Color {
+            r: 0.18,
+            g: 0.18,
+            b: 0.18,
+            a: 1.0,
+        },
+        Color {
+            r: 0.22,
+            g: 0.22,
+            b: 0.22,
+            a: 1.0,
+        },
+        Color {
+            r: 0.26,
+            g: 0.26,
+            b: 0.26,
+            a: 1.0,
+        },
+        Color {
+            r: 0.30,
+            g: 0.30,
+            b: 0.30,
+            a: 1.0,
+        },
+    ];
+    let best = FALLBACKS
+        .into_iter()
+        .max_by(|&a, &b| {
+            worst_contrast(a, backgrounds)
+                .partial_cmp(&worst_contrast(b, backgrounds))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(Color::BLACK);
+    (worst_contrast(best, backgrounds) >= min_ratio).then_some(best)
+}
+
 fn contrasting_color(
     t: &Tokens,
     candidates: &[&str],
     backgrounds: &[Color],
     min_ratio: f64,
 ) -> Color {
-    for &token in candidates {
-        let candidate = t.color(token);
-        if worst_contrast(candidate, backgrounds) >= min_ratio {
-            return candidate;
-        }
+    if let Some(color) = try_contrasting_color(t, candidates, backgrounds, min_ratio) {
+        return color;
     }
     if worst_contrast(Color::BLACK, backgrounds) >= worst_contrast(Color::WHITE, backgrounds) {
         Color::BLACK
@@ -102,60 +162,185 @@ fn effective_backgrounds(surface: Color, base: Color) -> [Color; 2] {
     ]
 }
 
-fn unchecked_indicator_border(t: &Tokens, indicator_fill: Color, card_fill: Color) -> Color {
+fn card_hover_fill(t: &Tokens, card_fill: Color) -> Color {
     let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
-    let fill = effective_backgrounds(indicator_fill, base);
     let rest = effective_backgrounds(card_fill, base);
-    let hover = effective_backgrounds(t.color("surface-hover"), base);
-    let backgrounds = [fill[0], fill[1], rest[0], rest[1], hover[0], hover[1]];
-    contrasting_color(
+    let raw_hover = t.color("surface-hover");
+    let hover = effective_backgrounds(raw_hover, base);
+    let backgrounds = [rest[0], rest[1], hover[0], hover[1]];
+    if try_contrasting_color(
         t,
         &[
-            "border-base",
-            "text-muted",
-            "text-secondary",
-            "text-primary",
+            "focus-ring-color",
             "accent-primary",
+            "text-primary",
+            "text-secondary",
         ],
         &backgrounds,
         3.0,
     )
-}
-
-fn card_focus_ring_color(t: &Tokens, selected: bool, card_fill: Color) -> Color {
-    let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
-    let rest = effective_backgrounds(card_fill, base);
-    if selected {
-        contrasting_color(
-            t,
-            &[
-                "focus-ring-color",
-                "accent-primary",
-                "text-primary",
-                "text-secondary",
-            ],
-            &rest,
-            3.0,
-        )
+    .is_some()
+    {
+        raw_hover
     } else {
-        let hover = effective_backgrounds(t.color("surface-hover"), base);
-        let backgrounds = [rest[0], rest[1], hover[0], hover[1]];
-        contrasting_color(
-            t,
-            &[
-                "focus-ring-color",
-                "accent-primary",
-                "text-primary",
-                "text-secondary",
-            ],
-            &backgrounds,
-            3.0,
-        )
+        card_fill
     }
 }
 
+fn unchecked_indicator_colors(t: &Tokens, card_fill: Color, hover_fill: Color) -> (Color, Color) {
+    let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+    let raw_fill = t.color("surface-field");
+    let fill = effective_backgrounds(raw_fill, base);
+    let rest = effective_backgrounds(card_fill, base);
+    let hover = effective_backgrounds(hover_fill, base);
+    let candidates = [
+        "border-base",
+        "text-muted",
+        "text-secondary",
+        "text-primary",
+        "accent-primary",
+    ];
+    let all = [fill[0], fill[1], rest[0], rest[1], hover[0], hover[1]];
+    if let Some(border) = try_contrasting_color(t, &candidates, &all, 3.0) {
+        return (raw_fill, border);
+    }
+    // When surface-field and card surfaces span incompatible luminances (e.g. black field on
+    // mid-grey resting / white hover card), align indicator fill with the card so one border
+    // achieves >= 3:1 against indicator fill, rest card, and hover card.
+    let card_bgs = [rest[0], rest[1], hover[0], hover[1]];
+    (card_fill, contrasting_color(t, &candidates, &card_bgs, 3.0))
+}
+
+fn checked_radio_colors(t: &Tokens, card_fill: Color) -> (Color, Color, Color) {
+    let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+    let raw_fill = t.color("surface-field");
+    let rest = effective_backgrounds(card_fill, base);
+    let candidates = [
+        "accent-primary",
+        "focus-ring-color",
+        "text-primary",
+        "text-secondary",
+    ];
+    let fill_bgs = effective_backgrounds(raw_fill, base);
+    let (indicator_fill, indicator_border) = if let Some(border) = try_contrasting_color(
+        t,
+        &candidates,
+        &[fill_bgs[0], fill_bgs[1], rest[0], rest[1]],
+        3.0,
+    ) {
+        (raw_fill, border)
+    } else {
+        (card_fill, contrasting_color(t, &candidates, &rest, 3.0))
+    };
+    let active_fill_bgs = effective_backgrounds(indicator_fill, base);
+    let mark = contrasting_color(t, &candidates, &active_fill_bgs, 3.0);
+    (indicator_fill, indicator_border, mark)
+}
+
+fn checked_checkbox_colors(t: &Tokens, card_fill: Color) -> (Color, Color, Color) {
+    let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+    let accent = t.color("accent-primary");
+    let rest = effective_backgrounds(card_fill, base);
+    let accent_bgs = effective_backgrounds(accent, base);
+    let border_candidates = [
+        "accent-primary",
+        "focus-ring-color",
+        "text-primary",
+        "text-secondary",
+    ];
+    let (indicator_fill, indicator_border) = if worst_contrast(accent, &rest) >= 3.0 {
+        (accent, accent)
+    } else if let Some(border) = try_contrasting_color(
+        t,
+        &border_candidates,
+        &[accent_bgs[0], accent_bgs[1], rest[0], rest[1]],
+        3.0,
+    ) {
+        (accent, border)
+    } else {
+        (
+            card_fill,
+            contrasting_color(t, &border_candidates, &rest, 3.0),
+        )
+    };
+    let active_fill_bgs = effective_backgrounds(indicator_fill, base);
+    let mark = contrasting_color(
+        t,
+        &["text-on-accent", "text-primary", "surface-field"],
+        &active_fill_bgs,
+        3.0,
+    );
+    (indicator_fill, indicator_border, mark)
+}
+
+fn card_focus_ring_color(t: &Tokens, selected: bool, card_fill: Color, hover_fill: Color) -> Color {
+    let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+    let rest = effective_backgrounds(card_fill, base);
+    let candidates = [
+        "focus-ring-color",
+        "accent-primary",
+        "text-primary",
+        "text-secondary",
+    ];
+    if selected {
+        contrasting_color(t, &candidates, &rest, 3.0)
+    } else {
+        let hover = effective_backgrounds(hover_fill, base);
+        let backgrounds = [rest[0], rest[1], hover[0], hover[1]];
+        contrasting_color(t, &candidates, &backgrounds, 3.0)
+    }
+}
+
+pub const FORM_FOCUS_ANCHOR: &str = "form-header";
+
 pub fn form_title(title: &str) -> El {
     text(title).wrap_anywhere()
+}
+
+pub fn form_header(eyebrow: &str, title: &str) -> El {
+    let t = tokens(layout::dark());
+    let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+    let focus_color = contrasting_color(
+        t,
+        &[
+            "focus-ring-color",
+            "accent-primary",
+            "text-primary",
+            "text-secondary",
+        ],
+        &[base],
+        3.0,
+    );
+    let label = if title.trim().is_empty() {
+        eyebrow
+    } else {
+        title.trim()
+    };
+    col()
+        .key(FORM_FOCUS_ANCHOR)
+        .w_full()
+        .gap(t.space(Space::Xs).px())
+        .label(label)
+        .focusable(true)
+        .keyboard_focus_only()
+        .tab_index(-1)
+        .focus_ring(2.0, -2.0, focus_color)
+        .focus_ring_radius(0.0)
+        .child(text(eyebrow).wrap_anywhere())
+        .child(form_title(title).key("form-title"))
+}
+
+pub fn clear_choice_button<S: 'static>(
+    key: &str,
+    text_label: &str,
+    accessible_label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    layout::button_tx(text_label, disabled, press)
+        .key(key.to_string())
+        .label(accessible_label)
+        .focus_return(FORM_FOCUS_ANCHOR)
 }
 
 pub fn field_heading(title: &str) -> El {
@@ -253,6 +438,7 @@ fn option_card<S: 'static>(
     } else {
         t.color("surface-control")
     };
+    let hover_fill = card_hover_fill(t, card_fill);
     let card_border = if disabled {
         t.color("border-muted")
     } else if selected {
@@ -260,7 +446,7 @@ fn option_card<S: 'static>(
     } else {
         t.color("border-base")
     };
-    let focus_color = card_focus_ring_color(t, selected, card_fill);
+    let focus_color = card_focus_ring_color(t, selected, card_fill, hover_fill);
     let mut item = row()
         .key(key.to_string())
         .role(role)
@@ -268,6 +454,7 @@ fn option_card<S: 'static>(
         .checked(selected)
         .focusable(!disabled)
         .disabled(disabled)
+        .focus_return(FORM_FOCUS_ANCHOR)
         .min_h(t.metric("button", "minHeight").px())
         .padding(t.space(Space::Sm).px())
         .gap(t.space(Space::Sm).px())
@@ -290,7 +477,7 @@ fn option_card<S: 'static>(
         item = item.description(d);
     }
     if !disabled && !selected {
-        item = item.hover(t.color("surface-hover"));
+        item = item.hover(hover_fill);
     }
     if !disabled {
         item = item.on_press(press);
@@ -311,28 +498,23 @@ pub fn radio_option<S: 'static>(
 ) -> El {
     let t = tokens(layout::dark());
     let desc = non_empty(description);
-    let accent = t.color("accent-primary");
     let card_fill = if selected && !disabled {
         t.color("menu-item-selected-bg")
     } else {
         t.color("surface-control")
     };
-    let indicator_fill = if disabled {
-        t.color("surface-control")
-    } else {
-        t.color("surface-field")
-    };
-    let indicator_border = if disabled {
-        t.color("border-muted")
+    let hover_fill = card_hover_fill(t, card_fill);
+    let (indicator_fill, indicator_border, mark_color) = if disabled {
+        (
+            t.color("surface-control"),
+            t.color("border-muted"),
+            t.color("text-muted"),
+        )
     } else if selected {
-        accent
+        checked_radio_colors(t, card_fill)
     } else {
-        unchecked_indicator_border(t, indicator_fill, card_fill)
-    };
-    let mark_color = if disabled {
-        t.color("text-muted")
-    } else {
-        accent
+        let (fill, border) = unchecked_indicator_colors(t, card_fill, hover_fill);
+        (fill, border, border)
     };
     let indicator = el()
         .key("indicator")
@@ -383,12 +565,12 @@ pub fn checkbox_option<S: 'static>(
     let t = tokens(dark);
     let k = kit(dark);
     let desc = non_empty(description);
-    let accent = t.color("accent-primary");
     let card_fill = if checked && !disabled {
         t.color("menu-item-selected-bg")
     } else {
         t.color("surface-control")
     };
+    let hover_fill = card_hover_fill(t, card_fill);
     let (indicator_fill, indicator_border, mark_color) = if disabled {
         (
             t.color("surface-control"),
@@ -396,14 +578,10 @@ pub fn checkbox_option<S: 'static>(
             t.color("text-muted"),
         )
     } else if checked {
-        (accent, accent, t.color("text-on-accent"))
+        checked_checkbox_colors(t, card_fill)
     } else {
-        let fill = t.color("surface-field");
-        (
-            fill,
-            unchecked_indicator_border(t, fill, card_fill),
-            t.color("text-on-accent"),
-        )
+        let (fill, border) = unchecked_indicator_colors(t, card_fill, hover_fill);
+        (fill, border, t.color("text-on-accent"))
     };
     let indicator = el()
         .key("indicator")

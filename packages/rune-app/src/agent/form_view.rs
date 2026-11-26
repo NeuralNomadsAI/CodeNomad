@@ -59,8 +59,10 @@ pub fn fields(s: &State, form: &Form) -> El {
     let mut body = col()
         .full_width()
         .separate(Space::Sm)
-        .child(text(t("permissionApproval.kind.question")))
-        .child(form_controls::form_title(&form.title).key("form-title"));
+        .child(form_controls::form_header(
+            t("permissionApproval.kind.question"),
+            &form.title,
+        ));
     if !supported {
         body = body.child(text(t("rune.unsupported_question")))
     }
@@ -129,59 +131,101 @@ pub fn fields(s: &State, form: &Form) -> El {
                     items,
                 ));
             }
-            Some("string" | "number" | "integer") => {
-                let mut has_options = false;
-                if field["type"] == "string" {
-                    let valid = agent_forms::normalized_options(field);
-                    if !valid.is_empty() {
-                        has_options = true;
-                        let total = valid.len();
-                        let items = valid
-                            .into_iter()
-                            .enumerate()
-                            .map(|(index, option)| {
-                                let label = option_label(option, index);
-                                let selected = d.edit.text == option.value;
-                                let value = option.value.to_string();
-                                let id = identity.clone();
-                                form_controls::radio_option(
-                                    &agent_forms::string_option_key(key, &value),
-                                    &label,
-                                    option.description,
-                                    selected,
-                                    locked,
-                                    true,
-                                    (index + 1, total),
-                                    crate::screen::action(&scope, move |s: &mut State| {
-                                        if let Some(d) = s
-                                            .agent
-                                            .as_mut()
-                                            .filter(|a| !a.forms_mutating())
-                                            .and_then(|a| a.drafts.get_mut(&id))
-                                        {
-                                            d.choose(&value)
-                                        }
-                                    }),
-                                )
-                            })
-                            .collect();
-                        body = body.child(form_controls::radio_group(
-                            &group_key,
-                            &field_name,
-                            field_desc,
-                            false,
-                            items,
+            Some("string") if agent_forms::has_declared_options(field) => {
+                let valid = agent_forms::normalized_options(field);
+                let allow_custom = field["custom"] == true;
+                let custom_active = allow_custom && !d.custom.text.is_empty();
+                let has_choice = !custom_active && d.choice.is_some();
+                if !valid.is_empty() {
+                    let total = valid.len();
+                    let items = valid
+                        .iter()
+                        .enumerate()
+                        .map(|(index, option)| {
+                            let label = option_label(*option, index);
+                            let selected =
+                                !custom_active && d.choice.as_deref() == Some(option.value);
+                            let value = option.value.to_string();
+                            let id = identity.clone();
+                            form_controls::radio_option(
+                                &agent_forms::string_option_key(key, &value),
+                                &label,
+                                option.description,
+                                selected,
+                                locked,
+                                true,
+                                (index + 1, total),
+                                crate::screen::action(&scope, move |s: &mut State| {
+                                    if let Some(d) = s
+                                        .agent
+                                        .as_mut()
+                                        .filter(|a| !a.forms_mutating())
+                                        .and_then(|a| a.drafts.get_mut(&id))
+                                    {
+                                        d.choose_option(&value)
+                                    }
+                                }),
+                            )
+                        })
+                        .collect();
+                    body = body.child(form_controls::radio_group(
+                        &group_key,
+                        &field_name,
+                        field_desc,
+                        false,
+                        items,
+                    ));
+                    if field["required"] != true {
+                        let id = identity.clone();
+                        let clear_label = t("sessionList.selection.clearLabel");
+                        let clear_accessible = format!("{field_name} · {clear_label}");
+                        body = body.child(form_controls::clear_choice_button(
+                            &agent_forms::clear_option_key(key),
+                            clear_label,
+                            &clear_accessible,
+                            locked || !has_choice,
+                            crate::screen::action_tx(&scope, move |s: &mut State, tx| {
+                                if let Some(d) = s
+                                    .agent
+                                    .as_mut()
+                                    .filter(|a| !a.forms_mutating())
+                                    .and_then(|a| a.drafts.get_mut(&id))
+                                {
+                                    d.clear_choice();
+                                    tx.focus(form_controls::FORM_FOCUS_ANCHOR, tx.focus_visible());
+                                }
+                            }),
                         ));
                     }
                 }
+                if allow_custom {
+                    let id = identity.clone();
+                    let custom_label = if !valid.is_empty() {
+                        format!("{field_name} · {}", t("rune.other_values"))
+                    } else {
+                        field_name.clone()
+                    };
+                    let mut editor = textarea(&d.custom)
+                        .label(custom_label)
+                        .disabled(locked)
+                        .on_edit(crate::screen::edit(
+                            &scope,
+                            crate::screen::Editor::Custom(id),
+                        ));
+                    if let Some(desc) = field_desc {
+                        editor = editor.description(desc);
+                    }
+                    body = body.child(
+                        editor
+                            .build(&field_kit(layout::dark()))
+                            .key(format!("custom-{key}")),
+                    );
+                }
+            }
+            Some("string" | "number" | "integer") => {
                 let id = identity.clone();
-                let input_label = if has_options && field["custom"] == true {
-                    format!("{field_name} · {}", t("rune.other_values"))
-                } else {
-                    field_name.clone()
-                };
                 let mut editor = textarea(&d.edit)
-                    .label(input_label)
+                    .label(field_name.clone())
                     .disabled(locked)
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Form(id)));
                 if let Some(desc) = field_desc {

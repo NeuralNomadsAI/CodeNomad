@@ -138,7 +138,6 @@ fn assert_palette_controls(label: &str, dark: bool) {
     // against indicator fill, rest card fill, and hover card fill.
     let t = tokens(dark);
     let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
-    let hover = effective_backgrounds(t.color("surface-hover"), base);
     for key in ["opt-b", "chk-a"] {
         let card = els.iter().find(|e| e.key.as_deref() == Some(key)).unwrap();
         let indicator = els
@@ -148,6 +147,7 @@ fn assert_palette_controls(label: &str, dark: bool) {
         let border = indicator.border_color.expect("unchecked outline border");
         let fill = effective_backgrounds(indicator.fill, base);
         let rest = effective_backgrounds(card.fill, base);
+        let hover = effective_backgrounds(card_hover_fill(t, card.fill), base);
         let backgrounds = [fill[0], fill[1], rest[0], rest[1], hover[0], hover[1]];
         let ratio = worst_contrast(border, &backgrounds);
         assert!(
@@ -156,14 +156,74 @@ fn assert_palette_controls(label: &str, dark: bool) {
         );
     }
 
+    // Checked radio indicator border and inner mark meet WCAG 3:1 in linear RGB.
+    {
+        let card = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("opt-a"))
+            .unwrap();
+        let indicator = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("indicator") && e.path.starts_with(&card.path))
+            .unwrap();
+        let mark = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("mark") && e.path.starts_with(&card.path))
+            .unwrap();
+        let border = indicator.border_color.expect("checked radio border");
+        let fill = effective_backgrounds(indicator.fill, base);
+        let rest = effective_backgrounds(card.fill, base);
+        let border_ratio = worst_contrast(border, &[fill[0], fill[1], rest[0], rest[1]]);
+        assert!(
+            border_ratio >= 3.0,
+            "{label}/opt-a checked radio border contrast below 3:1: {border_ratio:.2}"
+        );
+        let mark_ratio = worst_contrast(mark.fill, &[fill[0], fill[1]]);
+        assert!(
+            mark_ratio >= 3.0,
+            "{label}/opt-a checked radio mark contrast below 3:1: {mark_ratio:.2}"
+        );
+    }
+
+    // Checked checkbox indicator is distinguishable from the card and its checkmark meets >= 3:1.
+    {
+        let card = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("chk-b"))
+            .unwrap();
+        let indicator = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("indicator") && e.path.starts_with(&card.path))
+            .unwrap();
+        let border = indicator.border_color.expect("checked checkbox border");
+        let fill = effective_backgrounds(indicator.fill, base);
+        let rest = effective_backgrounds(card.fill, base);
+        let box_visible = worst_contrast(indicator.fill, &rest).max(worst_contrast(
+            border,
+            &[fill[0], fill[1], rest[0], rest[1]],
+        ));
+        assert!(
+            box_visible >= 3.0,
+            "{label}/chk-b checked checkbox box contrast below 3:1: {box_visible:.2}"
+        );
+        let (_, _, mark_color) = checked_checkbox_colors(t, card.fill);
+        let mark_ratio = worst_contrast(mark_color, &[fill[0], fill[1]]);
+        assert!(
+            mark_ratio >= 3.0,
+            "{label}/chk-b checked checkbox mark contrast below 3:1: {mark_ratio:.2}"
+        );
+    }
+
     // Focus ring color meets WCAG 3:1 in linear RGB on both checked and unchecked cards.
     let checked_fill = t.color("menu-item-selected-bg");
     let unchecked_fill = t.color("surface-control");
+    let unchecked_hover = card_hover_fill(t, unchecked_fill);
     let checked_bgs = effective_backgrounds(checked_fill, base);
     let unchecked_rest = effective_backgrounds(unchecked_fill, base);
+    let hover = effective_backgrounds(unchecked_hover, base);
     let unchecked_bgs = [unchecked_rest[0], unchecked_rest[1], hover[0], hover[1]];
-    let checked_ring = card_focus_ring_color(t, true, checked_fill);
-    let unchecked_ring = card_focus_ring_color(t, false, unchecked_fill);
+    let checked_ring = card_focus_ring_color(t, true, checked_fill, checked_fill);
+    let unchecked_ring = card_focus_ring_color(t, false, unchecked_fill, unchecked_hover);
     assert!(
         worst_contrast(checked_ring, &checked_bgs) >= 3.0,
         "{label}: checked focus ring contrast below 3:1 ({:.2})",
@@ -302,6 +362,34 @@ fn radio_and_checkbox_options_meet_contrast_focus_and_wrapping_across_all_palett
                     "custom-low-contrast-dark"
                 } else {
                     "custom-low-contrast-light"
+                },
+                dark,
+            );
+        });
+    }
+
+    // Verify mixed-surface custom palette (black surfaceBase with white surfaceSecondary &
+    // textPrimary, producing black field + mid-grey card + white hover) still passes >= 3:1.
+    let mixed_surface = ColorSchemeColors::default_custom()
+        .with(ColorField::SurfaceBase, "#000000")
+        .unwrap()
+        .with(ColorField::SurfaceSecondary, "#FFFFFF")
+        .unwrap()
+        .with(ColorField::TextPrimary, "#FFFFFF")
+        .unwrap();
+    for dark in [false, true] {
+        let custom = palettes::custom(
+            Some("mixed-surface-test"),
+            dark,
+            false,
+            mixed_surface.clone(),
+        );
+        palettes::with_resolved(Some(custom), || {
+            assert_palette_controls(
+                if dark {
+                    "custom-mixed-surface-dark"
+                } else {
+                    "custom-mixed-surface-light"
                 },
                 dark,
             );

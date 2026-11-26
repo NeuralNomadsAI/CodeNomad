@@ -150,6 +150,9 @@ pub(crate) fn focused_control_key(
     if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
         let values = agent_forms::values(f, &a.drafts);
         let region = format!("pending-content-{}", f.id);
+        if key == rune_theme_codenomad::form_controls::FORM_FOCUS_ANCHOR {
+            return Some((key.to_string(), Some(region)));
+        }
         for field in f
             .fields
             .iter()
@@ -163,9 +166,14 @@ pub(crate) fn focused_control_key(
                     key == agent_forms::bool_option_key(field_key, "true")
                         || key == agent_forms::bool_option_key(field_key, "false")
                 }
-                Some("string") => agent_forms::normalized_options(field)
-                    .iter()
-                    .any(|option| agent_forms::string_option_key(field_key, option.value) == key),
+                Some("string") => {
+                    let options = agent_forms::normalized_options(field);
+                    options.iter().any(|option| {
+                        agent_forms::string_option_key(field_key, option.value) == key
+                    }) || (field["required"] != true
+                        && !options.is_empty()
+                        && key == agent_forms::clear_option_key(field_key))
+                }
                 Some("multiselect") => agent_forms::normalized_options(field)
                     .iter()
                     .any(|option| agent_forms::multi_option_key(field_key, option.value) == key),
