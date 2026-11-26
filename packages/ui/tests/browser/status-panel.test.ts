@@ -376,12 +376,62 @@ test("Status sections reorder only from their grip, never from the card body", a
     assert.equal(await activeDrags(), 1, "the grip arms the drag")
     assert.ok(await tokens.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m42 > 10),
       "the dragged card follows the pointer")
+    assert.ok(await grip.evaluate(element => {
+      const card = element.closest("[data-status-section]")
+      const rect = element.getBoundingClientRect()
+      const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+      return Boolean(hit && card && card.contains(hit))
+    }), "the dragged card paints above its neighbour")
     await page.mouse.up()
     const at = initial.indexOf("provider-usage")
     const expected = [...initial.slice(1, at + 1), initial[0], ...initial.slice(at + 1)]
     assert.deepEqual(await sectionIds(page), expected, "dragging the grip moves the section next to the drop target")
     assert.deepEqual(await page.evaluate(() => (window as any).statusFixture.customization().statusSectionOrder),
       expected, "the reorder persists")
+    assert.deepEqual(errors, [])
+  } catch (error) {
+    console.error("Status fixture failure", errors, await page.locator("body").innerText())
+    throw error
+  } finally { await page.close() }
+})
+
+test("a dragged Status section paints above the neighbour it slides over", async () => {
+  const page = await browser.newPage({ viewport: { width: 700, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.addInitScript(() => localStorage.setItem("opencode-session-right-panel-tab-v2", "status"))
+  const sectionIds = (page: Page) => page.locator("[data-status-section]").evaluateAll(rows => rows.map(row => row.getAttribute("data-status-section")))
+  try {
+    await page.goto(url)
+    const tokens = page.locator('[data-status-section="tokens"]')
+    await tokens.waitFor()
+    const initial = await sectionIds(page)
+    // A collapsed Tokens card is one header tall; the expanded Permissions section sits right below it.
+    const trigger = tokens.locator("[data-status-section-trigger]")
+    if (await trigger.getAttribute("aria-expanded") !== "false") await trigger.click()
+    const grip = tokens.locator(".right-panel-section-grip")
+    const start = await grip.boundingBox()
+    assert.ok(start)
+    // A short pull, far less than the neighbour's height: the card slides over it without reordering.
+    await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2)
+    await page.mouse.down()
+    for (let step = 1; step <= 6; step++) await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2 + step * 4.5)
+    assert.equal(await page.locator(".right-panel-section-draggable-active").count(), 1, "the grip arms the drag")
+    assert.ok(await grip.evaluate(element => {
+      const card = element.closest("[data-status-section]")
+      const rect = element.getBoundingClientRect()
+      const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+      return Boolean(hit && card && card.contains(hit))
+    }), "the dragged card's grip paints above the neighbour")
+    assert.ok(await tokens.locator(".section-label").evaluate(element => {
+      const card = element.closest("[data-status-section]")
+      const rect = element.getBoundingClientRect()
+      const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+      return Boolean(hit && card && card.contains(hit))
+    }), "the dragged card's title paints above the neighbour")
+    await page.mouse.up()
+    assert.deepEqual(await sectionIds(page), initial, "a short pull reorders nothing")
     assert.deepEqual(errors, [])
   } catch (error) {
     console.error("Status fixture failure", errors, await page.locator("body").innerText())

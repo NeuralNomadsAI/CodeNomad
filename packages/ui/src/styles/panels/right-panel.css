@@ -473,6 +473,8 @@
 }
 
 .right-panel-section-draggable-active {
+  position: relative;
+  z-index: 1;
   opacity: 0.75;
 }
 
