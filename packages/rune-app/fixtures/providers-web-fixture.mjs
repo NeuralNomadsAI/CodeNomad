@@ -217,7 +217,7 @@ const server = createServer(async (req,res) => {
     if (p === '/api/workspaces/catalogue' && req.method === 'DELETE') return res.writeHead(204).end()
     if (p === '/api/events') {
       const client = url.searchParams.get('clientId')
-      if (detached && !client.endsWith('-preferences')) return res.writeHead(503).end()
+      if (detached) return res.writeHead(503).end()
       res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache'})
       res.write(': ready\n\n')
       streams.set(client,res)
@@ -431,7 +431,7 @@ const server = createServer(async (req,res) => {
     if (p === '/api/workspaces/catalogue/worktrees') return json({repository:'uninitialized',worktrees:[]})
     if (p === '/api/workspaces/catalogue/provider-accounts/example') {
       assert.equal(url.searchParams.get('directory'),directory)
-      return json({logins:{active:'account@example.test',secondary:'other@example.test'}})
+      return json({supported:false,enabled:false,logins:{active:'account@example.test',secondary:'other@example.test'}})
     }
     if (p === `${base}session` && req.method === 'POST') {
       let body = ''
@@ -792,7 +792,7 @@ try {
   }
 
   async function checkStats() {
-    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
+    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
     assert(stream,'Project catalogue stream must be attached')
     const emit = value => stream.write(`data: ${JSON.stringify({instanceId:project.id,...value})}\n\n`)
     const hint = type => emit({type:'instance.event',event:{type,data:{sessionID:'ses_unselected'}}})
@@ -861,7 +861,7 @@ try {
   }
 
   async function checkNotifications() {
-    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
+    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
     assert(stream,'Project catalogue stream must be attached')
     const message = 'Short announcement from the fixture'
     const envelope = {type:'instance.event',instanceId:project.id,event:{
@@ -1030,7 +1030,7 @@ try {
   async function checkProviders() {
   await click('Settings')
   const memory = page.getByRole('switch',{name:'Memory',exact:true})
-  await memory.waitFor({state:'attached'})
+  await memory.and(page.locator(':not([disabled], [aria-disabled="true"])')).waitFor({state:'attached'})
   assert.equal(await memory.getAttribute('aria-checked'),'false')
   await memory.click({force:true})
   await page.getByRole('switch',{name:'Memory',checked:true,exact:true}).waitFor({state:'attached'})
@@ -1069,8 +1069,8 @@ try {
   await page.getByRole('button',{name:'Personal memory',exact:true}).waitFor({state:'attached'})
   assert.equal(await page.getByText('Project-only entry text',{exact:true}).count(),0)
   assert(reviews.some(({operation})=>operation.scope==='global'))
-  const preferencesStream = Array.from(streams).find(([client])=>client.endsWith('-preferences'))?.[1]
-  assert(preferencesStream,'Memory observes the host stream without opening another connection')
+  assert.equal(streams.size,1,'Memory observes the host stream without opening another connection')
+  const preferencesStream = Array.from(streams.values())[0]
   memoryEnabled = false
   preferencesStream.write('data: {"type":"memory.changed"}\n\n')
   await page.getByRole('switch',{name:'Memory',checked:false,exact:true}).waitFor({state:'attached'})
@@ -1255,8 +1255,8 @@ try {
   await afterPaint()
   await readExpanded.click({force:true})
   await page.getByRole('option',{name:'Hidden',exact:true}).waitFor({state:'attached'})
-  const prefStream = Array.from(streams).find(([client])=>client.endsWith('-preferences'))?.[1]
-  assert(prefStream,'Preferences EventSource must be connected')
+  assert.equal(streams.size,1,'Preferences shares the single multiplexed EventSource')
+  const prefStream = Array.from(streams.values())[0]
   failConfigReadOnce = true
   const failedRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'GET' && response.status() === 503)
   prefStream.write(`data: ${JSON.stringify({type:'storage.configChanged',owner:'ui'})}\n\n`)
@@ -1299,8 +1299,11 @@ try {
   assert.equal(reads.length,0,'General and Chat do not load the provider catalogue')
   await radio('Providers').click({force:true})
   await visible(account)
-  const nonConversation = () => Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
-  assert(nonConversation(),'The catalogue has an EventSource without a conversation')
+  const nonConversation = () => {
+    assert.equal(streams.size,1,'The catalogue shares the single multiplexed EventSource without a conversation')
+    return Array.from(streams.values())[0]
+  }
+  nonConversation()
   account = 'default'
   nonConversation().write(`data: ${JSON.stringify({type:'instance.event',instanceId:'catalogue',event:{type:'credential.switched'}})}\n\n`)
   await visible('account@example.test')
@@ -1316,6 +1319,8 @@ try {
   memoryEnabled = true
   await radio('General').click({force:true})
   await page.getByRole('button',{name:'Personal memory',exact:true}).waitFor({state:'attached'})
+  const tidyButton = page.getByRole('button',{name:'Tidy up',exact:true})
+  await tidyButton.and(page.locator(':not([disabled], [aria-disabled="true"])')).waitFor({state:'attached'})
   await click('Tidy up')
   await visible('Review and tidy “About you” in a new project session?')
   assert.equal(cleanupCreates,0,'No session before consent')
