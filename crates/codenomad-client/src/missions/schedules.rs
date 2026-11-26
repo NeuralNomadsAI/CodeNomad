@@ -77,6 +77,9 @@ impl ScheduleAction {
     pub const fn requires_calendar_check(self) -> bool {
         matches!(self, Self::Play | Self::Resume | Self::RunNow)
     }
+    pub const fn requires_activation_proof(self) -> bool {
+        matches!(self, Self::Play | Self::Resume)
+    }
     pub const fn requires_confirmation(self) -> bool {
         matches!(self, Self::Stop | Self::Delete | Self::RunNow)
     }
@@ -315,6 +318,11 @@ pub struct ScheduleConfiguration {
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct ScheduleActivation {
+    pub state: String,
+}
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct UnifiedSchedule {
     pub id: String,
     pub kind: String,
@@ -337,10 +345,17 @@ pub struct UnifiedSchedule {
     #[serde(default)]
     pub history: Vec<SchedulePassageReceipt>,
     pub control: Option<ScheduleControlState>,
+    #[serde(default)]
+    pub schedule_activation: Option<ScheduleActivation>,
 }
 impl UnifiedSchedule {
     pub fn is_schedule(&self) -> bool {
         self.kind == "schedule"
+    }
+    pub fn activation_ready(&self) -> bool {
+        self.schedule_activation
+            .as_ref()
+            .is_some_and(|a| a.state == "ready")
     }
     pub fn owns_directory(&self, dir: Option<&str>) -> bool {
         dir.is_some_and(|d| {
@@ -609,7 +624,7 @@ async fn race_cancel<U>(
 ) -> Option<U> {
     match cancel {
         Some(c) => {
-            futures_lite::future::race(async { Some(fut.await) }, async {
+            futures_lite::future::or(async { Some(fut.await) }, async {
                 let _ = c.recv().await;
                 None
             })
@@ -802,7 +817,7 @@ mod tests {
     }
     fn sample(id: &str, rev: u64, control: &str) -> Value {
         js(&format!(
-            r#"{{"id":"{id}","kind":"schedule","revision":{rev},"state":"paused","firstPlayedAt":1700000000000,"oneShotAt":null,"slotEndsAt":null,"launchedCount":2,"successfulCount":1,"checks":null,"configuration":{{"title":"Nightly audit","objective":"Audit changes","notes":"Server crates","roots":[{{"mode":"directory-only","directory":"/owned"}}],"launch":{{"when":[{{"kind":"cron","expression":"0 9 * * *","zone":"UTC"}},{{"kind":"files-changed","paths":["src/main.rs"]}},{{"kind":"cron","expression":"0 18 * * *","zone":"UTC"}}]}}}},"observation":{{"state":"known","nativeStatus":"paused","nextDueAt":1700003600000,"kind":"check"}},"availableActions":["resume","stop","run-now","delete","configure"],"blockReason":null,"pendingPassage":null,"history":[{{"id":"psg_1","coordinatorSessionID":"ses_c1","dueAt":1700000000000,"outcome":"completed"}}],"control":{control}}}"#
+            r#"{{"id":"{id}","kind":"schedule","revision":{rev},"state":"paused","firstPlayedAt":1700000000000,"oneShotAt":null,"slotEndsAt":null,"launchedCount":2,"successfulCount":1,"checks":null,"configuration":{{"title":"Nightly audit","objective":"Audit changes","notes":"Server crates","roots":[{{"mode":"directory-only","directory":"/owned"}}],"launch":{{"when":[{{"kind":"cron","expression":"0 9 * * *","zone":"UTC"}},{{"kind":"files-changed","paths":["src/main.rs"]}},{{"kind":"cron","expression":"0 18 * * *","zone":"UTC"}}]}}}},"observation":{{"state":"known","nativeStatus":"paused","nextDueAt":1700003600000,"kind":"check"}},"availableActions":["resume","stop","run-now","delete","configure"],"blockReason":null,"pendingPassage":null,"history":[{{"id":"psg_1","coordinatorSessionID":"ses_c1","dueAt":1700000000000,"outcome":"completed"}}],"control":{control},"scheduleActivation":{{"state":"ready"}}}}"#
         ))
     }
 
@@ -819,6 +834,7 @@ mod tests {
         );
         assert!(
             d.is_schedule()
+                && d.activation_ready()
                 && l.requires_calendar
                 && l.has_events
                 && d.owns_directory(Some("/owned"))
@@ -826,6 +842,13 @@ mod tests {
                 && !d.owns_directory(None)
                 && d.owns_session("ses_c1")
                 && !d.owns_session("ses_x")
+        );
+        let mut unactivated = sample("msn_new", 1, "null");
+        unactivated["scheduleActivation"] = Value::Null;
+        assert!(
+            !UnifiedSchedule::from_value(&unactivated)
+                .unwrap()
+                .activation_ready()
         );
         let cs: Vec<_> = l.connected_items().into_iter().map(|(c, _)| c).collect();
         assert_eq!(

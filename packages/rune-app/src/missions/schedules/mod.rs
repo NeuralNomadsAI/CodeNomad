@@ -146,15 +146,6 @@ impl ScheduleHolds {
                 && matches!(e.phase, ScheduleHoldPhase::Control(..))
         })
     }
-    pub(crate) fn has_in_flight_control_for_workspace(&self, b: &Backend) -> bool {
-        let srv = owner(b);
-        self.entries.iter().any(|(k, e)| {
-            k.server == srv
-                && e.workspace == b.workspace
-                && e.checking
-                && matches!(e.phase, ScheduleHoldPhase::Control(..))
-        })
-    }
     pub(crate) fn retire_workspace(&mut self, b: &Backend) {
         let srv = owner(b);
         self.entries.retain(|k, e| {

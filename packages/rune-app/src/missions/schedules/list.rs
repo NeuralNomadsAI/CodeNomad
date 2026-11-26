@@ -52,15 +52,22 @@ impl<T: Send + 'static, M> Flight<T, M> {
         meta: M,
         backend: Backend,
         wake: Wake,
+        auth_tx: Sender<Backend>,
+        is_auth: fn(&T) -> bool,
         f: impl FnOnce(Receiver<()>) -> Fut,
     ) -> Self {
         let ((cancel, c), (out, rx)) = (bounded(1), bounded(1));
+        let auth_backend = backend.clone();
         let fut = f(c);
         platform::spawn(async move {
-            if let Some(v) = fut.await
-                && out.send(v).await.is_ok()
-            {
-                wake();
+            if let Some(v) = fut.await {
+                if is_auth(&v) {
+                    let _ = auth_tx.try_send(auth_backend);
+                    wake();
+                }
+                if out.send(v).await.is_ok() {
+                    wake();
+                }
             }
         });
         Self(meta, backend, cancel, rx)
@@ -68,6 +75,8 @@ impl<T: Send + 'static, M> Flight<T, M> {
     fn bg<Fut: PlatformFut<T>>(
         meta: M,
         ctx: ScheduleCtx<'_>,
+        auth_tx: Sender<Backend>,
+        is_auth: fn(&T) -> bool,
         f: impl FnOnce(Backend, Option<String>, Receiver<()>) -> Fut + Send + 'static,
     ) -> Self {
         let (b, d, r) = (
@@ -79,12 +88,23 @@ impl<T: Send + 'static, M> Flight<T, M> {
             meta,
             ctx.backend.clone(),
             ctx.wake.clone(),
+            auth_tx,
+            is_auth,
             move |c| async move {
                 let _p = r.background(&c).await?;
                 Some(f(b, d, c).await)
             },
         )
     }
+}
+fn is_fetch_auth<T>(v: &Fetch<T>) -> bool {
+    matches!(v, Fetch::AuthExpired)
+}
+fn is_read_auth(v: &ReadOut) -> bool {
+    matches!(v, ReadOut::AuthExpired)
+}
+fn is_pre_auth(v: &PreOut) -> bool {
+    matches!(v.0, Some(ReadOut::AuthExpired)) || matches!(v.1, Some(Fetch::AuthExpired))
 }
 fn cancel<T, M>(
     s: &mut Option<Flight<T, M>>,
@@ -122,27 +142,60 @@ struct Pre {
 }
 type PreOut = (Option<ReadOut>, Option<Fetch<ScheduleCapability>>);
 
-#[derive(Default)]
 pub(crate) struct Schedules {
     visible: bool,
     pub(crate) generation: u64,
+    page_limit: u8,
     pub(crate) project_id: Option<String>,
     pub(crate) rows: Vec<UnifiedSchedule>,
     pub(crate) next: Option<String>,
     pub(super) fresh: HashSet<String>,
     pub(crate) error: bool,
+    failed_append: bool,
     pub(crate) selection_error: Option<SelectionError>,
     pub(crate) selected: Option<String>,
-    list_flight: Option<Flight<Fetch<ScheduleListPage>, bool>>,
+    list_flight: Option<Flight<Fetch<ScheduleListPage>, (bool, u8, u64)>>,
     list_owed: bool,
-    point_flight: Option<Flight<ReadOut, String>>,
+    point_flight: Option<Flight<ReadOut, (String, u64)>>,
     pub(crate) capability: Option<Cap>,
-    cap_flight: Option<Flight<Fetch<ScheduleCapability>>>,
+    cap_flight: Option<Flight<Fetch<ScheduleCapability>, u64>>,
     pre: Option<Flight<PreOut, Pre>>,
     pending_pre: Option<(Pre, Backend, PreOut)>,
     pub(crate) feedback: Option<(String, &'static str)>,
     pub(crate) instructions_open: HashSet<String>,
+    auth_tx: Sender<Backend>,
+    auth_rx: Receiver<Backend>,
     auth_expired: Vec<Backend>,
+}
+impl Default for Schedules {
+    fn default() -> Self {
+        let (auth_tx, auth_rx) = bounded(16);
+        Self {
+            visible: false,
+            generation: 0,
+            page_limit: SCHEDULE_PAGE_LIMIT,
+            project_id: None,
+            rows: Vec::new(),
+            next: None,
+            fresh: HashSet::new(),
+            error: false,
+            failed_append: false,
+            selection_error: None,
+            selected: None,
+            list_flight: None,
+            list_owed: false,
+            point_flight: None,
+            capability: None,
+            cap_flight: None,
+            pre: None,
+            pending_pre: None,
+            feedback: None,
+            instructions_open: HashSet::new(),
+            auth_tx,
+            auth_rx,
+            auth_expired: Vec::new(),
+        }
+    }
 }
 
 impl Schedules {
@@ -226,8 +279,9 @@ impl Schedules {
             && !held
             && doc.owns_directory(dir)
             && doc.available_actions.contains(&act);
-        ok && (!(doc.configuration.launch.requires_calendar && act.requires_calendar_check())
-            || self.capability == Some(Cap::Available))
+        let cal = doc.configuration.launch.requires_calendar;
+        ok && (!(cal && act.requires_calendar_check()) || self.capability == Some(Cap::Available))
+            && (!(cal && act.requires_activation_proof()) || doc.activation_ready())
     }
 
     pub(crate) fn show(&mut self, show: bool) {
@@ -247,26 +301,35 @@ impl Schedules {
     }
     pub(crate) fn rebind(&mut self) {
         self.generation = self.generation.wrapping_add(1);
+        self.page_limit = SCHEDULE_PAGE_LIMIT;
+        self.failed_append = false;
         self.cancel_flights();
         self.fresh.clear();
         self.capability = None;
     }
     pub(crate) fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
+        self.failed_append = false;
         self.cancel_pre();
+        cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
+        if self.list_flight.is_some() {
+            self.list_owed = true;
+        }
         self.fresh.clear();
     }
     pub(crate) fn cancel_pre(&mut self) {
         self.pending_pre = None;
-        cancel(&mut self.pre, &mut self.auth_expired, |(r, c)| {
-            matches!(r, Some(ReadOut::AuthExpired)) || matches!(c, Some(Fetch::AuthExpired))
-        });
+        cancel(&mut self.pre, &mut self.auth_expired, is_pre_auth);
     }
     pub(crate) fn refresh(&mut self, ctx: ScheduleCtx<'_>) {
         if !self.visible {
             return;
         }
-        if self.list_flight.is_some() {
+        if self
+            .list_flight
+            .as_ref()
+            .is_some_and(|f| f.0.2 == self.generation)
+        {
             self.list_owed = true;
         } else {
             self.start_list(false, ctx);
@@ -291,9 +354,7 @@ impl Schedules {
         self.selection_error = None;
         self.feedback = None;
         self.cancel_pre();
-        cancel(&mut self.point_flight, &mut self.auth_expired, |r| {
-            matches!(r, ReadOut::AuthExpired)
-        });
+        cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
     }
 
     pub(crate) fn handle_gesture(
@@ -315,7 +376,16 @@ impl Schedules {
                 true
             }
             G::RetryList => {
-                self.refresh(ctx);
+                if self.error && self.page_limit > 1 {
+                    self.page_limit = (self.page_limit / 2).max(1);
+                }
+                if self.failed_append && self.next.is_some() && self.visible {
+                    self.error = false;
+                    self.start_list(true, ctx);
+                } else {
+                    self.failed_append = false;
+                    self.refresh(ctx);
+                }
                 true
             }
             G::ToggleInstructions => {
@@ -395,7 +465,8 @@ impl Schedules {
                     {
                         self.start_pre(m, false, true, ctx);
                     } else {
-                        self.dispatch_control(m, holds, ctx);
+                        self.cancel_pre();
+                        self.pending_pre = Some((m, ctx.backend.clone(), (None, None)));
                     }
                 }
                 true
@@ -418,34 +489,59 @@ impl Schedules {
         }
     }
 
+    fn drain_auth_channel(&mut self) -> bool {
+        let mut got = false;
+        while let Ok(b) = self.auth_rx.try_recv() {
+            push_auth_expired(&mut self.auth_expired, b);
+            got = true;
+        }
+        got
+    }
+
     pub(crate) fn poll(&mut self, holds: &mut ScheduleHolds, ctx: ScheduleCtx<'_>) -> bool {
-        let mut changed = false;
-        if let Some((append, b, res)) = ready(&mut self.list_flight) {
+        let mut changed = self.drain_auth_channel();
+        if let Some(((append, _limit, epoch), b, res)) = ready(&mut self.list_flight) {
             changed = true;
             let owed = std::mem::take(&mut self.list_owed);
-            match res {
-                Some(Fetch::Ready(page)) => self.accept_page(append, page, holds, ctx),
-                Some(Fetch::AuthExpired) => push_auth_expired(&mut self.auth_expired, b),
-                _ => self.error = true,
-            }
-            if owed && self.visible {
+            if matches!(res, Some(Fetch::AuthExpired)) {
+                push_auth_expired(&mut self.auth_expired, b);
+            } else if epoch == self.generation {
+                match res {
+                    Some(Fetch::Ready(page)) => {
+                        self.failed_append = false;
+                        self.accept_page(append, page, holds, ctx);
+                    }
+                    _ => {
+                        self.error = true;
+                        self.failed_append = append;
+                    }
+                }
+                if owed && self.visible {
+                    self.failed_append = false;
+                    self.start_list(false, ctx);
+                }
+            } else if owed && self.visible {
+                self.failed_append = false;
                 self.start_list(false, ctx);
             }
         }
-        if let Some((sid, b, res)) = ready(&mut self.point_flight) {
+        if let Some(((sid, epoch), b, res)) = ready(&mut self.point_flight) {
             changed = true;
             if matches!(res, Some(ReadOut::AuthExpired)) {
                 push_auth_expired(&mut self.auth_expired, b);
-            } else if self.selected.as_deref() == Some(sid.as_str()) {
+            } else if epoch == self.generation && self.selected.as_deref() == Some(sid.as_str()) {
                 self.finish_point_read(sid, res, holds, ctx);
             }
         }
-        if let Some(((), b, res)) = ready(&mut self.cap_flight) {
+        if let Some((epoch, b, res)) = ready(&mut self.cap_flight) {
             changed = true;
-            match res {
-                Some(Fetch::Ready(cap)) => self.capability = Some(cap_state(cap)),
-                Some(Fetch::AuthExpired) => push_auth_expired(&mut self.auth_expired, b),
-                _ => self.capability = Some(Cap::Missing),
+            if matches!(res, Some(Fetch::AuthExpired)) {
+                push_auth_expired(&mut self.auth_expired, b);
+            } else if epoch == self.generation {
+                match res {
+                    Some(Fetch::Ready(cap)) => self.capability = Some(cap_state(cap)),
+                    _ => self.capability = Some(Cap::Missing),
+                }
             }
         }
         if let Some((m, b, res)) = ready(&mut self.pre) {
@@ -476,12 +572,18 @@ impl Schedules {
         let auth_hit = auth_expired.iter().any(|x| {
             x.client.same_connection(&b.client) || x.client.same_connection(&ctx.backend.client)
         });
+        let confirmed_fresh = out.0.is_some()
+            || (self.is_fresh(&m.key.schedule_id)
+                && self
+                    .selected_document(holds, ctx)
+                    .is_some_and(|d| d.revision == m.rev && d.owns_directory(ctx.directory)));
         if auth_hit
             || !en
             || !self.visible
             || m.epoch != self.generation
             || self.selected.as_deref() != Some(m.key.schedule_id.as_str())
             || self.hold_for(holds, ctx, &m.key.schedule_id).is_some()
+            || !confirmed_fresh
         {
             return true;
         }
@@ -622,6 +724,13 @@ impl Schedules {
         if !m.doc.owns_directory(ctx.directory) {
             return;
         }
+        if m.doc.configuration.launch.requires_calendar
+            && m.act.requires_activation_proof()
+            && !m.doc.activation_ready()
+        {
+            self.feedback = Some((m.key.schedule_id, "missions.scheduling.capability.missing"));
+            return;
+        }
         self.dispatch_control(m, holds, ctx);
     }
 
@@ -653,6 +762,7 @@ impl Schedules {
     }
 
     pub(crate) fn drain_auth_expired(&mut self) -> Vec<Backend> {
+        self.drain_auth_channel();
         std::mem::take(&mut self.auth_expired)
     }
 
@@ -701,13 +811,17 @@ impl Schedules {
                         self.fresh.insert(id.clone());
                     }
                 }
-                cancel(&mut self.point_flight, &mut self.auth_expired, |r| {
-                    matches!(r, ReadOut::AuthExpired)
-                });
+                cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
                 let mid = id.clone();
-                self.point_flight = Some(Flight::bg(id, ctx, move |b, d, c| async move {
-                    b.mission_schedule_read(&mid, d.as_deref(), None, &c).await
-                }));
+                self.point_flight = Some(Flight::bg(
+                    (id, self.generation),
+                    ctx,
+                    self.auth_tx.clone(),
+                    is_read_auth,
+                    move |b, d, c| async move {
+                        b.mission_schedule_read(&mid, d.as_deref(), None, &c).await
+                    },
+                ));
             } else {
                 self.selection_error = None;
             }
@@ -716,25 +830,35 @@ impl Schedules {
     }
 
     fn start_list(&mut self, append: bool, ctx: ScheduleCtx<'_>) {
+        self.start_list_limit(append, self.page_limit, ctx);
+    }
+    fn start_list_limit(&mut self, append: bool, limit: u8, ctx: ScheduleCtx<'_>) {
         let after = append.then(|| self.next.clone()).flatten();
         if append && after.is_none() {
             return;
         }
-        cancel(&mut self.list_flight, &mut self.auth_expired, |r| {
-            matches!(r, Fetch::AuthExpired)
-        });
-        self.list_flight = Some(Flight::bg(append, ctx, move |b, d, c| async move {
-            b.mission_schedules_page(after.as_deref(), SCHEDULE_PAGE_LIMIT, d.as_deref(), &c)
-                .await
-        }));
+        let lim = limit.clamp(1, SCHEDULE_PAGE_LIMIT);
+        cancel(&mut self.list_flight, &mut self.auth_expired, is_fetch_auth);
+        self.list_flight = Some(Flight::bg(
+            (append, lim, self.generation),
+            ctx,
+            self.auth_tx.clone(),
+            is_fetch_auth,
+            move |b, d, c| async move {
+                b.mission_schedules_page(after.as_deref(), lim, d.as_deref(), &c)
+                    .await
+            },
+        ));
     }
     fn start_cap(&mut self, ctx: ScheduleCtx<'_>) {
-        cancel(&mut self.cap_flight, &mut self.auth_expired, |r| {
-            matches!(r, Fetch::AuthExpired)
-        });
-        self.cap_flight = Some(Flight::bg((), ctx, move |b, d, c| async move {
-            b.mission_schedule_capability(d.as_deref(), &c).await
-        }));
+        cancel(&mut self.cap_flight, &mut self.auth_expired, is_fetch_auth);
+        self.cap_flight = Some(Flight::bg(
+            self.generation,
+            ctx,
+            self.auth_tx.clone(),
+            is_fetch_auth,
+            move |b, d, c| async move { b.mission_schedule_capability(d.as_deref(), &c).await },
+        ));
     }
     fn start_pre(&mut self, m: Pre, do_read: bool, do_cap: bool, ctx: ScheduleCtx<'_>) {
         self.cancel_pre();
@@ -748,6 +872,8 @@ impl Schedules {
             m,
             ctx.backend.clone(),
             ctx.wake.clone(),
+            self.auth_tx.clone(),
+            is_pre_auth,
             move |c| async move {
                 let read = if do_read {
                     Some(b.mission_schedule_read(&mid, d.as_deref(), None, &c).await)
@@ -779,16 +905,10 @@ impl Schedules {
         holds.dispatch_control(m.key, m.occ, req, m.doc, ctx);
     }
     fn cancel_flights(&mut self) {
-        cancel(&mut self.list_flight, &mut self.auth_expired, |r| {
-            matches!(r, Fetch::AuthExpired)
-        });
+        cancel(&mut self.list_flight, &mut self.auth_expired, is_fetch_auth);
         self.list_owed = false;
-        cancel(&mut self.point_flight, &mut self.auth_expired, |r| {
-            matches!(r, ReadOut::AuthExpired)
-        });
-        cancel(&mut self.cap_flight, &mut self.auth_expired, |r| {
-            matches!(r, Fetch::AuthExpired)
-        });
+        cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
+        cancel(&mut self.cap_flight, &mut self.auth_expired, is_fetch_auth);
         self.cancel_pre();
     }
 }

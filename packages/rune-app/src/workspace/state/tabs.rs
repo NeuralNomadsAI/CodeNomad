@@ -376,13 +376,9 @@ fn close_blocked_inner(s: &State, index: usize, allow_uncertain_creation: bool) 
                 .creation(&panel.creation_scope_key())
                 .is_some()
         };
-        let sched_blocks = if masked_by_auth_or_launcher {
-            ui.mission_schedules
-                .has_in_flight_control_for_workspace(&panel.backend)
-        } else {
-            ui.mission_schedules
-                .has_unresolved_control_for_workspace(&panel.backend)
-        };
+        let sched_blocks = ui
+            .mission_schedules
+            .has_unresolved_control_for_workspace(&panel.backend);
         creation_blocks || sched_blocks || panel.has_unsaved_editor_draft(&ui.mission_editor)
     }) {
         return true;
@@ -400,13 +396,9 @@ fn close_blocked_inner(s: &State, index: usize, allow_uncertain_creation: bool) 
             } else {
                 ui.mission_editor.has_creation_for_workspace(&ws_backend)
             };
-            let sched_blocks = if masked_by_auth_or_launcher {
-                ui.mission_schedules
-                    .has_in_flight_control_for_workspace(&ws_backend)
-            } else {
-                ui.mission_schedules
-                    .has_unresolved_control_for_workspace(&ws_backend)
-            };
+            let sched_blocks = ui
+                .mission_schedules
+                .has_unresolved_control_for_workspace(&ws_backend);
             ed_blocks || sched_blocks
         })
     {

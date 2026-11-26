@@ -398,6 +398,13 @@ fn status_key(
         match ui.schedules.capability {
             Some(Cap::Refused) => return Some("missions.scheduleList.activationRefused"),
             Some(Cap::Missing) => return Some("missions.scheduling.capability.missing"),
+            Some(Cap::Available)
+                if !doc.activation_ready()
+                    && (doc.available_actions.contains(&A::Play)
+                        || doc.available_actions.contains(&A::Resume)) =>
+            {
+                return Some("missions.scheduling.capability.missing");
+            }
             _ => {}
         }
     }
