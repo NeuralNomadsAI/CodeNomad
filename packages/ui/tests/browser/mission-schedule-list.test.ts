@@ -1066,7 +1066,9 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
       || value.pathname.endsWith("/scheduled") && value.searchParams.get("after") === "aaa_7"),
       "controls are restored by a fresh point or inventory document read, never by retained partial display or receipt metadata")
     assert.equal(original.expectedRevision, originalRevision); assert.equal(typeof original.requestID, "string")
-    assert.equal(await page.locator(".mission-list-paging").count(), 0, "the automatic continuation disappears once the remaining page is read")
+    // The remaining page loads as the list end approaches view; the kept selected row can leave it below.
+    await page.locator(".mission-list-paging").scrollIntoViewIfNeeded().catch(() => {})
+    await page.locator(".mission-list-paging").waitFor({ state: "detached" })
     assert.deepEqual(f.posts, [original]); assert.deepEqual(f.errors, [])
   } finally { releaseReceipt?.(); release(); await page.close() }
 })
