@@ -26,9 +26,9 @@ mod rtl_tests;
 #[cfg(test)]
 mod tests;
 mod tool_diff;
-mod tool_patch;
-pub(crate) use tool_diff::Preferences as ToolDiffPreferences;
 mod tool_groups;
+mod tool_patch;
+pub(crate) use tool_diff::{ComposerCaretPins, Preferences as ToolDiffPreferences};
 pub(crate) mod tools;
 pub(crate) mod transcript;
 pub(crate) mod transport;

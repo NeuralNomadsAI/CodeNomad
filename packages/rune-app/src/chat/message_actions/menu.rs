@@ -221,9 +221,12 @@ pub(in crate::chat) fn restore(s: &State) -> impl Iterator<Item = El> {
         )
         .key("restore-message-history")
     });
-    restore
-        .into_iter()
-        .chain(owner.error.map(|error| text(t(error)).role("alert").wrap()))
+    restore.into_iter().chain(owner.error.map(|error| {
+        text(t(error))
+            .key("message-action-error")
+            .role("alert")
+            .wrap()
+    }))
 }
 
 pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {

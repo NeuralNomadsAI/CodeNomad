@@ -82,6 +82,9 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
     }
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
+        if s.screen.is_launcher() {
+            s.tool_diff_preferences.reset_history_size();
+        }
         s.renew_scope();
         if s.screen
             .launcher()

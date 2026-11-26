@@ -192,6 +192,7 @@ impl Harness {
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
             location: json!({ "directory": project_dir.to_string_lossy() }),
+            temporary: None,
         });
 
         let router =
