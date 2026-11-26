@@ -84,7 +84,9 @@ fn drain_chat(
             }
             Event::AgentHint(catalog) => {
                 if catalog {
-                    s.stream_offline = false;
+                    if s.history_detached {
+                        s.stream_offline = false;
+                    }
                     s.conversation_stream_connected = true;
                     s.transcript_display.messages.refresh();
                     s.status_permissions.online(true);

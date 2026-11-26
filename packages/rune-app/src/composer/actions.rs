@@ -317,6 +317,7 @@ pub fn can_send(s: &State) -> bool {
     }
     let stream_disconnected =
         s.stream_offline && matches!(s.phase, Phase::StreamDisconnected { .. });
+    let reader_offline = stream_disconnected && !s.conversation_stream_connected;
     (stream_disconnected || matches!(s.phase, Phase::Ready | Phase::Streaming))
         && !s
             .screen
@@ -327,7 +328,7 @@ pub fn can_send(s: &State) -> bool {
         && !crate::git::placement_unconfirmed(s)
         && s.reader
             .as_ref()
-            .is_none_or(|reader| !reader.blocks_send_while(stream_disconnected))
+            .is_none_or(|reader| !reader.blocks_send_while(reader_offline))
         && s.composer.sending.is_none()
         && !s.transcript_display.messages.pending()
         && !s.composer.picker.open()
@@ -955,9 +956,16 @@ mod tests {
             64,
             false
         ));
-        assert!(!rt.state.stream_offline);
+        assert!(rt.state.stream_offline);
+        assert!(rt.state.conversation_stream_connected);
+        assert!(rt.state.reader.as_ref().unwrap().is_resuming());
         assert!(rt.state.reader.as_ref().unwrap().blocks_send());
         assert!(!can_send(&rt.state));
+        // Even if agent status restores Ready before ReaderSync, attached paging stays gated on stream_offline.
+        rt.state.phase = Phase::Ready;
+        rt.state.can_older = true;
+        assert!(!can_send(&rt.state));
+        assert!(!crate::chat::reader::older(&mut rt.state));
 
         let generation = rt.state.reader.as_ref().unwrap().generation();
         lane.events
@@ -983,7 +991,42 @@ mod tests {
         ));
         assert!(rt.state.phase == Phase::Ready);
         assert!(!rt.state.stream_offline);
+        assert!(!rt.state.reader.as_ref().unwrap().is_resuming());
         assert!(can_send(&rt.state));
+    }
+
+    #[test]
+    fn direct_mode_keeps_send_eligible_across_reconnect_hint_before_sync() {
+        let (sender, _receiver) = codenomad_client::bounded(2);
+        let (out, incoming) = codenomad_client::bounded(4);
+        let mut s = crate::init();
+        s.phase = Phase::Ready;
+        s.commands = Some(sender);
+        s.incoming = Some(incoming);
+        s.draft = TextEdit::new("direct send across hint");
+        assert!(s.reader.is_none());
+
+        out.try_send(crate::transport::Event::ConnectionLost)
+            .unwrap();
+        assert!(crate::chat::events::poll_chat(&mut s, 16));
+        assert!(matches!(
+            s.phase,
+            Phase::StreamDisconnected { running: false }
+        ));
+        assert!(s.stream_offline);
+        assert!(!s.conversation_stream_connected);
+        assert!(can_send(&s));
+
+        out.try_send(crate::transport::Event::AgentHint(true))
+            .unwrap();
+        assert!(crate::chat::events::poll_chat(&mut s, 16));
+        assert!(matches!(
+            s.phase,
+            Phase::StreamDisconnected { running: false }
+        ));
+        assert!(s.stream_offline);
+        assert!(s.conversation_stream_connected);
+        assert!(can_send(&s));
     }
 
     #[test]
