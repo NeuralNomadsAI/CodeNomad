@@ -421,31 +421,33 @@ pub(crate) fn view<S: 'static>(
         content = content.child(theme::note(t(err), "alert"));
     }
 
-    if form.pending_leave.is_some() {
-        content = content
-            .child(theme::note(
-                t("settings.configFiles.confirmDiscard.message"),
-                "alert",
-            ))
-            .child(
-                layout::action_row()
-                    .child(
-                        layout::button_tx(
-                            t("settings.memory.discardConfirm"),
-                            false,
-                            move |s: &mut S, tx| act(s, EditorGesture::ConfirmDiscard, tx),
-                        )
-                        .key("mission-editor-discard-confirm"),
-                    )
-                    .child(
-                        layout::button_tx(
-                            t("missions.control.cancel"),
-                            false,
-                            move |s: &mut S, tx| act(s, EditorGesture::CancelDiscard, tx),
-                        )
-                        .key("mission-editor-discard-cancel"),
-                    ),
-            );
+    if let Some(intent) = &form.pending_leave {
+        let is_close_tab = *intent == super::editor::LeaveIntent::CloseTab;
+        let prompt_msg = if is_close_tab {
+            t("missions.scheduling.uncertain")
+        } else {
+            t("settings.configFiles.confirmDiscard.message")
+        };
+        let confirm_label = if is_close_tab {
+            t("instanceTab.actions.close.ariaLabel")
+        } else {
+            t("settings.memory.discardConfirm")
+        };
+        content = content.child(theme::note(prompt_msg, "alert")).child(
+            layout::action_row()
+                .child(
+                    layout::button_tx(confirm_label, false, move |s: &mut S, tx| {
+                        act(s, EditorGesture::ConfirmDiscard, tx)
+                    })
+                    .key("mission-editor-discard-confirm"),
+                )
+                .child(
+                    layout::button_tx(t("missions.control.cancel"), false, move |s: &mut S, tx| {
+                        act(s, EditorGesture::CancelDiscard, tx)
+                    })
+                    .key("mission-editor-discard-cancel"),
+                ),
+        );
     }
 
     // Action footer
@@ -460,14 +462,24 @@ pub(crate) fn view<S: 'static>(
     if let Some(hold) = &creation_hold
         && hold.state == HoldState::Uncertain
     {
-        actions = actions.child(
-            layout::button_tx(
-                t("missions.control.refresh"),
-                hold.checking,
-                move |s: &mut S, tx| act(s, EditorGesture::ReconcileCreation, tx),
+        actions = actions
+            .child(
+                layout::button_tx(
+                    t("missions.control.refresh"),
+                    hold.checking,
+                    move |s: &mut S, tx| act(s, EditorGesture::ReconcileCreation, tx),
+                )
+                .key("mission-editor-reconcile"),
             )
-            .key("mission-editor-reconcile"),
-        );
+            .child(
+                layout::button_tx(
+                    t("instanceTab.actions.close.ariaLabel"),
+                    hold.checking
+                        || form.pending_leave == Some(super::editor::LeaveIntent::CloseTab),
+                    move |s: &mut S, tx| act(s, EditorGesture::RequestCloseTab, tx),
+                )
+                .key("mission-editor-close-tab"),
+            );
     }
 
     if let Some(hold) = &edit_hold

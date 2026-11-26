@@ -5183,12 +5183,19 @@ fn deferred_submits_do_not_dispatch_when_discard_prompt_or_preview_obscures_edit
 }
 
 #[test]
-fn tab_close_unblocks_after_unknown_creation_receipt_and_retires_hold() {
-    let (base, _) = start_scripted_server(|_idx, raw| {
+fn tab_close_requires_explicit_confirmation_for_uncertain_creation_and_retires_hold() {
+    let receipt_calls = Arc::new(AtomicUsize::new(0));
+    let receipt_calls_srv = receipt_calls.clone();
+    let (base, _) = start_scripted_server(move |_idx, raw| {
         if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
             ("500 Internal Server Error".into(), "{}".into())
         } else if raw.contains("/missions/creation/") {
-            ("200 OK".into(), json!({ "state": "unknown" }).to_string())
+            let call = receipt_calls_srv.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                ("200 OK".into(), json!({ "state": "unknown" }).to_string())
+            } else {
+                ("401 Unauthorized".into(), "expired".into())
+            }
         } else {
             ("404 Not Found".into(), "{}".into())
         }
@@ -5213,40 +5220,123 @@ fn tab_close_unblocks_after_unknown_creation_receipt_and_retires_hold() {
             .is_some_and(|h| h.state == HoldState::Uncertain)
     });
 
-    // Before checking the receipt, closing the tab is blocked.
-    assert!(holds.creation_blocks_tab_close(&scope));
+    // Neither `unknown` nor `401` on receipt reads may ever auto-unblock direct tab close.
+    for _ in 0..2 {
+        panel.reconcile_editor_creation("tab-1", &mut holds);
+        wait_until(|| {
+            poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+            holds
+                .creation(&scope)
+                .is_some_and(|h| h.state == HoldState::Uncertain && !h.checking)
+        });
+    }
+    assert!(holds.has_creation_for_workspace(&backend));
 
-    // User clicks Refresh -> server reports state: "unknown".
-    panel.reconcile_editor_creation("tab-1", &mut holds);
-    wait_until(|| {
-        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
-        holds
-            .creation(&scope)
-            .is_some_and(|h| h.state == HoldState::Uncertain && !h.checking)
-    });
-    // Hold stays active in-tab (still fences duplicate POSTs), but tab close is now allowed.
-    assert!(holds.creation(&scope).is_some());
-    assert!(!holds.creation_blocks_tab_close(&scope));
-    assert!(!holds.has_blocking_creation_for_workspace(&backend));
-
-    panel.close_reader();
     let state = crate::workspace::test_state_with_mission_panel(panel, holds);
     let mut rt = Runtime::new(
         state,
-        |_, _| rune::el(),
-        (1200.0, 800.0),
+        |s, _| crate::workspace::mission_reader(s),
+        (1200.0, 900.0),
         Env::new(false, 1.0),
     );
     rt.frame(0.0);
     let tab_key = crate::workspace::test_mission_entry_mut(&mut rt.state, 0).0;
+
+    // Direct tab close stays blocked even after unknown and 401 receipt reads.
     rt.update(|s, tx| {
         crate::workspace::close(s, &tab_key, tx);
     });
+    let (still_key, still_has_panel, holds_still) =
+        crate::workspace::test_tab_state_and_holds(&rt.state, 0);
+    assert_eq!(still_key, tab_key);
+    assert!(still_has_panel);
+    assert!(holds_still.creation(&scope).is_some());
+
+    // Clicking the explicit Close instance button arms LeaveIntent::CloseTab without closing.
+    let close_tab_rect = rt
+        .elements()
+        .into_iter()
+        .find(|e| {
+            e.role == "button"
+                && e.label.as_deref() == Some(t("instanceTab.actions.close.ariaLabel"))
+        })
+        .expect("uncertain creation editor must expose explicit close-tab button")
+        .rect;
+    let cx = close_tab_rect[0] + close_tab_rect[2] * 0.5;
+    let cy = close_tab_rect[1] + close_tab_rect[3] * 0.5;
+    rt.pointer_down(cx, cy);
+    rt.pointer_up(cx, cy);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        crate::workspace::test_mission_panel(&rt.state, 0)
+            .editor
+            .form
+            .as_ref()
+            .and_then(|f| f.pending_leave.clone()),
+        Some(LeaveIntent::CloseTab),
+        "first click must arm explicit CloseTab confirmation"
+    );
+    assert_eq!(
+        crate::workspace::test_tab_state_and_holds(&rt.state, 0).0,
+        tab_key,
+        "tab must stay open until confirmation"
+    );
+
+    // Cancelling keeps the tab and uncertain creation hold intact.
+    let cancel_rect = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("mission-editor-discard-cancel"))
+        .expect("CloseTab confirmation must render Cancel")
+        .rect;
+    rt.pointer_down(
+        cancel_rect[0] + cancel_rect[2] * 0.5,
+        cancel_rect[1] + cancel_rect[3] * 0.5,
+    );
+    rt.pointer_up(
+        cancel_rect[0] + cancel_rect[2] * 0.5,
+        cancel_rect[1] + cancel_rect[3] * 0.5,
+    );
+    rt.frame(2.0 / 60.0);
+    assert_eq!(
+        crate::workspace::test_mission_panel(&rt.state, 0)
+            .editor
+            .form
+            .as_ref()
+            .and_then(|f| f.pending_leave.clone()),
+        None
+    );
+    assert!(
+        crate::workspace::test_tab_state_and_holds(&rt.state, 0)
+            .2
+            .creation(&scope)
+            .is_some()
+    );
+
+    // Re-arming and confirming closes the tab and retires the dead workspace creation hold.
+    rt.pointer_down(cx, cy);
+    rt.pointer_up(cx, cy);
+    rt.frame(3.0 / 60.0);
+    let confirm_rect = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("mission-editor-discard-confirm"))
+        .expect("CloseTab confirmation must render Confirm")
+        .rect;
+    rt.pointer_down(
+        confirm_rect[0] + confirm_rect[2] * 0.5,
+        confirm_rect[1] + confirm_rect[3] * 0.5,
+    );
+    rt.pointer_up(
+        confirm_rect[0] + confirm_rect[2] * 0.5,
+        confirm_rect[1] + confirm_rect[3] * 0.5,
+    );
+    rt.frame(4.0 / 60.0);
     let (after_key, has_panel, holds_after) =
         crate::workspace::test_tab_state_and_holds(&rt.state, 0);
     assert_ne!(
         after_key, tab_key,
-        "tab must close once creation receipt has been checked and returned unknown"
+        "explicit confirmation must close the tab"
     );
     assert!(!has_panel, "replacement blank tab must not keep old panel");
     assert!(
@@ -5256,7 +5346,8 @@ fn tab_close_unblocks_after_unknown_creation_receipt_and_retires_hold() {
 }
 
 #[test]
-fn sse_reconnecting_preserves_pending_edit_recheck_while_connection_lost_cancels_it() {
+fn sse_reconnecting_preserves_pending_edit_recheck_while_upstream_loss_and_connection_lost_cancel_it()
+ {
     let backend = unattested_backend("http://127.0.0.1:9/".into());
     let mut panel = Panel::new(
         backend.clone(),
@@ -5267,7 +5358,7 @@ fn sse_reconnecting_preserves_pending_edit_recheck_while_connection_lost_cancels
     let mut holds = EditorHolds::default();
     panel.open_create_editor(&mut holds, None);
     let submit_gen = panel.editor.form.as_ref().unwrap().generation;
-    panel.editor.ready_create_submit = Some(("tab-1".into(), submit_gen, backend));
+    panel.editor.ready_create_submit = Some(("tab-1".into(), submit_gen, backend.clone()));
 
     let mut state = crate::workspace::test_state_with_mission_panel(panel, holds);
     let (evt_tx, evt_rx) = bounded(4);
@@ -5285,7 +5376,31 @@ fn sse_reconnecting_preserves_pending_edit_recheck_while_connection_lost_cancels
         "Event::Reconnecting alone must preserve deferred submit"
     );
 
-    // Event::ConnectionLost MUST immediately cancel the deferred submit.
+    // Upstream native stream loss emits WorkspaceEvent::MissionsReconnected, which MUST cancel it.
+    let _ = evt_tx.try_send(crate::transport::Event::Workspace(
+        codenomad_client::transport::WorkspaceEvent::MissionsReconnected {
+            workspace_id: "ws-1".into(),
+        },
+    ));
+    let _ = crate::chat::events::poll_chat(&mut state, 8);
+    let (_, panel_after_upstream_loss, _) = crate::workspace::test_mission_entry_mut(&mut state, 0);
+    assert!(
+        panel_after_upstream_loss
+            .editor
+            .ready_create_submit
+            .is_none(),
+        "upstream stream loss (MissionsReconnected) must cancel deferred submit immediately"
+    );
+
+    // Event::ConnectionLost MUST also immediately cancel a deferred submit.
+    let next_gen = panel_after_upstream_loss
+        .editor
+        .form
+        .as_ref()
+        .unwrap()
+        .generation;
+    panel_after_upstream_loss.editor.ready_create_submit =
+        Some(("tab-1".into(), next_gen, backend));
     let _ = evt_tx.try_send(crate::transport::Event::ConnectionLost);
     let _ = crate::chat::events::poll_chat(&mut state, 8);
     let (_, panel_after_lost, _) = crate::workspace::test_mission_entry_mut(&mut state, 0);

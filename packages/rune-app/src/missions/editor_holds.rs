@@ -126,7 +126,6 @@ struct CreationEntry {
     auto_start_alive: bool,
     origin: Option<FormOrigin>,
     checking: bool,
-    reconcile_tried: bool,
     create_flight: Option<Receiver<CreateReply>>,
     receipt_flight: Option<Receiver<ReceiptReply>>,
 }
@@ -141,8 +140,8 @@ impl CreationEntry {
         }
     }
 
-    fn blocks_tab_close(&self) -> bool {
-        self.state == HoldState::Pending || self.checking || !self.reconcile_tried
+    fn in_flight(&self) -> bool {
+        self.state == HoldState::Pending || self.checking
     }
 }
 
@@ -248,16 +247,23 @@ impl EditorHolds {
         self.creations.get(key).map(CreationEntry::view)
     }
 
-    pub(crate) fn creation_blocks_tab_close(&self, key: &CreationScopeKey) -> bool {
+    pub(crate) fn has_creation_for_workspace(&self, backend: &Backend) -> bool {
+        let server = server_owner(backend);
         self.creations
-            .get(key)
-            .is_some_and(CreationEntry::blocks_tab_close)
+            .keys()
+            .any(|key| key.server == server && key.workspace == backend.workspace)
     }
 
-    pub(crate) fn has_blocking_creation_for_workspace(&self, backend: &Backend) -> bool {
+    pub(crate) fn creation_in_flight(&self, key: &CreationScopeKey) -> bool {
+        self.creations
+            .get(key)
+            .is_some_and(CreationEntry::in_flight)
+    }
+
+    pub(crate) fn has_in_flight_creation_for_workspace(&self, backend: &Backend) -> bool {
         let server = server_owner(backend);
         self.creations.iter().any(|(key, entry)| {
-            key.server == server && key.workspace == backend.workspace && entry.blocks_tab_close()
+            key.server == server && key.workspace == backend.workspace && entry.in_flight()
         })
     }
 
@@ -327,7 +333,6 @@ impl EditorHolds {
                 auto_start_alive: start_on_creation,
                 origin: Some(origin),
                 checking: false,
-                reconcile_tried: false,
                 create_flight: Some(incoming),
                 receipt_flight: None,
             },
@@ -674,7 +679,6 @@ impl EditorHolds {
                 CreationReceiptOutcome::AuthExpired | CreationReceiptOutcome::Unknown => {
                     if let Some(entry) = self.creations.get_mut(&key) {
                         entry.checking = false;
-                        entry.reconcile_tried = true;
                     }
                 }
             }
@@ -776,7 +780,6 @@ impl EditorHolds {
                 auto_start_alive: false,
                 origin: None,
                 checking: false,
-                reconcile_tried: false,
                 create_flight: None,
                 receipt_flight: None,
             },

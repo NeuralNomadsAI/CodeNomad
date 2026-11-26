@@ -256,13 +256,19 @@ fn mission_editor_act(s: &mut State, gesture: missions::EditorGesture, tx: &mut 
         return;
     }
     if matches!(gesture, missions::EditorGesture::ConfirmDiscard) {
-        let discarded = s.workspace.as_mut().and_then(|ui| {
-            let entry = &mut ui.entries[ui.active];
-            entry
-                .missions
-                .as_mut()?
-                .confirm_discard_editor(&mut ui.mission_editor)
-        });
+        let (tab_key, discarded) = s
+            .workspace
+            .as_mut()
+            .map(|ui| {
+                let entry = &mut ui.entries[ui.active];
+                let key = entry.key.clone();
+                let res = entry
+                    .missions
+                    .as_mut()
+                    .and_then(|panel| panel.confirm_discard_editor(&mut ui.mission_editor));
+                (key, res)
+            })
+            .unwrap_or_default();
         if let Some((intent, back)) = discarded {
             match intent {
                 missions::LeaveIntent::Close => {
@@ -270,6 +276,10 @@ fn mission_editor_act(s: &mut State, gesture: missions::EditorGesture, tx: &mut 
                         crate::chat::reading::restore_position(s, tx);
                     }
                     restore_mission_reader_focus(s, back, tx);
+                }
+                missions::LeaveIntent::CloseTab => {
+                    super::tabs::close_confirmed_uncertain_creation(s, &tab_key, tx);
+                    return;
                 }
                 missions::LeaveIntent::SelectMission(_) => {}
                 missions::LeaveIntent::OpenOverview(_)
@@ -282,6 +292,7 @@ fn mission_editor_act(s: &mut State, gesture: missions::EditorGesture, tx: &mut 
         tx.instant();
         return;
     }
+    let prompting_close_tab = matches!(gesture, missions::EditorGesture::RequestCloseTab);
     let opening = matches!(
         gesture,
         missions::EditorGesture::OpenCreate { .. } | missions::EditorGesture::OpenEdit { .. }
@@ -296,6 +307,9 @@ fn mission_editor_act(s: &mut State, gesture: missions::EditorGesture, tx: &mut 
                 focus_target = panel.take_editor_initial_focus();
             }
         }
+    }
+    if prompting_close_tab && opened {
+        tx.focus("mission-editor-discard-cancel", tx.focus_visible());
     }
     if opening && opened {
         on_mission_reader_open(s, tx);

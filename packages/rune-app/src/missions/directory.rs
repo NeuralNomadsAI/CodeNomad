@@ -356,13 +356,16 @@ impl Panel {
         holds: &mut EditorHolds,
     ) -> Option<(super::editor::LeaveIntent, Option<String>)> {
         let intent = self.editor.take_pending_leave()?;
+        if intent == super::editor::LeaveIntent::CloseTab {
+            return Some((intent, None));
+        }
         self.editor_suspended = false;
         self.editor_auto_start_revoked = true;
         let scope = self.creation_scope_key();
         holds.revoke_auto_start_for_scope(&scope);
         let back = self.editor.close();
         match &intent {
-            super::editor::LeaveIntent::Close => {}
+            super::editor::LeaveIntent::Close | super::editor::LeaveIntent::CloseTab => {}
             super::editor::LeaveIntent::SelectMission(id) => {
                 self.select_unchecked(id);
             }
@@ -419,6 +422,16 @@ impl Panel {
             }
             EditorGesture::Reopen => {
                 self.reopen_editor(holds);
+                false
+            }
+            EditorGesture::RequestCloseTab => {
+                let scope = self.creation_scope_key();
+                if holds.creation(&scope).is_some_and(|h| {
+                    h.state == super::editor_holds::HoldState::Uncertain && !h.checking
+                }) {
+                    self.editor.arm_leave(super::editor::LeaveIntent::CloseTab);
+                    return true;
+                }
                 false
             }
             EditorGesture::CancelDiscard => {

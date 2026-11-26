@@ -63,6 +63,7 @@ pub(crate) enum EditorGesture {
     RetryDefaults,
     RetryPrefill,
     Reopen,
+    RequestCloseTab,
     ConfirmDiscard,
     CancelDiscard,
 }
@@ -70,6 +71,7 @@ pub(crate) enum EditorGesture {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum LeaveIntent {
     Close,
+    CloseTab,
     SelectMission(String),
     OpenOverview(String),
     OpenTask(String, String, String),
@@ -1315,7 +1317,14 @@ impl Editor {
                 generation: f.generation,
                 backend: backend.clone(),
             });
-        holds.reconcile_creation(scope, origin, backend, wake)
+        let started = holds.reconcile_creation(scope, origin, backend, wake);
+        if started
+            && let Some(form) = &mut self.form
+            && form.pending_leave == Some(LeaveIntent::CloseTab)
+        {
+            form.pending_leave = None;
+        }
+        started
     }
 
     pub(super) fn reconcile_edit(

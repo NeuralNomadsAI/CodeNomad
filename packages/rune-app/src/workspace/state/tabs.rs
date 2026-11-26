@@ -238,6 +238,14 @@ pub fn new_tab(s: &mut State, tx: &mut Tx) {
     capture(s);
 }
 pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
+    close_inner(s, id, false, tx);
+}
+
+pub(super) fn close_confirmed_uncertain_creation(s: &mut State, id: &str, tx: &mut Tx) {
+    close_inner(s, id, true, tx);
+}
+
+fn close_inner(s: &mut State, id: &str, allow_uncertain_creation: bool, tx: &mut Tx) {
     crate::shell::Panels::dismiss_outside(s, tx);
     if busy(s) {
         return;
@@ -249,7 +257,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     else {
         return;
     };
-    if close_blocked(s, index) {
+    if close_blocked_inner(s, index, allow_uncertain_creation) {
         return;
     }
     let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
@@ -334,6 +342,10 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     capture(s);
 }
 pub(super) fn close_blocked(s: &State, index: usize) -> bool {
+    close_blocked_inner(s, index, false)
+}
+
+fn close_blocked_inner(s: &State, index: usize, allow_uncertain_creation: bool) -> bool {
     let Some(ui) = &s.workspace else {
         return false;
     };
@@ -344,9 +356,15 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
         return true;
     }
     if ui.entries[index].missions.as_ref().is_some_and(|panel| {
-        ui.mission_editor
-            .creation_blocks_tab_close(&panel.creation_scope_key())
-            || panel.has_unsaved_editor_draft(&ui.mission_editor)
+        let creation_blocks = if allow_uncertain_creation {
+            ui.mission_editor
+                .creation_in_flight(&panel.creation_scope_key())
+        } else {
+            ui.mission_editor
+                .creation(&panel.creation_scope_key())
+                .is_some()
+        };
+        creation_blocks || panel.has_unsaved_editor_draft(&ui.mission_editor)
     }) {
         return true;
     }
@@ -357,8 +375,12 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
         .is_some_and(|(backend, project)| {
             let mut ws_backend = backend.clone();
             ws_backend.workspace.clone_from(&project.id);
-            ui.mission_editor
-                .has_blocking_creation_for_workspace(&ws_backend)
+            if allow_uncertain_creation {
+                ui.mission_editor
+                    .has_in_flight_creation_for_workspace(&ws_backend)
+            } else {
+                ui.mission_editor.has_creation_for_workspace(&ws_backend)
+            }
         })
     {
         return true;

@@ -25,7 +25,7 @@ pub(super) fn decode(
                 revision,
             })
         }
-        "instance.eventStatus" if without_session && frame["status"] == "connected" => {
+        "instance.eventStatus" if without_session && frame["status"].is_string() => {
             Some(WorkspaceEvent::MissionsReconnected {
                 workspace_id: id.into(),
             })
@@ -95,6 +95,14 @@ mod tests {
             decode("owned", false, &status),
             None,
             "conversation streams already forward AgentHint"
+        );
+        let disconnected =
+            json!({"type":"instance.eventStatus","instanceId":"owned","status":"disconnected"});
+        assert_eq!(
+            decode("owned", true, &disconnected),
+            Some(WorkspaceEvent::MissionsReconnected {
+                workspace_id: "owned".into()
+            })
         );
     }
 

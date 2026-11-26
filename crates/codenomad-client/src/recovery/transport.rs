@@ -11,7 +11,7 @@ use crate::{
     history,
     runtime::{self, Instant},
     stream,
-    transport::{Command, Event, PromptOutcome, publish},
+    transport::{Command, Event, PromptOutcome, WorkspaceEvent, publish},
 };
 use std::{
     sync::{Arc, atomic::Ordering::SeqCst},
@@ -116,6 +116,14 @@ pub(crate) async fn run_with_reading(
             Some(Input::Unavailable(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
                 reader.dirty = true;
+                publish(
+                    &out,
+                    &wake,
+                    Event::Workspace(WorkspaceEvent::MissionsReconnected {
+                        workspace_id: backend.workspace.clone(),
+                    }),
+                )
+                .await;
                 if reading.is_some() || !reader.historical {
                     publish(&out, &wake, Event::Reconnecting).await;
                 }
