@@ -24,7 +24,7 @@ const applied = (result: { state: string; reply?: { state: string } }) => result
  * (its preparation then proves the run), and an auxiliary run
  * once its reconciliation applied. Anything else fails, so OpenCode retries the same run. */
 export function nativeMissionScheduleCodeWake(ctx: Plugin.Context, tool: Pick<Tool.Context, "sessionID" | "messageID">,
-  maintain = sendNativeMissionScheduleMaintenance) {
+  maintain = sendNativeMissionScheduleMaintenance, createDispatcher = nativeMissionScheduleDispatcher) {
   const invocation = nativeInvocation(CODE_WAKE_DEADLINE_MS)
   return Effect.scoped(invocation.capture(Effect.gen(function* () {
     const run = <A>(effect: Effect.Effect<A, unknown>) => invocation.check(run => run(effect))
@@ -64,7 +64,7 @@ export function nativeMissionScheduleCodeWake(ctx: Plugin.Context, tool: Pick<To
       if (value === undefined || value && typeof value === "object" && "deletedAt" in value) return undefined
       return parseMissionDocument(value, { id: original.id, projectID: ctx.location.project.id, projectCanonical: ctx.location.project.canonical })
     }
-    const dispatcher = nativeMissionScheduleDispatcher(ctx, original, { run, current, signal: abort.signal, fresh })
+    const dispatcher = createDispatcher(ctx, original, { run, current, signal: abort.signal, fresh })
     // Due rows of one Mission share its transport lane, so another wake of it can hold the lane briefly.
     // Wait within the deadline rather than fail: a failed last slot could expire before OpenCode retries it.
     const free = async (send: () => Promise<NativeScheduleTransportResult>) => {
@@ -81,8 +81,18 @@ export function nativeMissionScheduleCodeWake(ctx: Plugin.Context, tool: Pick<To
       current()
       // An unsettled claim on another occurrence holds every later wake of its Mission.
       const prior = parseNativeMissionScheduleClaim(await run(ctx.storage.get(nativeScheduleClaimKey(ctx, original.id))), original.id)
-      const recovered = await recoverNativeMissionScheduleClaim(prior, wake, dispatch)
+      let recovered = await recoverNativeMissionScheduleClaim(prior, wake, dispatch)
       if (descriptor.role === "reconciliation") {
+        if (!recovered && (await fresh())?.calendarOwner?.operation.pending) {
+          // A pending owner control blocks principal preflight while the unsettled claim
+          // blocks this reconciliation wake from running owner.reconcile. Settle the
+          // pending owner operation first, then retry recovering the exact prior claim.
+          await maintain({ missionID: original.id, sessionID: tool.sessionID, timeGeneration: original.timeGeneration,
+            registrationFile: original.calendarOwner!.installation.registrationFile, directory: ctx.location.directory }, abort.signal)
+          current()
+          const retryPrior = parseNativeMissionScheduleClaim(await run(ctx.storage.get(nativeScheduleClaimKey(ctx, original.id))), original.id)
+          recovered = await recoverNativeMissionScheduleClaim(retryPrior, wake, dispatch)
+        }
         if (!recovered) throw new Error("schedule-code-wake-pending")
         const result = await dispatch(wake)
         if (!applied(result)) throw new Error(result.state === "received" && result.reply.reason || "schedule-code-wake-pending")

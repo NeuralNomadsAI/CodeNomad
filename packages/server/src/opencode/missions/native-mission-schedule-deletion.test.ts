@@ -113,6 +113,30 @@ test("reconcileNativeMissionScheduleMaintenance compacts only when deleting clea
     async () => { throw new Error("cleanup-pending") }), { complete: true })
 })
 
+test("reconcileNativeMissionScheduleMaintenance settles a pending owner operation on a live schedule without requiring quietness", async () => {
+  const liveSlot = { role: "reconciliation" as const, slot: 0, timeGeneration: 1, sessionID: "ses_aux",
+    name: "cm_aux", when: { type: "every" as const, every: "60000 millis", tz: "UTC" }, endsAt: null,
+    creation: "adopted" as const, scheduleID: "aut_aux", ambiguous: [] }
+  const livePending = {
+    id: "msn_live_op", state: "running", pending: null, deletion: null,
+    calendarOwner: { operation: { pending: true, action: "check" }, slots: [liveSlot], retired: [] },
+  } as unknown as MissionDocument
+  const liveSettled = { ...livePending, calendarOwner: { operation: { pending: false, action: "check" }, slots: [liveSlot], retired: [] } } as unknown as MissionDocument
+  let quietChecked = 0
+  let reconciled = 0
+  assert.deepEqual(await reconcileNativeMissionScheduleMaintenance(livePending, "ses_aux", async () => { quietChecked++; return false },
+    async () => { reconciled++; return liveSettled }), { complete: true })
+  assert.equal(quietChecked, 0)
+  assert.equal(reconciled, 1)
+  // Already settled live schedule does nothing.
+  assert.deepEqual(await reconcileNativeMissionScheduleMaintenance(liveSettled, "ses_aux", async () => false,
+    async () => { reconciled++; return liveSettled }), { complete: false })
+  assert.equal(reconciled, 1)
+  // Unsettled owner operation reports incomplete.
+  assert.deepEqual(await reconcileNativeMissionScheduleMaintenance(livePending, "ses_aux", async () => false,
+    async () => livePending), { complete: false })
+})
+
 for (const failing of [false, true]) test(`receiveNativeMissionScheduleWake replies applied for a completed deleting schedule, ${failing ? "also when it cannot be compacted yet" : "which it compacts"}`, async () => {
   const { store, ctx, run } = await createStore()
   const wake = { missionID: "msn_wake_del", generation: 1, scheduleID: "aut_aux", run: 1, sessionID: "ses_aux", messageID: "msg_aut_aux_1" }

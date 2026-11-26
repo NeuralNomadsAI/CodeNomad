@@ -65,10 +65,18 @@ const inputSchema = z.object({ sessionID: z.string().min(1).max(1024), registrat
 export async function reconcileNativeMissionScheduleMaintenance(doc: MissionDocument, sessionID: string,
   quiet: (descriptor: MissionCalendarOwnerSlot) => Promise<boolean>, reconcile: () => Promise<MissionDocument>,
   compact?: () => Promise<void>): Promise<{ complete: boolean }> {
-  const state = doc.calendarOwner, descriptor = state?.slots.find(slot => slot.sessionID === sessionID)
-    ?? state?.retired.find(item => item.descriptor.sessionID === sessionID)?.descriptor
-  if (!state || !descriptor || doc.pending || !state.retired.length && !["finished", "stopped"].includes(doc.state) && !doc.deletion
-    || !await quiet(descriptor)) return { complete: false }
+  const state = doc.calendarOwner, liveSlot = state?.slots.find(slot => slot.sessionID === sessionID)
+  const descriptor = liveSlot ?? state?.retired.find(item => item.descriptor.sessionID === sessionID)?.descriptor
+  if (!state || !descriptor) return { complete: false }
+  const cleanup = Boolean(state.retired.length || ["finished", "stopped"].includes(doc.state) || doc.deletion)
+  if (!cleanup) {
+    // A pending owner control on a live schedule (such as an interrupted Check)
+    // blocks principal preflight without needing carrier retirement or quietness.
+    if (!liveSlot || !state.operation.pending) return { complete: false }
+    const result = await reconcile()
+    return { complete: result.calendarOwner?.operation.pending === false }
+  }
+  if (doc.pending || !await quiet(descriptor)) return { complete: false }
   const result = await reconcile()
   const complete = result.calendarOwner?.operation.pending === false && !result.calendarOwner.retired.length
     && !result.calendarOwner.slots.some(slot => slot.sessionID === sessionID)
