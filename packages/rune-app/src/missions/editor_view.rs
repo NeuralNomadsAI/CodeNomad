@@ -137,7 +137,18 @@ pub(crate) fn view<S: 'static>(
                         .key("mission-editor-defaults-retry"),
                     );
             }
-            DefaultsState::Ready => {}
+            DefaultsState::Ready => {
+                if let Some(profile_err) = form.profile_catalog_error() {
+                    content = content.child(theme::note(t(profile_err), "alert")).child(
+                        layout::button_tx(
+                            t("missionsPanel.reader.retry"),
+                            false,
+                            move |s: &mut S, tx| act(s, EditorGesture::RetryDefaults, tx),
+                        )
+                        .key("mission-editor-defaults-retry"),
+                    );
+                }
+            }
         }
     }
 

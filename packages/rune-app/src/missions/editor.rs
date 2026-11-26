@@ -19,8 +19,9 @@ use codenomad_client::{
     missions::{
         BodyDescriptor, ContentSelector, CreateMissionRequest, DocumentEditCheck,
         EditorBodyOutcome, LifecycleTarget, MISSION_TEXT_MAX, MISSION_TITLE_MAX, MapHeader,
-        MissionDefaultsOutcome, MissionProfileDefault, MissionProfiles, RunState, TaskMode,
-        Template, UpdateMissionRequest, compare_model_error, derive_mission_title,
+        MissionCatalog, MissionCatalogOutcome, MissionDefaultsOutcome, MissionProfileDefault,
+        MissionProfiles, RunState, TaskMode, Template, UpdateMissionRequest,
+        catalog_profiles_valid, compare_model_error, defaults_have_profiles, derive_mission_title,
         freeze_compare_profiles, js_trim, mission_defaults_for, mission_task_mode_for, request_id,
         utf16_len, valid_notes_input, valid_objective_input, valid_title_input,
     },
@@ -144,6 +145,7 @@ pub(crate) struct Form {
     pub(super) defaults_loaded: bool,
     pub(super) defaults: Vec<MissionProfileDefault>,
     pub(super) profiles: Option<MissionProfiles>,
+    pub(super) catalog: Option<MissionCatalog>,
     pub(super) start_on_creation: bool,
     pub(super) prefill: PrefillState,
     pub(super) has_loaded_draft: bool,
@@ -185,6 +187,7 @@ impl Form {
             defaults_loaded: false,
             defaults: Vec::new(),
             profiles: None,
+            catalog: None,
             start_on_creation: false,
             prefill: PrefillState::Ready,
             has_loaded_draft: false,
@@ -227,6 +230,7 @@ impl Form {
             defaults_loaded: true,
             defaults: Vec::new(),
             profiles: None,
+            catalog: None,
             start_on_creation: false,
             prefill: if hold.is_some() {
                 PrefillState::Ready
@@ -363,6 +367,23 @@ impl Form {
         }
     }
 
+    pub(super) fn profile_catalog_error(&self) -> Option<&'static str> {
+        if self.mode != Mode::Create || self.defaults_state != DefaultsState::Ready {
+            return None;
+        }
+        let frozen = freeze_compare_profiles(self.template, self.profiles.as_ref());
+        let has_profiles = frozen.as_ref().is_some_and(|profiles| {
+            profiles.coordinator.is_some() || profiles.roles.as_ref().is_some_and(|r| !r.is_empty())
+        });
+        if !has_profiles {
+            return None;
+        }
+        let valid = self.catalog.as_ref().is_some_and(|catalog| {
+            catalog_profiles_valid(frozen.as_ref(), catalog, self.task_mode)
+        });
+        (!valid).then_some("missions.control.profiles.error")
+    }
+
     pub(super) fn can_submit(
         &self,
         creation_hold: Option<&CreationHoldView>,
@@ -379,6 +400,7 @@ impl Form {
                 self.defaults_state == DefaultsState::Ready
                     && valid_title_input(&self.title.text)
                     && self.compare_error().is_none()
+                    && self.profile_catalog_error().is_none()
             }
             Mode::Edit => self.edit.is_some() && !self.edit_conflict,
         }
@@ -396,6 +418,7 @@ struct PrefillReply {
 struct DefaultsReply {
     serial: u64,
     outcome: MissionDefaultsOutcome,
+    catalog: Option<MissionCatalogOutcome>,
     backend: Backend,
 }
 
@@ -604,6 +627,9 @@ impl Editor {
         wake: &Wake,
         return_focus: Option<String>,
     ) -> bool {
+        if self.editing_mission_id() == Some(header.root.id.as_str()) {
+            return false;
+        }
         let target = EditTarget::from_header(header);
         let hold = holds.edit(&target.hold_key(backend));
         if target.read_only && hold.is_none() {
@@ -636,6 +662,9 @@ impl Editor {
         holds: &mut EditorHolds,
         return_focus: Option<String>,
     ) {
+        if self.editing_mission_id() == Some(hold.target.mission.as_str()) {
+            return;
+        }
         self.cancel_async();
         holds.revoke_auto_start_for_scope(scope);
         let generation = self.next_generation();
@@ -1120,7 +1149,9 @@ impl Editor {
         };
         self.defaults_flight = None;
         self.defaults_cancel = None;
-        if matches!(reply.outcome, MissionDefaultsOutcome::AuthExpired) {
+        if matches!(reply.outcome, MissionDefaultsOutcome::AuthExpired)
+            || matches!(reply.catalog, Some(MissionCatalogOutcome::AuthExpired))
+        {
             self.record_auth_expired(reply.backend.clone());
         }
         if reply.serial != self.defaults_serial {
@@ -1132,17 +1163,31 @@ impl Editor {
         if form.mode != Mode::Create {
             return false;
         }
-        match reply.outcome {
-            MissionDefaultsOutcome::Ready(defaults) => {
+        match (reply.outcome, reply.catalog) {
+            (MissionDefaultsOutcome::Ready(defaults), None) => {
                 form.defaults = defaults;
                 form.profiles = mission_defaults_for(&form.defaults, form.template);
+                form.catalog = None;
                 if !form.custom_task_mode {
                     form.task_mode = mission_task_mode_for(&form.defaults, form.template);
                 }
                 form.defaults_loaded = true;
                 form.defaults_state = DefaultsState::Ready;
             }
-            MissionDefaultsOutcome::AuthExpired | MissionDefaultsOutcome::Unavailable => {
+            (
+                MissionDefaultsOutcome::Ready(defaults),
+                Some(MissionCatalogOutcome::Ready(catalog)),
+            ) => {
+                form.defaults = defaults;
+                form.profiles = mission_defaults_for(&form.defaults, form.template);
+                form.catalog = Some(catalog);
+                if !form.custom_task_mode {
+                    form.task_mode = mission_task_mode_for(&form.defaults, form.template);
+                }
+                form.defaults_loaded = true;
+                form.defaults_state = DefaultsState::Ready;
+            }
+            _ => {
                 form.defaults_state = DefaultsState::Failed;
             }
         }
@@ -1656,10 +1701,25 @@ impl Editor {
             else {
                 return;
             };
+            let catalog = match &outcome {
+                MissionDefaultsOutcome::Ready(defaults) if defaults_have_profiles(defaults) => {
+                    let Some(cat) = crate::platform::reads::cancellable(
+                        &cancelled,
+                        backend_clone.read_mission_catalog(),
+                    )
+                    .await
+                    else {
+                        return;
+                    };
+                    Some(cat)
+                }
+                _ => None,
+            };
             let _ = out
                 .send(DefaultsReply {
                     serial,
                     outcome,
+                    catalog,
                     backend: backend_clone,
                 })
                 .await;
@@ -1722,7 +1782,8 @@ impl Editor {
         self.defaults_cancel = None;
         if let Some(rx) = self.defaults_flight.take()
             && let Ok(reply) = rx.try_recv()
-            && matches!(reply.outcome, MissionDefaultsOutcome::AuthExpired)
+            && (matches!(reply.outcome, MissionDefaultsOutcome::AuthExpired)
+                || matches!(reply.catalog, Some(MissionCatalogOutcome::AuthExpired)))
         {
             self.record_auth_expired(reply.backend);
         }

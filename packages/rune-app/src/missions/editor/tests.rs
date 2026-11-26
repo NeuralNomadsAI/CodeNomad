@@ -1969,6 +1969,7 @@ fn reopen_ignores_pre_click_inflight_detail_read_and_waits_for_post_click_refres
         defaults_loaded: true,
         defaults: Vec::new(),
         profiles: None,
+        catalog: None,
         start_on_creation: false,
         prefill: PrefillState::Ready,
         has_loaded_draft: true,
@@ -3462,6 +3463,41 @@ fn create_loads_server_defaults_for_task_mode_and_compare_profiles() {
                 })
                 .to_string(),
             )
+        } else if raw.starts_with("GET /workspaces/ws-1/instance/api/agent") {
+            (
+                "200 OK".into(),
+                json!({
+                    "location": { "directory": "/repo" },
+                    "data": [
+                        { "id": "general", "mode": "all" }
+                    ]
+                })
+                .to_string(),
+            )
+        } else if raw.starts_with("GET /workspaces/ws-1/instance/api/model") {
+            (
+                "200 OK".into(),
+                json!({
+                    "location": { "directory": "/repo" },
+                    "data": [
+                        {
+                            "providerID": "openai",
+                            "id": "gpt-5",
+                            "enabled": true,
+                            "capabilities": { "tools": true },
+                            "variants": []
+                        },
+                        {
+                            "providerID": "anthropic",
+                            "id": "claude-sonnet-4",
+                            "enabled": true,
+                            "capabilities": { "tools": true },
+                            "variants": [{ "id": "default" }]
+                        }
+                    ]
+                })
+                .to_string(),
+            )
         } else if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
             *captured_post_bg.lock().unwrap() = Some(raw.to_owned());
             let mut created = mission_json_for("msn_cmp_ok", 1, "prepared");
@@ -4099,6 +4135,470 @@ fn pre_creation_summaries_refresh_cannot_clear_newly_created_selection() {
         Some("msn_fresh1"),
         "pre-creation Summaries response must not clear newly created Mission selection"
     );
+}
+
+#[test]
+fn edit_button_disabled_while_editing_and_open_edit_preserves_same_mission_draft() {
+    let backend = unattested_backend("http://127.0.0.1:9/".into());
+    let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+    panel.fixture_ready_with_lookup(
+        sample_header(2, Some("Original"), None, "running"),
+        "tsk_1",
+        "k1",
+    );
+    panel.detail.cancel_lookup();
+
+    assert!(panel.open_edit_editor(&mut holds, Some("mission-edit".into())));
+    {
+        let form = panel.editor.form.as_mut().unwrap();
+        form.prefill = PrefillState::Ready;
+        form.has_loaded_draft = true;
+        form.objective = TextEdit::new("Keep my edited draft");
+    }
+
+    // Re-invoking open_edit_editor on the same Mission must not reset the draft.
+    assert!(!panel.open_edit_editor(&mut holds, Some("mission-edit".into())));
+    assert_eq!(
+        panel.editor.form.as_ref().unwrap().objective.text,
+        "Keep my edited draft"
+    );
+
+    // The right panel's Edit button must render disabled and ignore clicks while the editor is open.
+    struct PanelHost {
+        panel: Panel,
+        holds: EditorHolds,
+        fallback: TextEdit,
+        clicked: usize,
+    }
+    let mut rt = Runtime::new(
+        PanelHost {
+            panel,
+            holds,
+            fallback: TextEdit::new(""),
+            clicked: 0,
+        },
+        |host, _| {
+            super::super::view::panel_body(
+                &host.panel,
+                &host.holds,
+                |h: &mut PanelHost| (Some(&mut h.panel), &mut h.fallback),
+                rune::el(),
+                None,
+                |_, _| {},
+                |h: &mut PanelHost, _, _| {
+                    h.clicked += 1;
+                },
+            )
+        },
+        (400.0, 600.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let (ex, ey) = rt
+        .find("mission-edit")
+        .expect("Edit button must be laid out");
+    rt.pointer_down(ex, ey);
+    rt.pointer_up(ex, ey);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.clicked, 0,
+        "clicking disabled Edit button while editing must not fire OpenEdit"
+    );
+}
+
+#[test]
+fn control_fields_401_propagates_through_panel_and_blocks_create_autostart() {
+    let (cf_seen_tx, cf_seen_rx) = std::sync::mpsc::channel();
+    let cf_seen_tx = Arc::new(std::sync::Mutex::new(Some(cf_seen_tx)));
+    let (base, _) = start_scripted_server(move |_idx, raw| {
+        if raw.contains("/missions/panel-page") {
+            if let Some(tx) = cf_seen_tx.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+            ("401 Unauthorized".into(), "expired".into())
+        } else {
+            ("404 Not Found".into(), "{}".into())
+        }
+    });
+    let backend = attested_backend(base);
+    let (wake_tx, wake_rx) = bounded(8);
+    let wake: Wake = Arc::new(move || {
+        let _ = wake_tx.try_send(());
+    });
+    let mut panel = Panel::new(
+        backend.clone(),
+        Some("prj_1".into()),
+        Reads::default(),
+        wake,
+    );
+    let header_with_control: MapHeader = serde_json::from_value(json!({
+        "root": {
+            "version": 1,
+            "id": "msn_cf_401",
+            "projectID": "prj_1",
+            "projectCanonical": "/repo",
+            "title": "Alpha",
+            "excerpt": "Objective",
+            "template": "custom",
+            "taskMode": "native",
+            "status": "active",
+            "runState": "running",
+            "revision": 2,
+            "coordinatorSessionId": "ses_coord",
+            "createdAt": 1.0,
+            "updatedAt": 1.0,
+            "historyTruncated": false,
+            "bodies": {}
+        },
+        "collections": {
+            "actors": { "characters": 0, "digest": "", "total": 0, "array": true },
+            "history": { "characters": 0, "digest": "", "total": 0, "array": true },
+            "reports": { "characters": 0, "digest": "", "total": 0, "array": true }
+        },
+        "tasks": {
+            "version": "",
+            "page": { "order": "", "offset": 0, "end": 0, "total": 0, "reports": 0, "counts": {} },
+            "pins": [],
+            "reportPins": []
+        },
+        "control": {
+            "id": "op_1",
+            "requestID": "req_1",
+            "action": "pause",
+            "expectedRevision": 1,
+            "pending": 1,
+            "receipts": 1,
+            "unconfirmedReceipts": 0,
+            "partialDescendants": 0
+        }
+    }))
+    .unwrap();
+    panel.fixture_ready_with_lookup(header_with_control, "tsk_1", "k1");
+    panel.detail.cancel_lookup();
+    panel.read_control_field(codenomad_client::missions::ControlPart::Receipts, 0);
+    cf_seen_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("control-fields read must reach server");
+    crate::platform::block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), wake_rx.recv())
+            .await
+            .expect("control-fields 401 reply must arrive")
+            .unwrap();
+    });
+    // Even if cancel() runs before poll(), the arrived 401 must survive and surface via Panel::drain_auth_expired.
+    panel.control_fields.cancel();
+    assert_eq!(
+        panel.drain_auth_expired().len(),
+        1,
+        "Control-fields 401 must survive cancel() and surface through Panel::drain_auth_expired"
+    );
+
+    // Same-tick control-fields 401 with an active Create ACK must block auto-start /control.
+    let control_calls = Arc::new(AtomicUsize::new(0));
+    let control_calls_bg = control_calls.clone();
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let barrier_bg = barrier.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let _ = tx.send(format!("http://{addr}/"));
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let gate = barrier_bg.clone();
+                let controls = control_calls_bg.clone();
+                tokio::spawn(async move {
+                    let raw = read_http_request(&mut socket).await;
+                    let (status, body) = if raw.starts_with("GET /api/meta ") {
+                        (
+                            "200 OK",
+                            json!({"apiContract": 1, "serverId": "fixture-server"}).to_string(),
+                        )
+                    } else if raw.starts_with("GET /api/storage/config/ui") {
+                        ("200 OK", json!({"settings": {}}).to_string())
+                    } else if raw.contains("/missions/panel-page") {
+                        gate.wait().await;
+                        ("401 Unauthorized", "expired".into())
+                    } else if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+                        gate.wait().await;
+                        (
+                            "200 OK",
+                            json!({
+                                "acknowledgement": "fresh",
+                                "mission": mission_json_for("msn_cf_create", 1, "prepared")
+                            })
+                            .to_string(),
+                        )
+                    } else if raw.contains("/control ") {
+                        controls.fetch_add(1, Ordering::SeqCst);
+                        ("200 OK", "{}".into())
+                    } else {
+                        ("404 Not Found", "{}".into())
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+    });
+    let base2 = rx.recv().unwrap();
+    let backend2 = attested_backend(base2);
+    let (wake2_tx, wake2_rx) = bounded(16);
+    let wake2: Wake = Arc::new(move || {
+        let _ = wake2_tx.try_send(());
+    });
+    let mut panel2 = Panel::new(backend2, Some("prj_1".into()), Reads::default(), wake2);
+    let header2: MapHeader = serde_json::from_value(json!({
+        "root": {
+            "version": 1,
+            "id": "msn_cf_402",
+            "projectID": "prj_1",
+            "projectCanonical": "/repo",
+            "title": "Alpha",
+            "excerpt": "Objective",
+            "template": "custom",
+            "taskMode": "native",
+            "status": "active",
+            "runState": "running",
+            "revision": 2,
+            "coordinatorSessionId": "ses_coord",
+            "createdAt": 1.0,
+            "updatedAt": 1.0,
+            "historyTruncated": false,
+            "bodies": {}
+        },
+        "collections": {
+            "actors": { "characters": 0, "digest": "", "total": 0, "array": true },
+            "history": { "characters": 0, "digest": "", "total": 0, "array": true },
+            "reports": { "characters": 0, "digest": "", "total": 0, "array": true }
+        },
+        "tasks": {
+            "version": "",
+            "page": { "order": "", "offset": 0, "end": 0, "total": 0, "reports": 0, "counts": {} },
+            "pins": [],
+            "reportPins": []
+        },
+        "control": {
+            "id": "op_2",
+            "requestID": "req_2",
+            "action": "pause",
+            "expectedRevision": 1,
+            "pending": 1,
+            "receipts": 1,
+            "unconfirmedReceipts": 0,
+            "partialDescendants": 0
+        }
+    }))
+    .unwrap();
+    panel2.fixture_ready_with_lookup(header2, "tsk_1", "k1");
+    panel2.detail.cancel_lookup();
+    let mut holds2 = EditorHolds::default();
+    let mut lifecycle2 = Lifecycle::default();
+    open_create_ready(&mut panel2, &mut holds2, &mut lifecycle2, None);
+    panel2.editor.form.as_mut().unwrap().objective = TextEdit::new("Blocked by control_fields 401");
+    panel2.editor.form.as_mut().unwrap().start_on_creation = true;
+
+    let state = crate::workspace::test_state_with_mission_panel(panel2, holds2);
+    let mut rt = Runtime::new(
+        state,
+        |_, _| rune::el(),
+        (1200.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    rt.update(|s, _| {
+        let (tab_key, panel, mission_editor) = crate::workspace::test_mission_entry_mut(s, 0);
+        while wake2_rx.try_recv().is_ok() {}
+        panel.read_control_field(codenomad_client::missions::ControlPart::Receipts, 0);
+        panel.submit_editor(&tab_key, mission_editor);
+    });
+    crate::platform::block_on(async {
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(3), wake2_rx.recv())
+                .await
+                .expect("both control_fields 401 and Create ACK must arrive")
+                .unwrap();
+        }
+    });
+    rt.update(|s, tx| {
+        crate::workspace::poll(s, 1.0, tx);
+    });
+    std::thread::sleep(Duration::from_millis(60));
+    assert_eq!(
+        control_calls.load(Ordering::SeqCst),
+        0,
+        "control_fields 401 must block Create auto-start /control"
+    );
+    assert!(
+        rt.state
+            .screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required),
+        "control_fields 401 must trigger authentication recovery"
+    );
+}
+
+#[test]
+fn create_validates_default_profiles_against_native_catalog_for_removed_models_and_task_mode() {
+    let include_gpt5 = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let include_gpt5_bg = include_gpt5.clone();
+    let post_calls = Arc::new(AtomicUsize::new(0));
+    let post_calls_bg = post_calls.clone();
+    let (base, _) = start_scripted_server_raw(move |_idx, raw| {
+        if raw.starts_with("GET /api/storage/config/ui") {
+            (
+                "200 OK".into(),
+                json!({
+                    "settings": {
+                        "missionProfileDefaults": [{
+                            "template": "all",
+                            "taskMode": "native",
+                            "profiles": {
+                                "coordinator": {
+                                    "agent": "build",
+                                    "model": { "providerID": "openai", "id": "gpt-5" }
+                                },
+                                "roles": {
+                                    "specialist": { "agent": "explore" }
+                                }
+                            }
+                        }]
+                    }
+                })
+                .to_string(),
+            )
+        } else if raw.starts_with("GET /workspaces/ws-1/instance/api/agent") {
+            (
+                "200 OK".into(),
+                json!({
+                    "location": { "directory": "/repo" },
+                    "data": [
+                        { "id": "build", "mode": "primary" },
+                        { "id": "explore", "mode": "subagent" }
+                    ]
+                })
+                .to_string(),
+            )
+        } else if raw.starts_with("GET /workspaces/ws-1/instance/api/model") {
+            let models = if include_gpt5_bg.load(Ordering::SeqCst) {
+                json!([{
+                    "providerID": "openai",
+                    "id": "gpt-5",
+                    "enabled": true,
+                    "capabilities": { "tools": true },
+                    "variants": []
+                }])
+            } else {
+                json!([])
+            };
+            (
+                "200 OK".into(),
+                json!({
+                    "location": { "directory": "/repo" },
+                    "data": models
+                })
+                .to_string(),
+            )
+        } else if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+            post_calls_bg.fetch_add(1, Ordering::SeqCst);
+            (
+                "200 OK".into(),
+                json!({
+                    "acknowledgement": "fresh",
+                    "mission": mission_json_for("msn_cat_ok", 1, "prepared")
+                })
+                .to_string(),
+            )
+        } else {
+            ("404 Not Found".into(), "{}".into())
+        }
+    });
+    let backend = attested_backend(base);
+    let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+
+    open_create_ready(&mut panel, &mut holds, &mut lifecycle, None);
+    let scope = panel.creation_scope_key();
+    {
+        let form = panel.editor.form.as_mut().unwrap();
+        form.objective = TextEdit::new("Validate native catalog");
+        assert_eq!(form.task_mode, TaskMode::Native);
+        assert_eq!(form.profile_catalog_error(), None);
+        assert!(form.can_submit(None, None));
+
+        // Switching to Independent invalidates the subagent-only specialist role before POST /missions.
+        form.select_task_mode(TaskMode::Independent);
+        assert_eq!(
+            form.profile_catalog_error(),
+            Some("missions.control.profiles.error")
+        );
+        assert!(!form.can_submit(None, None));
+    }
+    panel.submit_editor("tab-1", &mut holds);
+    assert_eq!(post_calls.load(Ordering::SeqCst), 0);
+    assert!(holds.creation(&scope).is_none());
+
+    // Switching back to Native restores validity.
+    {
+        let form = panel.editor.form.as_mut().unwrap();
+        form.select_task_mode(TaskMode::Native);
+        assert_eq!(form.profile_catalog_error(), None);
+        assert!(form.can_submit(None, None));
+    }
+
+    // Removing the saved default model from the native catalog blocks Submit without creating a hold.
+    include_gpt5.store(false, Ordering::SeqCst);
+    panel
+        .editor
+        .retry_defaults(&panel.backend, &panel.reads, &panel.wake);
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        panel
+            .editor
+            .form
+            .as_ref()
+            .is_some_and(|f| f.defaults_state == DefaultsState::Ready)
+    });
+    assert_eq!(
+        panel.editor.form.as_ref().unwrap().profile_catalog_error(),
+        Some("missions.control.profiles.error")
+    );
+    assert!(!panel.editor.form.as_ref().unwrap().can_submit(None, None));
+    panel.submit_editor("tab-1", &mut holds);
+    assert_eq!(post_calls.load(Ordering::SeqCst), 0);
+    assert!(holds.creation(&scope).is_none());
+
+    // Restoring the model and retrying defaults unblocks Submit.
+    include_gpt5.store(true, Ordering::SeqCst);
+    panel
+        .editor
+        .retry_defaults(&panel.backend, &panel.reads, &panel.wake);
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        panel
+            .editor
+            .form
+            .as_ref()
+            .is_some_and(|f| f.defaults_state == DefaultsState::Ready)
+    });
+    assert_eq!(
+        panel.editor.form.as_ref().unwrap().profile_catalog_error(),
+        None
+    );
+    assert!(panel.editor.form.as_ref().unwrap().can_submit(None, None));
 }
 
 fn sample_doc_header_for(mission_id: &str, revision: u64, objective: &str) -> MapHeader {

@@ -1,7 +1,9 @@
 use super::*;
 use crate::missions::{
-    MissionDefaultScope, MissionDefaultsOutcome, freeze_compare_profiles, mission_defaults_for,
-    mission_task_mode_for, normalize_mission_defaults,
+    MissionCatalog, MissionCatalogAgent, MissionCatalogModel, MissionCatalogOutcome,
+    MissionDefaultScope, MissionDefaultsOutcome, catalog_profiles_valid, defaults_have_profiles,
+    freeze_compare_profiles, mission_defaults_for, mission_task_mode_for,
+    normalize_mission_defaults,
 };
 use serde_json::json;
 use std::future::Future;
@@ -1239,6 +1241,255 @@ fn mission_profile_defaults_resolve_task_mode_compare_models_and_freezing() {
         assert_eq!(
             backend(base).read_mission_defaults().await,
             MissionDefaultsOutcome::Unavailable
+        );
+    });
+}
+
+#[test]
+fn update_mission_409_without_code_rejects_workspace_changed_while_empty_409_stays_uncertain() {
+    block_on(async {
+        let req = UpdateMissionRequest::with_request_id(
+            "upd-ws-1".into(),
+            2,
+            "Updated objective",
+            "Notes",
+        )
+        .unwrap();
+        let (base, _t) = spawn_http(
+            "409 Conflict",
+            json!({ "error": "Mission workspace changed" }).to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base).update_mission(&target(), &req).await,
+            UpdateMissionOutcome::Rejected(MutationCode::WorkspaceChanged)
+        );
+
+        let (base, _t) = spawn_http(
+            "409 Conflict",
+            json!({ "error": "Worktree deletion is in progress" }).to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base).update_mission(&target(), &req).await,
+            UpdateMissionOutcome::Rejected(MutationCode::WorkspaceChanged)
+        );
+
+        let (base, _t) = spawn_http("409 Conflict", String::new()).await;
+        assert_eq!(
+            backend(base).update_mission(&target(), &req).await,
+            UpdateMissionOutcome::Uncertain
+        );
+
+        let (base, _t) = spawn_http("409 Conflict", "{truncated".into()).await;
+        assert_eq!(
+            backend(base).update_mission(&target(), &req).await,
+            UpdateMissionOutcome::Uncertain
+        );
+    });
+}
+
+#[test]
+fn mission_catalog_reads_filters_and_validates_profiles_by_task_mode() {
+    block_on(async {
+        let spawn_catalog = |agent_status: &'static str,
+                             agent_body: String,
+                             model_status: &'static str,
+                             model_body: String| async move {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                for _ in 0..2 {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let ab = agent_body.clone();
+                    let mb = model_body.clone();
+                    tokio::spawn(async move {
+                        let raw = read_http_request(&mut socket).await;
+                        let (status, body) = if raw.contains("/instance/api/agent") {
+                            (agent_status, ab)
+                        } else if raw.contains("/instance/api/model") {
+                            (model_status, mb)
+                        } else {
+                            ("404 Not Found", "{}".into())
+                        };
+                        let reply = format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(reply.as_bytes()).await;
+                    });
+                }
+            });
+            format!("http://{addr}/")
+        };
+
+        let base = spawn_catalog(
+            "200 OK",
+            json!({
+                "location": { "directory": "/repo" },
+                "data": [
+                    { "id": "build", "mode": "primary" },
+                    { "id": "explore", "mode": "subagent" },
+                    { "id": "general", "mode": "all" },
+                    { "id": "secret", "mode": "all", "hidden": true }
+                ]
+            })
+            .to_string(),
+            "200 OK",
+            json!({
+                "location": { "directory": "/repo" },
+                "data": [
+                    {
+                        "providerID": "openai",
+                        "id": "gpt-5",
+                        "enabled": true,
+                        "capabilities": { "tools": true },
+                        "variants": [{ "id": "high" }]
+                    },
+                    {
+                        "providerID": "openai",
+                        "id": "disabled-model",
+                        "enabled": false,
+                        "capabilities": { "tools": true },
+                        "variants": []
+                    },
+                    {
+                        "providerID": "openai",
+                        "id": "no-tools",
+                        "enabled": true,
+                        "capabilities": { "tools": false },
+                        "variants": []
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .await;
+        let MissionCatalogOutcome::Ready(catalog) = backend(base).read_mission_catalog().await
+        else {
+            panic!("expected Ready catalog");
+        };
+        assert_eq!(
+            catalog,
+            MissionCatalog {
+                agents: vec![
+                    MissionCatalogAgent {
+                        id: "build".into(),
+                        mode: "primary".into(),
+                    },
+                    MissionCatalogAgent {
+                        id: "explore".into(),
+                        mode: "subagent".into(),
+                    },
+                    MissionCatalogAgent {
+                        id: "general".into(),
+                        mode: "all".into(),
+                    },
+                ],
+                models: vec![MissionCatalogModel {
+                    provider_id: "openai".into(),
+                    id: "gpt-5".into(),
+                    variants: vec!["high".into()],
+                }],
+            }
+        );
+
+        let subagent_role = normalize_mission_defaults(&json!([{
+            "template": "all",
+            "profiles": {
+                "coordinator": {
+                    "agent": "build",
+                    "model": { "providerID": "openai", "id": "gpt-5", "variant": "high" }
+                },
+                "roles": {
+                    "specialist": { "agent": "explore" }
+                }
+            }
+        }]))
+        .unwrap();
+        assert!(defaults_have_profiles(&subagent_role));
+        let empty_defaults =
+            normalize_mission_defaults(&json!([{ "template": "all", "profiles": {} }])).unwrap();
+        assert!(!defaults_have_profiles(&empty_defaults));
+        let resolved = mission_defaults_for(&subagent_role, Template::Custom).unwrap();
+        assert!(catalog_profiles_valid(
+            Some(&resolved),
+            &catalog,
+            TaskMode::Native
+        ));
+        assert!(
+            !catalog_profiles_valid(Some(&resolved), &catalog, TaskMode::Independent),
+            "subagent-only role must be rejected in Independent task mode"
+        );
+
+        let bad_coord = normalize_mission_defaults(&json!([{
+            "template": "all",
+            "profiles": { "coordinator": { "agent": "explore" } }
+        }]))
+        .unwrap();
+        assert!(
+            !catalog_profiles_valid(
+                mission_defaults_for(&bad_coord, Template::Custom).as_ref(),
+                &catalog,
+                TaskMode::Native,
+            ),
+            "coordinator must reject subagent-only agent"
+        );
+
+        let bad_variant = normalize_mission_defaults(&json!([{
+            "template": "all",
+            "profiles": {
+                "coordinator": {
+                    "model": { "providerID": "openai", "id": "gpt-5", "variant": "missing" }
+                }
+            }
+        }]))
+        .unwrap();
+        assert!(!catalog_profiles_valid(
+            mission_defaults_for(&bad_variant, Template::Custom).as_ref(),
+            &catalog,
+            TaskMode::Native,
+        ));
+
+        let removed_model = normalize_mission_defaults(&json!([{
+            "template": "all",
+            "profiles": {
+                "coordinator": {
+                    "model": { "providerID": "openai", "id": "disabled-model" }
+                }
+            }
+        }]))
+        .unwrap();
+        assert!(!catalog_profiles_valid(
+            mission_defaults_for(&removed_model, Template::Custom).as_ref(),
+            &catalog,
+            TaskMode::Native,
+        ));
+
+        let auth_base = spawn_catalog(
+            "401 Unauthorized",
+            "expired".into(),
+            "200 OK",
+            json!({"data": []}).to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(auth_base).read_mission_catalog().await,
+            MissionCatalogOutcome::AuthExpired
+        );
+
+        let mismatch_base = spawn_catalog(
+            "200 OK",
+            json!({"location": {"directory": "/repo-a"}, "data": []}).to_string(),
+            "200 OK",
+            json!({"location": {"directory": "/repo-b"}, "data": []}).to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(mismatch_base).read_mission_catalog().await,
+            MissionCatalogOutcome::Unavailable
         );
     });
 }

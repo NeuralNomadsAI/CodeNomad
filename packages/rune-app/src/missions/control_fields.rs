@@ -4,9 +4,11 @@ use crate::{
     strings::{locale, t},
 };
 use codenomad_client::{
-    Receiver, bounded,
+    Receiver,
+    backend::Backend,
+    bounded,
     history::Result,
-    missions::{ControlPage, ControlPart, ControlReceipt},
+    missions::{ControlPage, ControlPart, ControlReceipt, is_auth_expired},
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
@@ -20,9 +22,10 @@ pub(super) struct Fields {
     part: Option<ControlPart>,
     revision: u64,
     shown: Option<ControlPage>,
-    flight: Option<Receiver<Result<ControlPage>>>,
+    flight: Option<(Backend, Receiver<Result<ControlPage>>)>,
     failed: Option<u64>,
     receipt: Option<ReceiptView>,
+    auth_expired: Vec<Backend>,
 }
 
 const RECEIPT_BYTES: usize = 12 * 1024;
@@ -68,8 +71,30 @@ impl ReceiptView {
 }
 
 impl Fields {
+    fn record_auth_expired(&mut self, backend: Backend) {
+        if !self
+            .auth_expired
+            .iter()
+            .any(|known| known.client.same_connection(&backend.client))
+        {
+            self.auth_expired.push(backend);
+        }
+    }
+
+    pub fn drain_auth_expired(&mut self) -> Vec<Backend> {
+        std::mem::take(&mut self.auth_expired)
+    }
+
     pub fn cancel(&mut self) {
+        if let Some((backend, inbox)) = self.flight.take()
+            && let Ok(Err(error)) = inbox.try_recv()
+            && is_auth_expired(&error)
+        {
+            self.record_auth_expired(backend);
+        }
+        let expired = std::mem::take(&mut self.auth_expired);
         *self = Self::default();
+        self.auth_expired = expired;
     }
 
     pub fn show_receipt(&mut self, id: String, page: Option<usize>) {
@@ -93,23 +118,33 @@ impl Fields {
         }
     }
 
-    fn poll(&mut self, revision: Option<u64>) -> bool {
+    fn poll(&mut self, revision: Option<u64>, detail_busy: bool) -> bool {
         if self.part.is_none() {
             return false;
         }
-        if revision != Some(self.revision) {
+        if !detail_busy && revision != Some(self.revision) {
             self.cancel();
             return true;
         }
-        if let Some(result) = self.flight.as_ref().and_then(|inbox| inbox.try_recv().ok()) {
-            self.flight = None;
+        if let Some(result) = self
+            .flight
+            .as_ref()
+            .and_then(|(_, inbox)| inbox.try_recv().ok())
+        {
+            let backend = self.flight.take().map(|(b, _)| b);
             match result {
                 Ok(page) => {
                     self.failed = None;
                     self.shown = Some(page);
                     self.receipt = None;
                 }
-                Err(_) => {}
+                Err(error) => {
+                    if is_auth_expired(&error)
+                        && let Some(backend) = backend
+                    {
+                        self.record_auth_expired(backend);
+                    }
+                }
             }
             return true;
         }
@@ -125,11 +160,7 @@ impl Panel {
             .as_ref()
             .filter(|_| self.detail.authoritative())
             .map(|snapshot| snapshot.header.root.revision);
-        // A busy refresh retains the display until the new header settles.
-        if self.detail.busy() {
-            return false;
-        }
-        self.control_fields.poll(revision)
+        self.control_fields.poll(revision, self.detail.busy())
     }
 
     pub(super) fn read_control_field(&mut self, part: ControlPart, offset: u64) {
@@ -161,7 +192,7 @@ impl Panel {
         fields.revision = header.root.revision;
         fields.failed = Some(offset);
         let (out, inbox) = bounded(1);
-        fields.flight = Some(inbox);
+        fields.flight = Some((self.backend.clone(), inbox));
         let reads = self.reads.clone();
         let wake = self.wake.clone();
         platform::spawn(async move {

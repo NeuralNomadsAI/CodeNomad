@@ -136,7 +136,7 @@ pub(crate) fn panel_body<S: 'static>(
             }));
         }
         let mut edit_row = layout::action_row();
-        if ui.can_edit_selected() {
+        if ui.can_edit_selected() && !ui.editor.is_open() {
             edit_row = edit_row.child(
                 layout::button_tx(
                     t("missionsPanel.picker.edit"),
@@ -159,11 +159,11 @@ pub(crate) fn panel_body<S: 'static>(
                 layout::focusable_disabled_button(t("missionsPanel.picker.edit"))
                     .key("mission-edit"),
             );
-            if ui.selected_edit_hold(holds).is_some() {
+            if !ui.can_edit_selected() && ui.selected_edit_hold(holds).is_some() {
                 edit_row = edit_row.child(
                     layout::button_tx(
                         t("missions.scheduling.readReceipt"),
-                        false,
+                        ui.editor.is_open(),
                         move |state: &mut S, tx| {
                             let back = tx.focused().unwrap_or("mission-edit-reconcile").to_owned();
                             editor_act(

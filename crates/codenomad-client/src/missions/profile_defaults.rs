@@ -381,6 +381,101 @@ pub fn valid_mission_profiles(template: Template, profiles: &MissionProfiles) ->
     true
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MissionCatalogAgent {
+    pub id: String,
+    pub mode: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MissionCatalogModel {
+    pub provider_id: String,
+    pub id: String,
+    pub variants: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MissionCatalog {
+    pub agents: Vec<MissionCatalogAgent>,
+    pub models: Vec<MissionCatalogModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MissionCatalogOutcome {
+    Ready(MissionCatalog),
+    Unavailable,
+    AuthExpired,
+}
+
+pub fn defaults_have_profiles(defaults: &[MissionProfileDefault]) -> bool {
+    defaults.iter().any(|entry| {
+        entry.profiles.coordinator.is_some()
+            || entry
+                .profiles
+                .roles
+                .as_ref()
+                .is_some_and(|roles| !roles.is_empty())
+    })
+}
+
+/// Validates resolved Mission profiles against the active workspace's native catalog,
+/// matching `validateMissionProfileCatalog` in `packages/server/src/missions/playbook-profiles.ts`.
+pub fn catalog_profiles_valid(
+    profiles: Option<&MissionProfiles>,
+    catalog: &MissionCatalog,
+    task_mode: TaskMode,
+) -> bool {
+    let Some(profiles) = profiles else {
+        return true;
+    };
+    let has_roles = profiles.roles.as_ref().is_some_and(|r| !r.is_empty());
+    if profiles.coordinator.is_none() && !has_roles {
+        return true;
+    }
+    let valid_exec = |exec: &MissionExecution, child: bool| -> bool {
+        if let Some(agent_id) = exec.agent.as_deref() {
+            let Some(agent) = catalog.agents.iter().find(|a| a.id == agent_id) else {
+                return false;
+            };
+            let allowed = if child {
+                matches!(agent.mode.as_str(), "subagent" | "all")
+            } else {
+                matches!(agent.mode.as_str(), "primary" | "all")
+            };
+            if !allowed {
+                return false;
+            }
+        }
+        if let Some(model) = &exec.model {
+            let Some(found) = catalog
+                .models
+                .iter()
+                .find(|m| m.provider_id == model.provider_id && m.id == model.id)
+            else {
+                return false;
+            };
+            if let Some(variant) = model.variant.as_deref()
+                && !found.variants.iter().any(|v| v == variant)
+            {
+                return false;
+            }
+        }
+        true
+    };
+    if let Some(coord) = &profiles.coordinator
+        && !valid_exec(coord, false)
+    {
+        return false;
+    }
+    let child_role = task_mode == TaskMode::Native;
+    if let Some(roles) = &profiles.roles
+        && roles.values().any(|exec| !valid_exec(exec, child_role))
+    {
+        return false;
+    }
+    true
+}
+
 impl Backend {
     /// Reads the owning backend's `missionProfileDefaults` from `/api/storage/config/ui`.
     pub async fn read_mission_defaults(&self) -> MissionDefaultsOutcome {
@@ -421,5 +516,110 @@ impl Backend {
             Some(list) => MissionDefaultsOutcome::Ready(list),
             None => MissionDefaultsOutcome::Unavailable,
         }
+    }
+
+    /// Reads the active workspace's visible agents and enabled tool-capable models,
+    /// matching `readMissionCatalog` in `packages/server/src/missions/native-catalog.ts`.
+    pub async fn read_mission_catalog(&self) -> MissionCatalogOutcome {
+        if !crate::history::valid_id(&self.workspace) {
+            return MissionCatalogOutcome::Unavailable;
+        }
+        let base = format!("{}workspaces/{}/instance/api", self.base, self.workspace);
+        let fetch = |route: &str| {
+            let url = format!("{base}/{route}");
+            async move {
+                let request = self
+                    .client
+                    .get(url)
+                    .header(reqwest::header::CACHE_CONTROL, "no-store")
+                    .timeout(DEFAULTS_TIMEOUT);
+                #[cfg(target_arch = "wasm32")]
+                let request = request.fetch_cache_no_store();
+                let Ok(response) = request.send().await else {
+                    return Err(false);
+                };
+                let status = response.status();
+                if status == StatusCode::UNAUTHORIZED {
+                    return Err(true);
+                }
+                if !status.is_success() {
+                    return Err(false);
+                }
+                read_json_limited(response, MAX_DEFAULTS_BYTES)
+                    .await
+                    .map_err(|_| false)
+            }
+        };
+        let (agents_res, models_res) =
+            futures_lite::future::zip(fetch("agent"), fetch("model")).await;
+        let (agents_body, models_body) = match (agents_res, models_res) {
+            (Ok(a), Ok(m)) => (a, m),
+            (Err(true), _) | (_, Err(true)) => return MissionCatalogOutcome::AuthExpired,
+            _ => return MissionCatalogOutcome::Unavailable,
+        };
+        let a_dir = agents_body["location"]["directory"].as_str();
+        let m_dir = models_body["location"]["directory"].as_str();
+        if let (Some(a), Some(m)) = (a_dir, m_dir)
+            && !crate::same_server_path(a, m)
+        {
+            return MissionCatalogOutcome::Unavailable;
+        }
+        let Some(agent_rows) = agents_body["data"].as_array() else {
+            return MissionCatalogOutcome::Unavailable;
+        };
+        let Some(model_rows) = models_body["data"].as_array() else {
+            return MissionCatalogOutcome::Unavailable;
+        };
+        let mut agents = Vec::new();
+        for row in agent_rows {
+            if row.get("hidden").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
+            let Some(id) = row.get("id").and_then(Value::as_str) else {
+                return MissionCatalogOutcome::Unavailable;
+            };
+            let Some(mode) = row.get("mode").and_then(Value::as_str) else {
+                return MissionCatalogOutcome::Unavailable;
+            };
+            agents.push(MissionCatalogAgent {
+                id: id.to_owned(),
+                mode: mode.to_owned(),
+            });
+        }
+        let mut models = Vec::new();
+        for row in model_rows {
+            let enabled = row.get("enabled").and_then(Value::as_bool) == Some(true);
+            let tools = row
+                .get("capabilities")
+                .and_then(|c| c.get("tools"))
+                .and_then(Value::as_bool)
+                == Some(true);
+            if !enabled || !tools {
+                continue;
+            }
+            let Some(provider_id) = row.get("providerID").and_then(Value::as_str) else {
+                return MissionCatalogOutcome::Unavailable;
+            };
+            let Some(id) = row.get("id").and_then(Value::as_str) else {
+                return MissionCatalogOutcome::Unavailable;
+            };
+            let mut variants = Vec::new();
+            if let Some(raw_variants) = row.get("variants") {
+                let Some(arr) = raw_variants.as_array() else {
+                    return MissionCatalogOutcome::Unavailable;
+                };
+                for v in arr {
+                    if let Some(vid) = v.get("id").and_then(Value::as_str) {
+                        variants.push(vid.to_owned());
+                    }
+                }
+            }
+            models.push(MissionCatalogModel {
+                provider_id: provider_id.to_owned(),
+                id: id.to_owned(),
+                variants,
+            });
+        }
+        MissionCatalogOutcome::Ready(MissionCatalog { agents, models })
     }
 }

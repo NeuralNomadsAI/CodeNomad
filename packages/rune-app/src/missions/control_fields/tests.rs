@@ -144,14 +144,17 @@ fn receipt_pagination_navigates_and_clears_on_page_part_and_revision_changes() {
     send.try_send(Ok(receipts_page("r2", "{}".into(), 2)))
         .ok()
         .unwrap();
-    fields.flight = Some(inbox);
-    assert!(fields.poll(Some(8)));
+    fields.flight = Some((
+        Backend::unauthenticated("http://127.0.0.1:9/").unwrap(),
+        inbox,
+    ));
+    assert!(fields.poll(Some(8), false));
     assert!(fields.receipt.is_none());
 
     // Revision change clears the open receipt and displayed page.
     fields.show_receipt("r2".into(), None);
     assert!(fields.receipt.is_some());
-    assert!(fields.poll(Some(9)));
+    assert!(fields.poll(Some(9), false));
     assert!(fields.receipt.is_none());
     assert!(fields.part.is_none());
     assert!(fields.shown.is_none());

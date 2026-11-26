@@ -42,8 +42,9 @@ pub use lifecycle::{
 };
 pub use model::{Cleanup, DirectoryPage, DirectoryRows, RunState, Status, Summary, Window};
 pub use profile_defaults::{
+    MissionCatalog, MissionCatalogAgent, MissionCatalogModel, MissionCatalogOutcome,
     MissionDefaultScope, MissionDefaultsOutcome, MissionExecution, MissionModelRef,
-    MissionProfileDefault, MissionProfiles, compare_model_error, freeze_compare_profiles,
-    mission_defaults_for, mission_task_mode_for, normalize_mission_defaults, template_roles,
-    valid_mission_profiles,
+    MissionProfileDefault, MissionProfiles, catalog_profiles_valid, compare_model_error,
+    defaults_have_profiles, freeze_compare_profiles, mission_defaults_for, mission_task_mode_for,
+    normalize_mission_defaults, template_roles, valid_mission_profiles,
 };

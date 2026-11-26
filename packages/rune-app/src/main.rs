@@ -270,12 +270,12 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         changed |= platform::pairing::poll(s, tx);
     }
     shell::sync(s);
-    changed |= workspace::poll(s, now, tx);
     let transcript_revision = s.revision;
     changed |= settings::poll(s, tx) | settings::poll_window_actions(s, tx);
     if s.revision != transcript_revision {
         timeline::filters_changed(s);
     }
+    changed |= workspace::poll(s, now, tx);
     changed |= timeline::search::settle_destination(s, tx);
     #[cfg(target_arch = "wasm32")]
     {

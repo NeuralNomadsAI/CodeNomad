@@ -541,6 +541,7 @@ impl Panel {
             .chain(self.observation.drain_auth_expired())
             .chain(self.detail.drain_auth_expired())
             .chain(self.reader.take_auth_expired())
+            .chain(self.control_fields.drain_auth_expired())
             .chain(self.editor.drain_auth_expired())
         {
             if !expired

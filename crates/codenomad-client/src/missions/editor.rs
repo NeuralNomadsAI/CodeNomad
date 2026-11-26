@@ -22,7 +22,7 @@ pub const MISSION_TITLE_MAX: usize = 60;
 pub const MISSION_TEXT_MAX: usize = 20_000;
 const MAX_REVISION: u64 = (1 << 53) - 1;
 const MUTATION_TIMEOUT: Duration = Duration::from_secs(90);
-const RECEIPT_TIMEOUT: Duration = Duration::from_secs(15);
+const RECEIPT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_BODY_SLICES: usize = 64;
 
@@ -292,6 +292,7 @@ pub enum MutationCode {
     MissionFinished,
     DocumentUnavailable,
     ControlPending,
+    WorkspaceChanged,
     CompareModelsRequired,
     CompareModelsIdentical,
     Forbidden,
@@ -337,9 +338,10 @@ impl MutationCode {
                 "missions.scheduling.lock.uncertain"
             }
             Self::Forbidden => "missions.control.mutation.forbidden",
-            Self::CreationUncertain | Self::CreationConflict | Self::Invalid => {
-                "missions.control.mutation.error"
-            }
+            Self::CreationUncertain
+            | Self::CreationConflict
+            | Self::WorkspaceChanged
+            | Self::Invalid => "missions.control.mutation.error",
         }
     }
 }
@@ -1216,6 +1218,15 @@ fn settle_update_error(status: StatusCode, body: Option<&Value>) -> UpdateMissio
         )
     {
         return UpdateMissionOutcome::Rejected(code.unwrap());
+    }
+    if status.as_u16() == 409
+        && body.is_some_and(|value| {
+            value.is_object()
+                && value.get("code").is_none()
+                && value.get("error").and_then(Value::as_str).is_some()
+        })
+    {
+        return UpdateMissionOutcome::Rejected(MutationCode::WorkspaceChanged);
     }
     if status.as_u16() == 503 && code == Some(MutationCode::ControlPending) {
         return UpdateMissionOutcome::Rejected(MutationCode::ControlPending);
