@@ -170,6 +170,18 @@ impl Target {
         true
     }
 
+    pub fn session_moved(&mut self, workspace: &str, session: &str) -> bool {
+        if !self.is_workspace(workspace) {
+            return false;
+        }
+        if !session.is_empty() && self.session.as_deref() != Some(session) {
+            return false;
+        }
+        self.authority = self.authority.wrapping_add(1);
+        self.invalidate();
+        true
+    }
+
     fn invalidate(&mut self) {
         self.revision = self.revision.wrapping_add(1);
     }
@@ -203,6 +215,7 @@ impl Catalog {
         self.manager.cancel_on_hide()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn dismiss_modal(&mut self, tx: &mut rune::Tx) -> bool {
         self.manager.dismiss_modal(tx)
     }

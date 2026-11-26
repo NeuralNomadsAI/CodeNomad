@@ -41,20 +41,22 @@ pub(super) fn view<S: 'static>(
     }
 
     if methods.len() > 1 {
-        let method_labels: Vec<&str> = methods
+        let raw_method_labels: Vec<String> = methods
             .iter()
             .map(|m| {
                 m.display_label(
                     t("settings.providers.method.api"),
                     t("settings.providers.method.oauth"),
                 )
+                .to_owned()
             })
             .collect();
+        let owned_labels = super::manager::unique_labels(&raw_method_labels);
+        let method_labels: Vec<&str> = owned_labels.iter().map(String::as_str).collect();
         let current = method_labels
             .get(flow.method_index)
             .copied()
             .or_else(|| method_labels.first().copied());
-        let owned_labels: Vec<String> = method_labels.iter().map(|s| (*s).to_owned()).collect();
         let method_disabled = !matches!(flow.stage, AuthStage::Prompts | AuthStage::Error);
         let control = chrome::picker(
             "provider-auth-method",
@@ -120,10 +122,12 @@ pub(super) fn view<S: 'static>(
 
         let form_fields = method.form();
         if !form_fields.is_empty() {
+            let effective =
+                form::effective_answers(form_fields, &flow.form_answers, &flow.form_edits);
             body = body.child(form::view(
                 catalog,
                 form_fields,
-                &flow.form_answers,
+                &effective,
                 prompts_disabled,
                 &mut modal_pickers,
                 access,
@@ -298,8 +302,7 @@ fn oauth_link_actions<S: 'static>(
             )
             .child(
                 layout::button_tx(copy_label, false, move |s: &mut S, tx| {
-                    tx.copy(copy_url.as_str());
-                    access(s).manager.mark_oauth_link_copied();
+                    access(s).manager.copy_oauth_link(&copy_url, tx);
                 })
                 .key("provider-auth-copy-url"),
             ),

@@ -510,7 +510,15 @@ fn accounts_rename_survives_refresh_and_failure_and_501_degrades_gracefully() {
         assert!(
             patch
                 .header
-                .starts_with("PATCH /workspaces/ws1/instance/api/credential/cred_1?"),
+                .starts_with("PATCH /workspaces/ws1/instance/api/credential/cred_1 "),
+            "{}",
+            patch.header
+        );
+        assert!(
+            patch
+                .header
+                .to_ascii_lowercase()
+                .contains("x-codenomad-location:"),
             "{}",
             patch.header
         );
@@ -589,10 +597,268 @@ fn accounts_rename_survives_refresh_and_failure_and_501_degrades_gracefully() {
         let del = http.accept().await;
         assert!(
             del.header
-                .starts_with("DELETE /workspaces/ws1/instance/api/credential/cred_1?"),
+                .starts_with("DELETE /workspaces/ws1/instance/api/credential/cred_1 "),
+            "{}",
+            del.header
+        );
+        assert!(
+            del.header
+                .to_ascii_lowercase()
+                .contains("x-codenomad-location:"),
             "{}",
             del.header
         );
         del.reply(200, json!({})).await;
+    });
+}
+
+#[test]
+fn closing_modal_mid_oauth_post_sends_delete_and_logical_clock_advances_polling() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let integrations = json!([
+            {
+                "id": "openai",
+                "name": "OpenAI",
+                "methods": [
+                    { "id": "codex", "type": "oauth", "label": "ChatGPT" }
+                ],
+                "connections": []
+            }
+        ]);
+
+        let mut rt = make_rt(http.backend.clone());
+        assert!(tick(&mut rt, 1.0));
+        reply_catalog(&http, integrations.clone(), json!([]), json!([]), None).await;
+        poll_until(&mut rt, 1.0, |h| h.catalog.manager.snapshot.is_some());
+
+        // Start OAuth POST, then close the modal BEFORE the POST returns -> late attemptID MUST trigger DELETE.
+        click(&mut rt, "providers-connect-button", 1.0);
+        click(&mut rt, "provider-auth-continue", 1.0);
+        assert!(tick(&mut rt, 1.0));
+        let post = http.accept().await;
+        assert!(
+            post.header
+                .starts_with("POST /workspaces/ws1/instance/api/integration/openai/connect/oauth?"),
+            "{}",
+            post.header
+        );
+        click(&mut rt, "provider-auth-close", 1.0);
+        assert!(rt.state.catalog.manager.connect.is_none());
+
+        post.reply(
+            200,
+            json!({
+                "location": { "directory": "/repo/a" },
+                "data": {
+                    "attemptID": "att_late",
+                    "url": "https://auth.example.test/late",
+                    "instructions": "Late",
+                    "mode": "auto"
+                }
+            }),
+        )
+        .await;
+        let del = http.accept().await;
+        assert!(
+            del.header.starts_with(
+                "DELETE /workspaces/ws1/instance/api/integration/openai/connect/oauth/att_late?"
+            ),
+            "{}",
+            del.header
+        );
+        del.reply(200, json!({})).await;
+
+        // Second flow: verify logical-clock polling advances from pending -> second poll at now+1.0 -> completed.
+        click(&mut rt, "providers-connect-button", 10.0);
+        click(&mut rt, "provider-auth-continue", 10.0);
+        assert!(tick(&mut rt, 10.0));
+        let post2 = http.accept().await;
+        post2
+            .reply(
+                200,
+                json!({
+                    "location": { "directory": "/repo/a" },
+                    "data": {
+                        "attemptID": "att_poll",
+                        "url": "https://auth.example.test/poll",
+                        "instructions": "Wait",
+                        "mode": "auto"
+                    }
+                }),
+            )
+            .await;
+        poll_until(&mut rt, 10.0, |h| {
+            h.catalog
+                .manager
+                .connect
+                .as_ref()
+                .is_some_and(|f| f.stage == manager::AuthStage::Waiting)
+        });
+        let st1 = http.accept().await;
+        st1.reply(
+            200,
+            json!({ "location": { "directory": "/repo/a" }, "data": { "status": "pending" } }),
+        )
+        .await;
+        poll_until(&mut rt, 10.0, |h| !h.catalog.manager.poll_flight_active());
+
+        // Before 11.0, no second poll is sent.
+        assert!(!tick(&mut rt, 10.5));
+        http.quiet().await;
+
+        // At 11.0 (logical clock + 1.0s), second poll fires and settles as completed.
+        assert!(tick(&mut rt, 11.0));
+        let st2 = http.accept().await;
+        assert!(
+            st2.header.starts_with(
+                "GET /workspaces/ws1/instance/api/integration/openai/connect/oauth/att_poll?"
+            ),
+            "{}",
+            st2.header
+        );
+        st2.reply(
+            200,
+            json!({ "location": { "directory": "/repo/a" }, "data": { "status": "complete" } }),
+        )
+        .await;
+        poll_until(&mut rt, 11.0, |h| h.catalog.manager.connect.is_none());
+    });
+}
+
+#[test]
+fn session_move_cancels_stale_location_and_duplicate_labels_and_live_form_visibility_work() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let integrations = json!([
+            {
+                "id": "custom",
+                "name": "Custom",
+                "methods": [{
+                    "type": "key",
+                    "label": "API key",
+                    "form": [
+                        { "key": "tier", "type": "string", "title": "Tier", "required": true },
+                        {
+                            "key": "endpoint",
+                            "type": "string",
+                            "title": "Enterprise Endpoint",
+                            "required": true,
+                            "when": [{ "key": "tier", "op": "eq", "value": "enterprise" }]
+                        }
+                    ]
+                }],
+                "connections": []
+            },
+            {
+                "id": "openai",
+                "name": "OpenAI",
+                "methods": [{ "type": "key", "label": "API key" }],
+                "connections": [
+                    { "type": "credential", "id": "cred_1", "label": "Work", "method": "key" },
+                    { "type": "credential", "id": "cred_2", "label": "Work", "method": "key" },
+                    { "type": "credential", "id": "cred_3", "label": "Work (2)", "method": "key" }
+                ]
+            }
+        ]);
+        let providers = json!([{ "id": "openai", "integrationID": "openai", "name": "OpenAI" }]);
+        let selection = json!({ "supported": false, "enabled": false, "logins": {} });
+
+        let mut rt = make_rt(http.backend.clone());
+        assert!(tick(&mut rt, 1.0));
+        reply_catalog(
+            &http,
+            integrations.clone(),
+            providers.clone(),
+            json!([]),
+            Some(("openai", selection.clone())),
+        )
+        .await;
+        poll_until(&mut rt, 1.0, |h| h.catalog.manager.snapshot.is_some());
+
+        // Dynamic form: typing "enterprise" into `tier` immediately reveals `endpoint` in modal view.
+        click(&mut rt, "providers-connect-button", 1.0);
+        assert!(node(&rt.accessibility_json(), "provider-form-text-endpoint").is_none());
+        rt.update(|h, _| {
+            *h.catalog.manager.form_text_edit_mut("tier") = rune::TextEdit::new("enterprise");
+        });
+        rt.frame(1.0);
+        assert!(node(&rt.accessibility_json(), "provider-form-text-endpoint").is_some());
+        assert!(!rt.state.catalog.manager.can_submit_auth());
+
+        // Session move bumps target authority, cancels the stale modal, and reloads the moved directory.
+        rt.update(|h, _| {
+            assert!(h.target.session_moved("ws1", "ses1"));
+        });
+        assert!(tick(&mut rt, 2.0));
+        assert!(rt.state.catalog.manager.connect.is_none());
+        let dir2 = "/repo/moved";
+        let session = http.accept().await;
+        session
+            .reply(
+                200,
+                json!({ "data": { "id": "ses1", "location": { "directory": dir2 } } }),
+            )
+            .await;
+        for _ in 0..4 {
+            let req = http.accept().await;
+            let path = req.header.split_whitespace().nth(1).unwrap();
+            let data = if path.contains("/websearch/provider?") {
+                json!([])
+            } else if path.contains("/integration?") {
+                integrations.clone()
+            } else if path.contains("/provider?") {
+                providers.clone()
+            } else {
+                json!([])
+            };
+            req.reply(
+                200,
+                json!({ "location": { "directory": dir2 }, "data": data }),
+            )
+            .await;
+        }
+        let meta = http.accept().await;
+        meta.reply(200, json!({ "capabilities": ["integrations"] }))
+            .await;
+        let acc = http.accept().await;
+        acc.reply(200, selection).await;
+        poll_until(&mut rt, 2.0, |h| {
+            h.catalog
+                .manager
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| s.directory == dir2)
+        });
+
+        // Duplicate display labels ("Work", "Work", "Work (2)"): choosing index 2 activates cred_3, not cred_2!
+        click(&mut rt, "provider-account-select-openai-trigger", 2.0);
+        let options: Vec<(f32, f32)> = rt
+            .elements()
+            .iter()
+            .filter(|e| e.role == "option")
+            .map(|e| (e.rect[0] + e.rect[2] * 0.5, e.rect[1] + e.rect[3] * 0.5))
+            .collect();
+        assert_eq!(options.len(), 3);
+        let (x, y) = options[2];
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(2.0);
+        assert!(tick(&mut rt, 2.0));
+        let act = http.accept().await;
+        assert!(
+            act.header
+                .starts_with("POST /workspaces/ws1/instance/api/credential/cred_3/activate "),
+            "{}",
+            act.header
+        );
+        assert!(
+            act.header
+                .to_ascii_lowercase()
+                .contains("x-codenomad-location:"),
+            "{}",
+            act.header
+        );
+        act.reply(200, json!({})).await;
     });
 }

@@ -158,7 +158,12 @@ impl Panel {
             now,
             tx,
         );
-        let providers_changed = if self.shown && paired && self.section == Section::Providers {
+        let providers_changed = if self.shown
+            && paired
+            && self.local(prefs)
+            && document_visible()
+            && self.section == Section::Providers
+        {
             self.catalog.poll(
                 prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
                 now,
@@ -247,6 +252,19 @@ impl Panel {
 
     fn local(&self, prefs: &Preferences) -> bool {
         self.scope.local(prefs)
+    }
+}
+
+fn document_visible() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|window| window.document())
+            .is_none_or(|doc| doc.visibility_state() == web_sys::VisibilityState::Visible)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        true
     }
 }
 
@@ -480,11 +498,17 @@ pub(super) fn view(
                 ))
         }
         Section::Providers => {
-            let available =
-                prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online);
-            providers::content(&panel.catalog, available, &mut layers, |s: &mut State| {
-                &mut s.settings.web.catalog
-            })
+            if !local {
+                text(t("integrations.connection.unsupported"))
+                    .wrap()
+                    .role("alert")
+            } else {
+                let available =
+                    prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online);
+                providers::content(&panel.catalog, available, &mut layers, |s: &mut State| {
+                    &mut s.settings.web.catalog
+                })
+            }
         }
         Section::Conversation => col()
             .full_width()

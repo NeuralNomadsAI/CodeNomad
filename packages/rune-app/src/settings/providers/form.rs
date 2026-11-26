@@ -73,16 +73,20 @@ pub(super) fn view<S: 'static>(
             } if !options.is_empty() && !*custom => {
                 let picker_id = PickerId::FormField(field.key.clone());
                 let current_val = answers.get(&field.key).and_then(Value::as_str);
+                let raw_labels: Vec<String> = options.iter().map(|o| o.label.clone()).collect();
+                let display_labels = super::manager::unique_labels(&raw_labels);
                 let current_label = current_val.and_then(|v| {
                     options
                         .iter()
-                        .find(|o| o.value == v)
-                        .map(|o| o.label.as_str())
+                        .position(|o| o.value == v)
+                        .and_then(|idx| display_labels.get(idx))
+                        .map(String::as_str)
                 });
-                let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
-                let pairs: Vec<(String, String)> = options
+                let labels: Vec<&str> = display_labels.iter().map(String::as_str).collect();
+                let pairs: Vec<(String, String)> = display_labels
                     .iter()
-                    .map(|o| (o.label.clone(), o.value.clone()))
+                    .zip(options.iter())
+                    .map(|(disp, o)| (disp.clone(), o.value.clone()))
                     .collect();
                 let pid_toggle = picker_id.clone();
                 let pid_choose = picker_id.clone();
@@ -101,7 +105,7 @@ pub(super) fn view<S: 'static>(
                     let mgr = &mut access(s).manager;
                     if mgr.open_picker.as_ref() == Some(&pid_choose) {
                         mgr.close_picker();
-                        if let Some((_, val)) = pairs.iter().find(|(lbl, _)| lbl == chosen) {
+                        if let Some((_, val)) = pairs.iter().find(|(disp, _)| disp == chosen) {
                             mgr.set_form_value(&fk, Some(Value::String(val.clone())));
                         }
                     }
@@ -215,6 +219,16 @@ pub(super) fn view<S: 'static>(
         }
     }
     stack
+}
+
+pub(super) fn effective_answers(
+    fields: &[FormField],
+    answers: &BTreeMap<String, Value>,
+    edits: &BTreeMap<String, rune::TextEdit>,
+) -> BTreeMap<String, Value> {
+    let mut merged = answers.clone();
+    sync_text_edits_to_answers(fields, edits, &mut merged);
+    merged
 }
 
 pub(super) fn sync_text_edits_to_answers(

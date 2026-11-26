@@ -66,29 +66,17 @@ fn accounts_controls<S: 'static>(
     let mgr = &catalog.manager;
     let has_credentials = provider.credential_count() > 0;
     let picker_id = PickerId::Account(provider.id.clone());
-    let mut label_counts: std::collections::BTreeMap<String, usize> =
-        std::collections::BTreeMap::new();
-    for conn in &provider.connections {
-        *label_counts
-            .entry(provider.connection_display_label(conn).to_owned())
-            .or_insert(0) += 1;
-    }
-    let mut seen_counts: std::collections::BTreeMap<String, usize> =
-        std::collections::BTreeMap::new();
+    let raw_labels: Vec<String> = provider
+        .connections
+        .iter()
+        .map(|conn| provider.connection_display_label(conn).to_owned())
+        .collect();
+    let display_labels = super::manager::unique_labels(&raw_labels);
     let option_entries: Vec<(String, Option<String>)> = provider
         .connections
         .iter()
-        .map(|conn| {
-            let base = provider.connection_display_label(conn).to_owned();
-            let display = if label_counts.get(&base).copied().unwrap_or(0) > 1 {
-                let n = seen_counts.entry(base.clone()).or_insert(0);
-                *n += 1;
-                format!("{base} ({n})")
-            } else {
-                base
-            };
-            (display, conn.credential_id().map(str::to_owned))
-        })
+        .zip(display_labels)
+        .map(|(conn, display)| (display, conn.credential_id().map(str::to_owned)))
         .collect();
     let option_labels: Vec<&str> = option_entries.iter().map(|(l, _)| l.as_str()).collect();
     let current_label = option_entries.first().map(|(l, _)| l.as_str());

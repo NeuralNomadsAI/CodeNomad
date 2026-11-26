@@ -200,7 +200,13 @@ impl Signals {
                 true
             });
         let provider_changed = crate::settings::provider_change(frame)
-            .is_some_and(|id| self.mark(&self.providers, Some(id)));
+            .is_some_and(|id| self.mark(&self.providers, Some(id)))
+            | (frame["type"] == "instance.event"
+                && frame["event"]["type"] == "session.moved"
+                && frame["instanceId"]
+                    .as_str()
+                    .filter(|id| valid_id(id))
+                    .is_some_and(|id| self.mark(&self.providers, Some(id))));
         let kind = frame["type"].as_str();
         let workspace = match kind {
             Some("workspace.worktreesChanged" | "workspace.stopped" | "workspace.filesChanged") => {

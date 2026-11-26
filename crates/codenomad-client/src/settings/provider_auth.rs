@@ -97,6 +97,9 @@ pub enum FormFieldKind {
         placeholder: Option<String>,
         default: Option<String>,
         format: Option<String>,
+        // Parsed from native schema; client-side regex evaluation requires a regex dependency
+        // outside codenomad-client's current Cargo.toml, so server validation remains authoritative.
+        pattern: Option<String>,
         min_length: Option<usize>,
         max_length: Option<usize>,
         options: Vec<FieldOption>,
@@ -114,7 +117,7 @@ pub enum FormFieldKind {
     },
     Multiselect {
         required: bool,
-        default: Vec<String>,
+        default: Option<Vec<String>>,
         min_items: Option<usize>,
         max_items: Option<usize>,
         options: Vec<FieldOption>,
@@ -321,8 +324,11 @@ pub fn initial_form_answers(fields: &[FormField]) -> BTreeMap<String, Value> {
             FormFieldKind::Boolean { default: Some(v) } => {
                 out.insert(field.key.clone(), Value::Bool(*v));
             }
-            FormFieldKind::Multiselect { default, .. } if !default.is_empty() => {
-                out.insert(field.key.clone(), json!(default));
+            FormFieldKind::Multiselect {
+                default: Some(items),
+                ..
+            } => {
+                out.insert(field.key.clone(), json!(items));
             }
             _ => {}
         }
@@ -361,7 +367,7 @@ pub fn is_field_visible(field: &FormField, values: &BTreeMap<String, Value>) -> 
 }
 
 pub fn is_field_complete(field: &FormField, values: &BTreeMap<String, Value>) -> bool {
-    if !is_field_active(field, values) || matches!(field.kind, FormFieldKind::External { .. }) {
+    if !is_field_visible(field, values) || matches!(field.kind, FormFieldKind::External { .. }) {
         return true;
     }
     let val = values.get(&field.key);
@@ -488,9 +494,10 @@ pub fn build_form_answer(fields: &[FormField], values: &BTreeMap<String, Value>)
                     json!(*v)
                 }),
                 FormFieldKind::Boolean { default: Some(v) } => Some(Value::Bool(*v)),
-                FormFieldKind::Multiselect { default, .. } if !default.is_empty() => {
-                    Some(json!(default))
-                }
+                FormFieldKind::Multiselect {
+                    default: Some(items),
+                    ..
+                } => Some(json!(items)),
                 _ => None,
             };
             if let Some(val) = default {
@@ -499,6 +506,106 @@ pub fn build_form_answer(fields: &[FormField], values: &BTreeMap<String, Value>)
         }
     }
     Some(Value::Object(map))
+}
+
+fn valid_calendar_date(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() != 10
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !bytes
+            .iter()
+            .enumerate()
+            .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit())
+    {
+        return false;
+    }
+    let (Ok(year), Ok(month), Ok(day)) = (
+        s[0..4].parse::<u32>(),
+        s[5..7].parse::<u32>(),
+        s[8..10].parse::<u32>(),
+    ) else {
+        return false;
+    };
+    let leap = (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=max_day).contains(&day)
+}
+
+fn valid_date_time(s: &str) -> bool {
+    let Some((date, rest)) = s.split_once('T') else {
+        return false;
+    };
+    if !valid_calendar_date(date) {
+        return false;
+    }
+    let time_part = if let Some(stripped) = rest.strip_suffix('Z') {
+        stripped
+    } else if let Some(pos) = rest.rfind(['+', '-']) {
+        let offset = &rest[pos + 1..];
+        let ob = offset.as_bytes();
+        if ob.len() != 5
+            || ob[2] != b':'
+            || !ob[0].is_ascii_digit()
+            || !ob[1].is_ascii_digit()
+            || !ob[3].is_ascii_digit()
+            || !ob[4].is_ascii_digit()
+        {
+            return false;
+        }
+        let (Ok(oh), Ok(om)) = (offset[0..2].parse::<u32>(), offset[3..5].parse::<u32>()) else {
+            return false;
+        };
+        if oh > 23 || om > 59 {
+            return false;
+        }
+        &rest[..pos]
+    } else {
+        rest
+    };
+    let (hms, frac) = match time_part.split_once('.') {
+        Some((hms, frac)) => {
+            if frac.is_empty() || !frac.bytes().all(|b| b.is_ascii_digit()) {
+                return false;
+            }
+            (hms, true)
+        }
+        None => (time_part, false),
+    };
+    let hb = hms.as_bytes();
+    let valid_hm = hb.len() == 5 && hb[2] == b':' && !frac;
+    let valid_hms = hb.len() == 8 && hb[2] == b':' && hb[5] == b':';
+    if !valid_hm && !valid_hms {
+        return false;
+    }
+    if !hb
+        .iter()
+        .enumerate()
+        .all(|(i, b)| i == 2 || i == 5 || b.is_ascii_digit())
+    {
+        return false;
+    }
+    let (Ok(hour), Ok(minute)) = (hms[0..2].parse::<u32>(), hms[3..5].parse::<u32>()) else {
+        return false;
+    };
+    if hour > 23 || minute > 59 {
+        return false;
+    }
+    if valid_hms {
+        let Ok(second) = hms[6..8].parse::<u32>() else {
+            return false;
+        };
+        if second > 59 {
+            return false;
+        }
+    }
+    true
 }
 
 fn matches_format(value: &str, format: &str) -> bool {
@@ -513,16 +620,8 @@ fn matches_format(value: &str, format: &str) -> bool {
                 && !domain.contains('@')
                 && !value.chars().any(char::is_whitespace)
         }
-        "date" => {
-            let bytes = value.as_bytes();
-            bytes.len() == 10
-                && bytes[4] == b'-'
-                && bytes[7] == b'-'
-                && bytes
-                    .iter()
-                    .enumerate()
-                    .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit())
-        }
+        "date" => valid_calendar_date(value),
+        "date-time" => valid_date_time(value),
         _ => true,
     }
 }
@@ -693,6 +792,7 @@ pub async fn oauth_connect(
         .await
         .map_err(|_| AuthError::Failed)?;
     let value = check_json_response(response).await?;
+    verify_response_location(&value, directory)?;
     let data = &value["data"];
     let attempt_id = clean_token(&data["attemptID"]).ok_or(AuthError::Failed)?;
     let auth_url = data["url"].as_str().unwrap_or_default().trim().to_owned();
@@ -736,6 +836,7 @@ pub async fn oauth_status(
         .await
         .map_err(|_| AuthError::Failed)?;
     let value = check_json_response(response).await?;
+    verify_response_location(&value, directory)?;
     parse_attempt_poll(&value["data"])
 }
 
@@ -819,6 +920,7 @@ pub async fn command_connect(
         .await
         .map_err(|_| AuthError::Failed)?;
     let value = check_json_response(response).await?;
+    verify_response_location(&value, directory)?;
     clean_token(&value["data"]["attemptID"]).ok_or(AuthError::Failed)
 }
 
@@ -848,6 +950,7 @@ pub async fn command_status(
         .await
         .map_err(|_| AuthError::Failed)?;
     let value = check_json_response(response).await?;
+    verify_response_location(&value, directory)?;
     parse_attempt_poll(&value["data"])
 }
 
@@ -879,6 +982,46 @@ pub async fn command_cancel(
         .await;
 }
 
+const LOCATION_CONTEXT_HEADER: &str = "x-codenomad-location";
+
+fn encode_location_header(directory: &str) -> String {
+    let raw = json!({ "directory": directory }).to_string();
+    let mut out = String::with_capacity(raw.len() * 2);
+    for byte in raw.bytes() {
+        let unreserved = byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            );
+        if unreserved {
+            out.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
+}
+
+fn verify_response_location(
+    value: &Value,
+    expected_directory: &str,
+) -> std::result::Result<(), AuthError> {
+    let Some(loc) = value.get("location") else {
+        return Ok(());
+    };
+    let Some(dir) = loc["directory"]
+        .as_str()
+        .filter(|path| crate::absolute_server_path(path))
+    else {
+        return Err(AuthError::Failed);
+    };
+    if !crate::same_server_path(dir, expected_directory) {
+        return Err(AuthError::Failed);
+    }
+    Ok(())
+}
+
 pub async fn activate_credential(
     backend: &Backend,
     workspace: &str,
@@ -893,7 +1036,7 @@ pub async fn activate_credential(
     let response = backend
         .client
         .post(url)
-        .query(&[("location[directory]", directory)])
+        .header(LOCATION_CONTEXT_HEADER, encode_location_header(directory))
         .send()
         .await
         .map_err(|_| AuthError::Failed)?;
@@ -918,7 +1061,7 @@ pub async fn rename_credential(
     let response = backend
         .client
         .patch(url)
-        .query(&[("location[directory]", directory)])
+        .header(LOCATION_CONTEXT_HEADER, encode_location_header(directory))
         .json(&json!({ "label": trimmed }))
         .send()
         .await
@@ -936,7 +1079,7 @@ pub async fn remove_credential(
     let response = backend
         .client
         .delete(url)
-        .query(&[("location[directory]", directory)])
+        .header(LOCATION_CONTEXT_HEADER, encode_location_header(directory))
         .send()
         .await
         .map_err(|_| AuthError::Failed)?;
@@ -969,7 +1112,7 @@ pub async fn set_account_auto_select(
         .await
         .map_err(|_| AuthError::Failed)?;
     let value = check_json_response(response).await?;
-    Ok(parse_account_selection(&value))
+    parse_account_selection(&value).ok_or(AuthError::Failed)
 }
 
 fn instance_url(
@@ -1091,10 +1234,12 @@ async fn fetch_account_selection(
         .error_for_status()
         .ok()?;
     let snapshot = read_json(response).await.ok()?;
-    Some(parse_account_selection(&snapshot))
+    parse_account_selection(&snapshot)
 }
 
-fn parse_account_selection(value: &Value) -> AccountSelection {
+fn parse_account_selection(value: &Value) -> Option<AccountSelection> {
+    let supported = value["supported"].as_bool()?;
+    let enabled = value["enabled"].as_bool()?;
     let mut logins = BTreeMap::new();
     if let Some(obj) = value["logins"].as_object() {
         for (cred_id, val) in obj.iter().take(MAX_ITEMS) {
@@ -1105,11 +1250,11 @@ fn parse_account_selection(value: &Value) -> AccountSelection {
             }
         }
     }
-    AccountSelection {
-        supported: value["supported"].as_bool().unwrap_or(false),
-        enabled: value["enabled"].as_bool().unwrap_or(false),
+    Some(AccountSelection {
+        supported,
+        enabled,
         logins,
-    }
+    })
 }
 
 fn parse_catalog(
@@ -1378,6 +1523,7 @@ fn parse_form_fields(value: &Value) -> Vec<FormField> {
                 placeholder: sanitize_text(&entry["placeholder"]),
                 default: entry["default"].as_str().map(str::to_owned),
                 format: entry["format"].as_str().map(str::to_owned),
+                pattern: entry["pattern"].as_str().map(str::to_owned),
                 min_length: entry["minLength"].as_u64().map(|n| n as usize),
                 max_length: entry["maxLength"].as_u64().map(|n| n as usize),
                 options: parse_field_options(&entry["options"]),
@@ -1395,14 +1541,11 @@ fn parse_form_fields(value: &Value) -> Vec<FormField> {
             },
             Some("multiselect") => FormFieldKind::Multiselect {
                 required: entry["required"].as_bool().unwrap_or(false),
-                default: entry["default"]
-                    .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(str::to_owned))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                default: entry["default"].as_array().map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                }),
                 min_items: entry["minItems"].as_u64().map(|n| n as usize),
                 max_items: entry["maxItems"].as_u64().map(|n| n as usize),
                 options: parse_field_options(&entry["options"]),
@@ -1561,16 +1704,35 @@ mod tests {
             { "key": "host", "type": "string", "required": true, "format": "uri",
               "when": [{ "key": "mode", "op": "eq", "value": "enterprise" }] },
             { "key": "protocol", "type": "string", "hidden": true, "default": "v2" },
+            { "key": "hidden_req", "type": "string", "hidden": true, "required": true },
+            { "key": "tags", "type": "multiselect", "default": [], "options": [{ "value": "a", "label": "A" }] },
+            { "key": "born", "type": "string", "format": "date" },
+            { "key": "when_ts", "type": "string", "format": "date-time" },
             { "key": "docs", "type": "external", "title": "Docs", "url": "https://example.test/docs" },
             { "key": "bad_link", "type": "external", "title": "Bad", "url": "javascript:alert(1)" }
         ]));
-        assert_eq!(fields.len(), 4);
+        assert_eq!(fields.len(), 8);
         let mut answers = initial_form_answers(&fields);
         assert!(!is_field_visible(&fields[1], &answers));
         assert!(!is_field_visible(&fields[2], &answers));
+        assert!(!is_field_visible(&fields[3], &answers));
+        // Hidden required field does not block submission, and explicit [] multiselect default is kept.
         assert!(fields.iter().all(|f| is_field_complete(f, &answers)));
         let built = build_form_answer(&fields, &answers).unwrap();
-        assert_eq!(built, json!({ "mode": "cloud", "protocol": "v2" }));
+        assert_eq!(
+            built,
+            json!({ "mode": "cloud", "protocol": "v2", "tags": [] })
+        );
+
+        // Calendar date and date-time validation reject impossible dates.
+        answers.insert("born".into(), json!("2025-02-29"));
+        assert!(!is_field_complete(&fields[5], &answers));
+        answers.insert("born".into(), json!("2024-02-29"));
+        assert!(is_field_complete(&fields[5], &answers));
+        answers.insert("when_ts".into(), json!("2024-02-29T25:00:00Z"));
+        assert!(!is_field_complete(&fields[6], &answers));
+        answers.insert("when_ts".into(), json!("2024-02-29T12:30:00Z"));
+        assert!(is_field_complete(&fields[6], &answers));
 
         answers.insert("mode".into(), json!("enterprise"));
         assert!(is_field_visible(&fields[1], &answers));
@@ -1582,8 +1744,37 @@ mod tests {
         let built = build_form_answer(&fields, &answers).unwrap();
         assert_eq!(
             built,
-            json!({ "mode": "enterprise", "host": "https://corp.example.test", "protocol": "v2" })
+            json!({
+                "mode": "enterprise",
+                "host": "https://corp.example.test",
+                "protocol": "v2",
+                "tags": [],
+                "born": "2024-02-29",
+                "when_ts": "2024-02-29T12:30:00Z"
+            })
         );
+    }
+
+    #[test]
+    fn account_selection_and_response_location_fail_closed() {
+        assert!(parse_account_selection(&json!({})).is_none());
+        assert!(parse_account_selection(&json!({ "supported": true })).is_none());
+        assert!(parse_account_selection(&json!({ "supported": true, "enabled": false })).is_some());
+        assert!(
+            verify_response_location(
+                &json!({ "location": { "directory": "/repo/a" } }),
+                "/repo/a"
+            )
+            .is_ok()
+        );
+        assert!(
+            verify_response_location(
+                &json!({ "location": { "directory": "/repo/b" } }),
+                "/repo/a"
+            )
+            .is_err()
+        );
+        assert!(verify_response_location(&json!({ "location": {} }), "/repo/a").is_err());
     }
 
     #[test]
