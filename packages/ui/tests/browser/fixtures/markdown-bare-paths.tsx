@@ -34,6 +34,7 @@ serverApi.listWorkspaceFiles = (async (_id: string, relativePath = ".", director
     ...(includeGone ? ([["gone.ts", "file"]] as Array<[string, string]>) : [])])
   if (relativePath === "docs") return entries([["算法工作台MVP-design.md", "file"]])
   if (relativePath === "脚本") return entries([["启动", "file"]])
+  if (relativePath === "项目/v2") return entries([["启动", "file"]])
   if (relativePath === ".") return entries([["README.md", "file"], ["src", "directory"], ["docs", "directory"], ["设计.md", "file"]])
   if (relativePath === "and") throw new Error("no such directory")
   return []
@@ -57,6 +58,9 @@ const initialText = [
   "也寫進 `docs/算法工作台MVP-design.md` 了。",
   "看看README.md.吧。",
   "跑 脚本/启动 前先读。",
+  "放进 项目/v2/启动 里。",
+  "File:/fixture-root/README.md 也行。",
+  "路徑在 `https://example.com/资料README.md`。",
   "```\nsrc/app.ts\n```",
 ].join("\n\n")
 

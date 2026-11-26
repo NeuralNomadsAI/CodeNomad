@@ -84,6 +84,21 @@ describe("bare path candidates", () => {
     assert.equal(candidate.integral?.href, "脚本/启动")
   })
 
+  it("offers no readings from a URL whose path contains non-ASCII letters", () => {
+    assert.deepEqual(barePathCandidates("see https://example.com/资料README.md now"), [])
+    assert.deepEqual(barePathCandidates("see //example.com/资料README.md now"), [])
+  })
+
+  it("probes a both-edges token whose edge runs are path segments", () => {
+    const [candidate] = barePathCandidates("放进 项目/v2/启动 里")
+    assert.equal(candidate.integral?.href, "项目/v2/启动")
+  })
+
+  it("splits a single-letter-colon prefix like a scheme, not a drive", () => {
+    const [candidate] = barePathCandidates("see File:/fixture-root/README.md there")
+    assert.deepEqual(candidate.pieces.map(piece => piece.href), ["/fixture-root/README.md"])
+  })
+
   it("extracts Windows drive and backslash paths whole", () => {
     assert.deepEqual(hrefs("open C:\\repo\\src\\app.ts there"), ["C:\\repo\\src\\app.ts"])
     assert.deepEqual(hrefs("open C:/repo/src/app.ts there"), ["C:/repo/src/app.ts"])

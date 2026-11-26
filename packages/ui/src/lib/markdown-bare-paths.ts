@@ -30,15 +30,20 @@ export const BARE_PATH_MAX_CANDIDATES = 64
 
 // A token is a contiguous run of path characters plus every script's letters,
 // marks and digits, optionally starting at a Windows drive prefix. The
-// drive-shaped alternative also matches mid-token, so prose glued ahead of a
-// drive path (`打开C:\repo\src\app.ts`) keeps the prefix in one token for the
-// boundary reading to recover. Boundaries are the charset itself — whitespace
-// and punctuation, CJK text included, end a token — never `\b`.
-const CANDIDATE = /(?:[A-Za-z]:)?(?:[A-Za-z]:[\\/]|[\p{L}\p{M}\p{Nd}._~+=@%\-/\\])+/gu
+// drive-shaped alternative also matches mid-token, but only when the drive
+// letter is not glued to an ASCII word — a lookbehind keeps `File:/x` and
+// `https://x` split at the colon like a scheme, while prose glued ahead of a
+// real drive path (`打开C:\repo\src\app.ts`) keeps the prefix in one token.
+// Boundaries are the charset itself — whitespace and punctuation, CJK text
+// included, end a token — never `\b`.
+const CANDIDATE = /(?:[A-Za-z]:)?(?:(?<![A-Za-z0-9+.-])[A-Za-z]:[\\/]|[\p{L}\p{M}\p{Nd}._~+=@%\-/\\])+/gu
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}>'"]+$/
 // A drive prefix followed by a doubled separator is a scheme-shaped URL
 // (`s://host/path`), not a path.
 const DRIVE_WITH_DOUBLE_SEPARATOR = /^[A-Za-z]:[\\/]{2}/
+// A doubled separator at the start names a scheme-relative or UNC URL; its
+// whole span is one address, so no reading may split it.
+const URL_ROOTED = /^[\\/]{2}/
 // A separator-less candidate needs a real file shape: a stem of at least two
 // characters, in any script, and a short ASCII extension.
 const PLAIN_FILE_NAME = /^[\p{L}\p{M}\p{Nd}._~+=@%\-]{2,}\.[A-Za-z0-9]{1,8}$/u
@@ -69,6 +74,9 @@ export function barePathCandidates(text: string): BarePathCandidate[] {
     if (budget <= 0) break
     const trimmed = match[0].replace(TRAILING_PUNCTUATION, "")
     if (!trimmed) continue
+    // A URL keeps its span intact: its rejected whole never falls back to
+    // pieces, so a non-ASCII path segment cannot leak a local file link.
+    if (URL_ROOTED.test(trimmed)) continue
     const start = match.index!
     const end = start + trimmed.length
     const runs = [...trimmed.matchAll(SCRIPT_RUN)].map(run => [run.index!, run.index! + run[0].length] as const)
@@ -81,11 +89,14 @@ export function barePathCandidates(text: string): BarePathCandidate[] {
     }
     const leading = runs[0][0] === 0 ? runs[0] : undefined
     const trailing = runs[runs.length - 1][1] === trimmed.length ? runs[runs.length - 1] : undefined
-    // Edge letter runs are prose around the token — unless trimming them
-    // leaves nothing path-shaped, in which case the runs are the path's own
-    // segments (`脚本/启动`) and the integral reading applies.
-    const core = trimmed.slice(leading ? leading[1] : 0, trailing ? trailing[0] : trimmed.length)
-    const wrapsProse = Boolean(leading && trailing) && /[\p{L}\p{M}\p{Nd}]/u.test(core)
+    // An edge letter run glued straight to a word character is prose around
+    // the token (`看看src/app.ts吧`); one whose inner neighbour is a separator
+    // is the path's own segment (`项目/v2/启动`), and both-edges tokens made
+    // of segments read as one path.
+    const separator = (char: string | undefined) => char === "/" || char === "\\"
+    const leadingIsSegment = Boolean(leading && separator(trimmed[leading[1]]))
+    const trailingIsSegment = Boolean(trailing && separator(trimmed[trailing[0] - 1]))
+    const wrapsProse = Boolean(leading && trailing) && !leadingIsSegment && !trailingIsSegment
     let integral: BarePathPiece | undefined
     if (!wrapsProse && gated(trimmed)) integral = { start, end, href: trimmed }
     const pieces: BarePathPiece[] = []
