@@ -384,6 +384,7 @@ impl Harness {
             created_at: now.clone(),
             updated_at: now,
             location: json!({ "directory": workspace_dir.to_string_lossy() }),
+            temporary: None,
         });
         let workspace_id = ws_id.to_string();
 

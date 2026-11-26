@@ -41,7 +41,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                         t(label)
                     );
                     buttons = buttons.child(button(
-                        &format!("field-{key}-{value}"),
+                        &format!("bool-{key}-{value}"),
                         &label,
                         a.busy,
                         crate::screen::action(&scope, move |s: &mut State| {
