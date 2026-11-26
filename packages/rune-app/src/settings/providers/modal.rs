@@ -23,15 +23,11 @@ pub(super) fn view<S: 'static>(
     };
     let provider_name = mgr.provider_name(&flow.provider_id);
     let title = t("settings.providers.auth.title").replace("{provider}", &provider_name);
-    let methods = mgr.methods_for(&flow.provider_id);
-    let method = methods
-        .get(flow.method_index)
-        .or_else(|| methods.first())
-        .cloned()
-        .unwrap_or(AuthMethod::Key {
-            label: None,
-            form: Vec::new(),
-        });
+    let methods = &flow.methods;
+    let method = flow.selected_method().cloned().unwrap_or(AuthMethod::Key {
+        label: None,
+        form: Vec::new(),
+    });
 
     let mut modal_pickers = Vec::new();
     let mut body = col().full_width().separate(Space::Sm);

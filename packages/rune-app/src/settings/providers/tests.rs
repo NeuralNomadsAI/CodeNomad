@@ -74,7 +74,13 @@ fn make_rt(backend: Backend) -> Runtime<Harness> {
 fn tick(rt: &mut Runtime<Harness>, now: f64) -> bool {
     let mut changed = false;
     rt.update(|h, tx| {
-        changed = h.catalog.poll(Some(&h.target), now, Some(&h.wake), tx);
+        changed = h.catalog.poll(
+            Some(&h.target),
+            now,
+            Some(&h.wake),
+            tx,
+            |h: &mut Harness| &mut h.catalog,
+        );
     });
     rt.frame(now);
     changed
@@ -274,7 +280,7 @@ fn api_key_connect_modal_traps_focus_restores_on_escape_and_wipes_secret() {
             post.header
         );
         assert_eq!(post.body["key"], "sk-ant-secret-123");
-        post.reply(200, json!({})).await;
+        post.reply(204, json!({})).await;
 
         poll_until(&mut rt, 1.0, |h| h.catalog.manager.connect.is_none());
         let next_integrations = json!([
@@ -341,6 +347,7 @@ fn oauth_auto_polling_opens_url_completes_and_cancel_sends_delete() {
         post.reply(
             200,
             json!({
+                "location": { "directory": "/repo/a" },
                 "data": {
                     "attemptID": "att_1",
                     "url": "https://auth.example.test/start",
@@ -369,8 +376,11 @@ fn oauth_auto_polling_opens_url_completes_and_cancel_sends_delete() {
             "{}",
             st1.header
         );
-        st1.reply(200, json!({ "data": { "status": "pending" } }))
-            .await;
+        st1.reply(
+            200,
+            json!({ "location": { "directory": "/repo/a" }, "data": { "status": "pending" } }),
+        )
+        .await;
         poll_until(&mut rt, 10.0, |h| !h.catalog.manager.poll_flight_active());
 
         // Cancel sends DELETE and returns to Prompts.
@@ -383,7 +393,7 @@ fn oauth_auto_polling_opens_url_completes_and_cancel_sends_delete() {
             "{}",
             del.header
         );
-        del.reply(200, json!({})).await;
+        del.reply(204, json!({})).await;
         assert_eq!(
             rt.state.catalog.manager.connect.as_ref().unwrap().stage,
             manager::AuthStage::Prompts
@@ -397,6 +407,7 @@ fn oauth_auto_polling_opens_url_completes_and_cancel_sends_delete() {
             .reply(
                 200,
                 json!({
+                    "location": { "directory": "/repo/a" },
                     "data": {
                         "attemptID": "att_2",
                         "url": "https://auth.example.test/code",
@@ -588,7 +599,7 @@ fn accounts_rename_survives_refresh_and_failure_and_501_degrades_gracefully() {
         )
         .await;
         poll_until(&mut rt, 2.0, |h| {
-            !h.catalog.manager.catalog_flight_active() && !h.catalog.manager.account_busy("openai")
+            !h.catalog.manager.catalog_flight_active() && !h.catalog.manager.any_account_busy()
         });
 
         // Remove active credential -> DELETE /workspaces/ws1/instance/api/credential/cred_1.
@@ -860,5 +871,269 @@ fn session_move_cancels_stale_location_and_duplicate_labels_and_live_form_visibi
             act.header
         );
         act.reply(200, json!({})).await;
+    });
+}
+
+#[test]
+fn command_external_snapshotted_methods_and_absent_optional_fields() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let integrations = json!([
+            {
+                "id": "acme",
+                "name": "Acme",
+                "methods": [
+                    { "id": "cli", "type": "command", "label": "CLI", "command": ["acme", "login"] },
+                    {
+                        "id": "ext",
+                        "type": "external",
+                        "label": "External",
+                        "form": [
+                            { "key": "optional_note", "type": "string", "title": "Note" },
+                            { "key": "custom_tags", "type": "multiselect", "title": "Tags", "custom": true, "options": [] }
+                        ]
+                    }
+                ],
+                "connections": []
+            }
+        ]);
+
+        let mut rt = make_rt(http.backend.clone());
+        assert!(tick(&mut rt, 1.0));
+        reply_catalog(&http, integrations.clone(), json!([]), json!([]), None).await;
+        poll_until(&mut rt, 1.0, |h| h.catalog.manager.snapshot.is_some());
+
+        // Start command connect flow -> pending status message -> complete.
+        click(&mut rt, "providers-connect-button", 1.0);
+        click(&mut rt, "provider-auth-continue", 1.0);
+        assert!(tick(&mut rt, 1.0));
+        let post = http.accept().await;
+        assert!(
+            post.header
+                .starts_with("POST /workspaces/ws1/instance/api/integration/acme/connect/command?"),
+            "{}",
+            post.header
+        );
+        assert_eq!(post.body["methodID"], "cli");
+        post.reply(
+            200,
+            json!({ "location": { "directory": "/repo/a" }, "data": { "attemptID": "cmd_1" } }),
+        )
+        .await;
+        poll_until(&mut rt, 1.0, |h| {
+            h.catalog
+                .manager
+                .connect
+                .as_ref()
+                .is_some_and(|f| f.stage == manager::AuthStage::Waiting)
+        });
+        let st1 = http.accept().await;
+        st1.reply(
+            200,
+            json!({ "location": { "directory": "/repo/a" }, "data": { "status": "pending", "message": "Waiting for CLI" } }),
+        )
+        .await;
+        poll_until(&mut rt, 1.0, |h| !h.catalog.manager.poll_flight_active());
+        assert!(
+            rt.accessibility_json()
+                .to_string()
+                .contains("Waiting for CLI")
+        );
+
+        assert!(tick(&mut rt, 2.0));
+        let st2 = http.accept().await;
+        st2.reply(
+            200,
+            json!({ "location": { "directory": "/repo/a" }, "data": { "status": "complete" } }),
+        )
+        .await;
+        poll_until(&mut rt, 2.0, |h| h.catalog.manager.connect.is_none());
+        reply_catalog(&http, integrations.clone(), json!([]), json!([]), None).await;
+        poll_until(&mut rt, 2.0, |h| !h.catalog.manager.catalog_flight_active());
+
+        // Open modal, select External (index 1), then mutate snapshot to reorder methods:
+        // ConnectFlow keeps snapshotted methods and omits untouched optional fields from answer.
+        click(&mut rt, "providers-connect-button", 3.0);
+        rt.update(|h, _| h.catalog.manager.select_method(1));
+        rt.update(|h, _| {
+            if let Some(snap) = &mut h.catalog.manager.snapshot
+                && let Some(prov) = snap.providers.first_mut()
+            {
+                prov.methods.reverse();
+            }
+        });
+        rt.frame(3.0);
+        click(&mut rt, "provider-auth-continue", 3.0);
+        assert!(tick(&mut rt, 3.0));
+        let ext = http.accept().await;
+        assert!(
+            ext.header.starts_with(
+                "POST /workspaces/ws1/instance/api/integration/acme/connect/external?"
+            ),
+            "{}",
+            ext.header
+        );
+        assert_eq!(ext.body["methodID"], "ext");
+        assert_eq!(ext.body["answer"], json!({}));
+        ext.reply(204, json!({})).await;
+        poll_until(&mut rt, 3.0, |h| h.catalog.manager.connect.is_none());
+    });
+}
+
+#[test]
+fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_labels_hold() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let integrations = json!([
+            {
+                "id": "openai",
+                "name": "OpenAI",
+                "methods": [{ "id": "codex", "type": "oauth", "label": "ChatGPT" }],
+                "connections": [
+                    { "type": "credential", "id": "cred_1", "label": "Work", "method": "key" },
+                    { "type": "credential", "id": "cred_2", "label": "Work", "method": "key" },
+                    { "type": "credential", "id": "cred_3", "label": "Work (2)", "method": "key" }
+                ]
+            }
+        ]);
+        let providers = json!([{ "id": "openai", "integrationID": "openai", "name": "OpenAI" }]);
+        let selection = json!({ "supported": false, "enabled": false, "logins": {} });
+
+        // Stable homonym labels keep identical numbering even when cred_2 moves to index 0 (active).
+        let before = manager::unique_labels_stable(
+            &["Work".into(), "Work".into(), "Work (2)".into()],
+            &[
+                "credential:cred_1".into(),
+                "credential:cred_2".into(),
+                "credential:cred_3".into(),
+            ],
+        );
+        let after = manager::unique_labels_stable(
+            &["Work".into(), "Work".into(), "Work (2)".into()],
+            &[
+                "credential:cred_2".into(),
+                "credential:cred_1".into(),
+                "credential:cred_3".into(),
+            ],
+        );
+        assert_eq!(before, vec!["Work (1)", "Work (3)", "Work (2)"]);
+        assert_eq!(after, vec!["Work (3)", "Work (1)", "Work (2)"]);
+
+        let mut rt = make_rt(http.backend.clone());
+        assert!(tick(&mut rt, 1.0));
+        reply_catalog(
+            &http,
+            integrations.clone(),
+            providers.clone(),
+            json!([]),
+            Some(("openai", selection.clone())),
+        )
+        .await;
+        poll_until(&mut rt, 1.0, |h| h.catalog.manager.snapshot.is_some());
+
+        // Rename click focuses input, and >256-char alias disables Save button.
+        click(&mut rt, "provider-account-rename-openai", 1.0);
+        rt.frame(1.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| { e.focused && e.path.contains("provider-account-rename-input-openai") })
+        );
+        let too_long = "a".repeat(257);
+        rt.update(|h, _| {
+            *h.catalog.manager.rename_text_mut("openai", "cred_1") = rune::TextEdit::new(too_long);
+        });
+        rt.frame(1.0);
+        let a11y = rt.accessibility_json();
+        let save = node(&a11y, "provider-account-rename-save-openai").unwrap();
+        assert!(
+            save["states"]
+                .as_array()
+                .is_some_and(|st| st.iter().any(|s| s == "disabled")),
+            "{save}"
+        );
+
+        // Ready-before-cancel interleaving: worker finishes POST and stores Ready(OAuthStarted)
+        // BEFORE UI clicks Close (without polling in between) -> Close must still spawn DELETE!
+        click(&mut rt, "provider-account-add-openai", 2.0);
+        click(&mut rt, "provider-auth-continue", 2.0);
+        assert!(tick(&mut rt, 2.0));
+        let post = http.accept().await;
+        post.reply(
+            200,
+            json!({
+                "location": { "directory": "/repo/a" },
+                "data": {
+                    "attemptID": "att_ready_first",
+                    "url": "https://auth.example.test/ready",
+                    "instructions": "Ready first",
+                    "mode": "auto"
+                }
+            }),
+        )
+        .await;
+        // Let the spawned task finish storing Ready(OAuthStarted) in AuthHandover before clicking Close.
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        click(&mut rt, "provider-auth-close", 2.0);
+        let del = http.accept().await;
+        assert!(
+            del.header.starts_with(
+                "DELETE /workspaces/ws1/instance/api/integration/openai/connect/oauth/att_ready_first?"
+            ),
+            "{}",
+            del.header
+        );
+        del.reply(204, json!({})).await;
+
+        // Catalogue ProviderMoves revokes authority immediately via Target::validate BEFORE reload!
+        click(&mut rt, "provider-account-add-openai", 3.0);
+        let app_state = crate::init();
+        rt.update(|h, _| {
+            let moves = codenomad_client::stream::ProviderMoves::Sessions(vec![(
+                "ws1".into(),
+                "ses1".into(),
+            )]);
+            let backend = h.target.backend().clone();
+            assert!(h.target.validate(
+                &app_state,
+                Some(&backend),
+                &codenomad_client::stream::CatalogueChanges::None,
+                &moves,
+                &codenomad_client::stream::CatalogueChanges::None,
+                None,
+            ));
+        });
+        assert!(tick(&mut rt, 3.0));
+        assert!(rt.state.catalog.manager.connect.is_none());
+
+        // 403 on catalog reload surfaces unsupported alert and disables Connect while keeping Refresh active.
+        let ses = http.accept().await;
+        ses.reply(
+            200,
+            json!({ "data": { "id": "ses1", "location": { "directory": "/repo/b" } } }),
+        )
+        .await;
+        for _ in 0..4 {
+            let req = http.accept().await;
+            req.reply(
+                403,
+                json!({ "error": "Remote access does not allow this endpoint" }),
+            )
+            .await;
+        }
+        poll_until(&mut rt, 3.0, |h| h.catalog.manager.load_error.is_some());
+        let tree = rt.accessibility_json().to_string();
+        assert!(
+            tree.contains(t("integrations.connection.unsupported")),
+            "{tree}"
+        );
+        let a11y = rt.accessibility_json();
+        let refresh = node(&a11y, "providers-refresh").unwrap();
+        assert!(
+            !refresh["states"]
+                .as_array()
+                .is_some_and(|st| st.iter().any(|s| s == "disabled")),
+            "{refresh}"
+        );
     });
 }

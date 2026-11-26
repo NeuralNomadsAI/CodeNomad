@@ -113,6 +113,7 @@ pub enum FormFieldKind {
         max: Option<f64>,
     },
     Boolean {
+        required: bool,
         default: Option<bool>,
     },
     Multiselect {
@@ -321,7 +322,9 @@ pub fn initial_form_answers(fields: &[FormField]) -> BTreeMap<String, Value> {
                     out.insert(field.key.clone(), json!(*v));
                 }
             }
-            FormFieldKind::Boolean { default: Some(v) } => {
+            FormFieldKind::Boolean {
+                default: Some(v), ..
+            } => {
                 out.insert(field.key.clone(), Value::Bool(*v));
             }
             FormFieldKind::Multiselect {
@@ -334,6 +337,14 @@ pub fn initial_form_answers(fields: &[FormField]) -> BTreeMap<String, Value> {
         }
     }
     out
+}
+
+fn json_values_equal(left: &Value, right: &Value) -> bool {
+    if let (Some(a), Some(b)) = (left.as_f64(), right.as_f64()) {
+        a == b
+    } else {
+        left == right
+    }
 }
 
 pub fn is_field_active(field: &FormField, values: &BTreeMap<String, Value>) -> bool {
@@ -355,7 +366,7 @@ pub fn is_field_active(field: &FormField, values: &BTreeMap<String, Value>) -> b
                     .iter()
                     .any(|item| item.as_str() == Some(target.as_str()))
             }
-            _ => current == &cond.value,
+            _ => json_values_equal(current, &cond.value),
         };
         if cond.equal { eq } else { !eq }
     })
@@ -373,7 +384,10 @@ pub fn is_field_complete(field: &FormField, values: &BTreeMap<String, Value>) ->
     let val = values.get(&field.key);
     match &field.kind {
         FormFieldKind::External { .. } => true,
-        FormFieldKind::Boolean { .. } => val.is_none_or(Value::is_boolean),
+        FormFieldKind::Boolean { required, .. } => match val {
+            None => !required,
+            Some(v) => v.is_boolean(),
+        },
         FormFieldKind::String {
             required,
             format,
@@ -392,9 +406,6 @@ pub fn is_field_complete(field: &FormField, values: &BTreeMap<String, Value>) ->
             if *required && s.trim().is_empty() {
                 return false;
             }
-            if !*required && s.is_empty() {
-                return true;
-            }
             let len = s.chars().count();
             if min_length.is_some_and(|min| len < min) || max_length.is_some_and(|max| len > max) {
                 return false;
@@ -407,6 +418,8 @@ pub fn is_field_complete(field: &FormField, values: &BTreeMap<String, Value>) ->
             if !options.is_empty() && !*custom && !options.iter().any(|opt| opt.value == s) {
                 return false;
             }
+            // Deliberate shortcut: `pattern` is preserved from schema but client-side JS RegExp
+            // evaluation requires a regex crate outside codenomad-client; server validation enforces it.
             true
         }
         FormFieldKind::Number {
@@ -493,7 +506,9 @@ pub fn build_form_answer(fields: &[FormField], values: &BTreeMap<String, Value>)
                 } else {
                     json!(*v)
                 }),
-                FormFieldKind::Boolean { default: Some(v) } => Some(Value::Bool(*v)),
+                FormFieldKind::Boolean {
+                    default: Some(v), ..
+                } => Some(Value::Bool(*v)),
                 FormFieldKind::Multiselect {
                     default: Some(items),
                     ..
@@ -630,13 +645,17 @@ pub async fn load_catalog(
     backend: &Backend,
     workspace: &str,
     session: Option<&str>,
-) -> Result<CatalogSnapshot> {
+) -> std::result::Result<CatalogSnapshot, AuthError> {
     if !valid_id(workspace) || session.is_some_and(|id| !valid_id(id)) {
-        return Err("Invalid provider Location".into());
+        return Err(AuthError::Failed);
     }
     let base = format!("{}workspaces/{workspace}/instance/api", backend.base);
     let location = if let Some(session) = session {
-        Some(super::session_directory(backend, workspace, session).await?)
+        Some(
+            super::session_directory(backend, workspace, session)
+                .await
+                .map_err(|_| AuthError::Failed)?,
+        )
     } else {
         None
     };
@@ -647,7 +666,15 @@ pub async fn load_catalog(
         if let Some(directory) = directory {
             request = request.query(&[("location[directory]", directory)]);
         }
-        read_json(request.send().await?.error_for_status()?).await
+        let response = request.send().await.map_err(|_| AuthError::Failed)?;
+        let status = response.status();
+        if status.is_success() {
+            return read_json(response).await.map_err(|_| AuthError::Failed);
+        }
+        if status.as_u16() == 403 {
+            return Err(AuthError::Unsupported);
+        }
+        Err(classify_error(status, response).await)
     };
     use futures_lite::future::zip;
     let ((integrations, providers), (models, search)) = zip(
@@ -659,21 +686,22 @@ pub async fn load_catalog(
     let received = integrations["location"]["directory"]
         .as_str()
         .filter(|path| crate::absolute_server_path(path))
-        .ok_or("Invalid provider Location")?
+        .ok_or(AuthError::Failed)?
         .to_owned();
     if [&providers, &models, &search]
         .iter()
         .any(|response| response["location"]["directory"] != received)
         || directory.is_some_and(|requested| !crate::same_server_path(requested, &received))
     {
-        return Err("Provider Location changed".into());
+        return Err(AuthError::Failed);
     }
     let mut listed = parse_catalog(
         &integrations["data"],
         &providers["data"],
         &models["data"],
         &search["data"],
-    )?;
+    )
+    .map_err(|_| AuthError::Failed)?;
     let needs_selection = |row: &ListedProvider| {
         let mut credentials = 0usize;
         let mut has_default = false;
@@ -1008,7 +1036,7 @@ fn verify_response_location(
     expected_directory: &str,
 ) -> std::result::Result<(), AuthError> {
     let Some(loc) = value.get("location") else {
-        return Ok(());
+        return Err(AuthError::Failed);
     };
     let Some(dir) = loc["directory"]
         .as_str()
@@ -1148,7 +1176,7 @@ fn valid_segment(value: &str) -> bool {
 
 async fn check_empty_response(response: reqwest::Response) -> std::result::Result<(), AuthError> {
     let status = response.status();
-    if status.is_success() {
+    if matches!(status.as_u16(), 200 | 204) {
         return Ok(());
     }
     Err(classify_error(status, response).await)
@@ -1162,11 +1190,11 @@ async fn check_json_response(response: reqwest::Response) -> std::result::Result
     Err(classify_error(status, response).await)
 }
 
-async fn classify_error(status: reqwest::StatusCode, response: reqwest::Response) -> AuthError {
-    if matches!(status.as_u16(), 404 | 405 | 501) {
+fn classify_error_body(status: u16, body: Option<&Value>) -> AuthError {
+    if matches!(status, 405 | 501) {
         return AuthError::Unsupported;
     }
-    if let Ok(body) = read_json(response).await {
+    if let Some(body) = body {
         let message = body["data"]["message"]
             .as_str()
             .or_else(|| body["error"]["data"]["message"].as_str())
@@ -1174,10 +1202,25 @@ async fn classify_error(status: reqwest::StatusCode, response: reqwest::Response
             .or_else(|| body["message"].as_str())
             .or_else(|| body["error"].as_str());
         if let Some(msg) = message.and_then(|s| sanitize_str(s, MAX_ERROR_LEN)) {
+            if status == 404 && msg.starts_with("Route ") && msg.ends_with(" not found") {
+                return AuthError::Unsupported;
+            }
             return AuthError::Message(msg);
         }
     }
+    if status == 404 {
+        return AuthError::Unsupported;
+    }
     AuthError::Failed
+}
+
+async fn classify_error(status: reqwest::StatusCode, response: reqwest::Response) -> AuthError {
+    let code = status.as_u16();
+    if matches!(code, 405 | 501) {
+        return AuthError::Unsupported;
+    }
+    let body = read_json(response).await.ok();
+    classify_error_body(code, body.as_ref())
 }
 
 fn parse_attempt_poll(data: &Value) -> std::result::Result<AttemptPoll, AuthError> {
@@ -1537,6 +1580,7 @@ fn parse_form_fields(value: &Value) -> Vec<FormField> {
                 max: entry["maximum"].as_f64().filter(|n| n.is_finite()),
             },
             Some("boolean") => FormFieldKind::Boolean {
+                required: entry["required"].as_bool().unwrap_or(false),
                 default: entry["default"].as_bool(),
             },
             Some("multiselect") => FormFieldKind::Multiselect {
@@ -1775,6 +1819,36 @@ mod tests {
             .is_err()
         );
         assert!(verify_response_location(&json!({ "location": {} }), "/repo/a").is_err());
+        assert!(verify_response_location(&json!({ "data": {} }), "/repo/a").is_err());
+    }
+
+    #[test]
+    fn form_numeric_when_required_boolean_and_error_classification() {
+        let fields = parse_form_fields(&json!([
+            { "key": "tier", "type": "number", "default": 1.0 },
+            { "key": "extra", "type": "string", "required": true,
+              "when": [{ "key": "tier", "op": "eq", "value": 1 }] },
+            { "key": "accept", "type": "boolean", "required": true }
+        ]));
+        let mut answers = initial_form_answers(&fields);
+        assert!(is_field_visible(&fields[1], &answers));
+        assert!(!is_field_complete(&fields[2], &answers));
+        answers.insert("accept".into(), Value::Bool(false));
+        assert!(is_field_complete(&fields[2], &answers));
+
+        assert_eq!(
+            classify_error_body(
+                404,
+                Some(&json!({ "data": { "message": "Attempt expired" } }))
+            ),
+            AuthError::Message("Attempt expired".into())
+        );
+        assert_eq!(
+            classify_error_body(404, Some(&json!({ "message": "Route POST:/x not found" }))),
+            AuthError::Unsupported
+        );
+        assert_eq!(classify_error_body(404, None), AuthError::Unsupported);
+        assert_eq!(classify_error_body(501, None), AuthError::Unsupported);
     }
 
     #[test]

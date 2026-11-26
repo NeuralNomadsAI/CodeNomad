@@ -19,7 +19,7 @@ use serde_json::Value;
 use std::{
     collections::BTreeMap,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -101,6 +101,7 @@ pub(super) struct RenameDraft {
 
 pub(super) struct ConnectFlow {
     pub provider_id: String,
+    pub methods: Vec<AuthMethod>,
     pub method_index: usize,
     pub stage: AuthStage,
     pub api_key: TextEdit,
@@ -117,6 +118,8 @@ pub(super) struct ConnectFlow {
     pending_submit: bool,
     pending_code_submit: bool,
     pending_url_launch: bool,
+    #[cfg(target_arch = "wasm32")]
+    pending_popup: Option<web_sys::Window>,
     next_poll_at: Option<f64>,
     operation_seq: u64,
     active_directory: Option<String>,
@@ -127,7 +130,7 @@ pub(super) struct ConnectFlow {
 impl ConnectFlow {
     fn new(
         provider_id: String,
-        methods: &[AuthMethod],
+        methods: Vec<AuthMethod>,
         return_focus: Option<String>,
         seq: u64,
     ) -> Self {
@@ -136,6 +139,7 @@ impl ConnectFlow {
         let form_edits = seed_form_edits(form_fields, &form_answers);
         Self {
             provider_id,
+            methods,
             method_index: 0,
             stage: AuthStage::Prompts,
             api_key: TextEdit::new(""),
@@ -152,6 +156,8 @@ impl ConnectFlow {
             pending_submit: false,
             pending_code_submit: false,
             pending_url_launch: false,
+            #[cfg(target_arch = "wasm32")]
+            pending_popup: None,
             next_poll_at: None,
             operation_seq: seq,
             active_directory: None,
@@ -160,9 +166,32 @@ impl ConnectFlow {
         }
     }
 
+    pub(super) fn selected_method(&self) -> Option<&AuthMethod> {
+        self.methods
+            .get(self.method_index)
+            .or_else(|| self.methods.first())
+    }
+
+    fn close_pending_popup(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(popup) = self.pending_popup.take()
+            && !popup.closed().unwrap_or(true)
+        {
+            let _ = popup.close();
+        }
+    }
+
     fn wipe_secrets(&mut self) {
         self.api_key = TextEdit::new("");
         self.oauth_code = TextEdit::new("");
+        self.close_pending_popup();
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for ConnectFlow {
+    fn drop(&mut self) {
+        self.close_pending_popup();
     }
 }
 
@@ -173,16 +202,27 @@ enum AuthFlightOutcome {
     Failed(AuthError),
 }
 
+enum AuthHandover {
+    Pending,
+    Ready(AuthFlightOutcome),
+    Cancelled,
+}
+
 enum AccountFlightOutcome {
     Done,
     AutoSelect(AccountSelection),
     Failed(AuthError),
 }
 
-type CatalogFlight = (Sender<()>, Receiver<Option<CatalogSnapshot>>);
-type AuthFlight = (u64, Arc<AtomicBool>, Receiver<AuthFlightOutcome>);
-type PollFlight = (u64, Receiver<Result<AttemptPoll, AuthError>>);
-type AccountFlight = (AccountAction, Receiver<AccountFlightOutcome>);
+type CatalogFlight = (Sender<()>, Receiver<Result<CatalogSnapshot, AuthError>>);
+type AuthFlight = (u64, Sender<()>, Arc<Mutex<AuthHandover>>);
+type PollFlight = (u64, Sender<()>, Receiver<Result<AttemptPoll, AuthError>>);
+type AccountFlight = (
+    AccountAction,
+    Sender<()>,
+    Arc<AtomicBool>,
+    Receiver<AccountFlightOutcome>,
+);
 
 pub(super) struct Manager {
     pub expanded: bool,
@@ -193,7 +233,7 @@ pub(super) struct Manager {
     refresh_nonce: u64,
     flight: Option<CatalogFlight>,
     pub snapshot: Option<CatalogSnapshot>,
-    pub failed: bool,
+    pub load_error: Option<ErrorCopy>,
     pub search: TextEdit,
     pub selected_provider_id: Option<String>,
     pub open_picker: Option<PickerId>,
@@ -228,7 +268,7 @@ impl Default for Manager {
             refresh_nonce: 0,
             flight: None,
             snapshot: None,
-            failed: false,
+            load_error: None,
             search: TextEdit::new(""),
             selected_provider_id: None,
             open_picker: None,
@@ -257,6 +297,7 @@ impl Default for Manager {
 impl Manager {
     pub(super) fn toggle(&mut self) {
         self.cancel_remote_attempt();
+        self.cancel_account_flight();
         let next = !self.expanded;
         *self = Self {
             expanded: next,
@@ -266,6 +307,7 @@ impl Manager {
 
     pub(super) fn suspend(&mut self) {
         self.cancel_remote_attempt();
+        self.cancel_account_flight();
         let expanded = self.expanded;
         *self = Self {
             expanded,
@@ -287,6 +329,7 @@ impl Manager {
             return false;
         }
         self.cancel_remote_attempt();
+        self.cancel_account_flight();
         if let Some(mut flow) = self.connect.take() {
             flow.wipe_secrets();
         }
@@ -295,8 +338,7 @@ impl Manager {
         self.flight = None;
         self.seen = None;
         self.snapshot_rev = None;
-        self.account_flight = None;
-        self.pending_account = None;
+        self.load_error = None;
         self.oauth_link.clear();
         self.oauth_launch_tracked = false;
         true
@@ -339,7 +381,7 @@ impl Manager {
     pub(super) fn request_refresh(&mut self) {
         self.refresh_nonce = self.refresh_nonce.wrapping_add(1);
         self.seen = None;
-        self.failed = false;
+        self.load_error = None;
     }
 
     pub(super) fn select_configurable_provider(&mut self, id: String) {
@@ -368,6 +410,9 @@ impl Manager {
         return_focus: Option<String>,
         tx: &mut Tx,
     ) {
+        if self.any_account_busy() || self.location_stale() {
+            return;
+        }
         let methods = self.methods_for(&provider_id);
         if methods.is_empty() {
             return;
@@ -382,7 +427,7 @@ impl Manager {
         let focus_target = tx.focused().map(str::to_owned).or(return_focus);
         self.connect = Some(ConnectFlow::new(
             provider_id,
-            &methods,
+            methods,
             focus_target,
             self.op_counter,
         ));
@@ -398,36 +443,33 @@ impl Manager {
         self.oauth_launch_tracked = false;
         if let Some(mut flow) = self.connect.take() {
             flow.wipe_secrets();
-            if let Some(key) = flow.return_focus {
+            if let Some(key) = flow.return_focus.take() {
                 tx.return_focus(key, tx.focus_visible());
             }
         }
     }
 
     pub(super) fn select_method(&mut self, index: usize) {
-        let Some(provider_id) = self.connect.as_ref().map(|f| f.provider_id.clone()) else {
+        let Some(flow) = &mut self.connect else {
             return;
         };
-        let methods = self.methods_for(&provider_id);
-        let Some(method) = methods.get(index) else {
+        let Some(method) = flow.methods.get(index) else {
             return;
         };
         let form_answers = initial_form_answers(method.form());
         let form_edits = seed_form_edits(method.form(), &form_answers);
-        if let Some(flow) = &mut self.connect {
-            flow.method_index = index;
-            flow.wipe_secrets();
-            flow.form_answers = form_answers;
-            flow.form_edits = form_edits;
-            flow.oauth = None;
-            flow.command_attempt = None;
-            flow.command_status = None;
-            flow.stage = AuthStage::Prompts;
-            flow.error = None;
-            flow.launch_blocked = false;
-            flow.link_copied = false;
-            flow.next_poll_at = None;
-        }
+        flow.method_index = index;
+        flow.wipe_secrets();
+        flow.form_answers = form_answers;
+        flow.form_edits = form_edits;
+        flow.oauth = None;
+        flow.command_attempt = None;
+        flow.command_status = None;
+        flow.stage = AuthStage::Prompts;
+        flow.error = None;
+        flow.launch_blocked = false;
+        flow.link_copied = false;
+        flow.next_poll_at = None;
     }
 
     pub(super) fn connect_api_key_mut(&mut self) -> &mut TextEdit {
@@ -507,11 +549,11 @@ impl Manager {
         };
         if !matches!(flow.stage, AuthStage::Prompts | AuthStage::Error)
             || self.auth_flight.is_some()
+            || self.location_stale()
         {
             return false;
         }
-        let methods = self.methods_for(&flow.provider_id);
-        let Some(method) = methods.get(flow.method_index).or_else(|| methods.first()) else {
+        let Some(method) = flow.selected_method() else {
             return false;
         };
         let answers = form::effective_answers(method.form(), &flow.form_answers, &flow.form_edits);
@@ -534,6 +576,11 @@ impl Manager {
         if self.can_submit_auth()
             && let Some(flow) = &mut self.connect
         {
+            #[cfg(target_arch = "wasm32")]
+            if matches!(flow.selected_method(), Some(AuthMethod::OAuth { .. })) {
+                flow.close_pending_popup();
+                flow.pending_popup = reserve_oauth_popup();
+            }
             flow.pending_submit = true;
         }
     }
@@ -626,18 +673,16 @@ impl Manager {
         }
     }
 
-    pub(super) fn account_busy(&self, integration_id: &str) -> bool {
-        self.account_flight
-            .as_ref()
-            .is_some_and(|(action, _)| action.integration_id() == integration_id)
-            || self
-                .pending_account
-                .as_ref()
-                .is_some_and(|action| action.integration_id() == integration_id)
+    pub(super) fn any_account_busy(&self) -> bool {
+        self.account_flight.is_some() || self.pending_account.is_some()
+    }
+
+    pub(super) fn location_stale(&self) -> bool {
+        self.flight.is_some() || self.load_error.is_some() || self.snapshot_rev != self.seen
     }
 
     pub(super) fn queue_account_action(&mut self, action: AccountAction) {
-        if self.account_flight.is_some() || self.pending_account.is_some() || self.modal_open() {
+        if self.any_account_busy() || self.modal_open() || self.location_stale() {
             return;
         }
         self.account_errors.remove(action.integration_id());
@@ -728,6 +773,13 @@ impl Manager {
         self.flight.is_some()
     }
 
+    fn cancel_account_flight(&mut self) {
+        self.pending_account = None;
+        if let Some((_, _cancel_tx, flag, _rx)) = self.account_flight.take() {
+            flag.store(true, Ordering::Release);
+        }
+    }
+
     fn cancel_remote_attempt(&mut self) {
         let context = self.connect.as_ref().and_then(|flow| {
             Some((
@@ -737,39 +789,14 @@ impl Manager {
                 flow.provider_id.clone(),
             ))
         });
-        if let Some((_, flag, rx)) = self.auth_flight.take() {
-            flag.store(true, Ordering::Release);
-            if let Some((backend, workspace, directory, provider_id)) = context.clone()
-                && let Ok(outcome) = rx.try_recv()
+        if let Some((_, _cancel_tx, handover)) = self.auth_flight.take() {
+            let taken = std::mem::replace(&mut *handover.lock().unwrap(), AuthHandover::Cancelled);
+            if let (
+                Some((backend, workspace, directory, provider_id)),
+                AuthHandover::Ready(outcome),
+            ) = (context.clone(), taken)
             {
-                match outcome {
-                    AuthFlightOutcome::OAuthStarted(auth) => {
-                        let attempt_id = auth.attempt_id;
-                        platform::spawn(async move {
-                            provider_auth::oauth_cancel(
-                                &backend,
-                                &workspace,
-                                &directory,
-                                &provider_id,
-                                &attempt_id,
-                            )
-                            .await;
-                        });
-                    }
-                    AuthFlightOutcome::CommandStarted(attempt_id) => {
-                        platform::spawn(async move {
-                            provider_auth::command_cancel(
-                                &backend,
-                                &workspace,
-                                &directory,
-                                &provider_id,
-                                &attempt_id,
-                            )
-                            .await;
-                        });
-                    }
-                    AuthFlightOutcome::Done | AuthFlightOutcome::Failed(_) => {}
-                }
+                spawn_cancel_outcome(backend, workspace, directory, provider_id, outcome);
             }
         }
         self.poll_flight = None;
@@ -778,6 +805,9 @@ impl Manager {
             self.pending_copy = None;
             self.copy_flight = None;
         }
+        if let Some(flow) = &mut self.connect {
+            flow.close_pending_popup();
+        }
         let Some((backend, workspace, directory, provider_id)) = context else {
             return;
         };
@@ -785,38 +815,31 @@ impl Manager {
             return;
         };
         if let Some(auth) = &flow.oauth {
-            let attempt_id = auth.attempt_id.clone();
-            platform::spawn(async move {
-                provider_auth::oauth_cancel(
-                    &backend,
-                    &workspace,
-                    &directory,
-                    &provider_id,
-                    &attempt_id,
-                )
-                .await;
-            });
+            spawn_oauth_cancel(
+                backend,
+                workspace,
+                directory,
+                provider_id,
+                auth.attempt_id.clone(),
+            );
         } else if let Some(attempt_id) = &flow.command_attempt {
-            let attempt_id = attempt_id.clone();
-            platform::spawn(async move {
-                provider_auth::command_cancel(
-                    &backend,
-                    &workspace,
-                    &directory,
-                    &provider_id,
-                    &attempt_id,
-                )
-                .await;
-            });
+            spawn_command_cancel(
+                backend,
+                workspace,
+                directory,
+                provider_id,
+                attempt_id.clone(),
+            );
         }
     }
 
-    pub(super) fn poll(
+    pub(super) fn poll<S: 'static>(
         &mut self,
         target: Option<&Target>,
         now: f64,
         wake: Option<&Waker>,
         tx: &mut Tx,
+        access: fn(&mut S) -> &mut Catalog,
     ) -> bool {
         self.clock = now;
         let Some((target, wake)) = target
@@ -829,6 +852,7 @@ impl Manager {
                 || self.account_flight.is_some();
             if changed {
                 self.cancel_remote_attempt();
+                self.cancel_account_flight();
                 let expanded = self.expanded;
                 *self = Self {
                     expanded,
@@ -846,6 +870,7 @@ impl Manager {
         }) || self.authority != target.authority()
         {
             self.cancel_remote_attempt();
+            self.cancel_account_flight();
             *self = Self {
                 expanded: true,
                 scope: Some((
@@ -876,10 +901,21 @@ impl Manager {
             self.flight = None;
             let expected = target.revision().wrapping_add(self.refresh_nonce);
             if self.seen == Some(expected) {
-                self.failed = result.is_none();
-                if let Some(snap) = result {
-                    self.snapshot_rev = Some(expected);
-                    self.adopt_snapshot(snap);
+                match result {
+                    Ok(snap) => {
+                        self.load_error = None;
+                        self.snapshot_rev = Some(expected);
+                        self.adopt_snapshot(snap);
+                    }
+                    Err(err) => {
+                        self.load_error = Some(load_error_copy(err));
+                        self.pending_account = None;
+                        if let Some(flow) = &mut self.connect {
+                            flow.pending_submit = false;
+                            flow.pending_code_submit = false;
+                            flow.close_pending_popup();
+                        }
+                    }
                 }
             }
             changed = true;
@@ -901,14 +937,14 @@ impl Manager {
             );
             self.seen = Some(desired_rev);
             self.flight = Some((cancel, reply));
-            self.failed = false;
+            self.load_error = None;
             platform::spawn(async move {
                 if let Some(result) = platform::reads::cancellable(
                     &cancelled,
                     provider_auth::load_catalog(&backend_cl, &ws_cl, ses_cl.as_deref()),
                 )
                 .await
-                    && out.send(result.ok()).await.is_ok()
+                    && out.send(result).await.is_ok()
                 {
                     wake_cl();
                 }
@@ -920,7 +956,8 @@ impl Manager {
         if location_fresh {
             changed |= self.start_pending_account(backend, workspace, wake);
         }
-        changed |= self.drive_connect_flow(backend, workspace, location_fresh, now, wake, tx);
+        changed |=
+            self.drive_connect_flow(backend, workspace, location_fresh, now, wake, tx, access);
         changed
     }
 
@@ -930,11 +967,10 @@ impl Manager {
         });
         if directory_changed {
             self.cancel_remote_attempt();
+            self.cancel_account_flight();
             if let Some(mut flow) = self.connect.take() {
                 flow.wipe_secrets();
             }
-            self.pending_account = None;
-            self.account_flight = None;
             self.renames.clear();
             self.account_errors.clear();
             self.open_picker = None;
@@ -988,7 +1024,7 @@ impl Manager {
     }
 
     fn poll_account_flight(&mut self) -> bool {
-        let Some((action, rx)) = &self.account_flight else {
+        let Some((action, _, _, rx)) = &self.account_flight else {
             return false;
         };
         let outcome = match rx.try_recv() {
@@ -1002,7 +1038,7 @@ impl Manager {
             return false;
         };
         let _ = action;
-        let (action, _) = self.account_flight.take().unwrap();
+        let (action, _, _, _) = self.account_flight.take().unwrap();
         let integration_id = action.integration_id().to_owned();
         match outcome {
             AccountFlightOutcome::Done => {
@@ -1047,69 +1083,81 @@ impl Manager {
         let Some(directory) = self.snapshot.as_ref().map(|s| s.directory.clone()) else {
             return false;
         };
+        let (cancel_tx, cancelled) = bounded(1);
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_cl = cancel_flag.clone();
         let (out, rx) = bounded(1);
         let (backend_cl, ws_cl, wake_cl) = (backend.clone(), workspace.to_owned(), wake.clone());
         let action_cl = action.clone();
-        self.account_flight = Some((action, rx));
+        self.account_flight = Some((action, cancel_tx, cancel_flag, rx));
         platform::spawn(async move {
-            let outcome = match action_cl {
-                AccountAction::Activate { credential_id, .. } => {
-                    match provider_auth::activate_credential(
+            if cancel_cl.load(Ordering::Acquire) {
+                return;
+            }
+            let Some(outcome) = platform::reads::cancellable(&cancelled, async {
+                match action_cl {
+                    AccountAction::Activate { credential_id, .. } => {
+                        match provider_auth::activate_credential(
+                            &backend_cl,
+                            &ws_cl,
+                            &directory,
+                            &credential_id,
+                        )
+                        .await
+                        {
+                            Ok(()) => AccountFlightOutcome::Done,
+                            Err(err) => AccountFlightOutcome::Failed(err),
+                        }
+                    }
+                    AccountAction::Rename {
+                        credential_id,
+                        label,
+                        ..
+                    } => match provider_auth::rename_credential(
                         &backend_cl,
                         &ws_cl,
                         &directory,
                         &credential_id,
+                        &label,
                     )
                     .await
                     {
                         Ok(()) => AccountFlightOutcome::Done,
                         Err(err) => AccountFlightOutcome::Failed(err),
+                    },
+                    AccountAction::Remove { credential_id, .. } => {
+                        match provider_auth::remove_credential(
+                            &backend_cl,
+                            &ws_cl,
+                            &directory,
+                            &credential_id,
+                        )
+                        .await
+                        {
+                            Ok(()) => AccountFlightOutcome::Done,
+                            Err(err) => AccountFlightOutcome::Failed(err),
+                        }
                     }
-                }
-                AccountAction::Rename {
-                    credential_id,
-                    label,
-                    ..
-                } => match provider_auth::rename_credential(
-                    &backend_cl,
-                    &ws_cl,
-                    &directory,
-                    &credential_id,
-                    &label,
-                )
-                .await
-                {
-                    Ok(()) => AccountFlightOutcome::Done,
-                    Err(err) => AccountFlightOutcome::Failed(err),
-                },
-                AccountAction::Remove { credential_id, .. } => {
-                    match provider_auth::remove_credential(
+                    AccountAction::AutoSelect {
+                        integration_id,
+                        enabled,
+                    } => match provider_auth::set_account_auto_select(
                         &backend_cl,
                         &ws_cl,
                         &directory,
-                        &credential_id,
+                        &integration_id,
+                        enabled,
                     )
                     .await
                     {
-                        Ok(()) => AccountFlightOutcome::Done,
+                        Ok(sel) => AccountFlightOutcome::AutoSelect(sel),
                         Err(err) => AccountFlightOutcome::Failed(err),
-                    }
+                    },
                 }
-                AccountAction::AutoSelect {
-                    integration_id,
-                    enabled,
-                } => match provider_auth::set_account_auto_select(
-                    &backend_cl,
-                    &ws_cl,
-                    &directory,
-                    &integration_id,
-                    enabled,
-                )
-                .await
-                {
-                    Ok(sel) => AccountFlightOutcome::AutoSelect(sel),
-                    Err(err) => AccountFlightOutcome::Failed(err),
-                },
+            })
+            .await
+            else {
+                return;
             };
             if out.send(outcome).await.is_ok() {
                 wake_cl();
@@ -1119,18 +1167,18 @@ impl Manager {
     }
 
     fn poll_auth_flight(&mut self, now: f64, tx: &mut Tx) -> bool {
-        let Some((_, _, rx)) = &self.auth_flight else {
-            return false;
-        };
-        let outcome = match rx.try_recv() {
-            Ok(out) => Some(out),
-            Err(codenomad_client::TryRecvError::Closed) => {
-                Some(AuthFlightOutcome::Failed(AuthError::Failed))
+        let outcome = {
+            let Some((_, _, handover)) = &self.auth_flight else {
+                return false;
+            };
+            let mut slot = handover.lock().unwrap();
+            if !matches!(*slot, AuthHandover::Ready(_)) {
+                return false;
             }
-            Err(codenomad_client::TryRecvError::Empty) => None,
-        };
-        let Some(outcome) = outcome else {
-            return false;
+            match std::mem::replace(&mut *slot, AuthHandover::Cancelled) {
+                AuthHandover::Ready(out) => out,
+                _ => return false,
+            }
         };
         let (seq, _, _) = self.auth_flight.take().unwrap();
         let Some(flow) = &mut self.connect else {
@@ -1147,9 +1195,38 @@ impl Manager {
             AuthFlightOutcome::OAuthStarted(attempt) => {
                 let auto = attempt.mode == OAuthMode::Auto;
                 let has_url = is_http_url(&attempt.url);
+                #[cfg(target_arch = "wasm32")]
+                {
+                    if has_url {
+                        if let Some(popup) = flow.pending_popup.take() {
+                            if !popup.closed().unwrap_or(true)
+                                && popup.location().set_href(&attempt.url).is_ok()
+                            {
+                                flow.pending_url_launch = false;
+                                flow.launch_blocked = false;
+                            } else {
+                                if !popup.closed().unwrap_or(true) {
+                                    let _ = popup.close();
+                                }
+                                flow.pending_url_launch = false;
+                                flow.launch_blocked = true;
+                            }
+                        } else {
+                            flow.pending_url_launch = false;
+                            flow.launch_blocked = true;
+                        }
+                    } else {
+                        flow.close_pending_popup();
+                        flow.pending_url_launch = false;
+                        flow.launch_blocked = true;
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    flow.pending_url_launch = has_url;
+                    flow.launch_blocked = !has_url;
+                }
                 flow.oauth = Some(attempt);
-                flow.pending_url_launch = has_url;
-                flow.launch_blocked = !has_url;
                 flow.link_copied = false;
                 flow.error = None;
                 if auto {
@@ -1161,6 +1238,7 @@ impl Manager {
                 }
             }
             AuthFlightOutcome::CommandStarted(attempt_id) => {
+                flow.close_pending_popup();
                 flow.command_attempt = Some(attempt_id);
                 flow.command_status = None;
                 flow.error = None;
@@ -1168,6 +1246,7 @@ impl Manager {
                 flow.next_poll_at = Some(now);
             }
             AuthFlightOutcome::Failed(err) => {
+                flow.close_pending_popup();
                 let was_code = flow
                     .oauth
                     .as_ref()
@@ -1184,7 +1263,7 @@ impl Manager {
     }
 
     fn poll_attempt_flight(&mut self, now: f64, tx: &mut Tx) -> bool {
-        let Some((_, rx)) = &self.poll_flight else {
+        let Some((_, _, rx)) = &self.poll_flight else {
             return false;
         };
         let outcome = match rx.try_recv() {
@@ -1195,7 +1274,7 @@ impl Manager {
         let Some(outcome) = outcome else {
             return false;
         };
-        let (seq, _) = self.poll_flight.take().unwrap();
+        let (seq, _, _) = self.poll_flight.take().unwrap();
         let Some(flow) = &mut self.connect else {
             return true;
         };
@@ -1252,7 +1331,7 @@ impl Manager {
         true
     }
 
-    fn drive_connect_flow(
+    fn drive_connect_flow<S: 'static>(
         &mut self,
         backend: &Backend,
         workspace: &str,
@@ -1260,6 +1339,7 @@ impl Manager {
         now: f64,
         wake: &Waker,
         tx: &mut Tx,
+        access: fn(&mut S) -> &mut Catalog,
     ) -> bool {
         let mut changed = false;
 
@@ -1302,15 +1382,7 @@ impl Manager {
             }
         });
         if let Some(url) = launch_url {
-            if is_http_url(&url) {
-                if tx.open_url(&url).is_err()
-                    && let Some(flow) = &mut self.connect
-                {
-                    flow.launch_blocked = true;
-                }
-            } else if let Some(flow) = &mut self.connect {
-                flow.launch_blocked = true;
-            }
+            self.open_oauth_url(&url, tx, access);
             changed = true;
         }
 
@@ -1326,14 +1398,9 @@ impl Manager {
         {
             self.op_counter = self.op_counter.wrapping_add(1);
             let seq = self.op_counter;
-            let provider_id = self.connect.as_ref().unwrap().provider_id.clone();
-            let methods = self.methods_for(&provider_id);
-            let method = methods
-                .get(self.connect.as_ref().unwrap().method_index)
-                .or_else(|| methods.first())
-                .cloned()
-                .unwrap();
             let flow = self.connect.as_mut().unwrap();
+            let provider_id = flow.provider_id.clone();
+            let method = flow.selected_method().cloned().unwrap();
             let effective =
                 form::effective_answers(method.form(), &flow.form_answers, &flow.form_edits);
             flow.form_answers = effective;
@@ -1345,40 +1412,55 @@ impl Manager {
             flow.active_directory = Some(directory.clone());
             flow.active_workspace = Some(workspace.to_owned());
             flow.active_backend = Some(backend.clone());
-            let (out, rx) = bounded(1);
-            let cancel_flag = Arc::new(AtomicBool::new(false));
-            let cancel_cl = cancel_flag.clone();
+            let (cancel_tx, cancelled) = bounded(1);
+            let handover = Arc::new(Mutex::new(AuthHandover::Pending));
+            let handover_cl = handover.clone();
             let (backend_cl, ws_cl, wake_cl) =
                 (backend.clone(), workspace.to_owned(), wake.clone());
-            self.auth_flight = Some((seq, cancel_flag, rx));
+            self.auth_flight = Some((seq, cancel_tx, handover));
             platform::spawn(async move {
+                if matches!(*handover_cl.lock().unwrap(), AuthHandover::Cancelled) {
+                    return;
+                }
                 let outcome = match method {
                     AuthMethod::Key { .. } => {
-                        match provider_auth::connect_key(
-                            &backend_cl,
-                            &ws_cl,
-                            &directory,
-                            &provider_id,
-                            &api_key,
-                            answer,
+                        let Some(res) = platform::reads::cancellable(
+                            &cancelled,
+                            provider_auth::connect_key(
+                                &backend_cl,
+                                &ws_cl,
+                                &directory,
+                                &provider_id,
+                                &api_key,
+                                answer,
+                            ),
                         )
                         .await
-                        {
+                        else {
+                            return;
+                        };
+                        match res {
                             Ok(()) => AuthFlightOutcome::Done,
                             Err(err) => AuthFlightOutcome::Failed(err),
                         }
                     }
                     AuthMethod::External { id, .. } => {
-                        match provider_auth::connect_external(
-                            &backend_cl,
-                            &ws_cl,
-                            &directory,
-                            &provider_id,
-                            &id,
-                            answer,
+                        let Some(res) = platform::reads::cancellable(
+                            &cancelled,
+                            provider_auth::connect_external(
+                                &backend_cl,
+                                &ws_cl,
+                                &directory,
+                                &provider_id,
+                                &id,
+                                answer,
+                            ),
                         )
                         .await
-                        {
+                        else {
+                            return;
+                        };
+                        match res {
                             Ok(()) => AuthFlightOutcome::Done,
                             Err(err) => AuthFlightOutcome::Failed(err),
                         }
@@ -1411,34 +1493,17 @@ impl Manager {
                         Err(err) => AuthFlightOutcome::Failed(err),
                     },
                 };
-                if cancel_cl.load(Ordering::Acquire) {
-                    match outcome {
-                        AuthFlightOutcome::OAuthStarted(attempt) => {
-                            provider_auth::oauth_cancel(
-                                &backend_cl,
-                                &ws_cl,
-                                &directory,
-                                &provider_id,
-                                &attempt.attempt_id,
-                            )
-                            .await;
-                        }
-                        AuthFlightOutcome::CommandStarted(attempt_id) => {
-                            provider_auth::command_cancel(
-                                &backend_cl,
-                                &ws_cl,
-                                &directory,
-                                &provider_id,
-                                &attempt_id,
-                            )
-                            .await;
-                        }
-                        AuthFlightOutcome::Done | AuthFlightOutcome::Failed(_) => {}
+                let cancelled_outcome = {
+                    let mut slot = handover_cl.lock().unwrap();
+                    if matches!(*slot, AuthHandover::Cancelled) {
+                        Some(outcome)
+                    } else {
+                        *slot = AuthHandover::Ready(outcome);
+                        None
                     }
-                    return;
-                }
-                if let Err(unsent) = out.send(outcome).await {
-                    match unsent.into_inner() {
+                };
+                if let Some(unsent) = cancelled_outcome {
+                    match unsent {
                         AuthFlightOutcome::OAuthStarted(attempt) => {
                             provider_auth::oauth_cancel(
                                 &backend_cl,
@@ -1490,26 +1555,39 @@ impl Manager {
                 flow.stage = AuthStage::Authorizing;
                 flow.error = None;
                 let provider_id = flow.provider_id.clone();
-                let (out, rx) = bounded(1);
-                let cancel_flag = Arc::new(AtomicBool::new(false));
+                let (cancel_tx, cancelled) = bounded(1);
+                let handover = Arc::new(Mutex::new(AuthHandover::Pending));
+                let handover_cl = handover.clone();
                 let (backend_cl, ws_cl, wake_cl) =
                     (backend.clone(), workspace.to_owned(), wake.clone());
-                self.auth_flight = Some((seq, cancel_flag, rx));
+                self.auth_flight = Some((seq, cancel_tx, handover));
                 platform::spawn(async move {
-                    let outcome = match provider_auth::oauth_complete(
-                        &backend_cl,
-                        &ws_cl,
-                        &directory,
-                        &provider_id,
-                        &auth.attempt_id,
-                        &code,
+                    if matches!(*handover_cl.lock().unwrap(), AuthHandover::Cancelled) {
+                        return;
+                    }
+                    let Some(res) = platform::reads::cancellable(
+                        &cancelled,
+                        provider_auth::oauth_complete(
+                            &backend_cl,
+                            &ws_cl,
+                            &directory,
+                            &provider_id,
+                            &auth.attempt_id,
+                            &code,
+                        ),
                     )
                     .await
-                    {
+                    else {
+                        return;
+                    };
+                    let outcome = match res {
                         Ok(()) => AuthFlightOutcome::Done,
                         Err(err) => AuthFlightOutcome::Failed(err),
                     };
-                    if out.send(outcome).await.is_ok() {
+                    let mut slot = handover_cl.lock().unwrap();
+                    if !matches!(*slot, AuthHandover::Cancelled) {
+                        *slot = AuthHandover::Ready(outcome);
+                        drop(slot);
                         wake_cl();
                     }
                 });
@@ -1534,29 +1612,36 @@ impl Manager {
                         .map(|a| a.attempt_id.clone())
                         .or_else(|| flow.command_attempt.clone());
                     if let Some(attempt_id) = attempt_id {
+                        let (cancel_tx, cancelled) = bounded(1);
                         let (out, rx) = bounded(1);
                         let (backend_cl, ws_cl, wake_cl) =
                             (backend.clone(), workspace.to_owned(), wake.clone());
-                        self.poll_flight = Some((seq, rx));
+                        self.poll_flight = Some((seq, cancel_tx, rx));
                         platform::spawn(async move {
-                            let res = if is_oauth {
-                                provider_auth::oauth_status(
-                                    &backend_cl,
-                                    &ws_cl,
-                                    &directory,
-                                    &provider_id,
-                                    &attempt_id,
-                                )
-                                .await
-                            } else {
-                                provider_auth::command_status(
-                                    &backend_cl,
-                                    &ws_cl,
-                                    &directory,
-                                    &provider_id,
-                                    &attempt_id,
-                                )
-                                .await
+                            let Some(res) = platform::reads::cancellable(&cancelled, async {
+                                if is_oauth {
+                                    provider_auth::oauth_status(
+                                        &backend_cl,
+                                        &ws_cl,
+                                        &directory,
+                                        &provider_id,
+                                        &attempt_id,
+                                    )
+                                    .await
+                                } else {
+                                    provider_auth::command_status(
+                                        &backend_cl,
+                                        &ws_cl,
+                                        &directory,
+                                        &provider_id,
+                                        &attempt_id,
+                                    )
+                                    .await
+                                }
+                            })
+                            .await
+                            else {
+                                return;
                             };
                             if out.send(res).await.is_ok() {
                                 wake_cl();
@@ -1588,12 +1673,8 @@ impl Manager {
                 body = body.child(connect_bar(catalog, layers, access));
                 if mgr.flight.is_some() && mgr.snapshot.is_none() {
                     body = body.child(text(t("settings.providers.loading")).role("status"));
-                } else if mgr.failed {
-                    body = body.child(
-                        text(t("settings.providers.errors.loadFailed"))
-                            .wrap()
-                            .role("alert"),
-                    );
+                } else if let Some(err) = &mgr.load_error {
+                    body = body.child(text(err.as_str()).wrap().role("alert"));
                 }
                 if let Some(snap) = &mgr.snapshot {
                     let query = mgr.search.text.trim().to_lowercase();
@@ -1612,7 +1693,7 @@ impl Manager {
                             body = body.child(accounts::card(
                                 catalog,
                                 provider,
-                                mgr.flight.is_some(),
+                                mgr.location_stale(),
                                 layers,
                                 access,
                             ));
@@ -1682,13 +1763,14 @@ fn connect_bar<S: 'static>(
             .as_ref()
             .and_then(|(sel_id, _)| pairs.iter().find(|(id, _)| id == sel_id))
             .map(|(_, disp)| disp.as_str());
+        let stale_or_busy = mgr.modal_open() || mgr.location_stale() || mgr.any_account_busy();
         let select = chrome::picker(
             "providers-connect-select",
             t("settings.providers.selectProvider"),
             &labels,
         )
         .current(current_name)
-        .disabled(mgr.modal_open())
+        .disabled(stale_or_busy)
         .open(mgr.open_picker == Some(PickerId::ConnectProvider))
         .on_toggle(move |s: &mut S| access(s).manager.toggle_picker(PickerId::ConnectProvider))
         .on_close(move |s: &mut S| access(s).manager.close_picker())
@@ -1705,7 +1787,7 @@ fn connect_bar<S: 'static>(
         row_el = row_el.child(chrome::build_picker(select, layers)).child(
             chrome::primary_action_tx(
                 t("settings.providers.actions.connect"),
-                connect_id.is_none() || mgr.modal_open(),
+                connect_id.is_none() || stale_or_busy,
                 move |s: &mut S, tx| {
                     if let Some(id) = connect_id.clone() {
                         access(s).manager.open_connect_modal(
@@ -1761,6 +1843,49 @@ pub(super) fn unique_labels(raw: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Assign collision-free suffixes to duplicate labels ordered by `stable_keys` so reordering
+/// items (for example activating another saved account) keeps each item's suffix stable.
+pub(super) fn unique_labels_stable(raw: &[String], stable_keys: &[String]) -> Vec<String> {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for item in raw {
+        *counts.entry(item.as_str()).or_insert(0) += 1;
+    }
+    let mut used: std::collections::HashSet<String> = counts
+        .iter()
+        .filter(|(_, count)| **count == 1)
+        .map(|(label, _)| (*label).to_owned())
+        .collect();
+    let mut out = raw.to_vec();
+    let mut groups: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (idx, base) in raw.iter().enumerate() {
+        if counts.get(base.as_str()).copied().unwrap_or(0) > 1 {
+            groups.entry(base.as_str()).or_default().push(idx);
+        }
+    }
+    for (base, mut indices) in groups {
+        indices.sort_by(|&a, &b| {
+            stable_keys
+                .get(a)
+                .map(String::as_str)
+                .unwrap_or("")
+                .cmp(stable_keys.get(b).map(String::as_str).unwrap_or(""))
+                .then_with(|| a.cmp(&b))
+        });
+        let mut counter = 0usize;
+        for idx in indices {
+            loop {
+                counter += 1;
+                let candidate = format!("{base} ({counter})");
+                if used.insert(candidate.clone()) {
+                    out[idx] = candidate;
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
 fn matches_query(provider: &ListedProvider, query: &str) -> bool {
     if query.is_empty() {
         return true;
@@ -1813,6 +1938,14 @@ fn seed_form_edits(
     edits
 }
 
+fn load_error_copy(err: AuthError) -> ErrorCopy {
+    match err {
+        AuthError::Unsupported => ErrorCopy::Key("integrations.connection.unsupported"),
+        AuthError::Message(msg) => ErrorCopy::Raw(msg),
+        AuthError::Failed => ErrorCopy::Key("settings.providers.errors.loadFailed"),
+    }
+}
+
 fn auth_error_copy(err: AuthError) -> ErrorCopy {
     match err {
         AuthError::Unsupported => ErrorCopy::Key("integrations.connection.unsupported"),
@@ -1827,4 +1960,65 @@ fn account_error_copy(err: AuthError) -> ErrorCopy {
         AuthError::Message(msg) => ErrorCopy::Raw(msg),
         AuthError::Failed => ErrorCopy::Key("settings.accounts.error"),
     }
+}
+
+fn spawn_oauth_cancel(
+    backend: Backend,
+    workspace: String,
+    directory: String,
+    provider_id: String,
+    attempt_id: String,
+) {
+    platform::spawn(async move {
+        provider_auth::oauth_cancel(&backend, &workspace, &directory, &provider_id, &attempt_id)
+            .await;
+    });
+}
+
+fn spawn_command_cancel(
+    backend: Backend,
+    workspace: String,
+    directory: String,
+    provider_id: String,
+    attempt_id: String,
+) {
+    platform::spawn(async move {
+        provider_auth::command_cancel(&backend, &workspace, &directory, &provider_id, &attempt_id)
+            .await;
+    });
+}
+
+fn spawn_cancel_outcome(
+    backend: Backend,
+    workspace: String,
+    directory: String,
+    provider_id: String,
+    outcome: AuthFlightOutcome,
+) {
+    match outcome {
+        AuthFlightOutcome::OAuthStarted(auth) => {
+            spawn_oauth_cancel(backend, workspace, directory, provider_id, auth.attempt_id);
+        }
+        AuthFlightOutcome::CommandStarted(attempt_id) => {
+            spawn_command_cancel(backend, workspace, directory, provider_id, attempt_id);
+        }
+        AuthFlightOutcome::Done | AuthFlightOutcome::Failed(_) => {}
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn reserve_oauth_popup() -> Option<web_sys::Window> {
+    let window = web_sys::window()?;
+    let popup = window
+        .open_with_url_and_target("", "_blank")
+        .ok()
+        .flatten()?;
+    let _ = popup.set_opener(&wasm_bindgen::JsValue::NULL);
+    if let Some(doc) = popup.document() {
+        doc.set_title(t("settings.providers.oauth.popup.loadingTitle"));
+        if let Some(body) = doc.body() {
+            body.set_text_content(Some(t("settings.providers.oauth.popup.loadingBody")));
+        }
+    }
+    Some(popup)
 }

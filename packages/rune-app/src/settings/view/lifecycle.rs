@@ -128,8 +128,13 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     if s.section == Section::Providers && !s.confirm_close && !s.closing {
                         let prefs = s.shared.borrow();
                         let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
-                        s.providers
-                            .poll(target, now, prefs.window_wake.as_ref(), tx)
+                        s.providers.poll(
+                            target,
+                            now,
+                            prefs.window_wake.as_ref(),
+                            tx,
+                            |s: &mut Window| &mut s.providers,
+                        )
                     } else {
                         s.providers.cancel_on_hide()
                     };

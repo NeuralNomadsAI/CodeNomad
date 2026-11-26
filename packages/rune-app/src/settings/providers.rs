@@ -8,7 +8,7 @@ mod tests;
 #[cfg(not(target_arch = "wasm32"))]
 use super::view::Window;
 use crate::{State, backend::Backend};
-use codenomad_client::stream::CatalogueChanges;
+use codenomad_client::stream::{CatalogueChanges, ProviderMoves};
 use rune::El;
 
 pub(super) struct Target {
@@ -60,6 +60,7 @@ impl Target {
         s: &State,
         current: Option<&Backend>,
         changes: &CatalogueChanges,
+        moves: &ProviderMoves,
         stopped: &CatalogueChanges,
         generation: Option<u64>,
     ) -> bool {
@@ -81,6 +82,20 @@ impl Target {
             self.authority = self.authority.wrapping_add(1);
         } else if self.matches(changes) {
             self.invalidate();
+        }
+        match moves {
+            ProviderMoves::None => {}
+            ProviderMoves::All => {
+                self.authority = self.authority.wrapping_add(1);
+                self.invalidate();
+            }
+            ProviderMoves::Sessions(entries) => {
+                for (workspace, session) in entries {
+                    if self.session_moved(workspace, session) {
+                        break;
+                    }
+                }
+            }
         }
         if let Some(generation) = generation
             && self.observed != Some(generation)
@@ -193,14 +208,20 @@ pub(super) struct Catalog {
 }
 
 impl Catalog {
-    pub fn poll(
+    pub fn poll<S: 'static>(
         &mut self,
         target: Option<&Target>,
         now: f64,
         wake: Option<&rune::Waker>,
         tx: &mut rune::Tx,
+        access: fn(&mut S) -> &mut Catalog,
     ) -> bool {
-        self.manager.poll(target, now, wake, tx)
+        self.manager.poll(target, now, wake, tx, access)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn has_active_connect(&self) -> bool {
+        self.manager.modal_open()
     }
 
     pub fn toggle(&mut self) {

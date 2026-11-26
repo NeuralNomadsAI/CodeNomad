@@ -244,6 +244,9 @@ pub(super) fn sync_text_edits_to_answers(
             FormFieldKind::String {
                 options, custom, ..
             } if options.is_empty() || *custom => {
+                if edit.text.is_empty() && !answers.contains_key(&field.key) {
+                    continue;
+                }
                 answers.insert(field.key.clone(), Value::String(edit.text.clone()));
             }
             FormFieldKind::Number { integer, .. } => {
@@ -269,6 +272,7 @@ pub(super) fn sync_text_edits_to_answers(
                 custom: true,
                 ..
             } => {
+                let had_key = answers.contains_key(&field.key);
                 let option_values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
                 let mut merged: Vec<String> = answers
                     .get(&field.key)
@@ -286,6 +290,9 @@ pub(super) fn sync_text_edits_to_answers(
                     if !trimmed.is_empty() && !merged.iter().any(|existing| existing == trimmed) {
                         merged.push(trimmed.to_owned());
                     }
+                }
+                if merged.is_empty() && !had_key {
+                    continue;
                 }
                 answers.insert(field.key.clone(), json!(merged));
             }

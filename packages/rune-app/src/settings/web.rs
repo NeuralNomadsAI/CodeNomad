@@ -158,18 +158,18 @@ impl Panel {
             now,
             tx,
         );
-        let providers_changed = if self.shown
-            && paired
-            && self.local(prefs)
-            && document_visible()
-            && self.section == Section::Providers
-        {
-            self.catalog.poll(
-                prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
-                now,
-                Some(wake),
-                tx,
-            )
+        let providers_changed = if self.shown && paired && self.section == Section::Providers {
+            if document_visible() || self.catalog.has_active_connect() {
+                self.catalog.poll(
+                    prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
+                    now,
+                    Some(wake),
+                    tx,
+                    |s: &mut State| &mut s.settings.web.catalog,
+                )
+            } else {
+                false
+            }
         } else {
             self.catalog.cancel_on_hide()
         };
@@ -498,17 +498,11 @@ pub(super) fn view(
                 ))
         }
         Section::Providers => {
-            if !local {
-                text(t("integrations.connection.unsupported"))
-                    .wrap()
-                    .role("alert")
-            } else {
-                let available =
-                    prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online);
-                providers::content(&panel.catalog, available, &mut layers, |s: &mut State| {
-                    &mut s.settings.web.catalog
-                })
-            }
+            let available =
+                prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online);
+            providers::content(&panel.catalog, available, &mut layers, |s: &mut State| {
+                &mut s.settings.web.catalog
+            })
         }
         Section::Conversation => col()
             .full_width()

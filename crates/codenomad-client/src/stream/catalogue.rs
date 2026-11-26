@@ -20,6 +20,14 @@ pub enum CatalogueChanges {
     All,
 }
 
+#[derive(Default)]
+pub enum ProviderMoves {
+    #[default]
+    None,
+    Sessions(Vec<(String, String)>),
+    All,
+}
+
 const MAX_WORKSPACE_EVENTS: usize = 256;
 const MAX_WORKSPACE_EVENT_BYTES: usize = 512 * 1024;
 
@@ -81,6 +89,7 @@ fn workspace_event_bytes(event: &WorkspaceEvent) -> usize {
 pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
+    provider_moves: Mutex<ProviderMoves>,
     stopped: Mutex<CatalogueChanges>,
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
@@ -155,6 +164,31 @@ impl Signals {
     fn mark(&self, lane: &Mutex<CatalogueChanges>, workspace: Option<&str>) -> bool {
         mark_changes(&mut lane.lock().unwrap(), workspace)
     }
+
+    fn mark_provider_move(&self, workspace: &str, session: &str) -> bool {
+        let mut moves = self.provider_moves.lock().unwrap();
+        match &mut *moves {
+            ProviderMoves::All => false,
+            ProviderMoves::None => {
+                *moves = ProviderMoves::Sessions(vec![(workspace.to_owned(), session.to_owned())]);
+                true
+            }
+            ProviderMoves::Sessions(entries) => {
+                if entries
+                    .iter()
+                    .any(|(ws, ses)| ws == workspace && (ses.is_empty() || ses == session))
+                {
+                    return false;
+                }
+                if entries.len() >= 128 {
+                    *moves = ProviderMoves::All;
+                    return true;
+                }
+                entries.push((workspace.to_owned(), session.to_owned()));
+                true
+            }
+        }
+    }
 }
 
 fn mark_changes(pending: &mut CatalogueChanges, workspace: Option<&str>) -> bool {
@@ -199,14 +233,30 @@ impl Signals {
                 }
                 true
             });
+        let session_moved = frame["type"] == "instance.event"
+            && frame["event"]["type"] == "session.moved"
+            && frame["instanceId"]
+                .as_str()
+                .filter(|id| valid_id(id))
+                .is_some_and(|id| {
+                    let ses = frame["event"]["data"]["sessionID"]
+                        .as_str()
+                        .filter(|s| valid_id(s))
+                        .or_else(|| {
+                            frame["event"]["data"]["id"]
+                                .as_str()
+                                .filter(|s| valid_id(s))
+                        })
+                        .unwrap_or("");
+                    self.mark_provider_move(id, ses) | self.mark(&self.providers, Some(id))
+                });
+        let account_config_changed = frame["type"] == "storage.configChanged"
+            && matches!(frame["owner"].as_str(), Some("providerAccounts" | "*"))
+            && self.mark(&self.providers, None);
         let provider_changed = crate::settings::provider_change(frame)
             .is_some_and(|id| self.mark(&self.providers, Some(id)))
-            | (frame["type"] == "instance.event"
-                && frame["event"]["type"] == "session.moved"
-                && frame["instanceId"]
-                    .as_str()
-                    .filter(|id| valid_id(id))
-                    .is_some_and(|id| self.mark(&self.providers, Some(id))));
+            | session_moved
+            | account_config_changed;
         let kind = frame["type"].as_str();
         let workspace = match kind {
             Some("workspace.worktreesChanged" | "workspace.stopped" | "workspace.filesChanged") => {
@@ -332,6 +382,7 @@ impl CatalogueWatch {
         let signals = Arc::new(Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_moves: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -434,6 +485,10 @@ impl CatalogueWatch {
             std::mem::take(&mut *self.signals.stopped.lock().unwrap()),
             self.signals.generation.load(SeqCst),
         )
+    }
+
+    pub fn take_provider_moves(&self) -> ProviderMoves {
+        std::mem::take(&mut *self.signals.provider_moves.lock().unwrap())
     }
     pub fn take_stats_changes(
         &self,
@@ -608,6 +663,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_moves: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -683,6 +739,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_moves: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -715,6 +772,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_moves: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -754,6 +812,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_moves: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -774,5 +833,40 @@ mod tests {
         assert!(!signals.workspace_overflow.load(SeqCst));
         signals.observe(&json!({"type":"workspace.stopped","workspaceId":"w-128"}));
         assert!(signals.workspace_overflow.load(SeqCst));
+    }
+
+    #[test]
+    fn session_moved_records_provider_move_and_provider_accounts_config_invalidates_all() {
+        let (watch, _task) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
+            Arc::new(|| {}),
+        );
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "ws1",
+            "event": { "type": "session.moved", "data": { "sessionID": "ses1" } }
+        }));
+        assert!(matches!(
+            watch.take_provider_moves(),
+            ProviderMoves::Sessions(entries) if entries == vec![("ws1".to_owned(), "ses1".to_owned())]
+        ));
+        let (changes, _, _) = watch.take_provider_changes();
+        assert!(
+            matches!(changes, CatalogueChanges::Workspaces(ids) if ids == HashSet::from(["ws1".into()]))
+        );
+
+        watch.signals.observe(&json!({
+            "type": "storage.configChanged",
+            "owner": "providerAccounts"
+        }));
+        let (changes, _, _) = watch.take_provider_changes();
+        assert!(matches!(changes, CatalogueChanges::All));
+
+        watch.signals.observe(&json!({
+            "type": "storage.configChanged",
+            "owner": "*"
+        }));
+        let (changes, _, _) = watch.take_provider_changes();
+        assert!(matches!(changes, CatalogueChanges::All));
     }
 }

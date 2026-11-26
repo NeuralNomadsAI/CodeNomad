@@ -20,7 +20,7 @@ pub(super) fn card<S: 'static>(
     access: fn(&mut S) -> &mut Catalog,
 ) -> El {
     let mgr = &catalog.manager;
-    let busy = disabled || mgr.account_busy(&provider.id) || mgr.modal_open();
+    let busy = disabled || mgr.any_account_busy() || mgr.modal_open();
     let provider_id = provider.id.clone();
 
     let summary = provider_summary(provider);
@@ -71,7 +71,12 @@ fn accounts_controls<S: 'static>(
         .iter()
         .map(|conn| provider.connection_display_label(conn).to_owned())
         .collect();
-    let display_labels = super::manager::unique_labels(&raw_labels);
+    let stable_keys: Vec<String> = provider
+        .connections
+        .iter()
+        .map(Connection::identity_key)
+        .collect();
+    let display_labels = super::manager::unique_labels_stable(&raw_labels, &stable_keys);
     let option_entries: Vec<(String, Option<String>)> = provider
         .connections
         .iter()
@@ -149,12 +154,14 @@ fn accounts_controls<S: 'static>(
             let rename_initial = label.clone();
             let remove_prov = provider.id.clone();
             let remove_cred = id.clone();
+            let rename_input_key = format!("provider-account-rename-input-{}", provider.id);
             actions = actions
                 .child(
-                    layout::button(t("settings.accounts.rename"), busy, move |s: &mut S| {
+                    layout::button_tx(t("settings.accounts.rename"), busy, move |s: &mut S, tx| {
                         access(s)
                             .manager
                             .start_rename(&rename_prov, &rename_cred, &rename_initial);
+                        tx.focus_when_shown(rename_input_key.clone(), true);
                     })
                     .label(t("settings.accounts.rename"))
                     .key(format!("provider-account-rename-{}", provider.id)),
@@ -206,7 +213,9 @@ fn accounts_controls<S: 'static>(
         let cred_submit = id.clone();
         let prov_cancel = provider.id.clone();
         let cred_cancel = id.clone();
-        let can_save = !busy && !draft.text.text.trim().is_empty() && draft.dirty;
+        let trimmed = draft.text.text.trim();
+        let can_save =
+            !busy && draft.dirty && !trimmed.is_empty() && trimmed.chars().take(257).count() <= 256;
         let input = layout::literal_field(&draft.text)
             .label(t("settings.accounts.label"))
             .disabled(busy)
