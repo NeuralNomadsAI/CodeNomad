@@ -125,6 +125,18 @@ pub struct Ui {
     closed: Vec<Workspace>,
 }
 impl Ui {
+    #[cfg(test)]
+    pub(crate) fn mark_ready(&mut self) {
+        self.ready = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn with_cached_git(&mut self, key: &str, f: impl FnOnce(&mut crate::git::Binding)) {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.key == key)
+            && let Some(cache) = entry.cache.as_mut()
+        {
+            f(cache.git_mut());
+        }
+    }
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key
     }

@@ -23,7 +23,7 @@ mod staleness;
 pub use catalogue::{AttentionHint, CatalogueChanges, CatalogueWatch, ProviderMoves};
 pub use children::ChildSettlement;
 pub(crate) use children::Children;
-use notifications::session_attention;
+pub(crate) use notifications::session_attention;
 use routing::dispatch;
 pub use staleness::probe_stale;
 #[cfg(target_arch = "wasm32")]

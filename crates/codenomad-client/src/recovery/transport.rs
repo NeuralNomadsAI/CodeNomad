@@ -255,11 +255,37 @@ pub(crate) async fn run_with_reading(
                     .await;
                     return Err("session scope changed".into());
                 }
-                if kind.starts_with("permission.")
-                    || kind.starts_with("form.")
-                    || kind.contains("model")
-                {
-                    publish(&out, &wake, Event::AgentHint(false)).await;
+                let attention_handled = crate::history::valid_id(&backend.session)
+                    && matches!(
+                        crate::stream::session_attention(&native, &backend.session),
+                        Some(
+                            crate::transport::WorkspaceEvent::SessionRequest { .. }
+                                | crate::transport::WorkspaceEvent::SessionRequestResolved { .. }
+                        )
+                    );
+                if !attention_handled {
+                    if kind.starts_with("permission.") {
+                        publish(
+                            &out,
+                            &wake,
+                            Event::AgentControl(crate::transport::AgentLane::Permissions),
+                        )
+                        .await;
+                    } else if kind.starts_with("form.") {
+                        publish(
+                            &out,
+                            &wake,
+                            Event::AgentControl(crate::transport::AgentLane::Forms),
+                        )
+                        .await;
+                    } else if kind.contains("model") {
+                        publish(
+                            &out,
+                            &wake,
+                            Event::AgentControl(crate::transport::AgentLane::Session),
+                        )
+                        .await;
+                    }
                 }
                 if kind == "session.usage.updated" {
                     if let Some(usage) = content::Usage::decode(&native["data"]) {

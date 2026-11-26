@@ -32,6 +32,11 @@ pub(super) struct Cache {
     status_usage: crate::shell::status_usage::Panel,
 }
 impl Cache {
+    #[cfg(test)]
+    pub(super) fn git_mut(&mut self) -> &mut crate::git::Binding {
+        &mut self.git
+    }
+
     pub(super) fn observes_notifications(&self, allow_running: bool) -> bool {
         self.agent
             .as_ref()
@@ -93,6 +98,13 @@ impl Cache {
         {
             files.event(event.clone());
             delivered = true;
+        }
+        if matches!(
+            event,
+            codenomad_client::transport::WorkspaceEvent::Stopped { .. }
+        ) && let Some(agent) = &mut self.agent
+        {
+            delivered |= agent.workspace_stopped(target);
         }
         delivered
     }
@@ -236,6 +248,10 @@ impl Cache {
         self.transcript_display.evict_rendered();
     }
     pub fn navigation_blocked(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        if self.phase == Phase::RestoreFailed {
+            return false;
+        }
         self.composer.blocks_navigation()
             || self
                 .agent

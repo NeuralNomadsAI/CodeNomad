@@ -29,7 +29,13 @@ pub(super) fn view_with_width(s: &crate::State, width: f32) -> rune::El {
                 .child(
                     git_panel::conversation_column()
                         .child(crate::git::reader(s))
-                        .child(crate::composer::view::view(s, false, None, rune::el())),
+                        .child(crate::composer::view::view(
+                            s,
+                            rune_theme_codenomad::interruption::SessionLayout::default(),
+                            crate::chat::ComposerCaretPins::default(),
+                            None,
+                            rune::el(),
+                        )),
                 )
                 .child(crate::git::panel(s, width, rune::el())),
         )

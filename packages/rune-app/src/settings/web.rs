@@ -265,13 +265,15 @@ fn document_visible() -> bool {
     }
 }
 
-pub(super) fn entry(touch: bool) -> El {
+pub(super) fn entry(touch: bool, skip_tab: bool) -> El {
     rune_theme_codenomad::tabs::BarAction::Settings
         .button(touch, t("settings.title"), open)
+        .tab_index(if skip_tab { -1 } else { 0 })
         .key("open-preferences")
 }
 
 fn open(s: &mut State) {
+    s.shell.leave_project();
     let target = Target::capture(s);
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.provider_target = target;
