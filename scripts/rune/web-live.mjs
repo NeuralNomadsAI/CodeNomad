@@ -63,10 +63,11 @@ export async function admitLiveRoute(req, {policy, origin, forbiddenRequests, on
   return allowed
 }
 
-function settleWithin(promise, ms=2_000){
+function settleWithin(promise, abort, ms=2_000){
   let timer
   return Promise.race([
     promise,
+    ...(abort?[abort]:[]),
     new Promise(resolve=>{ timer=setTimeout(resolve,ms); timer.unref?.() }),
   ]).finally(()=>clearTimeout(timer))
 }
@@ -356,7 +357,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         page.on('requestfailed',onAuthFailed)
         page.on('response',onAuthResponse)
         const focusForbiddenRejected=Promise.withResolvers()
-        void focusForbiddenRejected.promise.catch(()=>{})
+        const focusForbiddenDone=focusForbiddenRejected.promise.catch(()=>{})
         const failFocusForbidden=err=>{
           focusForbiddenError??=err
           focusForbiddenRejected.reject(err)
@@ -366,7 +367,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         const settleFollowUp=async()=>{
           if(!followUpCleaned&&!focusForbiddenError&&heldFollowUp){
             followUpCleaned=true
-            await settleWithin(followUpSettled.promise)
+            await settleWithin(followUpSettled.promise,focusForbiddenDone)
           }
         }
         const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failFocusForbidden})
@@ -466,10 +467,10 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
             assert.equal(authStatusRequests,1,'No follow-up /api/auth/status may start before the held probe is delivered')
             assert.equal(eventSources(),beforeRevoke,'SSE must remain blocked so focus/visibility alone drives recovery')
           } finally {
-            await page.evaluate(()=>globalThis.__runeCleanupReturnSignal?.()).catch(()=>{})
+            await settleWithin(page.evaluate(()=>globalThis.__runeCleanupReturnSignal?.()).catch(()=>{}),focusForbiddenDone)
             staleReleased=true
             releaseStale.resolve()
-            if(!focusForbiddenError&&heldStale)await settleWithin(staleSettled.promise)
+            if(!focusForbiddenError&&heldStale)await settleWithin(staleSettled.promise,focusForbiddenDone)
           }
           if(focusForbiddenError)throw focusForbiddenError
           if(staleError)throw staleError
@@ -491,6 +492,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
             releaseFollowUp.resolve()
             await settleFollowUp()
           }
+          if(focusForbiddenError)throw focusForbiddenError
           await focusStep(dialog.waitFor({state:'detached',timeout:10_000}))
           if(focusForbiddenError)throw focusForbiddenError
           assert.equal(eventSources(),beforeRevoke,'SSE stayed blocked until the pairing overlay dismissed')
