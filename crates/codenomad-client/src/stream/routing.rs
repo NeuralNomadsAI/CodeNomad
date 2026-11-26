@@ -115,6 +115,19 @@ pub(super) async fn dispatch(
         ))
         .await?;
     }
+    if value["type"] == "instance.event"
+        && let Some((id, session_id)) = crate::settings::integrations::session_stream_event(&value)
+        && id == b.workspace
+    {
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::IntegrationsChanged {
+                workspace_id: id.into(),
+                session_id: session_id.map(str::to_owned),
+            },
+        ))
+        .await?;
+    }
     if let Some(event) = workspace_event(b, &value) {
         out.send(Input::Workspace(epoch, event)).await?;
         return Ok(());
@@ -136,12 +149,13 @@ pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceE
     if let Some(event) = parse_workspace_event(value) {
         return Some(event);
     }
-    if value["type"] == "instance.eventStatus" && value["status"] == "connected" {
+    if value["type"] == "instance.eventStatus" {
         let id = value["instanceId"]
             .as_str()
             .filter(|id| crate::history::valid_id(id))?;
-        return Some(WorkspaceEvent::WorktreesChanged {
+        return Some(WorkspaceEvent::NativeStreamStatus {
             workspace_id: id.into(),
+            connected: value["status"] == "connected",
         });
     }
     if value["type"] != "instance.event" {
@@ -156,6 +170,26 @@ pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceE
         }),
         "filesystem.changed" => Some(WorkspaceEvent::NativeFilesystemChanged {
             workspace_id: id.into(),
+        }),
+        "plugin.updated" => {
+            let directory = value["event"]["location"]["directory"]
+                .as_str()
+                .filter(|p| crate::absolute_server_path(p))
+                .map(str::to_owned);
+            Some(WorkspaceEvent::PluginsChanged {
+                workspace_id: Some(id.into()),
+                directory,
+            })
+        }
+        "config.updated" => Some(WorkspaceEvent::ServicesConfigChanged {
+            workspace_id: id.into(),
+        }),
+        "mcp.status.changed"
+        | "mcp.resources.changed"
+        | "integration.updated"
+        | "credential.updated"
+        | "credential.switched" => Some(WorkspaceEvent::McpStatusChanged {
+            workspace_id: Some(id.into()),
         }),
         _ => None,
     }

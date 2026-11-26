@@ -28,6 +28,14 @@ pub enum ProviderMoves {
     All,
 }
 
+#[derive(Default)]
+pub enum SessionCatalogueChanges {
+    #[default]
+    None,
+    Sessions(HashSet<(String, String)>),
+    All,
+}
+
 const MAX_WORKSPACE_EVENTS: usize = 256;
 const MAX_WORKSPACE_EVENT_BYTES: usize = 512 * 1024;
 
@@ -90,6 +98,8 @@ pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
     provider_moves: Mutex<ProviderMoves>,
+    integrations: Mutex<CatalogueChanges>,
+    integration_sessions: Mutex<SessionCatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
@@ -112,7 +122,12 @@ struct StatsChanges {
 impl Signals {
     pub(super) fn invalidate_all(&self) {
         let workspace = !self.workspace_overflow.swap(true, SeqCst);
-        if self.mark(&self.pending, None) | self.mark(&self.providers, None) | workspace {
+        if self.mark(&self.pending, None)
+            | self.mark(&self.providers, None)
+            | self.mark(&self.integrations, None)
+            | mark_session_changes(&mut self.integration_sessions.lock().unwrap(), None)
+            | workspace
+        {
             (self.wake)();
         }
     }
@@ -120,6 +135,8 @@ impl Signals {
     pub(super) fn reconnected(&self) {
         self.mark(&self.pending, None);
         self.mark(&self.providers, None);
+        self.mark(&self.integrations, None);
+        mark_session_changes(&mut self.integration_sessions.lock().unwrap(), None);
         self.generation.fetch_add(1, SeqCst);
         let _ = self
             .workspace_generation
@@ -212,6 +229,31 @@ fn mark_changes(pending: &mut CatalogueChanges, workspace: Option<&str>) -> bool
     }
 }
 
+fn mark_session_changes(
+    pending: &mut SessionCatalogueChanges,
+    target: Option<(&str, &str)>,
+) -> bool {
+    match (&mut *pending, target) {
+        (SessionCatalogueChanges::All, _) => false,
+        (_, None) => {
+            *pending = SessionCatalogueChanges::All;
+            true
+        }
+        (SessionCatalogueChanges::None, Some((ws, ses))) => {
+            *pending =
+                SessionCatalogueChanges::Sessions(HashSet::from([(ws.to_owned(), ses.to_owned())]));
+            true
+        }
+        (SessionCatalogueChanges::Sessions(pairs), Some((ws, ses))) if pairs.len() < 128 => {
+            pairs.insert((ws.to_owned(), ses.to_owned()))
+        }
+        (SessionCatalogueChanges::Sessions(_), Some(_)) => {
+            *pending = SessionCatalogueChanges::All;
+            true
+        }
+    }
+}
+
 impl Signals {
     pub(super) fn observe(&self, frame: &Value) {
         let workspace_event =
@@ -257,6 +299,14 @@ impl Signals {
             .is_some_and(|id| self.mark(&self.providers, Some(id)))
             | session_moved
             | account_config_changed;
+        let integration_changed = match crate::settings::integrations::change_event(frame) {
+            Some((ws, None)) => self.mark(&self.integrations, Some(ws)),
+            Some((ws, Some(ses))) => mark_session_changes(
+                &mut self.integration_sessions.lock().unwrap(),
+                Some((ws, ses)),
+            ),
+            None => false,
+        };
         let kind = frame["type"].as_str();
         let workspace = match kind {
             Some("workspace.worktreesChanged" | "workspace.stopped" | "workspace.filesChanged") => {
@@ -265,7 +315,7 @@ impl Signals {
             _ => &frame["instanceId"],
         };
         let Some(id) = workspace.as_str().filter(|id| valid_id(id)) else {
-            if workspace_event || provider_changed {
+            if workspace_event || provider_changed || integration_changed {
                 (self.wake)();
             }
             return;
@@ -315,6 +365,7 @@ impl Signals {
         };
         if (invalidates && self.mark(&self.pending, Some(id)))
             | provider_changed
+            | integration_changed
             | workspace_event
             | stopped
             | attention
@@ -370,6 +421,8 @@ impl CatalogueWatch {
             pending: Mutex::default(),
             providers: Mutex::default(),
             provider_moves: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -452,10 +505,37 @@ impl CatalogueWatch {
         let generation = self.signals.workspace_generation.load(SeqCst);
         let overflow = self.signals.workspace_overflow.swap(false, SeqCst);
         let mut events = VecDeque::new();
-        for workspace_id in self.signals.workspace_stopped.lock().unwrap().drain() {
-            events.push_back(WorkspaceEvent::Stopped { workspace_id });
+        let stopped_ids: HashSet<String> = self
+            .signals
+            .workspace_stopped
+            .lock()
+            .unwrap()
+            .drain()
+            .collect();
+        for workspace_id in &stopped_ids {
+            events.push_back(WorkspaceEvent::Stopped {
+                workspace_id: workspace_id.clone(),
+            });
         }
-        events.extend(self.signals.workspace_events.lock().unwrap().drain());
+        for event in self.signals.workspace_events.lock().unwrap().drain() {
+            let superseded = match &event {
+                WorkspaceEvent::NativeFilesystemChanged { workspace_id }
+                | WorkspaceEvent::FilesChanged { workspace_id, .. }
+                | WorkspaceEvent::WorktreesChanged { workspace_id }
+                | WorkspaceEvent::SessionMoved { workspace_id, .. }
+                | WorkspaceEvent::ServicesConfigChanged { workspace_id }
+                | WorkspaceEvent::NativeStreamStatus { workspace_id, .. }
+                | WorkspaceEvent::Stopped { workspace_id } => stopped_ids.contains(workspace_id),
+                WorkspaceEvent::PluginsChanged { workspace_id, .. }
+                | WorkspaceEvent::McpStatusChanged { workspace_id } => workspace_id
+                    .as_ref()
+                    .is_some_and(|id| stopped_ids.contains(id)),
+                _ => false,
+            };
+            if !superseded {
+                events.push_back(event);
+            }
+        }
         (generation, overflow, events)
     }
 
@@ -476,6 +556,13 @@ impl CatalogueWatch {
 
     pub fn take_provider_moves(&self) -> ProviderMoves {
         std::mem::take(&mut *self.signals.provider_moves.lock().unwrap())
+    }
+
+    pub fn take_integration_changes(&self) -> (CatalogueChanges, SessionCatalogueChanges) {
+        (
+            std::mem::take(&mut *self.signals.integrations.lock().unwrap()),
+            std::mem::take(&mut *self.signals.integration_sessions.lock().unwrap()),
+        )
     }
     pub fn take_stats_changes(
         &self,
@@ -601,7 +688,14 @@ mod tests {
             "instanceId": "proj-1",
             "status": "disconnected"
         }));
-        assert!(watch.take_workspace_events().2.is_empty());
+        let (_, _, events) = watch.take_workspace_events();
+        assert!(matches!(
+            events.front(),
+            Some(WorkspaceEvent::NativeStreamStatus {
+                workspace_id,
+                connected: false
+            }) if workspace_id == "proj-1"
+        ));
         watch.signals.observe(&json!({
             "type": "instance.eventStatus",
             "instanceId": "proj-1",
@@ -610,7 +704,10 @@ mod tests {
         let (_, _, events) = watch.take_workspace_events();
         assert!(matches!(
             events.front(),
-            Some(WorkspaceEvent::WorktreesChanged { workspace_id }) if workspace_id == "proj-1"
+            Some(WorkspaceEvent::NativeStreamStatus {
+                workspace_id,
+                connected: true
+            }) if workspace_id == "proj-1"
         ));
 
         watch.signals.observe(&json!({
@@ -651,6 +748,8 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             provider_moves: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -727,6 +826,8 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             provider_moves: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -760,6 +861,8 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             provider_moves: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -800,6 +903,8 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             provider_moves: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -855,5 +960,41 @@ mod tests {
         }));
         let (changes, _, _) = watch.take_provider_changes();
         assert!(matches!(changes, CatalogueChanges::All));
+    }
+
+    #[test]
+    fn stopped_workspace_drops_earlier_events_in_same_batch() {
+        let (watch, _task) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
+            Arc::new(|| {}),
+        );
+        watch.signals.observe(&json!({
+            "type": "instance.eventStatus",
+            "instanceId": "proj-1",
+            "status": "connected"
+        }));
+        watch.signals.observe(&json!({
+            "type": "workspace.stopped",
+            "workspaceId": "proj-1"
+        }));
+        watch.signals.observe(&json!({
+            "type": "instance.eventStatus",
+            "instanceId": "proj-2",
+            "status": "connected"
+        }));
+        let (_, overflow, events) = watch.take_workspace_events();
+        assert!(!overflow);
+        assert!(events.iter().any(|ev| matches!(
+            ev,
+            WorkspaceEvent::Stopped { workspace_id } if workspace_id == "proj-1"
+        )));
+        assert!(!events.iter().any(|ev| matches!(
+            ev,
+            WorkspaceEvent::NativeStreamStatus { workspace_id, .. } if workspace_id == "proj-1"
+        )));
+        assert!(events.iter().any(|ev| matches!(
+            ev,
+            WorkspaceEvent::NativeStreamStatus { workspace_id, connected: true } if workspace_id == "proj-2"
+        )));
     }
 }

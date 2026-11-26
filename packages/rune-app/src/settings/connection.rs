@@ -105,12 +105,17 @@ pub(super) fn provider_changed(s: &State, workspace: &str) {
 }
 
 fn provider_session_moved(s: &State, workspace: &str, session: &str) {
+    if s.screen
+        .launcher()
+        .is_some_and(|l| l.catalogue_watch.is_some())
+    {
+        return;
+    }
     let mut prefs = s.settings.shared.borrow_mut();
-    if prefs
-        .provider_target
-        .as_mut()
-        .is_some_and(|target| target.session_moved(workspace, session))
-        && let Some(wake) = &prefs.window_wake
+    if prefs.provider_target.as_mut().is_some_and(|target| {
+        target.session_moved(workspace, session)
+            | target.integrations_hint(workspace, Some(session))
+    }) && let Some(wake) = &prefs.window_wake
     {
         wake();
     }
@@ -147,6 +152,26 @@ pub(crate) fn connection_event(
         Event::Workspace(WorkspaceEvent::ProvidersChanged { workspace_id }) => {
             provider_changed(s, workspace_id)
         }
+        Event::Workspace(WorkspaceEvent::IntegrationsChanged {
+            workspace_id,
+            session_id,
+        }) => {
+            if s.screen
+                .launcher()
+                .is_some_and(|l| l.catalogue_watch.is_some())
+            {
+                return;
+            }
+            let mut prefs = s.settings.shared.borrow_mut();
+            if prefs
+                .provider_target
+                .as_mut()
+                .is_some_and(|target| target.integrations_hint(workspace_id, session_id.as_deref()))
+                && let Some(wake) = &prefs.window_wake
+            {
+                wake();
+            }
+        }
         Event::Workspace(WorkspaceEvent::SessionMoved {
             workspace_id,
             session_id,
@@ -159,6 +184,9 @@ pub(crate) fn connection_event(
                 s.settings.shared.borrow_mut().memory.transport(true);
                 provider_transport(s, true);
             }
+        }
+        Event::Reconnecting if affects_preferences => {
+            provider_transport(s, false);
         }
         Event::ConnectionLost => {
             if affects_preferences {

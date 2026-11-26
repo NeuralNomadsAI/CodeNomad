@@ -8,7 +8,7 @@ mod tests;
 #[cfg(not(target_arch = "wasm32"))]
 use super::view::Window;
 use crate::{State, backend::Backend};
-use codenomad_client::stream::{CatalogueChanges, ProviderMoves};
+use codenomad_client::stream::{CatalogueChanges, ProviderMoves, SessionCatalogueChanges};
 use rune::El;
 
 pub(super) struct Target {
@@ -22,6 +22,8 @@ pub(super) struct Target {
     online: bool,
     stats: [u64; 2],
     stats_status: Option<(bool, Option<u64>)>,
+    integrations: u64,
+    integrations_session: u64,
 }
 
 impl Target {
@@ -52,6 +54,8 @@ impl Target {
             online: true,
             stats: [0; 2],
             stats_status: None,
+            integrations: 0,
+            integrations_session: 0,
         })
     }
 
@@ -157,6 +161,62 @@ impl Target {
         self.authority
     }
 
+    pub(super) fn integrations_source(
+        &self,
+    ) -> (&Backend, &str, Option<&str>, u64, u64, u64, bool) {
+        (
+            &self.backend,
+            &self.workspace,
+            self.session.as_deref(),
+            self.authority,
+            self.integrations,
+            self.integrations_session,
+            self.online,
+        )
+    }
+
+    pub(super) fn integrations_catalogue(
+        &mut self,
+        changes: &CatalogueChanges,
+        session_changes: &SessionCatalogueChanges,
+    ) -> bool {
+        let mut changed = false;
+        if self.matches(changes) {
+            self.integrations = self.integrations.wrapping_add(1);
+            changed = true;
+        }
+        let session_matched = match session_changes {
+            SessionCatalogueChanges::None => false,
+            SessionCatalogueChanges::All => true,
+            SessionCatalogueChanges::Sessions(pairs) => self
+                .session
+                .as_ref()
+                .is_some_and(|ses| pairs.contains(&(self.workspace.clone(), ses.clone()))),
+        };
+        if session_matched {
+            self.integrations_session = self.integrations_session.wrapping_add(1);
+            changed = true;
+        }
+        changed
+    }
+
+    pub(super) fn integrations_hint(&mut self, workspace: &str, session: Option<&str>) -> bool {
+        if !self.is_workspace(workspace) {
+            return false;
+        }
+        match session {
+            None => {
+                self.integrations = self.integrations.wrapping_add(1);
+                true
+            }
+            Some(ses) if self.session.as_deref() == Some(ses) => {
+                self.integrations_session = self.integrations_session.wrapping_add(1);
+                true
+            }
+            Some(_) => false,
+        }
+    }
+
     pub(super) fn location(&self) -> (&str, Option<&str>) {
         (&self.workspace, self.session.as_deref())
     }
@@ -199,6 +259,24 @@ impl Target {
 
     fn invalidate(&mut self) {
         self.revision = self.revision.wrapping_add(1);
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture(backend: Backend, workspace: &str, session: Option<&str>) -> Self {
+        Self {
+            backend,
+            workspace: workspace.to_owned(),
+            session: session.map(str::to_owned),
+            owned_tab: false,
+            revision: 0,
+            observed: None,
+            authority: 0,
+            online: true,
+            stats: [0; 2],
+            stats_status: None,
+            integrations: 0,
+            integrations_session: 0,
+        }
     }
 }
 

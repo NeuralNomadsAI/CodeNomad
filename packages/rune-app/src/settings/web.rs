@@ -23,6 +23,7 @@ enum Section {
     Notifications,
     Shortcuts,
     Providers,
+    Integrations,
     Stats,
     Remote,
     ConfigFiles,
@@ -39,6 +40,7 @@ impl Section {
             Self::Notifications => "settings.nav.notifications",
             Self::Shortcuts => "settings.nav.hotkeys",
             Self::Providers => "settings.nav.providers",
+            Self::Integrations => "settings.nav.integrations",
             Self::Stats => "settings.usage.title",
             Self::Remote => "settings.nav.remote",
             Self::ConfigFiles => "settings.nav.configFiles",
@@ -73,6 +75,7 @@ pub(super) struct Panel {
     transcript_picker: Option<super::TranscriptRow>,
     announced_transcript_error: Option<&'static str>,
     catalog: Catalog,
+    integrations: super::integrations::Panel,
     scope: super::host_support::HostSupport,
     config_files: super::config_files::Editor,
     environment: super::advanced::environment::Editor,
@@ -163,8 +166,9 @@ impl Panel {
             self.section = Section::General;
             prefs.memory.show(self.shown && paired);
         }
+        let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
         let stats_changed = self.stats.poll(
-            prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
+            target,
             self.shown && paired && self.section == Section::Stats,
             wake,
             now,
@@ -172,7 +176,7 @@ impl Panel {
         );
         let providers_changed = if self.shown && paired && self.section == Section::Providers {
             self.catalog.poll(
-                prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
+                target,
                 now,
                 Some(wake),
                 tx,
@@ -182,7 +186,14 @@ impl Panel {
         } else {
             self.catalog.cancel_on_hide()
         };
-        stats_changed | providers_changed | leave
+        let integrations_changed = self.integrations.poll(
+            target,
+            self.shown && paired && self.section == Section::Integrations,
+            wake,
+            now,
+            tx,
+        );
+        stats_changed | providers_changed | integrations_changed | leave
     }
 
     pub fn shown(&self) -> bool {
@@ -375,6 +386,7 @@ pub(super) fn open_providers(s: &mut State) {
     panel.section = Section::Providers;
     panel.general.close();
     panel.behavior.close();
+    panel.integrations.suspend();
     panel.transcript_picker = None;
     panel.advanced_help = None;
     panel.recording_shortcut = false;
@@ -426,6 +438,7 @@ fn close_panel(panel: &mut Panel, prefs: &mut Preferences) {
     panel.advanced_help = None;
     panel.behavior.close();
     panel.catalog.suspend();
+    panel.integrations.suspend();
     panel.stats.suspend();
     prefs.hide_opencode();
     prefs.show_environment(false);
@@ -495,6 +508,7 @@ pub(super) fn view(
         Section::Notifications,
         Section::Shortcuts,
         Section::Providers,
+        Section::Integrations,
         Section::Stats,
         Section::Remote,
         Section::ConfigFiles,
@@ -618,6 +632,14 @@ pub(super) fn view(
                 prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online);
             providers::content(&panel.catalog, available, &mut layers, |s: &mut State| {
                 &mut s.settings.web.catalog
+            })
+        }
+        Section::Integrations => {
+            super::integrations::view(&panel.integrations, &mut layers, |s: &mut State| {
+                let paired = !crate::platform::pairing::required(s);
+                let panel = &mut s.settings.web;
+                (paired && panel.shown && panel.section == Section::Integrations)
+                    .then_some(&mut panel.integrations)
             })
         }
         Section::Conversation => col()
@@ -830,10 +852,19 @@ pub(super) fn view(
                 screen::action(&s.input_scope, close),
             )
             .key("close-preferences"),
-            close,
+            close_or_dismiss_overlay,
         )
         .children(layers),
     )
+}
+
+fn close_or_dismiss_overlay(s: &mut State) {
+    if s.settings.web.section == Section::Integrations
+        && s.settings.web.integrations.dismiss_overlay()
+    {
+        return;
+    }
+    close(s);
 }
 
 fn apply_web_section(panel: &mut Panel, prefs: &mut Preferences, section: Section) {
@@ -848,6 +879,9 @@ fn apply_web_section(panel: &mut Panel, prefs: &mut Preferences, section: Sectio
     }
     if panel.section != Section::Providers {
         panel.catalog.suspend();
+    }
+    if panel.section != Section::Integrations {
+        panel.integrations.suspend();
     }
     if panel.section != Section::Remote {
         panel.remote.close();

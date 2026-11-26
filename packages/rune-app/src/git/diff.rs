@@ -170,6 +170,31 @@ impl Default for Reader {
 }
 
 impl Reader {
+    pub fn retained_bytes(&self) -> usize {
+        let content = match &self.content {
+            Some(Diff::Text { before, after }) => {
+                before.len().saturating_add(after.len()).saturating_mul(2)
+            }
+            Some(Diff::Image {
+                mime,
+                before,
+                after,
+            }) => mime
+                .len()
+                .saturating_add(before.as_ref().map_or(0, Vec::len))
+                .saturating_add(after.as_ref().map_or(0, Vec::len)),
+            Some(Diff::Binary) | None => 0,
+        };
+        let images = self.images.iter().flatten().fold(0usize, |total, image| {
+            let decoded = rune_theme_codenomad::attachment::decoded_size(image)
+                .map_or(0, |[w, h]| {
+                    (w as usize).saturating_mul(h as usize).saturating_mul(4)
+                });
+            total.saturating_add(decoded)
+        });
+        content.saturating_add(images)
+    }
+
     pub fn clear(&mut self) {
         self.content = None;
         self.notice = None;

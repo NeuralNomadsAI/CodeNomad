@@ -31,6 +31,8 @@ impl Harness {
             online: true,
             stats: [0; 2],
             stats_status: None,
+            integrations: 0,
+            integrations_session: 0,
         };
         let wake = std::mem::replace(&mut s.wake, Arc::new(|| {}));
         Self {

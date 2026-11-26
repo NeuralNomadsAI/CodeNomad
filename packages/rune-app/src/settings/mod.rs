@@ -7,6 +7,7 @@ mod conversation;
 mod general;
 mod host_support;
 mod info;
+mod integrations;
 mod memory;
 pub(crate) mod notification_routing;
 mod notification_settings;
@@ -227,6 +228,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                     .map(|target| target.location().0),
             )
         });
+        let integration_changes = watch.map(|watch| watch.take_integration_changes());
         let (changes, stopped, generation) = observation.map_or_else(
             || (Default::default(), Default::default(), None),
             |(changes, stopped, generation)| (changes, stopped, Some(generation)),
@@ -249,6 +251,13 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .is_some_and(|(target, (changes, status))| {
                     target.stats_catalogue(changes, *status)
                 });
+            let integrations_changed = shared
+                .provider_target
+                .as_mut()
+                .zip(integration_changes.as_ref())
+                .is_some_and(|(target, (changes, session_changes))| {
+                    target.integrations_catalogue(changes, session_changes)
+                });
             if (old
                 != shared
                     .provider_target
@@ -256,7 +265,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                     .map(|target| target.revision())
                 || !matches!(changes, codenomad_client::stream::CatalogueChanges::None)
                 || bound
-                || stats_changed)
+                || stats_changed
+                || integrations_changed)
                 && let Some(wake) = &shared.window_wake
             {
                 wake();

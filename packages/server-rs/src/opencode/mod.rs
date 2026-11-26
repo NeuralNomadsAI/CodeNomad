@@ -538,6 +538,14 @@ pub async fn session_location(app: &App, id: &str) -> Result<Option<String>, Err
     record["location"]["directory"].as_str().map(|dir| Some(dir.to_owned())).ok_or_else(upstream_error)
 }
 
+pub async fn session_location_at(app: &App, endpoint: &Arc<Endpoint>, id: &str) -> Result<Option<String>, Error> {
+    let record = session_record_at(app, endpoint, id).await?;
+    if record["location"].get("workspaceID").is_some() {
+        return Ok(None);
+    }
+    record["location"]["directory"].as_str().map(|dir| Some(dir.to_owned())).ok_or_else(upstream_error)
+}
+
 pub async fn session_directory(app: &App, id: &str) -> Result<String, Error> {
     session_location(app, id).await?.ok_or_else(upstream_error)
 }
