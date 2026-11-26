@@ -18,7 +18,7 @@ pub struct Owner {
     pub menu: rune_theme_codenomad::action_menu::State<State>,
     pub shell_mode: bool,
     pub(super) draft_was_empty: std::cell::Cell<bool>,
-    pub(super) pasted_input: bool,
+    pub(super) suppress_bang_change: bool,
     sending: Option<Send>,
     pub send_error: bool,
     unconfirmed: Option<UnconfirmedPrompt>,
@@ -36,7 +36,7 @@ impl Default for Owner {
             menu: Default::default(),
             shell_mode: false,
             draft_was_empty: std::cell::Cell::new(true),
-            pasted_input: false,
+            suppress_bang_change: false,
             sending: None,
             send_error: false,
             unconfirmed: None,
@@ -271,7 +271,7 @@ fn repeats_uncertain_command(s: &State) -> bool {
 }
 
 pub(crate) fn command_held(s: &State) -> bool {
-    command_receipts::repeats(s)
+    command_receipts::repeats_unconfirmed(s)
         || repeats_uncertain_command(s)
         || s.command_receipts.full()
             && (s.composer.shell_mode
@@ -303,6 +303,7 @@ pub fn can_send(s: &State) -> bool {
         && !s.composer.attachments_missing
         && s.composer.unconfirmed.is_none()
         && !command_held(s)
+        && !command_receipts::repeats(s)
         && payload_ready
         && s.commands.as_ref().is_some_and(|tx| !tx.is_closed())
         && s.agent.as_ref().is_none_or(|a| !a.blocked())
@@ -339,6 +340,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             .as_ref()
             .is_some_and(|pipe| pipe.try_send(command).is_ok())
         {
+            s.command_receipts.reserve(id.clone(), attempt.clone());
             let recallable = super::recall::record(s, command_text, true);
             s.composer.sending = Some(Send {
                 id,
@@ -594,6 +596,9 @@ pub fn settle_pending(s: &mut State, outcome: PromptOutcome) {
 }
 
 pub fn reconcile(s: &mut State) {
+    let target = super::recall::command_target(s);
+    s.command_receipts
+        .reconcile_shell(target.as_ref(), &s.messages);
     if s.composer.unconfirmed.as_ref().is_some_and(|send| {
         s.messages
             .iter()

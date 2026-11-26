@@ -56,9 +56,8 @@ pub(super) async fn shell(
     attempt: &str,
     command: &str,
 ) -> Option<PromptOutcome> {
-    use crate::prompt::PromptError;
     let outcome = if admitted {
-        match backend.prompt_shell(command).await {
+        match backend.prompt_shell(attempt, command).await {
             Ok(()) => PromptOutcome::Confirmed(attempt.into()),
             Err(ShellError::Rejected) => PromptOutcome::Rejected,
             Err(ShellError::Unconfirmed) => PromptOutcome::Unconfirmed,

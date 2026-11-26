@@ -11,7 +11,7 @@ pub(in crate::settings) struct Row {
     pub overridden: bool,
     pub conflicts: Vec<(String, String)>,
     chords: Vec<Chord>,
-    scope: &'static str,
+    pub(super) scope: &'static str,
 }
 
 fn definitions() -> &'static [Value] {

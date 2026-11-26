@@ -34,7 +34,7 @@ pub(super) fn clear(s: &mut State, tx: &mut Tx) {
     if !can_clear(s) {
         return;
     }
-    s.composer.recall = None;
+    recall::clear_recalled(s);
     s.draft.undo_group(|edit| {
         edit.set_selection(0, edit.text.len());
         edit.insert("");
@@ -69,7 +69,9 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
         }),
     );
     queue.disabled = !can_queue(s);
-    queue.description = super::shortcuts::Action::Alternate.label(s);
+    queue.description = (!s.composer.shell_mode)
+        .then(|| super::shortcuts::Action::Alternate.label(s))
+        .flatten();
     let mut attach = Item::new(
         "attach",
         t(if s.composer.device.busy() {

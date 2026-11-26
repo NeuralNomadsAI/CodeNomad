@@ -234,7 +234,7 @@ fn editor(s: &State, compact: bool) -> El {
         .composer
         .shell_mode
         .then(|| t("promptInput.overlay.shellModeActive"));
-    let shell_status = shell_description.filter(|_| s.draft.text.is_empty());
+    let shell_status = shell_description.filter(|_| !compact && s.draft.text.is_empty());
     let placeholder = t(if s.composer.shell_mode {
         "promptInput.placeholder.shell"
     } else {
@@ -281,7 +281,7 @@ fn editor(s: &State, compact: bool) -> El {
             if super::long_paste::paste(s, content.text(), tx) {
                 return true;
             }
-            s.composer.pasted_input = true;
+            s.composer.suppress_bang_change = true;
             false
         });
     #[cfg(not(target_arch = "wasm32"))]
@@ -364,13 +364,10 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
     .build(kit(layout::dark()), layer);
 }
 
-pub(super) fn changed(s: &mut State, tx: &mut Tx) {
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(read) = &s.composer.device.clipboard {
-        read.set(false);
-    }
-    let pasted = std::mem::take(&mut s.composer.pasted_input);
-    if !pasted
+#[cfg(any(target_arch = "wasm32", test))]
+pub(super) fn enter_shell_from_edit(s: &mut State, tx: &mut Tx) -> bool {
+    let suppressed = std::mem::take(&mut s.composer.suppress_bang_change);
+    if !suppressed
         && !s.composer.shell_mode
         && !s.composer.editing_locked()
         && !s.composer.device.busy()
@@ -386,7 +383,23 @@ pub(super) fn changed(s: &mut State, tx: &mut Tx) {
         s.composer.draft_was_empty.set(true);
         layout::announce_polite(tx, t("promptInput.overlay.shellModeActive"));
         crate::workspace::draft_changed(s, tx);
+        return true;
+    }
+    false
+}
+
+pub(super) fn changed(s: &mut State, tx: &mut Tx) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(read) = &s.composer.device.clipboard {
+        read.set(false);
+    }
+    #[cfg(target_arch = "wasm32")]
+    if enter_shell_from_edit(s, tx) {
         return;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        s.composer.suppress_bang_change = false;
     }
     s.composer.draft_was_empty.set(s.draft.text.is_empty());
     if s.composer.shell_mode {
@@ -432,6 +445,9 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     use super::shortcuts::Action;
+    if matches!(event.edit_command(), Some('z' | 'y')) {
+        s.composer.suppress_bang_change = true;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     if event.edit_command() == Some('v') {
         super::clipboard::request(s, tx);
@@ -442,9 +458,9 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if tx.key_repeat()
         && ((s.composer.shell_mode
-            && (event.key == Key::Enter
-                || crate::settings::matches_shortcut(s, "prompt-send", event, tx)))
-            || (event.key == Key::Enter
+            && crate::settings::matches_shortcut(s, "prompt-send", event, tx))
+            || (!s.composer.shell_mode
+                && event.key == Key::Enter
                 && (s.composer.picker.open()
                     || s.composer.picker.selected_command(&s.draft.text).is_some())))
     {
@@ -523,14 +539,14 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         super::menu::clear(s, tx);
         true
     } else if s.composer.shell_mode {
-        if Action::Alternate.matches(s, event, tx) {
-            true
-        } else if crate::settings::matches_shortcut(s, "prompt-newline", event, tx) {
+        if crate::settings::matches_shortcut(s, "prompt-newline", event, tx) {
             s.draft.insert("\n");
             changed(s, tx);
             true
         } else if crate::settings::matches_shortcut(s, "prompt-send", event, tx) {
             send(s, tx, false);
+            true
+        } else if Action::Alternate.matches(s, event, tx) || event.key == Key::Enter {
             true
         } else {
             super::menu::jump_key(s, event, tx)

@@ -35,6 +35,7 @@ impl Draft {
     }
 
     pub fn resolve_shell(&self, edit: &TextEdit) -> Option<String> {
+        let max_bytes = codenomad_client::prompt_shell::MAX_SHELL_COMMAND_BYTES;
         let mut result = String::new();
         let mut cursor = 0;
         for literal in
@@ -51,15 +52,18 @@ impl Draft {
             } else {
                 inline
             };
-            let (inline, _) = long_paste::expand(inline.to_owned(), &self.attachments)?;
+            let remaining = max_bytes.checked_sub(result.len())?;
+            let (inline, _) =
+                long_paste::expand_bounded(inline.to_owned(), &self.attachments, remaining)?;
             result.push_str(&inline);
             if !literal.is_empty() {
-                result.push_str(edit.text.get(literal.clone())?);
+                let literal_text = edit.text.get(literal.clone())?;
+                if result.len().saturating_add(literal_text.len()) > max_bytes {
+                    return None;
+                }
+                result.push_str(literal_text);
             }
             cursor = literal.end;
-            if result.len() > codenomad_client::prompt_shell::MAX_SHELL_COMMAND_BYTES {
-                return None;
-            }
         }
         (!result.is_empty()).then_some(result)
     }

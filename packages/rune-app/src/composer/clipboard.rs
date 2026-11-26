@@ -64,6 +64,7 @@ pub fn request(s: &mut State, tx: &mut Tx) {
             && !content.text().is_empty()
             && !super::long_paste::paste(s, content.text(), tx)
         {
+            s.composer.suppress_bang_change = true;
             s.draft.paste(content.text());
             super::view::changed(s, tx);
         }

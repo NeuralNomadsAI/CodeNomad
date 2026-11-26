@@ -202,10 +202,32 @@ pub(crate) async fn run_with_reading(
             Some(Input::Command(Command::Shell { attempt, command })) => {
                 let admitted = reading.is_some()
                     || opened && !reader.parked && !reader.historical && wire.upstream.load(SeqCst);
-                let Some(outcome) =
-                    receipts::shell(&backend, &out, &wake, &wire, admitted, &attempt, &command)
-                        .await
-                else {
+                if !admitted {
+                    publish(
+                        &out,
+                        &wake,
+                        Event::PromptAcknowledged {
+                            attempted: attempt,
+                            outcome: PromptOutcome::Rejected,
+                        },
+                    )
+                    .await;
+                    continue;
+                }
+                let backend = backend.clone();
+                let out = out.clone();
+                let wake = wake.clone();
+                let wire = wire.clone();
+                let done = tx.clone();
+                runtime::spawn(async move {
+                    let outcome =
+                        receipts::shell(&backend, &out, &wake, &wire, true, &attempt, &command)
+                            .await;
+                    let _ = done.send(Input::ShellSettled(attempt, outcome)).await;
+                });
+            }
+            Some(Input::ShellSettled(attempt, outcome)) => {
+                let Some(outcome) = outcome else {
                     return Ok(());
                 };
                 if matches!(

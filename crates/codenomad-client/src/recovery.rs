@@ -18,6 +18,7 @@ use serde_json::Value;
 
 pub enum Input {
     Command(Command),
+    ShellSettled(String, Option<crate::transport::PromptOutcome>),
     Opened(u64),
     Native(u64, u64, Value),
     Workspace(u64, crate::transport::WorkspaceEvent),

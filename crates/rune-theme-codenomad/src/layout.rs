@@ -173,6 +173,63 @@ pub fn editor_menu<S: 'static>(
     }
     tx.popup_menu(menu, point, pick);
 }
+fn linear_luminance(c: rune::Color) -> f32 {
+    0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+}
+fn contrast_ratio(fg: rune::Color, bg: rune::Color) -> f32 {
+    let over = rune::Color {
+        r: fg.r * fg.a + bg.r * (1.0 - fg.a),
+        g: fg.g * fg.a + bg.g * (1.0 - fg.a),
+        b: fg.b * fg.a + bg.b * (1.0 - fg.a),
+        a: 1.0,
+    };
+    let l1 = linear_luminance(over);
+    let l2 = linear_luminance(bg);
+    (l1.max(l2) + 0.05) / (l1.min(l2) + 0.05)
+}
+fn readable_on(bg: rune::Color, candidates: &[rune::Color]) -> rune::Color {
+    if let Some(&color) = candidates
+        .iter()
+        .find(|&&color| contrast_ratio(color, bg) >= 4.5)
+    {
+        return color;
+    }
+    candidates
+        .iter()
+        .copied()
+        .max_by(|a, b| {
+            contrast_ratio(*a, bg)
+                .partial_cmp(&contrast_ratio(*b, bg))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(rune::Color::WHITE)
+}
+fn shell_send_colors(t: &crate::Tokens) -> (rune::Color, rune::Color) {
+    let fill = t.color("status-success");
+    let ink = readable_on(
+        fill,
+        &[
+            t.color("text-inverted"),
+            t.color("text-primary"),
+            rune::Color::WHITE,
+            rune::Color::BLACK,
+        ],
+    );
+    (fill, ink)
+}
+fn shell_status_ink(t: &crate::Tokens) -> rune::Color {
+    let field = t.color("surface-field");
+    readable_on(
+        field,
+        &[
+            t.color("status-success"),
+            t.color("text-secondary"),
+            t.color("text-primary"),
+            rune::Color::BLACK,
+            rune::Color::WHITE,
+        ],
+    )
+}
 const SHELL_PROMPT: rune::Icon = rune::Icon {
     name: "shell-prompt",
     view: 24.0,
@@ -186,8 +243,7 @@ pub fn shell_send_button_tx<S: 'static>(
 ) -> El {
     let t = tokens(dark());
     let mut theme = kit(dark()).clone();
-    let fill = t.color("status-success");
-    let ink = t.color("text-inverted");
+    let (fill, ink) = shell_send_colors(t);
     theme.c.bg_icon_button_contrast = fill;
     theme.c.bg_contrast = fill;
     theme.c.contrast_hover = fill;
@@ -237,7 +293,7 @@ pub fn composer_field_with_status(
         .w_full()
         .child(field)
         .fill(t.color("surface-field"));
-    if let Some(status) = shell_status {
+    if !compact && let Some(status) = shell_status {
         let sm = t.space(Space::Sm).px();
         let xs = t.space(Space::Xs).px();
         box_el = box_el.child(
@@ -248,7 +304,7 @@ pub fn composer_field_with_status(
                 .child(
                     rune::text(status)
                         .font(t.text(TextRole::Small))
-                        .color(t.color("status-success")),
+                        .color(shell_status_ink(t)),
                 ),
         );
     }
@@ -708,6 +764,41 @@ mod tests {
                 assert!(look.matches(rt.popup_menu().unwrap()));
                 rt.resolve_popup(None).unwrap();
             }
+        }
+    }
+    #[test]
+    fn shell_send_and_status_meet_wcag_contrast_in_every_palette() {
+        let check = |label: &str, dark: bool| {
+            let t = tokens(dark);
+            let (fill, ink) = shell_send_colors(t);
+            let send_ratio = contrast_ratio(ink, fill);
+            assert!(
+                send_ratio >= 4.5,
+                "{label}: shell send button contrast {send_ratio:.2} < 4.5"
+            );
+            let field = t.color("surface-field");
+            let status_ratio = contrast_ratio(shell_status_ink(t), field);
+            assert!(
+                status_ratio >= 4.5,
+                "{label}: shell status contrast {status_ratio:.2} < 4.5"
+            );
+        };
+        for dark in [false, true] {
+            check(
+                if dark {
+                    "default-dark"
+                } else {
+                    "default-light"
+                },
+                dark,
+            );
+            let high = crate::palettes::increased_contrast(None, dark).unwrap();
+            crate::palettes::with_palette(Some(high), || check("default-hc", dark));
+        }
+        for palette in crate::palettes::built_in() {
+            crate::palettes::with_palette(Some(palette), || check(palette.id, palette.dark));
+            let high = crate::palettes::increased_contrast(Some(palette), palette.dark).unwrap();
+            crate::palettes::with_palette(Some(high), || check(palette.id, palette.dark));
         }
     }
 }

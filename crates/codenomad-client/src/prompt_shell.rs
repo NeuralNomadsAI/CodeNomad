@@ -12,62 +12,110 @@ pub enum ShellError {
     UnconfirmedAuthenticationRequired,
 }
 
+fn classify_status(status: u16, pre_dispatch: bool, native: bool) -> Result<(), ShellError> {
+    if status == 204 {
+        Ok(())
+    } else if status == 401 {
+        if native {
+            if pre_dispatch {
+                Err(ShellError::PreDispatchAuthenticationRequired)
+            } else {
+                Err(ShellError::UnconfirmedAuthenticationRequired)
+            }
+        } else if pre_dispatch {
+            Err(ShellError::Rejected)
+        } else {
+            Err(ShellError::Unconfirmed)
+        }
+    } else if status == 408 {
+        Err(ShellError::Unconfirmed)
+    } else if (400..500).contains(&status) || status == 501 {
+        Err(ShellError::Rejected)
+    } else {
+        Err(ShellError::Unconfirmed)
+    }
+}
+
 impl Backend {
-    pub async fn prompt_shell(&self, command: &str) -> Result<(), ShellError> {
+    pub async fn prompt_shell(&self, id: &str, command: &str) -> Result<(), ShellError> {
         if !crate::history::valid_id(&self.workspace)
             || !crate::history::valid_id(&self.session)
+            || !crate::history::valid_id(id)
             || command.trim().is_empty()
             || command.len() > MAX_SHELL_COMMAND_BYTES
         {
             return Err(ShellError::Rejected);
         }
-        let mut request = self
-            .client
-            .post(format!(
+        let body = json!({ "id": id, "command": command });
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut request = self
+                .client
+                .post(format!(
+                    "{}workspaces/{}/instance/api/session/{}/shell",
+                    self.base, self.workspace, self.session
+                ))
+                .json(&body);
+            if let Some(directory) = &self.session_directory {
+                request = request.query(&[("directory", directory.as_str())]);
+            }
+            let response = request.send().await.map_err(|error| {
+                if error.is_connect() || error.is_builder() {
+                    ShellError::Rejected
+                } else {
+                    ShellError::Unconfirmed
+                }
+            })?;
+            let pre_dispatch = response
+                .headers()
+                .get(PRE_DISPATCH_HEADER)
+                .and_then(|value| value.to_str().ok())
+                == Some("1");
+            classify_status(response.status().as_u16(), pre_dispatch, true)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsCast;
+            use wasm_bindgen_futures::JsFuture;
+            use web_sys::{Headers, Request, RequestCredentials, RequestInit, Response};
+
+            let mut url = reqwest::Url::parse(&format!(
                 "{}workspaces/{}/instance/api/session/{}/shell",
                 self.base, self.workspace, self.session
             ))
-            .json(&json!({ "command": command }));
-        if let Some(directory) = &self.session_directory {
-            request = request.query(&[("directory", directory.as_str())]);
-        }
-        let response = request.send().await.map_err(|error| {
-            #[cfg(not(target_arch = "wasm32"))]
-            if error.is_connect() || error.is_builder() {
-                return ShellError::Rejected;
+            .map_err(|_| ShellError::Rejected)?;
+            if let Some(directory) = &self.session_directory {
+                url.query_pairs_mut()
+                    .append_pair("directory", directory.as_str());
             }
-            #[cfg(target_arch = "wasm32")]
-            if error.is_builder() {
-                return ShellError::Rejected;
-            }
-            ShellError::Unconfirmed
-        })?;
-        let pre_dispatch = response
-            .headers()
-            .get(PRE_DISPATCH_HEADER)
-            .and_then(|value| value.to_str().ok())
-            == Some("1");
-        let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            if cfg!(not(target_arch = "wasm32")) {
-                if pre_dispatch {
-                    Err(ShellError::PreDispatchAuthenticationRequired)
-                } else {
-                    Err(ShellError::UnconfirmedAuthenticationRequired)
-                }
-            } else if pre_dispatch {
-                Err(ShellError::Rejected)
-            } else {
-                Err(ShellError::Unconfirmed)
-            }
-        } else if status.is_success() {
-            Ok(())
-        } else if status == reqwest::StatusCode::REQUEST_TIMEOUT {
-            Err(ShellError::Unconfirmed)
-        } else if status.is_client_error() || status == reqwest::StatusCode::NOT_IMPLEMENTED {
-            Err(ShellError::Rejected)
-        } else {
-            Err(ShellError::Unconfirmed)
+            let window = web_sys::window().ok_or(ShellError::Rejected)?;
+            let headers = Headers::new().map_err(|_| ShellError::Rejected)?;
+            headers
+                .set("Content-Type", "application/json")
+                .map_err(|_| ShellError::Rejected)?;
+            let serialized = serde_json::to_string(&body).map_err(|_| ShellError::Rejected)?;
+            let init = RequestInit::new();
+            init.set_method("POST");
+            init.set_credentials(RequestCredentials::SameOrigin);
+            init.set_headers(&headers);
+            init.set_body(&serialized.into());
+            // Refuse redirects before the browser can forward a shell POST outside the session.
+            js_sys::Reflect::set(&init, &"redirect".into(), &"error".into())
+                .map_err(|_| ShellError::Rejected)?;
+            let request = Request::new_with_str_and_init(url.as_str(), &init)
+                .map_err(|_| ShellError::Rejected)?;
+            let response: Response = JsFuture::from(window.fetch_with_request(&request))
+                .await
+                .and_then(JsCast::dyn_into)
+                .map_err(|_| ShellError::Unconfirmed)?;
+            let pre_dispatch = response
+                .headers()
+                .get(PRE_DISPATCH_HEADER)
+                .ok()
+                .flatten()
+                .as_deref()
+                == Some("1");
+            classify_status(response.status(), pre_dispatch, false)
         }
     }
 }
@@ -185,17 +233,24 @@ mod tests {
             backend.session_directory = Some("/repo/wt".into());
 
             // Pre-send validation refuses without HTTP.
-            assert_eq!(backend.prompt_shell("   ").await, Err(ShellError::Rejected));
+            assert_eq!(
+                backend.prompt_shell("msg_1", "   ").await,
+                Err(ShellError::Rejected)
+            );
+            assert_eq!(
+                backend.prompt_shell("../bad", "ls").await,
+                Err(ShellError::Rejected)
+            );
             assert_eq!(
                 backend
-                    .prompt_shell(&"x".repeat(MAX_SHELL_COMMAND_BYTES + 1))
+                    .prompt_shell("msg_1", &"x".repeat(MAX_SHELL_COMMAND_BYTES + 1))
                     .await,
                 Err(ShellError::Rejected)
             );
             assert!(captured.lock().unwrap().is_empty());
 
-            // 204 success with directory query and exact JSON payload.
-            assert_eq!(backend.prompt_shell("git status").await, Ok(()));
+            // 204 success with directory query and exact JSON payload including attempt id.
+            assert_eq!(backend.prompt_shell("msg_1", "git status").await, Ok(()));
             {
                 let requests = captured.lock().unwrap();
                 assert_eq!(requests.len(), 1);
@@ -203,40 +258,50 @@ mod tests {
                     requests[0].0,
                     "/workspaces/ws-1/instance/api/session/ses_1/shell?directory=%2Frepo%2Fwt"
                 );
-                assert_eq!(requests[0].1, json!({ "command": "git status" }));
+                assert_eq!(
+                    requests[0].1,
+                    json!({ "id": "msg_1", "command": "git status" })
+                );
             }
+
+            // Unexpected 200 (e.g. login page) must NOT confirm a 204-only shell endpoint.
+            code.store(200, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                backend.prompt_shell("msg_200", "echo 200").await,
+                Err(ShellError::Unconfirmed)
+            );
 
             // HTTP status classification, including pre-dispatch vs unmarked 401 and 408 timeout.
             code.store(400, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
-                backend.prompt_shell("echo 400").await,
+                backend.prompt_shell("msg_400", "echo 400").await,
                 Err(ShellError::Rejected)
             );
             code.store(408, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
-                backend.prompt_shell("echo 408").await,
+                backend.prompt_shell("msg_408", "echo 408").await,
                 Err(ShellError::Unconfirmed)
             );
             code.store(501, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
-                backend.prompt_shell("echo 501").await,
+                backend.prompt_shell("msg_501", "echo 501").await,
                 Err(ShellError::Rejected)
             );
             code.store(401, std::sync::atomic::Ordering::SeqCst);
             pre_dispatch.store(false, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
-                backend.prompt_shell("echo 401-unmarked").await,
+                backend.prompt_shell("msg_401u", "echo 401-unmarked").await,
                 Err(ShellError::UnconfirmedAuthenticationRequired)
             );
             pre_dispatch.store(true, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
-                backend.prompt_shell("echo 401-pre").await,
+                backend.prompt_shell("msg_401p", "echo 401-pre").await,
                 Err(ShellError::PreDispatchAuthenticationRequired)
             );
             pre_dispatch.store(false, std::sync::atomic::Ordering::SeqCst);
             code.store(500, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
-                backend.prompt_shell("echo 500").await,
+                backend.prompt_shell("msg_500", "echo 500").await,
                 Err(ShellError::Unconfirmed)
             );
             server.abort();
@@ -253,7 +318,7 @@ mod tests {
             backend.workspace = "ws-1".into();
             backend.session = "ses_1".into();
             assert_eq!(
-                backend.prompt_shell("echo offline").await,
+                backend.prompt_shell("msg_off", "echo offline").await,
                 Err(ShellError::Rejected)
             );
         });
@@ -301,5 +366,26 @@ mod tests {
         .unwrap();
         assert!(empty_out.completed);
         assert_eq!(empty_out.body, "true");
+
+        // Many 1 MiB shell outputs stay bounded so the resident history check never rejects the page.
+        let large = "a".repeat(1024 * 1024);
+        let rows: Vec<_> = (0..10)
+            .map(|i| {
+                Arc::new(
+                    crate::history::decode_message(&json!({
+                        "id": format!("msg_big_{i}"),
+                        "type": "shell",
+                        "shellID": format!("sh_big_{i}"),
+                        "command": "cat big.log",
+                        "status": "exited",
+                        "exit": 0,
+                        "output": { "output": large, "cursor": large.len(), "size": large.len(), "truncated": true },
+                        "time": { "created": 10 + i, "completed": 11 + i }
+                    }))
+                    .unwrap(),
+                )
+            })
+            .collect();
+        assert!(crate::history::check(&rows).is_ok());
     }
 }

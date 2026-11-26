@@ -101,6 +101,14 @@ fn compact(s: &mut State, text: &str) -> bool {
 }
 
 pub(super) fn expand(text: String, parts: &[Attachment]) -> Option<(String, Vec<Range<usize>>)> {
+    expand_bounded(text, parts, codenomad_client::prompt::MAX_BODY_BYTES)
+}
+
+pub(super) fn expand_bounded(
+    text: String,
+    parts: &[Attachment],
+    max_bytes: usize,
+) -> Option<(String, Vec<Range<usize>>)> {
     let mut result = String::new();
     let mut offset = 0;
     let mut spans = Vec::new();
@@ -110,8 +118,11 @@ pub(super) fn expand(text: String, parts: &[Attachment]) -> Option<(String, Vec<
         ) else {
             continue;
         };
-        if result.len() + (range.start - offset) + pasted.len()
-            > codenomad_client::prompt::MAX_BODY_BYTES
+        if result
+            .len()
+            .saturating_add(range.start - offset)
+            .saturating_add(pasted.len())
+            > max_bytes
         {
             return None;
         }
@@ -121,9 +132,9 @@ pub(super) fn expand(text: String, parts: &[Attachment]) -> Option<(String, Vec<
         offset = range.end;
     }
     if offset == 0 {
-        return Some((text, spans));
+        return (text.len() <= max_bytes).then_some((text, spans));
     }
-    if result.len() + (text.len() - offset) > codenomad_client::prompt::MAX_BODY_BYTES {
+    if result.len().saturating_add(text.len() - offset) > max_bytes {
         return None;
     }
     result.push_str(&text[offset..]);

@@ -218,6 +218,21 @@ pub(super) fn replace_edit(s: &mut State, mut edit: TextEdit) {
     s.draft = edit;
 }
 
+pub(super) fn clear_recalled(s: &mut State) {
+    if let Some(recall) = s.composer.recall.take()
+        && s.composer.shell_mode
+    {
+        for part in recall.draft.attachments {
+            if !matches!(part, Attachment::Pasted { .. })
+                && !s.composer.draft.attachments.contains(&part)
+            {
+                s.composer.draft.attachments.push(part);
+            }
+        }
+        s.composer.attachments_missing |= recall.missing;
+    }
+}
+
 pub(crate) fn available(s: &State) -> bool {
     scope(s).is_some_and(|(project, tab, session)| {
         s.prompt_history

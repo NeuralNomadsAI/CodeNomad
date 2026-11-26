@@ -213,7 +213,7 @@ fn pickers_and_alternate_delivery_are_disabled_in_shell_mode() {
     assert!(rt.find("refresh-command-catalogue").is_none());
     assert!(can_send(&rt.state));
 
-    // More actions menu disables alternate delivery in shell mode even while Streaming.
+    // More actions menu disables alternate delivery and hides its shortcut hint in shell mode.
     click(&mut rt, "composer-more:trigger");
     let tree = rt.accessibility_json();
     let queue = node(&tree, "composer-more:item:queue").expect("queue item");
@@ -224,6 +224,7 @@ fn pickers_and_alternate_delivery_are_disabled_in_shell_mode() {
             .iter()
             .any(|state| state == "disabled")
     );
+    assert!(queue["description"].is_null());
 }
 
 #[test]
@@ -354,21 +355,33 @@ fn switching_conversation_or_tab_resets_shell_mode() {
 fn web_edit_bang_enters_shell_mode_but_paste_and_delete_to_bang_do_not() {
     let (mut rt, _rx) = chat_runtime();
 
-    // Web bridge inserts '!' directly into the editor and invokes on_input_change.
+    // Desktop clipboard paste / direct changed() must never arm shell mode even when pasting '!'.
+    rt.update(|s, tx| {
+        s.draft.paste("!");
+        super::view::changed(s, tx);
+    });
+    rt.frame(0.0);
+    assert!(!rt.state.composer.shell_mode);
+    assert_eq!(rt.state.draft.text, "!");
+
+    // Web bridge inserts '!' directly into the editor and invokes enter_shell_from_edit.
+    rt.update(|s, _| s.draft.clear());
+    rt.frame(0.0);
     rt.update(|s, tx| {
         s.draft.insert("!");
-        super::view::changed(s, tx);
+        assert!(super::view::enter_shell_from_edit(s, tx));
     });
     rt.frame(0.0);
     assert!(rt.state.composer.shell_mode);
     assert!(rt.state.draft.text.is_empty());
 
-    // Exit shell mode, then simulate pasting "!" into an empty composer: stays literal.
+    // Exit shell mode, then simulate pasting or undoing "!" on web: stays literal.
     rt.update(|s, _| s.composer.exit_shell_mode());
     rt.frame(0.0);
     rt.update(|s, tx| {
-        s.composer.pasted_input = true;
+        s.composer.suppress_bang_change = true;
         s.draft.insert("!");
+        assert!(!super::view::enter_shell_from_edit(s, tx));
         super::view::changed(s, tx);
     });
     rt.frame(0.0);
@@ -382,6 +395,7 @@ fn web_edit_bang_enters_shell_mode_but_paste_and_delete_to_bang_do_not() {
     rt.frame(0.0);
     rt.update(|s, tx| {
         s.draft = TextEdit::new("!");
+        assert!(!super::view::enter_shell_from_edit(s, tx));
         super::view::changed(s, tx);
     });
     rt.frame(0.0);
@@ -401,25 +415,6 @@ fn shell_mode_honors_prompt_submit_on_enter_and_ignores_alternate_send() {
     send_key(&mut rt, Key::Text("echo hi".into()), Mods::default());
     assert!(rt.state.composer.shell_mode);
 
-    // Alt+Enter (alternate delivery) must not execute in shell mode.
-    send_key(
-        &mut rt,
-        Key::Enter,
-        Mods {
-            alt: true,
-            ..Mods::default()
-        },
-    );
-    assert!(rx.try_recv().is_err());
-    assert!(rt.state.composer.shell_mode);
-
-    // With promptSubmitOnEnter=false, plain Enter inserts a newline instead of executing.
-    send_key(&mut rt, Key::Enter, Mods::default());
-    assert!(rx.try_recv().is_err());
-    assert!(rt.state.composer.shell_mode);
-    assert_eq!(rt.state.draft.text, "echo hi\n");
-
-    // Mod+Enter sends the shell command.
     let primary = if cfg!(target_os = "macos") {
         Mods {
             cmd: true,
@@ -432,10 +427,123 @@ fn shell_mode_honors_prompt_submit_on_enter_and_ignores_alternate_send() {
             ..Mods::default()
         }
     };
+
+    // Primary+Shift+Enter (cross-platform alternate delivery) must not execute in shell mode.
+    send_key(
+        &mut rt,
+        Key::Enter,
+        Mods {
+            shift: true,
+            ..primary
+        },
+    );
+    #[cfg(not(target_os = "macos"))]
+    send_key(
+        &mut rt,
+        Key::Enter,
+        Mods {
+            alt: true,
+            ..Mods::default()
+        },
+    );
+    assert!(rx.try_recv().is_err());
+    assert!(rt.state.composer.shell_mode);
+    assert_eq!(rt.state.draft.text, "echo hi");
+
+    // With promptSubmitOnEnter=false, plain Enter inserts a newline instead of executing.
+    send_key(&mut rt, Key::Enter, Mods::default());
+    assert!(rx.try_recv().is_err());
+    assert!(rt.state.composer.shell_mode);
+    assert_eq!(rt.state.draft.text, "echo hi\n");
+
+    // Mod+Enter sends the shell command.
     send_key(&mut rt, Key::Enter, primary);
     let Command::Shell { command, .. } = rx.try_recv().expect("shell command on Mod+Enter") else {
         panic!("expected Command::Shell");
     };
     assert_eq!(command, "echo hi");
     assert!(!rt.state.composer.shell_mode);
+}
+
+#[test]
+fn in_flight_shell_reserves_command_and_reconciles_from_history_and_clear_keeps_attachments() {
+    let (mut rt, rx) = chat_runtime();
+    rt.update(|s, _| {
+        s.composer.shell_mode = true;
+        s.draft.replace_text("echo once");
+        s.composer.draft.attach(Attachment::Skill {
+            id: "review".into(),
+            name: "Review".into(),
+        });
+    });
+    rt.frame(0.0);
+
+    // Enqueue reserves the session/command pair immediately across the window.
+    rt.update(|s, tx| send(s, tx, false));
+    let Command::Shell { attempt, command } = rx.try_recv().expect("shell command") else {
+        panic!("expected Command::Shell");
+    };
+    assert_eq!(command, "echo once");
+
+    // Simulate another tab on the same session trying to dispatch the same command while in-flight.
+    rt.update(|s, _| {
+        s.composer.shell_mode = true;
+        s.draft.replace_text("echo once");
+    });
+    assert!(super::command_receipts::repeats(&rt.state));
+    assert!(!super::actions::command_held(&rt.state));
+    assert!(!can_send(&rt.state));
+
+    // Unconfirmed upgrades the reservation to an unconfirmed hold, then matching shell row settles it.
+    acknowledge(&mut rt.state, &attempt, PromptOutcome::Unconfirmed);
+    assert!(super::actions::command_held(&rt.state));
+    rt.update(|s, _| {
+        s.messages.push(std::sync::Arc::new(crate::Message {
+            id: attempt.clone(),
+            role: "shell".into(),
+            completed: true,
+            body: "$ echo once\nonce".into(),
+            usage: None,
+            parts: Vec::new(),
+        }));
+        super::actions::reconcile(s);
+    });
+    assert!(!super::command_receipts::repeats(&rt.state));
+    assert!(!super::actions::command_held(&rt.state));
+    assert!(can_send(&rt.state));
+
+    // Recalling in shell mode then clearing (Ctrl+K) preserves parked non-pasted attachments.
+    rt.update(|s, _| {
+        s.draft.clear();
+        s.composer.shell_mode = true;
+        assert_eq!(s.composer.draft.attachments.len(), 1);
+    });
+    rt.frame(0.0);
+    send_key(&mut rt, Key::Up, Mods::default());
+    assert_eq!(rt.state.draft.text, "echo once");
+    assert!(rt.state.composer.recall.is_some());
+    rt.update(|s, tx| super::menu::clear(s, tx));
+    assert!(rt.state.draft.text.is_empty());
+    assert!(rt.state.composer.recall.is_none());
+    assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+    assert!(matches!(
+        rt.state.composer.draft.attachments[0],
+        Attachment::Skill { .. }
+    ));
+
+    // Repeated large paste placeholders fail fast under the 128 KiB shell limit.
+    rt.update(|s, _| {
+        s.composer.draft.attach(Attachment::Pasted {
+            id: 9,
+            text: std::sync::Arc::from("x".repeat(40 * 1024)),
+        });
+        s.draft = TextEdit::new("[pasted #9] [pasted #9] [pasted #9] [pasted #9]");
+    });
+    assert!(
+        rt.state
+            .composer
+            .draft
+            .resolve_shell(&rt.state.draft)
+            .is_none()
+    );
 }
