@@ -1259,16 +1259,7 @@ fn read_shared_delivers_session_moved_before_closed_after_overflow() {
             let state = Arc::new(State::observing_preferences(ev_tx, Arc::new(|| {})));
             // Capacity 1 lets the first Opened sit in `out` while we overflow the hub queue.
             let (out, inbox) = bounded(1);
-            let guard = Arc::new(backend.client.track_stream(&backend.client_id));
-            let reader_backend = backend.clone();
-            let reader_out = out.clone();
-            let reader_state = state.clone();
-            let reader = tokio::spawn(async move {
-                let res =
-                    read_shared(&reader_backend, 1, &reader_out, &reader_state, guard, true).await;
-                let _ = reader_out.send(Input::Closed(1)).await;
-                res
-            });
+            crate::stream::start(backend.clone(), 1, out, state.clone());
 
             // Wait until the subscriber attaches and fills `out` (capacity 1) with Input::Opened(1).
             while inbox.is_empty() {
@@ -1320,7 +1311,7 @@ fn read_shared_delivers_session_moved_before_closed_after_overflow() {
                 saw_closed,
                 "Input::Closed must follow preserved session.moved"
             );
-            assert!(reader.await.unwrap().is_err());
+            state.wait_stopped().await;
             shared.finish(hub, false);
         },
     );

@@ -212,6 +212,7 @@ impl State {
         self.version.load(SeqCst) == version
             && self.alive.load(SeqCst)
             && !self.is_stream_closed()
+            && !self.is_placement_changed()
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)
     }
@@ -219,6 +220,7 @@ impl State {
         self.history_revision.load(SeqCst) == revision
             && self.alive.load(SeqCst)
             && !self.is_stream_closed()
+            && !self.is_placement_changed()
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)
     }
