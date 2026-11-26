@@ -29,6 +29,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub const COOKIE: &str = "__Host-codenomad_device";
+pub fn clear_cookie() -> String {
+    format!("{COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0")
+}
 const INVALID: &str = "This pairing link is invalid, already used or expired";
 type Fail = Box<dyn std::error::Error>;
 #[derive(Clone, Serialize, Deserialize)]
@@ -142,6 +145,10 @@ pub(crate) fn open_for_test_with_policy(
         Devices::open_with_policy(data.join("remote-control-devices.json"), origin, origins, false, disabled_by_admin)
             .unwrap(),
     )
+}
+#[cfg(test)]
+pub(crate) fn open_ingress_for_test(data: &Path, origin: String) -> Lock<Devices> {
+    Lock::new(Devices::open(data.join("remote-control-devices.json"), origin.clone(), vec![origin], true).unwrap())
 }
 /// Expired pairings and sessions leave the registry within 250 ms.
 pub async fn sweep(app: Shared, stop: CancellationToken) {

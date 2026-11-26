@@ -101,6 +101,22 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
         })
     })
 }
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn has_wake_lock_eligible_work(s: &State) -> bool {
+    if !s.screen.is_launcher()
+        && super::cache::has_wake_lock_eligible_work(&s.phase, s.agent.as_ref())
+    {
+        return true;
+    }
+    s.workspace.as_ref().is_some_and(|ui| {
+        ui.entries.iter().any(|entry| {
+            entry
+                .cache
+                .as_ref()
+                .is_some_and(Cache::has_wake_lock_eligible_work)
+        })
+    })
+}
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
     mission_lifecycle: crate::missions::Lifecycle,
@@ -120,6 +136,18 @@ pub struct Ui {
     closed: Vec<Workspace>,
 }
 impl Ui {
+    #[cfg(test)]
+    pub(crate) fn mark_ready(&mut self) {
+        self.ready = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn with_cached_git(&mut self, key: &str, f: impl FnOnce(&mut crate::git::Binding)) {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.key == key)
+            && let Some(cache) = entry.cache.as_mut()
+        {
+            f(cache.git_mut());
+        }
+    }
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key
     }

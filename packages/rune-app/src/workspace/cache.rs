@@ -32,6 +32,11 @@ pub(super) struct Cache {
     status_usage: crate::shell::status_usage::Panel,
 }
 impl Cache {
+    #[cfg(test)]
+    pub(super) fn git_mut(&mut self) -> &mut crate::git::Binding {
+        &mut self.git
+    }
+
     pub(super) fn observes_notifications(&self, allow_running: bool) -> bool {
         self.agent
             .as_ref()
@@ -257,6 +262,10 @@ impl Cache {
     pub fn status(&self) -> Option<rune_theme_codenomad::tabs::Status> {
         status(&self.phase, self.agent.as_ref())
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn has_wake_lock_eligible_work(&self) -> bool {
+        has_wake_lock_eligible_work(&self.phase, self.agent.as_ref())
+    }
     pub fn take(s: &mut State) -> Self {
         Self {
             agent: s.agent.take(),
@@ -330,5 +339,16 @@ pub(super) fn status(
         Some(Status::Unavailable)
     } else {
         None
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn has_wake_lock_eligible_work(phase: &Phase, agent: Option<&agent::Ui>) -> bool {
+    if agent.is_some_and(|a| !a.ids().is_empty()) {
+        return false;
+    }
+    match agent {
+        Some(agent) => agent.online && (agent.running || *phase == Phase::Streaming),
+        None => *phase == Phase::Streaming,
     }
 }

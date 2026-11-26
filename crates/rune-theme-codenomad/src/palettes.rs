@@ -23,6 +23,10 @@ impl Palette {
         }
     }
 
+    pub(crate) fn is_high_contrast(&self) -> bool {
+        self.high_contrast
+    }
+
     pub(crate) fn theme(&self) -> &Theme {
         self.theme.get_or_init(|| {
             let mode = if self.dark { "dark" } else { "light" };

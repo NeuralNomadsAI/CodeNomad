@@ -38,7 +38,8 @@ pub fn prose<S: 'static>(
         .link(t.color("accent-primary"))
         .link_hover(t.color("accent-hover"))
         .link_underline(rune::Color::TRANSPARENT)
-        .syntax_highlight(highlight);
+        .syntax_highlight(highlight)
+        .diagram_max_items(crate::document_reader::MERMAID_MAX_ITEMS);
     let source = literal_breaks_with(source, truncated).into_owned();
     let matches: Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)> = match query {
         Some(q) => prose_ranges(&source, q, 512)
@@ -317,10 +318,11 @@ pub fn link_menu<S: 'static>(
     open: &str,
     copy: &str,
     help: Option<String>,
+    look: crate::layout::PopupMenuLook,
     pick: impl FnOnce(&mut S, Option<&str>, &mut rune::Tx) + 'static,
 ) {
     use rune::{PopupItem, PopupMenu};
-    let mut menu = PopupMenu::new();
+    let mut menu = PopupMenu::new().style(look.into_style());
     if let Some(help) = help {
         menu = menu.item(PopupItem::new("link-help", help).enabled(false));
     }

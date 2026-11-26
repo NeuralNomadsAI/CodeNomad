@@ -229,6 +229,10 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
     assert(rect && rect.width && rect.height)
     return {x:Math.round(rect.x + rect.width / 2),y:Math.round(rect.y + rect.height / 2)}
   }
+  const fieldCenter = async () => {
+    const field = await fieldRect()
+    return {x:Math.round(field.x + field.width / 2),y:Math.round(field.y + field.height / 2)}
+  }
   const rowSample = () => page.evaluate(() => [...document.querySelectorAll('[data-rune-a11y] p')]
     .filter(n => n.textContent.startsWith('Mobile history row '))
     .map(n => [n.textContent,Math.round(n.getBoundingClientRect().top)])
@@ -298,7 +302,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       return {moved,before,after,frameP95Ms:frames[Math.floor(frames.length*0.95)]}
     })
     await probe('touchEditor', async () => {
-      const focus = await center(composer)
+      const focus = await fieldCenter()
       await page.touchscreen.tap(focus.x,focus.y)
       await editor.waitFor({state:'attached',timeout:2500})
       blank=await capture(inkClip(await fieldRect()))
@@ -346,7 +350,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       paintedDraft=await capture(clip)
       await page.keyboard.press('Tab')
       await page.waitForFunction(()=>!document.querySelector('textarea:focus')&&[...document.querySelectorAll('textarea')].every(el=>!el.value))
-      const point=await center(composer)
+      const point=await fieldCenter()
       await page.touchscreen.tap(point.x,point.y)
       await waitValue(draft)
       let refocused

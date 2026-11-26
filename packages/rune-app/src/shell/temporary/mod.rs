@@ -45,7 +45,7 @@ struct PendingKeep {
 
 struct PendingDiscard {
     generation: u64,
-    stashed: StashedTemporary,
+    stashed: Box<StashedTemporary>,
     quiet: bool,
     rx: Receiver<Result<(), TemporaryError>>,
 }
@@ -59,20 +59,20 @@ struct PendingReconcile {
 
 #[derive(Default)]
 pub(crate) struct Host {
-    dialog: Option<CloseDialog>,
+    dialog: Option<Box<CloseDialog>>,
     viewport: (f32, f32),
     generation: u64,
     reconcile_epoch: u64,
     pending_return_focus: Option<String>,
-    creating: Option<PendingCreate>,
+    creating: Option<Box<PendingCreate>>,
     stale_creates: Vec<PendingCreate>,
     pending_abandons: Vec<(Backend, String, Option<String>)>,
-    keeping: Option<PendingKeep>,
-    discarding: Option<PendingDiscard>,
-    pending_restore: Option<StashedTemporary>,
+    keeping: Option<Box<PendingKeep>>,
+    discarding: Option<Box<PendingDiscard>>,
+    pending_restore: Option<Box<StashedTemporary>>,
     stopped_queue: Vec<(String, bool, bool)>,
     pending_temporary_folders: Option<Vec<String>>,
-    reconcile_folders: Option<PendingReconcile>,
+    reconcile_folders: Option<Box<PendingReconcile>>,
 }
 
 impl Host {
@@ -89,16 +89,16 @@ impl Host {
 
     pub(crate) fn stashed_for_snapshot(&self) -> Option<&StashedTemporary> {
         self.discarding
-            .as_ref()
-            .map(|pending| &pending.stashed)
-            .or(self.pending_restore.as_ref())
+            .as_deref()
+            .map(|pending| pending.stashed.as_ref())
+            .or(self.pending_restore.as_deref())
     }
 
     pub(crate) fn stashed_for_snapshot_mut(&mut self) -> Option<&mut StashedTemporary> {
         self.discarding
-            .as_mut()
-            .map(|pending| &mut pending.stashed)
-            .or(self.pending_restore.as_mut())
+            .as_deref_mut()
+            .map(|pending| pending.stashed.as_mut())
+            .or(self.pending_restore.as_deref_mut())
     }
 
     pub(crate) fn cancel_for_auth(&mut self) {
@@ -106,7 +106,7 @@ impl Host {
         if let Some(pending) = self.creating.take()
             && self.stale_creates.len() < 8
         {
-            self.stale_creates.push(pending);
+            self.stale_creates.push(*pending);
         }
         self.keeping = None;
         self.stopped_queue.clear();
@@ -264,12 +264,12 @@ pub(crate) fn trigger_reconnect_reconcile(s: &mut State) {
             wake();
         }
     });
-    s.temporary.reconcile_folders = Some(PendingReconcile {
+    s.temporary.reconcile_folders = Some(Box::new(PendingReconcile {
         connection_generation,
         epoch,
         backend,
         rx,
-    });
+    }));
 }
 
 pub(crate) fn can_create(s: &State) -> bool {
@@ -319,12 +319,12 @@ pub(crate) fn create(s: &mut State, _tx: &mut Tx) -> bool {
             }
         }
     });
-    s.temporary.creating = Some(PendingCreate {
+    s.temporary.creating = Some(Box::new(PendingCreate {
         generation,
         connection_generation,
         backend,
         rx,
-    });
+    }));
     true
 }
 
@@ -416,12 +416,12 @@ fn open_dialog(s: &mut State, tab_key: &str, captured_focus: Option<String>, tx:
     let return_focus = captured_focus.or_else(|| capture_return_focus(s, tab_key, tx));
     super::Panels::dismiss_outside(s, tx);
     let scope = s.input_scope.clone();
-    s.temporary.dialog = Some(CloseDialog {
+    s.temporary.dialog = Some(Box::new(CloseDialog {
         scope,
         tab_key: tab_key.to_owned(),
         return_focus,
         close_control: WindowCloseState::default(),
-    });
+    }));
     tx.focus_when_shown(theme::CANCEL, true);
     tx.instant();
 }
@@ -489,7 +489,7 @@ fn start_keep(
             wake();
         }
     });
-    s.temporary.keeping = Some(PendingKeep {
+    s.temporary.keeping = Some(Box::new(PendingKeep {
         generation,
         backend,
         tab_key: info.tab_key,
@@ -498,7 +498,7 @@ fn start_keep(
         server_id: info.server_id,
         close_after,
         rx,
-    });
+    }));
     tx.instant();
     true
 }
@@ -528,12 +528,12 @@ fn start_discard(
             wake();
         }
     });
-    s.temporary.discarding = Some(PendingDiscard {
+    s.temporary.discarding = Some(Box::new(PendingDiscard {
         generation,
-        stashed,
+        stashed: Box::new(stashed),
         quiet,
         rx,
-    });
+    }));
     tx.instant();
 }
 
@@ -637,7 +637,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         changed = true;
     }
     if let Some(stashed) = s.temporary.pending_restore.take() {
-        workspace::restore_stashed(s, stashed, false, tx);
+        workspace::restore_stashed(s, *stashed, false, tx);
         changed = true;
     }
     if !s.temporary.stopped_queue.is_empty() {
@@ -767,17 +767,17 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         .as_ref()
         .and_then(|pending| pending.rx.try_recv().ok())
     {
-        let pending = s.temporary.discarding.take().unwrap();
+        let pending = *s.temporary.discarding.take().unwrap();
         if pending.generation == s.temporary.generation {
             changed = true;
             match result {
                 Ok(()) => {
                     s.temporary.reconcile_epoch = s.temporary.reconcile_epoch.wrapping_add(1);
-                    workspace::finish_discarded(s, pending.stashed, false, false, tx);
+                    workspace::finish_discarded(s, *pending.stashed, false, false, tx);
                 }
                 Err(TemporaryError::Unauthorized) => {
                     let backend = pending.stashed.backend.clone();
-                    workspace::restore_stashed(s, pending.stashed, true, tx);
+                    workspace::restore_stashed(s, *pending.stashed, true, tx);
                     let _ = crate::settings::authentication_required(s, &backend);
                 }
                 Err(err) if err.is_not_temporary() => {
@@ -797,9 +797,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     let mut stashed = pending.stashed;
                     stashed.clear_temporary();
                     if workspace::stashed_has_in_memory_state(s, &stashed) {
-                        workspace::restore_stashed(s, stashed, !pending.quiet, tx);
+                        workspace::restore_stashed(s, *stashed, !pending.quiet, tx);
                     } else {
-                        workspace::finish_discarded(s, stashed, true, true, tx);
+                        workspace::finish_discarded(s, *stashed, true, true, tx);
                     }
                 }
                 Err(err) if err.is_not_found() => {
@@ -812,9 +812,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         emit_temporary_error(s, "temporaryInstance.discard.failedTitle", &err);
                     }
                     if workspace::stashed_has_in_memory_state(s, &pending.stashed) {
-                        workspace::restore_stashed(s, pending.stashed, !pending.quiet, tx);
+                        workspace::restore_stashed(s, *pending.stashed, !pending.quiet, tx);
                     } else {
-                        workspace::finish_discarded(s, pending.stashed, true, false, tx);
+                        workspace::finish_discarded(s, *pending.stashed, true, false, tx);
                     }
                 }
                 Err(err) => {
@@ -823,7 +823,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     let still_temporary = pending.stashed.is_temporary();
                     workspace::restore_stashed(
                         s,
-                        pending.stashed,
+                        *pending.stashed,
                         !pending.quiet || !still_temporary,
                         tx,
                     );

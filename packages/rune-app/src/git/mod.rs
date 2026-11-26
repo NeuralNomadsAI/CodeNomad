@@ -10,14 +10,15 @@ mod request;
 mod view;
 #[cfg(test)]
 pub(crate) use binding::fixture_open_preview;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) use binding::poll_notices;
 pub(crate) use binding::{
     Binding, PlacementHold, SessionDirectory, can_place, close_preview, connected,
     connected_placed, conversation_checkout, detach_session, diff_preferences, event,
     file_link_scope, files_checkout, has_preview, hold_placement, is_composing, mode, online,
     overlay_open, placeable, placement, placement_hold, placement_unconfirmed, poll,
-    project_opened, release_placement, session_directory, set_diff_preferences, set_mode, show,
+    project_opened, release_placement, restore_reading_if_closed, session_directory,
+    set_diff_preferences, set_mode, show,
 };
 #[cfg(test)]
 pub(crate) use binding::{
@@ -60,7 +61,7 @@ use rune_theme_codenomad::git_diff::{ImageCache, image_cache};
 use rune_theme_codenomad::git_panel::ScrollBookmark;
 use std::collections::HashSet;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Mode {
     Workspace,
     Changes,
@@ -459,6 +460,72 @@ impl Ui {
         self.history.details = None;
         self.history.file = None;
         *self.requests.slot_mut(Lane::Details) = Default::default();
+    }
+}
+
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(crate) fn probe_observable_error(s: &crate::State) -> Option<String> {
+    let ui = s.git.owner.as_ref()?;
+    for (name, lane) in request::LANES {
+        if let Some(error) = ui.requests.slot(lane).error.as_deref() {
+            return Some(format!("git slot {name}: {error}"));
+        }
+    }
+    if let Some((false, message)) = &ui.mutation_message {
+        return Some(format!("git mutation error: {message}"));
+    }
+    None
+}
+
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(crate) fn probe_slots_diagnostic(s: &crate::State) -> String {
+    let Some(ui) = s.git.owner.as_ref() else {
+        return "git_owner=None".into();
+    };
+    let slots = request::LANES
+        .iter()
+        .map(|(name, lane)| {
+            let slot = ui.requests.slot(*lane);
+            format!(
+                "{name}(busy={},dirty={},err={:?})",
+                slot.busy(),
+                slot.dirty,
+                slot.error
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "online={}, shown={}, mode={:?}, slug={}, session_slug={}, can_change_index={}, can_commit={}, can_place={}, mutation={:?}, mutation_message={:?}, slots=[{slots}]",
+        ui.online,
+        ui.shown,
+        ui.mode,
+        ui.slug,
+        ui.session_slug,
+        ui.can_change_index(),
+        ui.can_commit(),
+        can_place(s),
+        ui.requests.mutation,
+        ui.mutation_message
+    )
+}
+
+#[cfg(all(test, feature = "test-support", not(target_arch = "wasm32")))]
+impl Ui {
+    pub(crate) fn fixture_set_mutation_error(&mut self, message: &str) {
+        self.mutation_message = Some((false, message.into()));
+    }
+
+    pub(crate) fn fixture_set_index_stale(&mut self, stale: bool) {
+        self.index_checked = if stale {
+            None
+        } else {
+            Some(self.index_revision)
+        };
+    }
+
+    pub(crate) fn fixture_set_history_dirty(&mut self, dirty: bool) {
+        self.requests.slot_mut(Lane::History).dirty = dirty;
     }
 }
 
