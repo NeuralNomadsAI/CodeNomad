@@ -353,6 +353,28 @@ fn switching_conversation_or_tab_resets_shell_mode() {
 
 #[test]
 fn web_edit_bang_enters_shell_mode_but_paste_and_delete_to_bang_do_not() {
+    assert!(super::web_bang::qualifies_beforeinput(
+        Some("insertText"),
+        Some("!"),
+        false
+    ));
+    for (input_type, data, composing) in [
+        (Some("insertText"), Some("!x"), false),
+        (Some("insertText"), Some("!"), true),
+        (Some("historyUndo"), Some("!"), false),
+        (Some("historyRedo"), Some("!"), false),
+        (Some("insertFromPaste"), Some("!"), false),
+        (Some("insertFromDrop"), Some("!"), false),
+        (Some("insertCompositionText"), Some("!"), false),
+        (Some("insertFromComposition"), Some("!"), false),
+        (None, Some("!"), false),
+    ] {
+        assert!(
+            !super::web_bang::qualifies_beforeinput(input_type, data, composing),
+            "must not arm shell mode for ({input_type:?}, {data:?}, composing={composing})"
+        );
+    }
+
     let (mut rt, _rx) = chat_runtime();
 
     // Desktop clipboard paste / direct changed() must never arm shell mode even when pasting '!'.
@@ -364,38 +386,57 @@ fn web_edit_bang_enters_shell_mode_but_paste_and_delete_to_bang_do_not() {
     assert!(!rt.state.composer.shell_mode);
     assert_eq!(rt.state.draft.text, "!");
 
-    // Web bridge inserts '!' directly into the editor and invokes enter_shell_from_edit.
+    // Web bridge inserts '!' via qualifying beforeinput("insertText", "!") and enters shell mode.
     rt.update(|s, _| s.draft.clear());
     rt.frame(0.0);
     rt.update(|s, tx| {
         s.draft.insert("!");
-        assert!(super::view::enter_shell_from_edit(s, tx));
+        assert!(super::view::enter_shell_from_edit(s, tx, true));
     });
     rt.frame(0.0);
     assert!(rt.state.composer.shell_mode);
     assert!(rt.state.draft.text.is_empty());
 
-    // Exit shell mode, then simulate pasting or undoing "!" on web: stays literal.
+    // Exit shell mode, then simulate browser-native Undo, IME commit, or paste (web_bang=false).
     rt.update(|s, _| s.composer.exit_shell_mode());
     rt.frame(0.0);
     rt.update(|s, tx| {
-        s.composer.suppress_bang_change = true;
         s.draft.insert("!");
-        assert!(!super::view::enter_shell_from_edit(s, tx));
+        assert!(!super::view::enter_shell_from_edit(s, tx, false));
         super::view::changed(s, tx);
     });
     rt.frame(0.0);
     assert!(!rt.state.composer.shell_mode);
     assert_eq!(rt.state.draft.text, "!");
 
+    // A no-op keyboard Undo must not poison the next deliberate '!' on Web.
+    rt.update(|s, _| s.draft.clear());
+    rt.frame(0.0);
+    send_key(
+        &mut rt,
+        Key::Command('z'),
+        Mods {
+            ctrl: !cfg!(target_os = "macos"),
+            cmd: cfg!(target_os = "macos"),
+            ..Mods::default()
+        },
+    );
+    rt.update(|s, tx| {
+        s.draft.insert("!");
+        assert!(super::view::enter_shell_from_edit(s, tx, true));
+    });
+    assert!(rt.state.composer.shell_mode);
+    assert!(rt.state.draft.text.is_empty());
+
     // Deleting "!ls" down to "!" does not enter shell mode because the buffer was not empty.
     rt.update(|s, _| {
-        s.draft = TextEdit::new("!ls");
+        s.composer.exit_shell_mode();
+        s.draft.replace_text("!ls");
     });
     rt.frame(0.0);
     rt.update(|s, tx| {
-        s.draft = TextEdit::new("!");
-        assert!(!super::view::enter_shell_from_edit(s, tx));
+        s.draft.replace_text("!");
+        assert!(!super::view::enter_shell_from_edit(s, tx, true));
         super::view::changed(s, tx);
     });
     rt.frame(0.0);
@@ -494,9 +535,17 @@ fn in_flight_shell_reserves_command_and_reconciles_from_history_and_clear_keeps_
     assert!(!super::actions::command_held(&rt.state));
     assert!(!can_send(&rt.state));
 
-    // Unconfirmed upgrades the reservation to an unconfirmed hold, then matching shell row settles it.
+    // Order 1: Unconfirmed arrives FIRST (restoring untouched draft in shell mode),
+    // then matching shell row arrives and clears BOTH the hold and the untouched restored draft.
+    rt.update(|s, _| {
+        s.draft.clear();
+        s.composer.shell_mode = false;
+    });
     acknowledge(&mut rt.state, &attempt, PromptOutcome::Unconfirmed);
+    assert!(rt.state.composer.shell_mode);
+    assert_eq!(rt.state.draft.text, "echo once");
     assert!(super::actions::command_held(&rt.state));
+    assert!(!can_send(&rt.state));
     rt.update(|s, _| {
         s.messages.push(std::sync::Arc::new(crate::Message {
             id: attempt.clone(),
@@ -510,9 +559,71 @@ fn in_flight_shell_reserves_command_and_reconciles_from_history_and_clear_keeps_
     });
     assert!(!super::command_receipts::repeats(&rt.state));
     assert!(!super::actions::command_held(&rt.state));
-    assert!(can_send(&rt.state));
+    assert!(!rt.state.composer.shell_mode);
+    assert!(rt.state.draft.text.is_empty());
+    assert_eq!(rt.state.composer.draft.attachments.len(), 1);
 
-    // Recalling in shell mode then clearing (Ctrl+K) preserves parked non-pasted attachments.
+    // Order 2: Matching running shell row arrives BEFORE HTTP Unconfirmed.
+    // Reservation stays active while POST is in flight; late Unconfirmed settles without holding or restoring.
+    rt.update(|s, _| {
+        s.composer.shell_mode = true;
+        s.draft.replace_text("echo twice");
+    });
+    rt.frame(0.0);
+    rt.update(|s, tx| send(s, tx, false));
+    let Command::Shell {
+        attempt: attempt2,
+        command: cmd2,
+    } = rx.try_recv().expect("second shell command")
+    else {
+        panic!("expected Command::Shell");
+    };
+    assert_eq!(cmd2, "echo twice");
+    rt.update(|s, _| {
+        s.messages.push(std::sync::Arc::new(crate::Message {
+            id: attempt2.clone(),
+            role: "shell".into(),
+            completed: false,
+            body: "echo twice".into(),
+            usage: None,
+            parts: Vec::new(),
+        }));
+        super::actions::reconcile(s);
+    });
+    // Still reserved while HTTP POST has not settled.
+    rt.update(|s, _| {
+        s.composer.shell_mode = true;
+        s.draft.replace_text("echo twice");
+    });
+    assert!(super::command_receipts::repeats(&rt.state));
+    rt.update(|s, _| {
+        s.draft.clear();
+        s.composer.shell_mode = false;
+    });
+    acknowledge(&mut rt.state, &attempt2, PromptOutcome::Unconfirmed);
+    assert!(!super::command_receipts::repeats(&rt.state));
+    assert!(!super::actions::command_held(&rt.state));
+    assert!(!rt.state.composer.shell_mode);
+    assert!(rt.state.draft.text.is_empty());
+
+    // Tab stash before a late shell refusal preserves draft text without re-arming shell mode.
+    rt.update(|s, _| {
+        s.composer.shell_mode = true;
+        s.draft.replace_text("echo stashed");
+    });
+    rt.update(|s, tx| send(s, tx, false));
+    let Command::Shell {
+        attempt: attempt3, ..
+    } = rx.try_recv().expect("third shell command")
+    else {
+        panic!("expected Command::Shell");
+    };
+    rt.update(|s, _| s.composer.on_tab_stash());
+    acknowledge(&mut rt.state, &attempt3, PromptOutcome::Rejected);
+    assert!(!rt.state.composer.shell_mode);
+    assert_eq!(rt.state.draft.text, "echo stashed");
+
+    // Recalling in shell mode, exiting shell mode, then clearing (Ctrl+K) still preserves parked attachments.
     rt.update(|s, _| {
         s.draft.clear();
         s.composer.shell_mode = true;
@@ -520,8 +631,9 @@ fn in_flight_shell_reserves_command_and_reconciles_from_history_and_clear_keeps_
     });
     rt.frame(0.0);
     send_key(&mut rt, Key::Up, Mods::default());
-    assert_eq!(rt.state.draft.text, "echo once");
+    assert_eq!(rt.state.draft.text, "echo stashed");
     assert!(rt.state.composer.recall.is_some());
+    rt.update(|s, _| s.composer.exit_shell_mode());
     rt.update(|s, tx| super::menu::clear(s, tx));
     assert!(rt.state.draft.text.is_empty());
     assert!(rt.state.composer.recall.is_none());

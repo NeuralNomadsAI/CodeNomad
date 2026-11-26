@@ -20,8 +20,8 @@ fn consumed_by_editor(event: &KeyEvent, web: bool, windows: bool, composer_scope
     if web && !primary && matches!(event.key, Key::Function(_)) {
         return true;
     }
-    // On Web, Rune's focused textarea sends bare printable keys as edits, never to on_input_key.
-    if web && composer_scope && !primary && !mods.alt && matches!(event.key, Key::Text(_)) {
+    // On Web, Rune's focused textarea only forwards Ctrl/Meta printable chords (never bare or Alt-only).
+    if web && composer_scope && !primary && matches!(event.key, Key::Text(_)) {
         return true;
     }
     // Rune #1662: native paste is handled before a focused editor can see Ctrl+V.
@@ -87,7 +87,16 @@ fn only_record_shortcuts_the_focused_editor_can_receive() {
         key: Key::Text("x".into()),
         mods: Default::default(),
     };
+    let alt_x = KeyEvent {
+        key: Key::Text("x".into()),
+        mods: rune::Mods {
+            alt: true,
+            ..Default::default()
+        },
+    };
     assert!(consumed_by_editor(&plain_x, true, false, true));
+    assert!(consumed_by_editor(&alt_x, true, false, true));
     assert!(!consumed_by_editor(&plain_x, true, false, false));
     assert!(!consumed_by_editor(&plain_x, false, true, true));
+    assert!(!consumed_by_editor(&alt_x, false, true, true));
 }

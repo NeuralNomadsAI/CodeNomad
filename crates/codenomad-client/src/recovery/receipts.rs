@@ -1,5 +1,5 @@
 //! One dispatch attempt and its correlated receipt.
-use super::authentication::{close_for_authentication, rejected_by_authentication};
+use super::authentication::rejected_by_authentication;
 use crate::{
     Sender, Wake,
     backend::Backend,
@@ -8,6 +8,12 @@ use crate::{
     stream,
     transport::{Event, PromptOutcome, publish},
 };
+
+#[derive(Debug)]
+pub enum ShellSettlement {
+    Outcome(PromptOutcome),
+    AuthExpired { outcome: PromptOutcome },
+}
 
 pub(super) async fn slash(
     backend: &Backend,
@@ -47,75 +53,30 @@ pub(super) async fn slash(
     true
 }
 
-pub(super) async fn shell(
-    backend: &Backend,
-    out: &Sender<Event>,
-    wake: &Wake,
-    wire: &stream::State,
-    admitted: bool,
-    attempt: &str,
-    command: &str,
-) -> Option<PromptOutcome> {
-    let outcome = if admitted {
-        match backend.prompt_shell(attempt, command).await {
-            Ok(()) => PromptOutcome::Confirmed(attempt.into()),
-            Err(ShellError::Rejected) => PromptOutcome::Rejected,
-            Err(ShellError::Unconfirmed) => PromptOutcome::Unconfirmed,
-            Err(ShellError::PreDispatchAuthenticationRequired) => {
-                if matches!(backend.authentication_status().await, Ok(false)) {
-                    close_for_authentication(wire, out).await;
-                    publish(
-                        out,
-                        wake,
-                        Event::PromptAcknowledged {
-                            attempted: attempt.into(),
-                            outcome: PromptOutcome::Rejected,
-                        },
-                    )
-                    .await;
-                    publish(
-                        out,
-                        wake,
-                        Event::AuthenticationRequired(crate::transport::Authentication {
-                            backend: backend.clone(),
-                            confirmed: true,
-                        }),
-                    )
-                    .await;
-                    return None;
+pub(super) async fn shell(backend: &Backend, attempt: &str, command: &str) -> ShellSettlement {
+    match backend.prompt_shell(attempt, command).await {
+        Ok(()) => ShellSettlement::Outcome(PromptOutcome::Confirmed(attempt.into())),
+        Err(ShellError::Rejected) => ShellSettlement::Outcome(PromptOutcome::Rejected),
+        Err(ShellError::Unconfirmed) => ShellSettlement::Outcome(PromptOutcome::Unconfirmed),
+        Err(ShellError::PreDispatchAuthenticationRequired) => {
+            if matches!(backend.authentication_status().await, Ok(false)) {
+                ShellSettlement::AuthExpired {
+                    outcome: PromptOutcome::Rejected,
                 }
-                PromptOutcome::Rejected
-            }
-            Err(ShellError::UnconfirmedAuthenticationRequired) => {
-                if matches!(backend.authentication_status().await, Ok(false)) {
-                    close_for_authentication(wire, out).await;
-                    publish(
-                        out,
-                        wake,
-                        Event::PromptAcknowledged {
-                            attempted: attempt.into(),
-                            outcome: PromptOutcome::Unconfirmed,
-                        },
-                    )
-                    .await;
-                    publish(
-                        out,
-                        wake,
-                        Event::AuthenticationRequired(crate::transport::Authentication {
-                            backend: backend.clone(),
-                            confirmed: true,
-                        }),
-                    )
-                    .await;
-                    return None;
-                }
-                PromptOutcome::Unconfirmed
+            } else {
+                ShellSettlement::Outcome(PromptOutcome::Rejected)
             }
         }
-    } else {
-        PromptOutcome::Rejected
-    };
-    Some(outcome)
+        Err(ShellError::UnconfirmedAuthenticationRequired) => {
+            if matches!(backend.authentication_status().await, Ok(false)) {
+                ShellSettlement::AuthExpired {
+                    outcome: PromptOutcome::Unconfirmed,
+                }
+            } else {
+                ShellSettlement::Outcome(PromptOutcome::Unconfirmed)
+            }
+        }
+    }
 }
 
 pub(super) async fn prompt(

@@ -214,22 +214,47 @@ pub(crate) async fn run_with_reading(
                     .await;
                     continue;
                 }
+                let dispatch_epoch = epoch;
                 let backend = backend.clone();
-                let out = out.clone();
-                let wake = wake.clone();
-                let wire = wire.clone();
                 let done = tx.clone();
                 runtime::spawn(async move {
-                    let outcome =
-                        receipts::shell(&backend, &out, &wake, &wire, true, &attempt, &command)
+                    if let Some(settlement) =
+                        runtime::until_closed(&done, receipts::shell(&backend, &attempt, &command))
+                            .await
+                    {
+                        let _ = done
+                            .send(Input::ShellSettled(dispatch_epoch, attempt, settlement))
                             .await;
-                    let _ = done.send(Input::ShellSettled(attempt, outcome)).await;
+                    }
                 });
             }
-            Some(Input::ShellSettled(attempt, outcome)) => {
-                let Some(outcome) = outcome else {
-                    return Ok(());
+            Some(Input::ShellSettled(dispatch_epoch, attempt, settlement)) => {
+                let (outcome, auth_expired) = match settlement {
+                    receipts::ShellSettlement::Outcome(outcome) => (outcome, false),
+                    receipts::ShellSettlement::AuthExpired { outcome } => (outcome, true),
                 };
+                if auth_expired && dispatch_epoch == epoch {
+                    super::authentication::close_for_authentication(&wire, &out).await;
+                    publish(
+                        &out,
+                        &wake,
+                        Event::PromptAcknowledged {
+                            attempted: attempt,
+                            outcome,
+                        },
+                    )
+                    .await;
+                    publish(
+                        &out,
+                        &wake,
+                        Event::AuthenticationRequired(crate::transport::Authentication {
+                            backend: backend.clone(),
+                            confirmed: true,
+                        }),
+                    )
+                    .await;
+                    return Ok(());
+                }
                 if matches!(
                     outcome,
                     PromptOutcome::Confirmed(_) | PromptOutcome::Unconfirmed

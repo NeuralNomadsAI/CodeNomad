@@ -18,10 +18,11 @@ pub struct Owner {
     pub menu: rune_theme_codenomad::action_menu::State<State>,
     pub shell_mode: bool,
     pub(super) draft_was_empty: std::cell::Cell<bool>,
-    pub(super) suppress_bang_change: bool,
+    pub(super) suppress_exit_repeat: Option<rune::Key>,
     sending: Option<Send>,
     pub send_error: bool,
     unconfirmed: Option<UnconfirmedPrompt>,
+    restored_shell: Option<RestoredShell>,
     pub command_unconfirmed: Option<UnconfirmedCommand>,
     pub restored: bool,
     pub attachments_missing: bool,
@@ -36,10 +37,11 @@ impl Default for Owner {
             menu: Default::default(),
             shell_mode: false,
             draft_was_empty: std::cell::Cell::new(true),
-            suppress_bang_change: false,
+            suppress_exit_repeat: None,
             sending: None,
             send_error: false,
             unconfirmed: None,
+            restored_shell: None,
             command_unconfirmed: None,
             restored: false,
             attachments_missing: false,
@@ -63,6 +65,13 @@ impl Owner {
             self.mark_edited();
         }
     }
+    pub(crate) fn on_tab_stash(&mut self) {
+        self.shell_mode = false;
+        self.suppress_exit_repeat = None;
+        if let Some(send) = &mut self.sending {
+            send.stashed = true;
+        }
+    }
     pub fn unconfirmed_id(&self) -> Option<&str> {
         self.unconfirmed.as_ref().map(|send| send.id.as_str())
     }
@@ -78,6 +87,9 @@ impl Owner {
         }
         if let Some(send) = &mut self.unconfirmed {
             send.edited = true;
+        }
+        if let Some(restored) = &mut self.restored_shell {
+            restored.edited = true;
         }
     }
     #[cfg(test)]
@@ -239,6 +251,13 @@ impl UnconfirmedCommand {
         )
     }
 }
+struct RestoredShell {
+    id: String,
+    target: command_receipts::Target,
+    command: String,
+    edited: bool,
+}
+
 struct Send {
     id: String,
     edit: TextEdit,
@@ -246,6 +265,7 @@ struct Send {
     was_running: bool,
     command: Option<CommandAttempt>,
     edited: bool,
+    stashed: bool,
     recallable: bool,
 }
 
@@ -341,6 +361,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             .is_some_and(|pipe| pipe.try_send(command).is_ok())
         {
             s.command_receipts.reserve(id.clone(), attempt.clone());
+            s.composer.restored_shell = None;
             let recallable = super::recall::record(s, command_text, true);
             s.composer.sending = Some(Send {
                 id,
@@ -349,6 +370,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
                 was_running: s.phase == Phase::Streaming,
                 command: Some(attempt),
                 edited: s.composer.recall.is_some(),
+                stashed: false,
                 recallable,
             });
             s.composer.shell_mode = false;
@@ -403,6 +425,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
                 was_running: true,
                 command: Some(slash),
                 edited: s.composer.recall.is_some(),
+                stashed: false,
                 recallable,
             });
             s.draft.clear();
@@ -449,6 +472,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         was_running,
         command: None,
         edited: s.composer.recall.is_some(),
+        stashed: false,
         recallable,
     });
     s.draft.clear();
@@ -499,7 +523,13 @@ fn alternate_inverts_the_confirmed_follow_up_only_while_running() {
 
 pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     // A late exact receipt can settle its own hold even after the composer moved on.
-    s.command_receipts.settle(attempted, &outcome);
+    let active_target = super::recall::command_target(s);
+    let target_matches = s
+        .command_receipts
+        .target_matches(attempted, active_target.as_ref());
+    let observed = s
+        .command_receipts
+        .settle(attempted, &outcome, &s.messages, target_matches);
     if !s
         .composer
         .sending
@@ -517,6 +547,29 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         && !s.composer.device.busy();
     if let Some(command) = send.command {
         let is_shell = matches!(command.kind, CommandKind::Shell { .. });
+        if is_shell && matches!(outcome, PromptOutcome::Unconfirmed) {
+            if !observed {
+                if may_restore {
+                    super::recall::replace_edit(s, send.edit);
+                    s.composer.draft = send.draft;
+                    if !send.stashed {
+                        s.composer.shell_mode = true;
+                        if let CommandKind::Shell { command: cmd } = &command.kind {
+                            s.composer.restored_shell = Some(RestoredShell {
+                                id: send.id.clone(),
+                                target: command.target.clone(),
+                                command: cmd.clone(),
+                                edited: false,
+                            });
+                        }
+                    }
+                    s.composer.restored = true;
+                }
+                s.command_receipts.hold(send.id, command);
+            }
+            s.composer.send_error = false;
+            return;
+        }
         if matches!(
             outcome,
             PromptOutcome::Rejected | PromptOutcome::Unconfirmed
@@ -524,7 +577,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         {
             super::recall::replace_edit(s, send.edit);
             s.composer.draft = send.draft;
-            if is_shell {
+            if is_shell && !send.stashed {
                 s.composer.shell_mode = true;
             }
             s.composer.restored = true;
@@ -599,6 +652,30 @@ pub fn reconcile(s: &mut State) {
     let target = super::recall::command_target(s);
     s.command_receipts
         .reconcile_shell(target.as_ref(), &s.messages);
+    if target.as_ref().is_some_and(|active| {
+        s.composer.restored_shell.as_ref().is_some_and(|restored| {
+            restored.target == *active
+                && s.messages
+                    .iter()
+                    .any(|row| row.role == "shell" && row.id == restored.id)
+        })
+    }) && let Some(restored) = s.composer.restored_shell.take()
+        && !restored.edited
+        && s.composer.shell_mode
+        && s.composer.recall.is_none()
+        && s.composer.draft.resolve_shell(&s.draft).as_deref() == Some(restored.command.as_str())
+    {
+        s.draft.clear();
+        s.composer
+            .draft
+            .attachments
+            .retain(|part| !matches!(part, super::draft::Attachment::Pasted { .. }));
+        s.composer.shell_mode = false;
+        s.composer.draft_was_empty.set(true);
+        if s.workspace.is_some() {
+            workspace::capture(s);
+        }
+    }
     if s.composer.unconfirmed.as_ref().is_some_and(|send| {
         s.messages
             .iter()

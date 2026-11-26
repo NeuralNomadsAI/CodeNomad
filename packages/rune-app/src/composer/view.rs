@@ -225,6 +225,8 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
 }
 
 fn editor(s: &State, compact: bool) -> El {
+    #[cfg(target_arch = "wasm32")]
+    super::web_bang::install();
     #[cfg(not(target_arch = "wasm32"))]
     let input_key = "input";
     #[cfg(target_arch = "wasm32")]
@@ -281,7 +283,6 @@ fn editor(s: &State, compact: bool) -> El {
             if super::long_paste::paste(s, content.text(), tx) {
                 return true;
             }
-            s.composer.suppress_bang_change = true;
             false
         });
     #[cfg(not(target_arch = "wasm32"))]
@@ -365,9 +366,8 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-pub(super) fn enter_shell_from_edit(s: &mut State, tx: &mut Tx) -> bool {
-    let suppressed = std::mem::take(&mut s.composer.suppress_bang_change);
-    if !suppressed
+pub(super) fn enter_shell_from_edit(s: &mut State, tx: &mut Tx, web_bang: bool) -> bool {
+    if web_bang
         && !s.composer.shell_mode
         && !s.composer.editing_locked()
         && !s.composer.device.busy()
@@ -394,12 +394,8 @@ pub(super) fn changed(s: &mut State, tx: &mut Tx) {
         read.set(false);
     }
     #[cfg(target_arch = "wasm32")]
-    if enter_shell_from_edit(s, tx) {
+    if enter_shell_from_edit(s, tx, super::web_bang::take()) {
         return;
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        s.composer.suppress_bang_change = false;
     }
     s.composer.draft_was_empty.set(s.draft.text.is_empty());
     if s.composer.shell_mode {
@@ -445,8 +441,10 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     use super::shortcuts::Action;
-    if matches!(event.edit_command(), Some('z' | 'y')) {
-        s.composer.suppress_bang_change = true;
+    if !tx.key_repeat() {
+        s.composer.suppress_exit_repeat = None;
+    } else if s.composer.suppress_exit_repeat.as_ref() == Some(&event.key) {
+        return true;
     }
     #[cfg(not(target_arch = "wasm32"))]
     if event.edit_command() == Some('v') {
@@ -457,12 +455,9 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if tx.key_repeat()
-        && ((s.composer.shell_mode
-            && crate::settings::matches_shortcut(s, "prompt-send", event, tx))
-            || (!s.composer.shell_mode
-                && event.key == Key::Enter
-                && (s.composer.picker.open()
-                    || s.composer.picker.selected_command(&s.draft.text).is_some())))
+        && !s.composer.shell_mode
+        && event.key == Key::Enter
+        && (s.composer.picker.open() || s.composer.picker.selected_command(&s.draft.text).is_some())
     {
         return true;
     }
@@ -478,6 +473,8 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         && !event.mods.logo
         && matches!(&event.key, Key::Text(text) if text == "!")
     {
+        #[cfg(target_arch = "wasm32")]
+        super::web_bang::clear();
         s.composer.shell_mode = true;
         s.composer.mark_edited();
         s.composer.picker.reset();
@@ -512,8 +509,11 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if s.composer.shell_mode {
         if Action::ExitShell.matches(s, event, tx) {
-            s.composer.exit_shell_mode();
-            s.composer.picker.reset();
+            if !tx.key_repeat() {
+                s.composer.exit_shell_mode();
+                s.composer.picker.reset();
+                s.composer.suppress_exit_repeat = Some(event.key.clone());
+            }
             return true;
         }
         if event.key == Key::Backspace && s.draft.text.is_empty() && s.draft.range() == (0, 0) {
@@ -544,7 +544,9 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             changed(s, tx);
             true
         } else if crate::settings::matches_shortcut(s, "prompt-send", event, tx) {
-            send(s, tx, false);
+            if !tx.key_repeat() {
+                send(s, tx, false);
+            }
             true
         } else if Action::Alternate.matches(s, event, tx) || event.key == Key::Enter {
             true

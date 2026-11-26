@@ -29,7 +29,7 @@ fn classify_status(status: u16, pre_dispatch: bool, native: bool) -> Result<(), 
         }
     } else if status == 408 {
         Err(ShellError::Unconfirmed)
-    } else if (400..500).contains(&status) || status == 501 {
+    } else if (400..500).contains(&status) || (status == 501 && pre_dispatch) {
         Err(ShellError::Rejected)
     } else {
         Err(ShellError::Unconfirmed)
@@ -55,6 +55,7 @@ impl Backend {
                     "{}workspaces/{}/instance/api/session/{}/shell",
                     self.base, self.workspace, self.session
                 ))
+                .timeout(crate::http::REQUEST_TIMEOUT)
                 .json(&body);
             if let Some(directory) = &self.session_directory {
                 request = request.query(&[("directory", directory.as_str())]);
@@ -77,7 +78,16 @@ impl Backend {
         {
             use wasm_bindgen::JsCast;
             use wasm_bindgen_futures::JsFuture;
-            use web_sys::{Headers, Request, RequestCredentials, RequestInit, Response};
+            use web_sys::{
+                AbortController, Headers, Request, RequestCredentials, RequestInit, Response,
+            };
+
+            struct AbortOnDrop(AbortController);
+            impl Drop for AbortOnDrop {
+                fn drop(&mut self) {
+                    self.0.abort();
+                }
+            }
 
             let mut url = reqwest::Url::parse(&format!(
                 "{}workspaces/{}/instance/api/session/{}/shell",
@@ -89,6 +99,7 @@ impl Backend {
                     .append_pair("directory", directory.as_str());
             }
             let window = web_sys::window().ok_or(ShellError::Rejected)?;
+            let controller = AbortController::new().map_err(|_| ShellError::Rejected)?;
             let headers = Headers::new().map_err(|_| ShellError::Rejected)?;
             headers
                 .set("Content-Type", "application/json")
@@ -99,15 +110,21 @@ impl Backend {
             init.set_credentials(RequestCredentials::SameOrigin);
             init.set_headers(&headers);
             init.set_body(&serialized.into());
+            init.set_signal(Some(&controller.signal()));
             // Refuse redirects before the browser can forward a shell POST outside the session.
             js_sys::Reflect::set(&init, &"redirect".into(), &"error".into())
                 .map_err(|_| ShellError::Rejected)?;
             let request = Request::new_with_str_and_init(url.as_str(), &init)
                 .map_err(|_| ShellError::Rejected)?;
-            let response: Response = JsFuture::from(window.fetch_with_request(&request))
-                .await
-                .and_then(JsCast::dyn_into)
-                .map_err(|_| ShellError::Unconfirmed)?;
+            let _abort = AbortOnDrop(controller);
+            let response: Response = crate::runtime::timeout(
+                crate::http::REQUEST_TIMEOUT,
+                JsFuture::from(window.fetch_with_request(&request)),
+            )
+            .await
+            .ok_or(ShellError::Unconfirmed)?
+            .and_then(JsCast::dyn_into)
+            .map_err(|_| ShellError::Unconfirmed)?;
             let pre_dispatch = response
                 .headers()
                 .get(PRE_DISPATCH_HEADER)
@@ -282,11 +299,19 @@ mod tests {
                 backend.prompt_shell("msg_408", "echo 408").await,
                 Err(ShellError::Unconfirmed)
             );
+            // Bare 501 stays unconfirmed without pre-dispatch proof; marked 501 is rejected.
             code.store(501, std::sync::atomic::Ordering::SeqCst);
+            pre_dispatch.store(false, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
                 backend.prompt_shell("msg_501", "echo 501").await,
+                Err(ShellError::Unconfirmed)
+            );
+            pre_dispatch.store(true, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                backend.prompt_shell("msg_501p", "echo 501-pre").await,
                 Err(ShellError::Rejected)
             );
+            pre_dispatch.store(false, std::sync::atomic::Ordering::SeqCst);
             code.store(401, std::sync::atomic::Ordering::SeqCst);
             pre_dispatch.store(false, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
@@ -367,6 +392,21 @@ mod tests {
         assert!(empty_out.completed);
         assert_eq!(empty_out.body, "true");
 
+        // Huge command + output stays strictly within 32 KiB per row, including "$ " and "\n".
+        let huge_cmd = "c".repeat(40 * 1024);
+        let capped = crate::history::decode_message(&json!({
+            "id": "msg_huge_cmd",
+            "type": "shell",
+            "shellID": "sh_huge_cmd",
+            "command": huge_cmd,
+            "status": "exited",
+            "exit": 0,
+            "output": { "output": "tail", "cursor": 4, "size": 4, "truncated": false },
+            "time": { "created": 5, "completed": 6 }
+        }))
+        .unwrap();
+        assert!(capped.body.len() <= 32 * 1024);
+
         // Many 1 MiB shell outputs stay bounded so the resident history check never rejects the page.
         let large = "a".repeat(1024 * 1024);
         let rows: Vec<_> = (0..10)
@@ -387,5 +427,196 @@ mod tests {
             })
             .collect();
         assert!(crate::history::check(&rows).is_ok());
+    }
+
+    #[test]
+    fn stale_epoch_shell_auth_expiry_settles_attempt_without_closing_newer_epoch() {
+        run(async {
+            use crate::transport::{Command, Event, PromptOutcome};
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            use tokio::sync::Notify;
+
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let sse_hits = Arc::new(AtomicUsize::new(0));
+            let release_shell = Arc::new(Notify::new());
+            let release_sse1 = Arc::new(Notify::new());
+            let shell_started = Arc::new(Notify::new());
+            let sse2_opened = Arc::new(Notify::new());
+
+            let server = tokio::spawn({
+                let sse_hits = sse_hits.clone();
+                let release_shell = release_shell.clone();
+                let release_sse1 = release_sse1.clone();
+                let shell_started = shell_started.clone();
+                let sse2_opened = sse2_opened.clone();
+                async move {
+                    while let Ok((mut socket, _)) = listener.accept().await {
+                        let sse_hits = sse_hits.clone();
+                        let release_shell = release_shell.clone();
+                        let release_sse1 = release_sse1.clone();
+                        let shell_started = shell_started.clone();
+                        let sse2_opened = sse2_opened.clone();
+                        tokio::spawn(async move {
+                            let mut buf = Vec::new();
+                            let mut chunk = [0u8; 4096];
+                            let header_end = loop {
+                                let n = socket.read(&mut chunk).await.unwrap_or(0);
+                                if n == 0 {
+                                    return;
+                                }
+                                buf.extend_from_slice(&chunk[..n]);
+                                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                                    break pos + 4;
+                                }
+                            };
+                            let head = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+                            let path = head
+                                .lines()
+                                .next()
+                                .and_then(|line| line.split_whitespace().nth(1))
+                                .unwrap_or_default()
+                                .to_owned();
+                            let content_len: usize = head
+                                .lines()
+                                .find_map(|line| {
+                                    let (k, v) = line.split_once(':')?;
+                                    k.eq_ignore_ascii_case("content-length")
+                                        .then(|| v.trim().parse().ok())
+                                        .flatten()
+                                })
+                                .unwrap_or(0);
+                            while buf.len() < header_end + content_len {
+                                let n = socket.read(&mut chunk).await.unwrap_or(0);
+                                if n == 0 {
+                                    break;
+                                }
+                                buf.extend_from_slice(&chunk[..n]);
+                            }
+
+                            if path.starts_with("/api/events") {
+                                let hit = sse_hits.fetch_add(1, Ordering::SeqCst) + 1;
+                                let _ = socket
+                                    .write_all(
+                                        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\ndata: {\"type\":\"server.connected\"}\n\n",
+                                    )
+                                    .await;
+                                if hit == 1 {
+                                    release_sse1.notified().await;
+                                    let _ = socket.shutdown().await;
+                                } else {
+                                    sse2_opened.notify_one();
+                                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                                }
+                            } else if path.contains("/shell") {
+                                shell_started.notify_one();
+                                release_shell.notified().await;
+                                let _ = socket
+                                    .write_all(
+                                        b"HTTP/1.1 401 Unauthorized\r\nx-codenomad-pre-dispatch: 1\r\nContent-Length: 0\r\n\r\n",
+                                    )
+                                    .await;
+                            } else if path.starts_with("/api/auth/status") {
+                                let body = r#"{"authenticated":false}"#;
+                                let resp = format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                                    body.len(),
+                                    body
+                                );
+                                let _ = socket.write_all(resp.as_bytes()).await;
+                            } else {
+                                let body = r#"{"messages":[],"running":false}"#;
+                                let resp = format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                                    body.len(),
+                                    body
+                                );
+                                let _ = socket.write_all(resp.as_bytes()).await;
+                            }
+                        });
+                    }
+                }
+            });
+
+            let mut backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+            backend.workspace = "ws-1".into();
+            backend.session = "ses_1".into();
+            let (ev_tx, ev_rx) = crate::bounded(64);
+            let (cmd_tx, cmd_rx) = crate::bounded(16);
+            let wake: crate::Wake = Arc::new(|| {});
+            let runner = tokio::spawn(crate::recovery::run(backend, ev_tx, cmd_rx, wake));
+
+            // Wait for epoch 1 SSE stream to open.
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    if matches!(ev_rx.recv().await, Ok(Event::AgentHint(true))) {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("epoch 1 opened");
+
+            // Dispatch shell command on epoch 1 and wait until server holds the POST.
+            cmd_tx
+                .send(Command::Shell {
+                    attempt: "msg_stale_auth".into(),
+                    command: "sleep 1".into(),
+                })
+                .await
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), shell_started.notified())
+                .await
+                .expect("shell POST reached server");
+
+            // Force epoch 1 SSE to drop and reconnect as epoch 2.
+            release_sse1.notify_one();
+            tokio::time::timeout(std::time::Duration::from_secs(5), sse2_opened.notified())
+                .await
+                .expect("epoch 2 opened");
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    if matches!(ev_rx.recv().await, Ok(Event::AgentHint(true))) {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("epoch 2 AgentHint");
+
+            // Now release the stale epoch-1 shell POST with pre-dispatch 401 + auth/status=false.
+            release_shell.notify_one();
+
+            // Must receive exact PromptAcknowledged(Rejected) and NEVER AuthenticationRequired!
+            let mut saw_ack = false;
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while let Ok(event) = ev_rx.recv().await {
+                    match event {
+                        Event::AuthenticationRequired(_) => {
+                            panic!("stale-epoch shell 401 must not expire the newer epoch");
+                        }
+                        Event::PromptAcknowledged { attempted, outcome }
+                            if attempted == "msg_stale_auth" =>
+                        {
+                            assert!(matches!(outcome, PromptOutcome::Rejected));
+                            saw_ack = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .expect("received stale-epoch shell acknowledgement");
+            assert!(saw_ack);
+            assert!(
+                !runner.is_finished(),
+                "transport loop must stay alive on epoch 2 after stale-epoch shell 401"
+            );
+
+            let _ = cmd_tx.send(Command::Close).await;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), runner).await;
+            server.abort();
+        });
     }
 }

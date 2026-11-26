@@ -308,7 +308,9 @@ pub fn composer_field_with_status(
                 ),
         );
     }
-    if shell_mode {
+    if shell_mode && focused {
+        box_el.outline(2.0, -2.0, t.color("status-success-ring"))
+    } else if shell_mode {
         box_el.outline(1.0, -1.0, t.color("status-success-ring"))
     } else if focused {
         box_el.outline(1.0, -1.0, t.color("focus-ring-color"))

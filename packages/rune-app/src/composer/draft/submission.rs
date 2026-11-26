@@ -53,8 +53,7 @@ impl Draft {
                 inline
             };
             let remaining = max_bytes.checked_sub(result.len())?;
-            let (inline, _) =
-                long_paste::expand_bounded(inline.to_owned(), &self.attachments, remaining)?;
+            let (inline, _) = long_paste::expand_bounded(inline, &self.attachments, remaining)?;
             result.push_str(&inline);
             if !literal.is_empty() {
                 let literal_text = edit.text.get(literal.clone())?;

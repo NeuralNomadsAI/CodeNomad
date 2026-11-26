@@ -74,7 +74,8 @@ pub fn decode_message(v: &Value) -> Result<Message> {
                 .unwrap_or_default();
             let mut body = match (command.is_empty(), output.is_empty()) {
                 (false, false) => {
-                    let prefix = format!("$ {}\n", truncate_utf8(command, MAX_SHELL_BODY_BYTES));
+                    let cmd_limit = MAX_SHELL_BODY_BYTES.saturating_sub(3);
+                    let prefix = format!("$ {}\n", truncate_utf8(command, cmd_limit));
                     let remaining = MAX_SHELL_BODY_BYTES.saturating_sub(prefix.len());
                     format!("{prefix}{}", truncate_utf8(output, remaining))
                 }

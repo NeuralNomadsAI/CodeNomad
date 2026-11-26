@@ -21,6 +21,7 @@ pub(crate) struct CommandAttempt {
 struct Held {
     attempt: CommandAttempt,
     unconfirmed: bool,
+    observed: bool,
 }
 
 #[derive(Default)]
@@ -37,6 +38,7 @@ impl CommandReceipts {
             Held {
                 attempt,
                 unconfirmed: false,
+                observed: false,
             },
         );
     }
@@ -47,18 +49,48 @@ impl CommandReceipts {
             Held {
                 attempt,
                 unconfirmed: true,
+                observed: false,
             },
         );
     }
 
-    pub(super) fn settle(&mut self, id: &str, outcome: &PromptOutcome) {
+    pub(super) fn target_matches(&self, id: &str, target: Option<&Target>) -> bool {
+        target.is_some_and(|active| {
+            self.0
+                .get(id)
+                .is_some_and(|held| held.attempt.target == *active)
+        })
+    }
+
+    pub(super) fn settle(
+        &mut self,
+        id: &str,
+        outcome: &PromptOutcome,
+        messages: &[crate::history::Row],
+        target_matches: bool,
+    ) -> bool {
+        let is_shell = self
+            .0
+            .get(id)
+            .is_some_and(|held| matches!(held.attempt.kind, CommandKind::Shell { .. }));
+        let observed = is_shell
+            && (self.0.get(id).is_some_and(|held| held.observed)
+                || (target_matches
+                    && messages
+                        .iter()
+                        .any(|row| row.role == "shell" && row.id == id)));
         if matches!(outcome, PromptOutcome::Unconfirmed) {
+            if observed {
+                self.0.remove(id);
+                return true;
+            }
             if let Some(held) = self.0.get_mut(id) {
                 held.unconfirmed = true;
             }
-        } else {
-            self.0.remove(id);
+            return false;
         }
+        self.0.remove(id);
+        observed
     }
 
     pub(super) fn reconcile_shell(
@@ -72,13 +104,18 @@ impl CommandReceipts {
         if self.0.is_empty() {
             return;
         }
-        self.0.retain(|id, held| {
-            !(held.attempt.target == *target
+        for (id, held) in &mut self.0 {
+            if held.attempt.target == *target
                 && matches!(held.attempt.kind, CommandKind::Shell { .. })
-                && messages.iter().any(|row| {
-                    row.role == "shell" && row.id == *id && (held.unconfirmed || row.completed)
-                }))
-        });
+                && messages
+                    .iter()
+                    .any(|row| row.role == "shell" && row.id == *id)
+            {
+                held.observed = true;
+            }
+        }
+        self.0
+            .retain(|_, held| !(held.unconfirmed && held.observed));
     }
 }
 

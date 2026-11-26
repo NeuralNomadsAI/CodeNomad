@@ -126,6 +126,7 @@ pub(crate) struct Recall {
     edit: TextEdit,
     draft: Draft,
     missing: bool,
+    shell_mode: bool,
 }
 
 pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
@@ -220,7 +221,7 @@ pub(super) fn replace_edit(s: &mut State, mut edit: TextEdit) {
 
 pub(super) fn clear_recalled(s: &mut State) {
     if let Some(recall) = s.composer.recall.take()
-        && s.composer.shell_mode
+        && (s.composer.shell_mode || recall.shell_mode)
     {
         for part in recall.draft.attachments {
             if !matches!(part, Attachment::Pasted { .. })
@@ -305,6 +306,7 @@ pub(crate) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> boo
                 edit: s.draft.clone(),
                 draft: s.composer.draft.clone(),
                 missing: s.composer.attachments_missing,
+                shell_mode: s.composer.shell_mode,
             });
         }
         edit.set_caret(edit.text.len());
