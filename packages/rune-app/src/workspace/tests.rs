@@ -528,63 +528,89 @@ fn draft_cap_sheds_mixed_bundles_atomically_without_stripping_attachment_markers
         saved.attachment_parts.get(NO_SESSION_DRAFT_ID),
         Some(&parts("no-session-agent"))
     );
+
+    // Symmetric text-cap direction: 24 priority text drafts + 1 ordinary mixed draft.
+    // Evicting the ordinary mixed draft removes text, attachment marker, and parts together.
+    let mut text_cap = workspace();
+    text_cap.active_session_id = Some("ses_active_txt".into());
+    text_cap
+        .drafts
+        .insert("ses_active_txt".into(), "active".into());
+    text_cap
+        .drafts
+        .insert(NO_SESSION_DRAFT_ID.into(), "no-session".into());
+    for index in 0..(MAX_DRAFTS - 2) {
+        let id = format!("{RECOVERED_DRAFT_PREFIX}00000000-0000-4000-8000-{index:012x}");
+        text_cap.drafts.insert(id, format!("rec {index}"));
+    }
+    text_cap
+        .drafts
+        .insert("ses_ordinary_mixed".into(), "text + attachment".into());
+    text_cap
+        .attachment_drafts
+        .insert("ses_ordinary_mixed".into());
+    text_cap
+        .attachment_parts
+        .insert("ses_ordinary_mixed".into(), parts("ordinary-agent"));
+    let (bytes, partial) = encode_for_save(&snapshot(text_cap)).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let [Tab::Workspace(saved)] = decoded.tabs.as_slice() else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(saved.drafts.len(), MAX_DRAFTS);
+    assert!(!saved.drafts.contains_key("ses_ordinary_mixed"));
+    assert!(!saved.attachment_drafts.contains("ses_ordinary_mixed"));
+    assert!(!saved.attachment_parts.contains_key("ses_ordinary_mixed"));
 }
 
 #[test]
 fn global_text_and_byte_budgets_preserve_distinct_priority_ranks_in_active_tab() {
     use crate::composer::draft_storage::SavedParts;
 
-    // Under global UTF-16 pressure (MAX_STRINGS), active_session_id and __no_session_draft__
-    // survive ahead of a larger __recovered_draft__ in the same active tab.
+    // Under global UTF-16 pressure (MAX_STRINGS = 96 KiB), every draft is valid (<= MAX_DRAFT = 32 KiB)
+    // and the excess (~300 units) is smaller than active_id (4,500) so a flat tier would sacrifice
+    // active_id instead of the larger 32,000-unit __recovered_draft__.
     let mut text_tab = workspace();
     let active_id = "ses_active_small".to_string();
-    let recovered_id = format!("{RECOVERED_DRAFT_PREFIX}12345678-1234-4234-8234-123456789abc");
+    let recovered_1 = format!("{RECOVERED_DRAFT_PREFIX}12345678-1234-4234-8234-123456789abc");
+    let recovered_2 = format!("{RECOVERED_DRAFT_PREFIX}22345678-1234-4234-8234-123456789abc");
     text_tab.active_session_id = Some(active_id.clone());
-    text_tab.drafts.insert(active_id.clone(), "a".repeat(2_000));
+    text_tab.drafts.insert(active_id.clone(), "a".repeat(4_500));
     text_tab
         .drafts
-        .insert(NO_SESSION_DRAFT_ID.into(), "n".repeat(4_000));
+        .insert(NO_SESSION_DRAFT_ID.into(), "n".repeat(30_000));
     text_tab
         .drafts
-        .insert(recovered_id.clone(), "r".repeat(60_000));
-    let mut tabs = vec![Tab::Workspace(text_tab)];
-    // Fill remaining string budget in sibling tabs using active_session_id drafts so global
-    // UTF-16 budget must shed inside the active tab without touching active_id or __no_session_draft__.
-    for idx in 1..MAX_TABS {
-        let mut sibling = workspace();
-        sibling.occurrence = idx as u64;
-        for d in 0..4 {
-            let sid = format!("ses_sib_{idx}_{d}");
-            if d == 0 {
-                sibling.active_session_id = Some(sid.clone());
-            }
-            sibling.drafts.insert(sid, "s".repeat(16_000));
-        }
-        tabs.push(Tab::Workspace(sibling));
-    }
-    let snap = Snapshot {
-        revision: 1,
-        saved_at: 1,
-        panel_widths: [None; 2],
-        file_wrap: None,
-        tabs,
-        active: Some(0),
-    };
+        .insert(recovered_1.clone(), "r".repeat(32_000));
+    text_tab
+        .drafts
+        .insert(recovered_2.clone(), "r".repeat(32_000));
+    let snap = snapshot(text_tab);
+    assert_eq!(encode(&snap), Err(Error::Limit));
     let (bytes, partial) = encode_for_save(&snap).unwrap();
     assert!(partial);
     let decoded = decode(&bytes).unwrap();
     let Tab::Workspace(saved) = &decoded.tabs[0] else {
         panic!("expected active workspace tab");
     };
-    assert!(saved.drafts.contains_key(&active_id));
-    assert!(saved.drafts.contains_key(NO_SESSION_DRAFT_ID));
+    assert_eq!(saved.drafts.get(&active_id).map(String::len), Some(4_500));
+    assert_eq!(
+        saved.drafts.get(NO_SESSION_DRAFT_ID).map(String::len),
+        Some(30_000)
+    );
+    assert!(
+        !saved.drafts.contains_key(&recovered_1) || !saved.drafts.contains_key(&recovered_2),
+        "a recovered draft must be shed before active_session_id or __no_session_draft__"
+    );
     // Verify original snapshot was not mutated.
     assert!(
-        matches!(&snap.tabs[0], Tab::Workspace(orig) if orig.drafts.contains_key(&recovered_id))
+        matches!(&snap.tabs[0], Tab::Workspace(orig) if orig.drafts.contains_key(&recovered_1) && orig.drafts.contains_key(&recovered_2))
     );
 
-    // Under global JSON byte pressure (MAX_BYTES), active_session_id and __no_session_draft__
-    // payloads survive while __recovered_draft__ payloads in the same active tab are shed first.
+    // Under global JSON byte pressure (MAX_BYTES = 1 MiB), active_id (120 KiB) is SMALLER than
+    // every recovered payload (200/255 KiB) while total exceeds 1 MiB by ~37 KiB, so a flat tier
+    // would sacrifice active_id; distinct ranks must keep active_id and __no_session_draft__ intact.
     let pasted = |kb: usize| {
         SavedParts::decode(&json!({
             "complete": true,
@@ -595,16 +621,15 @@ fn global_text_and_byte_budgets_preserve_distinct_priority_ranks_in_active_tab()
         }))
         .unwrap()
     };
-    let recovered_2 = format!("{RECOVERED_DRAFT_PREFIX}22345678-1234-4234-8234-123456789abc");
     let recovered_3 = format!("{RECOVERED_DRAFT_PREFIX}32345678-1234-4234-8234-123456789abc");
     let mut byte_tab = workspace();
     byte_tab.active_session_id = Some(active_id.clone());
     for (id, kb) in [
-        (active_id.clone(), 255),
+        (active_id.clone(), 120),
         (NO_SESSION_DRAFT_ID.to_string(), 255),
-        (recovered_id.clone(), 255),
+        (recovered_1.clone(), 255),
         (recovered_2.clone(), 255),
-        (recovered_3.clone(), 128),
+        (recovered_3.clone(), 200),
     ] {
         byte_tab.drafts.insert(id.clone(), "[pasted #1]".into());
         byte_tab.attachment_drafts.insert(id.clone());
@@ -618,19 +643,15 @@ fn global_text_and_byte_budgets_preserve_distinct_priority_ranks_in_active_tab()
     let [Tab::Workspace(saved)] = decoded.tabs.as_slice() else {
         panic!("expected workspace tab");
     };
-    assert_eq!(saved.attachment_parts.get(&active_id), Some(&pasted(255)));
+    assert_eq!(saved.attachment_parts.get(&active_id), Some(&pasted(120)));
     assert_eq!(
         saved.attachment_parts.get(NO_SESSION_DRAFT_ID),
         Some(&pasted(255))
     );
-    let recovered_shed = [&recovered_id, &recovered_2, &recovered_3]
-        .into_iter()
-        .any(|id| {
-            saved.attachment_parts.get(id)
-                != Some(&pasted(if id == &recovered_3 { 128 } else { 255 }))
-        });
-    assert!(recovered_shed);
-    assert!(saved.attachment_drafts.contains(&recovered_id));
-    assert!(saved.attachment_drafts.contains(&recovered_2));
+    assert_ne!(
+        saved.attachment_parts.get(&recovered_3),
+        Some(&pasted(200)),
+        "recovered payload must be trimmed before smaller active_session_id payload"
+    );
     assert!(saved.attachment_drafts.contains(&recovered_3));
 }

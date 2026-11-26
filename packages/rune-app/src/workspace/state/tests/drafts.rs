@@ -1202,3 +1202,132 @@ fn deferred_active_chat_deletion_recovers_on_leave_and_direct_recovered_adopt_pr
             .all(|id| !is_recovered_draft_id(id))
     );
 }
+
+#[test]
+fn sibling_clear_suppresses_restored_copy_project_promotion_avoids_collision_and_close_drains_delete()
+ {
+    use crate::workspace::{NO_SESSION_DRAFT_ID, RECOVERED_DRAFT_PREFIX};
+
+    // 1. Restored snapshot has stale text in Tab A and explicit clear ("") in Tab B:
+    // deleting the session must NOT resurrect Tab A's stale restored text.
+    let mut s = draft_state();
+    let mut tab_a_saved = closed("ses_cleared_res", "stale restored text");
+    tab_a_saved.active_session_id = None;
+    tab_a_saved
+        .drafts
+        .insert("ses_live_indep".into(), "live edited in A".into());
+    let mut tab_b_saved = closed("ses_cleared_res", "");
+    tab_b_saved.occurrence = 1;
+    tab_b_saved.active_session_id = None;
+    tab_b_saved
+        .drafts
+        .insert("ses_live_indep".into(), "".into());
+    let snap = crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(tab_a_saved), Tab::Workspace(tab_b_saved)],
+        active: Some(0),
+    };
+    let mut ui = Ui::new();
+    ui.hydrate(snap);
+    ui.ready = true;
+    // Mark `ses_live_indep` as genuinely edited in Tab A after restore (not a stale restored copy).
+    ui.entries[0].restored_drafts.remove("ses_live_indep");
+    s.workspace = Some(ui);
+    s.show_launcher();
+
+    assert!(!recover_missing_session_draft(&mut s, "ses_cleared_res"));
+    assert!(s.notifications.queued_messages().is_empty());
+    assert!(recover_missing_session_draft(&mut s, "ses_live_indep"));
+    assert_eq!(s.notifications.queued_messages().len(), 1);
+    let Tab::Workspace(after_a) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected tab A");
+    };
+    assert_eq!(
+        after_a.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+        Some("live edited in A")
+    );
+    assert!(!after_a.drafts.contains_key("ses_cleared_res"));
+
+    // 2. Direct UUID adoption in Tab B when Tab A already holds __no_session_draft__:
+    // Tab B must NOT promote its next UUID into __no_session_draft__, avoiding collision on reopen.
+    let uuid_1 = format!("{RECOVERED_DRAFT_PREFIX}11111111-1111-4111-8111-111111111111");
+    let uuid_2 = format!("{RECOVERED_DRAFT_PREFIX}22222222-2222-4222-8222-222222222222");
+    {
+        let ui = s.workspace.as_mut().unwrap();
+        let Tab::Workspace(tab_b) = &mut ui.entries[1].saved else {
+            panic!("expected tab B");
+        };
+        tab_b.drafts.insert(uuid_1.clone(), "b first".into());
+        tab_b.drafts.insert(uuid_2.clone(), "b second".into());
+        ui.active = 1;
+    }
+    assert!(adopt_recovered_draft(&mut s, "ses_new_b"));
+    {
+        let Tab::Workspace(tab_b) = &s.workspace.as_ref().unwrap().entries[1].saved else {
+            panic!("expected tab B");
+        };
+        assert_eq!(
+            tab_b.drafts.get("ses_new_b").map(String::as_str),
+            Some("b first")
+        );
+        assert!(
+            !tab_b.drafts.contains_key(NO_SESSION_DRAFT_ID),
+            "must not occupy __no_session_draft__ when sibling tab A already holds it"
+        );
+        assert_eq!(
+            tab_b.drafts.get(&uuid_2).map(String::as_str),
+            Some("b second")
+        );
+    }
+
+    // Closing both tabs and reopening preserves BOTH Tab A's __no_session_draft__ and Tab B's uuid_2!
+    let mut tx = rune::Tx::default();
+    close(&mut s, "tab-1", &mut tx);
+    if let Some(l) = s.screen.launcher_mut() {
+        l.pending = false;
+    }
+    close(&mut s, "tab-0", &mut tx);
+    reopen(&mut s);
+    let Tab::Workspace(merged) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected reopened tab");
+    };
+    assert_eq!(
+        merged.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+        Some("live edited in A")
+    );
+    assert_eq!(
+        merged.drafts.get(&uuid_2).map(String::as_str),
+        Some("b second")
+    );
+
+    // 3. Closing an active tab when Event::SessionDeleted is queued in `incoming` (not yet polled)
+    // drains the proof before dropping the cache and recovers the draft before pushing to `ui.closed`.
+    let mut close_s = draft_state();
+    close_s.draft = TextEdit::new(bound(&mut close_s, &backend("ses_queued_del")));
+    close_s.show_chat();
+    close_s.draft = TextEdit::new("unsent before close");
+    let (ev_tx, ev_rx) = bounded(2);
+    ev_tx
+        .try_send(crate::transport::Event::SessionDeleted)
+        .unwrap();
+    close_s.incoming = Some(ev_rx);
+    close(&mut close_s, "tab-0", &mut tx);
+    let closed_entry = close_s
+        .workspace
+        .as_ref()
+        .unwrap()
+        .closed
+        .last()
+        .expect("closed tab recorded");
+    assert!(!closed_entry.drafts.contains_key("ses_queued_del"));
+    assert_eq!(
+        closed_entry
+            .drafts
+            .get(NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("unsent before close")
+    );
+}

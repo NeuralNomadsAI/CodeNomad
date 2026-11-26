@@ -61,6 +61,18 @@ impl Cache {
         self.launcher_visible
     }
 
+    pub(super) fn drain_session_deleted(&mut self) -> bool {
+        let mut deleted = false;
+        if let Some(incoming) = &self.incoming {
+            while let Ok(event) = incoming.try_recv() {
+                if matches!(event, Event::SessionDeleted) {
+                    deleted = true;
+                }
+            }
+        }
+        deleted
+    }
+
     fn is_detached(&self) -> bool {
         self.launcher_visible && self.incoming.is_none()
     }

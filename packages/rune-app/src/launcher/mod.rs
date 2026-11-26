@@ -82,7 +82,7 @@ pub struct Launcher {
     detached_reconcile_trailing: bool,
     failed_detached_workspaces: HashSet<String>,
     pub(crate) rebind_after_send: Option<String>,
-    pub(crate) adopt_recovered_for: Option<String>,
+    pub(crate) adopt_recovered_for: Option<(String, Option<u64>)>,
     resume_after_job: bool,
     connection_generation: u64,
     pending_connection_generation: u64,
@@ -639,6 +639,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         .take()
         .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
     {
+        l.adopt_recovered_for = None;
         if std::mem::take(&mut l.resume_after_job)
             && !l.authentication_required
             && l.project.is_none()
@@ -793,7 +794,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     );
                 }
                 l.rebind_after_send = None;
-                l.adopt_recovered_for = Some(session_id.clone());
+                l.adopt_recovered_for = Some((session_id.clone(), ticket));
                 dismiss_origin_panel(s, dismiss, tx);
                 choose_destination(s, session_id, ticket, tx);
             } else {
@@ -879,7 +880,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             if l.adopt_recovered_for
                 .as_ref()
-                .is_some_and(|id| unavailable_ids.contains(id))
+                .is_some_and(|(id, _)| unavailable_ids.contains(id))
             {
                 l.adopt_recovered_for = None;
             }
@@ -915,18 +916,28 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         || s.phase == Phase::Failed
                             && selected.as_deref() == Some(b.session.as_str()))
             }) {
-                if let Some(l) = s.screen.launcher_mut() {
+                let retry_ticket = if let Some(l) = s.screen.launcher_mut() {
                     l.show_title = false;
-                    if l.adopt_recovered_for.as_deref() != Some(b.session.as_str()) {
+                    if l.adopt_recovered_for
+                        .as_ref()
+                        .is_some_and(|(id, _)| id == b.session.as_str())
+                    {
+                        l.adopt_recovered_for
+                            .as_ref()
+                            .and_then(|(_, ticket)| *ticket)
+                    } else {
                         l.adopt_recovered_for = None;
+                        None
                     }
-                }
+                } else {
+                    None
+                };
                 if stale_connection {
                     dismiss_origin_panel(s, dismiss, tx);
                     if close_mission_reader {
                         retry_mission_conversation(s, b.session);
                     } else {
-                        choose_destination(s, b.session, None, tx);
+                        choose_destination(s, b.session, retry_ticket, tx);
                     }
                 } else {
                     dismiss_origin_panel(s, dismiss, tx);

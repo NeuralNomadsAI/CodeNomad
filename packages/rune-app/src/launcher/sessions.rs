@@ -394,6 +394,14 @@ fn choose_from_inner(
     };
     l.selection_ticket = ticket;
     l.close_mission_reader_on_bind = close_mission_reader;
+    if l.adopt_recovered_for
+        .as_ref()
+        .is_some_and(|(id, expected_ticket)| {
+            !(candidates.len() == 1 && candidates[0].0 == *id && *expected_ticket == ticket)
+        })
+    {
+        l.adopt_recovered_for = None;
+    }
     l.job("sessionList.reload.error", async move {
         let mut missing = Vec::new();
         for (id, step) in candidates {
@@ -607,8 +615,11 @@ fn bind_at(
         || s.screen
             .launcher_mut()
             .and_then(|l| l.adopt_recovered_for.take())
-            .as_deref()
-            == Some(b.session.as_str());
+            .is_some_and(|(id, expected_ticket)| {
+                id == b.session
+                    && expected_ticket
+                        .is_none_or(|ticket| ticket == s.notifications.navigation_ticket())
+            });
     if should_adopt {
         crate::workspace::adopt_recovered_draft(s, &b.session);
     }

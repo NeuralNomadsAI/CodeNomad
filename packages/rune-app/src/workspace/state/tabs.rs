@@ -264,6 +264,15 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         .and_then(|ui| ui.entries.get_mut(index))
         .map(|entry| {
             let mut ids = entry.visits.poll_checks().deleted;
+            if entry
+                .cache
+                .as_mut()
+                .is_some_and(super::Cache::drain_session_deleted)
+                && let Tab::Workspace(saved) = &entry.saved
+                && let Some(active_id) = saved.active_session_id.as_deref()
+            {
+                ids.push(active_id.to_owned());
+            }
             ids.extend(std::mem::take(&mut entry.pending_deleted));
             if let Tab::Workspace(saved) = &mut entry.saved
                 && let Some(active_id) = saved.active_session_id.as_deref()

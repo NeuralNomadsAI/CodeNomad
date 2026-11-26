@@ -49,9 +49,8 @@ pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Er
                 break;
             };
             saved.drafts.remove(&id);
-            if let Some(parts) = saved.attachment_parts.get_mut(&id) {
-                parts.mark_incomplete();
-            }
+            saved.attachment_drafts.remove(&id);
+            saved.attachment_parts.remove(&id);
         }
         saved
             .attachment_drafts

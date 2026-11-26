@@ -70,6 +70,7 @@ pub(super) struct Entry {
     missions: Option<crate::missions::Panel>,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
+    restored_drafts: HashSet<String>,
     pending_deleted: std::collections::BTreeSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
 }
@@ -285,6 +286,7 @@ fn same_project(a: &Workspace, b: &Workspace) -> bool {
 }
 fn entry(key: String, mut saved: Tab) -> Entry {
     let mut cleared = HashSet::new();
+    let mut restored_drafts = HashSet::new();
     if let Tab::Workspace(w) = &mut saved {
         w.drafts.retain(|id, text| {
             if text.is_empty() {
@@ -294,6 +296,8 @@ fn entry(key: String, mut saved: Tab) -> Entry {
                 true
             }
         });
+        restored_drafts.extend(w.drafts.keys().cloned());
+        restored_drafts.extend(w.attachment_drafts.iter().cloned());
     }
     Entry {
         key,
@@ -317,6 +321,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         missions: None,
         cleared,
         pending_drafts: HashSet::new(),
+        restored_drafts,
         pending_deleted: std::collections::BTreeSet::new(),
         live_drafts: Default::default(),
     }
