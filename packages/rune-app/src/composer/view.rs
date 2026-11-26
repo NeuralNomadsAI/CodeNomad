@@ -521,8 +521,10 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if event.mods == rune::Mods::default() && matches!(event.key, Key::Up | Key::Down | Key::Escape)
     {
         if event.key == Key::Escape && s.composer.recall.is_some() && !s.composer.device.busy() {
-            super::recall::restore(s);
-            s.composer.picker.reset();
+            if !tx.key_repeat() {
+                super::recall::restore(s);
+                s.composer.picker.reset();
+            }
             return true;
         }
     }

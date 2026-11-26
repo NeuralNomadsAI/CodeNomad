@@ -375,6 +375,31 @@ fn web_edit_bang_enters_shell_mode_but_paste_and_delete_to_bang_do_not() {
         );
     }
 
+    // Gate enforces matching beforeinput -> input target pairing, bubble expiry, and drop/cancel reset.
+    let mut gate = super::web_bang::Gate::<u8>::default();
+    gate.on_beforeinput(Some(1), Some("insertText"), Some("!"), false);
+    assert!(
+        !gate.take(),
+        "beforeinput alone must not arm before matching input"
+    );
+    assert!(gate.on_input_capture(Some(&1), Some("insertText"), Some("!"), false));
+    assert!(gate.take());
+    assert!(!gate.take());
+    gate.on_reset();
+    // Canceled beforeinput on textarea 1 followed by input-only edit on textarea 2 never arms.
+    gate.on_beforeinput(Some(1), Some("insertText"), Some("!"), false);
+    assert!(!gate.on_input_capture(Some(&2), None, Some("!"), false));
+    assert!(!gate.take());
+    // Qualifying edit in another Rune field on the shared textarea expires at input bubble before drop/paste.
+    gate.on_beforeinput(Some(1), Some("insertText"), Some("!"), false);
+    assert!(gate.on_input_capture(Some(&1), Some("insertText"), Some("!"), false));
+    gate.on_reset();
+    assert!(!gate.take());
+    // Non-insertText input event (e.g. historyUndo) on same textarea cannot reuse a canceled beforeinput.
+    gate.on_beforeinput(Some(1), Some("insertText"), Some("!"), false);
+    assert!(!gate.on_input_capture(Some(&1), Some("historyUndo"), Some("!"), false));
+    assert!(!gate.take());
+
     let (mut rt, _rx) = chat_runtime();
 
     // Desktop clipboard paste / direct changed() must never arm shell mode even when pasting '!'.
@@ -811,4 +836,39 @@ fn shell_reconciliation_clears_stashed_and_recalled_restores_and_held_enter_neve
         rt.state.composer.draft.attachments[0],
         Attachment::Skill { .. }
     ));
+
+    // Holding Escape on an edited recalled entry in shell mode exits shell mode without cancelling recall.
+    rt.update(|s, _| {
+        s.draft.clear();
+        s.composer.shell_mode = true;
+    });
+    rt.frame(0.0);
+    send_key(&mut rt, Key::Up, Mods::default());
+    send_key(&mut rt, Key::Text(" --edited".into()), Mods::default());
+    assert!(rt.state.composer.shell_mode);
+    assert!(rt.state.composer.recall.is_some());
+    let edited_text = rt.state.draft.text.clone();
+    assert!(edited_text.ends_with(" --edited"));
+    rt.key(KeyEvent {
+        key: Key::Escape,
+        mods: Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.composer.shell_mode);
+    assert!(rt.state.composer.recall.is_some());
+    assert_eq!(rt.state.draft.text, edited_text);
+    rt.repeat_key(KeyEvent {
+        key: Key::Escape,
+        mods: Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(
+        rt.state.composer.recall.is_some(),
+        "repeated Escape after ExitShell must not discard edited recall"
+    );
+    assert_eq!(rt.state.draft.text, edited_text);
+    rt.key_up(KeyEvent {
+        key: Key::Escape,
+        mods: Mods::default(),
+    });
 }
