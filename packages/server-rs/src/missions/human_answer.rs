@@ -69,7 +69,10 @@ impl Human {
     fn current(&self, app: &App) -> bool {
         match self {
             Self::Cookie { key, username } => app.auth.cookie_user(key).as_ref() == Some(username),
-            Self::Device(id) => app.devices.as_ref().is_some_and(|d| d.lock().unwrap().is_authorized(*id)),
+            Self::Device(id) => {
+                let tunnel_active = app.remote_control.is_tunnel_active();
+                app.devices.as_ref().is_some_and(|d| d.lock().unwrap().is_authorized(*id, tunnel_active))
+            }
         }
     }
     fn wire(&self) -> (Value, &str) {

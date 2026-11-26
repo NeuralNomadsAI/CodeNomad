@@ -394,7 +394,7 @@ impl PreferencesWatch {
                 )
                 .await;
                 connected_state.store(false, SeqCst);
-                if cancel.is_closed() || state.cancelled.load(SeqCst) {
+                if cancel.is_closed() || state.is_cancelled() {
                     break;
                 }
                 if opened {

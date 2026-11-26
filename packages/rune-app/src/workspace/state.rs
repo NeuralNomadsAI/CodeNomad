@@ -26,10 +26,11 @@ pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
 };
 pub(crate) use panel_state::{
-    deliver_detached_events, detached_workspace_ids, has_detached_panels,
-    has_unopened_detached_panels, mission_confirmation, mission_event, mission_observation_project,
-    mission_panel, mission_supported, missions_composing, reconcile_detached_online,
-    right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
+    close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
+    has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_reader,
+    mission_observation_project, mission_panel, mission_reader, mission_supported,
+    missions_composing, reconcile_detached_online, restore_mission_reader_focus, right_panel_tab,
+    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_mission_briefing,
     suspend_missions,
 };
 pub use polling::{file_draft_status, poll, poll_file_drafts, status};
@@ -89,9 +90,26 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
         })
     })
 }
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn has_wake_lock_eligible_work(s: &State) -> bool {
+    if !s.screen.is_launcher()
+        && super::cache::has_wake_lock_eligible_work(&s.phase, s.agent.as_ref())
+    {
+        return true;
+    }
+    s.workspace.as_ref().is_some_and(|ui| {
+        ui.entries.iter().any(|entry| {
+            entry
+                .cache
+                .as_ref()
+                .is_some_and(Cache::has_wake_lock_eligible_work)
+        })
+    })
+}
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
     mission_lifecycle: crate::missions::Lifecycle,
+    mission_briefing: crate::missions::BriefingRequests,
     entries: Vec<Entry>,
     active: usize,
     next_key: u64,
@@ -107,6 +125,18 @@ pub struct Ui {
     closed: Vec<Workspace>,
 }
 impl Ui {
+    #[cfg(test)]
+    pub(crate) fn mark_ready(&mut self) {
+        self.ready = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn with_cached_git(&mut self, key: &str, f: impl FnOnce(&mut crate::git::Binding)) {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.key == key)
+            && let Some(cache) = entry.cache.as_mut()
+        {
+            f(cache.git_mut());
+        }
+    }
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key
     }
@@ -134,6 +164,7 @@ impl Ui {
         Self {
             openings: Default::default(),
             mission_lifecycle: Default::default(),
+            mission_briefing: Default::default(),
             entries: vec![entry("tab-0".into(), Tab::Blank)],
             active: 0,
             next_key: 1,
@@ -220,6 +251,21 @@ impl Ui {
         let Some(store) = &self.persistence.store else {
             return;
         };
+        let records: Vec<_> = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                Some((
+                    e.binding.as_ref()?.base.clone(),
+                    e.project.as_ref()?.id.clone(),
+                ))
+            })
+            .collect();
+        if self.persistence.suppresses_snapshot(self.revision) {
+            store.stage(&[], &records);
+            self.staged_revision = Some(self.revision);
+            return;
+        }
         let bytes = match super::encode_for_save(&self.snapshot()) {
             Ok((bytes, partial)) => {
                 self.persistence.partial = partial;
@@ -231,18 +277,80 @@ impl Ui {
                 return;
             }
         };
-        let records: Vec<_> = self
-            .entries
-            .iter()
-            .filter_map(|e| {
-                Some((
-                    e.binding.as_ref()?.base.clone(),
-                    e.project.as_ref()?.id.clone(),
-                ))
-            })
-            .collect();
         store.stage(&bytes, &records);
         self.staged_revision = Some(self.revision);
+    }
+    pub(crate) fn persistence_store(&self) -> Option<platform::storage::Store> {
+        self.persistence.store.clone()
+    }
+    pub(crate) fn is_primary_startup(&self) -> bool {
+        self.ready && self.persistence.store.is_some()
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_primary_store(&mut self, store: platform::storage::Store) {
+        self.ready = true;
+        self.persistence.store = Some(store);
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_unreadable_restore(&mut self) {
+        self.touched = false;
+        self.persistence.restore_enabled = false;
+        self.persistence.restore_read_error = true;
+        self.persistence.read_error = true;
+        self.persistence.file_draft_read_error = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn persistence_loading(&self) -> bool {
+        self.persistence.loading
+    }
+    #[cfg(test)]
+    pub(crate) fn workspace_revision(&self) -> u64 {
+        self.revision
+    }
+    pub(crate) fn restore_enabled(&self) -> bool {
+        self.persistence.restore_enabled
+    }
+    pub(crate) fn begin_startup_mutation(
+        &mut self,
+        documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
+    ) {
+        self.persistence
+            .begin_startup_mutation(self.revision, documents, outlines);
+        self.staged_revision = None;
+        self.stage();
+    }
+    pub(crate) fn cancel_startup_mutation(&mut self, outlines: &mut super::outlines::Cache) {
+        self.persistence.cancel_startup_mutation(outlines);
+        self.staged_revision = None;
+        self.stage();
+    }
+    pub(crate) fn apply_restore_enabled(
+        &mut self,
+        enabled: bool,
+        documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
+        wake: rune::Waker,
+    ) {
+        if self
+            .persistence
+            .apply_restore_enabled(enabled, self.revision, documents, outlines, wake)
+        {
+            self.changed();
+        }
+        self.staged_revision = None;
+        self.stage();
+    }
+    pub(crate) fn apply_startup_cleared(
+        &mut self,
+        outcome: platform::storage::ClearOutcome,
+        documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
+    ) {
+        self.persistence
+            .apply_cleared(outcome, self.revision, documents, outlines);
+        self.staged_revision = None;
+        self.stage();
     }
 }
 fn same_project(a: &Workspace, b: &Workspace) -> bool {

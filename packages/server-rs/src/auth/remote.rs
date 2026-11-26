@@ -28,6 +28,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("DELETE",r"^/api/workspaces/[^/]+/worktrees/[^/]+$"),
     ("GET",r"^/workspaces/[^/]+/instance/api/vcs/status$"),
     ("GET",r"^/api/(?:missions/playbooks|workspaces/[^/]+/missions(?:/msn_[a-z0-9]+(?:/(?:content|tasks))?)?)$"),
+    ("GET",r"^/api/workspaces/[^/]+/missions/[^/]+/admission$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/creation/[A-Za-z0-9_-]+$"),
     ("GET POST",r"^/api/workspaces/[^/]+/missions/recurrence$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/recurrence/[^/]+/(?:current|run-now/status|passages/[^/]+|current/[^/]+/content)$"),
@@ -43,15 +44,19 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET PUT",r"^/api/config-files/[^/]+/content$"),
     ("POST",r"^/api/storage/binaries/validate$"),
     ("POST",r"^/api/(?:client-connections/pong|workspaces(?:/creation/cancel|/[^/]+/creation/release)?)$"),
-    ("POST",r"^/api/workspaces/[^/]+/session-history/(?:outline|outlinePreview|window|query|ranked)$"),
+    ("GET POST",r"^/api/workspaces/temporary$"),
+    ("POST",r"^/api/workspaces/temporary/abandon$"),
+    ("POST",r"^/api/workspaces/[^/]+/(?:keep|discard)$"),
+    ("POST",r"^/api/workspaces/[^/]+/session-history/(?:outline|outlinePreview|window|query|ranked|prune)$"),
+    ("POST",r"^/api/workspaces/[^/]+/session-pruning/(?:preview|prune)$"),
     ("GET",r"^/api/workspaces/[^/]+/session-attachment/[^/]+/[^/]+/[0-9]+/[a-f0-9]{64}$"),
     ("GET",r"^/api/workspaces/[^/]+/session-media/[^/]+/[^/]+/[^/]+/[^/]+/[^/]+$"),
     ("DELETE",r"^/api/workspaces/[^/]+$"),
     ("GET",r"^/api/panel-extensions/[^/]+/panel$"),
     ("GET",r"^/workspaces/[^/]+/instance/api/(?:agent(?:/[^/]+)?|command|location|mcp|model(?:/default)?|provider|project|session(?:/active|/[^/]+(?:/(?:inbox|permission|form|message(?:/[^/]+)?))?)?|experimental/session/[^/]+/log)$"),
-    ("POST",r"^/workspaces/[^/]+/instance/api/session(?:/[^/]+/(?:prompt|command|agent|model|interrupt))?$"),
+    ("POST",r"^/workspaces/[^/]+/instance/api/session(?:/[^/]+/(?:prompt|command|agent|model|interrupt|background))?$"),
     ("PUT DELETE",r"^/workspaces/[^/]+/instance/api/experimental/session/[^/]+/instructions/entries/[^/]+$"),
-    ("GET PUT",r"^/api/workspaces/[^/]+/subagent-depth$"),
+    ("GET PUT",r"^/api/workspaces/[^/]+/(?:websearch-settings|image-settings|subagent-depth)$"),
     ("GET POST",r"^/api/sidecars$"),
     ("POST",r"^/api/previews$"),
     ("DELETE",r"^/api/previews/[^/]+$"),
@@ -66,6 +71,14 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
 
 #[derive(Clone)]
 pub(crate) struct BrowserDevice(pub uuid::Uuid);
+
+/// Per-device preview logout epoch captured at remote middleware admission time so a concurrent
+/// `POST /api/auth/logout` between admission and preview creation still fences publication.
+#[derive(Clone, Copy)]
+pub(crate) struct DeviceAdmission {
+    pub id: uuid::Uuid,
+    pub logout_epoch: u64,
+}
 
 fn reply(code: Status, text: &str) -> Response {
     (code, [(header::CONNECTION, "close")], Json(json!({"error":text}))).into_response()
@@ -184,9 +197,10 @@ pub async fn admit(
     let supplied = h.get(header::ORIGIN).cloned();
     let origin_ok = supplied.as_ref().is_some_and(|v| v == channel.origin.as_str());
     let server = h.get("x-codenomad-server-request").is_some_and(|v| v == "1");
+    let direct = channel.ingress || devices::direct_origin(&channel.origin);
     let server_pair = path == "/api/remote-control/server-pair";
     if server_pair {
-        if !channel.ingress {
+        if !direct {
             return (
                 Status::NOT_FOUND,
                 [(header::CACHE_CONTROL, "no-store")],
@@ -200,11 +214,12 @@ pub async fn admit(
             || browser_metadata(h)
             || ["cookie", "cookie2", "authorization", "proxy-authorization"].iter().any(|name| h.contains_key(*name))
         {
-            return cors(reply(Status::FORBIDDEN, "Server pairing request rejected"), None);
+            let mut denied = reply(Status::FORBIDDEN, "Server pairing request rejected");
+            denied.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            return cors(denied, None);
         }
         return cors(next.run(req).await, None);
     }
-    let direct = channel.ingress || devices::direct_origin(&channel.origin);
     let entry = direct
         && !server
         && matches!(*req.method(), Method::GET | Method::HEAD)
@@ -220,7 +235,7 @@ pub async fn admit(
     {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
-    if server && (!channel.ingress || browser_metadata(h)) {
+    if server && (!direct || browser_metadata(h)) {
         return cors(
             reply(if channel.ingress { Status::FORBIDDEN } else { Status::UNAUTHORIZED }, "This device is not paired"),
             None,
@@ -236,6 +251,7 @@ pub async fn admit(
             !id.is_empty() && !id.contains('/') && crate::missions::human_answer::form_reply(route, &method).is_some()
         });
     let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
+    let remote_logout = !server && method == Method::POST && path == "/api/auth/logout";
     if entry && path == "/remote-pair" {
         if let Some(crate::host::ui::RemoteBundle::Rune(dir)) = &bundle
             && let Some(page) = crate::host::ui::rune_pair_page(dir, method).await
@@ -245,12 +261,23 @@ pub async fn admit(
         return cors(next.run(req).await, supplied);
     }
     if path == "/api/remote-control/pair" && method == Method::POST && !server {
-        if !origin_ok || !direct {
+        if !direct {
             return cors(reply(Status::NOT_FOUND, "Not found"), None);
+        }
+        if !channel.ingress {
+            if !origin_ok {
+                return cors(reply(Status::NOT_FOUND, "Not found"), None);
+            }
+            return cors(next.run(req).await, supplied);
+        }
+        let native_pairing =
+            supplied.is_none() && !h.contains_key(header::REFERER) && !h.contains_key("sec-fetch-site");
+        if !origin_ok && !native_pairing {
+            return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
         }
         return cors(next.run(req).await, supplied);
     }
-    if path.starts_with("/api/auth/") && path != "/api/auth/status"
+    if path.starts_with("/api/auth/") && path != "/api/auth/status" && !remote_logout
         || (path.starts_with("/api/backends/") && !backend_ui)
         // `REMOTE_MANAGEMENT_READS`: the status is the one management read open to devices.
         || path.starts_with("/api/remote-control/") && path != "/api/remote-control/status"
@@ -265,6 +292,7 @@ pub async fn admit(
     if !entry
         && !backend_ui
         && !form_reply
+        && !remote_logout
         && ui.is_none()
         && !CATALOG.iter().any(|(methods, pat)| {
             methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
@@ -276,12 +304,13 @@ pub async fn admit(
     let Ok((_, token)) = crate::auth::cookies(h, app.auth.cookie_name()) else {
         return cors(reply(Status::BAD_REQUEST, "Invalid cookie"), supplied);
     };
+    let tunnel_active = app.remote_control.is_tunnel_active();
     let owner = token.filter(|_| direct).and_then(|token| {
-        app.devices
-            .as_ref()?
-            .lock()
-            .unwrap()
-            .authenticate(&token, (!channel.ingress).then_some(channel.origin.as_str()))
+        app.devices.as_ref()?.lock().unwrap().authenticate(
+            &token,
+            (!channel.ingress).then_some(channel.origin.as_str()),
+            tunnel_active,
+        )
     });
     if path == "/api/auth/status" && owner.is_none() {
         return cors(status(false), supplied);
@@ -347,7 +376,9 @@ pub async fn admit(
             req.headers_mut().remove(name);
         }
     }
+    let logout_epoch = app.previews.logout_epoch(id);
     req.extensions_mut().insert(Principal(principal.clone()));
+    req.extensions_mut().insert(DeviceAdmission { id, logout_epoch });
     if !server {
         req.extensions_mut().insert(BrowserDevice(id));
     }
@@ -389,6 +420,22 @@ mod tests {
     use axum::{Extension, middleware::from_fn_with_state};
     use std::{path::PathBuf, sync::Arc, time::Duration};
     use tokio_util::sync::CancellationToken;
+
+    fn admitted(method: &str, path: &str) -> bool {
+        let effective = if method == "HEAD" { "GET" } else { method };
+        CATALOG.iter().any(|(methods, pat)| methods.split(' ').any(|m| m == effective) && pat.is_match(path))
+    }
+
+    #[test]
+    fn remote_catalog_admits_mission_admission_get_and_head_only() {
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/admission"));
+        assert!(admitted("HEAD", "/api/workspaces/ws-1/missions/msn_abc123/admission"));
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/legacy-1/admission"));
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/tasks"));
+        assert!(admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/content"));
+        assert!(!admitted("POST", "/api/workspaces/ws-1/missions/msn_abc123/admission"));
+        assert!(!admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/admission/extra"));
+    }
 
     #[tokio::test]
     async fn multi_origin_pairing_binds_cookie_to_selected_origin_and_refuses_foreign_host_or_origin() {

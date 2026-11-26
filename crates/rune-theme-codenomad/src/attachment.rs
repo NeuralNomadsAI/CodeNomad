@@ -63,7 +63,7 @@ pub fn picture_hover(image: &rune::Image, label: &str, anchor: &str) -> Option<E
         .a11y_hidden()
         .inert();
     Some(rune_kit::popover::anchored(
-        crate::kit(dark),
+        &crate::kit(dark),
         body,
         anchor,
         rune_kit::Placement::TopStart,
@@ -96,7 +96,8 @@ pub fn picture_preview<S: 'static>(
                     .child(text(label).text_role(crate::TextRole::Title))
                     .child(
                         layout::button(close_label, false, close.clone())
-                            .key("close-attachment-preview"),
+                            .key("close-attachment-preview")
+                            .autofocus(),
                     ),
             )
             .child(preview)

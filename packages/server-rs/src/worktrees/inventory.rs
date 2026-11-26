@@ -3,8 +3,9 @@ mod cache;
 use super::linked::{conflict, git, missing, native, native_error, physical};
 use crate::{App, Error, Workspace, files};
 use axum::http::Method;
-pub use cache::{EventCache, event_catalogue, forget, invalidate};
-pub(super) use cache::{history_catalogue, receipt_catalogue, revision, store_if_current};
+pub use cache::{EventCache, blocking_invalidation, event_catalogue, forget, invalidate, invalidate_blocking};
+pub(crate) use cache::{HttpSnapshot, ReadMode, emit_worktrees_changed, http_read};
+pub(super) use cache::{event_revision, history_catalogue, http_list, media_http_read, receipt_catalogue, revision};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -173,7 +174,7 @@ impl Physical {
             && identity(&self.root).ok().as_ref() == Some(&self.root_id)
             && identity(&self.admin).ok().as_ref() == Some(&self.admin_id)
             && identity(&self.common).ok().as_ref() == Some(&self.common_id)
-            && std::fs::symlink_metadata(self.admin.join("HEAD")).is_ok()
+            && super::ownership::valid_git_admin(&self.admin, &self.common)
             && config_stamp(&self.common.join("config")).as_ref() == Some(&self.stamp[0])
             && config_stamp(&self.admin.join("config.worktree")).as_ref() == Some(&self.stamp[1])
             && match (&self.marker, &self.backlink, &self.common_marker) {
@@ -633,6 +634,12 @@ impl Catalogue {
                     && a.nested_missing == b.nested_missing
             })
     }
+
+    /// Re-verifies locally (no Git subprocess) that the workspace root checkout still matches
+    /// the cached layout and ancestor markers.
+    pub(crate) fn root_live_for(&self, opened: &Path) -> bool {
+        self.get("root").is_ok_and(|root| root.layout.live_for(opened))
+    }
 }
 pub fn scope(mut w: Workspace, tree: &Tree) -> Workspace {
     w.path = tree.path.clone();
@@ -731,14 +738,6 @@ pub(crate) async fn root_supported_with(app: &App, w: &Workspace, local: Physica
 }
 pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalogue, Error> {
     catalogue_in(app, w, refresh, true, None).await
-}
-pub(crate) async fn catalogue_with_local(
-    app: &App,
-    w: &Workspace,
-    refresh: bool,
-    local: Physical,
-) -> Result<Catalogue, Error> {
-    catalogue_in(app, w, refresh, true, Some(local)).await
 }
 
 async fn catalogue_in(

@@ -1,4 +1,5 @@
 //! Preferences geometry follows settings-screen.css and the native Preferences bounds.
+pub mod palette;
 pub mod stats;
 use crate::{
     Space, TextRole,
@@ -135,7 +136,7 @@ pub fn nav<S: 'static>(
     select: impl Fn(&mut S, &'static str) + Clone + 'static,
 ) -> El {
     let dark = layout::dark();
-    let kit = crate::kit(dark);
+    let kit = &*crate::kit(dark);
     let mut sidebar = Sidebar::new()
         .inset(tokens(dark).space(Space::Sm).px())
         .header(heading(title))
@@ -174,7 +175,7 @@ pub fn preset_buttons<S: 'static>(
     choose: impl Fn(&mut S, usize) + Clone + 'static,
 ) -> El {
     let dark = layout::dark();
-    let kit = crate::kit(dark);
+    let kit = &*crate::kit(dark);
     col()
         .key("transcript-presets")
         .role("group")
@@ -231,11 +232,12 @@ pub fn segments<S: 'static>(
             control = control.segment_state(index, rune_kit::State::Disabled);
         }
     }
-    control.build(crate::kit(layout::dark()))
+    control.build(&crate::kit(layout::dark()))
 }
 
 const PICKER_WIDTH: f32 = 180.0;
 const COMPACT_PICKER_WIDTH: f32 = 136.0;
+const PALETTE_PICKER_WIDTH: f32 = 160.0;
 
 fn table_width(compact: bool) -> f32 {
     if compact {
@@ -291,6 +293,17 @@ pub fn picker(key: &str, label: &str, options: &[&str]) -> Select {
     table_picker(key, label, options, false)
 }
 
+pub fn palette_picker(key: &str, label: &str, options: &[&str]) -> Select {
+    Select::new(key, options)
+        .label(label)
+        .width(PALETTE_PICKER_WIDTH)
+        .appearance(SelectAppearance::Field)
+}
+
+pub fn stepping_picker(key: &str, label: &str, options: &[&str]) -> Select {
+    picker(key, label, options).step_closed(true)
+}
+
 pub fn table_picker(key: &str, label: &str, options: &[&str], compact: bool) -> Select {
     Select::new(key, options)
         .label(label)
@@ -336,7 +349,7 @@ pub fn transcript_popup<S: 'static>(
                 .child(content),
         );
     rune_kit::popover::anchored(
-        crate::kit(dark),
+        &crate::kit(dark),
         body,
         trigger,
         rune_kit::Placement::BottomEnd,
@@ -465,13 +478,10 @@ pub fn transcript_filter_row<S: 'static>(
 pub fn render<S, T>(
     cx: &mut Cx<S>,
     dark: bool,
-    palette: Option<&'static crate::palettes::Palette>,
+    palette: Option<crate::palettes::ResolvedPalette>,
     build: impl FnOnce(&mut Cx<S>) -> T,
 ) -> T {
-    crate::palettes::with_palette(palette, || {
-        cx.foreground(tokens(dark).color("text-primary"));
-        layout::with_appearance(dark, || build(cx))
-    })
+    crate::palettes::with_resolved(palette, || layout::render_with_dark(cx, dark, build))
 }
 
 pub fn frame(sidebar: El, body: El, overlays: Vec<El>) -> El {
@@ -616,7 +626,7 @@ pub fn checkbox_cell<S: 'static>(
         .hide_label()
         .disabled(disabled)
         .on_toggle(toggle)
-        .build(crate::kit(layout::dark()))
+        .build(&crate::kit(layout::dark()))
 }
 
 pub fn setting_row_with_info(label: &str, info: Option<El>, control: El) -> El {
@@ -660,7 +670,7 @@ pub fn setting_switch<S: 'static>(
         .hide_label()
         .disabled(disabled)
         .on_toggle(toggle)
-        .build(crate::kit(layout::dark()))
+        .build(&crate::kit(layout::dark()))
 }
 
 pub fn primary_action<S: 'static>(
@@ -680,10 +690,18 @@ pub fn primary_action_tx<S: 'static>(
         .variant(rune_kit::ButtonVariant::Submit)
         .disabled(disabled)
         .on_press_tx(press)
-        .build(crate::kit(layout::dark()))
+        .build(&crate::kit(layout::dark()))
 }
 
-pub fn color_scheme(title: &str, mode: &str, segments: El, contrast: El, picker: El) -> El {
+pub fn color_scheme(
+    title: &str,
+    mode: &str,
+    segments: El,
+    contrast: El,
+    workbench: El,
+    name_editor: Option<El>,
+    error: Option<El>,
+) -> El {
     col()
         .full_width()
         .separate(Space::Sm)
@@ -694,7 +712,38 @@ pub fn color_scheme(title: &str, mode: &str, segments: El, contrast: El, picker:
                 .child(segments)
                 .child(contrast),
         )
-        .child(picker)
+        .child(workbench)
+        .children(name_editor)
+        .children(error)
+}
+
+pub fn startup_state_card(
+    title: &str,
+    info: El,
+    switch: El,
+    clear_button: El,
+    feedback: Option<(&str, bool)>,
+) -> El {
+    let t = tokens(layout::dark());
+    let notice = feedback.map(|(message, is_error)| {
+        let color = if is_error {
+            t.color("status-error")
+        } else {
+            t.color("text-muted")
+        };
+        text(message)
+            .role(if is_error { "alert" } else { "status" })
+            .text_role(TextRole::Label)
+            .color(color)
+            .key("startup-state-feedback")
+    });
+    col()
+        .key("startup-state-settings")
+        .full_width()
+        .separate(Space::Sm)
+        .child(setting_row_with_info(title, Some(info), switch))
+        .child(row().full_width().justify_end().child(clear_button))
+        .children(notice)
 }
 
 pub fn contrast_controls<S: 'static>(
@@ -730,7 +779,7 @@ pub fn disclosure<S: 'static>(
     rune_kit::Collapsible::new(label, open)
         .child(body)
         .on_toggle(move |s| press(s))
-        .build(crate::kit(layout::dark()))
+        .build(&crate::kit(layout::dark()))
         .on_key(move |s, event, tx| {
             if tx.focused() != Some("trigger")
                 || event.key != rune::Key::Enter
@@ -743,4 +792,69 @@ pub fn disclosure<S: 'static>(
             }
             true
         })
+}
+
+#[cfg(test)]
+#[test]
+fn stepping_picker_steps_while_closed_and_opens_with_alt_down() {
+    #[derive(Default)]
+    struct State {
+        open: bool,
+        selected: usize,
+    }
+    const OPTIONS: [&str; 3] = ["One", "Two", "Three"];
+    fn view(s: &State, cx: &mut Cx<State>) -> El {
+        layout::render(cx, |_| {
+            let mut layers = Vec::new();
+            let trigger = build_picker(
+                stepping_picker("step", "Choice", &OPTIONS)
+                    .current(Some(OPTIONS[s.selected]))
+                    .open(s.open)
+                    .on_toggle(|s: &mut State| s.open = !s.open)
+                    .on_close(|s: &mut State| s.open = false)
+                    .on_choose(|s: &mut State, value, _| {
+                        s.open = false;
+                        if let Some(index) = OPTIONS.iter().position(|&v| v == value) {
+                            s.selected = index;
+                        }
+                    }),
+                &mut layers,
+            );
+            col().w_full().h_full().child(trigger).children(layers)
+        })
+    }
+    let mut rt = rune::Runtime::new(
+        State::default(),
+        view,
+        (320.0, 240.0),
+        rune::Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    rt.update(|_, tx| tx.focus("step-trigger", true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Down,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.open);
+    assert_eq!(rt.state.selected, 1);
+
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Up,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.open);
+    assert_eq!(rt.state.selected, 0);
+
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Down,
+        mods: rune::Mods {
+            alt: true,
+            ..Default::default()
+        },
+    });
+    rt.frame(0.02);
+    assert!(rt.state.open);
 }

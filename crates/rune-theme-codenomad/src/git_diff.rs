@@ -34,5 +34,5 @@ pub fn view<S: 'static>(
         Some(comment) => view.on_comment(move |s, lines, tx| comment(s, lines, tx)),
         None => view,
     };
-    view.build(state, kit(dark()))
+    view.build(state, &kit(dark()))
 }

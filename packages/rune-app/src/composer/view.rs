@@ -6,10 +6,16 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
 };
 
-pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
+pub fn view(
+    s: &State,
+    bounds: rune_theme_codenomad::interruption::SessionLayout,
+    caret_pins: crate::chat::ComposerCaretPins,
+    worktree: Option<El>,
+    more: El,
+) -> El {
     let scope = s.input_scope.clone();
     let stop = s.phase == Phase::Streaming && s.agent.is_some();
-    let editor = editor(s, compact);
+    let editor = editor(s, bounds, caret_pins);
     let retry = s.reader.as_ref().is_some_and(|reader| reader.can_retry());
     let mut actions = layout::action_row()
         .children(worktree)
@@ -215,7 +221,12 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
         )
 }
 
-fn editor(s: &State, compact: bool) -> El {
+fn editor(
+    s: &State,
+    bounds: rune_theme_codenomad::interruption::SessionLayout,
+    caret_pins: crate::chat::ComposerCaretPins,
+) -> El {
+    let locked = s.composer.editing_locked();
     #[cfg(not(target_arch = "wasm32"))]
     let input_key = "input";
     #[cfg(target_arch = "wasm32")]
@@ -223,8 +234,19 @@ fn editor(s: &State, compact: bool) -> El {
     let input = layout::composer_input(&s.draft, t("promptInput.placeholder.default"))
         .key(input_key)
         .label(t("rune.prompt"));
-    if s.composer.editing_locked() {
-        return layout::composer_field(input.disabled(true), compact, false).key("composer");
+    let scroll = s.tool_diff_preferences.composer_scroll.clone();
+    if locked {
+        return layout::composer_field(
+            input.disabled(true),
+            bounds,
+            false,
+            move |y, max| {
+                scroll.set((y, max));
+            },
+            None,
+            None,
+        )
+        .key("composer");
     }
     let scope = s.input_scope.clone();
     let key_scope = scope.clone();
@@ -254,13 +276,14 @@ fn editor(s: &State, compact: bool) -> El {
     let input = {
         let physical_scope = scope.clone();
         let menu_scope = scope.clone();
+        let menu_look = layout::popup_menu_look();
         input
             .on_physical_input(move |s: &mut State, event, tx| {
                 s.current_scope(&physical_scope) && super::clipboard::physical(s, event, tx)
             })
             .on_secondary_press(move |s: &mut State, point, tx| {
                 if s.current_scope(&menu_scope) {
-                    super::clipboard::menu(s, (point.x, point.y), tx);
+                    super::clipboard::menu(s, (point.x, point.y), menu_look.clone(), tx);
                 }
             })
             .on_drop_files(move |s: &mut State, paths, _| {
@@ -269,7 +292,25 @@ fn editor(s: &State, compact: bool) -> El {
                 }
             })
     };
-    layout::composer_field(input, compact, s.draft.focused).key("composer")
+    layout::composer_field(
+        input,
+        bounds,
+        s.draft.focused,
+        move |y, max| {
+            scroll.set((y, max));
+        },
+        caret_pins.inner,
+        caret_pins.stack,
+    )
+    .key("composer")
+    .drawn_rect_into(&s.tool_diff_preferences.composer_bounds)
+    .on_layout_tx(|s: &mut State, rect, tx| {
+        if !s.screen.is_launcher() {
+            crate::chat::ToolDiffPreferences::composer_field_layout(s, rect, tx);
+        } else {
+            tx.live_only();
+        }
+    })
 }
 
 pub fn overlays(s: &State, layer: &mut Vec<El>) {
@@ -319,7 +360,7 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
             choose(s, tx, index, false, false);
         }
     })
-    .build(kit(layout::dark()), layer);
+    .build(&kit(layout::dark()), layer);
 }
 
 pub(super) fn changed(s: &mut State, tx: &mut Tx) {

@@ -63,7 +63,7 @@ impl SearchHit {
         }
     }
 
-    pub(crate) fn landing(&self, s: &State, row: &Row, steps: usize) -> Landing {
+    pub(crate) fn landing(&self, s: &State, rows: &[Row], row: &Row, steps: usize) -> Landing {
         if !super::anchors::context_visible(s, &row.role) {
             return Landing::Filtered;
         }
@@ -102,7 +102,7 @@ impl SearchHit {
         let Some((index, key, steps)) = self.technical_block(row, steps) else {
             return Landing::Missing;
         };
-        if !super::anchors::part_visible(s, row, index) {
+        if !super::anchors::part_visible(s, rows, row, index) {
             return Landing::Filtered;
         }
         if let Part::Tool(tool) = &row.parts[index]

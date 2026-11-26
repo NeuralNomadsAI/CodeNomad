@@ -182,12 +182,78 @@ async fn repo_target(
     guard: bool,
 ) -> Result<(Workspace, crate::worktrees::linked::Tree), Error> {
     let w = app.workspace(id)?;
-    let local = match crate::worktrees::linked::probe_root_checkout(&w).await? {
-        crate::worktrees::linked::RootCheckout::MissingGit => return Err(missing_git()),
-        crate::worktrees::linked::RootCheckout::NonGit => return Err(bad("Workspace is not a Git repository")),
-        crate::worktrees::linked::RootCheckout::Git(res) => *res?,
+    let hit = crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Validated).await?;
+    let hit = if hit.from_cache && matches!(hit.snapshot, crate::worktrees::linked::HttpSnapshot::NonGit) {
+        let dot_git = w.path.join(".git");
+        let appeared =
+            tokio::task::spawn_blocking(move || std::fs::symlink_metadata(&dot_git).is_ok()).await.unwrap_or(false);
+        if appeared {
+            crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Fresh).await?
+        } else {
+            hit
+        }
+    } else {
+        hit
     };
-    let cat = crate::worktrees::linked::catalogue_with_local(app, &w, false, local).await?;
+    let mut cat = match hit.snapshot {
+        crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(missing_git()),
+        crate::worktrees::linked::HttpSnapshot::NonGit => return Err(bad("Workspace is not a Git repository")),
+        crate::worktrees::linked::HttpSnapshot::Git(cat) => cat,
+    };
+    if hit.from_cache {
+        let (root_live, tree_ok) = {
+            let cat_clone = std::sync::Arc::clone(&cat);
+            let opened = w.path.clone();
+            let slug_owned = slug.to_owned();
+            tokio::task::spawn_blocking(move || {
+                let root_live = cat_clone.root_live_for(&opened);
+                let tree_ok = root_live
+                    && cat_clone.get(&slug_owned).ok().is_some_and(|t| t.direct_folder() && t.contains_live(&t.path));
+                (root_live, tree_ok)
+            })
+            .await
+            .unwrap_or((false, false))
+        };
+        if !tree_ok {
+            let missing_slug = root_live && cat.get(slug).is_err();
+            if !missing_slug || !hit.refreshed_on_miss {
+                let retry_mode = if missing_slug {
+                    crate::worktrees::linked::ReadMode::RefreshOnMiss(hit.generation)
+                } else {
+                    crate::worktrees::linked::ReadMode::Fresh
+                };
+                let fresh = crate::worktrees::linked::http_read(app, &w, retry_mode).await?;
+                cat = match fresh.snapshot {
+                    crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(missing_git()),
+                    crate::worktrees::linked::HttpSnapshot::NonGit => {
+                        return Err(bad("Workspace is not a Git repository"));
+                    }
+                    crate::worktrees::linked::HttpSnapshot::Git(cat) => cat,
+                };
+                if fresh.from_cache {
+                    let cat_clone = std::sync::Arc::clone(&cat);
+                    let slug_owned = slug.to_owned();
+                    let still_live = tokio::task::spawn_blocking(move || {
+                        cat_clone.get(&slug_owned).ok().is_none_or(|t| t.direct_folder() && t.contains_live(&t.path))
+                    })
+                    .await
+                    .unwrap_or(false);
+                    if !still_live {
+                        let forced =
+                            crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Fresh)
+                                .await?;
+                        cat = match forced.snapshot {
+                            crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(missing_git()),
+                            crate::worktrees::linked::HttpSnapshot::NonGit => {
+                                return Err(bad("Workspace is not a Git repository"));
+                            }
+                            crate::worktrees::linked::HttpSnapshot::Git(cat) => cat,
+                        };
+                    }
+                }
+            }
+        }
+    }
     if guard {
         guard_config(&cat.main).await?;
     }
@@ -398,6 +464,7 @@ pub async fn init(
     if files::host_identity(&w.path).ok().as_ref() != Some(&identity) {
         return Err(mismatch());
     }
+    let _invalidate = worktrees::linked::blocking_invalidation(&app);
     let response = app
         .native
         .request(reqwest::Method::POST, app.native.url().join("/api/vcs/init").unwrap())
@@ -408,8 +475,9 @@ pub async fn init(
         .map_err(|_| fail())?;
     match response.status().as_u16() {
         200..=299 => {
+            worktrees::linked::invalidate_blocking(&app);
             notify(&app, &w);
-            app.emit(json!({"type":"workspace.worktreesChanged","workspaceId":w.id}));
+            worktrees::linked::emit_worktrees_changed(&app, w.id);
             Ok(Json(json!({"ok":true})))
         }
         409 => Err(exists()),
@@ -470,6 +538,7 @@ mod tests {
                 }))
                 .into_response()
             }
+            (Method::POST, "/api/worktree/refresh") => Status::NO_CONTENT.into_response(),
             (Method::GET, "/api/worktree") => Json(json!([{"directory": root}])).into_response(),
             _ => Status::NOT_IMPLEMENTED.into_response(),
         }
@@ -568,6 +637,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({"directory": root}),
+            temporary: None,
         });
         let id_str = id.to_string();
 

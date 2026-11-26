@@ -53,6 +53,16 @@ pub(super) fn control(
     )
 }
 
+pub(super) fn clear(s: &mut State, tx: &mut Tx) {
+    let open = s.git.owner.as_ref().and_then(|ui| ui.open_menu.clone());
+    if let Some(id) = open {
+        action_menu::clear(s, state, &id.action_key("menu"), tx);
+        if let Some(ui) = &mut s.git.owner {
+            ui.open_menu = None;
+        }
+    }
+}
+
 pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let gone = s.git.owner.as_ref().and_then(|ui| {
         ui.open_menu
@@ -60,6 +70,7 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             .filter(|id| {
                 !ui.active
                     || !ui.shown
+                    || !ui.online
                     || ui.mode != Mode::Changes
                     || !ui.changes.open[super::changes::index(id.section)]
                     || !ui.changes.visible(id.section).any(|row| row.id == **id)

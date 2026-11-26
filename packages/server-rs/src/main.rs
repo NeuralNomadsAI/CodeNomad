@@ -16,8 +16,10 @@ mod meta;
 #[rustfmt::skip] // Frozen while its contract is redesigned: moved, never reformatted.
 mod missions;
 mod opencode;
+mod opencode_settings;
 mod previews;
 mod provider_usage;
+mod remote_control;
 mod search;
 mod service;
 mod sessions;
@@ -26,6 +28,7 @@ mod shared;
 mod sidecars;
 mod storage;
 mod subagent_depth;
+mod temporary_workspaces;
 mod usage;
 mod workspaces;
 mod worktrees;
@@ -98,10 +101,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         Some(settings) => Some(auth::tls::Listener::open(settings).await?),
         None => None,
     };
-    let devices = match &tls {
-        Some(tls) => Some(auth::devices::open(&data, tls)?),
-        None => None,
-    };
+    let devices = Some(auth::devices::open(&data, tls.as_ref())?);
     let settings = settings::Settings::new(launch.settings);
     let meta = meta::document(settings.server_id()?, port, &root, tls.as_ref(), launch.ui.meta())?;
     let positional = launch.binary.to_string_lossy();
@@ -135,6 +135,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     let routes = Router::new()
         .merge(meta::routes())
         .merge(auth::routes())
+        .merge(temporary_workspaces::routes())
         .merge(workspaces::routes())
         .merge(files::routes())
         .merge(search::routes())
@@ -144,6 +145,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(settings::routes())
         .merge(memory::routes())
         .merge(subagent_depth::routes())
+        .merge(opencode_settings::routes())
         .merge(sessions::routes(shutdown.clone()))
         .merge(events::routes())
         .merge(extensions::routes())
@@ -171,20 +173,25 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     tokio::spawn(previews::sweep(state.clone(), shutdown.clone()));
     tokio::spawn(files::watch::run(state.clone(), watch_rx, shutdown.clone()));
     let remote_url = tls.as_ref().map(|tls| tls.origin.clone());
+    let remote_router = routes
+        .clone()
+        .merge(auth::remote_routes())
+        .fallback(|| async { unavailable() })
+        .layer(from_fn(panic_guard::catch))
+        .layer(from_fn_with_state((state.clone(), launch.ui.remote_bundle()), auth::remote::admit))
+        .layer(from_fn(bench::refusal_trace))
+        .with_state(state.clone());
+    state.remote_control.attach_router(remote_router.clone());
+    tokio::spawn(auth::devices::sweep(state.clone(), shutdown.clone()));
     let remote = tls.map(|tls| {
-        let remote = routes
-            .clone()
-            .merge(auth::remote_routes())
-            .fallback(|| async { unavailable() })
-            .layer(from_fn(panic_guard::catch))
-            .layer(from_fn_with_state((state.clone(), launch.ui.remote_bundle()), auth::remote::admit))
-            .layer(from_fn(bench::refusal_trace))
-            .with_state(state.clone());
         if !launch.serve {
             println!("HTTPS {}", tls.origin);
         }
-        tokio::spawn(auth::devices::sweep(state.clone(), shutdown.clone()));
-        tokio::spawn(tls.serve(remote, shutdown.clone()))
+        tokio::spawn(tls.serve(remote_router, shutdown.clone()))
+    });
+    let resume_state = state.clone();
+    tokio::spawn(async move {
+        resume_state.remote_control.resume(&resume_state).await;
     });
     let ui = Arc::new(launch.ui);
     tokio::spawn(sidecars::probe(state.clone()));
@@ -219,22 +226,24 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         println!("{local_url}");
     }
     let done = shutdown.clone();
+    let local_state = state.clone();
     let served = shared::serve_local(listener, local, done, move || {
         // Event streams end, as `closeSseClients` does, so the drain can finish.
-        state.events.shutdown.cancel();
+        local_state.events.shutdown.cancel();
     })
     .await;
     shutdown.cancel();
-    // Wait for local HTTP, HTTPS, and automation bridge handlers to finish within their own
-    // contractual deadlines before tearing down plugin leases and removing the bridge registration
-    // (TS `http-server.ts:243-273`, `index.ts:753-768`, `shutdown.ts:130-146`).
-    let (remote, bridge_ok) = tokio::join!(
+    // Wait for local HTTP, HTTPS, Remote Control tunnel/ingress, and automation bridge handlers
+    // to finish within their own contractual deadlines before tearing down plugin leases and
+    // removing the bridge registration (TS `http-server.ts:243-273`, `index.ts:753-768`, `shutdown.ts:130-146`).
+    let (remote, _, bridge_ok) = tokio::join!(
         async {
             match remote {
                 Some(task) => task.await.map_err(|e| e.to_string()).and_then(|r| r.map_err(|e| e.to_string())),
                 None => Ok(()),
             }
         },
+        state.remote_control.shutdown(&state),
         async {
             match bridge {
                 Some(task) => matches!(task.await, Ok(Ok(()))),

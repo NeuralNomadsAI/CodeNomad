@@ -283,22 +283,9 @@ impl Signals {
         else {
             return false;
         };
-        let terminal = match event["type"].as_str() {
-            Some("form.replied" | "form.cancelled") => Some((true, &data["id"])),
-            Some("permission.replied") => Some((false, &data["requestID"])),
-            _ => None,
+        let Some(event) = other.or_else(|| super::session_attention(event, session)) else {
+            return false;
         };
-        let mapped = if let Some((form, id)) = terminal {
-            id.as_str()
-                .filter(|id| valid_id(id))
-                .map(|id| WorkspaceEvent::SessionRequestResolved {
-                    form,
-                    id: id.into(),
-                })
-        } else {
-            other.or_else(|| super::session_attention(event, session))
-        };
-        let Some(event) = mapped else { return false };
         let mut pending = self.attention.lock().unwrap();
         if pending.len() >= 128 {
             pending.pop_front();
@@ -369,7 +356,7 @@ impl CatalogueWatch {
                     },
                 )
                 .await;
-                state.cancelled.store(true, SeqCst);
+                state.cancel();
                 observer.disconnected();
                 if expired {
                     observer.authentication_required.store(true, SeqCst);

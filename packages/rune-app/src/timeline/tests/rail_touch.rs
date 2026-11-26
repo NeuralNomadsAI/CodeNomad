@@ -204,7 +204,7 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
             && owner(&mut rt.state).jump.is_browsing()
             && owner(&mut rt.state).scroll.get().rail_glide.is_none()
             && after_wheel_race >= 200.0
-            && after_wheel_race < 304.0,
+            && after_wheel_race < rail[3] * 2.0,
         "same-frame headless WheelOwner::Vertical race must interrupt the glide without snapping to 0.0 and enter browse mode: interrupted={wheel_glide_interrupted}, before={before_wheel_race}, after={after_wheel_race}"
     );
     // Mid-glide WheelOwner::Vertical burst: once a reveal glide is already in-flight, a continuing

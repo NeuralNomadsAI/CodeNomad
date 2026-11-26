@@ -42,12 +42,13 @@ fn memory_settings_are_demanded_and_failed_writes_only_read_back() {
 #[test]
 fn failed_memory_reads_keep_the_last_confirmed_switch_value() {
     fn view(prefs: &Preferences, _: &mut rune::Cx<Preferences>) -> rune::El {
+        let help = crate::settings::ExternalLink::default();
         crate::strings::with_locale("en", || {
             crate::settings::memory::view::<Preferences>(
                 prefs,
-                false,
+                &help,
                 |_, _| {},
-                |_, _| {},
+                |_| None,
                 |_, _| {},
                 |_, _| {},
             )

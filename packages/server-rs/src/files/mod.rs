@@ -229,15 +229,85 @@ async fn select(app: &crate::App, id: &str, q: &Input) -> Result<Workspace, Erro
     }
     let slug = q.worktree.as_deref().filter(|s| !s.is_empty());
     if slug.is_some_and(|s| s != "root") || directory(&w, q.directory.as_deref()).is_err() {
-        let cat = crate::worktrees::linked::catalogue(app, &w, false).await.map_err(|_| not_owned())?;
-        let tree = match (slug, q.directory.as_deref()) {
-            (Some(s), Some(p)) => cat.get(s).ok().filter(|t| cat.by_directory(p) == Some(*t)),
-            (Some(s), None) => cat.get(s).ok(),
-            (None, Some(p)) => cat.by_directory(p),
-            _ => None,
+        let hit = crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Validated)
+            .await
+            .map_err(|_| not_owned())?;
+        let cat = hit.snapshot.catalogue().ok_or_else(not_owned)?;
+        let (found, root_live) = {
+            let cat_clone = std::sync::Arc::clone(&cat);
+            let opened = w.path.clone();
+            let slug_owned = slug.map(str::to_owned);
+            let dir_owned = q.directory.clone();
+            let check_live = hit.from_cache;
+            tokio::task::spawn_blocking(move || {
+                let root_live = !check_live || cat_clone.root_live_for(&opened);
+                let tree = if root_live {
+                    let chosen = match (slug_owned.as_deref(), dir_owned.as_deref()) {
+                        (Some(s), Some(p)) => cat_clone.get(s).ok().filter(|t| cat_clone.by_directory(p) == Some(*t)),
+                        (Some(s), None) => cat_clone.get(s).ok(),
+                        (None, Some(p)) => cat_clone.by_directory(p),
+                        _ => None,
+                    };
+                    chosen.filter(|t| !check_live || t.contains_live(&t.path)).cloned()
+                } else {
+                    None
+                };
+                (tree, root_live)
+            })
+            .await
+            .unwrap_or((None, false))
+        };
+        if let Some(tree) = found {
+            return Ok(crate::worktrees::linked::scope(w, &tree));
         }
-        .ok_or_else(not_owned)?;
-        return Ok(crate::worktrees::linked::scope(w, tree));
+        if hit.from_cache && (!root_live || !hit.refreshed_on_miss) {
+            let retry_mode = if root_live {
+                crate::worktrees::linked::ReadMode::RefreshOnMiss(hit.generation)
+            } else {
+                crate::worktrees::linked::ReadMode::Fresh
+            };
+            let fresh = crate::worktrees::linked::http_read(app, &w, retry_mode).await.map_err(|_| not_owned())?;
+            let cat = fresh.snapshot.catalogue().ok_or_else(not_owned)?;
+            let cat_clone = std::sync::Arc::clone(&cat);
+            let slug_owned = slug.map(str::to_owned);
+            let dir_owned = q.directory.clone();
+            let check_live = fresh.from_cache;
+            let resolved = tokio::task::spawn_blocking(move || {
+                let chosen = match (slug_owned.as_deref(), dir_owned.as_deref()) {
+                    (Some(s), Some(p)) => cat_clone.get(s).ok().filter(|t| cat_clone.by_directory(p) == Some(*t)),
+                    (Some(s), None) => cat_clone.get(s).ok(),
+                    (None, Some(p)) => cat_clone.by_directory(p),
+                    _ => None,
+                };
+                match chosen {
+                    Some(t) if !check_live || t.contains_live(&t.path) => Some(Ok(t.clone())),
+                    Some(_) => Some(Err(())),
+                    None => None,
+                }
+            })
+            .await
+            .unwrap_or(None);
+            match resolved {
+                Some(Ok(tree)) => return Ok(crate::worktrees::linked::scope(w, &tree)),
+                Some(Err(())) => {
+                    let forced =
+                        crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Fresh)
+                            .await
+                            .map_err(|_| not_owned())?;
+                    let cat = forced.snapshot.catalogue().ok_or_else(not_owned)?;
+                    let tree = match (slug, q.directory.as_deref()) {
+                        (Some(s), Some(p)) => cat.get(s).ok().filter(|t| cat.by_directory(p) == Some(*t)),
+                        (Some(s), None) => cat.get(s).ok(),
+                        (None, Some(p)) => cat.by_directory(p),
+                        _ => None,
+                    }
+                    .ok_or_else(not_owned)?;
+                    return Ok(crate::worktrees::linked::scope(w, tree));
+                }
+                None => return Err(not_owned()),
+            }
+        }
+        return Err(not_owned());
     }
     directory(&w, q.directory.as_deref())?;
     Ok(w)
@@ -499,6 +569,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({"directory": root}),
+            temporary: None,
         });
 
         let expected: Vec<String> = (0..count).map(|i| format!("item-{i:04}.txt")).collect();
@@ -574,6 +645,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({ "directory": ws_dir }),
+            temporary: None,
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

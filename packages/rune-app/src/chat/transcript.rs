@@ -212,8 +212,14 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                 match groups.get(i, index) {
                     Some(chunk) => {
                         group_end = chunk.end;
-                        let body =
-                            chunk.view(s, &m.id, &m.parts[index..group_end], index, &mut marker);
+                        let body = chunk.view(
+                            s,
+                            &m.id,
+                            m.completed,
+                            &m.parts[index..group_end],
+                            index,
+                            &mut marker,
+                        );
                         hidden_continuation |= body.is_none();
                         body
                     }
@@ -232,8 +238,14 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                 match groups.get(i, index) {
                     Some(chunk) => {
                         group_end = chunk.end;
-                        let body =
-                            chunk.view(s, &m.id, &m.parts[index..group_end], index, &mut marker);
+                        let body = chunk.view(
+                            s,
+                            &m.id,
+                            m.completed,
+                            &m.parts[index..group_end],
+                            index,
+                            &mut marker,
+                        );
                         hidden_continuation |= body.is_none();
                         body
                     }

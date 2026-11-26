@@ -8,10 +8,16 @@ use codenomad_client::{
     backend::Backend,
     bounded,
     history::Result,
-    missions::{DetailRead, DirectoryChanged, MapHeader, RevisionChanged, Task, TaskWindow},
+    missions::{
+        DetailRead, DirectoryChanged, MapHeader, Report, RevisionChanged, Task, TaskWindow,
+    },
     runtime::{Instant, timeout},
 };
-use std::{rc::Rc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+    time::Duration,
+};
 
 const BUDGET: Duration = Duration::from_secs(30);
 
@@ -24,37 +30,48 @@ pub(super) struct Detail {
     staged: Option<(Demand, Result<Answer>)>,
     pending: Option<Demand>,
     retry: Option<Demand>,
+    looked_up: HashSet<(String, String)>,
+    lookup_failed: Option<(String, String)>,
+    auth_expired: Option<Backend>,
     pub failed: bool,
     pub map_reads: u64,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Demand {
     Refresh,
     More,
     Attention,
+    Lookup {
+        task_id: Option<String>,
+        task_key: Option<String>,
+    },
 }
 
 pub(super) struct Snapshot {
     pub header: MapHeader,
     pub tasks: Rc<TaskRows>,
+    pub reports: HashMap<String, Report>,
     pub end: u64,
     pub attention_end: u64,
 }
 
 enum Answer {
-    New(MapHeader, Vec<Task>, u64),
+    New(MapHeader, Vec<Task>, HashMap<String, Report>, u64),
     Same(MapHeader),
     More(TaskWindow, u64),
     Attention(TaskWindow, u64),
+    Lookup(TaskWindow, u64, String, String),
 }
 
 impl Answer {
     fn revision(&self) -> u64 {
         match self {
-            Self::New(header, _, _) => header.root.revision,
+            Self::New(header, _, _, _) => header.root.revision,
             Self::Same(header) => header.root.revision,
-            Self::More(_, revision) | Self::Attention(_, revision) => *revision,
+            Self::More(_, revision)
+            | Self::Attention(_, revision)
+            | Self::Lookup(_, revision, _, _) => *revision,
         }
     }
 }
@@ -97,10 +114,9 @@ impl Detail {
             return summary;
         }
         if self.staged.is_none() {
-            self.staged = self
-                .active
-                .as_ref()
-                .and_then(|(demand, inbox)| inbox.try_recv().ok().map(|answer| (*demand, answer)));
+            self.staged = self.active.as_ref().and_then(|(demand, inbox)| {
+                inbox.try_recv().ok().map(|answer| (demand.clone(), answer))
+            });
         }
         let answer = self.staged.as_ref().and_then(|(_, answer)| match answer {
             Ok(answer) => Some(answer.revision()),
@@ -111,7 +127,84 @@ impl Detail {
         self.observed.max(summary).max(answer)
     }
     pub fn retry(&mut self) {
-        self.pending = self.retry;
+        self.pending = self.retry.clone();
+    }
+    pub fn lookup_task(&mut self, task_id: Option<&str>, task_key: Option<&str>) {
+        if self.busy() || self.failed {
+            return;
+        }
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        if snapshot.tasks.len() >= snapshot.header.tasks.page.total {
+            return;
+        }
+        let key_pair = (
+            task_id.unwrap_or_default().to_owned(),
+            task_key.unwrap_or_default().to_owned(),
+        );
+        if self.looked_up.contains(&key_pair) {
+            return;
+        }
+        self.lookup_failed = None;
+        self.pending = Some(Demand::Lookup {
+            task_id: task_id.filter(|s| !s.is_empty()).map(str::to_owned),
+            task_key: task_key.filter(|s| !s.is_empty()).map(str::to_owned),
+        });
+    }
+    pub fn lookup_settled(&self, task_id: &str, task_key: &str) -> bool {
+        self.looked_up
+            .contains(&(task_id.to_owned(), task_key.to_owned()))
+    }
+    pub fn take_lookup_failed(&mut self, task_id: &str, task_key: &str) -> bool {
+        if self
+            .lookup_failed
+            .as_ref()
+            .is_some_and(|(id, key)| id == task_id && key == task_key)
+        {
+            self.lookup_failed = None;
+            true
+        } else {
+            false
+        }
+    }
+    pub fn clear_lookup_cache(&mut self) {
+        self.looked_up.clear();
+        self.lookup_failed = None;
+    }
+    pub fn cancel_lookup(&mut self) {
+        if matches!(self.active.as_ref(), Some((Demand::Lookup { .. }, _))) {
+            self.active = None;
+        }
+        if matches!(self.staged.as_ref(), Some((Demand::Lookup { .. }, _))) {
+            self.staged = None;
+        }
+        if matches!(self.pending.as_ref(), Some(Demand::Lookup { .. })) {
+            self.pending = None;
+        }
+    }
+    pub fn take_auth_expired(&mut self) -> Option<Backend> {
+        self.auth_expired.take()
+    }
+    #[cfg(test)]
+    pub fn fixture_snapshot_and_lookup(
+        &mut self,
+        header: MapHeader,
+        task_id: String,
+        task_key: String,
+    ) {
+        self.id.clone_from(&header.root.id);
+        self.snapshot = Some(Snapshot {
+            header,
+            tasks: Rc::new(TaskRows::new(Vec::new())),
+            reports: HashMap::new(),
+            end: 0,
+            attention_end: 0,
+        });
+        self.pending = Some(Demand::Lookup {
+            task_id: Some(task_id),
+            task_key: Some(task_key),
+        });
     }
     pub fn more(&mut self) {
         if !self.busy()
@@ -158,20 +251,27 @@ impl Detail {
         self.revision_floor(id, revision);
         if let Some((demand, result)) = self.staged.take() {
             self.active = None;
-            self.retry = None;
-            self.failed = match result {
+            let is_lookup = matches!(demand, Demand::Lookup { .. });
+            if !is_lookup {
+                self.retry = None;
+            }
+            let failed = match result {
                 Ok(answer) if Some(answer.revision()) < self.observed => {
-                    self.retry = Some(Demand::Refresh);
-                    true
+                    if !is_lookup {
+                        self.retry = Some(Demand::Refresh);
+                    }
+                    !is_lookup
                 }
                 Ok(answer) => {
                     self.observed = self.observed.max(Some(answer.revision()));
                     match answer {
-                        Answer::New(header, tasks, end) => {
+                        Answer::New(header, tasks, reports, end) => {
                             self.map_reads = self.map_reads.saturating_add(1);
+                            self.looked_up.clear();
                             self.snapshot = Some(Snapshot {
                                 header,
                                 tasks: Rc::new(TaskRows::new(tasks)),
+                                reports,
                                 end,
                                 attention_end: 0,
                             });
@@ -198,28 +298,54 @@ impl Detail {
                                 if !Rc::make_mut(&mut snapshot.tasks).extend(window.tasks, 0, 0) {
                                     return true;
                                 }
+                                snapshot.merge_reports(window.reports);
                                 snapshot.attention_end = end;
                                 false
                             })
                         }
+                        Answer::Lookup(window, _, req_id, req_key) => {
+                            self.looked_up.insert((req_id, req_key));
+                            if let Some(snapshot) = self.snapshot.as_mut()
+                                && Rc::make_mut(&mut snapshot.tasks).extend(window.tasks, 0, 0)
+                            {
+                                snapshot.merge_reports(window.reports);
+                            }
+                            false
+                        }
                     }
                 }
                 Err(error) => {
+                    if codenomad_client::missions::is_auth_expired(&error) {
+                        self.auth_expired = Some(backend.clone());
+                    }
                     if let Some(changed) = error.downcast_ref::<RevisionChanged>() {
                         self.observed = self.observed.max(Some(changed.0));
                     }
-                    self.retry = Some(
+                    if let Demand::Lookup { task_id, task_key } = demand {
                         if error.is::<DirectoryChanged>() || error.is::<RevisionChanged>() {
-                            Demand::Refresh
+                            self.refresh();
                         } else {
-                            demand
-                        },
-                    );
-                    true
+                            self.lookup_failed =
+                                Some((task_id.unwrap_or_default(), task_key.unwrap_or_default()));
+                        }
+                        false
+                    } else {
+                        self.retry = Some(
+                            if error.is::<DirectoryChanged>() || error.is::<RevisionChanged>() {
+                                Demand::Refresh
+                            } else {
+                                demand
+                            },
+                        );
+                        true
+                    }
                 }
             };
-            if self.failed && self.retry.is_none() {
-                self.retry = Some(Demand::Refresh);
+            if !is_lookup {
+                self.failed = failed;
+                if self.failed && self.retry.is_none() {
+                    self.retry = Some(Demand::Refresh);
+                }
             }
             changed = true;
         }
@@ -250,31 +376,50 @@ impl Detail {
             )
         });
         let more = self.snapshot.as_ref().and_then(|s| {
-            let read = match demand {
+            let read = match &demand {
                 Demand::More => backend.mission_task_window(&project, &s.header, s.end),
                 Demand::Attention => {
                     backend.mission_task_attention(&project, &s.header, s.attention_end)
                 }
+                Demand::Lookup { task_id, task_key } => backend.mission_task_lookup(
+                    &project,
+                    &s.header,
+                    task_id.as_deref(),
+                    task_key.as_deref(),
+                ),
                 Demand::Refresh => return None,
             };
             Some((read, s.header.root.revision))
         });
         let started = Instant::now();
         let floor = self.observed;
-        self.active = Some((demand, inbox));
+        self.active = Some((demand.clone(), inbox));
         platform::spawn(async move {
             let (_cancel, alive) = bounded(1);
             let operation = async {
                 match (demand, more) {
-                    (demand @ (Demand::More | Demand::Attention), Some((read, revision))) => {
+                    (Demand::More, Some((read, revision))) => {
                         let window = read_window(read?, &reads, &alive)
                             .await
                             .ok_or("cancelled Mission task read")??;
-                        Ok(if matches!(demand, Demand::More) {
-                            Answer::More(window, revision)
-                        } else {
-                            Answer::Attention(window, revision)
-                        })
+                        Ok(Answer::More(window, revision))
+                    }
+                    (Demand::Attention, Some((read, revision))) => {
+                        let window = read_window(read?, &reads, &alive)
+                            .await
+                            .ok_or("cancelled Mission task read")??;
+                        Ok(Answer::Attention(window, revision))
+                    }
+                    (Demand::Lookup { task_id, task_key }, Some((read, revision))) => {
+                        let window = read_window(read?, &reads, &alive)
+                            .await
+                            .ok_or("cancelled Mission task lookup")??;
+                        Ok(Answer::Lookup(
+                            window,
+                            revision,
+                            task_id.unwrap_or_default(),
+                            task_key.unwrap_or_default(),
+                        ))
                     }
                     _ => refresh(&backend, &project, &id, previous, floor, &reads, &alive).await,
                 }
@@ -322,12 +467,44 @@ impl Snapshot {
             })
     }
 
+    pub fn report(&self, id: &str) -> Option<&Report> {
+        self.reports.get(id)
+    }
+
+    pub fn task_reports(&self, task_key: &str) -> Vec<&Report> {
+        let mut list: Vec<&Report> = self
+            .reports
+            .values()
+            .filter(|report| report.task_key == task_key)
+            .collect();
+        list.sort_unstable_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        list
+    }
+
+    fn merge_reports(&mut self, reports: Vec<Report>) {
+        for report in reports {
+            if self
+                .reports
+                .get(&report.id)
+                .is_some_and(|existing| existing.task_key != report.task_key)
+            {
+                continue;
+            }
+            self.reports.insert(report.id.clone(), report);
+        }
+    }
+
     fn extend(&mut self, page: TaskWindow) -> bool {
         if page.task_page.offset != self.end
             || !Rc::make_mut(&mut self.tasks).extend(page.tasks, self.end, page.task_page.end)
         {
             return false;
         }
+        self.merge_reports(page.reports);
         self.end = page.task_page.end;
         true
     }
@@ -403,12 +580,22 @@ async fn read_map(
     }
     let end = source.page.end;
     let mut tasks = Vec::new();
+    let mut reports: HashMap<String, codenomad_client::missions::Report> = HashMap::new();
     if source.page.total != 0 {
         let read = backend.mission_task_window(project, &header, 0)?;
-        tasks = read_window(read, reads, alive)
+        let window = read_window(read, reads, alive)
             .await
-            .ok_or("cancelled Mission tasks")??
-            .tasks;
+            .ok_or("cancelled Mission tasks")??;
+        tasks = window.tasks;
+        for report in window.reports {
+            if reports
+                .get(&report.id)
+                .is_some_and(|old| old.task_key != report.task_key)
+            {
+                continue;
+            }
+            reports.insert(report.id.clone(), report);
+        }
     }
     if !source.pins.is_empty() || !source.report_pins.is_empty() {
         let read = backend.mission_task_pins(project, &header)?;
@@ -425,8 +612,17 @@ async fn read_map(
             }
             tasks.push(pin);
         }
+        for report in pins.reports {
+            if reports
+                .get(&report.id)
+                .is_some_and(|old| old.task_key != report.task_key)
+            {
+                continue;
+            }
+            reports.insert(report.id.clone(), report);
+        }
     }
-    Ok(Answer::New(header, tasks, end))
+    Ok(Answer::New(header, tasks, reports, end))
 }
 
 pub(super) async fn read_window<T>(
@@ -472,7 +668,7 @@ mod tests {
         let wake: Wake = std::sync::Arc::new(|| {});
         for revision in [7, 8] {
             let (send, inbox) = bounded(1);
-            send.try_send(Ok(Answer::New(header(revision), vec![], 0)))
+            send.try_send(Ok(Answer::New(header(revision), vec![], HashMap::new(), 0)))
                 .ok()
                 .unwrap();
             detail.active = Some((Demand::Refresh, inbox));

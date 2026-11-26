@@ -2,6 +2,8 @@
 //! reference's `auth.json`, bootstrap token and named cookie, and the paired-device admission of
 //! the HTTPS listener (`devices`, `remote`, `tls`).
 pub mod devices;
+#[cfg(test)]
+mod logout_tests;
 pub mod managed;
 pub mod password;
 pub mod remote;
@@ -34,6 +36,7 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/api/auth/status", get(status))
         .route("/api/auth/login", post(login).layer(DefaultBodyLimit::max(24 * 1024)))
+        .route("/api/auth/logout", post(logout).fallback(|| async { error(Status::NOT_FOUND, "Not found") }))
         .route("/api/remote-control/status", get(devices::status))
 }
 /// Pairing, served on the HTTPS listener only.
@@ -46,12 +49,13 @@ pub fn remote_routes() -> Router<Shared> {
 /// Device management, bootstrap and password pages, served on the loopback listener only.
 pub fn local_routes() -> Router<Shared> {
     Router::new()
+        .route("/api/remote-control/start", post(crate::remote_control::start_route))
+        .route("/api/remote-control", delete(crate::remote_control::stop_route))
         .route("/api/remote-control/pairings", post(devices::issue).layer(DefaultBodyLimit::max(4096)))
         .route("/api/remote-control/devices", get(devices::list))
         .route("/api/remote-control/devices/{id}", delete(devices::revoke))
         .route("/api/remote-control/previews", put(devices::set_previews).layer(DefaultBodyLimit::max(4096)))
         .route("/api/auth/token", post(token).layer(DefaultBodyLimit::max(4096)))
-        .route("/api/auth/logout", post(logout))
         .route("/api/auth/password", post(set_password).layer(DefaultBodyLimit::max(24 * 1024)))
         .route("/login", get(login_page))
         .route("/auth/token", get(token_page))
@@ -467,10 +471,10 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         )
             .into_response());
     }
-    if path == "/api/remote-control/server-pair"
-        || path == "/api/remote-control/pair"
-        || req.headers().contains_key("x-codenomad-server-pairing")
-    {
+    if path == "/api/remote-control/pair" || path == "/remote-pair" {
+        return Err(error(Status::NOT_FOUND, "Not found"));
+    }
+    if path == "/api/remote-control/server-pair" || req.headers().contains_key("x-codenomad-server-pairing") {
         return Err(error(Status::FORBIDDEN, "Server pairing request rejected"));
     }
     let origin = req.headers().get(header::ORIGIN).cloned();
@@ -611,8 +615,20 @@ pub async fn token(
     }
 }
 
-/// `POST /api/auth/logout`: revokes the session (including a managed local renewal right).
-pub async fn logout(State(app): State<Shared>, headers: HeaderMap) -> Result<Response, Error> {
+/// `POST /api/auth/logout`: revokes the local session (including a managed local renewal right),
+/// or clears the paired browser's device cookie and revokes its preview capabilities on HTTPS.
+pub async fn logout(
+    State(app): State<Shared>,
+    channel: Option<Extension<tls::Channel>>,
+    browser: Option<Extension<remote::BrowserDevice>>,
+    headers: HeaderMap,
+) -> Result<Response, Error> {
+    if channel.is_some() {
+        if let Some(Extension(remote::BrowserDevice(id))) = browser {
+            app.previews.revoke_device(id);
+        }
+        return Ok(([(header::SET_COOKIE, devices::clear_cookie())], Json(json!({"ok":true}))).into_response());
+    }
     let (key, _) = cookies(&headers, app.auth.cookie_name())?;
     let _change = app.auth.password_change.lock().await;
     app.auth.revoke_session(key.as_deref());
