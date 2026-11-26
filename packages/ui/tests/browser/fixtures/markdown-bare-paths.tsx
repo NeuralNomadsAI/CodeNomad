@@ -30,8 +30,10 @@ const entries = (names: Array<[string, string]>): Entry[] => names.map(([name, t
 serverApi.listWorkspaceFiles = (async (_id: string, relativePath = ".", directory?: string) => {
   listingCalls.push({ path: relativePath, directory })
   if (holdListing && !released) await new Promise<void>(resolve => { pendingReleases.push(resolve) })
-  if (relativePath === "src") return entries([["app.ts", "file"], ["inner", "directory"],
+  if (relativePath === "src") return entries([["app.ts", "file"], ["a\tpp.ts", "file"], ["inner", "directory"],
     ...(includeGone ? ([["gone.ts", "file"]] as Array<[string, string]>) : [])])
+  if (relativePath === "docs") return entries([["算法工作台MVP-design.md", "file"], ["issue", "file"]])
+  if (relativePath === "前端-v2") return entries([["run-测试", "file"]])
   if (relativePath === ".") return entries([["README.md", "file"], ["src", "directory"], ["docs", "directory"]])
   if (relativePath === "and") throw new Error("no such directory")
   return []
@@ -47,9 +49,14 @@ const initialText = [
   "The fix lives in src/app.ts and src/gone.ts today.",
   "Also see README.md and the old /fixture-root/README.md copy.",
   "Outside the worktree: /etc/passwd. A directory: src/inner.",
-  "Prose keeps and/or unclear; code stays: `src/app.ts`.",
+  "Prose keeps and/or unclear; inline code links exactly: `src/app.ts`.",
   "看看src/app.ts吧。",
   "A hand-written [readme](./README.md) keeps its own anchor.",
+  "规格写入 `./docs/算法工作台MVP-design.md`。",
+  "缺的不連：`docs/不存在README.md`；URL `https://example.test/guide#README.md` 也不連。",
+  "`前端-v2/run-测试` 存在；`docs/issue#42.md` 與 `docs/%E7%AE%97.md` 保持純文字。",
+  "`src/app.ts!` `src/app.ts?` `src/a\tpp.ts` <code>run <em>src/app.ts</em> now</code>",
+  "```\nsrc/app.ts\n```",
 ].join("\n\n")
 
 let renderCount = 0

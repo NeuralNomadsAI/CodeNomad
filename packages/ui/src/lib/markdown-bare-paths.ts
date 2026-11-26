@@ -45,3 +45,13 @@ export function barePathCandidates(text: string): BarePathCandidate[] {
   }
   return candidates
 }
+
+// Admit only literal path segments. A colon is valid only in a drive prefix.
+const INLINE_PATH = /^(?:(?:[A-Za-z]:)?[\\/])?[\p{L}\p{M}\p{Nd}._~+=-]+(?:[\\/][\p{L}\p{M}\p{Nd}._~+=-]+)*[\\/]?$/u
+const INLINE_FILE_NAME = /^[^\\/]{2,}\.[A-Za-z0-9]{1,8}$/u
+
+export function inlineCodeCandidates(text: string): BarePathCandidate[] {
+  if (!INLINE_PATH.test(text)) return []
+  if (!/[\\/]/.test(text) && !INLINE_FILE_NAME.test(text)) return []
+  return [{ start: 0, end: text.length, href: text }]
+}

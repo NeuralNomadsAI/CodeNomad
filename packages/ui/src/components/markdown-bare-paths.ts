@@ -6,7 +6,7 @@
 
 import { backendOf } from "../lib/backend-client"
 import { backgroundReads } from "../lib/background-read-queue"
-import { barePathCandidates, type BarePathCandidate } from "../lib/markdown-bare-paths"
+import { barePathCandidates, inlineCodeCandidates, type BarePathCandidate } from "../lib/markdown-bare-paths"
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
 import { canOpenLocalPaths } from "../lib/workspace-open"
 import type { SessionLinkBase, SessionLinkTitles } from "./markdown-session-links"
@@ -154,11 +154,12 @@ export interface LinkBarePathsOptions {
 }
 
 interface ResolvedTarget {
+  path: string
   parent: string
   name: string
 }
 
-const SKIP_TEXT = "code, pre, a, [data-local-image]"
+const SKIP_TEXT = "pre, a, [data-local-image]"
 
 const walkHits = (container: ParentNode) => {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
@@ -168,10 +169,14 @@ const walkHits = (container: ParentNode) => {
       return (node.nodeValue ?? "").trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
     },
   })
-  const hits: Array<{ node: Text; candidates: BarePathCandidate[] }> = []
+  const hits: Array<{ node: Text; inline: boolean; candidates: BarePathCandidate[] }> = []
   for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
-    const candidates = barePathCandidates(node.nodeValue ?? "")
-    if (candidates.length) hits.push({ node, candidates })
+    const code = node.parentElement!.closest("code")
+    if (code && (code.firstChild !== node || code.childNodes.length !== 1)) continue
+    const candidates = code
+      ? inlineCodeCandidates(node.nodeValue ?? "")
+      : barePathCandidates(node.nodeValue ?? "")
+    if (candidates.length) hits.push({ node, inline: Boolean(code), candidates })
   }
   return hits
 }
@@ -180,16 +185,17 @@ const resolveTarget = (href: string, base: string): ResolvedTarget | undefined =
   const resolved = resolveProjectLinkPath(href, base)
   if (resolved === undefined) return undefined
   const lastSlash = resolved.lastIndexOf("/")
-  return { parent: lastSlash < 0 ? "" : resolved.slice(0, lastSlash), name: lastSlash < 0 ? resolved : resolved.slice(lastSlash + 1) }
+  return { path: resolved, parent: lastSlash < 0 ? "" : resolved.slice(0, lastSlash), name: lastSlash < 0 ? resolved : resolved.slice(lastSlash + 1) }
 }
 
 /** One existence-gated pass over a rendered markdown container: bare-path
  * candidates that resolve inside the session's worktree and name a linkable entry
  * become anchors the shared click routing and link decoration already
- * serve. The container is walked once to warm the directory cache and walked
- * again after the listings land, so a fallback/final html commit between the
- * two walks can never strand a wrap. Fire-and-forget; errors never break
- * rendering. */
+ * serve. Inline code spans convert through the exact-candidate grammar; prose
+ * text keeps the boundary grammar. The container is walked once to warm the
+ * directory cache and walked again after the listings land, so a fallback/final
+ * html commit between the two walks can never strand a wrap. Fire-and-forget;
+ * errors never break rendering. */
 export function linkBarePaths(container: ParentNode, options: LinkBarePathsOptions): void {
   void (async () => {
     try {
@@ -209,23 +215,22 @@ export function linkBarePaths(container: ParentNode, options: LinkBarePathsOptio
       // Re-read the container: the markdown pipeline may have replaced its
       // children while the listings were in flight.
       let wrapped = false
-      for (const { node, candidates } of walkHits(container)) {
+      for (const { node, inline, candidates } of walkHits(container)) {
         const matches = candidates
           .map(candidate => ({ candidate, target: resolveTarget(candidate.href, options.base.base) }))
-          .filter(({ target }) => target !== undefined && nameSets.get(target.parent)?.has(target.name))
           .sort((left, right) => right.candidate.start - left.candidate.start)
-        if (!matches.length) continue
-        for (const { candidate } of matches) {
+        for (const { candidate, target: resolved } of matches) {
+          if (!resolved || !nameSets.get(resolved.parent)?.has(resolved.name)) continue
           if (candidate.end < node.nodeValue!.length) node.splitText(candidate.end)
           const target = candidate.start > 0 ? node.splitText(candidate.start) : node
           const anchor = document.createElement("a")
-          anchor.setAttribute("href", candidate.href)
+          anchor.setAttribute("href", inline ? resolved.path : candidate.href)
           const range = document.createRange()
           range.setStart(target, 0)
           range.setEnd(target, candidate.end - candidate.start)
           range.surroundContents(anchor)
+          wrapped = true
         }
-        wrapped = true
       }
       if (wrapped) {
         // Loaded dynamically: this module stays importable outside the browser.
