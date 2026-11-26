@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { missionCalendarOccurrence, runMissionCalendar, type MissionCalendarControl } from "./calendar-run"
+import { missionCalendarEventsSchema, missionCalendarOccurrence, runMissionCalendar, type MissionCalendarControl, type MissionCalendarNews } from "./calendar-run"
 import type { MissionJsonValue } from "./model"
 
 type Fake = { id: string; status: "active" | "completed"; runState: "prepared" | "running"; revision: number
@@ -31,7 +31,8 @@ function fixture() {
     mission: async (id: string) => ({ mission: missions.get(id) }),
   } as unknown as MissionCalendarControl
   const storage = { get: async (key: string) => values.get(key), set: async (key: string, value: MissionJsonValue) => { values.set(key, value) } }
-  const run = (number: number) => runMissionCalendar(control, storage, "key", { automationID: "aut_a", run: number }, { objective: "Review", template: "custom" })
+  const run = (number: number, news?: MissionCalendarNews) => runMissionCalendar(control, storage, "key", { automationID: "aut_a", run: number },
+    { objective: "Review", template: "custom" }, news)
   return { missions, calls, run, failStarts: (value: boolean) => { failStart = value } }
 }
 
@@ -67,4 +68,35 @@ test("a Mission whose start did not finish is started by the next run with its o
   assert.deepEqual(f.calls.slice(-1), ["start msn_calendar_aut_a_1 calendar-start 1"])
   assert.equal(f.missions.get("msn_calendar_aut_a_1")!.control, undefined)
   assert.equal(f.missions.size, 1)
+})
+
+test("events gate the launch, and their news waits for the active Mission", async () => {
+  const f = fixture()
+  let head = "a", reads = 0
+  // Like the source readers: the first read only records where the source stands.
+  const news: MissionCalendarNews = async previous => {
+    reads++
+    const old = previous[0]?.value as { oid?: string } | undefined
+    return { checkpoints: [{ key: "a".repeat(64), kind: "remote-branch-commits", placementDigest: "b".repeat(64), value: { oid: head } }], changed: !!old && old.oid !== head }
+  }
+  assert.deepEqual(await f.run(1, news), { idle: true })
+  assert.deepEqual(await f.run(2, news), { idle: true })
+  assert.equal(f.calls.length, 0, "a run without news asks nothing of Missions")
+  head = "b"
+  assert.deepEqual(await f.run(3, news), { missionID: "msn_calendar_aut_a_3", status: "active" })
+  head = "c"
+  assert.deepEqual(await f.run(4, news), { waiting: "msn_calendar_aut_a_3" })
+  assert.equal(reads, 3, "an active Mission leaves the events unread")
+  f.missions.get("msn_calendar_aut_a_3")!.status = "completed"
+  assert.deepEqual(await f.run(5, news), { missionID: "msn_calendar_aut_a_5", status: "active" }, "the commit that landed meanwhile launches the next Mission")
+  f.missions.get("msn_calendar_aut_a_5")!.status = "completed"
+  assert.deepEqual(await f.run(6, news), { idle: true })
+  assert.deepEqual(await f.run(7, news), { idle: true })
+  assert.equal(f.calls.filter(call => call.startsWith("create")).length, 2)
+})
+
+test("a calendar waits only for events read from Git and the forges", () => {
+  assert.equal(missionCalendarEventsSchema.safeParse([{ kind: "files-changed", paths: ["package.json"] }]).success, true)
+  for (const event of [{ kind: "mission-completed", missionID: "msn_other" }, { kind: "conversation-message", conversationID: "ses_other" }])
+    assert.equal(missionCalendarEventsSchema.safeParse([event]).success, false)
 })

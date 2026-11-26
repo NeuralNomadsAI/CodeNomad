@@ -125,7 +125,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
         return retained
       }, undefined, () => runs > 0 || marked) }
       catch (error) { await disposeBusiness(); await promptHook.dispose(); index.dispose(); throw error }
-      // A calendar run registers Missions for its own duration, with or without a backend.
+      // A calendar run registers Missions for each step that needs them, with or without a backend.
       const calendar = await registerMissionCalendarTool(ctx, async work => {
         runs++
         try {
