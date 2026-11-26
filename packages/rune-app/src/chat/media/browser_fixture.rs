@@ -10,10 +10,12 @@ pub(crate) fn load(s: &mut State) {
         .parse()
         .unwrap();
     let png = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC";
+    let png_bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, png).unwrap();
     let avif = include_str!("../../../fixtures/animated-32.avif.b64").trim();
     let uri = format!(
         "/api/workspaces/owned/session-media/session/result/0/4/{}",
-        "a".repeat(64)
+        codenomad_client::content::deferred_media_digest("image/png", &png_bytes)
     );
     let mut backend = crate::backend::Backend::unauthenticated("/").unwrap();
     backend.workspace = "owned".into();

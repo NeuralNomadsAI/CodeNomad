@@ -7,8 +7,11 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::Value;
 use std::sync::Arc;
 mod deferred;
-pub use deferred::DeferredPicture;
+pub use deferred::{DeferredPicture, data_uri_digest};
+pub const DEFERRED_MEDIA_HEADER: &str = "x-codenomad-media";
+pub const DEFERRED_MEDIA_VALUE: &str = "deferred";
 pub(super) const ROW_IMAGE_BYTES: usize = 256 * 1024;
+pub(super) const ROW_DEFERRED_REF_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Picture {
@@ -162,7 +165,8 @@ pub(super) fn tool_pictures(
     state: &Value,
     message: &str,
     part: usize,
-    bytes: &mut usize,
+    inline_bytes: &mut usize,
+    deferred_bytes: &mut usize,
 ) -> Vec<Picture> {
     if state["status"] != "completed" {
         return Vec::new();
@@ -175,10 +179,10 @@ pub(super) fn tool_pictures(
         .filter_map(|(index, item)| {
             let mime = item["mime"].as_str().filter(|mime| is_image(mime))?;
             let uri = item["uri"].as_str().filter(|_| item["type"] == "file")?;
-            let source = DeferredPicture::parse(uri, message, part, index)
-                .map(PictureSource::Deferred)
-                .unwrap_or_else(|| PictureSource::uri(mime, uri))
-                .fit(bytes);
+            let source = match DeferredPicture::parse(uri, message, part, index) {
+                Some(deferred) => PictureSource::Deferred(deferred).fit(deferred_bytes),
+                None => PictureSource::uri(mime, uri).fit(inline_bytes),
+            };
             Some(Picture {
                 name: item["name"]
                     .as_str()
@@ -208,7 +212,8 @@ fn media_requires_a_passive_signature_and_matching_mime() {
         {"type":"text","text":"visible log"}
     ]});
     let mut bytes = ROW_IMAGE_BYTES;
-    let pictures = tool_pictures(&response, "message", 0, &mut bytes);
+    let mut deferred = ROW_DEFERRED_REF_BYTES;
+    let pictures = tool_pictures(&response, "message", 0, &mut bytes, &mut deferred);
     assert_eq!(pictures.len(), 3);
     assert!(
         pictures[..2]
@@ -230,6 +235,7 @@ fn all_fitting_tool_images_are_retained() {
         "message",
         0,
         &mut { ROW_IMAGE_BYTES },
+        &mut { ROW_DEFERRED_REF_BYTES },
     );
     assert_eq!(pictures.len(), 16);
     assert!(
@@ -237,4 +243,33 @@ fn all_fitting_tool_images_are_retained() {
             .iter()
             .all(|pic| matches!(pic.source, PictureSource::Http(_)))
     );
+}
+
+#[cfg(test)]
+#[test]
+fn deferred_tool_images_survive_full_inline_budget_while_large_inline_degrades() {
+    use serde_json::json;
+    let png_prefix = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC").unwrap();
+    let mut oversized_png = png_prefix.clone();
+    oversized_png.resize(300 * 1024, 0);
+    let oversized_uri = format!("data:image/png;base64,{}", STANDARD.encode(&oversized_png));
+    let deferred_uri = format!(
+        "/api/workspaces/owned/session-media/session/message/0/1/{}",
+        data_uri_digest("image/png", &oversized_png)
+    );
+    let mut inline_left = 0; // Simulate exhausted 256 KiB inline budget on the same row.
+    let mut deferred_left = ROW_DEFERRED_REF_BYTES;
+    let pictures = tool_pictures(
+        &json!({"status":"completed","content":[
+            {"type":"file","name":"Inline > 256 KiB","mime":"image/png","uri":oversized_uri},
+            {"type":"file","name":"Deferred > 256 KiB","mime":"image/png","uri":deferred_uri}
+        ]}),
+        "message",
+        0,
+        &mut inline_left,
+        &mut deferred_left,
+    );
+    assert_eq!(pictures.len(), 2);
+    assert_eq!(pictures[0].source, PictureSource::Unavailable);
+    assert!(matches!(pictures[1].source, PictureSource::Deferred(_)));
 }

@@ -5,7 +5,10 @@ use std::{mem::size_of, sync::Arc};
 mod media;
 mod reasoning;
 mod subagent;
-pub use media::{Picture, PictureSource};
+pub use media::{
+    DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE, Picture, PictureSource,
+    data_uri_digest as deferred_media_digest,
+};
 mod tool_live;
 mod usage;
 mod user;
@@ -502,6 +505,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
     let mut ids = std::collections::HashSet::new();
     let mut reasoning_ordinal = 0;
     let mut media_bytes = media::ROW_IMAGE_BYTES;
+    let mut deferred_media_bytes = media::ROW_DEFERRED_REF_BYTES;
     for (index, part) in parts.iter().enumerate() {
         if part["type"] == "text" {
             if let Some(text) = part["text"].as_str() {
@@ -589,6 +593,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                     v["id"].as_str().unwrap_or_default(),
                     index,
                     &mut media_bytes,
+                    &mut deferred_media_bytes,
                 ),
                 started: part["time"]["ran"]
                     .as_u64()

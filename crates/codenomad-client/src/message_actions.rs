@@ -126,6 +126,10 @@ impl Backend {
             let mut request = self
                 .client
                 .get(format!("{url}/message"))
+                .header(
+                    crate::content::DEFERRED_MEDIA_HEADER,
+                    crate::content::DEFERRED_MEDIA_VALUE,
+                )
                 .timeout(deadline.saturating_duration_since(crate::runtime::Instant::now()))
                 .query(&[("limit", "200")]);
             request = match &cursor {

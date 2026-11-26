@@ -197,6 +197,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     chat::reader::suspend(s);
                     s.composer.picker.set_attachments_supported(false);
                     s.attachments.cancel();
+                    s.transcript_display.pictures.clear();
                     s.messages.clear();
                     s.history_detached = false;
                     s.can_older = false;
@@ -312,7 +313,10 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.paging = false;
                 s.history_error = true;
             }
-            Event::RevertChanged => s.transcript_display.messages.invalidate_boundary(),
+            Event::RevertChanged => {
+                s.transcript_display.messages.invalidate_boundary();
+                s.transcript_display.pictures.clear();
+            }
             Event::PageFailed(cancelled) => {
                 chat::reader::admit_page(s, &cancelled, || false);
             }

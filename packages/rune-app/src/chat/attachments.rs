@@ -183,6 +183,7 @@ pub fn file_chip(s: &State, file: &crate::content::File) -> rune::El {
                 name,
                 &file.mime,
                 true,
+                None,
             ))
     } else {
         chip.key(file.id.clone())

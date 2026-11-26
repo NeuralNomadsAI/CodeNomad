@@ -413,7 +413,12 @@ fn render_body(
     {
         return block
             .child(questions)
-            .children(media::tool(s, key, &tool.pictures))
+            .children(media::tool(
+                s,
+                key,
+                &tool.pictures,
+                ancestors.last().copied(),
+            ))
             .children(diagnostics());
     }
     if pending && tool.name != "todowrite" && tool.input.as_str().is_none_or(str::is_empty) {
@@ -425,7 +430,12 @@ fn render_body(
         return block
             .children(failure)
             .child(todo::view(tool))
-            .children(media::tool(s, key, &tool.pictures))
+            .children(media::tool(
+                s,
+                key,
+                &tool.pictures,
+                ancestors.last().copied(),
+            ))
             .children(diagnostics());
     }
     let task_body = (is_task && !probe)
@@ -789,7 +799,12 @@ fn render_body(
         block = block.children(execute::notice(tool));
     }
     let block = block
-        .children(media::tool(s, key, &tool.pictures))
+        .children(media::tool(
+            s,
+            key,
+            &tool.pictures,
+            ancestors.last().copied(),
+        ))
         .children(diagnostics());
     if !probe && can_watch_child {
         task::observe(s, key, task::parent_child(message), tool, block)

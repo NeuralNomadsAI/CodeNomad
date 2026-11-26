@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
@@ -10,7 +11,9 @@ const manifest = JSON.parse(await readFile(path.join(bundle, 'bundle-manifest.js
 assert.equal(manifest.testSupport, true)
 const mime = { '.js':'text/javascript', '.html':'text/html', '.wasm':'application/wasm', '.css':'text/css', '.ttf':'font/ttf' }
 const assets = new Set(manifest.files.map(({file}) => `/${file}`))
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC', 'base64')
+const pngB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC'
+const png = Buffer.from(pngB64, 'base64')
+const pngDigest = createHash('sha256').update(`data:image/png;base64,${pngB64}`).digest('hex')
 const observed = []
 let deferred = 0
 const images = createServer((req, res) => {
@@ -21,7 +24,7 @@ const images = createServer((req, res) => {
 })
 const web = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1')
-  if (url.pathname === `/api/workspaces/owned/session-media/session/result/0/4/${'a'.repeat(64)}`) {
+  if (url.pathname === `/api/workspaces/owned/session-media/session/result/0/4/${pngDigest}`) {
     if (req.headers.cookie !== 'image_fixture=owned') return res.writeHead(401).end()
     deferred++
     return res.writeHead(200, {'Content-Type':'image/png'}).end(png)

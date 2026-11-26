@@ -28,12 +28,14 @@ pub(crate) struct Pictures {
     waiting: VecDeque<String>,
     preview: Option<(String, String, Image)>,
     hover: Option<(String, String)>,
+    generation: u64,
 }
 
 struct Entry {
     lease: Weak<()>,
     media: PictureSource,
     mime: String,
+    owner_session: Option<String>,
     visible: bool,
     request: Option<(Sender<()>, Receiver<Option<Arc<Vec<u8>>>>)>,
     image: Option<Image>,
@@ -62,6 +64,7 @@ impl Pictures {
     }
 
     pub(crate) fn clear(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
         self.images.clear();
         self.waiting.clear();
         self.cache = None;
@@ -94,6 +97,7 @@ impl Pictures {
         key: &str,
         media: &PictureSource,
         mime: &str,
+        owner_session: Option<&str>,
         lease: &Rc<()>,
         visible: bool,
     ) {
@@ -105,6 +109,7 @@ impl Pictures {
                 lease: Rc::downgrade(lease),
                 media: media.clone(),
                 mime: mime.into(),
+                owner_session: owner_session.map(str::to_owned),
                 visible: false,
                 request: None,
                 image: None,
@@ -189,10 +194,17 @@ impl Pictures {
             let (cancel, cancelled) = bounded(1);
             let (out, result) = bounded(1);
             entry.request = Some((cancel, result));
-            let (media, mime, backend, reads, wake) = (
+            let mut backend = self.backend.clone();
+            if let (PictureSource::Deferred(_), Some(owner), Some(conn)) = (
+                &entry.media,
+                entry.owner_session.as_deref(),
+                backend.as_mut(),
+            ) {
+                conn.session = owner.to_owned();
+            }
+            let (media, mime, reads, wake) = (
                 entry.media.clone(),
                 entry.mime.clone(),
-                self.backend.clone(),
                 reads.clone(),
                 wake.clone(),
             );
@@ -219,6 +231,7 @@ pub(super) fn tool<'a>(
     s: &'a State,
     key: &'a str,
     pictures: &'a [crate::content::Picture],
+    owner_session: Option<&'a str>,
 ) -> impl Iterator<Item = El> + 'a {
     pictures.iter().enumerate().map(move |(i, picture)| {
         let name = picture.name.clone().unwrap_or_else(|| {
@@ -235,6 +248,7 @@ pub(super) fn tool<'a>(
             &name,
             &picture.mime,
             false,
+            owner_session,
         )
     })
 }
@@ -246,6 +260,7 @@ pub(super) fn view(
     name: &str,
     mime: &str,
     attachment: bool,
+    owner_session: Option<&str>,
 ) -> El {
     view_on_platform(
         s,
@@ -254,16 +269,18 @@ pub(super) fn view(
         name,
         mime,
         attachment,
+        owner_session,
         cfg!(target_arch = "wasm32"),
     )
 }
 
-fn source_key(key: &str, source: &PictureSource, mime: &str) -> String {
+fn source_key(key: &str, generation: u64, source: &PictureSource, mime: &str) -> String {
     let mut stamp = DefaultHasher::new();
-    (source, mime).hash(&mut stamp);
+    (generation, source, mime).hash(&mut stamp);
     format!("{key}-{:x}", stamp.finish())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn view_on_platform(
     s: &State,
     key: String,
@@ -271,9 +288,10 @@ fn view_on_platform(
     name: &str,
     mime: &str,
     attachment: bool,
+    owner_session: Option<&str>,
     web: bool,
 ) -> El {
-    let key = source_key(&key, source, mime);
+    let key = source_key(&key, s.transcript_display.pictures.generation, source, mime);
     let entry = s
         .transcript_display
         .pictures
@@ -360,9 +378,10 @@ fn view_on_platform(
             }
         });
     }
-    let (request, mime, scope, target) = (
+    let (request, mime, owner_session, scope, target) = (
         source.clone(),
         mime.to_owned(),
+        owner_session.map(str::to_owned),
         s.input_scope.clone(),
         key.clone(),
     );
@@ -370,9 +389,14 @@ fn view_on_platform(
         .key(key)
         .on_visible(move |s: &mut State, visible, tx| {
             if s.current_scope(&scope) {
-                s.transcript_display
-                    .pictures
-                    .visibility(&target, &request, &mime, &lease, visible);
+                s.transcript_display.pictures.visibility(
+                    &target,
+                    &request,
+                    &mime,
+                    owner_session.as_deref(),
+                    &lease,
+                    visible,
+                );
                 if visible {
                     tx.wake_after(std::time::Duration::ZERO);
                 }

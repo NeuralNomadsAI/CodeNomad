@@ -113,6 +113,10 @@ impl Backend {
                         "x-codenomad-user-files",
                         crate::attachments::USER_FILES_REFERENCE,
                     )
+                    .header(
+                        crate::content::DEFERRED_MEDIA_HEADER,
+                        crate::content::DEFERRED_MEDIA_VALUE,
+                    )
                     .json(&json!({"sessionID":self.session,"target":target}))
                     .send()
                     .await?
@@ -136,6 +140,10 @@ impl Backend {
                 .header(
                     "x-codenomad-user-files",
                     crate::attachments::USER_FILES_REFERENCE,
+                )
+                .header(
+                    crate::content::DEFERRED_MEDIA_HEADER,
+                    crate::content::DEFERRED_MEDIA_VALUE,
                 )
                 .json(&json!({"sessionID":self.session,"target":target}))
                 .send()
