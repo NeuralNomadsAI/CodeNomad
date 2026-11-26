@@ -1,6 +1,95 @@
-use crate::{State, agent_api::Form, agent_forms, components::button, strings::t};
+use crate::{
+    State,
+    agent_api::Form,
+    agent_forms,
+    components::button,
+    strings::{locale, t},
+};
 use rune::{El, col};
-use rune_theme_codenomad::{Space, form_controls, layout::Layout};
+use rune_theme_codenomad::{Space, catalogue, form_controls, layout::Layout};
+
+fn format_bound(n: f64) -> String {
+    if n.fract() == 0.0 && n.abs() < 1e15 {
+        format!("{n:.0}")
+    } else {
+        n.to_string()
+    }
+}
+
+fn format_items_limit(prefix: &str, count: u64) -> String {
+    let loc = locale();
+    let count_str = count.to_string();
+    let item_key = if count == 1 {
+        "newTab.items.one"
+    } else {
+        "newTab.items.other"
+    };
+    let items = catalogue::format(loc, item_key, &[("count", &count_str)]);
+    let limit = format!("{prefix} {items}");
+    catalogue::format(
+        loc,
+        "toolCall.renderer.read.detail.limit",
+        &[("limit", &limit)],
+    )
+}
+
+fn validation_message(err: &agent_forms::ValidationError) -> String {
+    let loc = locale();
+    match err {
+        agent_forms::ValidationError::Unsupported => t("rune.unsupported_question").to_string(),
+        agent_forms::ValidationError::Required => t("formRequest.errors.validation").to_string(),
+        agent_forms::ValidationError::SelectDeclaredOption => {
+            t("formRequest.selectPlaceholder").to_string()
+        }
+        agent_forms::ValidationError::TooShort { min } => {
+            let limit = format!("≥ {min}");
+            catalogue::format(
+                loc,
+                "toolCall.renderer.read.detail.limit",
+                &[("limit", &limit)],
+            )
+        }
+        agent_forms::ValidationError::TooLong { max } => {
+            let limit = format!("≤ {max}");
+            catalogue::format(
+                loc,
+                "toolCall.renderer.read.detail.limit",
+                &[("limit", &limit)],
+            )
+        }
+        agent_forms::ValidationError::BelowMin { min } => {
+            let limit = format!("≥ {}", format_bound(*min));
+            catalogue::format(
+                loc,
+                "toolCall.renderer.read.detail.limit",
+                &[("limit", &limit)],
+            )
+        }
+        agent_forms::ValidationError::AboveMax { max } => {
+            let limit = format!("≤ {}", format_bound(*max));
+            catalogue::format(
+                loc,
+                "toolCall.renderer.read.detail.limit",
+                &[("limit", &limit)],
+            )
+        }
+        agent_forms::ValidationError::TooFewItems { min } => format_items_limit("≥", *min),
+        agent_forms::ValidationError::TooManyItems { max } => format_items_limit("≤", *max),
+        agent_forms::ValidationError::NotNumber | agent_forms::ValidationError::NotInteger => {
+            t("toolCall.renderer.toolName.invalid").to_string()
+        }
+    }
+}
+
+fn join_notes(parts: &[Option<&str>]) -> Option<String> {
+    let joined: Vec<&str> = parts
+        .iter()
+        .flatten()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    (!joined.is_empty()).then(|| joined.join(" · "))
+}
 
 fn field_title(field: &serde_json::Value) -> Option<&str> {
     field["title"]
@@ -101,9 +190,15 @@ pub fn fields(s: &State, form: &Form) -> El {
             body = body.child(form_controls::field_description(desc));
         }
         let group_key = agent_forms::field_group_key(key);
+        let container_key = format!("field-body:{}:{key}", key.len());
+        let error_key = format!("field-error:{}:{key}", key.len());
+        let validation_error = agent_forms::visible_validation_error(field, d);
+        let error_text = validation_error.as_ref().map(validation_message);
+        let is_invalid = error_text.is_some();
         match field["type"].as_str() {
             Some("boolean") => {
                 const CHOICES: [(&str, &str); 2] = [("rune.yes", "true"), ("rune.no", "false")];
+                let group_desc = join_notes(&[field_desc, error_text.as_deref()]);
                 let items = CHOICES
                     .iter()
                     .enumerate()
@@ -113,6 +208,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                             &agent_forms::bool_option_key(key, value),
                             t(label_key),
                             None,
+                            error_text.as_deref(),
                             d.edit.text == value,
                             locked,
                             false,
@@ -133,19 +229,38 @@ pub fn fields(s: &State, form: &Form) -> El {
                 body = body.child(form_controls::radio_group(
                     &group_key,
                     &field_name,
-                    field_desc,
+                    group_desc.as_deref(),
                     true,
                     required,
+                    is_invalid,
                     items,
                 ));
+                if let Some(msg) = &error_text {
+                    body = body.child(form_controls::field_error(&error_key, msg));
+                }
             }
             Some("string") if agent_forms::has_declared_options(field) => {
                 let valid = agent_forms::normalized_options(field);
                 let allow_custom = field["custom"] == true;
                 let custom_active = allow_custom && !d.custom.text.is_empty();
-                let custom_conflict = agent_forms::custom_matches_declared_option(field, d);
+                let custom_conflict =
+                    validation_error == Some(agent_forms::ValidationError::SelectDeclaredOption);
                 let has_choice = !custom_active && d.choice.is_some();
                 let shared_required = required && !valid.is_empty() && allow_custom;
+                let req_note = shared_required.then(|| t("toolCall.question.status.required"));
+                let custom_invalid = custom_conflict
+                    || (allow_custom && (valid.is_empty() || custom_active) && is_invalid);
+                let radio_invalid =
+                    !valid.is_empty() && is_invalid && !custom_conflict && !custom_active;
+                let radio_note = join_notes(&[
+                    req_note,
+                    radio_invalid.then_some(error_text.as_deref()).flatten(),
+                ]);
+                let radio_group_desc = join_notes(&[
+                    field_desc,
+                    req_note,
+                    radio_invalid.then_some(error_text.as_deref()).flatten(),
+                ]);
                 let mut children = Vec::new();
                 if !valid.is_empty() {
                     let total = valid.len();
@@ -162,6 +277,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                                 &agent_forms::string_option_key(key, &value),
                                 &label,
                                 option.description,
+                                radio_note.as_deref(),
                                 selected,
                                 locked,
                                 true,
@@ -182,9 +298,10 @@ pub fn fields(s: &State, form: &Form) -> El {
                     children.push(form_controls::radio_group(
                         &group_key,
                         &field_name,
-                        field_desc,
+                        radio_group_desc.as_deref(),
                         false,
                         required && !shared_required,
+                        radio_invalid,
                         items,
                     ));
                     if field["required"] != true {
@@ -217,52 +334,61 @@ pub fn fields(s: &State, form: &Form) -> El {
                     } else {
                         field_name.clone()
                     };
+                    let custom_desc = join_notes(&[
+                        field_desc,
+                        req_note,
+                        custom_invalid.then_some(error_text.as_deref()).flatten(),
+                    ]);
                     children.push(form_controls::form_textarea(
                         &format!("custom-{key}"),
                         &d.custom,
                         &custom_label,
-                        field_desc,
+                        custom_desc.as_deref(),
                         locked,
                         required && valid.is_empty(),
-                        custom_conflict,
+                        custom_invalid,
                         crate::screen::edit(&scope, crate::screen::Editor::Custom(id)),
                     ));
-                    if custom_conflict {
-                        children.push(form_controls::field_error(
-                            &format!("field-error:{}:{key}", key.len()),
-                            t("formRequest.selectPlaceholder"),
-                        ));
-                    }
                 }
-                if shared_required {
-                    body = body.child(form_controls::required_field_group(
-                        &format!("field-required-group:{}:{key}", key.len()),
-                        &field_name,
-                        field_desc,
-                        true,
-                        children,
-                    ));
-                } else {
-                    for child in children {
-                        body = body.child(child);
-                    }
+                if let Some(msg) = &error_text {
+                    children.push(form_controls::field_error(&error_key, msg));
                 }
+                let container_desc = join_notes(&[field_desc, req_note, error_text.as_deref()]);
+                body = body.child(form_controls::field_container(
+                    &container_key,
+                    &field_name,
+                    container_desc.as_deref(),
+                    shared_required,
+                    children,
+                ));
             }
             Some("string" | "number" | "integer") => {
                 let id = identity.clone();
+                let editor_desc = join_notes(&[field_desc, error_text.as_deref()]);
                 body = body.child(form_controls::form_textarea(
                     &format!("field-{key}"),
                     &d.edit,
                     &field_name,
-                    field_desc,
+                    editor_desc.as_deref(),
                     locked,
                     required,
-                    false,
+                    is_invalid,
                     crate::screen::edit(&scope, crate::screen::Editor::Form(id)),
                 ));
+                if let Some(msg) = &error_text {
+                    body = body.child(form_controls::field_error(&error_key, msg));
+                }
             }
             Some("multiselect") => {
                 let valid = agent_forms::normalized_options(field);
+                let allow_custom = field["custom"] == true;
+                let has_choices =
+                    !valid.is_empty() || (allow_custom && !d.preserved_custom.is_empty());
+                let shared_required = required && has_choices && allow_custom;
+                let req_note =
+                    (required && has_choices).then(|| t("toolCall.question.status.required"));
+                let choice_note = join_notes(&[req_note, error_text.as_deref()]);
+                let group_desc = join_notes(&[field_desc, req_note, error_text.as_deref()]);
                 let mut items: Vec<El> = valid
                     .into_iter()
                     .enumerate()
@@ -275,8 +401,10 @@ pub fn fields(s: &State, form: &Form) -> El {
                             &agent_forms::multi_option_key(key, &value),
                             &label,
                             option.description,
+                            choice_note.as_deref(),
                             checked,
                             locked,
+                            is_invalid,
                             crate::screen::action(&scope, move |s: &mut State| {
                                 if let Some(d) = s
                                     .agent
@@ -290,7 +418,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                         )
                     })
                     .collect();
-                if field["custom"] == true {
+                if allow_custom {
                     for raw in &d.preserved_custom {
                         let checked = d.preserved_custom_selected.contains(raw);
                         let value = raw.clone();
@@ -299,8 +427,10 @@ pub fn fields(s: &State, form: &Form) -> El {
                             &agent_forms::multi_option_key(key, raw),
                             raw,
                             None,
+                            choice_note.as_deref(),
                             checked,
                             locked,
+                            is_invalid,
                             crate::screen::action(&scope, move |s: &mut State| {
                                 if let Some(d) = s
                                     .agent
@@ -314,16 +444,12 @@ pub fn fields(s: &State, form: &Form) -> El {
                         ));
                     }
                 }
-                let allow_custom = field["custom"] == true;
-                let has_choices = !items.is_empty();
-                let shared_required = required && has_choices && allow_custom;
                 let mut children = Vec::new();
                 if has_choices {
                     children.push(form_controls::checkbox_group(
                         &group_key,
                         &field_name,
-                        field_desc,
-                        required && !shared_required,
+                        group_desc.as_deref(),
                         items,
                     ));
                 }
@@ -334,30 +460,32 @@ pub fn fields(s: &State, form: &Form) -> El {
                     } else {
                         field_name.clone()
                     };
+                    let custom_desc = join_notes(&[
+                        field_desc,
+                        shared_required.then(|| t("toolCall.question.status.required")),
+                        error_text.as_deref(),
+                    ]);
                     children.push(form_controls::form_textarea(
                         &format!("custom-{key}"),
                         &d.custom,
                         &custom_label,
-                        field_desc,
+                        custom_desc.as_deref(),
                         locked,
                         required && !has_choices,
-                        false,
+                        is_invalid,
                         crate::screen::edit(&scope, crate::screen::Editor::Custom(id)),
                     ));
                 }
-                if shared_required {
-                    body = body.child(form_controls::required_field_group(
-                        &format!("field-required-group:{}:{key}", key.len()),
-                        &field_name,
-                        field_desc,
-                        true,
-                        children,
-                    ));
-                } else {
-                    for child in children {
-                        body = body.child(child);
-                    }
+                if let Some(msg) = &error_text {
+                    children.push(form_controls::field_error(&error_key, msg));
                 }
+                body = body.child(form_controls::field_container(
+                    &container_key,
+                    &field_name,
+                    group_desc.as_deref(),
+                    shared_required,
+                    children,
+                ));
             }
             _ => {}
         }

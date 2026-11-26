@@ -604,11 +604,11 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
             );
         }
 
-        // Multiselect sanitized out "" and "stale_removed" so the form submits cleanly with ["alpha"].
+        // Multiselect preserves declared "" and sanitizes out undeclared "stale_removed".
         let a = rt.state.agent.as_ref().unwrap();
         let answer = agent_forms::answer(&a.forms[0], &a.drafts).expect("sanitized draft submits");
         assert_eq!(answer["choice"], json!("internal_choice_key"));
-        assert_eq!(answer["tags"], json!(["alpha"]));
+        assert_eq!(answer["tags"], json!(["", "alpha"]));
 
         // Optional closed choice can be cleared via its localized Clear button.
         let clear_key = agent_forms::clear_option_key("choice");
@@ -1328,14 +1328,29 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             find_node(&tree, &agent_forms::field_group_key("opt_radio")).unwrap(),
             "required"
         ));
-        assert!(has_state(
-            find_node(&tree, &agent_forms::field_group_key("req_multi")).unwrap(),
-            "required"
-        ));
-        assert!(!has_state(
-            find_node(&tree, &agent_forms::field_group_key("opt_multi")).unwrap(),
-            "required"
-        ));
+        let req_multi_group = find_node(&tree, &agent_forms::field_group_key("req_multi")).unwrap();
+        assert!(
+            !has_state(req_multi_group, "required"),
+            "role=group must not rely on invalid aria-required"
+        );
+        assert!(
+            req_multi_group["description"]
+                .as_str()
+                .is_some_and(|d| d.contains("Question Required")),
+            "required checkbox group must convey requiredness via accessible description: {req_multi_group}"
+        );
+        let req_multi_box =
+            find_node(&tree, &agent_forms::multi_option_key("req_multi", "x")).unwrap();
+        assert!(!has_state(req_multi_box, "required"));
+        assert!(
+            req_multi_box["description"]
+                .as_str()
+                .is_some_and(|d| d.contains("Question Required")),
+            "keyboard-focused checkbox in required group must inherit localized requiredness hint"
+        );
+        let opt_multi_group = find_node(&tree, &agent_forms::field_group_key("opt_multi")).unwrap();
+        assert!(!has_state(opt_multi_group, "required"));
+        assert!(opt_multi_group["description"].is_null());
         let required_markers = rt
             .elements()
             .into_iter()
@@ -1434,10 +1449,10 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             assert_eq!((rd.custom.anchor, rd.custom.focus), (1, 3));
             // Typing a declared string option's wire value into custom while the radio is
             // unchecked must conflict and block submission rather than submitting an unchecked radio.
-            assert!(agent_forms::custom_matches_declared_option(
-                &a.forms[0].fields[1],
-                rd
-            ));
+            assert_eq!(
+                agent_forms::validate(&a.forms[0].fields[1], rd),
+                Err(agent_forms::ValidationError::SelectDeclaredOption)
+            );
             assert!(agent_forms::value(&a.forms[0].fields[1], rd).is_err());
             assert!(agent_forms::answer(&a.forms[0], &a.drafts).is_err());
         }
@@ -1859,31 +1874,396 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
                 "sole editor {sole_key} must expose required state"
             );
         }
-        for (field_key, group_key, custom_key) in [
+        for (field_key, group_key, choice_key, custom_key) in [
             (
                 "req_hybrid_radio",
                 agent_forms::field_group_key("req_hybrid_radio"),
+                agent_forms::string_option_key("req_hybrid_radio", "a"),
                 "custom-req_hybrid_radio",
             ),
             (
                 "req_hybrid_multi",
                 agent_forms::field_group_key("req_hybrid_multi"),
+                agent_forms::multi_option_key("req_hybrid_multi", "x"),
                 "custom-req_hybrid_multi",
             ),
         ] {
-            let shared_key = format!("field-required-group:{}:{field_key}", field_key.len());
+            let shared_key = format!("field-body:{}:{field_key}", field_key.len());
             let shared = find_node(&rtree, &shared_key)
                 .expect("shared required parent group for hybrid choice+custom field");
             assert_eq!(shared["role"], "group");
-            assert!(has_state(shared, "required"));
+            assert!(
+                !has_state(shared, "required"),
+                "role=group must not emit invalid aria-required"
+            );
+            assert!(
+                shared["description"]
+                    .as_str()
+                    .is_some_and(|d| d.contains("Question Required")),
+                "shared hybrid group must convey localized requiredness in description: {shared}"
+            );
             assert!(
                 !has_state(find_node(&rtree, &group_key).unwrap(), "required"),
                 "inner choice group {group_key} must not claim individual requiredness in hybrid field"
             );
+            let choice_node = find_node(&rtree, &choice_key).unwrap();
+            assert!(!has_state(choice_node, "required"));
             assert!(
-                !has_state(find_input(&rtree, custom_key), "required"),
+                choice_node["description"]
+                    .as_str()
+                    .is_some_and(|d| d.contains("Question Required")),
+                "focused choice {choice_key} inside hybrid required field must surface requirement hint"
+            );
+            let custom_input = find_input(&rtree, custom_key);
+            assert!(
+                !has_state(custom_input, "required"),
                 "inner custom input {custom_key} must not claim individual requiredness in hybrid field"
             );
+            assert!(
+                custom_input["description"]
+                    .as_str()
+                    .is_some_and(|d| d.contains("Question Required")),
+                "focused custom input {custom_key} inside hybrid required field must surface requirement hint"
+            );
+        }
+
+        // 7a. Hidden multiselect defaults stay isolated and never leak on reveal without default.
+        let hidden_multi_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r8-hidden-multi".into(),
+            title: "Hidden multiselect".into(),
+            fields: vec![json!({
+                "key": "secret_tags",
+                "title": "Secret tags",
+                "type": "multiselect",
+                "hidden": true,
+                "custom": true,
+                "options": [],
+                "default": ["internal-token"]
+            })],
+        };
+        let (state, _rx) = state_with_form(hidden_multi_form);
+        let mut hrt = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+        hrt.frame(0.0);
+        {
+            let a = hrt.state.agent.as_ref().unwrap();
+            assert_eq!(
+                agent_forms::answer(&a.forms[0], &a.drafts).unwrap()["secret_tags"],
+                json!(["internal-token"])
+            );
+        }
+        hrt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields[0] = json!({
+                "key": "secret_tags",
+                "title": "Secret tags",
+                "type": "multiselect",
+                "custom": true,
+                "options": []
+            });
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        hrt.frame(1.0 / 60.0);
+        let htree = hrt.accessibility_json();
+        assert_eq!(
+            find_input(&htree, "custom-secret_tags")["value"]
+                .as_str()
+                .unwrap_or(""),
+            "",
+            "revealing a previously hidden custom multiselect must not expose its hidden default"
+        );
+        assert!(
+            !hrt.elements().iter().any(|e| e
+                .text
+                .as_deref()
+                .is_some_and(|t| t.contains("internal-token"))),
+            "hidden multiselect default must not appear visibly after reveal"
+        );
+
+        // 7b. Native signed Infinity bounds on number fields are valid while non-finite answers
+        // and unsatisfiable bounds (minimum: "Infinity") remain rejected.
+        let inf_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r8-inf".into(),
+            title: "Unbounded number".into(),
+            fields: vec![json!({
+                "key": "num_inf",
+                "title": "Amount",
+                "type": "number",
+                "required": true,
+                "minimum": "-Infinity",
+                "maximum": "Infinity",
+                "default": "NaN"
+            })],
+        };
+        assert!(agent_forms::supported(&inf_form));
+        assert!(!agent_forms::field_unanswerable(&inf_form.fields[0]));
+        assert!(agent_forms::field_unanswerable(&json!({
+            "key": "impossible_inf",
+            "type": "number",
+            "required": true,
+            "minimum": "Infinity"
+        })));
+        let (state, _rx) = state_with_form(inf_form);
+        let mut nrt = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+        nrt.frame(0.0);
+        let ntree = nrt.accessibility_json();
+        assert!(find_node(&ntree, "form-unsupported").is_none());
+        assert_eq!(
+            find_input(&ntree, "field-num_inf")["value"]
+                .as_str()
+                .unwrap_or(""),
+            "",
+            "non-finite wire default NaN must not be seeded as editable text"
+        );
+        nrt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.drafts
+                .get_mut(&("form-r8-inf".into(), "num_inf".into()))
+                .unwrap()
+                .editor()
+                .text = "2".into();
+        });
+        nrt.frame(1.0 / 60.0);
+        assert!(!has_state(
+            find_node(&nrt.accessibility_json(), "answer-question").unwrap(),
+            "disabled"
+        ));
+        {
+            let a = nrt.state.agent.as_ref().unwrap();
+            assert_eq!(
+                agent_forms::answer(&a.forms[0], &a.drafts).unwrap()["num_inf"],
+                json!(2.0)
+            );
+        }
+
+        // 7c. Declared empty string value in multiselect is preserved and submittable as [""].
+        let empty_multi_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r8-empty-multi".into(),
+            title: "Empty option value".into(),
+            fields: vec![json!({
+                "key": "empty_opt",
+                "title": "Preset",
+                "type": "multiselect",
+                "required": true,
+                "options": [{"value": "", "label": "Default"}]
+            })],
+        };
+        assert!(agent_forms::supported(&empty_multi_form));
+        let (state, _rx) = state_with_form(empty_multi_form);
+        let mut ert = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+        ert.frame(0.0);
+        let empty_box_key = agent_forms::multi_option_key("empty_opt", "");
+        let etree = ert.accessibility_json();
+        assert!(find_node(&etree, "form-unsupported").is_none());
+        assert_eq!(
+            find_node(&etree, &empty_box_key).unwrap()["name"],
+            "Default"
+        );
+        tap(&mut ert, &empty_box_key);
+        assert!(!has_state(
+            find_node(&ert.accessibility_json(), "answer-question").unwrap(),
+            "disabled"
+        ));
+        {
+            let a = ert.state.agent.as_ref().unwrap();
+            assert_eq!(
+                agent_forms::answer(&a.forms[0], &a.drafts).unwrap()["empty_opt"],
+                json!([""])
+            );
+        }
+
+        // 7d. Promoting a custom multiselect line during refresh preserves keyboard focus and
+        // remaps the remaining selection without reparenting the editor.
+        let promo_edit_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r8-promo-edit".into(),
+            title: "Promote while editing".into(),
+            fields: vec![json!({
+                "key": "promote_tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "required": true,
+                "custom": true,
+                "options": []
+            })],
+        };
+        let (state, _rx) = state_with_form(promo_edit_form);
+        let mut pert = Runtime::new(state, render_form, (420.0, 640.0), Env::new(false, 1.0));
+        pert.frame(0.0);
+        pert.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            let d = a
+                .drafts
+                .get_mut(&("form-r8-promo-edit".into(), "promote_tags".into()))
+                .unwrap();
+            d.custom_editor().text = "target\nkeep editing".into();
+        });
+        pert.frame(1.0 / 60.0);
+        let promo_input = pert
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("input") && e.path.contains("custom-promote_tags"))
+            .expect("custom-promote_tags inner input");
+        let promo_input_path = promo_input.path.clone();
+        let px = promo_input.rect[0] + promo_input.rect[2] * 0.5;
+        let py = promo_input.rect[1] + promo_input.rect[3] * 0.5;
+        pert.pointer_down(px, py);
+        pert.pointer_up(px, py);
+        pert.frame(2.0 / 60.0);
+        pert.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            let d = a
+                .drafts
+                .get_mut(&("form-r8-promo-edit".into(), "promote_tags".into()))
+                .unwrap();
+            d.custom.anchor = 12;
+            d.custom.focus = 19;
+        });
+        pert.frame(3.0 / 60.0);
+        assert!(
+            pert.elements()
+                .into_iter()
+                .any(|e| e.path == promo_input_path && e.focused),
+            "custom-promote_tags input must be focused before refresh"
+        );
+        pert.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields[0] = json!({
+                "key": "promote_tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "required": true,
+                "custom": true,
+                "options": [{"value": "target", "label": "Target"}]
+            });
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        pert.frame(4.0 / 60.0);
+        assert!(
+            pert.elements()
+                .into_iter()
+                .any(|e| e.path == promo_input_path && e.focused),
+            "promoting a custom line must keep editor path stable and preserve keyboard focus"
+        );
+        {
+            let a = pert.state.agent.as_ref().unwrap();
+            let d = &a.drafts[&("form-r8-promo-edit".into(), "promote_tags".into())];
+            assert!(d.selected.contains("target"));
+            assert_eq!(d.custom.text, "keep editing");
+            assert_eq!(
+                (d.custom.anchor, d.custom.focus),
+                (5, 12),
+                "selection on remaining line ('editing') must survive line promotion"
+            );
+            assert!(d.custom.focused);
         }
     });
+
+    // 7e. Violated field limits (maxLength, minItems) expose localized field-associated errors
+    // and invalid states in both en and fr, clearing as soon as the field becomes valid.
+    for (locale, max_len_expected, min_items_expected) in [
+        ("en", "Limit: ≤ 3", "Limit: ≥ 2 items"),
+        ("fr", "Limite : ≤ 3", "Limite : ≥ 2 éléments"),
+    ] {
+        crate::strings::with_locale(locale, || {
+            let val_form = Form {
+                tool: None,
+                infer_websearch: false,
+                id: "form-r8-validation".into(),
+                title: "Limits".into(),
+                fields: vec![
+                    json!({
+                        "key": "short_text",
+                        "title": "Code",
+                        "type": "string",
+                        "maxLength": 3
+                    }),
+                    json!({
+                        "key": "min_tags",
+                        "title": "Tags",
+                        "type": "multiselect",
+                        "minItems": 2,
+                        "options": [
+                            {"value": "a", "label": "Alpha"},
+                            {"value": "b", "label": "Beta"}
+                        ]
+                    }),
+                ],
+            };
+            let (state, _rx) = state_with_form(val_form);
+            let mut vrt = Runtime::new(state, render_form, (420.0, 640.0), Env::new(false, 1.0));
+            vrt.frame(0.0);
+            // Enter 4 chars in maxLength:3 field and check 1 option in minItems:2 multiselect.
+            vrt.update(|s, _| {
+                let a = s.agent.as_mut().unwrap();
+                a.drafts
+                    .get_mut(&("form-r8-validation".into(), "short_text".into()))
+                    .unwrap()
+                    .editor()
+                    .text = "abcd".into();
+            });
+            vrt.frame(1.0 / 60.0);
+            let tag_a = agent_forms::multi_option_key("min_tags", "a");
+            let tag_b = agent_forms::multi_option_key("min_tags", "b");
+            tap(&mut vrt, &tag_a);
+            let vtree = vrt.accessibility_json();
+            assert!(has_state(
+                find_node(&vtree, "answer-question").unwrap(),
+                "disabled"
+            ));
+            let short_in = find_input(&vtree, "field-short_text");
+            assert!(has_state(short_in, "invalid"));
+            assert!(
+                short_in["description"]
+                    .as_str()
+                    .is_some_and(|d| d.contains(max_len_expected)),
+                "maxLength violation must reach input description ({locale}): {short_in}"
+            );
+            let short_err = find_node(&vtree, "field-error:10:short_text").unwrap();
+            assert_eq!(short_err["role"], "alert");
+            assert_eq!(short_err["name"], max_len_expected);
+
+            let tag_a_node = find_node(&vtree, &tag_a).unwrap();
+            assert!(has_state(tag_a_node, "invalid"));
+            assert!(
+                tag_a_node["description"]
+                    .as_str()
+                    .is_some_and(|d| d.contains(min_items_expected)),
+                "minItems violation must reach checkbox description ({locale}): {tag_a_node}"
+            );
+            let tags_err = find_node(&vtree, "field-error:8:min_tags").unwrap();
+            assert_eq!(tags_err["role"], "alert");
+            assert_eq!(tags_err["name"], min_items_expected);
+
+            // Fix both violations -> alerts and invalid states clear and Answer enables.
+            vrt.update(|s, _| {
+                let a = s.agent.as_mut().unwrap();
+                a.drafts
+                    .get_mut(&("form-r8-validation".into(), "short_text".into()))
+                    .unwrap()
+                    .editor()
+                    .text = "abc".into();
+            });
+            vrt.frame(2.0 / 60.0);
+            tap(&mut vrt, &tag_b);
+            let ok_tree = vrt.accessibility_json();
+            assert!(!has_state(
+                find_input(&ok_tree, "field-short_text"),
+                "invalid"
+            ));
+            assert!(find_node(&ok_tree, "field-error:10:short_text").is_none());
+            assert!(!has_state(find_node(&ok_tree, &tag_a).unwrap(), "invalid"));
+            assert!(find_node(&ok_tree, "field-error:8:min_tags").is_none());
+            assert!(!has_state(
+                find_node(&ok_tree, "answer-question").unwrap(),
+                "disabled"
+            ));
+        });
+    }
 }

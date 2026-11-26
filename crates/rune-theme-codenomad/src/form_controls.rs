@@ -441,25 +441,25 @@ pub fn field_error(key: &str, message: &str) -> El {
         .wrap_anywhere()
 }
 
-pub fn required_field_group(
+pub fn field_container(
     key: &str,
     label: &str,
     description: Option<&str>,
-    required: bool,
+    as_group: bool,
     children: Vec<El>,
 ) -> El {
     let t = tokens(layout::dark());
-    let mut group = col()
+    let mut container = col()
         .key(key.to_string())
         .w_full()
-        .gap(t.space(Space::Xs).px())
-        .role("group")
-        .label(label)
-        .required(required);
-    if let Some(desc) = non_empty(description) {
-        group = group.description(desc);
+        .gap(t.space(Space::Xs).px());
+    if as_group {
+        container = container.role("group").label(label);
+        if let Some(desc) = non_empty(description) {
+            container = container.description(desc);
+        }
     }
-    group.children(children)
+    container.children(children)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -524,6 +524,24 @@ pub fn form_textarea<S: 'static>(
     } else {
         contrasting_color(t, &["text-primary", "text-secondary"], &fill_bgs, 4.5)
     };
+    let raw_sel = contrasting_color(
+        t,
+        &[
+            "accent-primary",
+            "focus-ring-color",
+            "text-primary",
+            "text-secondary",
+        ],
+        &[fill_bgs[0], fill_bgs[1]],
+        3.0,
+    );
+    let sel_bg = composite_linear(raw_sel, fill_bgs[0]);
+    let sel_ink = contrasting_color(
+        t,
+        &["text-on-accent", "text-primary", "surface-field"],
+        &[sel_bg],
+        4.5,
+    );
     let focus_color = contrasting_color(
         t,
         &[
@@ -543,7 +561,12 @@ pub fn form_textarea<S: 'static>(
         .key("input")
         .w_full()
         .color(ink)
-        .caret(ink, k.selection())
+        .caret(ink, sel_bg)
+        .selection_style(
+            rune::SelectionStyle::new(sel_bg)
+                .ink(sel_ink)
+                .inactive(sel_bg, Some(sel_ink)),
+        )
         .label(label)
         .required(required)
         .invalid(invalid)
@@ -722,6 +745,7 @@ pub fn radio_group(
     description: Option<&str>,
     horizontal: bool,
     required: bool,
+    invalid: bool,
     items: Vec<El>,
 ) -> El {
     let t = tokens(layout::dark());
@@ -735,11 +759,21 @@ pub fn radio_group(
     .role("radiogroup")
     .label(label)
     .required(required)
+    .invalid(invalid)
     .focus_group();
     if let Some(desc) = non_empty(description) {
         group = group.description(desc);
     }
     group.children(items)
+}
+
+fn join_a11y_description(visible: Option<&str>, note: Option<&str>) -> Option<String> {
+    match (non_empty(visible), non_empty(note)) {
+        (Some(a), Some(b)) => Some(format!("{a} · {b}")),
+        (Some(a), None) => Some(a.to_string()),
+        (None, Some(b)) => Some(b.to_string()),
+        (None, None) => None,
+    }
 }
 
 fn option_copy(label: &str, desc: Option<&str>, label_color: Color, desc_color: Color) -> El {
@@ -775,8 +809,10 @@ fn option_card<S: 'static>(
     role: &'static str,
     label: &str,
     desc: Option<&str>,
+    a11y_note: Option<&str>,
     selected: bool,
     disabled: bool,
+    invalid: bool,
     full_width: bool,
     indicator: El,
     press: impl Fn(&mut S) + 'static,
@@ -800,6 +836,7 @@ fn option_card<S: 'static>(
         .checked(selected)
         .focusable(!disabled)
         .disabled(disabled)
+        .invalid(invalid)
         .focus_return(FORM_FOCUS_ANCHOR)
         .min_h(t.metric("button", "minHeight").px())
         .padding(t.space(Space::Sm).px())
@@ -819,7 +856,7 @@ fn option_card<S: 'static>(
     if full_width {
         item = item.w_full();
     }
-    if let Some(d) = desc {
+    if let Some(d) = join_a11y_description(desc, a11y_note) {
         item = item.description(d);
     }
     if !disabled && !selected {
@@ -841,6 +878,7 @@ pub fn radio_option<S: 'static>(
     key: &str,
     label: &str,
     description: Option<&str>,
+    a11y_note: Option<&str>,
     selected: bool,
     disabled: bool,
     full_width: bool,
@@ -880,39 +918,36 @@ pub fn radio_option<S: 'static>(
         .a11y_hidden();
 
     option_card(
-        key, "radio", label, desc, selected, disabled, full_width, indicator, press,
+        key, "radio", label, desc, a11y_note, selected, disabled, false, full_width, indicator,
+        press,
     )
     .focus_selected(selected)
     .position_in_set(position.0, position.1)
 }
 
-pub fn checkbox_group(
-    key: &str,
-    label: &str,
-    description: Option<&str>,
-    required: bool,
-    items: Vec<El>,
-) -> El {
+pub fn checkbox_group(key: &str, label: &str, description: Option<&str>, items: Vec<El>) -> El {
     let t = tokens(layout::dark());
     let mut group = col()
         .key(key.to_string())
         .w_full()
         .gap(t.space(Space::Xs).px())
         .role("group")
-        .label(label)
-        .required(required);
+        .label(label);
     if let Some(desc) = non_empty(description) {
         group = group.description(desc);
     }
     group.children(items)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn checkbox_option<S: 'static>(
     key: &str,
     label: &str,
     description: Option<&str>,
+    a11y_note: Option<&str>,
     checked: bool,
     disabled: bool,
+    invalid: bool,
     toggle: impl Fn(&mut S) + 'static,
 ) -> El {
     let dark = layout::dark();
@@ -949,7 +984,8 @@ pub fn checkbox_option<S: 'static>(
         .a11y_hidden();
 
     option_card(
-        key, "checkbox", label, desc, checked, disabled, true, indicator, toggle,
+        key, "checkbox", label, desc, a11y_note, checked, disabled, invalid, true, indicator,
+        toggle,
     )
 }
 

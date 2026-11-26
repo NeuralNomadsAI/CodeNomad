@@ -1,6 +1,9 @@
 use super::*;
 use crate::palettes::{self, ColorField, ColorSchemeColors};
-use rune::{Cx, Env, Key, KeyEvent, Mods, Runtime, render::KIND_RECT};
+use rune::{
+    Cx, Env, Key, KeyEvent, Mods, Runtime,
+    render::{KIND_GLYPH, KIND_RECT},
+};
 use serde_json::Value;
 
 fn node<'a>(tree: &'a Value, key: &str) -> Option<&'a Value> {
@@ -42,11 +45,13 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                 None,
                 false,
                 true,
+                false,
                 vec![
                     radio_option(
                         "opt-a",
                         "Alpha",
                         Some("First choice"),
+                        None,
                         s.radio == 0,
                         false,
                         true,
@@ -57,6 +62,7 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                         "opt-b",
                         "https://example.invalid/very/long/unbroken/option/segment/that/must/wrap/anywhere",
                         Some("unbroken_description_token_without_spaces_for_mobile_wrap_check_1234567890"),
+                        None,
                         s.radio == 1,
                         false,
                         true,
@@ -85,14 +91,15 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
             .child(checkbox_group(
                 "check-grp",
                 "Tags",
-                None,
-                true,
+                Some("Question Required"),
                 vec![
                     checkbox_option(
                         "chk-a",
                         "Enable logging",
                         Some("Detailed output"),
+                        Some("Question Required"),
                         s.checked_a,
+                        false,
                         false,
                         |s: &mut Demo| s.checked_a = !s.checked_a,
                     ),
@@ -100,7 +107,9 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                         "chk-b",
                         "Dry run",
                         None,
+                        Some("Question Required"),
                         s.checked_b,
+                        false,
                         false,
                         |s: &mut Demo| s.checked_b = !s.checked_b,
                     ),
@@ -126,7 +135,8 @@ fn assert_palette_controls(label: &str, dark: bool) {
 
     let check_group = node(&tree, "check-grp").unwrap();
     assert_eq!(check_group["role"], "group");
-    assert!(has_state(check_group, "required"), "{check_group}");
+    assert!(!has_state(check_group, "required"), "{check_group}");
+    assert_eq!(check_group["description"], "Question Required");
 
     let opt_a = node(&tree, "opt-a").unwrap();
     assert_eq!(opt_a["role"], "radio-button");
@@ -143,12 +153,13 @@ fn assert_palette_controls(label: &str, dark: bool) {
     let chk_a = node(&tree, "chk-a").unwrap();
     assert_eq!(chk_a["role"], "check-box");
     assert_eq!(chk_a["name"], "Enable logging");
-    assert_eq!(chk_a["description"], "Detailed output");
+    assert_eq!(chk_a["description"], "Detailed output · Question Required");
     assert!(has_state(chk_a, "unchecked"), "{chk_a}");
 
     let chk_b = node(&tree, "chk-b").unwrap();
     assert_eq!(chk_b["role"], "check-box");
     assert_eq!(chk_b["name"], "Dry run");
+    assert_eq!(chk_b["description"], "Question Required");
     assert!(has_state(chk_b, "checked"), "{chk_b}");
 
     let els = rt.elements();
@@ -274,8 +285,9 @@ fn assert_palette_controls(label: &str, dark: bool) {
         );
     }
 
-    // Form custom/text editor meets >= 4.5:1 ink contrast against its actual painted field fill
-    // and >= 3:1 boundary visibility against the dock.
+    // Form custom/text editor meets >= 4.5:1 ink contrast against its actual painted field fill,
+    // >= 3:1 boundary visibility against the dock, and >= 3:1 selection fill + >= 4.5:1 selected
+    // glyph contrast when focused with a range selection.
     {
         let box_el = els
             .iter()
@@ -302,6 +314,71 @@ fn assert_palette_controls(label: &str, dark: bool) {
         assert!(
             field_boundary >= 3.0,
             "{label}/custom-input boundary contrast below 3:1: {field_boundary:.2}"
+        );
+
+        let ix = input_el.rect[0] + input_el.rect[2] * 0.5;
+        let iy = input_el.rect[1] + input_el.rect[3] * 0.5;
+        rt.pointer_down(ix, iy);
+        rt.pointer_up(ix, iy);
+        now += 1.0;
+        rt.frame(now);
+        rt.update(|s, _| {
+            s.custom.anchor = 0;
+            s.custom.focus = 6;
+        });
+        now += 1.0;
+        rt.frame(now);
+        let sel_rect = rt
+            .instances
+            .iter()
+            .find(|inst| {
+                inst.params[1] == KIND_RECT
+                    && inst.fill[3] > 0.0
+                    && inst.rect[0] >= input_el.rect[0] - 1.0
+                    && inst.rect[1] >= input_el.rect[1] - 1.0
+                    && inst.rect[0] + inst.rect[2] <= input_el.rect[0] + input_el.rect[2] + 1.0
+                    && inst.rect[1] + inst.rect[3] <= input_el.rect[1] + input_el.rect[3] + 1.0
+                    && inst.rect[2] > 4.0
+                    && inst.rect[2] < input_el.rect[2] - 1.0
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label}/custom-input: missing painted selection rect inside {:?}",
+                    input_el.rect
+                )
+            });
+        let sel_fill = decode_instance_color(sel_rect.fill, rt.srgb_blend());
+        let sel_fill_ratio = worst_contrast(sel_fill, &field_bgs);
+        assert!(
+            sel_fill_ratio >= 3.0,
+            "{label}/custom-input painted selection fill contrast below 3:1: {sel_fill_ratio:.2} (sel={sel_fill:?}, field={field_bgs:?})"
+        );
+        let sel_bgs = effective_backgrounds(sel_fill, field_bgs[0]);
+        let mut selected_glyphs = 0usize;
+        for inst in &rt.instances {
+            if inst.params[1] != KIND_GLYPH || inst.fill[3] <= 0.0 {
+                continue;
+            }
+            let cx = inst.rect[0] + inst.rect[2] * 0.5;
+            let cy = inst.rect[1] + inst.rect[3] * 0.5;
+            if cx >= sel_rect.rect[0]
+                && cx <= sel_rect.rect[0] + sel_rect.rect[2]
+                && cy >= sel_rect.rect[1]
+                && cy <= sel_rect.rect[1] + sel_rect.rect[3]
+            {
+                selected_glyphs += 1;
+                let glyph_ink = decode_instance_color(inst.fill, rt.srgb_blend());
+                let glyph_ratio = worst_contrast(glyph_ink, &sel_bgs);
+                assert!(
+                    glyph_ratio >= 4.5,
+                    "{label}/custom-input painted selected glyph contrast below 4.5:1: {glyph_ratio:.2} (ink={glyph_ink:?}, sel={sel_bgs:?})"
+                );
+            }
+        }
+        assert!(
+            selected_glyphs > 0,
+            "{label}/custom-input: expected painted glyphs inside selection rect {:?}",
+            sel_rect.rect
         );
     }
 
@@ -697,6 +774,28 @@ fn radio_and_checkbox_options_meet_contrast_focus_and_wrapping_across_all_palett
                     "custom-mid-gap-dark"
                 } else {
                     "custom-mid-gap-light"
+                },
+                dark,
+            );
+        });
+    }
+
+    // Verify monochromatic mid-gray palette (all swatches #848484) keeps editor text,
+    // focused selection highlight (>= 3:1), and selected glyphs (>= 4.5:1) visible.
+    let monochrome_mid = ColorField::ALL
+        .into_iter()
+        .fold(ColorSchemeColors::default_custom(), |colors, field| {
+            colors.with(field, "#848484").unwrap()
+        });
+    for dark in [false, true] {
+        let custom_mono =
+            palettes::custom(Some("monochrome-mid"), dark, false, monochrome_mid.clone());
+        palettes::with_resolved(Some(custom_mono), || {
+            assert_palette_controls(
+                if dark {
+                    "custom-monochrome-mid-dark"
+                } else {
+                    "custom-monochrome-mid-light"
                 },
                 dark,
             );
