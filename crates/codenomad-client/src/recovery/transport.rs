@@ -251,6 +251,7 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Available(e, v)) if e == epoch => {
                 if reading.is_some() {
+                    publish(&out, &wake, Event::UpstreamReady).await;
                     publish(&out, &wake, Event::AgentHint(true)).await;
                 } else if !stream_gap && v > reader.fence && !reader.historical {
                     publish(&out, &wake, Event::Reconnecting).await;

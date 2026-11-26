@@ -123,6 +123,7 @@ pub enum Event {
     Workspace(WorkspaceEvent),
     Preferences(crate::settings::Owner),
     AgentHint(bool),
+    UpstreamReady,
     AgentControl(AgentLane),
     SessionUsage(crate::content::Usage),
     FamilyUsage(crate::content::FamilyChange),

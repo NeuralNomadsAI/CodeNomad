@@ -87,9 +87,6 @@ fn drain_chat(
                     if s.history_detached {
                         s.stream_offline = false;
                     }
-                    if let Some(reader) = &mut s.reader {
-                        reader.stream_reconnected();
-                    }
                     let newly_connected = !s.conversation_stream_connected;
                     s.conversation_stream_connected = true;
                     #[cfg(target_arch = "wasm32")]
@@ -116,6 +113,11 @@ fn drain_chat(
                         a.online = true;
                     }
                     a.refresh(catalog)
+                }
+            }
+            Event::UpstreamReady => {
+                if let Some(reader) = &mut s.reader {
+                    reader.stream_reconnected();
                 }
             }
             Event::AgentControl(lane) => {

@@ -91,6 +91,9 @@ pub fn available() -> bool {
 }
 
 fn start_check(s: &mut State) {
+    if s.pairing.state.should_defer_start() {
+        return;
+    }
     s.pairing.retry_timer = None;
     if s.pairing.focus.is_none() {
         s.pairing.focus = FocusCheck::new(s.wake.clone());
@@ -121,6 +124,16 @@ fn schedule_retry(s: &mut State, delay_ms: u64) {
         let _ = out.send(()).await;
         wake();
     });
+}
+
+pub fn set_defer_checks(s: &mut State, defer: bool) {
+    s.pairing.state.set_defer_checks(defer);
+}
+
+pub fn flush_deferred_checks(s: &mut State) {
+    if s.pairing.state.take_deferred_check() && available() {
+        start_check(s);
+    }
 }
 
 pub fn observe(s: &mut State) {
@@ -234,7 +247,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if let Some(commands) = s.commands.take() {
                 commands.close();
             }
-            s.phase = crate::Phase::Failed;
+            if !matches!(
+                s.phase,
+                crate::Phase::WorkspaceMissing | crate::Phase::RestoreFailed
+            ) {
+                s.phase = crate::Phase::Failed;
+            }
             s.stream_offline = true;
             crate::workspace::revoke_cached_sessions(s);
             if s.pairing.focus.is_none() {

@@ -2277,3 +2277,108 @@ fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
         .expect("revoked attestation send refusal must complete");
     });
 }
+
+#[test]
+fn host_open_emits_agent_hint_without_upstream_ready_until_upstream_recovers() {
+    use crate::{
+        backend::Backend,
+        bounded,
+        recovery::{ReadingLane, demand},
+        transport::Event,
+    };
+    use std::{sync::Arc, time::Duration};
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        net::TcpListener,
+    };
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let mut backend =
+                Backend::unauthenticated(&format!("http://{address}/")).unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let (out, events) = bounded(16);
+            let (commands, input) = bounded(1);
+            let (demand, observer) = demand::open();
+            let (content, _snapshots) = bounded(4);
+            demand.publish(None);
+            let task = tokio::spawn(crate::transport::run_backend_reading(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+                ReadingLane {
+                    demand: observer,
+                    events: content,
+                    connection: Default::default(),
+                    revoked: Default::default(),
+                },
+            ));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            // Opening the host SSE must emit AgentHint(true) without UpstreamReady.
+            loop {
+                match events.recv().await.unwrap() {
+                    Event::UpstreamReady => {
+                        panic!("host SSE open must not emit UpstreamReady before upstream status")
+                    }
+                    Event::AgentHint(true) => break,
+                    _ => continue,
+                }
+            }
+            // Upstream disconnect emits ConnectionLost; upstream reconnect emits UpstreamReady then AgentHint(true).
+            stream
+                .get_mut()
+                .write_all(
+                    b"data: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"disconnected\"}\n\n",
+                )
+                .await
+                .unwrap();
+            loop {
+                match events.recv().await.unwrap() {
+                    Event::UpstreamReady => {
+                        panic!("upstream disconnect must not emit UpstreamReady")
+                    }
+                    Event::ConnectionLost => break,
+                    _ => continue,
+                }
+            }
+            stream
+                .get_mut()
+                .write_all(
+                    b"data: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"connected\"}\n\n",
+                )
+                .await
+                .unwrap();
+            let mut saw_upstream_ready = false;
+            loop {
+                match events.recv().await.unwrap() {
+                    Event::UpstreamReady => saw_upstream_ready = true,
+                    Event::AgentHint(true) if saw_upstream_ready => break,
+                    _ => continue,
+                }
+            }
+            assert!(saw_upstream_ready);
+            drop(commands);
+            drop(stream);
+            let _ = task.await;
+        })
+        .await
+        .expect("host open vs upstream ready test must complete");
+    });
+}

@@ -948,8 +948,8 @@ mod tests {
         assert!(rt.state.stream_offline);
         assert!(can_send(&rt.state));
 
-        // A host SSE preferences invalidation while upstream is still down must not revoke
-        // the reader's offline send exception before AgentHint(true) announces recovery.
+        // A host SSE preferences invalidation or host SSE reopen before upstream status arrives
+        // must not revoke the reader's offline send exception while upstream is still down.
         out.try_send(crate::transport::Event::Preferences(
             codenomad_client::settings::Owner::Config,
         ))
@@ -971,6 +971,19 @@ mod tests {
         ));
         assert!(rt.state.stream_offline);
         assert!(rt.state.conversation_stream_connected);
+        assert!(rt.state.reader.as_ref().unwrap().is_resuming());
+        assert!(can_send(&rt.state));
+
+        // Once upstream reports ready, end the offline send exception while keeping
+        // resume_pending armed until the replacement ReaderSync installs.
+        out.try_send(crate::transport::Event::UpstreamReady)
+            .unwrap();
+        assert!(crate::chat::events::poll_chat_for_window(
+            &mut rt.state,
+            64,
+            false
+        ));
+        assert!(rt.state.stream_offline);
         assert!(rt.state.reader.as_ref().unwrap().is_resuming());
         assert!(rt.state.reader.as_ref().unwrap().blocks_send());
         assert!(!can_send(&rt.state));

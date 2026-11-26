@@ -25,6 +25,8 @@ pub(crate) struct PairingState {
     pub(crate) auth_retries: u8,
     pub(crate) retry_waiting: bool,
     pub(crate) seen_auth: [Option<u64>; 2],
+    pub(crate) defer_checks: bool,
+    pub(crate) deferred_check: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -105,6 +107,27 @@ impl PairingState {
     /// to a launcher tab with no live conversation stream never strands a stale overlay).
     pub(crate) fn watches_focus(&self) -> bool {
         self.required || self.in_flight
+    }
+
+    /// Defer starting a probe while `s.workspace` is temporarily taken (e.g. during
+    /// cached-tab polling) so the probe records the real active tab key once restored.
+    pub(crate) fn should_defer_start(&mut self) -> bool {
+        if self.defer_checks {
+            self.deferred_check = true;
+            true
+        } else {
+            self.deferred_check = false;
+            false
+        }
+    }
+
+    pub(crate) fn set_defer_checks(&mut self, defer: bool) {
+        self.defer_checks = defer;
+    }
+
+    pub(crate) fn take_deferred_check(&mut self) -> bool {
+        self.defer_checks = false;
+        std::mem::take(&mut self.deferred_check)
     }
 
     pub(crate) fn settle(&mut self, result: Option<bool>) -> Settled {
@@ -492,5 +515,32 @@ mod tests {
         assert_eq!(state.settle(Some(false)), Settled::Recovered);
         assert!(!state.required);
         assert!(!state.watches_focus());
+    }
+
+    #[test]
+    fn deferred_check_waits_until_workspace_is_restored() {
+        let mut state = PairingState {
+            required: true,
+            ..Default::default()
+        };
+        state.set_defer_checks(true);
+        assert_eq!(
+            state.on_authenticated_signal(AuthSignal::Conversation(1)),
+            Action::StartCheck
+        );
+        assert!(state.should_defer_start());
+        assert!(state.deferred_check);
+        // Repeated signals during the same cached poll do not clear the deferred dispatch.
+        assert_eq!(
+            state.on_authenticated_signal(AuthSignal::Conversation(1)),
+            Action::None
+        );
+        assert!(state.deferred_check);
+        // Restoring s.workspace flushes the deferred check once, with defer_checks cleared.
+        assert!(state.take_deferred_check());
+        assert!(!state.defer_checks);
+        assert!(!state.deferred_check);
+        assert!(!state.should_defer_start());
+        assert!(!state.take_deferred_check());
     }
 }

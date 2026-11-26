@@ -73,7 +73,9 @@ pub(crate) fn poll_cached_notifications(s: &mut State, tx: &mut Tx) -> bool {
     let Some(mut ui) = s.workspace.take() else {
         return false;
     };
+    crate::platform::pairing::set_defer_checks(s, true);
     let changed = poll_cached(s, &mut ui, None, tx);
     s.workspace = Some(ui);
+    crate::platform::pairing::flush_deferred_checks(s);
     changed
 }

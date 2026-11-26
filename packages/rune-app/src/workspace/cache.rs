@@ -94,7 +94,9 @@ impl Cache {
         if let Some(commands) = self.commands.take() {
             commands.close();
         }
-        self.phase = Phase::Failed;
+        if !matches!(self.phase, Phase::WorkspaceMissing | Phase::RestoreFailed) {
+            self.phase = Phase::Failed;
+        }
         self.stream_offline = true;
     }
 
