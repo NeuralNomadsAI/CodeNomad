@@ -168,12 +168,50 @@ fn physical(scope: &Path, candidate: &str) -> Option<PathBuf> {
 }
 
 async fn owns_physical(app: &App, workspace: &Workspace, target: &Path) -> bool {
+    Box::pin(owns_physical_inner(app, workspace, target)).await
+}
+
+async fn owns_physical_inner(app: &App, workspace: &Workspace, target: &Path) -> bool {
     if target.starts_with(&workspace.path) {
         return dunce::canonicalize(&workspace.path).ok().as_ref() == Some(&workspace.path);
     }
-    crate::worktrees::linked::catalogue(app, workspace, false)
+    let Ok(hit) =
+        crate::worktrees::linked::http_read(app, workspace, crate::worktrees::linked::ReadMode::Validated).await
+    else {
+        return false;
+    };
+    let Some(catalogue) = hit.snapshot.catalogue() else {
+        return false;
+    };
+    let (owned, root_live) = {
+        let cat = std::sync::Arc::clone(&catalogue);
+        let opened = workspace.path.clone();
+        let target_owned = target.to_path_buf();
+        let check_root = hit.from_cache;
+        tokio::task::spawn_blocking(move || {
+            let root_live = !check_root || cat.root_live_for(&opened);
+            let owned = root_live && cat.trees.iter().any(|tree| tree.contains_live(&target_owned));
+            (owned, root_live)
+        })
         .await
-        .is_ok_and(|catalogue| catalogue.trees.iter().any(|tree| tree.contains_live(target)))
+        .unwrap_or((false, false))
+    };
+    if owned {
+        return true;
+    }
+    if hit.from_cache && (!root_live || !hit.refreshed_on_miss) {
+        let retry_mode = if root_live {
+            crate::worktrees::linked::ReadMode::RefreshOnMiss(hit.generation)
+        } else {
+            crate::worktrees::linked::ReadMode::Fresh
+        };
+        return crate::worktrees::linked::http_read(app, workspace, retry_mode)
+            .await
+            .ok()
+            .and_then(|fresh| fresh.snapshot.catalogue())
+            .is_some_and(|catalogue| catalogue.trees.iter().any(|tree| tree.contains_live(target)));
+    }
+    false
 }
 
 #[derive(PartialEq, Eq)]

@@ -7,6 +7,11 @@ publish = false
 [features]
 test-support = []
 
+[[example]]
+name = "web-focus-fixture"
+path = "tests/fixtures/web_focus.rs"
+required-features = ["test-support"]
+
 [dependencies]
 rune = { workspace = true }
 rune-kit = { workspace = true, features = ["markdown"] }

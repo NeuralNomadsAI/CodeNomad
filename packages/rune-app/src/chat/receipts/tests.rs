@@ -162,3 +162,130 @@ fn receipts_are_anchored_without_becoming_native_message_parts() {
         assert!(row.parts.is_empty() && !row.body.contains("reason"));
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn launcher_chat_and_inactive_transcript_do_not_spin_receipt_wakes() {
+    use std::time::Duration;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        time::timeout,
+    };
+
+    crate::platform::block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut backend =
+            Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+                .await
+                .unwrap();
+        backend.workspace = "workspace".into();
+        backend.session = "ses_fixture".into();
+        let mut s = crate::init();
+        s.screen = crate::screen::Screen::Chat {
+            launcher: Some(crate::launcher::Launcher::new(std::sync::Arc::new(|| {}))),
+        };
+        s.phase = crate::Phase::Ready;
+        s.messages.push(
+            crate::history::decode_message(&json!({
+                "id": "msg_1", "type": "user", "text": "Hello from launcher chat"
+            }))
+            .unwrap()
+            .into(),
+        );
+        s.transcript_display.receipts.bind(backend);
+
+        let server = tokio::spawn(async move {
+            let mut served = 0usize;
+            while let Ok(Ok((mut socket, _))) =
+                timeout(Duration::from_secs(3), listener.accept()).await
+            {
+                let mut req = Vec::new();
+                while !req.ends_with(b"\r\n\r\n") && req.len() < 4096 {
+                    let Ok(byte) = socket.read_u8().await else {
+                        break;
+                    };
+                    req.push(byte);
+                }
+                let body = r#"{"receipts":[],"next":null}"#;
+                let _ = socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+                served += 1;
+                if served >= 2 {
+                    break;
+                }
+            }
+            served
+        });
+
+        let mut rt = Runtime::new(
+            s,
+            |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+            (960.0, 900.0),
+            Env::new(false, 1.0),
+        );
+        rt.poll = Some(crate::poll);
+        rt.frame(0.0);
+        for _ in 0..40 {
+            rt.frame(1.0 / 60.0);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            if rt
+                .state
+                .transcript_display
+                .receipts
+                .entries
+                .get(&Some("msg_1".into()))
+                .is_some_and(|entry| !entry.dirty && entry.job.is_none())
+            {
+                break;
+            }
+        }
+        assert!(
+            rt.state
+                .transcript_display
+                .receipts
+                .entries
+                .get(&Some("msg_1".into()))
+                .is_some_and(|entry| !entry.dirty && entry.job.is_none()),
+            "launcher-opened chat must fetch and settle visible message receipts"
+        );
+        for _ in 0..10 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(
+            rt.wake_deadline().is_none(),
+            "settled launcher chat must not keep scheduling receipt wakes: {:?}",
+            rt.wake_deadline()
+        );
+
+        // When the transcript is inactive (Reconnecting/Failed), dirty visible rows must not
+        // spin wake_after(Duration::ZERO) on every frame.
+        rt.update(|s, _| {
+            s.phase = crate::Phase::Reconnecting;
+            s.transcript_display
+                .receipts
+                .invalidate(Some("msg_1".into()));
+        });
+        for _ in 0..10 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(
+            rt.wake_deadline().is_none(),
+            "inactive reconnecting transcript must not spin receipt wakes: {:?}",
+            rt.wake_deadline()
+        );
+
+        let served = server.await.unwrap();
+        assert!(
+            served >= 2,
+            "expected unanchored + anchored receipt fetches, got {served}"
+        );
+    });
+}

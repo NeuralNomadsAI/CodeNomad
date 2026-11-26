@@ -291,6 +291,10 @@ pub fn picker(key: &str, label: &str, options: &[&str]) -> Select {
     table_picker(key, label, options, false)
 }
 
+pub fn stepping_picker(key: &str, label: &str, options: &[&str]) -> Select {
+    picker(key, label, options).step_closed(true)
+}
+
 pub fn table_picker(key: &str, label: &str, options: &[&str], compact: bool) -> Select {
     Select::new(key, options)
         .label(label)
@@ -468,10 +472,7 @@ pub fn render<S, T>(
     palette: Option<&'static crate::palettes::Palette>,
     build: impl FnOnce(&mut Cx<S>) -> T,
 ) -> T {
-    crate::palettes::with_palette(palette, || {
-        cx.foreground(tokens(dark).color("text-primary"));
-        layout::with_appearance(dark, || build(cx))
-    })
+    crate::palettes::with_palette(palette, || layout::render_with_dark(cx, dark, build))
 }
 
 pub fn frame(sidebar: El, body: El, overlays: Vec<El>) -> El {
@@ -756,4 +757,69 @@ pub fn disclosure<S: 'static>(
             }
             true
         })
+}
+
+#[cfg(test)]
+#[test]
+fn stepping_picker_steps_while_closed_and_opens_with_alt_down() {
+    #[derive(Default)]
+    struct State {
+        open: bool,
+        selected: usize,
+    }
+    const OPTIONS: [&str; 3] = ["One", "Two", "Three"];
+    fn view(s: &State, cx: &mut Cx<State>) -> El {
+        layout::render(cx, |_| {
+            let mut layers = Vec::new();
+            let trigger = build_picker(
+                stepping_picker("step", "Choice", &OPTIONS)
+                    .current(Some(OPTIONS[s.selected]))
+                    .open(s.open)
+                    .on_toggle(|s: &mut State| s.open = !s.open)
+                    .on_close(|s: &mut State| s.open = false)
+                    .on_choose(|s: &mut State, value, _| {
+                        s.open = false;
+                        if let Some(index) = OPTIONS.iter().position(|&v| v == value) {
+                            s.selected = index;
+                        }
+                    }),
+                &mut layers,
+            );
+            col().w_full().h_full().child(trigger).children(layers)
+        })
+    }
+    let mut rt = rune::Runtime::new(
+        State::default(),
+        view,
+        (320.0, 240.0),
+        rune::Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    rt.update(|_, tx| tx.focus("step-trigger", true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Down,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.open);
+    assert_eq!(rt.state.selected, 1);
+
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Up,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.open);
+    assert_eq!(rt.state.selected, 0);
+
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Down,
+        mods: rune::Mods {
+            alt: true,
+            ..Default::default()
+        },
+    });
+    rt.frame(0.02);
+    assert!(rt.state.open);
 }
