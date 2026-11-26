@@ -21,15 +21,48 @@ use codenomad_client::{
     },
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
 };
 
-pub(crate) type AuthSink = Arc<Mutex<Vec<Backend>>>;
+#[derive(Default)]
+pub(crate) struct AuthSinkState {
+    pub(super) pending: Vec<Backend>,
+    log: VecDeque<(u64, Backend)>,
+    epoch: u64,
+}
+pub(crate) type AuthSink = Arc<Mutex<AuthSinkState>>;
 pub(super) fn push_auth_sink(sink: &AuthSink, b: Backend) {
-    if let Ok(mut list) = sink.lock() {
-        push_auth_expired(&mut list, b);
+    if let Ok(mut state) = sink.lock() {
+        state.epoch = state.epoch.wrapping_add(1);
+        let ep = state.epoch;
+        if state.log.len() >= 64 {
+            state.log.pop_front();
+        }
+        state.log.push_back((ep, b.clone()));
+        push_auth_expired(&mut state.pending, b);
     }
+}
+pub(super) fn take_auth_sink(sink: &AuthSink) -> (Vec<Backend>, u64) {
+    sink.lock()
+        .map(|mut state| (std::mem::take(&mut state.pending), state.epoch))
+        .unwrap_or_default()
+}
+pub(super) fn has_auth_since(sink: &AuthSink, since_epoch: u64, b: &Backend) -> bool {
+    let Ok(state) = sink.lock() else {
+        return false;
+    };
+    if state.epoch == since_epoch {
+        return false;
+    }
+    let delta = state.epoch.wrapping_sub(since_epoch);
+    if delta as usize > state.log.len() {
+        return true;
+    }
+    state.log.iter().any(|(ep, bk)| {
+        let diff = ep.wrapping_sub(since_epoch);
+        diff != 0 && diff <= delta && bk.client.same_connection(&b.client)
+    })
 }
 
 pub(crate) const HOLD_CAPACITY: usize = 128;
@@ -136,9 +169,11 @@ pub(crate) struct ActiveScheduleView<'a> {
 
 enum Reply {
     ActApply(String, Option<String>, Act, u64, ActOut),
+    ActAborted(u64),
     ActRead(ActOut),
     Ctrl(String, Option<String>, ScheduleControlRequest, u64, CtrlOut),
     Read(ScheduleControlRequest, ReadOut),
+    ReadAborted,
 }
 
 pub(crate) struct ReadyScheduleReplies(Vec<(ScheduleHoldKey, Backend, Reply)>);
@@ -165,16 +200,19 @@ impl ScheduleHolds {
         Arc::clone(&self.auth_sink)
     }
     fn drain_auth_sink(&mut self) -> bool {
-        let pending = self
-            .auth_sink
-            .lock()
-            .map(|mut list| std::mem::take(&mut *list))
-            .unwrap_or_default();
+        let (pending, _) = take_auth_sink(&self.auth_sink);
         let got = !pending.is_empty();
         for b in pending {
             push_auth_expired(&mut self.auth_expired, b);
         }
         got
+    }
+    fn drain_auth_sink_epoch(&mut self) -> u64 {
+        let (pending, epoch) = take_auth_sink(&self.auth_sink);
+        for b in pending {
+            push_auth_expired(&mut self.auth_expired, b);
+        }
+        epoch
     }
     pub(crate) fn get(&self, key: &ScheduleHoldKey) -> Option<(&ScheduleHoldPhase, bool)> {
         self.entries.get(key).map(|e| (&e.phase, e.checking))
@@ -194,24 +232,10 @@ impl ScheduleHolds {
         })
     }
     pub(crate) fn retire_workspace(&mut self, b: &Backend) {
+        self.drain_auth_sink();
         let srv = owner(b);
-        self.entries.retain(|k, e| {
-            if k.server == srv && e.workspace == b.workspace {
-                if let Some((fb, rx)) = e.flight.take()
-                    && let Ok(
-                        Reply::Ctrl(_, _, _, _, CtrlOut::AuthExpired)
-                        | Reply::Read(_, ReadOut::AuthExpired)
-                        | Reply::ActApply(_, _, _, _, ActOut::AuthExpired)
-                        | Reply::ActRead(ActOut::AuthExpired),
-                    ) = rx.try_recv()
-                {
-                    push_auth_expired(&mut self.auth_expired, fb);
-                }
-                false
-            } else {
-                true
-            }
-        });
+        self.entries
+            .retain(|k, e| !(k.server == srv && e.workspace == b.workspace));
     }
     pub(crate) fn held_documents<'a>(
         &'a self,
@@ -283,13 +307,15 @@ impl ScheduleHolds {
             let out = b
                 .mission_schedule_settings_apply(&id, &req, proof_expected_revision)
                 .await;
-            if matches!(out, ActOut::AuthExpired) {
+            let auth = matches!(out, ActOut::AuthExpired);
+            if auth {
                 push_auth_sink(&sink, b.clone());
             }
             if out_tx
                 .send(Reply::ActApply(occ, dir, action, view_epoch, out))
                 .await
                 .is_ok()
+                || auth
             {
                 wake();
             }
@@ -334,13 +360,15 @@ impl ScheduleHolds {
         let (out_tx, rx) = bounded(1);
         platform::spawn(async move {
             let out = b.control_mission_schedule(&id, &r).await;
-            if matches!(out, CtrlOut::AuthExpired) {
+            let auth = matches!(out, CtrlOut::AuthExpired);
+            if auth {
                 push_auth_sink(&sink, b.clone());
             }
             if out_tx
                 .send(Reply::Ctrl(occ, dir, r, view_epoch, out))
                 .await
                 .is_ok()
+                || auth
             {
                 wake();
             }
@@ -387,10 +415,11 @@ impl ScheduleHolds {
                     let out = b
                         .mission_schedule_settings_read(&id, &req_id, proof_rev, &c)
                         .await;
-                    if matches!(out, ActOut::AuthExpired) {
+                    let auth = matches!(out, ActOut::AuthExpired);
+                    if auth {
                         push_auth_sink(&sink, b.clone());
                     }
-                    if out_tx.send(Reply::ActRead(out)).await.is_ok() {
+                    if out_tx.send(Reply::ActRead(out)).await.is_ok() || auth {
                         wake();
                     }
                 });
@@ -408,6 +437,7 @@ impl ScheduleHolds {
                     req.clone(),
                     ctx.wake.clone(),
                     sink,
+                    None,
                 );
                 true
             }
@@ -491,7 +521,7 @@ impl ScheduleHolds {
                     if let Some(e) = self.entries.get_mut(&key) {
                         e.min_rev = Some(e.min_rev.unwrap_or(0).max(revision));
                     }
-                    self.drain_auth_sink();
+                    let sink_epoch = self.drain_auth_sink_epoch();
                     let sink = self.auth_sink.clone();
                     if let Some(v) = active.filter(|v| {
                         view_ok(v, &key, &occ, view_epoch, &b)
@@ -509,14 +539,22 @@ impl ScheduleHolds {
                         );
                         let (out_tx, rx) = bounded(1);
                         platform::spawn(async move {
+                            if has_auth_since(&sink, sink_epoch, &bc) {
+                                if out_tx.send(Reply::ActAborted(revision)).await.is_ok() {
+                                    wake();
+                                }
+                                return;
+                            }
                             let out = bc.control_mission_schedule(&id, &r).await;
-                            if matches!(out, CtrlOut::AuthExpired) {
+                            let auth = matches!(out, CtrlOut::AuthExpired);
+                            if auth {
                                 push_auth_sink(&sink, bc.clone());
                             }
                             if out_tx
                                 .send(Reply::Ctrl(occ, dir, r, view_epoch, out))
                                 .await
                                 .is_ok()
+                                || auth
                             {
                                 wake();
                             }
@@ -544,6 +582,7 @@ impl ScheduleHolds {
                 ActOut::AuthExpired => {}
                 ActOut::Unconfirmed => evs.push(Ev::NeedsRefresh(key)),
             },
+            Reply::ActAborted(revision) => self.settle(&key, Some(revision), evs),
             Reply::ActRead(out) => match out {
                 ActOut::Ready { revision } => self.settle(&key, Some(revision), evs),
                 ActOut::AuthExpired => {}
@@ -561,7 +600,7 @@ impl ScheduleHolds {
                 evs.push(Ev::Refused(key, "missions.scheduleList.conflict"));
             }
             Reply::Ctrl(occ, dir, req, view_epoch, CtrlOut::Pending(partial)) => {
-                self.drain_auth_sink();
+                let sink_epoch = self.drain_auth_sink_epoch();
                 let sink = self.auth_sink.clone();
                 let auth_blocked = expired(&b, exp) || expired(&b, &self.auth_expired);
                 if let Some(e) = self.entries.get_mut(&key) {
@@ -569,7 +608,7 @@ impl ScheduleHolds {
                     if let Some(v) =
                         active.filter(|v| view_ok(v, &key, &occ, view_epoch, &b) && !auth_blocked)
                     {
-                        spawn_receipt(&key, e, b, dir, req, v.wake.clone(), sink);
+                        spawn_receipt(&key, e, b, dir, req, v.wake.clone(), sink, Some(sink_epoch));
                     } else {
                         evs.push(Ev::NeedsRefresh(key));
                     }
@@ -593,6 +632,7 @@ impl ScheduleHolds {
                 set_partial(self.entries.get_mut(&key), ok);
                 evs.push(Ev::NeedsRefresh(key));
             }
+            Reply::ReadAborted => evs.push(Ev::NeedsRefresh(key)),
             _ => evs.push(Ev::NeedsRefresh(key)),
         }
     }
@@ -620,6 +660,7 @@ impl ScheduleHolds {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_receipt(
     key: &ScheduleHoldKey,
     e: &mut Entry,
@@ -628,18 +669,28 @@ fn spawn_receipt(
     req: ScheduleControlRequest,
     wake: Wake,
     sink: AuthSink,
+    abort_after_epoch: Option<u64>,
 ) {
     let (bc, id, r) = (b.clone(), key.schedule_id.clone(), req.clone());
     let (out_tx, rx) = bounded(1);
     platform::spawn(async move {
+        if let Some(ep) = abort_after_epoch
+            && has_auth_since(&sink, ep, &bc)
+        {
+            if out_tx.send(Reply::ReadAborted).await.is_ok() {
+                wake();
+            }
+            return;
+        }
         let (_keep, c) = bounded(1);
         let out = bc
             .mission_schedule_read(&id, dir.as_deref(), Some(&r.request_id), &c)
             .await;
-        if matches!(out, ReadOut::AuthExpired) {
+        let auth = matches!(out, ReadOut::AuthExpired);
+        if auth {
             push_auth_sink(&sink, bc.clone());
         }
-        if out_tx.send(Reply::Read(r, out)).await.is_ok() {
+        if out_tx.send(Reply::Read(r, out)).await.is_ok() || auth {
             wake();
         }
     });

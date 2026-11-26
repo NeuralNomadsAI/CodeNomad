@@ -3,7 +3,7 @@
 use super::{
     AuthSink, ScheduleConfirmation, ScheduleGesture as G, ScheduleHoldEvent as Ev,
     ScheduleHoldKey as Key, ScheduleHoldPhase as Phase, ScheduleHolds, push_auth_expired,
-    push_auth_sink,
+    push_auth_sink, take_auth_sink,
 };
 use crate::platform::{self, reads::Reads};
 use codenomad_client::{
@@ -562,11 +562,7 @@ impl Schedules {
     }
 
     fn drain_auth_sink(&mut self) -> bool {
-        let pending = self
-            .auth_sink
-            .lock()
-            .map(|mut list| std::mem::take(&mut *list))
-            .unwrap_or_default();
+        let (pending, _) = take_auth_sink(&self.auth_sink);
         let got = !pending.is_empty();
         for b in pending {
             push_auth_expired(&mut self.auth_expired, b);

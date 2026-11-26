@@ -381,13 +381,12 @@ impl Editor {
                     move |s| {
                         let editor = edit(s);
                         editor.notice = None;
-                        editor.goal = editor.files.as_ref().and_then(|list| {
-                            editor
-                                .requested_id
-                                .as_deref()
-                                .and_then(|id| list.iter().position(|file| file.id == id))
-                                .or_else(|| (!list.is_empty()).then_some(0))
-                        });
+                        if !editor.apply_requested() {
+                            editor.goal = editor
+                                .files
+                                .as_ref()
+                                .and_then(|list| (!list.is_empty()).then_some(0));
+                        }
                     },
                 ));
             }
@@ -488,5 +487,14 @@ mod tests {
         assert!(editor.apply_requested());
         assert_eq!(editor.confirm, Some(1));
         assert_eq!(editor.draft.text, "{/* draft */}");
+
+        // After B fails to load, modifying A and retrying must still ask for discard confirmation.
+        editor.confirm = None;
+        editor.notice = Some("settings.configFiles.errors.loadContent");
+        editor.draft = TextEdit::new("{/* edited again */}");
+        editor.notice = None;
+        assert!(editor.apply_requested());
+        assert_eq!(editor.confirm, Some(1));
+        assert_eq!(editor.goal, None);
     }
 }
