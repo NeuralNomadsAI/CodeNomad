@@ -781,6 +781,67 @@ fn missions_french_scope_switch_same_model_keeps_variant_and_tab_switch_cancels_
                 .contains("Claude / high")
         );
 
+        // Expand folded profiles disclosure and re-select the active model: variant stays and no PATCH is sent.
+        let disclosure_key = rt.elements().into_iter().find_map(|el| {
+            let key = el.key?;
+            (rt.accessibility_json()
+                .to_string()
+                .contains("Claude / high")
+                && key.contains("disclosure"))
+            .then_some(key)
+        });
+        if let Some(key) = disclosure_key {
+            click(&mut rt, &key);
+            tick(&mut rt);
+        } else {
+            let a11y = rt.accessibility_json();
+            fn find_disclosure(node: &serde_json::Value) -> Option<String> {
+                if node["name"]
+                    .as_str()
+                    .is_some_and(|n| n.contains("Claude / high"))
+                    && let Some(key) = node["key"].as_str()
+                {
+                    return Some(key.to_owned());
+                }
+                node["children"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find_map(find_disclosure)
+            }
+            if let Some(key) = find_disclosure(&a11y) {
+                click(&mut rt, &key);
+                tick(&mut rt);
+            }
+        }
+        if rt.find("mission-model-coordinator-trigger").is_some() {
+            click(&mut rt, "mission-model-coordinator-trigger");
+            click_option(&mut rt, "mission-model-coordinator", "Anthropic · Claude");
+            tick(&mut rt);
+            assert!(
+                timeout(Duration::from_millis(120), listener.accept())
+                    .await
+                    .is_err(),
+                "re-selecting the already selected model must not send a PATCH or clear its variant"
+            );
+            assert_eq!(
+                shared.borrow().saved(Owner::Config).unwrap()["settings"]["missionProfileDefaults"]
+                    [0]["profiles"]["coordinator"]["model"]["variant"],
+                json!("high")
+            );
+        }
+
+        // Trigger a catalog refresh, switch away to General before replying, and verify the late reply is ignored.
+        crate::settings::provider_changed(&root, "captured");
+        tick(&mut rt);
+        let late_req = request(&listener).await;
+        click(&mut rt, "settings-general");
+        tick(&mut rt);
+        late_req
+            .reply(200, json!({"location":{"directory":"/repo"},"data":[]}))
+            .await;
+        tick(&mut rt);
+
         // Stale external ACK with older guard does not overwrite a newer snapshot.
         let stale_guard = shared.borrow().config_guard();
         shared.borrow_mut().invalidate_config_for_missions();
@@ -794,9 +855,5 @@ fn missions_french_scope_switch_same_model_keeps_variant_and_tab_switch_cancels_
                 .saved(Owner::Config)
                 .is_some_and(|doc| doc["settings"]["missionDeleteSessions"].is_null())
         );
-
-        // Switching away to General cancels pending reads without leaking errors.
-        click(&mut rt, "settings-general");
-        tick(&mut rt);
     });
 }

@@ -107,6 +107,11 @@ impl State {
             ));
             values.push("masked".to_owned());
         }
+        let min_choice = self
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.capability.as_ref())
+            .map_or(1, |c| c.minimum.max(1));
         let max_choice = self
             .snapshot
             .as_ref()
@@ -114,7 +119,7 @@ impl State {
             .and_then(|c| c.maximum)
             .map_or(10, |m| m.min(10));
         let mut choices = BTreeSet::new();
-        for value in 1..=max_choice {
+        for value in min_choice..=max_choice {
             choices.insert(value);
         }
         if let Ok(saved) = self.draft.parse::<u64>() {

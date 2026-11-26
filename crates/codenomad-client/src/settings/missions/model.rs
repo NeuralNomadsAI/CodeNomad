@@ -2,9 +2,32 @@
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
-/// ECMAScript `String.prototype.trim` (Unicode whitespace plus BOM `U+FEFF`).
+/// ECMAScript `String.prototype.trim` whitespace (WhiteSpace + LineTerminator, including BOM,
+/// excluding Unicode NEL U+0085 which Rust's `char::is_whitespace` strips).
+fn is_js_whitespace(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{0009}'
+            | '\u{000A}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{000D}'
+            | '\u{0020}'
+            | '\u{00A0}'
+            | '\u{1680}'
+            | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
+}
+
 pub(super) fn js_trim(value: &str) -> &str {
-    value.trim_matches(|ch: char| ch.is_whitespace() || ch == '\u{FEFF}')
+    value.trim_matches(is_js_whitespace)
 }
 
 pub fn valid_execution_id(value: &str) -> bool {

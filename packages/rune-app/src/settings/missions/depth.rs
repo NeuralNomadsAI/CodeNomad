@@ -1,12 +1,19 @@
 //! Location-scoped Subagent depth state machine matching `mission-subagent-depth.tsx`.
 use crate::{platform, settings::providers::Target};
 use codenomad_client::{
-    Receiver, Sender, bounded,
+    Receiver, Sender, bounded, same_server_path,
     settings::missions::{
         SubagentDepthError, SubagentDepthSnapshot, read_subagent_depth,
         resolve_workspace_directory, set_subagent_depth,
     },
 };
+
+struct QueuedChoice {
+    value: String,
+    base: String,
+    directory: String,
+    authority: u64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Phase {
@@ -43,7 +50,7 @@ pub(super) struct State {
     dirty: bool,
     pub(super) error: bool,
     pub(super) saved: bool,
-    queued: Option<(String, String)>,
+    queued: Option<QueuedChoice>,
     read_flight: Option<ReadFlight>,
     save_flight: Option<SaveFlight>,
     pending_save: bool,
@@ -89,12 +96,15 @@ impl State {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn saving(&self) -> bool {
-        self.save_flight.is_some() || self.pending_save
+        self.save_flight.is_some()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn has_unconfirmed(&self) -> bool {
-        self.save_flight.is_some() || self.pending_save || self.phase == Phase::Uncertain
+        self.save_flight.is_some()
+            || self.pending_save
+            || self.queued.is_some()
+            || self.phase == Phase::Uncertain
     }
 
     pub(super) fn request_refresh(&mut self) {
@@ -127,7 +137,7 @@ impl State {
     pub(super) fn selected_value(&self) -> &str {
         self.queued
             .as_ref()
-            .map_or_else(|| self.saved_value(), |(value, _)| value.as_str())
+            .map_or_else(|| self.saved_value(), |queued| queued.value.as_str())
     }
 
     fn locked(&self) -> bool {
@@ -154,11 +164,22 @@ impl State {
             return;
         }
         if self.locked() {
+            let Some(directory) = self.snapshot.as_ref().map(|s| s.directory.clone()) else {
+                return;
+            };
             let base = self
                 .queued
                 .as_ref()
-                .map_or_else(|| self.draft.clone(), |(_, base)| base.clone());
-            self.queued = Some((value, base));
+                .filter(|q| {
+                    q.authority == self.authority && same_server_path(&q.directory, &directory)
+                })
+                .map_or_else(|| self.draft.clone(), |q| q.base.clone());
+            self.queued = Some(QueuedChoice {
+                value,
+                base,
+                directory,
+                authority: self.authority,
+            });
             return;
         }
         self.draft = value;
@@ -239,10 +260,10 @@ impl State {
         } else if self.authority != authority {
             self.authority = authority;
             self.seen_revision = None;
+            self.queued = None;
             if self.phase == Phase::Saving {
                 self.save_flight = None;
                 self.pending_save = false;
-                self.queued = None;
                 self.phase = Phase::Uncertain;
             } else if self.phase == Phase::Reading {
                 self.suspend();
@@ -290,16 +311,20 @@ impl State {
                             .as_ref()
                             .and_then(|p| p.depth)
                             .map_or_else(String::new, |d| d.to_string());
-                        let queued = self.queued.take().filter(|(_, base)| *base == fresh);
+                        let queued = self.queued.take().filter(|queued| {
+                            queued.authority == self.authority
+                                && same_server_path(&queued.directory, &snapshot.directory)
+                                && queued.base == fresh
+                        });
                         self.snapshot = Some(snapshot);
                         self.draft = fresh;
                         self.dirty = false;
                         self.error = false;
                         self.phase = Phase::Ready;
-                        if let Some((next_value, _)) = queued
-                            && next_value != self.saved_value()
+                        if let Some(queued) = queued
+                            && queued.value != self.saved_value()
                         {
-                            self.draft = next_value;
+                            self.draft = queued.value;
                             self.dirty = true;
                             self.saved = false;
                             self.pending_save = true;
@@ -406,5 +431,68 @@ impl State {
             changed = true;
         }
         changed
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use codenomad_client::settings::missions::{SubagentDepthCapability, SubagentDepthProject};
+
+    fn snap(directory: &str, depth: Option<u64>) -> SubagentDepthSnapshot {
+        SubagentDepthSnapshot {
+            directory: directory.to_owned(),
+            capability: Some(SubagentDepthCapability {
+                minimum: 1,
+                maximum: Some(10),
+                default: Some(2),
+            }),
+            effective_depth: depth.or(Some(2)),
+            nesting: None,
+            origin: None,
+            project: Some(SubagentDepthProject {
+                path: format!("{directory}/opencode.json"),
+                depth,
+                expectation: "a".repeat(64),
+                nesting_skipped: false,
+                empty_experimental: false,
+            }),
+        }
+    }
+
+    #[test]
+    fn queued_choice_is_dropped_when_directory_changes_and_flush_never_spins_on_pending_save() {
+        let mut state = State {
+            authority: 7,
+            phase: Phase::Saving,
+            snapshot: Some(snap("/checkout-a", Some(2))),
+            draft: "2".into(),
+            ..State::default()
+        };
+        state.choose("4".into(), true, true);
+        assert!(state.queued.is_some());
+        assert!(!state.saving());
+        assert!(state.has_unconfirmed());
+
+        // A fresh snapshot for a different checkout directory with the same base depth must drop the queued choice.
+        let fresh_b = snap("/checkout-b", Some(2));
+        let fresh = fresh_b
+            .project
+            .as_ref()
+            .and_then(|p| p.depth)
+            .map_or_else(String::new, |d| d.to_string());
+        let accepted = state.queued.take().filter(|queued| {
+            queued.authority == state.authority
+                && same_server_path(&queued.directory, &fresh_b.directory)
+                && queued.base == fresh
+        });
+        assert!(accepted.is_none());
+
+        // An unsubmitted pending_save reports unconfirmed without blocking flush draining.
+        state.phase = Phase::Ready;
+        state.choose("3".into(), true, true);
+        assert!(state.pending_save);
+        assert!(!state.saving());
+        assert!(state.has_unconfirmed());
     }
 }

@@ -180,7 +180,7 @@ impl State {
     pub(super) fn draining(&self) -> bool {
         self.write_flight.is_some()
             || self.delete_flight.is_some()
-            || (!self.needs_reload && !self.reattach_pending && !self.queued.is_empty())
+            || (!self.needs_reload && !self.queued.is_empty())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -407,7 +407,10 @@ impl State {
             effects.changed = true;
             effects.settled = true;
         }
-        if self.write_flight.is_none()
+        // Wait for Preferences to publish any completed ACK/reload before popping the next edit.
+        if effects.applied.is_none()
+            && !effects.invalidate
+            && self.write_flight.is_none()
             && self.in_flight_edit.is_none()
             && !self.needs_reload
             && !self.reattach_pending

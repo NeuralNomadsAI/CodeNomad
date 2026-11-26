@@ -142,9 +142,21 @@ pub async fn set_subagent_depth(
     }
 }
 
+const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+fn parse_safe_u64(value: &Value, min: u64) -> Option<u64> {
+    value
+        .as_u64()
+        .filter(|&n| n >= min && n <= MAX_SAFE_INTEGER)
+}
+
 fn parse_subagent_depth(value: &Value, requested_directory: &str) -> Option<SubagentDepthSnapshot> {
     let map = value.as_object()?;
-    let directory = map.get("location")?.get("directory")?.as_str()?.to_owned();
+    let location = map.get("location")?;
+    if location.get("workspaceID").is_some() {
+        return None;
+    }
+    let directory = location.get("directory")?.as_str()?.to_owned();
     if !crate::absolute_server_path(&directory)
         || !crate::same_server_path(requested_directory, &directory)
     {
@@ -152,22 +164,27 @@ fn parse_subagent_depth(value: &Value, requested_directory: &str) -> Option<Suba
     }
     let capability = match map.get("capability")? {
         Value::Null => None,
-        Value::Object(cap) => Some(SubagentDepthCapability {
-            minimum: cap.get("minimum")?.as_u64()?,
-            maximum: match cap.get("maximum") {
+        Value::Object(cap) => {
+            let minimum = parse_safe_u64(cap.get("minimum")?, 0)?;
+            let maximum = match cap.get("maximum") {
                 None | Some(Value::Null) => None,
-                Some(v) => Some(v.as_u64()?),
-            },
-            default: match cap.get("default") {
+                Some(v) => Some(parse_safe_u64(v, minimum)?),
+            };
+            let default = match cap.get("default") {
                 None | Some(Value::Null) => None,
-                Some(v) => Some(v.as_u64()?),
-            },
-        }),
+                Some(v) => Some(parse_safe_u64(v, 0)?),
+            };
+            Some(SubagentDepthCapability {
+                minimum,
+                maximum,
+                default,
+            })
+        }
         _ => return None,
     };
     let effective_depth = match map.get("effectiveDepth") {
         None | Some(Value::Null) => None,
-        Some(v) => Some(v.as_u64()?),
+        Some(v) => Some(parse_safe_u64(v, 0)?),
     };
     let nesting = match map.get("nesting") {
         None | Some(Value::Null) => None,
@@ -192,7 +209,7 @@ fn parse_subagent_depth(value: &Value, requested_directory: &str) -> Option<Suba
                 path: p.get("path")?.as_str()?.to_owned(),
                 depth: match p.get("depth") {
                     None | Some(Value::Null) => None,
-                    Some(v) => Some(v.as_u64()?),
+                    Some(v) => Some(parse_safe_u64(v, 0)?),
                 },
                 expectation: expectation.to_owned(),
                 nesting_skipped: p

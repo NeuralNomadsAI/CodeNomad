@@ -274,10 +274,12 @@ impl State {
         for model in &models {
             *name_counts.entry(model.name.as_str()).or_default() += 1;
         }
-        let mut labels = vec![t("missions.models.none").to_owned()];
+        let none_label = t("missions.models.none");
+        let mut labels = vec![none_label.to_owned()];
         let mut ids = vec![String::new()];
         for model in &models {
-            let label = if name_counts.get(model.name.as_str()).copied().unwrap_or(0) > 1 {
+            let duplicate = name_counts.get(model.name.as_str()).copied().unwrap_or(0) > 1;
+            let label = if duplicate || model.name == none_label {
                 format!("{} ({})", model.name, model.id)
             } else {
                 model.name.clone()

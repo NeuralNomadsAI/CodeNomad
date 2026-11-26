@@ -186,9 +186,12 @@ pub async fn read_mission_catalog(
         .as_str()
         .filter(|path| crate::absolute_server_path(path))
         .ok_or("Invalid mission catalog Location")?;
-    if [&models, &providers]
+    if [&agents, &models, &providers]
         .iter()
-        .any(|response| response["location"]["directory"] != received)
+        .any(|response| response["location"].get("workspaceID").is_some())
+        || [&models, &providers]
+            .iter()
+            .any(|response| response["location"]["directory"] != received)
         || directory.is_some_and(|requested| !crate::same_server_path(requested, received))
     {
         return Err("Mission catalog Location changed".into());

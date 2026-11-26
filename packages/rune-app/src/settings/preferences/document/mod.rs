@@ -200,6 +200,7 @@ impl Document {
         }
         self.snapshot = Some(snapshot);
         self.read.failed = false;
+        self.invalidation_seq.fetch_add(1, Ordering::Release);
         true
     }
 

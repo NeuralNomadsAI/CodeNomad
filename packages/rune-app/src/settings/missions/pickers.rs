@@ -142,12 +142,12 @@ pub(super) fn build_model_picker<S: 'static>(
     }
     for m in &models {
         let base_label = format!("{} · {}", m.provider_name, m.name);
-        let label = if counts
+        let duplicate = counts
             .get(&(m.provider_name.clone(), m.name.clone()))
             .copied()
             .unwrap_or(0)
-            > 1
-        {
+            > 1;
+        let label = if duplicate || base_label == native || labels.contains(&base_label) {
             format!("{base_label} ({}/{})", m.provider_id, m.id)
         } else {
             base_label
