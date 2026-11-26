@@ -14,6 +14,7 @@ import {
 } from "./coordinator-goal"
 import { parseMissionEvent } from "./journal"
 import { reduceMissionEvents, type MissionEvent, type MissionJsonValue, type MissionMap } from "./model"
+import { setupMissionsPlugin } from "../opencode/missions-plugin"
 
 const baseMission = (overrides: Partial<MissionMap> = {}): Pick<MissionMap, "id" | "title" | "objective" | "status" | "runState" | "coordinatorGoal" | "coordinatorSessionId"> => ({
   id: "msn_goal_test_001",
@@ -108,7 +109,7 @@ test("pure reconciler adopts queued arm, handles mission pause/resume, and respe
   assert.deepEqual(reconcileCoordinatorGoalDecision(baseMission(), armedRecord, null), { kind: "noop", reason: "user-cleared" })
   // User replaced with another goal: never touch it.
   assert.deepEqual(reconcileCoordinatorGoalDecision(baseMission({ runState: "paused" }), armedRecord, liveGoal({ id: "goal_foreign" })), { kind: "noop", reason: "foreign-goal" })
-  assert.deepEqual(reconcileCoordinatorGoalDecision(baseMission({ status: "completed" }), armedRecord, liveGoal({ id: "goal_foreign" })), { kind: "noop", reason: "foreign-goal" })
+  assert.deepEqual(reconcileCoordinatorGoalDecision(baseMission({ status: "completed" }), armedRecord, liveGoal({ id: "goal_foreign" })), { kind: "forget" })
 
   // Mission Pause pauses owned active goal.
   assert.deepEqual(reconcileCoordinatorGoalDecision(baseMission({ runState: "paused" }), armedRecord, liveGoal()), { kind: "pause", goalID: "goal_1" })
@@ -252,4 +253,111 @@ test("journal parser and reducer preserve optional coordinatorGoal and stay back
 
   // Invalid non-boolean coordinatorGoal is rejected.
   assert.equal(parseMissionEvent({ ...base, coordinatorGoal: "yes" }), undefined)
+})
+
+/** In-memory record store and live goal, with OpenCode's `/goal` commands applied to it. */
+function goalFixture(goal: LiveCoordinatorGoal | null = null) {
+  const store = new Map<string, MissionJsonValue>(), commands: string[] = [], state = { goal, failNext: false }
+  let clock = 50_000
+  const key = coordinatorGoalRecordKey("proj_tok", "msn_goal_test_001")
+  return { store, commands, state, key, record: () => parseCoordinatorGoalRecord(store.get(key)), adapter: {
+    projectToken: "proj_tok", now: () => ++clock,
+    readRecord: async (name: string) => store.get(name),
+    writeRecord: async (name: string, value: MissionJsonValue) => { store.set(name, value) },
+    removeRecord: async (name: string) => { store.delete(name) },
+    readGoal: async () => state.goal,
+    runGoalCommand: async (_sessionID: string, text: string) => {
+      if (state.failNext) { state.failNext = false; throw new Error("command refused") }
+      commands.push(text)
+      if (text === "clear") state.goal = null
+      else if (text === "pause" && state.goal) state.goal = { ...state.goal, status: "paused", reason: "Paused" }
+      else if (text === "resume" && state.goal) state.goal = { ...state.goal, status: "active", reason: undefined }
+      else if (!["pause", "resume"].includes(text)) state.goal = liveGoal({ id: "goal_live", objective: text })
+    },
+  } }
+}
+
+test("a failed Mission whose goal clears immediately drops its record in the same pass so immediate recovery arms again", async () => {
+  const f = goalFixture()
+  await reconcileCoordinatorGoal(baseMission(), f.adapter)
+  const cleared = await reconcileCoordinatorGoal(baseMission({ status: "failed" }), f.adapter)
+  assert.equal(cleared.decision.kind, "clear")
+  assert.equal(f.store.has(f.key), false)
+  assert.equal((await reconcileCoordinatorGoal(baseMission(), f.adapter)).decision.kind, "arm")
+})
+
+test("a finished Mission drops its record once nothing is left to clear, and a recovered one arms again", async () => {
+  const f = goalFixture()
+  await reconcileCoordinatorGoal(baseMission(), f.adapter)
+  assert.equal(f.record()?.goalID, "goal_live")
+  // Goal already cleared before terminal pass: the record is forgotten on the terminal pass.
+  f.state.goal = null
+  assert.equal((await reconcileCoordinatorGoal(baseMission({ status: "failed" }), f.adapter)).decision.kind, "forget")
+  assert.equal(f.store.has(f.key), false)
+  assert.deepEqual((await reconcileCoordinatorGoal(baseMission({ status: "failed" }), f.adapter)).decision, { kind: "noop", reason: "terminal" })
+  // Recovered through the coordinator: the option still applies.
+  assert.equal((await reconcileCoordinatorGoal(baseMission(), f.adapter)).decision.kind, "arm")
+  assert.deepEqual(f.commands.filter(text => text !== "clear").length, 2)
+  // A goal the user cleared while the Mission runs stays cleared.
+  f.state.goal = null
+  assert.deepEqual((await reconcileCoordinatorGoal(baseMission(), f.adapter)).decision, { kind: "noop", reason: "user-cleared" })
+  // A finished Mission never touches another goal on its session, and still drops its record.
+  f.state.goal = liveGoal({ id: "user_goal" })
+  assert.equal((await reconcileCoordinatorGoal(baseMission({ status: "completed" }), f.adapter)).decision.kind, "forget")
+  assert.equal(f.state.goal?.id, "user_goal")
+})
+
+test("a Mission that ended or paused while its arm was queued acts on the adopted goal in the same pass", async () => {
+  const objective = coordinatorGoalObjective(baseMission())
+  for (const [mission, command] of [[baseMission({ status: "completed" }), "clear"], [baseMission({ runState: "paused" }), "pause"]] as const) {
+    const f = goalFixture(liveGoal({ id: "goal_late", objective }))
+    f.store.set(f.key, { version: 1, missionID: "msn_goal_test_001", sessionID: "ses_coord_001", armingAt: 50_000, armingObjective: objective,
+      restartResumes: 0, lastAction: "arming", updatedAt: 50_000 })
+    const result = await reconcileCoordinatorGoal(mission, f.adapter)
+    assert.deepEqual([result.decision.kind, f.commands], [command, [command]])
+  }
+  // A queued arm that has not materialised keeps its record after the Mission ended.
+  const waiting = goalFixture()
+  waiting.store.set(waiting.key, { version: 1, missionID: "msn_goal_test_001", sessionID: "ses_coord_001", armingAt: 50_000, armingObjective: objective,
+    restartResumes: 0, lastAction: "arming", updatedAt: 50_000 })
+  assert.deepEqual((await reconcileCoordinatorGoal(baseMission({ status: "completed" }), waiting.adapter)).decision, { kind: "noop", reason: "terminal" })
+  assert.equal(waiting.store.has(waiting.key), true)
+})
+
+test("a refused Mission Resume command is sent again on the next pass", async () => {
+  const f = goalFixture()
+  await reconcileCoordinatorGoal(baseMission(), f.adapter)
+  await reconcileCoordinatorGoal(baseMission({ runState: "paused" }), f.adapter)
+  f.state.failNext = true
+  await assert.rejects(reconcileCoordinatorGoal(baseMission(), f.adapter), /command refused/)
+  assert.equal(f.state.goal?.status, "paused")
+  assert.equal((await reconcileCoordinatorGoal(baseMission(), f.adapter)).decision.kind, "resume-mission-pause")
+  assert.equal(f.state.goal?.status, "active")
+})
+
+test("a Mission without the option never reaches the goal runtime; one with it arrives as its map", async () => {
+  const values = new Map<string, MissionJsonValue>(), reconciled: Array<{ id: string; coordinatorGoal?: boolean }> = []
+  let handlers: Record<string, (input: unknown, context?: unknown) => Promise<unknown>> | undefined
+  const registration = () => ({ dispose: async () => {} })
+  const dispose = await setupMissionsPlugin({
+    location: { directory: "/repo", project: { id: "project-1", canonical: "/repo" } },
+    storage: { get: async (key: string) => values.get(key), set: async (key: string, value: MissionJsonValue) => { values.set(key, structuredClone(value)) },
+      scan: async ({ prefix }: { prefix: string }) => ({ entries: [...values].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value })) }) },
+    session: { get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, projectID: "project-1", title: "Coordinator", location: { directory: "/repo" } }),
+      hook: async () => registration() },
+    agent: { list: async () => ({ data: [] }) }, model: { list: async () => ({ data: [] }) },
+    tool: { transform: async (callback: (draft: unknown) => void) => { callback({ namespace: () => {}, add: () => {} }); return registration() } },
+    rpc: { register: async (_definition: unknown, registered: typeof handlers) => { handlers = registered; return { ...registration(), events: { emit: async () => {} } } } },
+  } as never, undefined, undefined, undefined, undefined, true, undefined, undefined, {
+    reconcile: async (mission: MissionMap) => { reconciled.push({ id: mission.id, coordinatorGoal: mission.coordinatorGoal }) },
+    // The runtime's own read by ID: a change must not take it.
+    reconcileMission: async (id: string) => { reconciled.push({ id }) }, cleanupMission: async () => {},
+  } as never)
+  try {
+    const context = { error: (...args: unknown[]) => { throw new Error(JSON.stringify(args)) } }
+    await handlers!.create({ requestID: "plain", objective: "Plain", template: "custom", coordinatorSessionID: "ses_plain" }, context)
+    assert.deepEqual(reconciled, [])
+    const kept = await handlers!.create({ requestID: "kept", objective: "Kept", template: "custom", coordinatorSessionID: "ses_kept", coordinatorGoal: true }, context) as { mission: { id: string } }
+    assert.deepEqual(reconciled, [{ id: kept.mission.id, coordinatorGoal: true }])
+  } finally { await dispose() }
 })

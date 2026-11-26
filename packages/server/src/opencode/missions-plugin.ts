@@ -176,7 +176,7 @@ export interface MissionsPluginPolicy {
 export async function setupMissionsPlugin(context: MissionsPluginContext, transport?: MissionInputTransport,
   policy?: MissionsPluginPolicy, createManagedRoot?: MissionManagedRootCreation, humanGate?: NativeHumanAnswerGate, business = true,
   journalIndex?: MissionJournalIndex, documents?: MissionDocumentAccess,
-  coordinatorGoal?: { reconcileMission(missionID: string): Promise<unknown>; cleanupMission(missionID: string): Promise<void> }): Promise<() => Promise<void>> {
+  coordinatorGoal?: { reconcile(mission: MissionMap): Promise<unknown>; cleanupMission(missionID: string): Promise<void> }): Promise<() => Promise<void>> {
   let active = true
   let notificationOutbox: MissionNotificationOutbox | undefined
   const registrations: Registration[] = []
@@ -241,7 +241,10 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     },
     changed: async (missionID, revision) => {
       await rpcRegistration?.events.emit("changed", { missionID, revision })
-      await coordinatorGoal?.reconcileMission(missionID).catch(() => undefined)
+      if (!coordinatorGoal) return
+      // Every Mission change passes here: the control's journal follows its range, and a Mission without the option stops at this read.
+      const mission = await control.coordinatorGoalMission(missionID).catch(() => undefined)
+      if (mission) await coordinatorGoal.reconcile(mission).catch(() => undefined)
     },
   })
 
@@ -780,7 +783,7 @@ const prepareSchema = {
     taskMode: { ...missionTaskModeSchema, description: "Explicit policy wins; omission inherits Missions preferences (type exception, then global), then native." },
     startOnCreation: { type: "boolean", description: "Default false. True only for the user's explicit automatic first-Play request; recovered creation leaves Play explicit." },
     ...missionPreparationOptionsWire,
-    coordinatorGoal: { type: "boolean", description: "Default false. Keep the coordinator active with OpenCode's /goal across turns and restarts." },
+    coordinatorGoal: { type: "boolean", description: "Default false. One-time Missions only: keep the coordinator active with OpenCode's /goal across turns and restarts." },
   },
   required: ["requestID", "objective", "template"],
   additionalProperties: false,

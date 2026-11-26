@@ -115,9 +115,12 @@ export type CoordinatorGoalDecision =
   | { kind: "resume-mission-pause"; goalID: string }
   | { kind: "resume-restart"; goalID: string; deadBoot?: string; pausedAt: number }
   | { kind: "clear"; goalID: string }
+  /** The Mission is over and nothing is left to clear: its runtime record goes. */
+  | { kind: "forget" }
 
 /** Pure reconciliation decision for a Mission's coordinator `/goal`. Never touches foreign
- * goals, never re-arms a user-cleared goal, and never auto-resumes human/stall/maxRounds pauses. */
+ * goals, never re-arms a goal the user cleared while the Mission runs, and never auto-resumes
+ * human/stall/maxRounds pauses. A Mission that ends drops its record, so a recovered one arms again. */
 export function reconcileCoordinatorGoalDecision(
   mission: Pick<MissionMap, "id" | "title" | "objective" | "status" | "runState" | "control" | "coordinatorGoal" | "coordinatorSessionId">,
   record: CoordinatorGoalRecord | undefined,
@@ -135,18 +138,20 @@ export function reconcileCoordinatorGoalDecision(
     return { kind: "adopt-armed", goalID: liveGoal.id }
   }
 
-  // Foreign goal guard: never modify a `/goal` that this mission does not own.
-  if (liveGoal !== null && ownedGoalID !== undefined && liveGoal.id !== ownedGoalID) {
-    return { kind: "noop", reason: "foreign-goal" }
-  }
-
   const runState = mission.runState ?? "running"
   const terminal = mission.status !== "active" || runState === "stopped"
   if (terminal) {
     if (liveGoal !== null && ownedGoalID !== undefined && liveGoal.id === ownedGoalID && liveGoal.status !== "complete") {
       return { kind: "clear", goalID: liveGoal.id }
     }
+    // A queued arm may still materialise after the Mission ended: keep its record until it is adopted and cleared.
+    if (ownedRecord && (ownedRecord.armingAt === undefined || now - ownedRecord.armingAt >= COORDINATOR_GOAL_ARMING_GRACE_MS)) return { kind: "forget" }
     return { kind: "noop", reason: "terminal" }
+  }
+
+  // Foreign goal guard: never modify a `/goal` that this mission does not own.
+  if (liveGoal !== null && ownedGoalID !== undefined && liveGoal.id !== ownedGoalID) {
+    return { kind: "noop", reason: "foreign-goal" }
   }
 
   if (runState === "prepared") {
@@ -206,6 +211,7 @@ export interface CoordinatorGoalReconcileAdapter {
   projectToken: string
   readRecord(key: string): Promise<MissionJsonValue | undefined>
   writeRecord(key: string, value: MissionJsonValue): Promise<void>
+  removeRecord?(key: string): Promise<void>
   /** Returns the live goal, `null` when confirmed absent, or `"unavailable"` when the RPC cannot be read. */
   readGoal(sessionID: string): Promise<LiveCoordinatorGoal | null | "unavailable">
   runGoalCommand(sessionID: string, text: string, delivery: "queue" | "steer"): Promise<void>
@@ -228,39 +234,34 @@ export async function reconcileCoordinatorGoal(
   return runMissionExclusive(`coordinator-goal:${adapter.projectToken}:${mission.id}`, async () => {
     const now = adapter.now?.() ?? Date.now()
     const raw = await adapter.readRecord(key)
-    const record = parseCoordinatorGoalRecord(raw, mission.id, mission.coordinatorSessionId)
+    let record = parseCoordinatorGoalRecord(raw, mission.id, mission.coordinatorSessionId)
     const liveGoal = await adapter.readGoal(mission.coordinatorSessionId)
     if (liveGoal === "unavailable") return { decision: { kind: "noop", reason: "goal-rpc-unavailable" }, record }
-    const decision = reconcileCoordinatorGoalDecision(mission, record, liveGoal, now)
+    let decision = reconcileCoordinatorGoalDecision(mission, record, liveGoal, now)
 
     const save = async (next: CoordinatorGoalRecord): Promise<CoordinatorGoalRecord> => {
       await adapter.writeRecord(key, JSON.parse(JSON.stringify(next)) as MissionJsonValue)
       return next
     }
+    const fresh: CoordinatorGoalRecord = { version: 1, missionID: mission.id, sessionID: mission.coordinatorSessionId, restartResumes: 0, updatedAt: now }
 
-    const base: CoordinatorGoalRecord = record ?? {
-      version: 1,
-      missionID: mission.id,
-      sessionID: mission.coordinatorSessionId,
-      restartResumes: 0,
-      updatedAt: now,
+    if (decision.kind === "adopt-armed") {
+      record = await save({ ...(record ?? fresh), goalID: decision.goalID, armingAt: undefined, armingObjective: undefined, lastAction: "armed", updatedAt: now })
+      // The Mission may have paused or ended while its arm was queued: act on the adopted goal in this pass.
+      const next = reconcileCoordinatorGoalDecision(mission, record, liveGoal, now)
+      if (next.kind === "noop") return { decision, record }
+      decision = next
     }
+    const base = record ?? fresh
 
     switch (decision.kind) {
       case "noop":
+      case "adopt-armed":
         return { decision, record }
 
-      case "adopt-armed": {
-        const next = await save({
-          ...base,
-          goalID: decision.goalID,
-          armingAt: undefined,
-          armingObjective: undefined,
-          lastAction: "armed",
-          updatedAt: now,
-        })
-        return { decision, record: next }
-      }
+      case "forget":
+        await adapter.removeRecord?.(key)
+        return { decision }
 
       case "clear-mission-pause": {
         const next = await save({
@@ -308,6 +309,8 @@ export async function reconcileCoordinatorGoal(
       }
 
       case "resume-mission-pause": {
+        // The pause mark outlives a failed command, so the next pass resumes again; resuming an active goal is harmless.
+        await adapter.runGoalCommand(mission.coordinatorSessionId, "resume", "steer")
         const saved = await save({
           ...base,
           goalID: decision.goalID,
@@ -315,7 +318,6 @@ export async function reconcileCoordinatorGoal(
           lastAction: "resumed-mission",
           updatedAt: now,
         })
-        await adapter.runGoalCommand(mission.coordinatorSessionId, "resume", "steer")
         return { decision, record: saved }
       }
 
@@ -346,6 +348,11 @@ export async function reconcileCoordinatorGoal(
           updatedAt: now,
         })
         await adapter.runGoalCommand(mission.coordinatorSessionId, "clear", "steer")
+        const after = await adapter.readGoal(mission.coordinatorSessionId).catch(() => "unavailable" as const)
+        if (after === null || (after !== "unavailable" && after.id !== decision.goalID)) {
+          await adapter.removeRecord?.(key)
+          return { decision }
+        }
         return { decision, record: saved }
       }
     }

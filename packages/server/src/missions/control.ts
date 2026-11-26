@@ -335,6 +335,12 @@ export class MissionControl {
       ...(mission && !mission.document?.dormant ? { mission } : {}), cleanups: cleanups ?? [], ...damage }
   }
 
+  /** The Mission's map when it keeps its coordinator active with `/goal`, from this journal's own
+   * projection: a Mission without the option costs no copy. */
+  coordinatorGoalMission(missionID: string): Promise<MissionMap | undefined> {
+    return this.journal.readProjection(missionID, view => view.mission?.coordinatorGoal ? view.mission : undefined)
+  }
+
   /** More of one mission's tasks for display (`missionTaskPage`): a window of its display
    * order or tasks by key, ID or report, from one read of its range alone; refused once
    * the order `request.order` names has changed (read-mostly: never a write's authority). */

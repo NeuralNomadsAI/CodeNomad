@@ -49,7 +49,8 @@ export function coordinatorGoalWatchdogSessionID(projectID: string, projectCanon
 
 export interface NativeCoordinatorGoalRuntime {
   readonly carrierSessionID: string
-  reconcileMission(missionID: string): Promise<CoordinatorGoalReconcileResult | undefined>
+  /** One pass for a Mission map the caller already read. */
+  reconcile(mission: MissionMap): Promise<CoordinatorGoalReconcileResult | undefined>
   reconcileProject(includeUnrecorded?: boolean): Promise<number>
   cleanupMission(missionID: string): Promise<void>
 }
@@ -102,8 +103,11 @@ export const registerNativeCoordinatorGoalRuntime = Effect.fn("missions.register
 
   const makeJournal = () => new MissionJournal(missionStorage(), projectID, projectCanonical)
 
+  // OpenCode's goal plugin may register after this one: wait for it at activation only, so a
+  // Mission change never stalls on a service without `/goal`.
+  const goalRpcExpectedBy = Date.now() + 3_000
   const readGoal = async (sessionID: string): Promise<LiveCoordinatorGoal | null | "unavailable"> => {
-    const deadline = Date.now() + 3_000
+    const deadline = goalRpcExpectedBy
     while (true) {
       try {
         const raw = await runEffect(goalRpc.get({ sessionID }))
@@ -222,6 +226,7 @@ export const registerNativeCoordinatorGoalRuntime = Effect.fn("missions.register
       projectToken,
       readRecord: key => storage.get(key),
       writeRecord: (key, value) => storage.set(key, value),
+      removeRecord: async key => { await storage.remove?.(key) },
       readGoal,
       runGoalCommand,
     })
@@ -348,7 +353,7 @@ export const registerNativeCoordinatorGoalRuntime = Effect.fn("missions.register
 
   return {
     carrierSessionID,
-    reconcileMission,
+    reconcile: reconcileMissionMap,
     reconcileProject,
     cleanupMission,
   } satisfies NativeCoordinatorGoalRuntime
