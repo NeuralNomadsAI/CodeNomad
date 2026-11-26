@@ -34,6 +34,14 @@ export async function assertWorktreeTestRoot(root){
   return {rootReal,testsReal}
 }
 
+export function assertPrivateDirStat(stat,label){
+  assert(!stat.isSymbolicLink()&&stat.isDirectory(),`Output path must be a non-symlink directory: ${label}`)
+  if(process.platform!=='win32'){
+    assert.equal(Number(stat.uid),process.getuid(),`Output directory must be owned by current user: ${label}`)
+    assert.equal(Number(stat.mode)&0o077,0,`Output directory must not be group/world accessible: ${label}`)
+  }
+}
+
 export async function createPrivateOutputDir(out,allowedRoot){
   const rootReal=await realpath(allowedRoot)
   const resolved=path.resolve(out)
@@ -41,15 +49,12 @@ export async function createPrivateOutputDir(out,allowedRoot){
   assert(parentReal===rootReal||inside(rootReal,parentReal),`Output parent escapes allowed fixture root: ${parentReal}`)
   const existing=await lstat(resolved).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
   if(existing){
-    assert(!existing.isSymbolicLink()&&existing.isDirectory(),`Output path must be an empty non-symlink directory: ${resolved}`)
-    if(process.platform!=='win32'){
-      assert.equal(existing.uid,process.getuid(),`Output directory must be owned by current user: ${resolved}`)
-      assert.equal(existing.mode&0o077,0,`Existing output directory must not be group/world accessible: ${resolved}`)
-    }
+    assertPrivateDirStat(existing,resolved)
     const entries=await readdir(resolved)
     assert.equal(entries.length,0,`Refusing to write into non-empty output directory: ${resolved}`)
   }else{
     await mkdir(resolved,{mode:0o700})
+    assertPrivateDirStat(await lstat(resolved),resolved)
   }
   const outReal=await realpath(resolved)
   assert(inside(rootReal,outReal),`Output link escapes fixture root: ${outReal}`)
@@ -64,7 +69,8 @@ async function openVerifiedPrivateFile(filePath,allowedRoot,extraFlags=0,expecte
   assert(dirReal===rootReal||inside(rootReal,dirReal),`Output directory escapes allowed fixture root: ${dirReal}`)
   if(expectedDirIdentity){
     const dirStat=await lstat(parentPath,{bigint:true})
-    assert(!dirStat.isSymbolicLink()&&dirStat.isDirectory()&&dirStat.dev===expectedDirIdentity.dev&&dirStat.ino===expectedDirIdentity.ino,`Output directory identity changed before open: ${parentPath}`)
+    assertPrivateDirStat(dirStat,parentPath)
+    assert(dirStat.dev===expectedDirIdentity.dev&&dirStat.ino===expectedDirIdentity.ino,`Output directory identity changed before open: ${parentPath}`)
   }
   const existing=await lstat(resolved).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
   assert(!existing||(!existing.isSymbolicLink()&&existing.isFile()&&existing.nlink===1),`Refusing to overwrite symlink, hardlink, or non-file output: ${resolved}`)
@@ -77,7 +83,8 @@ async function openVerifiedPrivateFile(filePath,allowedRoot,extraFlags=0,expecte
     assert(recheckDir===dirReal&&(recheckDir===rootReal||inside(rootReal,recheckDir)),`Output parent shifted during open: ${resolved}`)
     if(expectedDirIdentity){
       const afterDirStat=await lstat(parentPath,{bigint:true})
-      assert(!afterDirStat.isSymbolicLink()&&afterDirStat.isDirectory()&&afterDirStat.dev===expectedDirIdentity.dev&&afterDirStat.ino===expectedDirIdentity.ino,`Output directory identity shifted during open: ${parentPath}`)
+      assertPrivateDirStat(afterDirStat,parentPath)
+      assert(afterDirStat.dev===expectedDirIdentity.dev&&afterDirStat.ino===expectedDirIdentity.ino,`Output directory identity shifted during open: ${parentPath}`)
     }
     return handle
   }catch(error){

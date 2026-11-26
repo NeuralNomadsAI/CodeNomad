@@ -13,7 +13,7 @@ import {mobileDrawersBrowser} from './web-mobile-drawers.mjs'
 import {keyboardViewport} from './web-keyboard-viewport.mjs'
 import {outlineRestore} from './web-outline-restore.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,appendPrivateFile,bundleAssetPaths,createPrivateOutputDir,privateChromiumEnv,workspacePolicy,writeExclusivePrivateFile,writePrivateFile} from './web-workspace-policy.mjs'
+import {privateWebFixture,appendPrivateFile,assertPrivateDirStat,bundleAssetPaths,createPrivateOutputDir,privateChromiumEnv,workspacePolicy,writeExclusivePrivateFile,writePrivateFile} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
 const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},'target-pid':{type:'string'},'launcher-pid':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},'mobile-drawers':{type:'boolean'},'keyboard-viewport':{type:'boolean'},outline:{type:'boolean'}}})
@@ -55,14 +55,16 @@ const verifyOutputTarget=async name=>{
   assert(summaryHandle&&outputAuthorized&&outIdentity,'Output directory anchor is not active')
   assert(isAllowedOutputName(name),`Invalid output artifact name: ${name}`)
   const curStat=await lstat(outReal,{bigint:true})
-  assert(!curStat.isSymbolicLink()&&curStat.isDirectory()&&curStat.dev===outIdentity.dev&&curStat.ino===outIdentity.ino,`Output directory identity changed: ${outReal}`)
+  assertPrivateDirStat(curStat,outReal)
+  assert(curStat.dev===outIdentity.dev&&curStat.ino===outIdentity.ino,`Output directory identity changed: ${outReal}`)
   const currentOut=await realpath(outReal)
   assert(currentOut===outReal&&inside(profile,currentOut),`Output directory shifted outside fixture profile: ${currentOut}`)
   return path.join(outReal,name)
 }
 const trackOutput=task=>{
-  inflightOutputs.add(task)
-  task.finally(()=>inflightOutputs.delete(task))
+  const done=task.then(()=>{},()=>{})
+  inflightOutputs.add(done)
+  done.then(()=>inflightOutputs.delete(done))
   return task
 }
 const writeOutput=(name,content,{overwrite=false}={})=>trackOutput((async()=>{
@@ -118,14 +120,14 @@ const attestedFulfillWorkspaceCreation=async(route,policy)=>{
 try {
   // Open summary.json exclusively at startup: pins outReal and its ancestry on NTFS and binds summary writes directly to this fd.
   outIdentity=await lstat(outReal,{bigint:true})
-  assert(!outIdentity.isSymbolicLink()&&outIdentity.isDirectory(),`Output path must be a non-symlink directory: ${outReal}`)
+  assertPrivateDirStat(outIdentity,outReal)
   summaryHandle=await open(path.join(outReal,'summary.json'),fsConstants.O_WRONLY|fsConstants.O_CREAT|fsConstants.O_EXCL|(fsConstants.O_NOFOLLOW??0),0o600)
   const summaryStat=await summaryHandle.stat()
   const verifiedOut=await lstat(outReal,{bigint:true})
+  assertPrivateDirStat(verifiedOut,outReal)
   const anchoredOut=await realpath(outReal)
   assert(
     summaryStat.isFile()&&summaryStat.nlink===1
-      &&!verifiedOut.isSymbolicLink()&&verifiedOut.isDirectory()
       &&verifiedOut.dev===outIdentity.dev&&verifiedOut.ino===outIdentity.ino
       &&anchoredOut===outReal&&inside(profile,anchoredOut),
     `Output summary anchor failed containment verification: ${anchoredOut}`,
@@ -159,12 +161,13 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
 })
   for(const spec of sizes) {
     if(values.outline&&spec.touch)continue
-    if(values['keyboard-viewport'])await resetKeyboard()
-    const context=await browser.newContext({viewport:{width:spec.width,height:spec.height},deviceScaleFactor:1,colorScheme:spec.colorScheme,isMobile:spec.touch,hasTouch:spec.touch,storageState:browserStorageState})
-    const page=await context.newPage();page.setDefaultTimeout(20000)
     const record={context:spec.name,phoneEmulated:spec.touch,requests:[],eventSource:[],storage:[],storageLocal:[],history:[],errors:[],forbidden:[],stages:[]}
     results.push(record)
-    let forbidRelease=false,sequence=0,outlineGate,specError=null
+    let context,page,forbidRelease=false,sequence=0,outlineGate,specError=null,capture=null,localProof=null
+    try {
+    if(values['keyboard-viewport'])await resetKeyboard()
+    context=await browser.newContext({viewport:{width:spec.width,height:spec.height},deviceScaleFactor:1,colorScheme:spec.colorScheme,isMobile:spec.touch,hasTouch:spec.touch,storageState:browserStorageState})
+    page=await context.newPage();page.setDefaultTimeout(20000)
     const policy=workspacePolicy({origin:url.origin,project:values.project,assets,keyboardActions:Boolean(values['keyboard-viewport'])}),workspaces=policy.workspaces
     const stamp=()=>++sequence
     await page.addInitScript(({key,released,proof})=>{
@@ -337,7 +340,7 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
       assert(snapshot.session.tabs.every(t=>t.folder===values.project&&t.backendId==='web'&&typeof t.serverId==='string'))
       return raw
     }
-    const capture=async stage=>{
+    capture=async stage=>{
       record.stages.push(stage);await writeOutput(`${spec.name}-${stage}.aria.yml`,await page.locator('body').ariaSnapshot())
       if(stage==='failure'){const buf=await page.screenshot();await writeOutput(`${spec.name}-${stage}.png`,buf);return}
       const attempts=[]
@@ -382,7 +385,7 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
       }
       }
     }
-    const localProof=async documentId=>{
+    localProof=async documentId=>{
       const raw=await page.evaluate(key=>sessionStorage.getItem(key),PROOF)
       assert(raw&&Buffer.byteLength(raw)<=65536,'Bounded persistent fixture proof required')
       const proof=JSON.parse(raw);assert.equal(proof.version,1);assert(Array.isArray(proof.events)&&proof.events.length<=256)
@@ -393,7 +396,6 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
       assert(record.storageLocal.length<=768,'Fixture proof collection exceeded its bound')
       return proof.events.filter(e=>e.sourceDocumentId===documentId)
     }
-    try {
       await page.goto(url.href,{waitUntil:'domcontentloaded',timeout:60000});await boot();await connect()
       await type(m['instanceInfo.labels.folder'],values.project);await page.keyboard.press('Enter')
       if(values['keyboard-viewport']){
@@ -509,16 +511,18 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
       assert.equal(record.errors.length,0);assert.equal(record.forbidden.length,0)
       await writeOutput(`${spec.name}-snapshot.json`,await saved([draftA,retryDraft]))
       record.result='pass';record.limit='Phone emulated. Forced closure with unsaved edits is outside the restoration guarantee.'
-    }catch(error){specError=error;record.result='fail';record.failure=error?.message??String(error);await capture('failure').catch(()=>{});throw error}
+    }catch(error){specError=error;record.result='fail';record.failure=error?.message??String(error);if(capture&&page)await capture('failure').catch(()=>{});throw error}
     finally{
       forbidRelease=false
       let specCleanupError=null
-      try{await localProof(await page.evaluate(()=>globalThis.__runeRestoreProofDocumentId))}catch{}
-      try{await context.close()}catch(closeError){
-        recordCleanupError(`${spec.name} context.close`,closeError)
-        ;(record.cleanupErrors??=[]).push(`context.close: ${closeError.message}`)
-        if(record.result==='pass'){record.result='fail';record.failure=closeError.message}
-        specCleanupError??=closeError
+      if(localProof&&page){try{await localProof(await page.evaluate(()=>globalThis.__runeRestoreProofDocumentId))}catch{}}
+      if(context){
+        try{await context.close()}catch(closeError){
+          recordCleanupError(`${spec.name} context.close`,closeError)
+          ;(record.cleanupErrors??=[]).push(`context.close: ${closeError.message}`)
+          if(record.result==='pass'){record.result='fail';record.failure=closeError.message}
+          specCleanupError??=closeError
+        }
       }
       try{await writeOutput(`${spec.name}-proof.json`,JSON.stringify(record,null,2))}catch(writeError){
         recordCleanupError(`${spec.name} proof write`,writeError)
@@ -549,22 +553,25 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
   }
   if(summaryHandle){
     const handle=summaryHandle
+    const authorized=outputAuthorized
     summaryHandle=null
     outputAuthorized=false
     try{
-      const summaryResult=primaryError||cleanupError||cleanupErrors.length||results.some(r=>r.result!=='pass')?'fail':'pass'
-      const body=JSON.stringify({
-        runner:'web-restore',
-        mode:runMode,
-        result:summaryResult,
-        origin:url.origin,
-        ...(primaryError?{failure:primaryError?.message??String(primaryError)}:{}),
-        ...(cleanupErrors.length?{cleanupErrors}:{}),
-        contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure,...(r.cleanupErrors?.length?{cleanupErrors:r.cleanupErrors}:{})})),
-        scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions',
-      },null,2)
-      await handle.truncate(0)
-      await handle.writeFile(body)
+      if(authorized){
+        const summaryResult=primaryError||cleanupError||cleanupErrors.length||results.some(r=>r.result!=='pass')?'fail':'pass'
+        const body=JSON.stringify({
+          runner:'web-restore',
+          mode:runMode,
+          result:summaryResult,
+          origin:url.origin,
+          ...(primaryError?{failure:primaryError?.message??String(primaryError)}:{}),
+          ...(cleanupErrors.length?{cleanupErrors}:{}),
+          contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure,...(r.cleanupErrors?.length?{cleanupErrors:r.cleanupErrors}:{})})),
+          scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions',
+        },null,2)
+        await handle.truncate(0)
+        await handle.writeFile(body)
+      }
     }catch(writeError){
       recordCleanupError('summary write',writeError)
     }finally{
