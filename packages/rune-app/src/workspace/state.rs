@@ -19,7 +19,7 @@ pub(crate) use notification::{
 };
 #[cfg(target_arch = "wasm32")]
 pub(crate) use observation::poll_cached_notifications;
-pub(super) use panel_state::event_workspace_id;
+pub(crate) use panel_state::event_workspace_id;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use panel_state::revoke_schedule_continuations;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]

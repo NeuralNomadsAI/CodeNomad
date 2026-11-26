@@ -29,6 +29,7 @@ pub(super) struct Cache {
     launcher_visible: bool,
     input_scope: std::rc::Rc<()>,
     status_permissions: crate::shell::status_permissions::Permissions,
+    status_services: crate::shell::status_services::Services,
     status_usage: crate::shell::status_usage::Panel,
 }
 impl Cache {
@@ -90,13 +91,33 @@ impl Cache {
         if let Some(git) = &mut self.git.owner
             && git.workspace_id() == target
         {
-            git.event(event);
-            delivered = true;
+            if let codenomad_client::transport::WorkspaceEvent::NativeStreamStatus {
+                workspace_id,
+                connected: true,
+            } = event
+            {
+                git.event(
+                    &codenomad_client::transport::WorkspaceEvent::WorktreesChanged {
+                        workspace_id: workspace_id.clone(),
+                    },
+                );
+                delivered = true;
+            } else if !matches!(
+                event,
+                codenomad_client::transport::WorkspaceEvent::NativeStreamStatus { .. }
+            ) {
+                git.event(event);
+                delivered = true;
+            }
         }
         if let Some(files) = &mut self.files
             && files.workspace_id() == target
         {
             files.event(event.clone());
+            delivered = true;
+        }
+        if self.status_services.workspace_id() == Some(target) {
+            self.status_services.event(event);
             delivered = true;
         }
         if matches!(
@@ -110,7 +131,10 @@ impl Cache {
     }
 
     pub(super) fn has_detached_panels(&self) -> bool {
-        self.is_detached() && (self.git.owner.is_some() || self.files.is_some())
+        self.is_detached()
+            && (self.git.owner.is_some()
+                || self.files.is_some()
+                || self.status_services.workspace_id().is_some())
     }
 
     pub(super) fn collect_detached_workspace_ids(
@@ -125,6 +149,9 @@ impl Cache {
         }
         if let Some(files) = &self.files {
             out.insert(files.workspace_id().to_owned());
+        }
+        if let Some(id) = self.status_services.workspace_id() {
+            out.insert(id.to_owned());
         }
     }
 
@@ -151,6 +178,13 @@ impl Cache {
                 files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
                 changed = true;
             }
+        }
+        if let Some(id) = self.status_services.workspace_id().map(str::to_owned)
+            && !live.contains(id.as_str())
+        {
+            self.status_services
+                .event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id: id });
+            changed = true;
         }
         changed
     }
@@ -206,6 +240,27 @@ impl Cache {
                 None => {}
             }
         }
+        if let Some(id) = self.status_services.workspace_id().map(str::to_owned) {
+            match live {
+                Some(live)
+                    if !opened_after.contains(id.as_str()) && !live.contains(id.as_str()) =>
+                {
+                    self.status_services.event(
+                        &codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id: id },
+                    );
+                    changed = true;
+                }
+                Some(_) => {
+                    self.status_services.online(true);
+                    changed = true;
+                }
+                None if opened_after.contains(id.as_str()) => {
+                    self.status_services.online(true);
+                    changed = true;
+                }
+                None => {}
+            }
+        }
         changed
     }
 
@@ -220,6 +275,10 @@ impl Cache {
         }
         if let Some(files) = &mut self.files {
             files.online(online);
+            changed = true;
+        }
+        if self.status_services.workspace_id().is_some() {
+            self.status_services.online(online);
             changed = true;
         }
         changed
@@ -361,6 +420,7 @@ impl Cache {
             launcher_visible: s.screen.is_launcher(),
             input_scope: s.input_scope.clone(),
             status_permissions: std::mem::take(&mut s.status_permissions),
+            status_services: std::mem::take(&mut s.status_services),
             status_usage: std::mem::take(&mut s.status_usage),
         }
     }
@@ -393,6 +453,7 @@ impl Cache {
         }
         s.input_scope = self.input_scope;
         s.status_permissions = self.status_permissions;
+        s.status_services = self.status_services;
         s.status_usage = self.status_usage;
     }
 }

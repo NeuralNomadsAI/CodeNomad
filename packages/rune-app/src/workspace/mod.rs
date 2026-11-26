@@ -40,7 +40,7 @@ pub(crate) use state::{
 };
 pub(crate) use state::{
     active_mission_editor_has_unsaved_draft, close_mission_reader, deliver_detached_events,
-    detached_workspace_ids, discard_active_mission_draft, has_detached_panels,
+    detached_workspace_ids, discard_active_mission_draft, event_workspace_id, has_detached_panels,
     has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_editor,
     mission_has_reader, mission_observation_project, mission_panel, mission_reader,
     mission_supported, missions_composing, on_mission_transport_lost, reconcile_detached_online,
