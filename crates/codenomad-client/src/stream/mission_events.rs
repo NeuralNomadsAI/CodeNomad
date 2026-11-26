@@ -25,6 +25,15 @@ pub(super) fn decode(
                 revision,
             })
         }
+        "instance.event"
+            if event["type"].as_str().is_some_and(|kind| {
+                kind.starts_with("rpc.codenomad.missions.") || kind == "plugin.updated"
+            }) =>
+        {
+            Some(WorkspaceEvent::MissionScheduleChanged {
+                workspace_id: id.into(),
+            })
+        }
         "instance.eventStatus" if without_session && frame["status"].is_string() => {
             Some(WorkspaceEvent::MissionsReconnected {
                 workspace_id: id.into(),
@@ -104,6 +113,15 @@ mod tests {
                 workspace_id: "owned".into()
             })
         );
+        for kind in ["rpc.codenomad.missions.scheduleChanged", "plugin.updated"] {
+            let ev = json!({"type":"instance.event","instanceId":"owned","event":{"type":kind}});
+            assert_eq!(
+                decode("owned", false, &ev),
+                Some(WorkspaceEvent::MissionScheduleChanged {
+                    workspace_id: "owned".into()
+                })
+            );
+        }
     }
 
     #[test]

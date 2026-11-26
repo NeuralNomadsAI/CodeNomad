@@ -109,11 +109,13 @@ pub(crate) fn mission_panel(s: &State) -> El {
         missions::panel_body(
             panel,
             &ui.mission_editor,
+            &ui.mission_schedules,
             mission_edit,
             actions,
             Some(std::rc::Rc::new(open_mission_conversation)),
             on_mission_reader_open,
             mission_editor_act,
+            mission_schedule_act,
         )
     })
 }
@@ -300,7 +302,8 @@ fn mission_editor_act(s: &mut State, gesture: missions::EditorGesture, tx: &mut 
                     super::tabs::close_confirmed_uncertain_creation(s, &tab_key, tx);
                     return;
                 }
-                missions::LeaveIntent::SelectMission(_) => {}
+                missions::LeaveIntent::SelectMission(_)
+                | missions::LeaveIntent::SelectSchedule(_) => {}
                 missions::LeaveIntent::OpenOverview(_)
                 | missions::LeaveIntent::OpenTask(_, _, _) => {
                     on_mission_reader_open(s, tx);
@@ -393,7 +396,42 @@ pub(crate) fn mission_confirmation(s: &State) -> Option<El> {
     {
         return missions::briefing_confirmation(&ui.mission_briefing, briefing_act);
     }
+    if let Some(selected_key) = panel.selected_schedule_hold_key()
+        && ui
+            .mission_schedules
+            .confirmation
+            .as_ref()
+            .is_some_and(|confirm| confirm.occurrence == entry.key && confirm.key == selected_key)
+    {
+        return missions::schedule_confirmation(&ui.mission_schedules, mission_schedule_act);
+    }
     None
+}
+
+fn mission_schedule_act(s: &mut State, gesture: missions::ScheduleGesture, tx: &mut rune::Tx) {
+    if mission_context_blocked(s)
+        || !crate::shell::right_panel_visible(s)
+        || right_panel_tab(s) != RightPanelTab::Missions
+    {
+        return;
+    }
+    if let missions::ScheduleGesture::OpenConversation(session_id) = gesture {
+        open_mission_conversation(s, session_id, tx);
+        return;
+    }
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    let entry = &mut ui.entries[ui.active];
+    if let Some(panel) = &mut entry.missions
+        && panel.schedule_gesture(&entry.key, &mut ui.mission_schedules, gesture)
+    {
+        if ui.mission_schedules.confirmation.is_some() {
+            ui.mission_lifecycle.confirmation = None;
+            ui.mission_briefing.confirmation = None;
+        }
+        tx.instant();
+    }
 }
 
 fn control(s: &mut State, source: &missions::Source, gesture: missions::Gesture) {
@@ -408,6 +446,7 @@ fn control(s: &mut State, source: &missions::Source, gesture: missions::Gesture)
         panel.control(&entry.key, &mut ui.mission_lifecycle, source, gesture);
         if ui.mission_lifecycle.confirmation.is_some() {
             ui.mission_briefing.confirmation = None;
+            ui.mission_schedules.confirmation = None;
         }
     }
 }
@@ -445,6 +484,7 @@ fn briefing_act(
         panel.briefing_act(occurrence, &mut ui.mission_briefing, key, locale, gesture);
         if ui.mission_briefing.confirmation.is_some() {
             ui.mission_lifecycle.confirmation = None;
+            ui.mission_schedules.confirmation = None;
         }
     }
 }
@@ -464,10 +504,10 @@ fn open_mission_conversation(s: &mut State, session_id: String, tx: &mut rune::T
     }
     let Some((binding, project_id, owned_target)) = s.workspace.as_ref().and_then(|ui| {
         let entry = &ui.entries[ui.active];
-        let owned = entry
-            .missions
-            .as_ref()
-            .is_some_and(|panel| panel.owns_conversation_target(&session_id));
+        let owned = entry.missions.as_ref().is_some_and(|panel| {
+            panel.owns_conversation_target(&session_id)
+                || panel.owns_schedule_conversation_target(&ui.mission_schedules, &session_id)
+        });
         Some((
             entry.binding.as_ref()?,
             entry.project.as_ref()?.id.as_str(),
@@ -671,12 +711,34 @@ pub(super) fn poll_missions(
             }
             changed |= panel.observe_editor_detail(&ui.mission_editor);
             changed |= panel.poll();
+            changed |= panel.poll_schedules(&mut ui.mission_schedules);
             changed |= panel.observe_editor_detail(&ui.mission_editor);
             extend_unique_auth(&mut auth_expired, panel.drain_auth_expired());
         }
     }
     changed |= ui.mission_briefing.poll();
     extend_unique_auth(&mut auth_expired, ui.mission_briefing.take_auth_expired());
+
+    let (schedules_changed, schedule_events) = {
+        let e = &ui.entries[ui.active];
+        let v = (active_polled && active_visible)
+            .then(|| e.missions.as_ref()?.active_schedule_view(&e.key))
+            .flatten();
+        ui.mission_schedules.poll(v.as_ref(), &auth_expired)
+    };
+    changed |= schedules_changed;
+    extend_unique_auth(&mut auth_expired, ui.mission_schedules.drain_auth_expired());
+    let keep_confirm = ui.mission_schedules.confirmation.as_ref().is_some_and(|c| {
+        !blocked
+            && mounted
+            && matches!(&ui.entries[ui.active].saved, Tab::Workspace(s) if s.view.right_panel == RightPanelTab::Missions)
+            && ui.entries[ui.active].key == c.occurrence
+            && ui.entries[ui.active].missions.as_ref().and_then(missions::Panel::selected_schedule_hold_key).as_ref() == Some(&c.key)
+    });
+    if ui.mission_schedules.confirmation.is_some() && !keep_confirm {
+        ui.mission_schedules.confirmation = None;
+        changed = true;
+    }
 
     let (editor_changed, editor_events) = {
         let active_entry = &ui.entries[ui.active];
@@ -702,6 +764,7 @@ pub(super) fn poll_missions(
                 changed |= panel.commit_editor_submit(&mut ui.mission_editor, &auth_expired);
             }
             changed |= panel.apply_editor_events(&entry.key, &editor_events);
+            changed |= panel.apply_schedule_hold_events(&schedule_events);
             if let Some(text) = panel.take_reader_copy()
                 && !any_auth_expired
                 && panel.has_reader()
@@ -842,6 +905,7 @@ pub(crate) fn on_mission_transport_lost(s: &mut State) {
                     .revoke_auto_start_for_occurrence(&entry.key);
                 if let Some(panel) = entry.missions.as_mut() {
                     panel.invalidate_editor_generation();
+                    panel.schedules.invalidate();
                 }
             }
         }
@@ -853,6 +917,7 @@ pub(crate) fn suspend_missions(s: &mut State) {
         ui.mission_lifecycle.confirmation = None;
         ui.mission_lifecycle.retain_checks_for(None);
         ui.mission_briefing.suspend();
+        ui.mission_schedules.confirmation = None;
         let entry = &mut ui.entries[ui.active];
         ui.mission_editor
             .revoke_auto_start_for_occurrence(&entry.key);
@@ -906,6 +971,11 @@ pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
             revision,
         }) if workspace_id == &project.id => {
             panel.invalidate(Some((mission_id, *revision)), ui.clock);
+        }
+        Some(WorkspaceEvent::MissionScheduleChanged { workspace_id })
+            if workspace_id == &project.id =>
+        {
+            panel.invalidate_schedules(ui.clock);
         }
         Some(WorkspaceEvent::MissionsReconnected { workspace_id })
             if workspace_id == &project.id =>

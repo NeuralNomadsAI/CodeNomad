@@ -11,6 +11,7 @@ mod lifecycle;
 mod lifecycle_view;
 mod observation;
 mod reader;
+mod schedules;
 mod task_rows;
 mod view;
 
@@ -27,6 +28,7 @@ pub(crate) use editor_view::view as editor_view;
 pub(crate) use lifecycle::{Gesture, Lifecycle, Source};
 pub(crate) use lifecycle_view::{confirmation, controls};
 pub(crate) use reader::view::view as reader_view;
+pub(crate) use schedules::{ScheduleGesture, ScheduleHolds, confirmation as schedule_confirmation};
 #[cfg(test)]
 pub(crate) use view::panel;
 pub(crate) use view::panel_body;

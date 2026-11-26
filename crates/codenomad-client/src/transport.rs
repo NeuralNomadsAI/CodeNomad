@@ -50,6 +50,9 @@ pub enum WorkspaceEvent {
         mission_id: String,
         revision: u64,
     },
+    MissionScheduleChanged {
+        workspace_id: String,
+    },
     MissionsReconnected {
         workspace_id: String,
     },

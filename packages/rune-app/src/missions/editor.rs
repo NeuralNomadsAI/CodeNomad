@@ -73,6 +73,7 @@ pub(crate) enum LeaveIntent {
     Close,
     CloseTab,
     SelectMission(String),
+    SelectSchedule(String),
     OpenOverview(String),
     OpenTask(String, String, String),
 }

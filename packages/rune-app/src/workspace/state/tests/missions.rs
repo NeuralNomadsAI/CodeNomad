@@ -149,12 +149,25 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
 
         click(&mut rt, "right-panel-tab-2");
         assert_eq!(right_panel_tab(&rt.state), RightPanelTab::Missions);
-        for _ in 0..2 {
+        let mut pages_seen = 0;
+        for _ in 0..3 {
             let req = http.accept().await;
+            if req
+                .header
+                .starts_with("GET /api/workspaces/header-windows/missions/scheduled")
+            {
+                req.reply(
+                    200,
+                    json!({"version":1,"projectID":"fixture-project","schedules":[],"next":null}),
+                )
+                .await;
+                continue;
+            }
             assert!(
                 req.header
                     .starts_with("POST /api/workspaces/header-windows/missions/panel-page ")
             );
+            pages_seen += 1;
             let source = req.body["source"].as_str().unwrap();
             let text = r#"{"id":"alpha","title":"Alpha 🦀","objective":"Fixture","status":"active","coordinatorSessionId":"ses_fixture","actorCount":1,"updatedAt":1,"revision":1}"#;
             let (order, pieces) = if source == "summaries" {
@@ -183,6 +196,7 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
             }
             req.reply(200, page).await;
         }
+        assert_eq!(pages_seen, 2);
         until(&mut rt, &signal, |rt| {
             let tree = rt.accessibility_json().to_string();
             tree.contains("Alpha 🦀")
@@ -300,7 +314,7 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         rt.update(|s, _| mission_event(s, Some(&changed)));
         tick(&mut rt);
         let mut detail = false;
-        for _ in 0..4 {
+        for _ in 0..5 {
             let req = http.accept().await;
             detail |= req.body == json!({"source":"mission","missionID":"alpha","header":true});
             req.reply(
@@ -317,7 +331,7 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         });
         tick(&mut rt);
         let mut detail = false;
-        for _ in 0..4 {
+        for _ in 0..5 {
             let req = http.accept().await;
             detail |= req.body["source"] == "mission";
             req.reply(
@@ -338,8 +352,7 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         tick(&mut rt);
         http.quiet().await;
         click(&mut rt, "right-panel-tab-2");
-        let summaries = http.accept().await;
-        let cleanups = http.accept().await;
+        let inflight = [http.accept().await, http.accept().await];
         assert!(rt.find("missions-panel").is_some());
         rt.update(|s, tx| {
             assert!(crate::settings::conversation_authentication(
@@ -358,8 +371,9 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         );
         assert!(rt.find("missions-panel").is_none());
         assert!(rt.find("server-password").is_some());
-        summaries.disconnected().await;
-        cleanups.disconnected().await;
+        for req in inflight {
+            req.disconnected().await;
+        }
         http.quiet().await;
         assert_eq!(right_panel_tab(&rt.state), RightPanelTab::Missions);
         drop(conversation_a);

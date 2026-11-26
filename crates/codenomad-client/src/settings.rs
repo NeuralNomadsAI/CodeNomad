@@ -321,6 +321,7 @@ impl PreferencesWatch {
                                             crate::transport::WorkspaceEvent::MemoryChanged,
                                         ) => 8,
                                         Input::Workspace(_, event @ (crate::transport::WorkspaceEvent::MissionChanged { .. }
+                                            | crate::transport::WorkspaceEvent::MissionScheduleChanged { .. }
                                             | crate::transport::WorkspaceEvent::MissionsReconnected { .. }
                                             | crate::transport::WorkspaceEvent::MissionActivityChanged { .. })) => {
                                             let mut batch = mission_notices.lock().unwrap();

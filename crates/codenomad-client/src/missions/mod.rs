@@ -11,6 +11,7 @@ mod editor;
 mod lifecycle;
 mod model;
 mod profile_defaults;
+mod schedules;
 pub use activity::{Activity, Actor, ActorState, Coverage};
 pub use attention::Attention;
 pub use briefing::{
@@ -47,4 +48,12 @@ pub use profile_defaults::{
     MissionProfileDefault, MissionProfiles, catalog_profiles_valid, compare_model_error,
     defaults_have_profiles, freeze_compare_profiles, mission_defaults_for, mission_task_mode_for,
     normalize_mission_defaults, template_roles, valid_mission_profiles,
+};
+pub use schedules::{
+    LaunchItem, LaunchPolicy, SCHEDULE_PAGE_LIMIT, ScheduleAction, ScheduleCapability,
+    ScheduleChecks, ScheduleConfiguration, ScheduleControlOutcome, ScheduleControlRequest,
+    ScheduleControlState, ScheduleDeletionReceipt, ScheduleFetch, ScheduleListPage,
+    ScheduleObservation, SchedulePassageReceipt, SchedulePendingPassage, ScheduleRead,
+    ScheduleReadOutcome, ScheduleState, UnifiedSchedule, classify_schedule_control_read,
+    valid_schedule_id, valid_schedule_request_id,
 };

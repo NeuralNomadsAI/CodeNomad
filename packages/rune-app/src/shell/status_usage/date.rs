@@ -5,7 +5,7 @@ pub(super) fn reset(millis: Option<f64>) -> Option<String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn short(millis: f64, locale: &str) -> Option<String> {
+pub(crate) fn short(millis: f64, locale: &str) -> Option<String> {
     use js_sys::{Array, Intl, Object, Reflect};
     use wasm_bindgen::JsValue;
     let options = Object::new();
@@ -21,7 +21,7 @@ fn short(millis: f64, locale: &str) -> Option<String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn short(millis: f64, locale: &str) -> Option<String> {
+pub(crate) fn short(millis: f64, locale: &str) -> Option<String> {
     let local = codenomad_host_process::local_clock((millis / 1000.0).floor() as i64)?;
     Some(short_civil(local, locale))
 }

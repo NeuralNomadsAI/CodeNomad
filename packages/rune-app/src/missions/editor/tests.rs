@@ -1804,13 +1804,16 @@ fn finished_mission_with_uncertain_edit_hold_exposes_read_only_receipt_reconcili
             fallback: TextEdit::new(""),
         },
         |h, _| {
+            let schedules = crate::missions::ScheduleHolds::default();
             crate::missions::panel_body(
                 &h.panel,
                 &h.holds,
+                &schedules,
                 |s: &mut PanelHost| (Some(&mut s.panel), &mut s.fallback),
                 rune::el(),
                 None,
                 |_, _| {},
+                |_, _, _| {},
                 |_, _, _| {},
             )
         },
@@ -3968,9 +3971,11 @@ fn create_button_disabled_while_editor_open_and_open_create_preserves_draft() {
             clicked: 0,
         },
         |host, _| {
+            let schedules = crate::missions::ScheduleHolds::default();
             super::super::view::panel_body(
                 &host.panel,
                 &host.holds,
+                &schedules,
                 |h: &mut PanelHost| (Some(&mut h.panel), &mut h.fallback),
                 rune::el(),
                 None,
@@ -3978,6 +3983,7 @@ fn create_button_disabled_while_editor_open_and_open_create_preserves_draft() {
                 |h: &mut PanelHost, _, _| {
                     h.clicked += 1;
                 },
+                |_, _, _| {},
             )
         },
         (400.0, 600.0),
@@ -4228,9 +4234,11 @@ fn edit_button_disabled_while_editing_and_open_edit_preserves_same_mission_draft
             clicked: 0,
         },
         |host, _| {
+            let schedules = crate::missions::ScheduleHolds::default();
             super::super::view::panel_body(
                 &host.panel,
                 &host.holds,
+                &schedules,
                 |h: &mut PanelHost| (Some(&mut h.panel), &mut h.fallback),
                 rune::el(),
                 None,
@@ -4238,6 +4246,7 @@ fn edit_button_disabled_while_editing_and_open_edit_preserves_same_mission_draft
                 |h: &mut PanelHost, _, _| {
                     h.clicked += 1;
                 },
+                |_, _, _| {},
             )
         },
         (400.0, 600.0),

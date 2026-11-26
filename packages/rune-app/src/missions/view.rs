@@ -3,6 +3,7 @@ use super::{
     editor::EditorGesture,
     editor_holds::EditorHolds,
     reader::ReaderTarget,
+    schedules::{ScheduleGesture, ScheduleHolds},
     task_rows::OpenTask,
 };
 use crate::strings::{locale, t};
@@ -45,17 +46,31 @@ impl<S> Scoped<S> {
 #[cfg(test)]
 pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
     let holds = EditorHolds::default();
-    panel_body(ui, &holds, owner, rune::el(), None, |_, _| {}, |_, _, _| {})
+    let schedule_holds = ScheduleHolds::default();
+    panel_body(
+        ui,
+        &holds,
+        &schedule_holds,
+        owner,
+        rune::el(),
+        None,
+        |_, _| {},
+        |_, _, _| {},
+        |_, _, _| {},
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn panel_body<S: 'static>(
     ui: &Panel,
     holds: &EditorHolds,
+    schedule_holds: &ScheduleHolds,
     owner: Owner<S>,
     actions: El,
     open_task: Option<OpenTask<S>>,
     on_reader_open: fn(&mut S, &mut Tx),
     editor_act: fn(&mut S, EditorGesture, &mut Tx),
+    schedule_act: fn(&mut S, ScheduleGesture, &mut Tx),
 ) -> El {
     let heading = t("missions.control.mapLabel");
     let search = t("missionsPanel.picker.search");
@@ -116,8 +131,10 @@ pub(crate) fn panel_body<S: 'static>(
                 ),
         );
     }
-    let mut body = theme::scroll().child(list);
-    if ui.covered(Kind::Summaries) && !shown {
+    let (schedules_list, has_schedules) =
+        super::schedules::list_section(ui, schedule_holds, schedule_act);
+    let mut body = theme::scroll().child(list).child(schedules_list);
+    if ui.covered(Kind::Summaries) && !shown && !has_schedules {
         let key = if ui.summaries.is_empty() {
             "missions.control.empty.title"
         } else {
@@ -126,7 +143,11 @@ pub(crate) fn panel_body<S: 'static>(
         body = body.child(theme::note(t(key), "status"));
     }
     body = body.child(page_footer(ui, scoped.clone(), Kind::Summaries));
-    if ui.selected.is_some() {
+    if let Some(schedule_detail) =
+        super::schedules::detail_section(ui, schedule_holds, schedule_act)
+    {
+        body = body.child(schedule_detail);
+    } else if ui.selected.is_some() {
         if ui.detail.snapshot.is_some() {
             let owner = scoped.clone();
             body = body.child(ui.observation.view(move |state| {

@@ -53,8 +53,9 @@ pub(crate) struct Panel {
     pub(super) wake: Wake,
     out: Sender<Completion>,
     incoming: Receiver<Completion>,
-    project: Option<String>,
-    owner_scope: String,
+    pub(super) project: Option<String>,
+    pub(super) owner_scope: String,
+    directory: Option<String>,
     serial: u64,
     visible: bool,
     refresh_due: Option<f64>,
@@ -74,6 +75,7 @@ pub(crate) struct Panel {
     pub(super) observation: Observation,
     pub(super) reader: Reader,
     pub(super) editor: Editor,
+    pub(crate) schedules: super::schedules::Schedules,
     editor_saved_focus: Option<String>,
     reader_suspended: bool,
     editor_suspended: bool,
@@ -95,6 +97,7 @@ impl Panel {
             backend,
             project,
             owner_scope,
+            directory: None,
             reads,
             wake,
             out,
@@ -118,6 +121,7 @@ impl Panel {
             observation: Observation::default(),
             reader: Reader::default(),
             editor: Editor::default(),
+            schedules: Default::default(),
             editor_saved_focus: None,
             reader_suspended: false,
             editor_suspended: false,
@@ -128,6 +132,7 @@ impl Panel {
 
     pub(crate) fn with_owner_scope(mut self, scope: String) -> Self {
         if !scope.is_empty() {
+            self.directory = Some(scope.clone());
             self.owner_scope = scope;
         }
         self
@@ -167,6 +172,7 @@ impl Panel {
         self.detail.clear_lookup_cache();
         self.reader.invalidate();
         self.editor.suspend();
+        self.schedules.rebind();
         if self.visible || self.reader.is_open() || self.editor.is_open() {
             self.refresh();
         }
@@ -381,6 +387,9 @@ impl Panel {
             super::editor::LeaveIntent::SelectMission(id) => {
                 self.select_unchecked(id);
             }
+            super::editor::LeaveIntent::SelectSchedule(id) => {
+                self.select_schedule_unchecked(id.clone());
+            }
             super::editor::LeaveIntent::OpenOverview(id) => {
                 if self.selected.as_deref() != Some(id.as_str()) {
                     self.select_unchecked(id);
@@ -582,6 +591,7 @@ impl Panel {
             changed |= ev_changed;
             if let Some(saved) = saved {
                 if saved.select {
+                    self.schedules.clear_selection();
                     self.selected = Some(saved.mission_id.clone());
                     self.detail.clear();
                     self.observation.reset();
@@ -645,6 +655,7 @@ impl Panel {
         self.control_fields.cancel();
         self.reader.suspend();
         self.editor.suspend();
+        self.schedules.suspend();
         self.cancel_probe();
         while let Ok(done) = self.incoming.try_recv() {
             if let Err(error) = &done.page
@@ -664,6 +675,7 @@ impl Panel {
             .chain(self.reader.take_auth_expired())
             .chain(self.control_fields.drain_auth_expired())
             .chain(self.editor.drain_auth_expired())
+            .chain(self.schedules.drain_auth_expired())
         {
             if !expired
                 .iter()
@@ -778,6 +790,7 @@ impl Panel {
             return;
         }
         self.visible = show;
+        self.schedules.show(show);
         if show {
             self.refresh();
         } else {
@@ -800,6 +813,8 @@ impl Panel {
         if self.visible {
             self.detail.refresh();
             self.observation.refresh();
+            let (s, c) = self.schedule_parts();
+            s.refresh(c);
             for kind in KINDS {
                 if self.busy(kind) {
                     self.lanes[kind as usize].owed = true;
@@ -835,6 +850,7 @@ impl Panel {
             self.reader.invalidate();
             self.editor.invalidate_generation();
             self.editor_auto_start_revoked = true;
+            self.schedules.invalidate();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
                     cancel.close();
@@ -842,6 +858,14 @@ impl Panel {
             }
         }
         if (self.visible || self.has_surface()) && self.refresh_due.is_none() {
+            self.refresh_due = Some(self.last_passive.map_or(now, |last| now.max(last + 1.5)));
+            (self.wake)();
+        }
+    }
+
+    pub(crate) fn invalidate_schedules(&mut self, now: f64) {
+        self.schedules.invalidate();
+        if self.visible && self.refresh_due.is_none() {
             self.refresh_due = Some(self.last_passive.map_or(now, |last| now.max(last + 1.5)));
             (self.wake)();
         }
@@ -1372,12 +1396,144 @@ impl Panel {
 
     fn select_unchecked(&mut self, id: &str) {
         if self.selected.as_deref() != Some(id) && self.summaries.iter().any(|row| row.id == id) {
+            self.schedules.clear_selection();
             self.control_fields.cancel();
             self.detail.clear();
             self.observation.reset();
             self.selected = Some(id.into());
             self.reader.follow_selection(Some(id));
         }
+    }
+
+    fn schedule_project(&self) -> Option<&str> {
+        self.project
+            .as_deref()
+            .or(self.schedules.project_id.as_deref())
+    }
+
+    pub(super) fn schedule_ctx(&self) -> super::schedules::ScheduleCtx<'_> {
+        super::schedules::ScheduleCtx {
+            backend: &self.backend,
+            project: self.project.as_deref(),
+            scope: &self.owner_scope,
+            directory: self.directory.as_deref(),
+            reads: &self.reads,
+            wake: &self.wake,
+        }
+    }
+
+    pub(super) fn schedule_parts(
+        &mut self,
+    ) -> (
+        &mut super::schedules::Schedules,
+        super::schedules::ScheduleCtx<'_>,
+    ) {
+        let ctx = super::schedules::ScheduleCtx {
+            backend: &self.backend,
+            project: self.project.as_deref(),
+            scope: &self.owner_scope,
+            directory: self.directory.as_deref(),
+            reads: &self.reads,
+            wake: &self.wake,
+        };
+        (&mut self.schedules, ctx)
+    }
+
+    fn select_schedule_unchecked(&mut self, id: String) {
+        self.control_fields.cancel();
+        self.detail.clear();
+        self.observation.reset();
+        self.selected = None;
+        self.reader.follow_selection(None);
+        let (s, c) = self.schedule_parts();
+        s.select(id, c);
+        (self.wake)();
+    }
+
+    pub(crate) fn active_schedule_view<'a>(
+        &'a self,
+        occurrence: &'a str,
+    ) -> Option<super::schedules::ActiveScheduleView<'a>> {
+        Some(super::schedules::ActiveScheduleView {
+            occurrence,
+            backend: &self.backend,
+            project: self.schedule_project()?,
+            scope: &self.owner_scope,
+            selected: self.schedules.selected.as_deref(),
+            wake: &self.wake,
+        })
+    }
+
+    pub(crate) fn selected_schedule_hold_key(&self) -> Option<super::schedules::ScheduleHoldKey> {
+        Some(super::schedules::ScheduleHoldKey::new(
+            &self.backend,
+            self.schedule_project()?,
+            &self.owner_scope,
+            self.schedules.selected.as_deref()?,
+        ))
+    }
+
+    pub(crate) fn poll_schedules(&mut self, holds: &mut super::schedules::ScheduleHolds) -> bool {
+        let (s, c) = self.schedule_parts();
+        let changed = s.poll(holds, c);
+        if self.project.is_none() {
+            self.project = self.schedules.project_id.clone();
+        }
+        changed
+    }
+
+    pub(crate) fn apply_schedule_hold_events(
+        &mut self,
+        events: &[super::schedules::ScheduleHoldEvent],
+    ) -> bool {
+        let (s, c) = self.schedule_parts();
+        s.apply_hold_events(events, c)
+    }
+
+    pub(crate) fn schedule_gesture(
+        &mut self,
+        occurrence: &str,
+        holds: &mut super::schedules::ScheduleHolds,
+        gesture: super::schedules::ScheduleGesture,
+    ) -> bool {
+        if let super::schedules::ScheduleGesture::Select(id) = gesture {
+            if self.schedules.selected.as_deref() == Some(id.as_str()) {
+                return false;
+            }
+            if self.editor.is_open() {
+                if !self
+                    .editor
+                    .request_leave_from_form(super::editor::LeaveIntent::SelectSchedule(id.clone()))
+                {
+                    self.editor_auto_start_revoked = true;
+                    (self.wake)();
+                    return false;
+                }
+                self.editor_suspended = false;
+                self.editor_auto_start_revoked = true;
+                self.editor.close();
+            }
+            holds.confirmation = None;
+            self.select_schedule_unchecked(id);
+            return true;
+        }
+        let allow = !self.editor.is_open();
+        let (s, c) = self.schedule_parts();
+        let changed = s.handle_gesture(occurrence, gesture, holds, c, allow);
+        if changed {
+            (self.wake)();
+        }
+        changed
+    }
+
+    pub(crate) fn owns_schedule_conversation_target(
+        &self,
+        holds: &super::schedules::ScheduleHolds,
+        sid: &str,
+    ) -> bool {
+        self.schedules
+            .selected_document(holds, self.schedule_ctx())
+            .is_some_and(|d| d.owns_session(sid))
     }
 
     pub(crate) fn has_eye_trigger(&self, key: &str) -> bool {
