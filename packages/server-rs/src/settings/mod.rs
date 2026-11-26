@@ -447,8 +447,14 @@ async fn patch_config(
     };
     let saved = saved.map_err(Failure::response)?;
     if binary_changed {
-        crate::opencode::adopt_configured_binary(&app).await;
-        crate::opencode::login_start::refresh(&app);
+        let app_adopt = app.clone();
+        // Detach so cancelling this HTTP request (e.g. remote device revocation) never leaves
+        // the active binary selection behind the already-committed profile change.
+        let _ = tokio::spawn(async move {
+            crate::opencode::adopt_configured_binary(&app_adopt).await;
+            crate::opencode::login_start::refresh(&app_adopt);
+        })
+        .await;
     }
     Ok(Json(sanitized(&name, saved)).into_response())
 }

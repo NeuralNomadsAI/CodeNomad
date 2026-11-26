@@ -388,7 +388,6 @@ async fn meta_exposes_latest_stable_server_version_on_stable_feed() {
         shutdown.clone(),
         reqwest::Url::parse(&origin).unwrap(),
         "NeuralNomadsAI/CodeNomad".into(),
-        true,
     ));
     let router = meta::routes().with_state(app.clone());
     let (base, api_server) = start_server(router).await;
@@ -630,6 +629,18 @@ async fn service_and_update_enforce_fastify_1mib_limit_reject_3xx_reload_and_hon
         assert_eq!(resp.status().as_u16(), 413, "{route}");
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["code"], "FST_ERR_CTP_BODY_TOO_LARGE", "{route}");
+
+        // Empty chunked body without Content-Type must also return 415 per Fastify framing rules.
+        let addr = base.trim_start_matches("http://");
+        let mut raw = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let req_bytes = format!(
+            "POST {route} HTTP/1.1\r\nHost: {addr}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n\r\n"
+        );
+        raw.write_all(req_bytes.as_bytes()).await.unwrap();
+        let mut raw_resp = String::new();
+        tokio::io::AsyncReadExt::read_to_string(&mut raw, &mut raw_resp).await.unwrap();
+        assert!(raw_resp.starts_with("HTTP/1.1 415 "), "{route} empty chunked without content-type: {raw_resp}");
+        assert!(raw_resp.contains("FST_ERR_CTP_INVALID_MEDIA_TYPE"), "{route}: {raw_resp}");
     }
 
     // 2. 302 redirect on /api/location/reload fails activation with 502.

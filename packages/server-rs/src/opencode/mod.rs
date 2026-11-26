@@ -58,9 +58,10 @@ struct NativeInner {
     binary_adopt: tokio::sync::Mutex<()>,
     /// Incremented on invalidation, retirement or binary hot-adoption so stale acquires retry.
     generation: AtomicU64,
+    next_flight_id: AtomicU64,
     /// When the current endpoint was last confirmed; `None` once invalidated.
     validated: Mutex<Option<Instant>>,
-    inflight: Mutex<Option<AcquireFlight>>,
+    inflight: Mutex<Option<(u64, AcquireFlight)>>,
     retired: tokio::sync::Notify,
 }
 
@@ -91,6 +92,7 @@ impl Native {
             pinned_binary: AtomicBool::new(false),
             binary_adopt: tokio::sync::Mutex::new(()),
             generation: AtomicU64::new(0),
+            next_flight_id: AtomicU64::new(0),
             validated: Mutex::new(Some(Instant::now())),
             inflight: Mutex::new(None),
             retired: tokio::sync::Notify::new(),
@@ -132,6 +134,7 @@ impl Native {
             pinned_binary: AtomicBool::new(false),
             binary_adopt: tokio::sync::Mutex::new(()),
             generation: AtomicU64::new(0),
+            next_flight_id: AtomicU64::new(0),
             validated,
             inflight: Mutex::new(None),
             retired: tokio::sync::Notify::new(),
@@ -273,10 +276,11 @@ impl Native {
         }
         let flight = {
             let mut slot = self.inner.inflight.lock().unwrap();
-            if let Some(existing) = slot.as_ref() {
+            if let Some((_, existing)) = slot.as_ref() {
                 existing.clone()
             } else {
                 use futures_util::FutureExt;
+                let id = self.inner.next_flight_id.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
                 let inner = self.inner.clone();
                 let shared_deadline = deadline.max(Instant::now() + Duration::from_secs(30));
                 let (tx, rx) = tokio::sync::oneshot::channel();
@@ -285,10 +289,14 @@ impl Native {
                 }
                 .boxed()
                 .shared();
-                *slot = Some(shared.clone());
+                *slot = Some((id, shared.clone()));
                 tokio::spawn(async move {
                     let result = run_acquire(&inner, shared_deadline).await;
-                    *inner.inflight.lock().unwrap() = None;
+                    let mut slot = inner.inflight.lock().unwrap();
+                    if slot.as_ref().is_some_and(|(current_id, _)| *current_id == id) {
+                        *slot = None;
+                    }
+                    drop(slot);
                     let _ = tx.send(result);
                 });
                 shared
@@ -379,7 +387,19 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
                     if inner.generation.load(Ordering::SeqCst) != generation {
                         continue;
                     }
-                    lifecycle.start_daemon(deadline).await?
+                    // Match TS `ensure()`: validate profile startup env and run a final discovery
+                    // before launching `service start`, checking generation right before spawn.
+                    let environment = launch::daemon_environment_from_config(lifecycle.config_path.as_deref())
+                        .map_err(Refusal::Failed)?;
+                    match lifecycle.discover(deadline).await? {
+                        Some(found) => found,
+                        None => {
+                            if inner.generation.load(Ordering::SeqCst) != generation {
+                                continue;
+                            }
+                            lifecycle.start_with_env(&environment, deadline).await?
+                        }
+                    }
                 }
             },
         };
@@ -457,6 +477,17 @@ pub(crate) async fn read_fastify_body(
             fastify::body(&head.headers, &bytes)
         }
         None => {
+            // Fastify 5 rejects framed bodies (`Transfer-Encoding` or non-zero `Content-Length`)
+            // without a supported `Content-Type`, even when a chunked stream carries zero bytes.
+            let has_transfer_encoding = head.headers.contains_key(axum::http::header::TRANSFER_ENCODING);
+            let non_zero_length = head
+                .headers
+                .get(axum::http::header::CONTENT_LENGTH)
+                .is_some_and(|v| v.to_str().ok().map(str::trim) != Some("0"));
+            if has_transfer_encoding || non_zero_length {
+                drain(body.into_data_stream(), 0).await;
+                return Err(media());
+            }
             let mut stream = body.into_data_stream();
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk.map_err(|_| media())?;
@@ -471,15 +502,20 @@ pub(crate) async fn read_fastify_body(
 }
 
 /// Resolves the currently configured OpenCode executable and hot-adopts it on `app.native`
-/// without restarting any running daemon. Serialized so concurrent PATCHes always converge to the
-/// latest committed `opencodeBinary`.
-pub async fn adopt_configured_binary(app: &App) {
+/// without restarting any running daemon. Runs in a detached serialized task so concurrent
+/// config PATCHes always converge to the latest committed `opencodeBinary` even if the HTTP
+/// handler is cancelled mid-wait.
+pub async fn adopt_configured_binary(app: &Shared) {
     if app.native.is_pinned() {
         return;
     }
-    let _guard = app.native.inner.binary_adopt.lock().await;
-    let (binary, _, _) = update::selected_binary(app).await;
-    app.native.adopt_binary(&binary);
+    let app = app.clone();
+    let _ = tokio::spawn(async move {
+        let _guard = app.native.inner.binary_adopt.lock().await;
+        let (binary, _, _) = update::selected_binary(&app).await;
+        app.native.adopt_binary(&binary);
+    })
+    .await;
 }
 
 pub fn routes() -> Router<Shared> {

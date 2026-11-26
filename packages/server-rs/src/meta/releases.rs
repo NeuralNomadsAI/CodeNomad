@@ -23,7 +23,9 @@ struct State {
     feed: &'static str,
     update: Option<Value>,
     latest_stable: Option<(String, String)>,
-    stable_checked: bool,
+    /// True on initial startup in `stable` mode and on periodic poll ticks; switching
+    /// `preview -> stable` never fires an extra stable-only request.
+    stable_due: bool,
     generation: u64,
 }
 
@@ -40,7 +42,7 @@ impl Monitor {
                 feed,
                 update: (feed == "stable").then_some(Value::Null),
                 latest_stable: None,
-                stable_checked: false,
+                stable_due: feed == "stable",
                 generation: 0,
             }),
             changed: Notify::new(),
@@ -63,6 +65,7 @@ impl Monitor {
         if state.feed != feed {
             state.feed = feed;
             state.generation = state.generation.wrapping_add(1);
+            state.stable_due = false;
             if feed == "stable" {
                 state.update = Some(Value::Null);
             }
@@ -76,20 +79,12 @@ fn read_feed(settings: &Settings) -> &'static str {
 }
 
 pub(crate) async fn run(app: Shared, shutdown: CancellationToken) {
-    let fixture = crate::bench::releases_fixture();
-    let allow_stable_only = fixture.is_none();
-    let url = fixture.unwrap_or_else(|| Url::parse("https://api.github.com/").unwrap());
+    let url = crate::bench::releases_fixture().unwrap_or_else(|| Url::parse("https://api.github.com/").unwrap());
     let repo = std::env::var("CODENOMAD_GITHUB_REPO").unwrap_or_else(|_| REPO.into());
-    run_with_base(app, shutdown, url, repo, allow_stable_only).await;
+    run_with_base(app, shutdown, url, repo).await;
 }
 
-pub(crate) async fn run_with_base(
-    app: Shared,
-    shutdown: CancellationToken,
-    url: Url,
-    repo: String,
-    allow_stable_only: bool,
-) {
+pub(crate) async fn run_with_base(app: Shared, shutdown: CancellationToken, url: Url, repo: String) {
     let monitor = &app.releases;
     let repo = repo.trim();
     let parts: Vec<_> = repo.split('/').collect();
@@ -104,7 +99,7 @@ pub(crate) async fn run_with_base(
     loop {
         let (feed, generation, need_stable) = {
             let state = monitor.state.lock().unwrap();
-            (state.feed, state.generation, allow_stable_only && !state.stable_checked)
+            (state.feed, state.generation, state.stable_due)
         };
         if feed == "preview" {
             tokio::select! {
@@ -119,7 +114,7 @@ pub(crate) async fn run_with_base(
                             if stable.is_some() {
                                 state.latest_stable = stable;
                             }
-                            state.stable_checked = true;
+                            state.stable_due = false;
                         }
                     }
                 }
@@ -136,7 +131,7 @@ pub(crate) async fn run_with_base(
                             if stable.is_some() {
                                 state.latest_stable = stable;
                             }
-                            state.stable_checked = true;
+                            state.stable_due = false;
                         }
                     }
                 }
@@ -146,7 +141,10 @@ pub(crate) async fn run_with_base(
             _ = shutdown.cancelled() => return,
             _ = monitor.changed.notified() => (),
             _ = tokio::time::sleep(INTERVAL) => {
-                monitor.state.lock().unwrap().stable_checked = false;
+                let mut state = monitor.state.lock().unwrap();
+                if state.feed == "stable" {
+                    state.stable_due = true;
+                }
             }
         }
     }

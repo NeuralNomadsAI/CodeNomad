@@ -235,12 +235,6 @@ impl Lifecycle {
         self.endpoint(&url, deadline).await
     }
 
-    /// Validates the startup environment and starts the daemon directly without rediscovering.
-    pub async fn start_daemon(&self, deadline: Instant) -> Result<Endpoint, String> {
-        let environment = launch::daemon_environment_from_config(self.config_path.as_deref())?;
-        self.start_with_env(&environment, deadline).await
-    }
-
     #[cfg(test)]
     pub async fn ensure(&self, deadline: Instant) -> Result<Endpoint, String> {
         let environment = launch::daemon_environment_from_config(self.config_path.as_deref())?;

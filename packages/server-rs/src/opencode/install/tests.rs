@@ -142,15 +142,20 @@ fn legacy_npm_verification_preflight_and_removal_match_reference() {
         std::fs::write(&cmd, "@ECHO off\r\n\"%dp0%\\node_modules\\opencode-ai\\bin\\opencode.exe\" %*\r\n").unwrap();
         std::fs::write(
             prefix.commands().join("opencode.ps1"),
-            "#!/usr/bin/env pwsh\n$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent\n  & \"$basedir/node_modules/opencode-ai/bin/opencode.exe\" $args\n",
+            layout::ps1("node_modules/opencode-ai/bin/opencode.exe"),
         )
         .unwrap();
-        // Custom script merely mentioning `node_modules/opencode-ai/` in a comment must NOT be removed.
-        std::fs::write(
-            prefix.commands().join("opencode"),
-            "#!/bin/sh\n# note: replaced node_modules/opencode-ai/bin/opencode.exe manually\nexec /usr/local/bin/custom \"$@\"\n",
-        )
-        .unwrap();
+        // Customized npm `sh` shim (keeps header + exec line, adds user env export) must NOT be deleted or overwritten.
+        let customized_sh = layout::sh("node_modules/opencode-ai/bin/opencode.exe")
+            .replace("\nexec ", "\nexport MY_CUSTOM_VAR=1\nexec ");
+        std::fs::write(prefix.commands().join("opencode"), customized_sh).unwrap();
+        // Customized `.ps1` shim with an extra user setting must also be rejected as an npm shim.
+        let customized_ps1 = prefix.commands().join("custom-check.ps1");
+        let ps1_with_env = layout::ps1("node_modules/opencode-ai/bin/opencode.exe")
+            .replace("# Support pipeline input", "$env:MY_CUSTOM_VAR = \"1\"\n# Support pipeline input");
+        std::fs::write(&customized_ps1, ps1_with_env).unwrap();
+        assert!(!legacy::is_npm_companion_shim(&customized_ps1, &bin));
+        let _ = std::fs::remove_file(&customized_ps1);
         cmd.to_string_lossy().into_owned()
     };
     #[cfg(not(windows))]
@@ -206,12 +211,15 @@ fn legacy_npm_verification_preflight_and_removal_match_reference() {
     #[cfg(windows)]
     {
         assert!(!prefix.commands().join("opencode.ps1").exists());
-        assert!(prefix.commands().join("opencode").exists(), "custom script must not be deleted by comment mention");
+        assert!(prefix.commands().join("opencode").exists(), "customized npm shim must not be deleted");
         layout::publish_commands(&prefix, &["opencode".into()]).unwrap();
         assert!(prefix.commands().join("opencode.cmd").is_file());
         assert!(prefix.commands().join("opencode.ps1").is_file());
         let preserved = std::fs::read_to_string(prefix.commands().join("opencode")).unwrap();
-        assert!(preserved.contains("/usr/local/bin/custom"), "publish_commands must preserve custom companion script");
+        assert!(
+            preserved.contains("export MY_CUSTOM_VAR=1"),
+            "publish_commands must preserve customized companion script"
+        );
     }
     let _ = std::fs::remove_dir_all(root);
 }

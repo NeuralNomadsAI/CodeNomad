@@ -178,47 +178,60 @@ fn is_busy_or_permission(err: &std::io::Error) -> bool {
     err.kind() == ErrorKind::PermissionDenied || matches!(err.raw_os_error(), Some(5 | 16 | 32 | 33))
 }
 
+fn normalized_shim_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            // Collapse multiple spaces only before the trailing `$args` / `"$@"` token as npm's cmd-shim varies spacing.
+            for suffix in ["$args", "\"$@\""] {
+                if let Some(head) = line.strip_suffix(suffix) {
+                    return format!("{} {suffix}", head.trim_end());
+                }
+            }
+            line.to_owned()
+        })
+        .collect()
+}
+
 pub(crate) fn is_npm_companion_shim(path: &Path, expected_binary: &Path) -> bool {
     let Some(parent) = path.parent() else { return false };
     let Ok(bytes) = fs::read(path) else { return false };
-    if bytes.len() > 64 * 1024 {
+    if bytes.len() > 8192 {
         return false;
     }
     let Ok(script) = String::from_utf8(bytes) else { return false };
+    let Ok(rel) = expected_binary.strip_prefix(parent) else { return false };
+    let target = rel.to_string_lossy().replace('\\', "/");
+    if target.is_empty() {
+        return false;
+    }
+    let actual = normalized_shim_lines(&script);
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if name.to_ascii_lowercase().ends_with(".ps1") {
-        if !script.starts_with("#!/usr/bin/env pwsh") || !script.contains("$basedir=Split-Path") {
-            return false;
-        }
-        static PS1_TARGET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-            regex::Regex::new(r#"(?m)^\s*(?:\$input\s*\|\s*)?&\s+"\$basedir/([^"\r\n]+)"\s+\$args\s*$"#).unwrap()
-        });
-        let mut matched = false;
-        for caps in PS1_TARGET.captures_iter(&script) {
-            let Some(target) = caps.get(1).map(|m| m.as_str()) else { return false };
-            if !same_path(&resolve_from(Some(parent), Path::new(target)), expected_binary) {
-                return false;
-            }
-            matched = true;
-        }
-        return matched;
+        let modern = super::layout::ps1(&target);
+        let with_ret = format!(
+            "#!/usr/bin/env pwsh\n$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent\n$exe=\"\"\n\
+             if ($PSVersionTable.PSVersion -lt \"6.0\" -or $IsWindows) {{\n  # Fix case when both the Windows and Linux builds of Node\n\
+             \x20 # are installed in the same directory\n  $exe=\".exe\"\n}}\n$ret=0\n# Support pipeline input\n\
+             if ($MyInvocation.ExpectingInput) {{\n  $input | & \"$basedir/{target}\" $args\n}} else {{\n  & \"$basedir/{target}\" $args\n}}\n\
+             $ret=$LASTEXITCODE\nexit $ret\n"
+        );
+        return actual == normalized_shim_lines(&modern) || actual == normalized_shim_lines(&with_ret);
     }
     if !name.contains('.') {
-        if !script.starts_with("#!/bin/sh\n") && !script.starts_with("#!/bin/sh\r\n") {
-            return false;
-        }
-        static SH_TARGET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-            regex::Regex::new(r#"(?m)^exec\s+"\$basedir/([^"\r\n]+)"\s+"\$@"\s*$"#).unwrap()
-        });
-        let mut matched = false;
-        for caps in SH_TARGET.captures_iter(&script) {
-            let Some(target) = caps.get(1).map(|m| m.as_str()) else { return false };
-            if !same_path(&resolve_from(Some(parent), Path::new(target)), expected_binary) {
-                return false;
-            }
-            matched = true;
-        }
-        return matched;
+        let modern = super::layout::sh(&target);
+        let legacy_uname = format!(
+            "#!/bin/sh\nbasedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")\ncase `uname` in\n\
+             \x20 *CYGWIN*|*MINGW*|*MSYS*) basedir=`cygpath -w \"$basedir\"`;;\nesac\nexec \"$basedir/{target}\" \"$@\"\n"
+        );
+        let legacy_cygwin = format!(
+            "#!/bin/sh\nbasedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")\ncase `uname` in\n\
+             \x20 *CYGWIN*) basedir=`cygpath -w \"$basedir\"`;;\nesac\nexec \"$basedir/{target}\" \"$@\"\n"
+        );
+        return actual == normalized_shim_lines(&modern)
+            || actual == normalized_shim_lines(&legacy_uname)
+            || actual == normalized_shim_lines(&legacy_cygwin);
     }
     false
 }
