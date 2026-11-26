@@ -239,6 +239,7 @@ fn build(dark: bool) -> Kit {
             border: c("accent-primary"),
             mark: c("text-on-accent"),
         }),
+        ..Metrics::default()
     };
     Kit {
         dark,
