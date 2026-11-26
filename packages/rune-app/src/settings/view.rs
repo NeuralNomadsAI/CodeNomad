@@ -235,6 +235,7 @@ impl Window {
         }
         self.logging.close();
         self.remote.close();
+        self.providers.suspend();
         self.integrations.suspend();
         if self.config_files.dirty() {
             self.confirm_close = Some(CloseConfirm::ConfigFiles);
@@ -311,6 +312,7 @@ impl Window {
     }
 
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
+        self.providers.suspend();
         self.integrations.suspend();
         {
             let mut prefs = self.shared.borrow_mut();
@@ -562,6 +564,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             .provider_target
                             .as_ref()
                             .is_some_and(providers::Target::online),
+                    &mut layers,
                 ),
             ),
             Section::Integrations => (

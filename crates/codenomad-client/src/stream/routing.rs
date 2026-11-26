@@ -80,6 +80,21 @@ pub(super) async fn dispatch_marked(
         ))
         .await?;
     }
+    if value["type"] == "storage.configChanged"
+        && matches!(value["owner"].as_str(), Some("providerAccounts" | "*"))
+        && !b.workspace.is_empty()
+    {
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::ProvidersChanged {
+                workspace_id: b.workspace.clone(),
+            },
+        ))
+        .await?;
+        if value["owner"] == "providerAccounts" {
+            return Ok(());
+        }
+    }
     if let Some(owner) = storage_owner(&value) {
         return state.storage_changed(epoch, owner, out).await;
     }

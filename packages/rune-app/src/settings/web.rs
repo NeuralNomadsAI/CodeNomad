@@ -167,21 +167,33 @@ impl Panel {
             prefs.memory.show(self.shown && paired);
         }
         let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
-        let stats = self.stats.poll(
+        let stats_changed = self.stats.poll(
             target,
             self.shown && paired && self.section == Section::Stats,
             wake,
             now,
             tx,
         );
-        let integrations = self.integrations.poll(
+        let providers_changed = if self.shown && paired && self.section == Section::Providers {
+            self.catalog.poll(
+                target,
+                now,
+                Some(wake),
+                tx,
+                document_visible(),
+                |s: &mut State| &mut s.settings.web.catalog,
+            )
+        } else {
+            self.catalog.cancel_on_hide()
+        };
+        let integrations_changed = self.integrations.poll(
             target,
             self.shown && paired && self.section == Section::Integrations,
             wake,
             now,
             tx,
         );
-        stats | integrations | leave
+        stats_changed | providers_changed | integrations_changed | leave
     }
 
     pub fn shown(&self) -> bool {
@@ -264,12 +276,6 @@ impl Panel {
             | (self.section == Section::Remote
                 && self.local(prefs)
                 && self.remote.poll(prefs, wake))
-            | (self.shown
-                && self.section == Section::Providers
-                && self.catalog.poll(
-                    prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
-                    Some(wake),
-                ))
     }
 
     fn poll_notification_permission(&self) -> bool {
@@ -337,6 +343,19 @@ impl Panel {
             }
             _ => true,
         }
+    }
+}
+
+fn document_visible() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|window| window.document())
+            .is_none_or(|doc| doc.visibility_state() == web_sys::VisibilityState::Visible)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        true
     }
 }
 
@@ -631,8 +650,8 @@ pub(super) fn view(
         Section::Providers => {
             let available =
                 prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online);
-            providers::content(&panel.catalog, available, |s: &mut State| {
-                s.settings.web.catalog.toggle()
+            providers::content(&panel.catalog, available, &mut layers, |s: &mut State| {
+                &mut s.settings.web.catalog
             })
         }
         Section::Integrations => {

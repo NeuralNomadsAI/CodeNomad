@@ -71,6 +71,66 @@ pub fn authentication_dialog<S: 'static>(
         )
 }
 
+pub fn modal_dialog<S: 'static>(
+    key: &str,
+    title: &str,
+    close_button: El,
+    body: El,
+    focus_return: Option<&str>,
+    dismiss: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    let dark = layout::dark();
+    let theme = tokens(dark);
+    let header = row()
+        .full_width()
+        .center_y()
+        .h(theme.length(crate::Length::Chrome).px())
+        .fill(theme.color("surface-chrome"))
+        .px(theme.space(Space::Md).px())
+        .border_sides([0.0, 0.0, 1.0, 0.0], theme.color("border-divider"))
+        .child(
+            text(title)
+                .role("heading")
+                .text_role(TextRole::Title)
+                .grow(1.0)
+                .shrink()
+                .truncate(),
+        )
+        .child(close_button);
+    let mut dialog = col()
+        .key(key)
+        .role("dialog")
+        .label(title)
+        .full_width()
+        .max_w(520.0)
+        .fill(theme.color("surface-overlay"))
+        .border(1.0, theme.color("border-base"))
+        .child(header)
+        .child(
+            col()
+                .full_width()
+                .max_h(560.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .pad(Space::Md)
+                .separate(Space::Sm)
+                .child(body),
+        )
+        .modal_tx(true, dismiss)
+        .modal_click_outside(false);
+    if let Some(target) = focus_return {
+        dialog = dialog.focus_return(target);
+    }
+    el().key(format!("{key}-layer"))
+        .absolute(0.0, 0.0)
+        .full_width()
+        .full_height()
+        .center()
+        .fill(crate::kit(dark).c.scrim)
+        .child(dialog)
+}
+
 pub fn embedded_section<S: 'static>(
     title: &str,
     body: El,

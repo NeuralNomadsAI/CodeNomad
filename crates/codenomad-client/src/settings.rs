@@ -4,6 +4,7 @@ pub mod info;
 pub mod integrations;
 pub mod memory;
 mod opencode_actions;
+pub mod provider_auth;
 mod providers;
 pub mod remote;
 pub mod stats;
