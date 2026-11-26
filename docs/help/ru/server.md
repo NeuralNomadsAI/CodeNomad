@@ -80,7 +80,7 @@ HTTPS предпочитает порт **9898**, HTTP — **9899**. Без пе
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`; разрешить просмотр всей файловой системы. Не настройка песочницы агента. |
 | `--config <path>` | `CLI_CONFIG` | Итоговый активный путь по умолчанию: `~/.config/codenomad/config.yaml`. Принимает каталог или YAML-файл для явного размещения. |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`; документированные уровни: `trace`, `debug`, `info`, `warn`, `error`. |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`; иначе писать в выбранный файл. |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`, а также `logs/server.log` рядом с файлом конфигурации; выбранный файл заменяет оба. |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; имя пользователя для аутентификации, переданное при запуске. Сохранённый файл аутентификации сохраняет своё имя пользователя, если при запуске не передан другой пароль. |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Не задан; пароль, действующий только в текущем процессе, имеет приоритет над управляемым файлом аутентификации. |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`; символы кроме букв, цифр, `_` и `-` заменяются на `_`. |

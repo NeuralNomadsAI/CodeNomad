@@ -80,7 +80,7 @@ Las opciones prevalecen sobre sus equivalentes del entorno. Las opciones con val
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`; permite explorar todo el sistema de archivos. No es un ajuste de aislamiento del agente. |
 | `--config <path>` | `CLI_CONFIG` | Predeterminado activo resuelto: `~/.config/codenomad/config.yaml`. Acepta un directorio o archivo YAML para una ubicación explícita. |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`; niveles documentados: `trace`, `debug`, `info`, `warn`, `error`. |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`; en otro caso escribe en el archivo elegido. |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`, además de `logs/server.log` junto al archivo de configuración; un archivo elegido sustituye a ambos. |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; usuario de autenticación de ejecución. Un archivo de autenticación almacenado conserva su usuario guardado si ninguna contraseña de ejecución lo sustituye. |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Sin definir; contraseña solo de ejecución, prevalece sobre el archivo de autenticación gestionado. |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`; los caracteres distintos de letras, dígitos, `_` y `-` se convierten en `_`. |

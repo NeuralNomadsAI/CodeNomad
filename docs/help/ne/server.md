@@ -80,7 +80,7 @@ flag ले environment counterpart override गर्छन्। value-taking 
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`; full-filesystem browsing अनुमति। agent sandbox सेटिङ होइन। |
 | `--config <path>` | `CLI_CONFIG` | resolved active default: `~/.config/codenomad/config.yaml`। स्पष्ट स्थानका लागि directory वा YAML file स्वीकार्छ। |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`; documented level: `trace`, `debug`, `info`, `warn`, `error`। |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`; अन्यथा चयनित file मा लेख्छ। |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`, साथै configuration file सँगैको `logs/server.log`; रोजिएको file ले दुवैको सट्टा लिन्छ। |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; runtime auth username। runtime password override नभए stored auth file ले आफ्नै username राख्छ। |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | unset; runtime-only password, managed auth file भन्दा अघि पर्छ। |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`; अक्षर, अङ्क, `_` र `-` बाहेक character `_` बन्छन्। |

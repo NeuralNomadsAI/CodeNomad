@@ -80,7 +80,7 @@ Flags übersteuern ihre Umgebungsentsprechungen. Flags mit Wert verwenden das ge
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`; erlaubt das Durchsuchen des gesamten Dateisystems. Keine Agenten-Sandbox-Einstellung. |
 | `--config <path>` | `CLI_CONFIG` | Aufgelöster aktiver Standard: `~/.config/codenomad/config.yaml`. Akzeptiert Verzeichnis oder YAML-Datei für expliziten Speicherort. |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`; dokumentierte Stufen: `trace`, `debug`, `info`, `warn`, `error`. |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`; sonst in die gewählte Datei schreiben. |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`, zusätzlich `logs/server.log` neben der Konfigurationsdatei; eine gewählte Datei ersetzt beides. |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; Laufzeit-Authentifizierungsbenutzername. Eine gespeicherte Auth-Datei behält ihren Benutzernamen ohne Laufzeit-Passwortüberschreibung. |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Nicht gesetzt; reines Laufzeitpasswort mit Vorrang vor der verwalteten Auth-Datei. |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`; Zeichen außer Buchstaben, Ziffern, `_` und `-` werden `_`. |

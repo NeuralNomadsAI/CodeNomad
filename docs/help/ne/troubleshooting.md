@@ -85,7 +85,7 @@ cancelled वा partial cleanup मा अर्को deletion अघि progr
 ## log र सुरक्षित निदान {#diagnostics}
 
 1. **सेटिङहरू → OpenCode → OpenCode लगहरू हेर्नुहोस्** खोल्नुहोस्। छानिएको कार्यान्वयन होस्टको विश्वव्यापी `opencode.log` फाइल `opencode debug paths log` बाट पत्ता लगाइन्छ। अन्तिम बढीमा 128 KiB देखाइन्छ; **रिफ्रेस** ले फेरि पढ्छ।
-2. **प्राथमिकताहरू → OpenCode** मा थप विवरण चाहिँदा मात्र अभिप्रेत **पूर्वनिर्धारित लग स्तर** रोज्नुहोस्। standalone logging मा [server CLI logging विकल्प](server.md) प्रयोग गर्नुहोस्।
+2. **प्राथमिकताहरू → OpenCode** मा थप विवरण चाहिँदा मात्र अभिप्रेत **पूर्वनिर्धारित लग स्तर** रोज्नुहोस्। standalone logging मा [server CLI logging विकल्प](server.md) प्रयोग गर्नुहोस्। CodeNomad server ले आफ्नो configuration file सँगै (पूर्वनिर्धारित `~/.config/codenomad`) `logs/server.log` मा आफ्नै log पनि राख्छ; अघिल्लो भरिएको file `server.previous.log` हो।
 3. **सेटिङहरू → जानकारी → निदान (Diagnostics)** खोली **बग रिपोर्ट गर्नुहोस्**, **क्लिपबोर्डमा प्रतिलिपि गर्नुहोस्** वा **.txt डाउनलोड गर्नुहोस्** प्रयोग गर्नुहोस्।
 
 logging विवरणले path, output र application data देखाउन सक्छ। log/capture साझा अघि credential, pairing link, network address, private path र conversation content redact गर्नुहोस्। पूर्ण diagnostic report मा path/address हुन्छन्; prefilled bug form ले जानाजानी समावेश गर्दैन। [bug report गर्नुहोस्](support.md#report-a-bug) हेर्नुहोस्।

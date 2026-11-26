@@ -25,6 +25,7 @@ import { CODENOMAD_API_CONTRACT, CODENOMAD_CAPABILITIES } from "./meta-contract"
 import { InstanceStore } from "./storage/instance-store"
 import { InstanceEventBridge } from "./workspaces/instance-events"
 import { createLogger } from "./logger"
+import { serverLogFile } from "./log-file"
 import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
@@ -284,6 +285,9 @@ export function programHasArg(argv: string[], flag: string): boolean {
   return argv.some((argument) => argument === flag || argument.startsWith(`${flag}=`))
 }
 
+/** The server's own log file, once `main` has resolved it. */
+let logFile: string | undefined
+
 async function main() {
   const options = parseCliOptions(process.argv.slice(2))
   if (options.upgrade !== undefined) {
@@ -292,7 +296,10 @@ async function main() {
     return
   }
 
-  const logger = createLogger({ level: options.logLevel, destination: options.logDestination, component: "app" })
+  const configLocation = resolveConfigLocation(options.configPath)
+  // An explicit destination replaces stdout and this file alike.
+  if (!options.logDestination) logFile = serverLogFile(configLocation.baseDir)
+  const logger = createLogger({ level: options.logLevel, destination: options.logDestination, component: "app", file: logFile })
   const workspaceLogger = logger.child({ component: "workspace" })
   const configLogger = logger.child({ component: "config" })
   const eventLogger = logger.child({ component: "events" })
@@ -312,7 +319,6 @@ async function main() {
 
   const eventBus = new EventBus(eventLogger)
 
-  const configLocation = resolveConfigLocation(options.configPath)
   const configDir = configLocation.baseDir
   const memoryStore = new MemoryStore(configLocation.baseDir)
 
@@ -787,7 +793,7 @@ async function main() {
 
 if (path.resolve(process.argv[1] ?? "") === __filename) {
   main().catch((error) => {
-    const logger = createLogger({ component: "app" })
+    const logger = createLogger({ component: "app", file: logFile })
     logger.error({ err: error }, "CLI server crashed")
     process.exit(1)
   })
