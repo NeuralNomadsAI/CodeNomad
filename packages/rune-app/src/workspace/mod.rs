@@ -28,11 +28,11 @@ pub(crate) use state::{
     can_switch_tabs, capture, capture_files_mode, clear_temporary_mark, close, close_ordinary,
     connected, conversation_stream_clients, detach_stopped_temporary, draft_changed,
     file_draft_status, file_wrap, files_tab, finish_discarded, has_conversation_stream,
-    input_ready, new_tab, opened, panel_width, poll, poll_file_drafts, prepare_open,
-    reconcile_temporary_folders, rename_tab, renew_connection, restore_files_mode, restore_stashed,
-    resume, retry, schedule_catalogue, schedule_catalogue_refresh, select, select_index,
-    select_relative, stash_for_discard, status, strip, tab_rename_seed, temporary_tab_info,
-    toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
+    has_temporary_tabs, input_ready, new_tab, opened, panel_width, poll, poll_file_drafts,
+    prepare_open, reconcile_temporary_folders, rename_tab, renew_connection, restore_files_mode,
+    restore_stashed, resume, retry, schedule_catalogue, schedule_catalogue_refresh, select,
+    select_index, select_relative, stash_for_discard, status, strip, tab_rename_seed,
+    temporary_tab_info, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,

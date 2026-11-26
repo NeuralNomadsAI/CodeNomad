@@ -39,6 +39,8 @@ pub fn dialog<S: 'static>(
     let dismiss_action = on_cancel;
     let on_keep = Rc::new(on_keep);
     let keep_press = on_keep.clone();
+    let on_discard = Rc::new(on_discard);
+    let discard_press = on_discard.clone();
     let keep_btn = {
         let btn = rune_kit::Button::new(keep_label)
             .variant(rune_kit::ButtonVariant::Submit)
@@ -55,7 +57,19 @@ pub fn dialog<S: 'static>(
     let cancel_btn = layout::button_tx(cancel_label, busy, move |s, tx| cancel_press(s, tx))
         .key(CANCEL)
         .autofocus();
-    let discard_btn = layout::button_tx(discard_label, busy, on_discard).key(DISCARD);
+    let discard_btn = {
+        let btn = rune_kit::Button::new(discard_label)
+            .variant(rune_kit::ButtonVariant::Danger)
+            .disabled(busy)
+            .on_press_tx(move |s, tx| discard_press(s, tx))
+            .build(kit(layout::dark()))
+            .key(DISCARD);
+        if busy {
+            btn
+        } else {
+            btn.on_key(layout::enter_action(on_discard))
+        }
+    };
     let header = row()
         .full_width()
         .center_y()
@@ -86,8 +100,8 @@ pub fn dialog<S: 'static>(
                 .full_width()
                 .justify_end()
                 .separate(Space::Sm)
-                .child(discard_btn)
                 .child(cancel_btn)
+                .child(discard_btn)
                 .child(keep_btn),
         );
     col()

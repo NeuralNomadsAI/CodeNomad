@@ -375,8 +375,13 @@ pub fn close_ordinary(s: &mut State, id: &str, tx: &mut Tx) {
     detach_entry(s, id, true, true, tx);
 }
 
-pub(super) fn detach_local_without_release(s: &mut State, id: &str, tx: &mut Tx) {
-    detach_entry(s, id, false, false, tx);
+pub(super) fn detach_local_without_release(
+    s: &mut State,
+    id: &str,
+    keep_drafts: bool,
+    tx: &mut Tx,
+) {
+    detach_entry(s, id, keep_drafts, false, tx);
 }
 
 fn detach_entry(s: &mut State, id: &str, keep_drafts: bool, release_on_server: bool, tx: &mut Tx) {

@@ -128,7 +128,11 @@ impl Cache {
             let id = git.workspace_id();
             if !live.contains(id) {
                 let workspace_id = id.to_owned();
-                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
                 changed = true;
             }
         }
@@ -136,7 +140,11 @@ impl Cache {
             let id = files.workspace_id();
             if !live.contains(id) {
                 let workspace_id = id.to_owned();
-                files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                files.event(codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
                 changed = true;
             }
         }
@@ -159,6 +167,8 @@ impl Cache {
                     let workspace_id = id.to_owned();
                     git.event(&codenomad_client::transport::WorkspaceEvent::Stopped {
                         workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
                     });
                     changed = true;
                 }
@@ -180,6 +190,8 @@ impl Cache {
                     let workspace_id = id.to_owned();
                     files.event(codenomad_client::transport::WorkspaceEvent::Stopped {
                         workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
                     });
                     changed = true;
                 }

@@ -45,12 +45,19 @@ impl Drop for MockServer {
 
 impl MockServer {
     fn start(replies: Vec<MockReply>) -> Self {
+        Self::start_with_caps(replies, r#"["temporary-workspaces"]"#)
+    }
+
+    fn start_with_caps(replies: Vec<MockReply>, capabilities_json: &str) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = stop.clone();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let seen = requests.clone();
+        let meta_body = format!(
+            r#"{{"serverId":"srv-temp","apiContract":1,"capabilities":{capabilities_json}}}"#
+        );
         let mut queue = VecDeque::from(replies);
         let handle = thread::spawn(move || {
             while !stop_flag.load(Ordering::SeqCst) {
@@ -109,6 +116,7 @@ impl MockServer {
                         || path == "/api/workspaces"
                         || (path.starts_with("/api/workspaces/")
                             && (path.ends_with("/keep") || path.ends_with("/discard")))))
+                    || (method == "GET" && path == "/api/workspaces/temporary")
                     || (method == "DELETE"
                         && path.starts_with("/api/workspaces/")
                         && !path.contains("/creation/"))
@@ -137,7 +145,7 @@ impl MockServer {
                 } else if path.starts_with("/api/meta") {
                     MockReply {
                         status: "200 OK",
-                        body: r#"{"serverId":"srv-temp","apiContract":1,"capabilities":["temporary-workspaces"]}"#.into(),
+                        body: meta_body.clone(),
                     }
                 } else if path.starts_with("/api/storage/config/ui") {
                     MockReply {
@@ -170,6 +178,20 @@ impl MockServer {
             }
         });
         let backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+        let attest_backend = backend.clone();
+        let (done_tx, done_rx) = bounded(1);
+        platform::spawn(async move {
+            let _ = done_tx.try_send(attest_backend.attest_server().await.is_ok());
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Ok(ok) = done_rx.try_recv() {
+                assert!(ok, "mock server attestation failed");
+                break;
+            }
+            assert!(Instant::now() < deadline, "timed out attesting mock server");
+            thread::sleep(Duration::from_millis(5));
+        }
         Self {
             backend,
             addr,
@@ -206,7 +228,7 @@ fn connected_runtime(backend: Backend) -> Runtime<State> {
             let _ = crate::poll(s, 0.0, tx);
         });
         rt.frame(1.0 / 60.0);
-        if rt.find("new-temporary-tab").is_some() {
+        if rt.find("open-folder").is_some() {
             break;
         }
         assert!(
@@ -661,14 +683,211 @@ fn stopped_and_temporary_changed_sync_tabs_without_second_delete_and_snapshot_pe
         other => panic!("unexpected tab: {other:?}"),
     }
 
-    // 3. workspace.stopped detaches temporary tab locally WITHOUT calling DELETE
+    // 3. workspace.stopped (deleted) detaches temporary tab locally WITHOUT calling DELETE,
+    //    even when workspace.temporaryChanged arrives in the same poll!
     rt.update(|s, tx| {
-        assert!(workspace::detach_stopped_temporary(s, "ws-temp-stop", tx));
+        s.temporary
+            .queue_stopped("ws-temp-stop".into(), true, false);
+        s.temporary.queue_temporary_folders(vec![]);
+        assert!(poll(s, tx));
     });
     assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 2);
     assert!(
         server.requests().is_empty(),
         "workspace.stopped on temporary tab must not send DELETE: {:?}",
         server.requests()
+    );
+}
+
+#[test]
+fn missing_capability_hides_launcher_button_and_blocks_shortcut_and_palette() {
+    let server = MockServer::start_with_caps(vec![], "[]");
+    let mut rt = connected_runtime(server.backend.clone());
+    assert!(
+        rt.find("new-temporary-tab").is_none(),
+        "launcher must hide new-temporary-tab when server omits temporary-workspaces capability"
+    );
+    assert!(!can_create(&rt.state));
+    send_key(
+        &mut rt,
+        Key::Command('t'),
+        Mods {
+            alt: true,
+            ..Mods::default()
+        },
+    );
+    assert!(!rt.state.temporary.in_flight());
+    assert!(server.requests().is_empty());
+}
+
+#[test]
+fn discard_refusal_cancels_neighbour_restore_preserves_exit_snapshot_and_handles_401_and_not_found()
+{
+    let server = MockServer::start(vec![
+        // 1. Discard ws-sib-1 -> 404 temporary_not_found (must NOT clear ws-sib-2's temporary mark)
+        MockReply {
+            status: "404 Not Found",
+            body: r#"{"error":"temporary_not_found"}"#.into(),
+        },
+        // 2. Discard ws-sib-2 -> 401 Unauthorized (must restore without dialog and trigger auth)
+        MockReply {
+            status: "401 Unauthorized",
+            body: r#"{"error":"Authentication required"}"#.into(),
+        },
+        // 3. Reconnect reconcile -> GET /api/workspaces/temporary returns [] -> clears mark
+        MockReply {
+            status: "200 OK",
+            body: r#"{"folders":[]}"#.into(),
+        },
+    ]);
+    let mut rt = connected_runtime(server.backend.clone());
+    open_fixture_tab(
+        &mut rt,
+        "ws-sib-1",
+        "/tmp/cn-sib",
+        true,
+        vec![Session {
+            id: "s-1".into(),
+            title: "One".into(),
+        }],
+    );
+    rt.update(workspace::new_tab);
+    open_fixture_tab(
+        &mut rt,
+        "ws-sib-2",
+        "/tmp/cn-sib",
+        true,
+        vec![Session {
+            id: "s-2".into(),
+            title: "Two".into(),
+        }],
+    );
+    let sib1_key = "tab-0".to_owned();
+    let sib2_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+
+    // 1. Start explicit discard on sib-1; while in flight, snapshot_with_stashed still keeps it!
+    rt.update(|s, tx| {
+        strings::with_locale("en", || {
+            open_dialog(s, &sib1_key, Some(format!("t-{sib1_key}")), tx);
+            choose_discard(s, tx);
+        });
+    });
+    assert!(rt.state.temporary.in_flight());
+    let in_flight_snap = rt
+        .state
+        .workspace
+        .as_ref()
+        .unwrap()
+        .snapshot_with_stashed(rt.state.temporary.stashed_for_snapshot());
+    assert_eq!(
+        in_flight_snap.tabs.len(),
+        2,
+        "exit snapshot during in-flight discard must retain stashed temporary tab"
+    );
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    // temporary_not_found must NOT strip sibling ws-sib-2's temporary mark!
+    let snap = rt.state.workspace.as_ref().unwrap().snapshot();
+    match &snap.tabs[1] {
+        workspace::Tab::Workspace(w) => {
+            assert!(
+                w.temporary,
+                "temporary_not_found on one tab must not strip temporary flag from sibling"
+            );
+        }
+        other => panic!("unexpected sibling tab: {other:?}"),
+    }
+
+    // 2. Discard on ws-sib-2 returns 401 -> restores tab without dialog and flags auth_required
+    rt.update(|s, tx| {
+        strings::with_locale("en", || {
+            open_dialog(s, &sib2_key, Some(format!("t-{sib2_key}")), tx);
+            choose_discard(s, tx);
+        });
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    assert!(!is_open(&rt.state));
+    assert!(
+        rt.state
+            .screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required),
+        "HTTP 401 on discard must trigger authentication_required"
+    );
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().active_key(),
+        sib2_key,
+        "HTTP 401 must restore the stashed tab in place"
+    );
+
+    // 3. After re-auth, trigger_reconnect_reconcile fetches GET /api/workspaces/temporary and clears marks
+    rt.update(|s, _| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = false;
+        }
+        trigger_reconnect_reconcile(s);
+    });
+    wait_until(&mut rt, |s| !workspace::has_temporary_tabs(s));
+    assert!(
+        server
+            .requests()
+            .iter()
+            .any(|(req, _)| req == "GET /api/workspaces/temporary HTTP/1.1")
+    );
+}
+
+#[test]
+fn retained_stopped_preserves_drafts_and_discard_refusal_cancels_unopened_neighbour_restore() {
+    let server = MockServer::start(vec![
+        // Discard returns 409 temporary_running while neighbour restore is pending
+        MockReply {
+            status: "409 Conflict",
+            body: r#"{"error":"temporary_running"}"#.into(),
+        },
+    ]);
+    let mut rt = connected_runtime(server.backend.clone());
+    // Seed tab-0 as a restored-but-unopened regular workspace tab (no binding) + tab-1 as active temporary
+    open_fixture_tab(
+        &mut rt,
+        "ws-temp-focus",
+        "/tmp/cn-focus",
+        true,
+        vec![Session {
+            id: "s-f".into(),
+            title: "Focus".into(),
+        }],
+    );
+    let temp_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+    // Simulate a pending launcher restore job that would race if restore_stashed didn't cancel it
+    rt.update(|s, tx| {
+        strings::with_locale("en", || {
+            open_dialog(s, &temp_key, Some(format!("t-{temp_key}")), tx);
+            choose_discard(s, tx);
+        });
+        if let Some(l) = s.screen.launcher_mut() {
+            l.pending = true;
+        }
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    assert!(
+        rt.state.screen.launcher().is_some_and(|l| !l.pending),
+        "restore_stashed must cancel any in-flight neighbour restore job"
+    );
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_key(), temp_key);
+
+    // Retained workspace.stopped (temporaryRetained: true) detaches tab without sending DELETE
+    rt.update(|s, tx| {
+        assert!(workspace::detach_stopped_temporary(
+            s,
+            "ws-temp-focus",
+            true,
+            true,
+            tx
+        ));
+    });
+    assert!(
+        server
+            .requests()
+            .iter()
+            .all(|(req, _)| !req.starts_with("DELETE "))
     );
 }

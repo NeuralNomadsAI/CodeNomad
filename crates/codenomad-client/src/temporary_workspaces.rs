@@ -20,6 +20,8 @@ pub struct CreatedTemporaryFolder {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TemporaryError {
+    /// The server requires re-authentication (HTTP 401).
+    Unauthorized,
     /// The server does not expose temporary workspace routes (404/501/503 without a temporary_* code).
     Unavailable,
     /// Structured temporary_* error code returned by the server.
@@ -35,26 +37,32 @@ impl TemporaryError {
     pub fn code(&self) -> Option<&str> {
         match self {
             Self::Code { code, .. } => Some(code.as_str()),
-            Self::Unavailable | Self::Other(_) => None,
+            Self::Unauthorized | Self::Unavailable | Self::Other(_) => None,
         }
+    }
+
+    pub fn is_unauthorized(&self) -> bool {
+        matches!(self, Self::Unauthorized)
     }
 
     pub fn is_unavailable(&self) -> bool {
         matches!(self, Self::Unavailable)
     }
 
+    /// True only when the server explicitly confirmed the folder is no longer registered temporary.
     pub fn is_not_temporary(&self) -> bool {
-        matches!(
-            self.code(),
-            Some("temporary_not_temporary" | "temporary_not_found")
-        )
+        matches!(self.code(), Some("temporary_not_temporary"))
+    }
+
+    pub fn is_not_found(&self) -> bool {
+        matches!(self.code(), Some("temporary_not_found"))
     }
 
     pub fn message(&self) -> Option<&str> {
         match self {
             Self::Code { message, .. } => message.as_deref(),
             Self::Other(message) => Some(message.as_str()),
-            Self::Unavailable => None,
+            Self::Unauthorized | Self::Unavailable => None,
         }
     }
 }
@@ -62,6 +70,7 @@ impl TemporaryError {
 impl fmt::Display for TemporaryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Unauthorized => f.write_str("authentication required"),
             Self::Unavailable => f.write_str("temporary workspaces unavailable"),
             Self::Code {
                 code,
@@ -103,6 +112,9 @@ pub(crate) fn parse_folders(value: &Value) -> std::result::Result<Vec<String>, T
 
 async fn parse_error(response: reqwest::Response) -> TemporaryError {
     let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return TemporaryError::Unauthorized;
+    }
     let mut bytes = Vec::new();
     let mut chunks = response.bytes_stream();
     let mut exceeded = false;
@@ -215,11 +227,15 @@ impl Backend {
             ));
         }
         let mut payload = json!({ "path": path });
-        if let Some(id) = request_id
-            .map(str::trim)
-            .filter(|id| !id.is_empty() && id.encode_utf16().nth(128).is_none())
-        {
-            payload["requestId"] = Value::String(id.to_owned());
+        if let Some(raw) = request_id {
+            let trimmed = raw.trim();
+            if trimmed.is_empty()
+                || trimmed.encode_utf16().nth(128).is_some()
+                || trimmed.chars().any(char::is_control)
+            {
+                return Err(TemporaryError::Other("invalid requestId".into()));
+            }
+            payload["requestId"] = Value::String(trimmed.to_owned());
         }
         let response = self
             .client
@@ -400,6 +416,14 @@ mod tests {
                 body: r#"{"error":"temporary_not_found"}"#.into(),
             },
             MockReply {
+                status: "409 Conflict",
+                body: r#"{"error":"temporary_not_temporary"}"#.into(),
+            },
+            MockReply {
+                status: "401 Unauthorized",
+                body: r#"{"error":"Authentication required"}"#.into(),
+            },
+            MockReply {
                 status: "404 Not Found",
                 body: r#"{"error":"Not Found"}"#.into(),
             },
@@ -436,8 +460,28 @@ mod tests {
 
         let not_found = block_on(backend.keep_temporary_workspace("ws-2")).unwrap_err();
         assert_eq!(not_found.code(), Some("temporary_not_found"));
-        assert!(not_found.is_not_temporary());
+        assert!(not_found.is_not_found());
+        assert!(!not_found.is_not_temporary());
         assert!(!not_found.is_unavailable());
+
+        let not_temp = block_on(backend.keep_temporary_workspace("ws-2")).unwrap_err();
+        assert_eq!(not_temp.code(), Some("temporary_not_temporary"));
+        assert!(not_temp.is_not_temporary());
+        assert!(!not_temp.is_not_found());
+
+        let unauth = block_on(backend.discard_temporary_workspace("ws-2", false)).unwrap_err();
+        assert!(unauth.is_unauthorized());
+        assert!(!unauth.is_unavailable());
+
+        // Invalid requestId must be rejected before dispatch instead of silently omitted.
+        let invalid_empty =
+            block_on(backend.abandon_temporary_folder("/tmp/cn-temp-3", Some("   "))).unwrap_err();
+        assert!(!invalid_empty.is_unavailable());
+        let long_id = "x".repeat(129);
+        let invalid_long =
+            block_on(backend.abandon_temporary_folder("/tmp/cn-temp-3", Some(&long_id)))
+                .unwrap_err();
+        assert!(!invalid_long.is_unavailable());
 
         let unavail_404 = block_on(backend.create_temporary_folder()).unwrap_err();
         assert!(unavail_404.is_unavailable());

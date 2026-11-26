@@ -91,6 +91,10 @@ pub fn open_temporary_folder(
         }
     };
     let request_id = pending.request_id().to_owned();
+    let cleanup_req = created
+        .supports_cancel_and_abandon
+        .then(|| request_id.clone());
+    l.pending_temporary_cleanup = Some((b.clone(), created.path.clone(), cleanup_req));
     l.folder = TextEdit::new(&created.path);
     l.job("rune.open_error", async move {
         let mut opening = match pending.create(&created.path).await {

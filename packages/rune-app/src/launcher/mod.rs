@@ -74,8 +74,9 @@ pub struct Launcher {
     pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
     pending_stream_generation: u64,
-    stopped_during_pending: HashSet<String>,
+    stopped_during_pending: std::collections::HashMap<String, (bool, bool)>,
     stopped_during_pending_overflow: bool,
+    pub(super) pending_temporary_cleanup: Option<(Backend, String, Option<String>)>,
     detached_reconcile: Option<(u64, HashSet<String>, Receiver<Option<Vec<Project>>>)>,
     detached_reconcile_trailing: bool,
     failed_detached_workspaces: HashSet<String>,
@@ -131,6 +132,38 @@ impl Launcher {
     pub(crate) fn connection_generation(&self) -> u64 {
         self.connection_generation
     }
+}
+
+pub(crate) fn cancel_pending_open(s: &mut State) {
+    let intent = s
+        .workspace
+        .as_ref()
+        .map(|ui| ui.active_key().to_owned())
+        .unwrap_or_else(|| "launcher".into());
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    if !l.pending {
+        return;
+    }
+    l.openings.revoke_intent(&intent);
+    l.result = None;
+    l.pending = false;
+    l.listing = false;
+    l.selection_ticket = None;
+    l.resume_after_job = false;
+    l.stopped_during_pending.clear();
+    l.stopped_during_pending_overflow = false;
+    if let Some((backend, path, req_id)) = l.pending_temporary_cleanup.take() {
+        crate::platform::spawn(async move {
+            let _ = backend
+                .abandon_temporary_folder(&path, req_id.as_deref())
+                .await;
+        });
+    }
+}
+
+impl Launcher {
     #[cfg(test)]
     pub(crate) fn workspace_stream_online(&self) -> bool {
         self.detached_reconcile.is_none()
@@ -218,8 +251,9 @@ impl Launcher {
             openings: Default::default(),
             result: None,
             pending_stream_generation: 0,
-            stopped_during_pending: HashSet::new(),
+            stopped_during_pending: std::collections::HashMap::new(),
             stopped_during_pending_overflow: false,
+            pending_temporary_cleanup: None,
             detached_reconcile: None,
             detached_reconcile_trailing: false,
             failed_detached_workspaces: HashSet::new(),
@@ -402,9 +436,6 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         expired,
     )) = stream_update
     {
-        if let Some(folders) = temporary_folders {
-            relayed |= crate::workspace::reconcile_temporary_folders(s, &folders);
-        }
         let mut stopped = Vec::new();
         let mut other = Vec::new();
         for event in events {
@@ -426,13 +457,19 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         if !stopped.is_empty() {
             if let Some(l) = s.screen.launcher_mut() {
                 for event in &stopped {
-                    if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } =
-                        event
+                    if let codenomad_client::transport::WorkspaceEvent::Stopped {
+                        workspace_id,
+                        deleted,
+                        temporary_retained,
+                    } = event
                     {
                         if l.pending {
-                            if l.stopped_during_pending.len() < 128 {
-                                l.stopped_during_pending.insert(workspace_id.clone());
-                            } else if !l.stopped_during_pending.contains(workspace_id) {
+                            if l.stopped_during_pending.len() < 128
+                                || l.stopped_during_pending.contains_key(workspace_id)
+                            {
+                                l.stopped_during_pending
+                                    .insert(workspace_id.clone(), (*deleted, *temporary_retained));
+                            } else {
                                 l.stopped_during_pending_overflow = true;
                             }
                         }
@@ -443,12 +480,25 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
             }
             for event in &stopped {
-                if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } = event
+                if let codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted,
+                    temporary_retained,
+                } = event
                 {
-                    relayed |= crate::workspace::detach_stopped_temporary(s, workspace_id, tx);
+                    relayed |= crate::workspace::detach_stopped_temporary(
+                        s,
+                        workspace_id,
+                        *deleted,
+                        *temporary_retained,
+                        tx,
+                    );
                 }
             }
             relayed |= crate::workspace::deliver_detached_events(s, &stopped);
+        }
+        if let Some(folders) = temporary_folders {
+            relayed |= crate::workspace::reconcile_temporary_folders(s, &folders);
         }
         #[cfg(target_arch = "wasm32")]
         if disconnected {
@@ -458,6 +508,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         let _ = disconnected;
         let mut start_reconcile = None;
         let mut overflow_reconcile = false;
+        let mut reconcile_temporary = false;
         if generation != previous {
             if generation > 0 && generation % 2 == 0 {
                 if let Some(l) = s.screen.launcher_mut() {
@@ -467,17 +518,22 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 relayed |= crate::workspace::set_detached_online(s, false);
             } else if generation % 2 == 1 {
+                reconcile_temporary = true;
                 relayed |= crate::workspace::set_detached_online(s, false);
                 if crate::workspace::has_detached_panels(s) {
                     start_reconcile = Some(generation);
                 }
             }
         } else if overflow && generation % 2 == 1 {
+            reconcile_temporary = true;
             relayed |= crate::workspace::set_detached_online(s, false);
             if crate::workspace::has_detached_panels(s) {
                 start_reconcile = Some(generation);
                 overflow_reconcile = true;
             }
+        }
+        if reconcile_temporary {
+            crate::shell::temporary::trigger_reconnect_reconcile(s);
         }
         if let Some(reconcile_generation) = start_reconcile
             && crate::workspace::has_detached_panels(s)
@@ -638,6 +694,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.result = None;
     l.pending = false;
     l.listing = false;
+    let temporary_cleanup = l.pending_temporary_cleanup.take();
     let stale_connection = l.pending_connection_generation != l.connection_generation;
     let pending_stream_generation = l.pending_stream_generation;
     let stopped_during_pending = std::mem::take(&mut l.stopped_during_pending);
@@ -647,6 +704,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         .take()
         .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
     {
+        if let Some((backend, path, req_id)) = temporary_cleanup {
+            crate::platform::spawn(async move {
+                let _ = backend
+                    .abandon_temporary_folder(&path, req_id.as_deref())
+                    .await;
+            });
+        }
         if std::mem::take(&mut l.resume_after_job)
             && !l.authentication_required
             && l.project.is_none()
@@ -667,7 +731,26 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Ok(Reply::Opened(opening, rows, restored)) => {
             let project = opening.project.clone();
+            if stale_connection && temporary_cleanup.is_some() {
+                drop(opening);
+                if let Some((backend, path, req_id)) = temporary_cleanup {
+                    crate::platform::spawn(async move {
+                        let _ = backend
+                            .abandon_temporary_folder(&path, req_id.as_deref())
+                            .await;
+                    });
+                }
+                tx.instant();
+                return true;
+            }
             if opening.adopt().is_err() {
+                if let Some((backend, path, req_id)) = temporary_cleanup {
+                    crate::platform::spawn(async move {
+                        let _ = backend
+                            .abandon_temporary_folder(&path, req_id.as_deref())
+                            .await;
+                    });
+                }
                 l.error = Some("rune.open_error");
                 tx.instant();
                 return true;
@@ -679,7 +762,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.creation_uncertain_linked = None;
             l.rebind_after_send = None;
             l.failed_detached_workspaces.remove(&project.id);
-            let stopped_in_flight = stopped_during_pending.contains(&project.id);
+            let stopped_meta = stopped_during_pending.get(&project.id).copied();
+            let stopped_in_flight = stopped_meta.is_some();
             let current_stream_generation = l.workspace_stream_generation;
             let needs_reconcile = !stopped_in_flight
                 && (stopped_during_pending_overflow
@@ -727,12 +811,20 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     crate::workspace::restore_files_mode(s);
                 }
             }
-            if stopped_in_flight {
-                let _ = crate::workspace::detach_stopped_temporary(s, &project.id, tx);
+            if let Some((deleted, temporary_retained)) = stopped_meta {
+                let _ = crate::workspace::detach_stopped_temporary(
+                    s,
+                    &project.id,
+                    deleted,
+                    temporary_retained,
+                    tx,
+                );
                 crate::workspace::deliver_detached_events(
                     s,
                     &[codenomad_client::transport::WorkspaceEvent::Stopped {
                         workspace_id: project.id,
+                        deleted,
+                        temporary_retained,
                     }],
                 );
             } else if needs_reconcile
@@ -778,8 +870,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.show_title = false;
             }
             let superseded = ticket.is_some_and(|t| t != s.notifications.navigation_ticket());
-            let stopped_in_flight =
-                stopped_during_pending_overflow || stopped_during_pending.contains(&b.workspace);
+            let stopped_in_flight = stopped_during_pending_overflow
+                || stopped_during_pending.contains_key(&b.workspace);
             if blocked || superseded || l.authentication_required || stopped_in_flight {
                 if !stopped_in_flight {
                     l.sessions.insert(
@@ -817,7 +909,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             let stopped_in_flight = stopped_during_pending_overflow
                 || l.project
                     .as_ref()
-                    .is_some_and(|p| stopped_during_pending.contains(&p.id));
+                    .is_some_and(|p| stopped_during_pending.contains_key(&p.id));
             if !stopped_in_flight && !l.sessions.iter().any(|row| row.id == session.id) {
                 l.sessions.insert(0, session);
             }
@@ -894,7 +986,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
                 !auth_required
                     && !stopped_during_pending_overflow
-                    && !stopped_during_pending.contains(&b.workspace)
+                    && !stopped_during_pending.contains_key(&b.workspace)
                     && (!selection_blocked
                         || s.phase == Phase::Failed
                             && selected.as_deref() == Some(b.session.as_str()))
@@ -930,7 +1022,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if !l.authentication_required && !stale_connection {
                 let id = opening.project.id.clone();
                 l.failed_detached_workspaces.remove(&id);
-                let stopped_in_flight = stopped_during_pending.contains(&id);
+                let stopped_in_flight = stopped_during_pending.contains_key(&id);
                 let current_stream_generation = l.workspace_stream_generation;
                 let needs_reconcile = !stopped_in_flight
                     && (stopped_during_pending_overflow
@@ -960,6 +1052,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         s,
                         &[codenomad_client::transport::WorkspaceEvent::Stopped {
                             workspace_id: id,
+                            deleted: false,
+                            temporary_retained: false,
                         }],
                     );
                 } else if needs_reconcile
@@ -983,7 +1077,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 crate::workspace::schedule_catalogue(s);
                 if !auth_required
                     && !stopped_during_pending_overflow
-                    && !stopped_during_pending.contains(&backend.workspace)
+                    && !stopped_during_pending.contains_key(&backend.workspace)
                     && (attempted
                         || crate::git::placement(s) != Some(slug.as_str())
                         || s.phase == Phase::Failed)
@@ -1007,7 +1101,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             crate::workspace::schedule_catalogue(s);
             if !auth_required
                 && !stopped_during_pending_overflow
-                && !stopped_during_pending.contains(&backend.workspace)
+                && !stopped_during_pending.contains_key(&backend.workspace)
                 && (crate::git::placement(s) != Some(slug.as_str()) || s.phase == Phase::Failed)
             {
                 if stale_connection {

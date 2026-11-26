@@ -73,7 +73,7 @@ fn workspace_event_bytes(event: &WorkspaceEvent) -> usize {
         }),
         WorkspaceEvent::NativeFilesystemChanged { workspace_id }
         | WorkspaceEvent::WorktreesChanged { workspace_id }
-        | WorkspaceEvent::Stopped { workspace_id } => workspace_id.len() + 64,
+        | WorkspaceEvent::Stopped { workspace_id, .. } => workspace_id.len() + 64,
         WorkspaceEvent::TemporaryChanged { folders } => folders
             .iter()
             .fold(64usize, |acc, folder| acc.saturating_add(folder.len() + 32)),
@@ -88,7 +88,7 @@ pub(super) struct Signals {
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
     workspace_events: Mutex<WorkspaceEventQueue>,
-    workspace_stopped: Mutex<HashSet<String>>,
+    workspace_stopped: Mutex<std::collections::HashMap<String, (bool, bool)>>,
     temporary_folders: Mutex<Option<Vec<String>>>,
     workspace_overflow: std::sync::atomic::AtomicBool,
     disconnect_notice: std::sync::atomic::AtomicBool,
@@ -188,11 +188,15 @@ impl Signals {
         let workspace_event =
             super::routing::parse_detached_workspace_event(frame).is_some_and(|event| {
                 match event {
-                    WorkspaceEvent::Stopped { workspace_id } => {
+                    WorkspaceEvent::Stopped {
+                        workspace_id,
+                        deleted,
+                        temporary_retained,
+                    } => {
                         let mut stopped = self.workspace_stopped.lock().unwrap();
-                        if stopped.len() < 128 {
-                            stopped.insert(workspace_id);
-                        } else if !stopped.contains(&workspace_id) {
+                        if stopped.len() < 128 || stopped.contains_key(&workspace_id) {
+                            stopped.insert(workspace_id, (deleted, temporary_retained));
+                        } else {
                             self.workspace_overflow.store(true, SeqCst);
                         }
                     }
@@ -421,8 +425,14 @@ impl CatalogueWatch {
         let generation = self.signals.workspace_generation.load(SeqCst);
         let overflow = self.signals.workspace_overflow.swap(false, SeqCst);
         let mut events = VecDeque::new();
-        for workspace_id in self.signals.workspace_stopped.lock().unwrap().drain() {
-            events.push_back(WorkspaceEvent::Stopped { workspace_id });
+        for (workspace_id, (deleted, temporary_retained)) in
+            self.signals.workspace_stopped.lock().unwrap().drain()
+        {
+            events.push_back(WorkspaceEvent::Stopped {
+                workspace_id,
+                deleted,
+                temporary_retained,
+            });
         }
         events.extend(self.signals.workspace_events.lock().unwrap().drain());
         (generation, overflow, events)
@@ -547,7 +557,7 @@ mod tests {
         assert_eq!(generation, 2);
         assert!(matches!(
             events.front(),
-            Some(WorkspaceEvent::Stopped { workspace_id }) if workspace_id == "proj-1"
+            Some(WorkspaceEvent::Stopped { workspace_id, .. }) if workspace_id == "proj-1"
         ));
         for _ in 0..260 {
             watch.signals.observe(&json!({

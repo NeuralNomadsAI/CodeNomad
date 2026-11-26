@@ -14,8 +14,8 @@ mod strip;
 mod temporary;
 pub(crate) use temporary::{
     StashedTemporary, TemporaryTabInfo, active_temporary_workspace, clear_temporary_mark,
-    detach_stopped_temporary, finish_discarded, reconcile_temporary_folders, restore_stashed,
-    stash_for_discard, temporary_tab_info,
+    detach_stopped_temporary, finish_discarded, has_temporary_tabs, reconcile_temporary_folders,
+    restore_stashed, stash_for_discard, temporary_tab_info,
 };
 
 pub use drafts::{
@@ -167,27 +167,59 @@ impl Ui {
         self.persistence.dirty(self.clock);
     }
     pub(crate) fn snapshot(&self) -> Snapshot {
+        self.snapshot_with_stashed(None)
+    }
+    pub(crate) fn snapshot_with_stashed(&self, stashed: Option<&StashedTemporary>) -> Snapshot {
+        let mut refs: Vec<&Entry> = self.entries.iter().collect();
+        let mut active = self.active;
+        if let Some(stashed) = stashed {
+            if let Some(blank_key) = &stashed.created_blank_key
+                && let Some(pos) = refs
+                    .iter()
+                    .position(|e| e.key == *blank_key && matches!(e.saved, Tab::Blank))
+            {
+                refs.remove(pos);
+                if active > pos {
+                    active -= 1;
+                }
+            }
+            let insert_at = stashed.original_index.min(refs.len());
+            refs.insert(insert_at, &stashed.entry);
+            if stashed.was_active {
+                active = insert_at;
+            } else if insert_at <= active {
+                active += 1;
+            }
+        }
+        let active = if refs.is_empty() {
+            None
+        } else {
+            Some(active.min(refs.len() - 1))
+        };
         Snapshot {
             revision: self.revision,
             saved_at: self.saved_at,
             panel_widths: self.panel_widths,
             file_wrap: self.file_wrap,
-            tabs: self.entries.iter().map(|e| {
-                let mut saved = e.saved.clone();
-                if let Tab::Workspace(w) = &mut saved {
-                    // Persist only clears protecting against another restored occurrence's text.
-                    for id in &e.cleared {
-                        if self.entries.iter().any(|other| {
-                            other.key != e.key && matches!(&other.saved, Tab::Workspace(old)
-                                if same_project(w, old) && old.drafts.get(id).is_some_and(|text| !text.is_empty()))
-                        }) {
-                            w.drafts.insert(id.clone(), String::new());
+            tabs: refs
+                .iter()
+                .map(|e| {
+                    let mut saved = e.saved.clone();
+                    if let Tab::Workspace(w) = &mut saved {
+                        // Persist only clears protecting against another restored occurrence's text.
+                        for id in &e.cleared {
+                            if refs.iter().any(|other| {
+                                other.key != e.key && matches!(&other.saved, Tab::Workspace(old)
+                                    if same_project(w, old) && old.drafts.get(id).is_some_and(|text| !text.is_empty()))
+                            }) {
+                                w.drafts.insert(id.clone(), String::new());
+                            }
                         }
                     }
-                }
-                saved
-            }).collect(),
-            active: Some(self.active),
+                    saved
+                })
+                .collect(),
+            active,
         }
     }
     fn hydrate(&mut self, saved: Snapshot) {
@@ -220,18 +252,23 @@ impl Ui {
         platform::release_records_on_exit(records, self.openings.clone());
     }
     fn stage(&mut self) {
+        self.stage_with_stashed(None);
+    }
+    fn stage_with_stashed(&mut self, stashed: Option<&StashedTemporary>) {
         #[cfg(target_arch = "wasm32")]
         if let Some(store) = &self.persistence.store {
             store.watch_openings(self.openings.clone());
         }
-        if self.persistence.read_error || !self.ready || self.staged_revision == Some(self.revision)
+        if self.persistence.read_error
+            || !self.ready
+            || (stashed.is_none() && self.staged_revision == Some(self.revision))
         {
             return;
         }
         let Some(store) = &self.persistence.store else {
             return;
         };
-        let bytes = match super::encode_for_save(&self.snapshot()) {
+        let bytes = match super::encode_for_save(&self.snapshot_with_stashed(stashed)) {
             Ok((bytes, partial)) => {
                 self.persistence.partial = partial;
                 bytes
@@ -253,7 +290,9 @@ impl Ui {
             })
             .collect();
         store.stage(&bytes, &records);
-        self.staged_revision = Some(self.revision);
+        if stashed.is_none() {
+            self.staged_revision = Some(self.revision);
+        }
     }
 }
 fn same_project(a: &Workspace, b: &Workspace) -> bool {

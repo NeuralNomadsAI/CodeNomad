@@ -793,6 +793,8 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
             &mut rt.state,
             &[codenomad_client::transport::WorkspaceEvent::Stopped {
                 workspace_id: bound.workspace.clone(),
+                deleted: false,
+                temporary_retained: false,
             }],
         ));
         assert!(rt.state.files.as_ref().unwrap().stopped);

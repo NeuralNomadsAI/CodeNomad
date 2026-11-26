@@ -16,15 +16,28 @@ pub(crate) struct TemporaryTabInfo {
 
 pub(crate) struct StashedTemporary {
     pub tab_key: String,
-    original_index: usize,
-    was_active: bool,
-    created_blank_key: Option<String>,
-    entry: Entry,
+    pub(super) original_index: usize,
+    pub(super) was_active: bool,
+    pub(super) created_blank_key: Option<String>,
+    pub(super) entry: Entry,
     pub backend: Backend,
     pub project: Project,
     pub folder: String,
     pub backend_id: Option<String>,
     pub server_id: Option<String>,
+    pub return_focus: Option<String>,
+}
+
+pub(crate) fn has_temporary_tabs(s: &State) -> bool {
+    s.workspace.as_ref().is_some_and(|ui| {
+        ui.entries
+            .iter()
+            .any(|item| matches!(&item.saved, Tab::Workspace(w) if w.temporary))
+    }) || s
+        .screen
+        .launcher()
+        .and_then(|l| l.project.as_ref())
+        .is_some_and(|p| p.temporary)
 }
 
 fn current_backend_identity(s: &State) -> Option<(Option<String>, Option<String>)> {
@@ -136,6 +149,7 @@ pub(crate) fn next_temporary_name(ui: &Ui, base: &str) -> String {
 pub(crate) fn stash_for_discard(
     s: &mut State,
     tab_key: &str,
+    return_focus: Option<String>,
     tx: &mut Tx,
 ) -> Option<StashedTemporary> {
     crate::shell::Panels::dismiss_outside(s, tx);
@@ -199,13 +213,28 @@ pub(crate) fn stash_for_discard(
         folder,
         backend_id,
         server_id,
+        return_focus,
     })
 }
 
-pub(crate) fn restore_stashed(s: &mut State, stashed: StashedTemporary, tx: &mut Tx) {
+pub(crate) fn restore_stashed(
+    s: &mut State,
+    stashed: StashedTemporary,
+    restore_focus: bool,
+    tx: &mut Tx,
+) {
     if stashed.was_active {
+        // Cancel any async neighbour restore/open triggered when yielding to the neighbour tab,
+        // so a late Reply::Opened cannot overwrite the restored temporary tab.
+        crate::launcher::cancel_pending_open(s);
         tabs::stash(s);
     }
+    let focus_target = restore_focus.then(|| {
+        stashed
+            .return_focus
+            .clone()
+            .unwrap_or_else(|| format!("t-{}", stashed.tab_key))
+    });
     let Some(ui) = &mut s.workspace else {
         return;
     };
@@ -234,6 +263,9 @@ pub(crate) fn restore_stashed(s: &mut State, stashed: StashedTemporary, tx: &mut
         tx.instant();
     }
     capture(s);
+    if let Some(target) = focus_target {
+        tx.return_focus(target, tx.focus_visible());
+    }
 }
 
 pub(crate) fn finish_discarded(
@@ -397,7 +429,13 @@ pub(crate) fn reconcile_temporary_folders(s: &mut State, folders: &[String]) -> 
     changed
 }
 
-pub(crate) fn detach_stopped_temporary(s: &mut State, workspace_id: &str, tx: &mut Tx) -> bool {
+pub(crate) fn detach_stopped_temporary(
+    s: &mut State,
+    workspace_id: &str,
+    deleted: bool,
+    temporary_retained: bool,
+    tx: &mut Tx,
+) -> bool {
     let keys: Vec<String> = s
         .workspace
         .as_ref()
@@ -415,9 +453,89 @@ pub(crate) fn detach_stopped_temporary(s: &mut State, workspace_id: &str, tx: &m
     if keys.is_empty() {
         return false;
     }
+    let keep_drafts = !(deleted && !temporary_retained);
     for tab_key in keys {
         crate::shell::temporary::dismiss_for_tab(s, &tab_key);
-        tabs::detach_local_without_release(s, &tab_key, tx);
+        tabs::detach_local_without_release(s, &tab_key, keep_drafts, tx);
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Screen, init, launcher::Launcher};
+    use rune::{Env, Runtime};
+
+    #[test]
+    fn detach_stopped_temporary_keeps_drafts_when_retained_and_purges_when_deleted() {
+        let mut s = init();
+        s.screen = Screen::Launcher(Launcher::fixture());
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        let project_retained = Project {
+            id: "ws-retained".into(),
+            path: "/tmp/cn-ret".into(),
+            temporary: true,
+        };
+        let project_deleted = Project {
+            id: "ws-deleted".into(),
+            path: "/tmp/cn-del".into(),
+            temporary: true,
+        };
+        let mut w_ret = crate::workspace::Workspace {
+            backend_id: None,
+            server_id: None,
+            folder: "/tmp/cn-ret".into(),
+            project_name: None,
+            temporary: true,
+            occurrence: 1,
+            workspace_id: Some("ws-retained".into()),
+            active_session_id: None,
+            drafts: Default::default(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        };
+        w_ret.drafts.insert("s-1".into(), "keep me".into());
+        let mut e_ret = entry("tab-0".into(), Tab::Workspace(w_ret));
+        e_ret.project = Some(project_retained);
+
+        let mut w_del = crate::workspace::Workspace {
+            backend_id: None,
+            server_id: None,
+            folder: "/tmp/cn-del".into(),
+            project_name: None,
+            temporary: true,
+            occurrence: 1,
+            workspace_id: Some("ws-deleted".into()),
+            active_session_id: None,
+            drafts: Default::default(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        };
+        w_del.drafts.insert("s-2".into(), "drop me".into());
+        let mut e_del = entry("tab-1".into(), Tab::Workspace(w_del));
+        e_del.project = Some(project_deleted);
+
+        ui.entries = vec![e_ret, e_del];
+        ui.active = 0;
+        s.workspace = Some(ui);
+        let mut rt = Runtime::new(s, |_, _| rune::el(), (800.0, 600.0), Env::new(false, 1.0));
+        rt.update(|s, tx| {
+            assert!(detach_stopped_temporary(s, "ws-retained", true, true, tx));
+            assert!(detach_stopped_temporary(s, "ws-deleted", true, false, tx));
+        });
+        let closed = &rt.state.workspace.as_ref().unwrap().closed;
+        assert!(
+            closed.iter().any(|w| w.folder == "/tmp/cn-ret"
+                && w.drafts.get("s-1").map(String::as_str) == Some("keep me")),
+            "retained workspace.stopped must preserve drafts in ui.closed"
+        );
+        assert!(
+            closed.iter().all(|w| w.folder != "/tmp/cn-del"),
+            "deleted non-retained workspace.stopped must purge drafts"
+        );
+    }
 }

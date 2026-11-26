@@ -1096,7 +1096,8 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
             l.authentication_required = false;
             l.detached_reconcile = Some((1, HashSet::new(), reconcile_rx));
             l.pending_stream_generation = 1;
-            l.stopped_during_pending.insert(project_c.id.clone());
+            l.stopped_during_pending
+                .insert(project_c.id.clone(), (false, false));
             l.result = Some(opened_in);
             l.pending = true;
         }
@@ -1202,7 +1203,8 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
         {
             let l = rt.state.screen.launcher_mut().unwrap();
             l.sessions.clear();
-            l.stopped_during_pending.insert("proj-stopped".into());
+            l.stopped_during_pending
+                .insert("proj-stopped".into(), (false, false));
             l.result = Some(created_in);
             l.pending = true;
         }

@@ -141,7 +141,7 @@ pub(crate) fn connection_event(
         Event::Workspace(WorkspaceEvent::ProvidersChanged { workspace_id }) => {
             provider_changed(s, workspace_id)
         }
-        Event::Workspace(WorkspaceEvent::Stopped { workspace_id }) => {
+        Event::Workspace(WorkspaceEvent::Stopped { workspace_id, .. }) => {
             provider_stopped(s, workspace_id)
         }
         Event::AgentHint(true) => {

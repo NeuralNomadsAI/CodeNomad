@@ -78,6 +78,8 @@ pub enum WorkspaceEvent {
     },
     Stopped {
         workspace_id: String,
+        deleted: bool,
+        temporary_retained: bool,
     },
 }
 #[derive(Debug)]

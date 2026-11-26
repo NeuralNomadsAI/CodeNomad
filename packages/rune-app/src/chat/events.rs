@@ -190,13 +190,17 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::TemporaryChanged {
                 folders,
             }) => {
-                let _ = workspace::reconcile_temporary_folders(s, &folders);
+                s.temporary.queue_temporary_folders(folders);
             }
             Event::Workspace(event) => {
-                if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } =
-                    &event
+                if let codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted,
+                    temporary_retained,
+                } = &event
                 {
-                    s.temporary.queue_stopped(workspace_id.clone());
+                    s.temporary
+                        .queue_stopped(workspace_id.clone(), *deleted, *temporary_retained);
                 }
                 if matches!(
                     event,

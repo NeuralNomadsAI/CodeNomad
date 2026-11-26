@@ -168,6 +168,8 @@ pub(super) fn parse_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
     match value["type"].as_str()? {
         "workspace.stopped" => Some(WorkspaceEvent::Stopped {
             workspace_id: id.into(),
+            deleted: value["reason"].as_str() == Some("deleted"),
+            temporary_retained: value["temporaryRetained"].as_bool().unwrap_or(false),
         }),
         "workspace.worktreesChanged" => Some(WorkspaceEvent::WorktreesChanged {
             workspace_id: id.into(),

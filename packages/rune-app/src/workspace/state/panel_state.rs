@@ -585,7 +585,7 @@ pub(crate) fn event_workspace_id(event: &WorkspaceEvent) -> Option<&str> {
         | WorkspaceEvent::FilesChanged { workspace_id, .. }
         | WorkspaceEvent::WorktreesChanged { workspace_id }
         | WorkspaceEvent::SessionMoved { workspace_id, .. }
-        | WorkspaceEvent::Stopped { workspace_id } => Some(workspace_id.as_str()),
+        | WorkspaceEvent::Stopped { workspace_id, .. } => Some(workspace_id.as_str()),
         _ => None,
     }
 }
@@ -701,13 +701,24 @@ pub(crate) fn stop_unlisted_detached(
             .map(|git| git.workspace_id().to_owned())
             .filter(|id| !live.contains(id.as_str()))
         {
-            crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+            crate::git::event(
+                s,
+                &WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                },
+            );
             changed = true;
         }
         if let Some(files) = &mut s.files {
             let workspace_id = files.workspace_id().to_owned();
             if !live.contains(workspace_id.as_str()) {
-                files.event(WorkspaceEvent::Stopped { workspace_id });
+                files.event(WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
                 changed = true;
             }
         }
@@ -743,7 +754,14 @@ pub(crate) fn reconcile_detached_online(
                     if !opened_after.contains(workspace_id.as_str())
                         && !live.contains(workspace_id.as_str()) =>
                 {
-                    crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+                    crate::git::event(
+                        s,
+                        &WorkspaceEvent::Stopped {
+                            workspace_id,
+                            deleted: false,
+                            temporary_retained: false,
+                        },
+                    );
                     changed = true;
                 }
                 Some(_) => {
@@ -764,7 +782,11 @@ pub(crate) fn reconcile_detached_online(
                     if !opened_after.contains(workspace_id.as_str())
                         && !live.contains(workspace_id.as_str()) =>
                 {
-                    files.event(WorkspaceEvent::Stopped { workspace_id });
+                    files.event(WorkspaceEvent::Stopped {
+                        workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
+                    });
                     changed = true;
                 }
                 Some(_) => {

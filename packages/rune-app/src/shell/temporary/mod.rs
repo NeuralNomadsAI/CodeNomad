@@ -34,6 +34,7 @@ struct PendingCreate {
 
 struct PendingKeep {
     generation: u64,
+    backend: Backend,
     tab_key: String,
     folder: String,
     backend_id: Option<String>,
@@ -49,6 +50,12 @@ struct PendingDiscard {
     rx: Receiver<Result<(), TemporaryError>>,
 }
 
+struct PendingReconcile {
+    connection_generation: u64,
+    backend: Backend,
+    rx: Receiver<Result<Vec<String>, TemporaryError>>,
+}
+
 #[derive(Default)]
 pub(crate) struct Host {
     dialog: Option<CloseDialog>,
@@ -58,7 +65,9 @@ pub(crate) struct Host {
     keeping: Option<PendingKeep>,
     discarding: Option<PendingDiscard>,
     pending_restore: Option<StashedTemporary>,
-    stopped_queue: Vec<String>,
+    stopped_queue: Vec<(String, bool, bool)>,
+    pending_temporary_folders: Option<Vec<String>>,
+    reconcile_folders: Option<PendingReconcile>,
 }
 
 impl Host {
@@ -73,21 +82,47 @@ impl Host {
             || self.pending_restore.is_some()
     }
 
+    pub(crate) fn stashed_for_snapshot(&self) -> Option<&StashedTemporary> {
+        self.discarding
+            .as_ref()
+            .map(|pending| &pending.stashed)
+            .or(self.pending_restore.as_ref())
+    }
+
     pub(crate) fn cancel_for_auth(&mut self) {
         self.dialog = None;
         self.creating = None;
         self.keeping = None;
         self.stopped_queue.clear();
+        self.pending_temporary_folders = None;
+        self.reconcile_folders = None;
         self.generation = self.generation.wrapping_add(1);
         if let Some(pending) = self.discarding.take() {
             self.pending_restore = Some(pending.stashed);
         }
     }
 
-    pub(crate) fn queue_stopped(&mut self, workspace_id: String) {
-        if self.stopped_queue.len() < 128 && !self.stopped_queue.contains(&workspace_id) {
-            self.stopped_queue.push(workspace_id);
+    pub(crate) fn queue_stopped(
+        &mut self,
+        workspace_id: String,
+        deleted: bool,
+        temporary_retained: bool,
+    ) {
+        if let Some(existing) = self
+            .stopped_queue
+            .iter_mut()
+            .find(|(id, _, _)| id == &workspace_id)
+        {
+            existing.1 = deleted;
+            existing.2 = temporary_retained;
+        } else if self.stopped_queue.len() < 128 {
+            self.stopped_queue
+                .push((workspace_id, deleted, temporary_retained));
         }
+    }
+
+    pub(crate) fn queue_temporary_folders(&mut self, folders: Vec<String>) {
+        self.pending_temporary_folders = Some(folders);
     }
 }
 
@@ -171,8 +206,42 @@ fn emit_temporary_error(s: &mut State, title_key: &'static str, err: &TemporaryE
     );
 }
 
+pub(crate) fn host_supports_temporary(s: &State) -> bool {
+    s.screen
+        .launcher()
+        .and_then(|l| l.connection.as_ref())
+        .is_some_and(|backend| backend.client.supports("temporary-workspaces"))
+}
+
+pub(crate) fn trigger_reconnect_reconcile(s: &mut State) {
+    if !workspace::has_temporary_tabs(s) || !host_supports_temporary(s) {
+        return;
+    }
+    let Some((backend, connection_generation)) = s.screen.launcher().and_then(|l| {
+        (!l.authentication_required)
+            .then(|| Some((l.connection.clone()?, l.connection_generation())))
+            .flatten()
+    }) else {
+        return;
+    };
+    let (out, rx) = bounded(1);
+    let wake = s.wake.clone();
+    let req_backend = backend.clone();
+    platform::spawn(async move {
+        let result = req_backend.temporary_folders().await;
+        if out.try_send(result).is_ok() {
+            wake();
+        }
+    });
+    s.temporary.reconcile_folders = Some(PendingReconcile {
+        connection_generation,
+        backend,
+        rx,
+    });
+}
+
 pub(crate) fn can_create(s: &State) -> bool {
-    if s.temporary.in_flight() || !workspace::input_ready(s) {
+    if s.temporary.in_flight() || !workspace::input_ready(s) || !host_supports_temporary(s) {
         return false;
     }
     let Some(l) = s.screen.launcher() else {
@@ -207,8 +276,15 @@ pub(crate) fn create(s: &mut State, _tx: &mut Tx) -> bool {
     let req_backend = backend.clone();
     platform::spawn(async move {
         let result = req_backend.create_temporary_folder().await;
-        if out.try_send(result).is_ok() {
-            wake();
+        match out.try_send(result) {
+            Ok(()) => wake(),
+            Err(err) => {
+                if let Ok(created) = err.into_inner() {
+                    let _ = req_backend
+                        .abandon_temporary_folder(&created.path, None)
+                        .await;
+                }
+            }
         }
     });
     s.temporary.creating = Some(PendingCreate {
@@ -245,21 +321,24 @@ pub(crate) fn request_close(s: &mut State, tab_key: &str, tx: &mut Tx) {
         return;
     };
     if info.untouched {
-        start_discard(s, tab_key, true, tx);
+        start_discard(s, tab_key, true, None, tx);
     } else {
-        open_dialog(s, tab_key, tx);
+        open_dialog(s, tab_key, None, tx);
     }
 }
 
-fn open_dialog(s: &mut State, tab_key: &str, tx: &mut Tx) {
+fn capture_return_focus(tab_key: &str, tx: &Tx) -> Option<String> {
+    tx.focused()
+        .filter(|key| !key.starts_with("command-palette-"))
+        .map(str::to_owned)
+        .or_else(|| Some(format!("t-{tab_key}")))
+}
+
+fn open_dialog(s: &mut State, tab_key: &str, captured_focus: Option<String>, tx: &mut Tx) {
     if is_open(s) || blocked_by_higher_modal(s) {
         return;
     }
-    let return_focus = tx
-        .focused()
-        .filter(|key| !key.starts_with("command-palette-"))
-        .map(str::to_owned)
-        .or_else(|| Some(format!("t-{tab_key}")));
+    let return_focus = captured_focus.or_else(|| capture_return_focus(tab_key, tx));
     super::Panels::dismiss_outside(s, tx);
     let scope = s.input_scope.clone();
     s.temporary.dialog = Some(CloseDialog {
@@ -310,11 +389,10 @@ fn choose_discard(s: &mut State, tx: &mut Tx) {
     if !is_open(s) || s.temporary.in_flight() {
         return;
     }
-    let Some(tab_key) = s.temporary.dialog.as_ref().map(|d| d.tab_key.clone()) else {
+    let Some(dialog) = s.temporary.dialog.take() else {
         return;
     };
-    s.temporary.dialog = None;
-    start_discard(s, &tab_key, false, tx);
+    start_discard(s, &dialog.tab_key, false, dialog.return_focus, tx);
 }
 
 fn start_keep(
@@ -327,16 +405,18 @@ fn start_keep(
     let generation = s.temporary.generation;
     let (out, rx) = bounded(1);
     let wake = s.wake.clone();
-    let backend = info.backend;
+    let backend = info.backend.clone();
+    let req_backend = info.backend;
     let workspace_id = info.project.id;
     platform::spawn(async move {
-        let result = backend.keep_temporary_workspace(&workspace_id).await;
+        let result = req_backend.keep_temporary_workspace(&workspace_id).await;
         if out.try_send(result).is_ok() {
             wake();
         }
     });
     s.temporary.keeping = Some(PendingKeep {
         generation,
+        backend,
         tab_key: info.tab_key,
         folder: info.folder,
         backend_id: info.backend_id,
@@ -348,8 +428,15 @@ fn start_keep(
     true
 }
 
-fn start_discard(s: &mut State, tab_key: &str, quiet: bool, tx: &mut Tx) {
-    let Some(stashed) = workspace::stash_for_discard(s, tab_key, tx) else {
+fn start_discard(
+    s: &mut State,
+    tab_key: &str,
+    quiet: bool,
+    captured_focus: Option<String>,
+    tx: &mut Tx,
+) {
+    let return_focus = captured_focus.or_else(|| capture_return_focus(tab_key, tx));
+    let Some(stashed) = workspace::stash_for_discard(s, tab_key, return_focus, tx) else {
         return;
     };
     s.temporary.generation = s.temporary.generation.wrapping_add(1);
@@ -442,13 +529,46 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let mut changed = false;
     if let Some(stashed) = s.temporary.pending_restore.take() {
-        workspace::restore_stashed(s, stashed, tx);
+        workspace::restore_stashed(s, stashed, false, tx);
         changed = true;
     }
     if !s.temporary.stopped_queue.is_empty() {
         let stopped = std::mem::take(&mut s.temporary.stopped_queue);
-        for workspace_id in stopped {
-            changed |= workspace::detach_stopped_temporary(s, &workspace_id, tx);
+        for (workspace_id, deleted, temporary_retained) in stopped {
+            changed |= workspace::detach_stopped_temporary(
+                s,
+                &workspace_id,
+                deleted,
+                temporary_retained,
+                tx,
+            );
+        }
+    }
+    if let Some(folders) = s.temporary.pending_temporary_folders.take() {
+        changed |= workspace::reconcile_temporary_folders(s, &folders);
+    }
+    if let Some(result) = s
+        .temporary
+        .reconcile_folders
+        .as_ref()
+        .and_then(|pending| pending.rx.try_recv().ok())
+    {
+        let pending = s.temporary.reconcile_folders.take().unwrap();
+        let same_connection = s.screen.launcher().is_some_and(|l| {
+            l.connection.is_some()
+                && !l.authentication_required
+                && l.connection_generation() == pending.connection_generation
+        });
+        if same_connection {
+            match result {
+                Ok(folders) => {
+                    changed |= workspace::reconcile_temporary_folders(s, &folders);
+                }
+                Err(TemporaryError::Unauthorized) => {
+                    changed |= crate::settings::authentication_required(s, &pending.backend);
+                }
+                Err(_) => {}
+            }
         }
     }
     if let Some(result) = s
@@ -474,6 +594,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                             let _ = backend.abandon_temporary_folder(&created.path, None).await;
                         });
                     }
+                }
+                Err(TemporaryError::Unauthorized) => {
+                    let _ = crate::settings::authentication_required(s, &pending.backend);
                 }
                 Err(err) => {
                     emit_temporary_error(s, "commands.newTemporaryInstance.label", &err);
@@ -507,6 +630,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         workspace::close_ordinary(s, &pending.tab_key, tx);
                     }
                 }
+                Err(TemporaryError::Unauthorized) => {
+                    let _ = crate::settings::authentication_required(s, &pending.backend);
+                }
                 Err(err) if err.is_not_temporary() => {
                     workspace::clear_temporary_mark(
                         s,
@@ -537,6 +663,11 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 Ok(()) => {
                     workspace::finish_discarded(s, pending.stashed, false, false, tx);
                 }
+                Err(TemporaryError::Unauthorized) => {
+                    let backend = pending.stashed.backend.clone();
+                    workspace::restore_stashed(s, pending.stashed, true, tx);
+                    let _ = crate::settings::authentication_required(s, &backend);
+                }
                 Err(err) if err.is_not_temporary() => {
                     let folder = pending.stashed.folder.clone();
                     let backend_id = pending.stashed.backend_id.clone();
@@ -554,9 +685,10 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 Err(err) => {
                     let tab_key = pending.stashed.tab_key.clone();
-                    workspace::restore_stashed(s, pending.stashed, tx);
+                    let return_focus = pending.stashed.return_focus.clone();
+                    workspace::restore_stashed(s, pending.stashed, !pending.quiet, tx);
                     if pending.quiet {
-                        open_dialog(s, &tab_key, tx);
+                        open_dialog(s, &tab_key, return_focus, tx);
                     } else {
                         emit_temporary_error(s, "temporaryInstance.discard.failedTitle", &err);
                     }
