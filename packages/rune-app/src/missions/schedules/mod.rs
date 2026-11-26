@@ -137,6 +137,7 @@ pub(crate) enum ScheduleGesture {
     Select(String),
     More,
     RetryList,
+    RetrySelection,
     Action(Act),
     Confirm(bool),
     Reconcile,

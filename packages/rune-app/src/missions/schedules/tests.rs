@@ -1474,3 +1474,121 @@ fn late_sibling_401_between_collect_and_apply_blocks_activation_play() {
         assert!(holds2.drain_auth_expired().is_empty());
     });
 }
+
+#[test]
+fn evicted_offpage_selection_shows_retry_and_clears_error_on_more_and_prunes_disclosures() {
+    crate::platform::block_on(async {
+        let mut h = H::new().await;
+        let s1 = row("msn_1", "Page One", "paused", 1, "null");
+        let s2 = row("msn_2", "Page Two", "paused", 1, "null");
+        let (s, c) = h.panel.schedule_parts();
+        s.show(true);
+        s.refresh(c);
+        let first = h.http.accept().await;
+        first
+            .reply(200, list(vec![s1.clone()], Some("msn_1")))
+            .await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.rows.len() == 1)
+            .await;
+
+        // Load page 2 via More, select msn_2, and open instructions + diagnostics disclosures.
+        assert!(h.act(G::More));
+        let second = h.http.accept().await;
+        second.reply(200, list(vec![s2.clone()], None)).await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.rows.len() == 2)
+            .await;
+
+        assert!(h.act(G::Select("msn_2".into())));
+        let (r1, r2) = (h.http.accept().await, h.http.accept().await);
+        for req in [r1, r2] {
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, list(vec![s1.clone()], Some("msn_1"))).await;
+            }
+        }
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.capability.is_some())
+            .await;
+        let pt = h.http.accept().await;
+        assert!(pt.header.contains("/missions/msn_2/schedule"));
+        pt.reply(200, rdoc(s2.clone())).await;
+        h.pump(|p, _| p.schedules.is_fresh("msn_2")).await;
+
+        assert!(h.act(G::ToggleInstructions));
+        assert!(h.act(G::ToggleDiagnostics));
+        assert!(h.panel.schedules.retained_bytes() > 0);
+
+        // Suspend and evict under M7 pressure: rows + disclosures must drop to 0 bytes.
+        h.panel.suspend();
+        let evicted = h.panel.evict_inactive_caches();
+        assert!(evicted > 0);
+        assert_eq!(h.panel.schedules.retained_bytes(), 0);
+        assert!(h.panel.schedules.instructions_open.is_empty());
+        assert!(h.panel.schedules.diagnostics_open.is_empty());
+        assert_eq!(h.panel.schedules.selected.as_deref(), Some("msn_2"));
+
+        // Return to tab: page 1 succeeds, off-page point-read fails with 503.
+        let (s, c) = h.panel.schedule_parts();
+        s.show(true);
+        s.refresh(c);
+        let (r1, r2) = (h.http.accept().await, h.http.accept().await);
+        for req in [r1, r2] {
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, list(vec![s1.clone()], Some("msn_1"))).await;
+            }
+        }
+        h.pump(|p, _| !p.schedules.loading()).await;
+        let pt_fail = h.http.accept().await;
+        assert!(pt_fail.header.contains("/missions/msn_2/schedule"));
+        pt_fail.reply(503, json!({"error": "unavailable"})).await;
+        h.pump(|p, _| p.schedules.selection_error == Some(super::list::SelectionError::Failed))
+            .await;
+
+        // Detail region must stay visible with error alert and targeted Retry button.
+        let mut rt = rune::Runtime::new(
+            h,
+            |h, _| {
+                let Some(el) =
+                    super::view::detail_section(&h.panel, &h.holds, |_: &mut H, _, _| {})
+                else {
+                    panic!("expected detail_section with Retry on point-read 503");
+                };
+                el
+            },
+            (480.0, 400.0),
+            rune::Env::default(),
+        );
+        rt.frame(0.0);
+        let tree = rt.accessibility_json().to_string();
+        assert!(
+            tree.contains("\"role\":\"alert\""),
+            "expected alert role on failed point-read detail: {tree}"
+        );
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|n| n.key.as_deref() == Some("mission-schedule-retry-selection")),
+            "expected RetrySelection button in detail view"
+        );
+        let mut h = rt.state;
+
+        // Targeted retry issues a new point-read; failing again keeps selection_error,
+        // then loading page 2 via More brings msn_2 back and clears the stale error.
+        assert!(h.act(G::RetrySelection));
+        let pt_retry = h.http.accept().await;
+        assert!(pt_retry.header.contains("/missions/msn_2/schedule"));
+        pt_retry.reply(503, json!({"error": "unavailable"})).await;
+        h.pump(|p, _| p.schedules.selection_error == Some(super::list::SelectionError::Failed))
+            .await;
+
+        assert!(h.act(G::More));
+        let more_req = h.http.accept().await;
+        more_req.reply(200, list(vec![s2.clone()], None)).await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.rows.len() == 2)
+            .await;
+        assert_eq!(h.panel.schedules.selection_error, None);
+        assert!(h.panel.schedules.is_fresh("msn_2"));
+    });
+}

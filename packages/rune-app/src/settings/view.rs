@@ -116,7 +116,7 @@ impl Default for Section {
     }
 }
 
-pub(super) fn set_after_palette_save(
+fn set_after_palette_save(
     slot: &mut Option<(u64, AfterPaletteSave)>,
     close_request: Option<&Rc<CloseRequest>>,
     epoch: u64,
@@ -130,7 +130,7 @@ pub(super) fn set_after_palette_save(
     *slot = Some((epoch, after));
 }
 
-pub(super) fn clear_after_palette_save(
+fn clear_after_palette_save(
     slot: &mut Option<(u64, AfterPaletteSave)>,
     close_request: Option<&Rc<CloseRequest>>,
 ) {
@@ -254,6 +254,7 @@ impl Window {
 
     fn request_close(&mut self, tx: &mut rune::Tx) {
         if self.config_files.busy() {
+            self.cancel_close_main();
             return;
         }
         {
@@ -493,26 +494,24 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-info" => Section::Info,
                     _ => Section::General,
                 };
-                if next != s.section {
-                    let prefs = s.shared.borrow();
-                    if s.general.busy(&prefs) {
-                        set_after_palette_save(
-                            &mut s.after_palette_save,
-                            s.close_request.as_ref(),
-                            prefs.binding_epoch(),
-                            AfterPaletteSave::Section(next),
-                        );
-                        return;
-                    }
-                    drop(prefs);
-                    if s.general.dirty() {
-                        clear_after_palette_save(
-                            &mut s.after_palette_save,
-                            s.close_request.as_ref(),
-                        );
-                        s.pending_section = Some(PendingSection::Section(next));
-                        return;
-                    }
+                if next == s.section {
+                    return;
+                }
+                let prefs = s.shared.borrow();
+                if s.general.busy(&prefs) {
+                    set_after_palette_save(
+                        &mut s.after_palette_save,
+                        s.close_request.as_ref(),
+                        prefs.binding_epoch(),
+                        AfterPaletteSave::Section(next),
+                    );
+                    return;
+                }
+                drop(prefs);
+                if s.general.dirty() {
+                    clear_after_palette_save(&mut s.after_palette_save, s.close_request.as_ref());
+                    s.pending_section = Some(PendingSection::Section(next));
+                    return;
                 }
                 s.switch_section(next);
             },

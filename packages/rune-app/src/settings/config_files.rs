@@ -43,6 +43,12 @@ impl Editor {
         self.write.is_some()
     }
 
+    #[cfg(test)]
+    pub(super) fn fixture_busy_for_test(&mut self) {
+        let (_tx, rx) = bounded(1);
+        self.write = Some(rx);
+    }
+
     pub fn request_file(&mut self, id: String) {
         self.requested_id = Some(id);
         if self.read.is_none() && !self.busy() {

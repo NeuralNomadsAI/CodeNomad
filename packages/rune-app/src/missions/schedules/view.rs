@@ -89,10 +89,28 @@ pub(crate) fn detail_section<S: 'static>(
             SelErr::Pending => "missions.scheduleList.uncertain",
             SelErr::Failed => "missions.scheduleList.readFailed",
         };
-        reg = reg.child(note(k, "status"));
+        let role = if err == SelErr::Failed {
+            "alert"
+        } else {
+            "status"
+        };
+        reg = reg.child(note(k, role));
     }
 
-    let doc = ui.schedules.selected_document(holds, ctx)?;
+    let Some(doc) = ui.schedules.selected_document(holds, ctx) else {
+        if let Some(err) = ui.schedules.selection_error {
+            if err == SelErr::Failed {
+                reg = reg.child(tbtn(
+                    "missionsPanel.reader.retry",
+                    "mission-schedule-retry-selection",
+                    G::RetrySelection,
+                    act,
+                ));
+            }
+            return Some(reg.label(t("missionsPanel.overview")));
+        }
+        return None;
+    };
     let pre = ui.schedules.pre_busy(&doc.id);
     let active = pre.or_else(|| hold.and_then(|(p, chk)| chk.then(|| p.action()).flatten()));
     let busy = pre.is_some() || hold.is_some_and(|(_, chk)| chk);

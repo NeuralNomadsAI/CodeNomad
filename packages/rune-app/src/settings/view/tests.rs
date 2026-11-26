@@ -1123,4 +1123,23 @@ fn config_file_jump_during_palette_save_cancels_deferred_main_window_close() {
         !request.close_main_after.get(),
         "clearing a deferred Close must also cancel close_main_after"
     );
+
+    // Clicking the already-active section must not cancel a deferred main-window close,
+    // while refusing a close request because config_files is busy must clear close_main_after.
+    let mut rt = rune::Runtime::new(
+        window,
+        |_, _| rune::el(),
+        (400.0, 300.0),
+        rune::Env::default(),
+    );
+    rt.frame(0.0);
+    rt.update(|w, tx| {
+        w.config_files.fixture_busy_for_test();
+        request.close_main_after.set(true);
+        w.request_close(tx);
+    });
+    assert!(
+        !request.close_main_after.get(),
+        "refusing close during busy config_files must clear close_main_after"
+    );
 }

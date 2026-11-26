@@ -284,12 +284,21 @@ fn schedule_bytes(doc: &UnifiedSchedule) -> usize {
         .saturating_add(256)
 }
 
+fn set_bytes(set: &HashSet<String>) -> usize {
+    set.iter().fold(0usize, |acc, s| {
+        acc.saturating_add(s.len()).saturating_add(32)
+    })
+}
+
 impl Schedules {
     pub(crate) fn retained_bytes(&self) -> usize {
         self.rows
             .iter()
             .fold(0usize, |acc, doc| acc.saturating_add(schedule_bytes(doc)))
             .saturating_add(self.next.as_deref().map_or(0, str::len))
+            .saturating_add(set_bytes(&self.instructions_open))
+            .saturating_add(set_bytes(&self.diagnostics_open))
+            .saturating_add(set_bytes(&self.diagnostics_info_open))
     }
 
     pub(crate) fn evict_cache(&mut self) -> usize {
@@ -303,10 +312,30 @@ impl Schedules {
         self.rows = Vec::new();
         self.next = None;
         self.fresh.clear();
+        self.instructions_open = HashSet::new();
+        self.diagnostics_open = HashSet::new();
+        self.diagnostics_info_open = HashSet::new();
         self.error = false;
         self.failed_append = false;
         self.selection_error = None;
         before
+    }
+
+    fn forget_disclosures(&mut self, id: &str) {
+        self.instructions_open.remove(id);
+        self.diagnostics_open.remove(id);
+        self.diagnostics_info_open.remove(id);
+    }
+
+    fn prune_disclosures(&mut self) {
+        let keep = |id: &String, rows: &[UnifiedSchedule], sel: Option<&str>| {
+            sel == Some(id.as_str()) || rows.iter().any(|r| &r.id == id)
+        };
+        let rows = &self.rows;
+        let sel = self.selected.as_deref();
+        self.instructions_open.retain(|id| keep(id, rows, sel));
+        self.diagnostics_open.retain(|id| keep(id, rows, sel));
+        self.diagnostics_info_open.retain(|id| keep(id, rows, sel));
     }
 
     #[cfg(test)]
@@ -553,6 +582,20 @@ impl Schedules {
                 } else {
                     self.failed_append = false;
                     self.refresh(ctx);
+                }
+                true
+            }
+            G::RetrySelection => {
+                let Some(id) = self.selected.clone() else {
+                    return false;
+                };
+                if !self.visible || self.point_flight.is_some() {
+                    return false;
+                }
+                self.selection_error = None;
+                self.start_point(id, ctx);
+                if self.capability.is_none() {
+                    self.start_cap(ctx);
                 }
                 true
             }
@@ -828,6 +871,7 @@ impl Schedules {
                 None => {
                     self.rows.retain(|x| x.id != sid);
                     self.fresh.remove(&sid);
+                    self.forget_disclosures(&sid);
                     self.selection_error = None;
                 }
             },
@@ -1009,7 +1053,12 @@ impl Schedules {
             }
             let sel = self.selected.as_deref() == Some(key.schedule_id.as_str());
             match ev {
-                Ev::Settled(_, true) if sel => self.clear_selection(),
+                Ev::Settled(k, true) => {
+                    self.forget_disclosures(&k.schedule_id);
+                    if sel {
+                        self.clear_selection();
+                    }
+                }
                 Ev::Refused(_, fb) if sel => self.feedback = Some((key.schedule_id.clone(), *fb)),
                 Ev::ActivationRefused(_, refusal) if sel => {
                     self.refusal = refusal.clone();
@@ -1049,13 +1098,21 @@ impl Schedules {
         self.error = false;
         let published = page.schedules.clone();
         if append {
+            let mut loaded_selected = false;
             for doc in page.schedules {
+                if self.selected.as_deref() == Some(doc.id.as_str()) {
+                    loaded_selected = true;
+                }
                 self.fresh.insert(doc.id.clone());
                 if let Some(slot) = self.rows.iter_mut().find(|r| r.id == doc.id) {
                     *slot = doc;
                 } else {
                     self.rows.push(doc);
                 }
+            }
+            if loaded_selected {
+                self.selection_error = None;
+                cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
             }
             self.next = page.next;
         } else {
@@ -1079,22 +1136,25 @@ impl Schedules {
                         self.fresh.insert(id.clone());
                     }
                 }
-                cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
-                let mid = id.clone();
-                self.point_flight = Some(Flight::bg(
-                    (id, self.generation),
-                    ctx,
-                    self.auth_sink.clone(),
-                    is_read_auth,
-                    move |b, d, c| async move {
-                        b.mission_schedule_read(&mid, d.as_deref(), None, &c).await
-                    },
-                ));
+                self.start_point(id, ctx);
             } else {
                 self.selection_error = None;
             }
+            self.prune_disclosures();
         }
         holds.mark_published(ctx.backend, &page.project_id, ctx.scope, &published);
+    }
+
+    fn start_point(&mut self, id: String, ctx: ScheduleCtx<'_>) {
+        cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
+        let mid = id.clone();
+        self.point_flight = Some(Flight::bg(
+            (id, self.generation),
+            ctx,
+            self.auth_sink.clone(),
+            is_read_auth,
+            move |b, d, c| async move { b.mission_schedule_read(&mid, d.as_deref(), None, &c).await },
+        ));
     }
 
     fn start_list(&mut self, append: bool, ctx: ScheduleCtx<'_>) {
