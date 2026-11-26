@@ -110,10 +110,19 @@ impl Jump {
                 self.cancelled.recv().await.ok();
                 None
             },
-            futures_lite::future::or(request, async {
-                wire.placement_changed().await;
-                None
-            }),
+            futures_lite::future::or(
+                futures_lite::future::or(
+                    async {
+                        wire.placement_changed().await;
+                        None
+                    },
+                    async {
+                        wire.stream_closed().await;
+                        None
+                    },
+                ),
+                request,
+            ),
         )
         .await
         else {
@@ -192,4 +201,22 @@ fn an_accepted_older_window_follows_a_queued_reader_sync() {
         .await;
         assert!(accepted && events.is_empty());
     });
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn admission_rejects_after_placement_change_even_before_revision_bumps() {
+    let (ev_tx, _ev_rx) = bounded(1);
+    let wire = Arc::new(stream::State::observing_preferences(ev_tx, Arc::new(|| {})));
+    wire.alive.store(true, SeqCst);
+    wire.upstream.store(true, SeqCst);
+    let (admit, _verdict) = bounded(1);
+    let admission = Admission {
+        wire: wire.clone(),
+        revision: 0,
+        live_version: None,
+        admit,
+    };
+    wire.close_placement();
+    assert!(!admission.accept());
 }

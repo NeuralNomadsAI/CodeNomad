@@ -527,6 +527,14 @@ async fn read_page(
     wire: &stream::State,
     page: impl std::future::Future<Output = history::Result<history::Page>>,
 ) -> Option<Result<history::Page, PageFailure>> {
+    if wire.is_placement_changed()
+        || reading.is_some_and(|reading| reading.demand.current().generation != generation)
+    {
+        return None;
+    }
+    if wire.is_stream_closed() {
+        return Some(Err(PageFailure::StreamClosed));
+    }
     let page = async {
         match page.await {
             Err(error)
@@ -567,10 +575,15 @@ async fn read_page(
         ),
     )
     .await;
-    result.filter(|_| {
-        !wire.is_placement_changed()
-            && reading.is_none_or(|reading| reading.demand.current().generation == generation)
-    })
+    if wire.is_placement_changed()
+        || reading.is_some_and(|reading| reading.demand.current().generation != generation)
+    {
+        return None;
+    }
+    if wire.is_stream_closed() {
+        return Some(Err(PageFailure::StreamClosed));
+    }
+    result
 }
 
 pub(super) async fn reader_event(
