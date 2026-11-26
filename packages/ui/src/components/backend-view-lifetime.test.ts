@@ -15,7 +15,7 @@ function view(path: string, imports: Record<string, unknown>) {
   return productionModule(new URL(path, import.meta.url), { backendOf: () => ({ api: imports.serverApi }), ...imports })
 }
 const solid = { createEffect, createMemo, createSignal, on, onCleanup, untrack }
-const fileDraftImports = { sha256, bytesToHex, instances: () => new Map() }
+const fileDraftImports = { sha256, bytesToHex, instances: () => new Map(), localServerMeta: { meta: () => undefined } }
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 function attachment() {
   let controller = new AbortController()

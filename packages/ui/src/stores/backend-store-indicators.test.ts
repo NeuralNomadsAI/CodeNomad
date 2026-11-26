@@ -9,10 +9,10 @@ import { PluginControlsCache } from "./plugin-controls"
 import { createShellStore } from "./shell-store"
 import { createSessionGoalStore } from "./session-goal-store"
 import { createIntegrationBindingsStore } from "./integration-bindings-store"
-import { createMissionStore } from "./mission-store"
+import { createMissionStore, type MissionRowsResponse } from "./mission-store"
 import { createSessionOutline } from "./session-outline"
 import { setSessions } from "./session-state"
-import type { MissionListResponse, PluginControlsSnapshot } from "../../../server/src/api-types"
+import type { PluginControlsSnapshot } from "../../../server/src/api-types"
 import { deferred } from "../../tests/test-support/deferred"
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
@@ -178,12 +178,11 @@ for (const failure of [false, true]) for (const replacement of [false, true]) {
     const backendId = `indicator_mission_${failure}_${replacement}`, instanceId = `${backendId}~ws`
     let detach = backendEvents.attach(backendId, source)
     t.after(() => detach())
-    const requests: ReturnType<typeof deferred<MissionListResponse>>[] = []
+    const requests: ReturnType<typeof deferred<MissionRowsResponse>>[] = []
     const store = createMissionStore(async () => {
-      const gate = deferred<MissionListResponse>(); requests.push(gate); return gate.promise
-    }, undefined, false, id => captureBackendOperation(id).signal)
-    const answer: MissionListResponse = { available: true, version: 1, projectID: "project", generatedAt: 1,
-      discardedEvents: 0, missions: [], activity: { generatedAt: 1, missions: [] } }
+      const gate = deferred<MissionRowsResponse>(); requests.push(gate); return gate.promise
+    }, undefined, id => captureBackendOperation(id).signal)
+    const answer: MissionRowsResponse = { available: true, projectID: "project", generatedAt: 1, discardedEvents: 0, summaries: [] }
     const first = store.refresh(instanceId)
     assert.equal(store.state(instanceId).status, "loading")
     detach(); detach = backendEvents.attach(backendId, source)

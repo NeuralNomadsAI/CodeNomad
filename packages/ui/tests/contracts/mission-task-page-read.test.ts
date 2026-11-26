@@ -96,7 +96,7 @@ test("every slice retains the admitted selector even if its caller edits the req
 
 for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} cancellation cannot retain API queue slots past the task lifetime`, async t => {
   const { serverApi } = await import("../../src/lib/api-client")
-  const { backgroundReads } = await import("../../src/lib/background-read-queue")
+  const { missionReads } = await import("../../src/lib/background-read-queue")
   const original = globalThis.fetch
   let rejectCancel!: (error: Error) => void, starts = 0, cancels = 0, released = false
   const cancellation = new Promise<void>((_, reject) => { rejectCancel = reject })
@@ -113,7 +113,7 @@ for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} c
   }
   const calls = Array.from({ length: 3 }, () => serverApi.fetchMissionTasks("fixture", map.id, { offset: 0 }, { ...scope, signal: lifetime }))
   let markerStarted = false, startedAfterTimeout = false, startedWhileDeferred = false
-  const marker = backgroundReads.run(AbortSignal.timeout(1000), async () => {
+  const marker = missionReads.run(AbortSignal.timeout(1000), async () => {
     markerStarted = true; startedAfterTimeout = lifetime.aborted; startedWhileDeferred = !released
   }).then(() => true, () => false)
   try {
@@ -134,16 +134,16 @@ for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} c
   } finally {
     released = true; rejectCancel(new Error("late cancellation rejection"))
     await Promise.allSettled(calls); await marker
-    await backgroundReads.run(new AbortController().signal, async () => {})
+    await missionReads.run(new AbortController().signal, async () => {})
     clearTimeout(keepAlive); globalThis.fetch = original
   }
 })
 
 for (const mode of ["expired", "cancelled", "expired-at-exchange"] as const) test(`queued task admission refuses ${mode} before fetch`, async t => {
   const { serverApi } = await import("../../src/lib/api-client")
-  const { backgroundReads } = await import("../../src/lib/background-read-queue")
-  const originalFetch = globalThis.fetch, originalRun = backgroundReads.run, clock = Object.getOwnPropertyDescriptor(performance, "now")
-  const run = originalRun.bind(backgroundReads)
+  const { missionReads } = await import("../../src/lib/background-read-queue")
+  const originalFetch = globalThis.fetch, originalRun = missionReads.run, clock = Object.getOwnPropertyDescriptor(performance, "now")
+  const run = originalRun.bind(missionReads)
   let now = 0, starts = 0, occupied = 0, resumed = false, currentChecks = 0, queuedSignal: AbortSignal | undefined
   let release!: () => void, entered!: () => void, pending: Promise<unknown> | undefined
   const gate = new Promise<void>(resolve => { release = resolve }), ready = new Promise<void>(resolve => { entered = resolve })
@@ -155,13 +155,13 @@ for (const mode of ["expired", "cancelled", "expired-at-exchange"] as const) tes
     release()
     try { await Promise.allSettled([...held, ...(pending ? [pending] : [])]) }
     finally {
-      globalThis.fetch = originalFetch; backgroundReads.run = originalRun
+      globalThis.fetch = originalFetch; missionReads.run = originalRun
       if (clock) Object.defineProperty(performance, "now", clock); else Reflect.deleteProperty(performance, "now")
     }
   })
   await ready
   Object.defineProperty(performance, "now", { configurable: true, value: () => now })
-  backgroundReads.run = (signal, read, priority) => { queuedSignal = signal; return run(signal, read, priority) }
+  missionReads.run = (signal, read, priority) => { queuedSignal = signal; return run(signal, read, priority) }
   globalThis.fetch = async (_url, init) => { starts++; return response(answer(JSON.parse(init!.body as string))) }
   const controller = new AbortController(), deadline = 10_000
   pending = serverApi.fetchMissionTasks("fixture", map.id, { offset: 150 }, { ...scope, signal: controller.signal, deadline,
@@ -343,11 +343,11 @@ test("the logical budget admits maximal journal-width dependencies and compact n
 })
 
 test("the store's serialized wait shares the same real 30-second API deadline", { timeout: 45_000 }, async () => {
-  const { createMissionStore } = await import("../../src/stores/mission-store")
+  const { listedMissionStore } = await import("../../src/stores/mission-store.test-fixture")
   const { serverApi } = await import("../../src/lib/api-client")
   const full = structuredClone(map); full.tasks = full.tasks.map(task => ({ ...task, title: task.key }))
-  const listed = { available: true as const, version: 1 as const, projectID: map.projectID, missions: [(await import("../../../server/src/missions/mission-compact-map")).compactMissionMap(full)], generatedAt: 1,
-    discardedEvents: 0, activity: { generatedAt: 1, missions: [] } }
+  const listed = { available: true as const, projectID: map.projectID, missions: [(await import("../../../server/src/missions/mission-compact-map")).compactMissionMap(full)], generatedAt: 1,
+    discardedEvents: 0 }
   const original = globalThis.fetch, starts: number[] = [], start = performance.now()
   globalThis.fetch = async (_url, init) => {
     starts.push(performance.now() - start)
@@ -360,7 +360,7 @@ test("the store's serialized wait shares the same real 30-second API deadline", 
     return response(missionPanelPage(header, [missionTaskPage(full, request.task)], request.cursor))
   }
   try {
-    const store = createMissionStore(async () => listed, (id, mission, task, scope) => serverApi.fetchMissionTasks(id, mission, task, scope))
+    const store = listedMissionStore(() => listed, (id, mission, task, scope) => serverApi.fetchMissionTasks(id, mission, task, scope))
     store.want("fixture", "reader", map.id, true); await store.ensure("fixture")
     assert.deepEqual(await Promise.all([store.loadTasks("fixture", map.id, { offset: 50 }), store.loadTasks("fixture", map.id, { offset: 100 })]), ["read", "failed"])
     assert.equal(store.state("fixture").taskReads?.[map.id]?.failure?.reason, "deadline")

@@ -1,9 +1,9 @@
 import { createSignal, untrack } from "solid-js"
-import type { MissionListResponse, MissionPanelMap, MissionSummary, MissionActivityProjection } from "../../../server/src/api-types"
+import type { MissionPanelMap, MissionSummary, MissionActivityProjection } from "../../../server/src/api-types"
 import type { MissionUnavailableReason } from "../../../server/src/missions/model"
 import type { MissionPanelPageRequest, MissionPanelPage } from "../../../server/src/missions/mission-panel-wire"
 import type { MissionTaskFetch } from "./mission-store"
-import { createMissionStore, type MissionDisplayResponse, type MissionViewState } from "./mission-store"
+import { createMissionStore, type MissionRowsResponse, type MissionViewState } from "./mission-store"
 import { MissionTaskPageReadError, MissionPanelMissingError, taskPageDigest, type MissionPanelReadScope } from "../lib/mission-task-page-read"
 import { assertTaskReadLive, raceTaskRead, TASK_READ_TIMEOUT_MS } from "../lib/mission-task-read-lifetime"
 import { panelSummarySchema, panelCleanupSchema, panelHeaderSchema, panelObservationSchema, panelMarksSchema, panelPersistedActorSchema, panelHistorySchema, panelReportSchema, type PanelHeader, type PanelObservation } from "../lib/mission-panel-schema"
@@ -385,7 +385,7 @@ export function createMissionPanelInventory(input: {
     void readLane(instanceId, `activity:${id}`, { source: "activity", missionID: id }, life, false, true).catch(() => {})
     return map
   }
-  const base = createMissionStore(async (instanceId, request, signal): Promise<MissionDisplayResponse> => {
+  const base = createMissionStore(async (instanceId, signal): Promise<MissionRowsResponse> => {
     signal?.throwIfAborted()
     const own = entry(instanceId)
     const captured = scope(instanceId, own, undefined, own.refreshDeadline)
@@ -399,15 +399,13 @@ export function createMissionPanelInventory(input: {
     if (!life.current()) throw new DOMException("Obsolete panel read", "AbortError")
     assertTaskReadLive(life.signal, life.deadline)
     if (own.panel && !input.passage) void readLane(instanceId, "marks", { source: "marks", missionOffset: 0 }, life, false, true).catch(() => {})
-    const summaries = summaryRows(own, maps)
-    return { available: true, version: 1, projectID: own.projectID!, generatedAt: Date.now(), discardedEvents: 0, missions: maps, summaries, panelDeadline: life.deadline, panelCurrent: life.current,
-      activity: activity(own), cleanups: values(own, "cleanups") as NonNullable<Extract<MissionListResponse, { available: true }>["cleanups"]>,
-      cleanupUnavailable: Boolean(own.lanes.get("cleanups")?.failed) }
+    return { available: true, projectID: own.projectID!, generatedAt: Date.now(), discardedEvents: 0, summaries: summaryRows(own, maps), panelDeadline: life.deadline, panelCurrent: life.current,
+      cleanups: values(own, "cleanups") as NonNullable<MissionViewState["cleanups"]>, cleanupUnavailable: Boolean(own.lanes.get("cleanups")?.failed) }
   }, (instanceId, id, request, parent) => {
     if (!parent.current()) throw new DOMException("Obsolete task owner", "AbortError")
     const own = entry(instanceId), life = scope(instanceId, own, id)
     return input.tasks(instanceId, id, request, { ...parent, signal: AbortSignal.any([parent.signal, life.signal!]), current: () => parent.current() && life.current() })
-  }, true, input.signal)
+  }, input.signal)
   const summaryRows = (own: Entry, maps: MissionPanelMap[]): MissionSummary[] => {
     const rows = new Map((values(own, "summaries") as Array<ReturnType<typeof panelSummarySchema.parse>>).map(row => [row.id, { ...row, actorSessionIds: [] as string[] }]))
     for (const map of maps) if (!rows.has(map.id) || own.lanes.get("summaries")?.inventoryRows?.get(map.id)?.epoch !== own.epoch || rows.get(map.id)!.revision < map.revision) rows.set(map.id, { id: map.id, title: map.title, objective: map.excerpt ?? "", status: map.status,
@@ -501,7 +499,7 @@ export function createMissionPanelInventory(input: {
     }
     return [...rows.values()].map(value => value.row)
   }
-  return { ...base, bounded: true as const, progress, more, observations,
+  return { ...base, progress, more, observations,
     taskMarks: (instanceId: string, id: string) => {
       version(); const own = entries.get(instanceId), key = `task-marks:${id}`, target = own?.lanes.get(key), first = target?.pages.get(0)
       const status = progress(instanceId, key)
