@@ -139,6 +139,7 @@ fn prompt_owner_current(s: &State, intent: &Intent, created_session: &str) -> bo
     let active = crate::workspace::active_session(s);
     intent.authority_valid()
         && prefs.memory.visible
+        && prefs.memory.active_scope(prefs.provider_target.as_ref()) == intent.scope
         && backend.client_id == intent.connection
         && project.id == intent.workspace
         && !launcher.authentication_required

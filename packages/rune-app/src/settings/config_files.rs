@@ -30,6 +30,7 @@ pub(super) struct Editor {
     goal: Option<usize>,
     confirm: Option<usize>,
     notice: Option<&'static str>,
+    verified_stamp: Option<(u64, u64)>,
     reverify: bool,
     conflict: bool,
 }
@@ -68,6 +69,13 @@ impl Editor {
         self.active.is_some() || self.dirty()
     }
 
+    fn current_stamp(prefs: &Preferences, backend: &Backend) -> (u64, u64) {
+        (
+            prefs.authority_handle().load(Ordering::SeqCst),
+            backend.client.drop_generation(),
+        )
+    }
+
     pub fn can_write(&self, prefs: &Preferences) -> bool {
         !self.reverify
             && !self.conflict
@@ -77,6 +85,8 @@ impl Editor {
                 self.owner
                     .as_ref()
                     .is_some_and(|owner| owner.verified_for_write(backend))
+                    && (self.active.is_none()
+                        || self.verified_stamp == Some(Self::current_stamp(prefs, backend)))
             })
     }
 
@@ -88,13 +98,20 @@ impl Editor {
             if owner.same_backend_server(backend) {
                 if owner.adopt_same_server(backend) {
                     // Re-authenticated to the same server: preserve loaded files and unsaved edits,
-                    // cancelling reads and requiring a non-destructive baseline check before save.
+                    // cancelling reads and invalidating the baseline stamp so clean files reload
+                    // and dirty drafts run a non-destructive baseline check before any PUT.
                     self.authority.fetch_add(1, Ordering::SeqCst);
                     self.read = None;
-                    if self.active.is_some() && self.dirty() {
-                        self.reverify = true;
+                    self.verified_stamp = None;
+                    if let Some(index) = self.active {
                         self.conflict = false;
                         self.notice = None;
+                        if self.dirty() {
+                            self.reverify = true;
+                        } else {
+                            self.reverify = false;
+                            self.goal = Some(index);
+                        }
                     }
                     changed = true;
                 }
@@ -148,10 +165,24 @@ impl Editor {
             }
             return changed;
         }
-        let stamp = (
-            prefs.authority_handle().load(Ordering::SeqCst),
-            backend.client.drop_generation(),
-        );
+        let stamp = Self::current_stamp(prefs, backend);
+        if let Some(index) = self.active
+            && self.verified_stamp != Some(stamp)
+            && !self.busy()
+        {
+            if self.dirty() {
+                if !self.reverify && !self.conflict {
+                    self.reverify = true;
+                    self.notice = None;
+                    changed = true;
+                }
+            } else if self.goal != Some(index) && self.read.is_none() && self.notice.is_none() {
+                self.reverify = false;
+                self.conflict = false;
+                self.goal = Some(index);
+                changed = true;
+            }
+        }
         if let Some((read_stamp, _, inbox)) = self.read.as_ref() {
             if *read_stamp != stamp {
                 self.read = None;
@@ -188,6 +219,7 @@ impl Editor {
                                     let input = content.contents.replace("\r\n", "\n");
                                     self.draft = TextEdit::new(&input);
                                     self.original = Some(input);
+                                    self.verified_stamp = Some(stamp);
                                     self.reverify = false;
                                     self.conflict = false;
                                     self.diagnose();
@@ -203,9 +235,11 @@ impl Editor {
                                             && self.original.as_deref() == Some(disk.as_str());
                                         self.reverify = false;
                                         if unchanged {
+                                            self.verified_stamp = Some(stamp);
                                             self.conflict = false;
                                             self.notice = None;
                                         } else {
+                                            self.verified_stamp = None;
                                             self.conflict = true;
                                             self.notice = Some("settings.configFiles.errors.save");
                                         }
@@ -570,7 +604,15 @@ impl Editor {
             } else {
                 "status"
             }));
-            if key == "settings.configFiles.errors.loadList" || self.active.is_none() {
+            if self.reverify {
+                view = view.child(layout::button(
+                    t("sessionList.loadError.retry"),
+                    waiting || !readable,
+                    move |s| {
+                        edit(s).notice = None;
+                    },
+                ));
+            } else if key == "settings.configFiles.errors.loadList" || self.active.is_none() {
                 view = view.child(layout::button(
                     t("sessionList.loadError.retry"),
                     waiting,
@@ -1125,6 +1167,23 @@ mod tests {
             assert!(!editor.conflict);
             assert!(editor.can_write(&prefs));
             assert_eq!(editor.draft.text, "locale: external\n");
+
+            // Same-client authority generation advance on a clean file: can_write must turn false
+            // immediately and polling must reload the updated disk baseline before any edit/save.
+            *saved_payload.lock().unwrap() = Some("locale: after-drop\n".to_owned());
+            prefs.authority_handle().fetch_add(1, Ordering::SeqCst);
+            assert!(!editor.can_write(&prefs));
+            for _ in 0..100 {
+                prefs.poll();
+                editor.poll(&prefs, &wake, true);
+                if editor.can_write(&prefs) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(editor.can_write(&prefs));
+            assert_eq!(editor.draft.text, "locale: after-drop\n");
+
             editor.draft = TextEdit::new("locale: dirty-before-profile-b\n");
             assert!(editor.dirty());
 

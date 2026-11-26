@@ -172,6 +172,10 @@ impl Review {
     pub fn bind_seen(&mut self, store: Option<crate::platform::storage::Store>) {
         self.seen.bind(store);
     }
+    pub fn active_scope(&self, project: Option<&Target>) -> Scope {
+        self.scope(project)
+    }
+
     fn scope(&self, project: Option<&Target>) -> Scope {
         self.scope.unwrap_or(if project.is_some() {
             Scope::Project

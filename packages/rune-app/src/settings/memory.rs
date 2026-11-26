@@ -53,6 +53,10 @@ impl Setting {
         )
     }
 
+    pub fn active_scope(&self, project: Option<&super::providers::Target>) -> memory::Scope {
+        self.review.active_scope(project)
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn bind_seen(&mut self, store: Option<crate::platform::storage::Store>) {
         self.review.bind_seen(store);
@@ -65,6 +69,7 @@ impl Setting {
             }
             self.invalidate();
         } else {
+            self.prompt_token.fetch_add(1, Ordering::SeqCst);
             self.review.revoke_authority();
             let owner_gen = self.owner_gen.wrapping_add(1);
             *self = Self {
@@ -413,11 +418,15 @@ pub(super) fn review_action(prefs: &mut Preferences, action: review::Action) -> 
         }
         let write = matches!(action, review::Action::Write(..));
         let was_writing = prefs.memory.review.writing();
+        let scope_before = prefs.memory.active_scope(prefs.provider_target.as_ref());
         let authority = prefs.authority_handle();
         prefs
             .memory
             .review
             .action(action, prefs.provider_target.as_ref(), &authority);
+        if prefs.memory.active_scope(prefs.provider_target.as_ref()) != scope_before {
+            prefs.memory.prompt_token.fetch_add(1, Ordering::SeqCst);
+        }
         for wake in [&prefs.main_wake, &prefs.window_wake].into_iter().flatten() {
             wake();
         }

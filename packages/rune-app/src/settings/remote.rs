@@ -604,10 +604,14 @@ impl Remote {
                     } else {
                         match remote::start(&backend).await {
                             Ok(started) => {
-                                let (devices, devices_error) = match remote::devices(&backend).await
-                                {
-                                    Ok(devices) => (devices, None),
-                                    Err(err) => (None, Some(err)),
+                                let (devices, devices_error) = if attest().await {
+                                    match remote::devices(&backend).await {
+                                        Ok(devices) if attest().await => (devices, None),
+                                        Ok(_) => (None, Some(remote::Error::Transport)),
+                                        Err(err) => (None, Some(err)),
+                                    }
+                                } else {
+                                    (None, Some(remote::Error::Transport))
                                 };
                                 Reply::Started(Ok((
                                     started.status,
@@ -936,8 +940,19 @@ impl Remote {
                 devices_card = Some(chrome::card(list));
             }
         }
-        if let Some(err) = &self.error {
-            rc = rc.child(text(err.as_str()).role("alert").wrap());
+        if available {
+            if let Some(err) = &self.error {
+                rc = rc.child(text(err.as_str()).role("alert").wrap());
+            }
+        } else if host_ready
+            && (!prefs.can_retry()
+                || prefs.transport_lost()
+                || prefs
+                    .backend
+                    .as_ref()
+                    .is_some_and(|b| !super::ServerOwner::backend_verified(b)))
+        {
+            rc = rc.child(text(t("rune.connect_error")).role("alert").wrap());
         }
 
         // REMOTE_CONTROL.md: Remote Control comes first; Direct/LAN access sits below in one
