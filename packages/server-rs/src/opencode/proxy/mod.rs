@@ -576,6 +576,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     } else {
         target.set_query(head.uri.query());
     }
+    let account_route = is_account_no_store_route(route, &head.method);
     let location_context_dir =
         parsed_location_context.as_ref().and_then(|v| v["directory"].as_str()).map(str::to_owned);
     if let Some(context) = parsed_location_context {
@@ -593,7 +594,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
                 }
                 prompt_locations.push((raw.to_owned(), context, (live, observed)));
             }
-        } else if !message_list {
+        } else if !message_list && !account_route {
             // Match TS `http-server.ts:1224-1269` & `compatibility/location.ts:74-83`: an ambient
             // `x-codenomad-location` only needs to belong to this workspace and agree with any
             // explicit query selector, NOT with the target session's own linked worktree.
@@ -724,30 +725,41 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         initial_identity: &initial_identity,
         input_checkout: &input_checkout,
     };
-    let mutation::PreparedMutation { fork, root_permissions, input, rules_lock, mutation, account_manual, receipt } =
-        match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
-            recheck: &recheck,
-            head: &head,
-            route,
-            control,
-            send_input,
-            command,
-            body_limit,
-            declared,
-            pending_body: &mut pending_body,
-            prompt_input: &mut prompt_input,
-            prompt_locations: &prompt_locations,
-            trace_fence,
-            explicit: explicit || global_form_directory.is_some(),
-            location_context_dir: location_context_dir.as_deref(),
-            session_list,
-            target: &mut target,
-        }))
-        .await?
-        {
-            mutation::MutationOutcome::Ready(prepared) => prepared,
-            mutation::MutationOutcome::Early(response) => return Ok(response),
-        };
+    let mutation::PreparedMutation {
+        fork,
+        root_permissions,
+        input,
+        rules_lock,
+        mutation,
+        account_manual,
+        account_context_dir,
+        secret_sentinels,
+        receipt,
+    } = match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
+        recheck: &recheck,
+        head: &head,
+        route,
+        control,
+        send_input,
+        command,
+        body_limit,
+        declared,
+        pending_body: &mut pending_body,
+        prompt_input: &mut prompt_input,
+        prompt_locations: &prompt_locations,
+        trace_fence,
+        explicit: explicit || global_form_directory.is_some(),
+        requested_dirs: &requested_dirs,
+        location_context_dir: location_context_dir.as_deref(),
+        session_list,
+        target: &mut target,
+    }))
+    .await?
+    {
+        mutation::MutationOutcome::Ready(prepared) => prepared,
+        mutation::MutationOutcome::Early(response) => return Ok(response),
+    };
+    let method_str = head.method.to_string();
     let mut upstream = app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password));
     // Forward all sanitized request headers across every proxied route (including Accept,
     // conditionals, Range, If-Range), matching TS `sanitizeInstanceProxyRequestHeaders`
@@ -788,7 +800,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             upstream = upstream.header(name, value);
         }
     }
-    if let Some(dir) = &global_form_directory {
+    if let Some(dir) = global_form_directory.as_ref().or(account_context_dir.as_ref()) {
         let encoded = percent_encoding::utf8_percent_encode(dir, percent_encoding::NON_ALPHANUMERIC).to_string();
         upstream = upstream.header("x-opencode-directory", encoded);
     }
@@ -831,11 +843,14 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         endpoint,
         principal,
         upstream,
+        method: method_str,
         route,
         opened,
         directory,
         id,
         message_list,
+        account_route,
+        secret_sentinels,
         fork,
         actual,
         project,

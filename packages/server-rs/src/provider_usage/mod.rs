@@ -61,6 +61,14 @@ impl Default for State {
 impl State {
     #[cfg(test)]
     pub(crate) fn with_test_accounts(fixture: reqwest::Url, settle: Duration) -> Self {
+        Self::with_test_accounts_timeout(fixture, settle, Duration::from_secs(15))
+    }
+    #[cfg(test)]
+    pub(crate) fn with_test_accounts_timeout(
+        fixture: reqwest::Url,
+        settle: Duration,
+        preflight_timeout: Duration,
+    ) -> Self {
         let http = OnceLock::new();
         let _ = http.set(Http::with_fixture(fixture).expect("Test fixture client unavailable"));
         Self {
@@ -70,7 +78,7 @@ impl State {
             codex: Default::default(),
             google: Default::default(),
             claude: Default::default(),
-            accounts: selection::AccountService::with_settle(settle),
+            accounts: selection::AccountService::with_timeouts(settle, preflight_timeout),
         }
     }
     pub(super) fn http(&self) -> &Http {

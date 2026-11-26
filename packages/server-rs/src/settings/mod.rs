@@ -37,6 +37,13 @@ pub struct Settings {
     write: Mutex<()>,
 }
 
+#[cfg(test)]
+impl Settings {
+    pub(crate) fn lock_write_for_test(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.write.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum Kind {
     Config,
@@ -348,14 +355,23 @@ fn sanitized(name: &str, value: Value) -> Value {
 
 /// `mergePatchOwner` for other domains (memory, SideCars, Stats), published like the reference's.
 pub fn patch_owner(app: &App, kind: Kind, name: &str, patch: Value) -> Result<Value, Failure> {
-    let (saved, _) = app.settings.patch_checked_committed(
-        kind,
-        name,
-        &patch,
-        &[],
-        |_, _| Ok(()),
-        |saved, order| publish_with_order(app, kind, name, saved.clone(), order),
-    )?;
+    patch_owner_checked(app, kind, name, patch, |_, _| Ok(()), || {})
+}
+
+/// `mergePatchOwner` with a pre-commit authorization check and post-commit hook executed under the
+/// settings write lock.
+pub fn patch_owner_checked(
+    app: &App,
+    kind: Kind,
+    name: &str,
+    patch: Value,
+    check: impl FnOnce(&Doc, &Doc) -> Result<(), Failure>,
+    on_committed: impl FnOnce(),
+) -> Result<Value, Failure> {
+    let (saved, _) = app.settings.patch_checked_committed(kind, name, &patch, &[], check, |saved, order| {
+        on_committed();
+        publish_with_order(app, kind, name, saved.clone(), order);
+    })?;
     Ok(saved)
 }
 

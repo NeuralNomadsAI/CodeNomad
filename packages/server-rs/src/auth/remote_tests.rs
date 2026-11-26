@@ -872,129 +872,146 @@ async fn paired_browser_and_server_device_admit_provider_accounts_and_connect_ro
         axum::serve(native_listener, Router::new().fallback(any(fake_native)).with_state(native_state)).await.unwrap();
     });
 
-    let host = "192.168.1.44:9898";
-    let origin = format!("https://{host}");
-    let origins = vec![origin.clone()];
-    let devices = devices::open_for_test(&dir.0, origin.clone(), origins.clone());
-    let app = build_app(&dir.0, opencode::Native::test_connection(native_addr), devices);
-    let ws_id = Uuid::new_v4();
-    app.inner.lock().unwrap().workspaces.push(Workspace {
-        id: ws_id,
-        request_id: None,
-        path: root.clone(),
-        name: None,
-        status: "ready",
-        proxy_path: format!("/workspaces/{ws_id}/instance"),
-        binary_id: PathBuf::new(),
-        binary_label: String::new(),
-        created_at: String::new(),
-        updated_at: String::new(),
-        location: json!({"directory": root}),
-        temporary: None,
-    });
-
-    let router = auth::remote_routes()
-        .merge(crate::provider_usage::routes())
-        .route("/workspaces/{id}/instance/{*route}", any(opencode::proxy::relay))
-        .layer(from_fn_with_state((app.clone(), None), admit))
-        .layer(from_fn(per_request_channel(origin.clone(), Arc::from(origins), false)))
-        .with_state(app.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    let server_task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let browser_cookie = pair_browser(&client, &app, &base, host, &origin, false).await;
-    let server_cookie = pair_server_device(&client, &app, &base, host, &origin, false).await;
-
-    let accounts_url = format!("{base}/api/workspaces/{ws_id}/provider-accounts/openai");
-    let instance = format!("{base}/workspaces/{ws_id}/instance/api");
-
-    for (label, is_server, cookie) in [("browser", false, &browser_cookie), ("server-device", true, &server_cookie)] {
-        let send = |method: Method, url: String, body: Option<Value>| {
-            let mut req = client.request(method, url).header(header::HOST, host).header(header::COOKIE, cookie);
-            if is_server {
-                req = req.header("x-codenomad-server-request", "1");
-            } else {
-                req = req.header(header::ORIGIN, &origin);
-            }
-            if let Some(body) = body {
-                req = req.json(&body);
-            }
-            req.send()
+    for ingress in [false, true] {
+        let mode = if ingress { "ingress" } else { "direct" };
+        let host = if ingress { "remote.example.test" } else { "192.168.1.44:9898" };
+        let origin = format!("https://{host}");
+        let origins = vec![origin.clone()];
+        let mode_dir = dir.0.join(mode);
+        std::fs::create_dir_all(&mode_dir).unwrap();
+        let devices = if ingress {
+            devices::open_ingress_for_test(&mode_dir, origin.clone())
+        } else {
+            devices::open_for_test(&mode_dir, origin.clone(), origins.clone())
         };
+        let app = build_app(&dir.0, opencode::Native::test_connection(native_addr), devices);
+        let ws_id = Uuid::new_v4();
+        app.inner.lock().unwrap().workspaces.push(Workspace {
+            id: ws_id,
+            request_id: None,
+            path: root.clone(),
+            name: None,
+            status: "ready",
+            proxy_path: format!("/workspaces/{ws_id}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({"directory": root}),
+            temporary: None,
+        });
+        let router = auth::remote_routes()
+            .merge(crate::provider_usage::routes())
+            .route("/workspaces/{id}/instance/{*route}", any(opencode::proxy::relay))
+            .layer(from_fn_with_state((app.clone(), None), admit))
+            .layer(from_fn(per_request_channel(origin.clone(), Arc::from(origins), ingress)))
+            .with_state(app.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server_task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
-        // GET & PUT provider-accounts
-        let get_res = send(Method::GET, format!("{accounts_url}?directory={root_encoded}"), None).await.unwrap();
-        assert_eq!(get_res.status(), Status::OK, "{label} GET provider-accounts");
-        assert_eq!(get_res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+        let browser_cookie = pair_browser(&client, &app, &base, host, &origin, ingress).await;
+        let server_cookie = pair_server_device(&client, &app, &base, host, &origin, ingress).await;
 
-        let put_res = send(Method::PUT, accounts_url.clone(), Some(json!({"directory": root_str, "enabled": true})))
-            .await
-            .unwrap();
-        assert_eq!(put_res.status(), Status::OK, "{label} PUT provider-accounts");
-        assert_eq!(put_res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
-        let put_json: Value = put_res.json().await.unwrap();
-        assert_eq!(put_json["enabled"], true);
-        assert!(!put_json.to_string().contains("secret-remote"));
+        let accounts_url = format!("{base}/api/workspaces/{ws_id}/provider-accounts/openai");
+        let instance = format!("{base}/workspaces/{ws_id}/instance/api");
 
-        // Integration connect & credential proxy mutations
-        for (method, url, body) in [
-            (Method::POST, format!("{instance}/integration/openai/connect/key"), Some(json!({"key": "sk-remote"}))),
-            (
-                Method::POST,
-                format!("{instance}/integration/openai/connect/oauth"),
-                Some(json!({"methodID": "chatgpt-browser"})),
-            ),
-            (Method::POST, format!("{instance}/integration/openai/connect/command"), Some(json!({"methodID": "cli"}))),
-            (
-                Method::POST,
-                format!("{instance}/integration/azure/connect/external"),
-                Some(json!({"methodID": "azure-cli"})),
-            ),
-            (
-                Method::POST,
-                format!("{instance}/integration/openai/connect/oauth/att_remote/complete"),
-                Some(json!({"code": "123"})),
-            ),
-            (Method::DELETE, format!("{instance}/integration/openai/connect/oauth/att_remote"), None),
-            (Method::DELETE, format!("{instance}/integration/openai/connect/command/att_remote"), None),
-            (Method::POST, format!("{instance}/credential/cre_1/activate"), None),
-            (Method::PATCH, format!("{instance}/credential/cre_1"), Some(json!({"label": "Remote"}))),
-            (Method::DELETE, format!("{instance}/credential/cre_1"), None),
-        ] {
-            let res = send(method.clone(), url.clone(), body).await.unwrap();
-            assert!(res.status().is_success(), "{label} {method} {url} -> {}", res.status());
-            assert_eq!(res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+        for (label, is_server, cookie) in [("browser", false, &browser_cookie), ("server-device", true, &server_cookie)]
+        {
+            let send = |method: Method, url: String, body: Option<Value>| {
+                let mut req = client.request(method, url).header(header::HOST, host).header(header::COOKIE, cookie);
+                if is_server {
+                    req = req.header("x-codenomad-server-request", "1");
+                } else {
+                    req = req.header(header::ORIGIN, &origin);
+                }
+                if let Some(body) = body {
+                    req = req.json(&body);
+                }
+                req.send()
+            };
+
+            // GET & PUT provider-accounts
+            let get_res = send(Method::GET, format!("{accounts_url}?directory={root_encoded}"), None).await.unwrap();
+            assert_eq!(get_res.status(), Status::OK, "{mode} {label} GET provider-accounts");
+            assert_eq!(get_res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+
+            let put_res =
+                send(Method::PUT, accounts_url.clone(), Some(json!({"directory": root_str, "enabled": true})))
+                    .await
+                    .unwrap();
+            assert_eq!(put_res.status(), Status::OK, "{mode} {label} PUT provider-accounts");
+            assert_eq!(put_res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+            let put_json: Value = put_res.json().await.unwrap();
+            assert_eq!(put_json["enabled"], true);
+            assert!(!put_json.to_string().contains("secret-remote"));
+
+            // Integration connect & credential proxy mutations
+            for (method, url, body) in [
+                (Method::POST, format!("{instance}/integration/openai/connect/key"), Some(json!({"key": "sk-remote"}))),
+                (
+                    Method::POST,
+                    format!("{instance}/integration/openai/connect/oauth"),
+                    Some(json!({"methodID": "chatgpt-browser"})),
+                ),
+                (
+                    Method::POST,
+                    format!("{instance}/integration/openai/connect/command"),
+                    Some(json!({"methodID": "cli"})),
+                ),
+                (
+                    Method::POST,
+                    format!("{instance}/integration/azure/connect/external"),
+                    Some(json!({"methodID": "azure-cli"})),
+                ),
+                (
+                    Method::POST,
+                    format!("{instance}/integration/openai/connect/oauth/att_remote/complete"),
+                    Some(json!({"code": "123"})),
+                ),
+                (Method::DELETE, format!("{instance}/integration/openai/connect/oauth/att_remote"), None),
+                (Method::DELETE, format!("{instance}/integration/openai/connect/command/att_remote"), None),
+                (Method::POST, format!("{instance}/credential/cre_1/activate"), None),
+                (Method::PATCH, format!("{instance}/credential/cre_1"), Some(json!({"label": "Remote"}))),
+                (Method::DELETE, format!("{instance}/credential/cre_1"), None),
+            ] {
+                let res = send(method.clone(), url.clone(), body).await.unwrap();
+                assert!(res.status().is_success(), "{mode} {label} {method} {url} -> {}", res.status());
+                assert_eq!(res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+            }
+
+            // Disallowed native credential export stays 403 with no-store
+            let export = send(Method::GET, format!("{instance}/credential"), None).await.unwrap();
+            assert_eq!(export.status(), Status::FORBIDDEN, "{mode} {label} GET /api/credential");
+            assert_eq!(export.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
         }
 
-        // Disallowed native credential export stays 403
-        let export = send(Method::GET, format!("{instance}/credential"), None).await.unwrap();
-        assert_eq!(export.status(), Status::FORBIDDEN, "{label} GET /api/credential");
+        // Unpaired PUT provider-accounts is rejected with 401 and Cache-Control: no-store.
+        let unpaired = client
+            .put(&accounts_url)
+            .header(header::HOST, host)
+            .header(header::ORIGIN, &origin)
+            .json(&json!({"directory": root_str, "enabled": true}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unpaired.status(), Status::UNAUTHORIZED, "{mode} unpaired PUT");
+        assert_eq!(unpaired.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+
+        // Cross-origin paired browser mutation is rejected with 403 and Cache-Control: no-store.
+        let cross_origin = client
+            .post(format!("{instance}/credential/cre_1/activate"))
+            .header(header::HOST, host)
+            .header(header::ORIGIN, "https://evil.example")
+            .header(header::COOKIE, &browser_cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cross_origin.status(), Status::FORBIDDEN, "{mode} cross-origin activate");
+        assert_eq!(cross_origin.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+
+        server_task.abort();
     }
-
-    // Unpaired PUT provider-accounts is rejected with 401.
-    let unpaired = client
-        .put(&accounts_url)
-        .header(header::HOST, host)
-        .header(header::ORIGIN, &origin)
-        .json(&json!({"directory": root_str, "enabled": true}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(unpaired.status(), Status::UNAUTHORIZED);
-
-    // Cross-origin paired browser mutation is rejected with 403.
-    let cross_origin = client
-        .post(format!("{instance}/credential/cre_1/activate"))
-        .header(header::HOST, host)
-        .header(header::ORIGIN, "https://evil.example")
-        .header(header::COOKIE, &browser_cookie)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(cross_origin.status(), Status::FORBIDDEN);
-
-    server_task.abort();
     native_task.abort();
 }

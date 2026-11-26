@@ -314,7 +314,7 @@ pub(super) fn build_credential(spec: &AdapterSpec, entry: &Value, now: u64) -> O
     Some(SelectionCredential { identity, login: email, kind: cred_kind })
 }
 
-async fn read_credential_quota(cred: &SelectionCredential, http: &Http, now: u64) -> ReadState {
+async fn read_credential_quota(cred: &SelectionCredential, http: &Http) -> ReadState {
     let result: Quota = match &cred.kind {
         CredentialKind::Codex { access, account_id } => {
             let auth = format!("Bearer {access}");
@@ -330,11 +330,11 @@ async fn read_credential_quota(cred: &SelectionCredential, http: &Http, now: u64
                 )
                 .await
             {
-                Ok(payload) => parse_codex_selection_quota(&payload, now),
+                Ok(payload) => parse_codex_selection_quota(&payload, now_ms()),
                 Err(err) => Err(err),
             }
         }
-        CredentialKind::Go { projected } => special::go_selection(projected, http, now).await,
+        CredentialKind::Go { projected } => special::go_selection(projected, http, now_ms()).await,
         CredentialKind::Usage { integration_id, projected, readable } => {
             if !readable {
                 Err(FAILED)
@@ -343,8 +343,9 @@ async fn read_credential_quota(cred: &SelectionCredential, http: &Http, now: u64
             }
         }
     };
+    let after = now_ms();
     match result {
-        Ok(usage) => quota_state(&usage.windows, now),
+        Ok(usage) => quota_state(&usage.windows, after),
         Err(failed) => {
             if failed.status.is_some_and(definite_rejection) {
                 ReadState::Rejected
@@ -447,22 +448,30 @@ pub(crate) struct AccountService {
     connections: Mutex<Vec<(Weak<Endpoint>, Arc<ConnectionState>)>>,
     dedupe: Mutex<EventDedupe>,
     mark_settle: Duration,
+    preflight_timeout: Duration,
 }
 
 impl Default for AccountService {
     fn default() -> Self {
-        Self::with_settle(DEFAULT_MARK_SETTLE)
+        Self::with_timeouts(DEFAULT_MARK_SETTLE, PREFLIGHT_TIMEOUT)
     }
 }
 
 impl AccountService {
-    pub(crate) fn with_settle(mark_settle: Duration) -> Self {
+    pub(crate) fn with_timeouts(mark_settle: Duration, preflight_timeout: Duration) -> Self {
         Self {
             policy_revision: AtomicU64::new(0),
             connections: Mutex::new(Vec::new()),
             dedupe: Mutex::new(EventDedupe::default()),
             mark_settle,
+            preflight_timeout,
         }
+    }
+    #[cfg(test)]
+    pub(super) fn active_at(&self, endpoint: &Arc<Endpoint>, integration_id: &str, at: f64) -> Option<Option<String>> {
+        let state = self.connection_state(endpoint);
+        let inner = state.inner.lock().unwrap();
+        inner.marks.active_at(integration_id, at).map(|opt| opt.map(str::to_owned))
     }
 
     fn connection_state(&self, endpoint: &Arc<Endpoint>) -> Arc<ConnectionState> {
@@ -644,11 +653,33 @@ impl AccountService {
         {
             return false;
         }
-        if !app.native.current(endpoint) || is_fenced() {
+        if !app.native.current(endpoint) {
             return false;
         }
-        state.inner.lock().unwrap().marks.mark(integration_id, selected_id, failure.limit_name.as_deref(), now_ms());
+        let mut inner = state.inner.lock().unwrap();
+        if epoch != inner.epoch
+            || inner.manual > 0
+            || inner.marks.switched_since(integration_id, step_started_at)
+            || inner.marks.changed_after(integration_id, watermark)
+        {
+            return false;
+        }
+        inner.marks.mark(integration_id, selected_id, failure.limit_name.as_deref(), now_ms());
         true
+    }
+}
+
+struct ActivationGuard {
+    state: Arc<ConnectionState>,
+    integration_id: &'static str,
+    completed_ok: bool,
+}
+
+impl Drop for ActivationGuard {
+    fn drop(&mut self) {
+        if !self.completed_ok {
+            self.state.inner.lock().unwrap().marks.active_unknown(self.integration_id);
+        }
     }
 }
 
@@ -696,6 +727,8 @@ where
         return Ok(());
     }
     let state = service.connection_state(endpoint);
+    let activation_dispatched = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let dispatched_ref = Arc::clone(&activation_dispatched);
     let work = async {
         let _gate = state.gate.lock().await;
         principal.live()?;
@@ -743,9 +776,8 @@ where
         else {
             return Ok(());
         };
-        let now = now_ms();
-        let Some(current) = build_credential(spec, current_entry, now) else { return Ok(()) };
-        let current_read = read_credential_quota(&current, http, now).await;
+        let Some(current) = build_credential(spec, current_entry, now_ms()) else { return Ok(()) };
+        let current_read = read_credential_quota(&current, http).await;
         if current_read == ReadState::Available {
             state.inner.lock().unwrap().marks.clear(integration_id, selected_id);
             return Ok(());
@@ -768,14 +800,18 @@ where
             else {
                 continue;
             };
-            let check_now = now_ms();
-            let Some(cred) = build_credential(spec, entry, check_now) else { continue };
-            let marked = state.inner.lock().unwrap().marks.has(integration_id, candidate_id, check_now);
-            let read = read_credential_quota(&cred, http, check_now).await;
-            if read == ReadState::Available {
-                state.inner.lock().unwrap().marks.clear(integration_id, candidate_id);
-            }
-            let acceptable = read == ReadState::Available || (spec.reactive && read == ReadState::Unknown && !marked);
+            let Some(cred) = build_credential(spec, entry, now_ms()) else { continue };
+            let read = read_credential_quota(&cred, http).await;
+            let acceptable = match read {
+                ReadState::Available => {
+                    state.inner.lock().unwrap().marks.clear(integration_id, candidate_id);
+                    true
+                }
+                ReadState::Unknown if spec.reactive => {
+                    !state.inner.lock().unwrap().marks.has(integration_id, candidate_id, now_ms())
+                }
+                _ => false,
+            };
             if !acceptable {
                 continue;
             }
@@ -826,19 +862,25 @@ where
             if !app.native.current(endpoint) {
                 return Err(crate::opencode::upstream_error());
             }
-            if fenced() {
-                return Ok(());
+            {
+                let mut inner = state.inner.lock().unwrap();
+                if epoch != inner.epoch
+                    || inner.manual > 0
+                    || policy_revision != service.policy_revision()
+                    || !service.is_enabled(app, integration_id)
+                    || (read == ReadState::Unknown && inner.marks.has(integration_id, candidate_id, now_ms()))
+                {
+                    return Ok(());
+                }
+                inner.marks.switched(integration_id, now_ms() as f64, Some(Some(candidate_id.to_owned())));
             }
-
-            state.inner.lock().unwrap().marks.switched(
-                integration_id,
-                now_ms() as f64,
-                Some(Some(candidate_id.to_owned())),
-            );
             let url = endpoint
                 .url
                 .join(&format!("/api/credential/{}/activate", plans::encode(candidate_id)))
                 .map_err(|_| selection_failed())?;
+            dispatched_ref.store(true, Ordering::SeqCst);
+            let mut activation_guard =
+                ActivationGuard { state: Arc::clone(&state), integration_id, completed_ok: false };
             let activated = app
                 .native
                 .client
@@ -848,9 +890,9 @@ where
                 .await
                 .is_ok_and(|res| res.status().is_success());
             if !activated {
-                state.inner.lock().unwrap().marks.active_unknown(integration_id);
                 return Err(selection_failed());
             }
+            activation_guard.completed_ok = true;
             return Ok(());
         }
         Ok(())
@@ -858,12 +900,26 @@ where
 
     tokio::select! {
         biased;
-        _ = principal.0.cancelled() => Err(crate::auth::unauthorized()),
-        _ = app.native.wait_retired(endpoint) => Err(crate::opencode::upstream_error()),
-        result = tokio::time::timeout(PREFLIGHT_TIMEOUT, work) => match result {
+        _ = principal.0.cancelled() => {
+            if activation_dispatched.load(Ordering::SeqCst) {
+                Err(selection_failed())
+            } else {
+                Err(crate::auth::unauthorized())
+            }
+        }
+        _ = app.native.wait_retired(endpoint) => {
+            if activation_dispatched.load(Ordering::SeqCst) {
+                Err(selection_failed())
+            } else {
+                Err(crate::opencode::upstream_error())
+            }
+        }
+        result = tokio::time::timeout(service.preflight_timeout, work) => match result {
             Ok(outcome) => outcome,
             Err(_) => {
-                if !app.native.current(endpoint) {
+                if activation_dispatched.load(Ordering::SeqCst) {
+                    Err(selection_failed())
+                } else if !app.native.current(endpoint) {
                     Err(crate::opencode::upstream_error())
                 } else {
                     Ok(())

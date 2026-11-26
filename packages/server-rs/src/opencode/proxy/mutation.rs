@@ -9,8 +9,8 @@ use axum::{
 use serde_json::{Value, json};
 
 use super::guards::{
-    carrier_denied, directory_identity, foreign, is_account_mutation, is_json_content_type, marker, one_location,
-    same_target, schedule_input,
+    carrier_denied, directory_identity, foreign, is_account_mutation, is_account_no_store_route, is_json_content_type,
+    marker, one_location, same_target, schedule_input,
 };
 use crate::missions::human_answer;
 use crate::opencode::{Endpoint, controls, upstream_error};
@@ -23,6 +23,8 @@ pub(super) struct PreparedMutation {
     pub rules_lock: Option<tokio::sync::OwnedMutexGuard<()>>,
     pub mutation: Option<crate::worktrees::fence::Entered>,
     pub account_manual: Option<crate::provider_usage::selection::ManualGuard>,
+    pub account_context_dir: Option<String>,
+    pub secret_sentinels: Vec<String>,
     pub receipt: Option<crate::sessions::receipts::Prepared>,
 }
 
@@ -100,6 +102,7 @@ pub(super) struct MutationContext<'a> {
         &'a [(String, crate::opencode::prompt::Location, (Arc<std::sync::atomic::AtomicBool>, tokio::time::Instant))],
     pub trace_fence: bool,
     pub explicit: bool,
+    pub requested_dirs: &'a [String],
     pub location_context_dir: Option<&'a str>,
     pub session_list: bool,
     pub target: &'a mut reqwest::Url,
@@ -120,6 +123,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         prompt_locations,
         trace_fence,
         explicit,
+        requested_dirs,
         location_context_dir,
         session_list,
         target,
@@ -141,7 +145,11 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/'));
     let mut root_permissions = None;
     let mut input = None;
-    let mut account_body_dirs: Vec<String> = Vec::new();
+    let mut account_verified_locs: Vec<(String, crate::worktrees::ownership::Owned)> = Vec::new();
+    let mut account_query_resolved: Option<String> = None;
+    let mut account_body_resolved: Option<String> = None;
+    let mut account_context_dir: Option<String> = None;
+    let mut secret_sentinels: Vec<String> = Vec::new();
     let mut has_body_location = false;
     if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE) {
         let mut body_empty = false;
@@ -186,17 +194,37 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 input = Some(data);
             }
         } else if account_mutation {
-            let Value::Object(data) = data else {
+            let Value::Object(mut data) = data else {
                 return Err(error(Status::BAD_REQUEST, "Invalid request body"));
             };
             if schedule_input(&data) {
                 return Err(carrier_denied());
             }
             let opened = workspace.location["directory"].as_str().ok_or_else(upstream_error)?;
-            account_body_dirs =
-                validate_account_body_locations(app, workspace, &data, opened, location_context_dir).await?;
-            has_body_location = !account_body_dirs.is_empty();
+            let resolved =
+                resolve_account_locations(app, workspace, &data, opened, requested_dirs, location_context_dir).await?;
             validate_account_body(route, &head.method, &data, body_empty)?;
+            if let Some(key) = data.get("key").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+                secret_sentinels.push(key.to_owned());
+            }
+            if let Some(code) = data.get("code").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+                secret_sentinels.push(code.to_owned());
+            }
+            account_query_resolved = resolved.queries.first().map(|(_, o)| o.directory.clone());
+            account_body_resolved = resolved.body.as_ref().map(|(_, o)| o.directory.clone());
+            if let Some((_, ctx_owned)) = &resolved.context {
+                account_context_dir = Some(ctx_owned.directory.clone());
+            }
+            has_body_location = resolved.body.is_some();
+            if let Some(ref translated) = account_body_resolved
+                && let Some(loc) = data.get_mut("location").and_then(Value::as_object_mut)
+            {
+                loc.insert("directory".into(), Value::String(translated.clone()));
+            }
+            account_verified_locs.extend(resolved.queries);
+            for item in [resolved.context, resolved.body].into_iter().flatten() {
+                account_verified_locs.push(item);
+            }
             if head.method != Method::DELETE && !body_empty {
                 input = Some(Value::Object(data));
             }
@@ -267,6 +295,17 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 input = Some(Value::Object(data));
             }
         }
+    } else if is_account_no_store_route(route, &head.method) {
+        let opened = workspace.location["directory"].as_str().ok_or_else(upstream_error)?;
+        let empty = serde_json::Map::new();
+        let resolved =
+            resolve_account_locations(app, workspace, &empty, opened, requested_dirs, location_context_dir).await?;
+        if let Some((_, q_owned)) = resolved.queries.first() {
+            account_query_resolved = Some(q_owned.directory.clone());
+        }
+        if let Some((_, ctx_owned)) = &resolved.context {
+            account_context_dir = Some(ctx_owned.directory.clone());
+        }
     }
     let rules_lock = if permissions_patch {
         #[cfg(test)]
@@ -328,19 +367,8 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             }
             checkouts.push(key);
         }
-        for raw in &account_body_dirs {
-            let physical = match crate::files::paths::canonical(&app.scope, raw) {
-                Some(physical) => physical,
-                None => {
-                    let target = crate::worktrees::ownership::resolve_directory(raw)
-                        .unwrap_or_else(|| std::path::PathBuf::from(raw));
-                    if fence::is_blocked(&fence::identity(&target)) {
-                        return Err(error(Status::CONFLICT, "Worktree deletion is in progress"));
-                    }
-                    return Err(foreign());
-                }
-            };
-            checkouts.push(fence::identity(&fence::checkout_root(&app.scope, &physical)));
+        for (_, owned) in &account_verified_locs {
+            checkouts.push(fence::identity(&owned.checkout));
         }
         checkouts.extend(session.map(fence::session));
         if trace_fence {
@@ -368,8 +396,12 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         if create && !crate::worktrees::owns(app, workspace, directory).await {
             return Err(foreign());
         }
-        for raw in &account_body_dirs {
-            if !crate::worktrees::owns(app, workspace, raw).await {
+        for (raw, initial) in &account_verified_locs {
+            if !crate::worktrees::ownership::resolve(app, workspace, raw)
+                .await
+                .is_some_and(|latest| latest.directory == initial.directory && latest.checkout == initial.checkout)
+                || !crate::sessions::permission_mode::workspace_current(app, workspace)
+            {
                 return Err(foreign());
             }
         }
@@ -427,8 +459,27 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         #[cfg(test)]
         crate::worktrees::fence_test_trace::record("permission rules", "send refresh finished");
     }
-    if !explicit
+    if let Some(ref translated) = account_query_resolved {
+        let pairs: Vec<(String, String)> = target
+            .query_pairs()
+            .into_owned()
+            .map(|(k, v)| {
+                if matches!(k.as_str(), "directory" | "location[directory]") { (k, translated.clone()) } else { (k, v) }
+            })
+            .collect();
+        target.query_pairs_mut().clear().extend_pairs(pairs);
+    }
+    if account_mutation
+        && head.method == Method::DELETE
+        && !route.starts_with("/api/credential/")
+        && !explicit
+        && account_context_dir.is_none()
+        && let Some(ref translated) = account_body_resolved
+    {
+        target.query_pairs_mut().append_pair("location[directory]", translated);
+    } else if !explicit
         && !has_body_location
+        && account_context_dir.is_none()
         && !create
         && session.is_none()
         && !matches!(route, "/api/project" | "/api/session/active")
@@ -507,37 +558,35 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         rules_lock,
         mutation,
         account_manual,
+        account_context_dir,
+        secret_sentinels,
         receipt,
     }))
 }
 
-async fn validate_account_body_locations(
+struct AccountLocations {
+    queries: Vec<(String, crate::worktrees::ownership::Owned)>,
+    context: Option<(String, crate::worktrees::ownership::Owned)>,
+    body: Option<(String, crate::worktrees::ownership::Owned)>,
+}
+
+async fn resolve_account_locations(
     app: &Shared,
     workspace: &Workspace,
     data: &serde_json::Map<String, Value>,
     opened: &str,
+    requested_dirs: &[String],
     location_context_dir: Option<&str>,
-) -> Result<Vec<String>, Error> {
+) -> Result<AccountLocations, Error> {
     let invalid_loc = || error(Status::BAD_REQUEST, "Location does not belong to workspace");
     if data.contains_key("workspace") || data.contains_key("workspaceID") {
         return Err(invalid_loc());
     }
-    let mut dirs = Vec::new();
-    if let Some(dir_val) = data.get("directory") {
-        let dir = dir_val
-            .as_str()
-            .filter(|s| !s.trim().is_empty() && !s.contains('\0') && s.encode_utf16().count() <= 4096)
-            .ok_or_else(invalid_loc)?;
-        dirs.push(dir.to_owned());
-    }
-    if let Some(loc_val) = data.get("location")
+    let body_raw: Option<String> = if let Some(loc_val) = data.get("location")
         && !loc_val.is_null()
     {
         let loc = loc_val.as_object().ok_or_else(invalid_loc)?;
-        if loc.contains_key("workspace") || loc.contains_key("workspaceID") {
-            return Err(invalid_loc());
-        }
-        if loc.keys().any(|k| k != "directory") {
+        if loc.contains_key("workspace") || loc.contains_key("workspaceID") || loc.keys().any(|k| k != "directory") {
             return Err(invalid_loc());
         }
         let dir = match loc.get("directory") {
@@ -547,21 +596,38 @@ async fn validate_account_body_locations(
                 .ok_or_else(invalid_loc)?,
             None => opened,
         };
-        dirs.push(dir.to_owned());
+        Some(dir.to_owned())
+    } else {
+        None
+    };
+
+    let resolve_one = |raw: String| async move {
+        let owned = crate::worktrees::ownership::resolve(app, workspace, &raw).await.ok_or_else(foreign)?;
+        Ok::<_, Error>((raw, owned))
+    };
+    let mut queries = Vec::with_capacity(requested_dirs.len());
+    for raw in requested_dirs {
+        queries.push(resolve_one(raw.clone()).await?);
     }
-    for dir in &dirs {
-        if !crate::worktrees::owns(app, workspace, dir).await {
-            return Err(foreign());
+    let context = match location_context_dir {
+        Some(raw) => Some(resolve_one(raw.to_owned()).await?),
+        None => None,
+    };
+    let body = match body_raw {
+        Some(raw) => Some(resolve_one(raw).await?),
+        None => None,
+    };
+
+    let mut canonical: Option<&str> = None;
+    for item in queries.iter().chain(context.iter()).chain(body.iter()) {
+        if let Some(prev) = canonical
+            && prev != item.1.directory
+        {
+            return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
         }
-        if let Some(ctx_dir) = location_context_dir {
-            let lhs = crate::files::paths::canonical(&app.scope, dir);
-            let rhs = crate::files::paths::canonical(&app.scope, ctx_dir);
-            if lhs.is_none() || lhs != rhs {
-                return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
-            }
-        }
+        canonical = Some(item.1.directory.as_str());
     }
-    Ok(dirs)
+    Ok(AccountLocations { queries, context, body })
 }
 
 fn validate_account_body(

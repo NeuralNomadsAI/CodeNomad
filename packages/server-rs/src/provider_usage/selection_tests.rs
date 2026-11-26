@@ -40,6 +40,8 @@ struct MockState {
     entries: Vec<Value>,
     needs_auth: HashSet<String>,
     fail_activation: bool,
+    activate_delay: Duration,
+    activate_seen: Option<Arc<tokio::sync::Notify>>,
     fail_native: bool,
     calls: Vec<String>,
     quota_calls: Vec<String>,
@@ -109,6 +111,33 @@ fn go_usage_payload(used: f64) -> Value {
 async fn fake_native(State(state): State<Arc<Mutex<MockState>>>, req: Request) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_owned();
+    if method == Method::POST && path.starts_with("/api/credential/") && path.ends_with("/activate") {
+        let (delay, seen) = {
+            let mut s = state.lock().unwrap();
+            s.calls.push(format!("{method} {path}"));
+            (s.activate_delay, s.activate_seen.clone())
+        };
+        if !delay.is_zero() {
+            if let Some(notify) = seen {
+                notify.notify_one();
+            }
+            tokio::time::sleep(delay).await;
+        }
+        let mut s = state.lock().unwrap();
+        if s.fail_native {
+            return (Status::INTERNAL_SERVER_ERROR, Json(json!({"error": "secret-upstream-detail"}))).into_response();
+        }
+        if s.fail_activation {
+            return (Status::INTERNAL_SERVER_ERROR, Json(json!({"error": "secret-provider-error"}))).into_response();
+        }
+        let id = path.trim_start_matches("/api/credential/").trim_end_matches("/activate").to_owned();
+        s.order.retain(|item| item != &id);
+        s.order.insert(0, id.clone());
+        for entry in &mut s.entries {
+            entry["active"] = json!(entry["id"] == id);
+        }
+        return Status::NO_CONTENT.into_response();
+    }
     let mut s = state.lock().unwrap();
     s.calls.push(format!("{method} {path}"));
     if s.fail_native && path != "/api/location" && path != "/api/worktree" {
@@ -165,19 +194,6 @@ async fn fake_native(State(state): State<Arc<Mutex<MockState>>>, req: Request) -
             .into_response()
         }
         (Method::GET, "/api/credential") => Json(json!({"data": s.entries})).into_response(),
-        (Method::POST, p) if p.starts_with("/api/credential/") && p.ends_with("/activate") => {
-            if s.fail_activation {
-                return (Status::INTERNAL_SERVER_ERROR, Json(json!({"error": "secret-provider-error"})))
-                    .into_response();
-            }
-            let id = p.trim_start_matches("/api/credential/").trim_end_matches("/activate").to_owned();
-            s.order.retain(|item| item != &id);
-            s.order.insert(0, id.clone());
-            for entry in &mut s.entries {
-                entry["active"] = json!(entry["id"] == id);
-            }
-            Status::NO_CONTENT.into_response()
-        }
         _ => Status::NOT_FOUND.into_response(),
     }
 }
@@ -205,6 +221,15 @@ struct TestHarness {
 }
 
 async fn setup_harness(integration: &str, provider: &str, entries: Vec<Value>) -> TestHarness {
+    setup_harness_with_timeout(integration, provider, entries, Duration::from_secs(15)).await
+}
+
+async fn setup_harness_with_timeout(
+    integration: &str,
+    provider: &str,
+    entries: Vec<Value>,
+    preflight_timeout: Duration,
+) -> TestHarness {
     let dir = TempDir(crate::shared::test_dir("provider-accounts-selection"));
     let project = dir.0.join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -219,6 +244,8 @@ async fn setup_harness(integration: &str, provider: &str, entries: Vec<Value>) -
         entries,
         needs_auth: HashSet::new(),
         fail_activation: false,
+        activate_delay: Duration::ZERO,
+        activate_seen: None,
         fail_native: false,
         calls: Vec::new(),
         quota_calls: Vec::new(),
@@ -270,9 +297,10 @@ async fn setup_harness(integration: &str, provider: &str, entries: Vec<Value>) -
         crate::files::watch::Watches::new(tx),
         None,
     );
-    app.provider_usage = Arc::new(UsageState::with_test_accounts(
+    app.provider_usage = Arc::new(UsageState::with_test_accounts_timeout(
         reqwest::Url::parse(&format!("http://{quota_addr}/")).unwrap(),
         Duration::ZERO,
+        preflight_timeout,
     ));
     let ws_id = Uuid::new_v4();
     app.inner.lock().unwrap().workspaces.push(Workspace {
@@ -608,12 +636,35 @@ async fn reactive_go_rotation_respects_marks_definite_4xx_and_console_scope() {
     before_send(&h.app, &h.endpoint, &h.principal, "ses_go", |_| async { true }).await.unwrap();
     assert_eq!(h.state.lock().unwrap().order[0], "one");
 
-    // Manual change clears marks.
+    // Manual change clears existing marks AND fences earlier step attribution.
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let started2 = crate::shared::now_ms() as f64;
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    h.app.provider_usage.accounts.observe_event(
+        &h.app,
+        &h.endpoint,
+        &json!({
+            "id": "evt_step_2",
+            "type": "session.step.started",
+            "created": started2,
+            "data": {"sessionID": "ses_go", "model": {"providerID": "opencode-go", "id": "m"}}
+        }),
+    );
+    let failure_before_manual = QuotaFailure {
+        session_id: "ses_go".into(),
+        failed_at: started2 + 1.0,
+        limit_name: Some("5 hour".into()),
+        watermark: None,
+    };
+    assert!(h.app.provider_usage.accounts.mark_quota_failure(&h.app, &h.endpoint, &failure_before_manual).await);
     let _g = h.app.provider_usage.accounts.manual_fence(&h.endpoint);
     drop(_g);
+    // Because manual_fence cleared the mark on "one", before_send stays on "one" instead of rotating.
+    before_send(&h.app, &h.endpoint, &h.principal, "ses_go", |_| async { true }).await.unwrap();
+    assert_eq!(h.state.lock().unwrap().order[0], "one");
     let failure2 = QuotaFailure {
         session_id: "ses_go".into(),
-        failed_at: started + 6.0,
+        failed_at: crate::shared::now_ms() as f64,
         limit_name: Some("weekly".into()),
         watermark: None,
     };
@@ -621,6 +672,104 @@ async fn reactive_go_rotation_respects_marks_definite_4xx_and_console_scope() {
         !h.app.provider_usage.accounts.mark_quota_failure(&h.app, &h.endpoint, &failure2).await,
         "manual change since step start fences attribution"
     );
+}
+
+#[tokio::test]
+async fn before_send_returns_502_and_clears_active_on_stalled_activation() {
+    let h = setup_harness_with_timeout(
+        "openai",
+        "openai",
+        vec![codex_entry("one", true, "default"), codex_entry("two", false, "default")],
+        Duration::from_millis(80),
+    )
+    .await;
+    crate::settings::patch_owner(
+        &h.app,
+        crate::settings::Kind::Config,
+        "providerAccounts",
+        json!({"autoSelect": {"openai": true}}),
+    )
+    .map_err(|e| e.message())
+    .unwrap();
+    {
+        let mut s = h.state.lock().unwrap();
+        s.quota_responses.insert("acct-one".into(), (200, codex_usage_payload(100.0, 3_600_000)));
+        s.quota_responses.insert("acct-two".into(), (200, codex_usage_payload(10.0, 3_600_000)));
+    }
+
+    // First rotation succeeds and records "two" as active in marks.
+    before_send(&h.app, &h.endpoint, &h.principal, "ses_1", |_| async { true }).await.unwrap();
+    assert_eq!(h.state.lock().unwrap().order[0], "two");
+    let now = crate::shared::now_ms() as f64 + 10.0;
+    assert_eq!(h.app.provider_usage.accounts.active_at(&h.endpoint, "openai", now).flatten().as_deref(), Some("two"));
+
+    // Flip quota so "two" is exhausted and "one" is available, then stall POST .../activate past timeout.
+    let seen = Arc::new(tokio::sync::Notify::new());
+    {
+        let mut s = h.state.lock().unwrap();
+        s.quota_responses.insert("acct-two".into(), (200, codex_usage_payload(100.0, 3_600_000)));
+        s.quota_responses.insert("acct-one".into(), (200, codex_usage_payload(10.0, 3_600_000)));
+        s.activate_delay = Duration::from_millis(250);
+        s.activate_seen = Some(Arc::clone(&seen));
+    }
+    let err = before_send(&h.app, &h.endpoint, &h.principal, "ses_1", |_| async { true }).await.unwrap_err();
+    seen.notified().await;
+    assert_eq!(err.0, Status::BAD_GATEWAY);
+    assert_eq!(err.1.0["error"], "PROVIDER_ACCOUNT_SELECTION_FAILED");
+    let after = crate::shared::now_ms() as f64 + 10.0;
+    assert_eq!(
+        h.app.provider_usage.accounts.active_at(&h.endpoint, "openai", after).flatten(),
+        None,
+        "timed-out activation must invalidate cached active account"
+    );
+}
+
+#[tokio::test]
+async fn put_provider_accounts_aborts_cleanly_when_cancelled_while_waiting_for_settings_lock() {
+    let h = setup_harness(
+        "openai",
+        "openai",
+        vec![codex_entry("one", true, "default"), codex_entry("two", false, "default")],
+    )
+    .await;
+    let cancel = CancellationToken::new();
+    let principal = Principal(cancel.clone());
+    let base = format!("/api/workspaces/{}/provider-accounts", h.workspace_id);
+
+    // Hold the settings write lock in a blocking task so the PUT handler blocks entering patch_owner_checked.
+    let app_lock = Arc::clone(&h.app);
+    let (locked_tx, locked_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let lock_task = tokio::task::spawn_blocking(move || {
+        let _guard = app_lock.settings.lock_write_for_test();
+        let _ = locked_tx.send(());
+        let _ = release_rx.blocking_recv();
+    });
+    locked_rx.await.unwrap();
+
+    let app_req = Arc::clone(&h.app);
+    let dir_req = h.directory.clone();
+    let req_task = tokio::spawn(async move {
+        send_route(
+            app_req,
+            principal,
+            Method::PUT,
+            &format!("{base}/openai"),
+            Some(json!({"directory": dir_req, "enabled": true})),
+        )
+        .await
+    });
+
+    // Give the handler time to pass native/worktree checks and park on settings.write, then cancel principal.
+    tokio::time::sleep(Duration::from_millis(120)).await;
+    cancel.cancel();
+    let _ = release_tx.send(());
+    lock_task.await.unwrap();
+
+    let (status, cc, _) = req_task.await.unwrap();
+    assert_eq!(status, Status::UNAUTHORIZED);
+    assert_eq!(cc, "no-store");
+    assert!(!h._dir.0.join("config.yaml").exists(), "cancelled PUT must not commit config.yaml");
 }
 
 #[test]

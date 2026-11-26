@@ -65,22 +65,24 @@ pub(super) async fn put_route(
     Extension(principal): Extension<Principal>,
     Path((workspace, integration)): Path<(String, String)>,
     headers: HeaderMap,
-    bytes: Bytes,
+    bytes: Result<Bytes, axum::extract::rejection::BytesRejection>,
 ) -> Response {
     let invalid = || error(Status::BAD_REQUEST, "Invalid provider accounts request");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let work = async {
+        let bytes = bytes.map_err(|_| invalid())?;
         if bytes.len() > MAX_WRITE_BODY || !is_json_header(&headers) {
             return Err(invalid());
         }
         let input: WriteInput = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
         validate_params(&workspace, &integration, &input.directory)?;
-        let result = write_policy(&app, &principal, &workspace, &integration, &input).await?;
+        let result = write_policy(&app, &principal, &workspace, &integration, &input, deadline).await?;
         principal.live()?;
         Ok(Json(result))
     };
     let result = tokio::select! {
         _ = principal.0.cancelled() => Err(crate::auth::unauthorized()),
-        result = tokio::time::timeout(Duration::from_secs(15), work) => result.unwrap_or_else(|_| Err(unavailable())),
+        result = tokio::time::timeout_at(deadline, work) => result.unwrap_or_else(|_| Err(unavailable())),
     };
     ([(header::CACHE_CONTROL, "no-store")], result).into_response()
 }
@@ -125,32 +127,79 @@ async fn native(app: &App, endpoint: &Endpoint, url: reqwest::Url) -> Result<Val
 }
 
 async fn write_policy(
-    app: &App,
+    app: &Shared,
     principal: &Principal,
     workspace_id: &str,
     integration: &str,
     input: &WriteInput,
+    deadline: tokio::time::Instant,
 ) -> Result<Value, Error> {
     let workspace = app.workspace(workspace_id).map_err(|_| error(Status::NOT_FOUND, "Workspace not found"))?;
-    let endpoint =
-        app.native.acquire(tokio::time::Instant::now() + Duration::from_secs(15)).await.map_err(|_| unavailable())?;
+    let endpoint = app.native.acquire(deadline).await.map_err(|_| unavailable())?;
     let foreign = || error(Status::FORBIDDEN, "Location does not belong to workspace");
     let owned = crate::worktrees::ownership::resolve(app, &workspace, &input.directory).await.ok_or_else(foreign)?;
-    let _fence = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&owned.checkout)])?;
+    let fence = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&owned.checkout)])?;
     let snapshot =
         snapshot_for_owned(app, &workspace, &endpoint, integration, &owned.directory, &owned.checkout).await?;
     principal.live()?;
     if !selection::supports(integration) || (input.enabled && !snapshot.supported) {
         return Err(error(Status::CONFLICT, "Automatic account selection unavailable"));
     }
-    crate::settings::patch_owner(
-        app,
-        crate::settings::Kind::Config,
-        "providerAccounts",
-        json!({ "autoSelect": { integration: input.enabled } }),
-    )
+    let app_write = std::sync::Arc::clone(app);
+    let principal_write = principal.clone();
+    let workspace_write = workspace.clone();
+    let endpoint_write = std::sync::Arc::clone(&endpoint);
+    let integration_write = integration.to_owned();
+    let dir_write = owned.directory.clone();
+    let checkout_write = owned.checkout.clone();
+    let enabled = input.enabled;
+    let persisted = tokio::task::spawn_blocking(move || -> Result<(), Error> {
+        let _fence = fence;
+        let mut rejected: Option<Error> = None;
+        let result = crate::settings::patch_owner_checked(
+            &app_write,
+            crate::settings::Kind::Config,
+            "providerAccounts",
+            json!({ "autoSelect": { &integration_write: enabled } }),
+            |_, _| {
+                if principal_write.live().is_err() {
+                    rejected = Some(crate::auth::unauthorized());
+                    return Err(crate::settings::Failure::Conflict);
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    rejected = Some(unavailable());
+                    return Err(crate::settings::Failure::Unreadable);
+                }
+                if !crate::sessions::permission_mode::workspace_current(&app_write, &workspace_write) {
+                    rejected = Some(error(Status::FORBIDDEN, "Location does not belong to workspace"));
+                    return Err(crate::settings::Failure::HostOnly);
+                }
+                if !app_write.native.current(&endpoint_write) {
+                    rejected = Some(unavailable());
+                    return Err(crate::settings::Failure::Unreadable);
+                }
+                let canonical = crate::files::paths::canonical(&app_write.scope, &dir_write);
+                if !canonical
+                    .as_deref()
+                    .is_some_and(|p| crate::worktrees::fence::checkout_root(&app_write.scope, p) == checkout_write)
+                {
+                    rejected = Some(error(Status::FORBIDDEN, "Location does not belong to workspace"));
+                    return Err(crate::settings::Failure::HostOnly);
+                }
+                Ok(())
+            },
+            || {
+                app_write.provider_usage.accounts.note_policy_change();
+            },
+        );
+        match result {
+            Ok(_) => Ok(()),
+            Err(_) => Err(rejected.unwrap_or_else(unavailable)),
+        }
+    })
+    .await
     .map_err(|_| unavailable())?;
-    app.provider_usage.accounts.note_policy_change();
+    persisted?;
     Ok(json!({
         "supported": snapshot.supported,
         "enabled": input.enabled,

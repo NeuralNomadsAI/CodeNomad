@@ -78,6 +78,12 @@ pub(crate) struct DeviceAdmission {
 fn reply(code: Status, text: &str) -> Response {
     (code, [(header::CONNECTION, "close")], Json(json!({"error":text}))).into_response()
 }
+fn is_no_store_account_path(path: &str) -> bool {
+    (path.starts_with("/api/workspaces/") && path.contains("/provider-accounts/"))
+        || (path.starts_with("/workspaces/")
+            && (path.contains("/instance/api/credential")
+                || (path.contains("/instance/api/integration/") && path.contains("/connect/"))))
+}
 fn status(paired: bool) -> Response {
     Json(if paired {
         json!({"authenticated":true,"username":"codenomad","passwordUserProvided":true})
@@ -156,6 +162,19 @@ fn route_path(uri: &axum::http::Uri) -> Option<String> {
 }
 
 pub async fn admit(
+    state: State<(Shared, Option<crate::host::ui::RemoteBundle>)>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let no_store = is_no_store_account_path(req.uri().path());
+    let mut response = admit_inner(state, req, next).await;
+    if no_store && !response.status().is_success() {
+        response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
+}
+
+async fn admit_inner(
     State((app, bundle)): State<(Shared, Option<crate::host::ui::RemoteBundle>)>,
     mut req: Request,
     next: Next,

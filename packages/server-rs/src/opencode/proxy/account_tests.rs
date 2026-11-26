@@ -24,13 +24,28 @@ impl Drop for TempDir {
     }
 }
 
+struct MockCall {
+    method: String,
+    path: String,
+    query: Option<String>,
+    dir_header: Option<String>,
+    body: Option<Value>,
+}
+
+enum UpstreamErrorMode {
+    None,
+    NonJsonServerError,
+    JsonEchoSecret,
+}
+
 struct MockUpstream {
     root: PathBuf,
     linked: PathBuf,
-    calls: Vec<(String, String, Option<String>, Option<Value>)>,
+    calls: Vec<MockCall>,
     order: Vec<String>,
     entries: Vec<Value>,
     fail_activate: bool,
+    connect_error: UpstreamErrorMode,
     events: Vec<String>,
 }
 
@@ -43,11 +58,18 @@ async fn fake_opencode(State(state): State<Arc<Mutex<MockUpstream>>>, req: Reque
     let method = req.method().clone();
     let path = req.uri().path().to_owned();
     let query = req.uri().query().map(str::to_owned);
+    let dir_header = req.headers().get("x-opencode-directory").and_then(|v| v.to_str().ok()).map(str::to_owned);
     let bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024).await.unwrap_or_default();
     let body: Option<Value> = if bytes.is_empty() { None } else { serde_json::from_slice(&bytes).ok() };
     let mut s = state.lock().unwrap();
     if path.starts_with("/api/credential") || path.starts_with("/api/integration") {
-        s.calls.push((method.to_string(), path.clone(), query.clone(), body.clone()));
+        s.calls.push(MockCall {
+            method: method.to_string(),
+            path: path.clone(),
+            query: query.clone(),
+            dir_header,
+            body: body.clone(),
+        });
     }
     match (method, path.as_str()) {
         (Method::GET, "/api/location") => Json(json!({
@@ -120,8 +142,43 @@ async fn fake_opencode(State(state): State<Arc<Mutex<MockUpstream>>>, req: Reque
         (Method::PATCH, p) if p.starts_with("/api/credential/") => Status::NO_CONTENT.into_response(),
         (Method::DELETE, p) if p.starts_with("/api/credential/") => Status::NO_CONTENT.into_response(),
         (Method::POST, p) if p.starts_with("/api/integration/") && p.contains("/connect/") => {
-            Json(json!({"data": {"attemptID": "att_1", "mode": "code", "url": "https://example.test/auth"}}))
-                .into_response()
+            match s.connect_error {
+                UpstreamErrorMode::NonJsonServerError => {
+                    return (
+                        Status::INTERNAL_SERVER_ERROR,
+                        [(header::CONTENT_TYPE, "text/plain")],
+                        "raw upstream stack trace with sk-raw-leak-777",
+                    )
+                        .into_response();
+                }
+                UpstreamErrorMode::JsonEchoSecret => {
+                    let echoed = body
+                        .as_ref()
+                        .and_then(|b| b.get("key").or_else(|| b.get("code")))
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    return (
+                        Status::BAD_REQUEST,
+                        Json(json!({
+                            "code": "INVALID_CREDENTIAL",
+                            "message": format!("Rejected secret {echoed}"),
+                            "request": {"body": body},
+                            "stack": "internal trace",
+                        })),
+                    )
+                        .into_response();
+                }
+                UpstreamErrorMode::None => {}
+            }
+            if p.ends_with("/connect/oauth") || p.ends_with("/connect/command") {
+                Json(json!({"data": {"attemptID": "att_1", "mode": "code", "url": "https://example.test/auth"}}))
+                    .into_response()
+            } else {
+                Status::NO_CONTENT.into_response()
+            }
+        }
+        (Method::GET, p) if p.starts_with("/api/integration/") && p.contains("/connect/") => {
+            Json(json!({"data": {"attemptID": "att_1", "status": "pending"}})).into_response()
         }
         (Method::DELETE, p) if p.starts_with("/api/integration/") && p.contains("/connect/") => {
             Status::NO_CONTENT.into_response()
@@ -182,6 +239,7 @@ async fn setup_proxy_fixture() -> (TempDir, Arc<App>, String, PathBuf, PathBuf, 
         order: vec!["one".into(), "two".into()],
         entries: vec![mk_entry("one", true), mk_entry("two", false)],
         fail_activate: false,
+        connect_error: UpstreamErrorMode::None,
         events: Vec::new(),
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -284,65 +342,154 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
     let linked_str = linked.to_string_lossy().into_owned();
     let root_str = root.to_string_lossy().into_owned();
 
-    // 1. Happy paths for all 6 integration connect & credential route families.
-    for (method, path, body) in [
+    // 1. Happy paths for all integration connect & credential route families with exact native statuses.
+    for (method, path, body, expected_status) in [
         (
             Method::POST,
             format!("{base}/integration/openai/connect/key"),
             Some(json!({"key": "sk-secret-value", "label": "Work"}).to_string()),
+            Status::NO_CONTENT,
         ),
         (
             Method::POST,
             format!("{base}/integration/openai/connect/oauth"),
             Some(json!({"methodID": "chatgpt-browser", "answer": {"org": "a"}}).to_string()),
+            Status::OK,
         ),
         (
             Method::POST,
             format!("{base}/integration/openai/connect/command"),
             Some(json!({"methodID": "cli-login"}).to_string()),
+            Status::OK,
         ),
         (
             Method::POST,
             format!("{base}/integration/azure/connect/external"),
             Some(json!({"methodID": "azure-cli", "location": {"directory": linked_str}}).to_string()),
+            Status::NO_CONTENT,
         ),
         (
             Method::POST,
             format!("{base}/integration/openai/connect/oauth/att_1/complete"),
             Some(json!({"code": "123456"}).to_string()),
+            Status::NO_CONTENT,
         ),
-        (Method::DELETE, format!("{base}/integration/openai/connect/oauth/att_1"), None),
-        (Method::DELETE, format!("{base}/integration/openai/connect/command/att_1"), None),
-        (Method::POST, format!("{base}/credential/cre_1/activate"), None),
-        (Method::PATCH, format!("{base}/credential/cre_1"), Some(json!({"label": "Renamed"}).to_string())),
-        (Method::DELETE, format!("{base}/credential/cre_1"), None),
+        (Method::DELETE, format!("{base}/integration/openai/connect/oauth/att_1"), None, Status::NO_CONTENT),
+        (Method::DELETE, format!("{base}/integration/openai/connect/command/att_1"), None, Status::NO_CONTENT),
+        (Method::POST, format!("{base}/credential/cre_1/activate"), None, Status::NO_CONTENT),
+        (
+            Method::PATCH,
+            format!("{base}/credential/cre_1"),
+            Some(json!({"label": "Renamed"}).to_string()),
+            Status::NO_CONTENT,
+        ),
+        (Method::DELETE, format!("{base}/credential/cre_1"), None, Status::NO_CONTENT),
     ] {
         let ct = body.as_ref().map(|_| "application/json");
         let (status, cc, _) = call_relay(&app, method.clone(), &path, ct, body.as_deref(), &[]).await;
-        assert!(status.is_success(), "{method} {path} -> {status}");
+        assert_eq!(status, expected_status, "{method} {path} -> {status}");
         assert_eq!(cc, "no-store", "{method} {path} must return no-store");
     }
 
     // Verify credential routes never inject default location[directory], while integration routes do unless body supplied it.
     {
         let calls = &mock.lock().unwrap().calls;
-        let activate = calls.iter().find(|(m, p, _, _)| m == "POST" && p == "/api/credential/cre_1/activate").unwrap();
-        assert!(activate.2.is_none(), "credential activate must not inject default location[directory]");
-        assert!(activate.3.is_none(), "empty activate body must stay empty");
-        let patch = calls.iter().find(|(m, p, _, _)| m == "PATCH" && p == "/api/credential/cre_1").unwrap();
-        assert!(patch.2.is_none());
-        assert_eq!(patch.3, Some(json!({"label": "Renamed"})));
+        let activate = calls.iter().find(|c| c.method == "POST" && c.path == "/api/credential/cre_1/activate").unwrap();
+        assert!(activate.query.is_none(), "credential activate must not inject default location[directory]");
+        assert!(activate.body.is_none(), "empty activate body must stay empty");
+        let patch = calls.iter().find(|c| c.method == "PATCH" && c.path == "/api/credential/cre_1").unwrap();
+        assert!(patch.query.is_none());
+        assert_eq!(patch.body, Some(json!({"label": "Renamed"})));
         let connect_key =
-            calls.iter().find(|(m, p, _, _)| m == "POST" && p == "/api/integration/openai/connect/key").unwrap();
-        assert!(connect_key.2.as_deref().is_some_and(|q| q.contains("location%5Bdirectory%5D=")));
+            calls.iter().find(|c| c.method == "POST" && c.path == "/api/integration/openai/connect/key").unwrap();
+        assert!(connect_key.query.as_deref().is_some_and(|q| q.contains("location%5Bdirectory%5D=")));
         let connect_ext =
-            calls.iter().find(|(m, p, _, _)| m == "POST" && p == "/api/integration/azure/connect/external").unwrap();
-        assert!(connect_ext.2.is_none(), "body location suppresses default query location");
+            calls.iter().find(|c| c.method == "POST" && c.path == "/api/integration/azure/connect/external").unwrap();
+        assert!(connect_ext.query.is_none(), "body location suppresses default query location");
+    }
+
+    // x-codenomad-location alone injects x-opencode-directory and suppresses default query location.
+    let linked_ctx = percent_encoding::utf8_percent_encode(
+        &json!({"directory": linked_str}).to_string(),
+        percent_encoding::NON_ALPHANUMERIC,
+    )
+    .to_string();
+    let (status, cc, _) = call_relay(
+        &app,
+        Method::POST,
+        &format!("{base}/integration/openai/connect/key"),
+        Some("application/json"),
+        Some(&json!({"key": "sk-ctx"}).to_string()),
+        &[("x-codenomad-location", &linked_ctx)],
+    )
+    .await;
+    assert_eq!(status, Status::NO_CONTENT);
+    assert_eq!(cc, "no-store");
+    {
+        let calls = &mock.lock().unwrap().calls;
+        let last = calls.last().unwrap();
+        assert!(last.query.is_none(), "x-codenomad-location suppresses default query injection");
+        let decoded_header = last
+            .dir_header
+            .as_deref()
+            .and_then(|v| percent_encoding::percent_decode_str(v).decode_utf8().ok())
+            .map(|s| s.into_owned());
+        assert_eq!(decoded_header.as_deref(), Some(linked_str.as_str()));
+    }
+
+    // DELETE with body-only location forwards translated location[directory] query upstream.
+    let (status, cc, _) = call_relay(
+        &app,
+        Method::DELETE,
+        &format!("{base}/integration/openai/connect/oauth/att_2"),
+        Some("application/json"),
+        Some(&json!({"location": {"directory": linked_str}}).to_string()),
+        &[],
+    )
+    .await;
+    assert_eq!(status, Status::NO_CONTENT);
+    assert_eq!(cc, "no-store");
+    {
+        let calls = &mock.lock().unwrap().calls;
+        let last = calls.last().unwrap();
+        assert_eq!(last.path, "/api/integration/openai/connect/oauth/att_2");
+        assert!(last.body.is_none());
+        let parsed =
+            reqwest::Url::parse(&format!("http://localhost/?{}", last.query.as_deref().unwrap_or(""))).unwrap();
+        let loc_dir = parsed.query_pairs().find(|(k, _)| k == "location[directory]").map(|(_, v)| v.into_owned());
+        assert_eq!(loc_dir.as_deref(), Some(linked_str.as_str()));
     }
 
     let before_refusals = mock.lock().unwrap().calls.len();
 
-    // 2. Refusals: foreign query/body locations, conflicting x-codenomad-location, invalid bodies, disallowed routes, traversal.
+    // 2. Refusals: foreign query/body locations, conflicting query/header/body locations, invalid bodies, disallowed routes, traversal.
+    let linked_encoded =
+        percent_encoding::utf8_percent_encode(&linked_str, percent_encoding::NON_ALPHANUMERIC).to_string();
+    let root_encoded = percent_encoding::utf8_percent_encode(&root_str, percent_encoding::NON_ALPHANUMERIC).to_string();
+    // Query vs body location conflict -> 400
+    let (status, cc, _) = call_relay(
+        &app,
+        Method::POST,
+        &format!("{base}/integration/azure/connect/external?location[directory]={root_encoded}"),
+        Some("application/json"),
+        Some(&json!({"methodID": "azure-cli", "location": {"directory": linked_str}}).to_string()),
+        &[],
+    )
+    .await;
+    assert_eq!(status, Status::BAD_REQUEST);
+    assert_eq!(cc, "no-store");
+    // directory vs location[directory] conflicting query selectors -> 403
+    let (status, cc, _) = call_relay(
+        &app,
+        Method::POST,
+        &format!("{base}/integration/openai/connect/key?directory={root_encoded}&location[directory]={linked_encoded}"),
+        Some("application/json"),
+        Some(&json!({"key": "sk-1"}).to_string()),
+        &[],
+    )
+    .await;
+    assert_eq!(status, Status::FORBIDDEN);
+    assert_eq!(cc, "no-store");
     let (status, cc, _) = call_relay(
         &app,
         Method::POST,
@@ -447,6 +594,40 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
     }
 
     assert_eq!(mock.lock().unwrap().calls.len(), before_refusals, "no refusal may reach OpenCode");
+
+    // 3. Upstream non-2xx responses (non-JSON and JSON echoing secrets) are redacted with no-store.
+    mock.lock().unwrap().connect_error = UpstreamErrorMode::NonJsonServerError;
+    let (status, cc, body_text) = call_relay(
+        &app,
+        Method::POST,
+        &format!("{base}/integration/openai/connect/key"),
+        Some("application/json"),
+        Some(&json!({"key": "sk-nonjson-secret"}).to_string()),
+        &[],
+    )
+    .await;
+    assert_eq!(status, Status::INTERNAL_SERVER_ERROR);
+    assert_eq!(cc, "no-store");
+    assert!(body_text.contains("OpenCodeContractError"));
+    assert!(!body_text.contains("sk-raw-leak-777"));
+    assert!(!body_text.contains("sk-nonjson-secret"));
+
+    mock.lock().unwrap().connect_error = UpstreamErrorMode::JsonEchoSecret;
+    let (status, cc, body_text) = call_relay(
+        &app,
+        Method::POST,
+        &format!("{base}/integration/openai/connect/key"),
+        Some("application/json"),
+        Some(&json!({"key": "sk-json-echo-secret-42"}).to_string()),
+        &[],
+    )
+    .await;
+    assert_eq!(status, Status::BAD_REQUEST);
+    assert_eq!(cc, "no-store");
+    assert!(body_text.contains("INVALID_CREDENTIAL"));
+    assert!(!body_text.contains("sk-json-echo-secret-42"));
+    assert!(!body_text.contains("internal trace"));
+    mock.lock().unwrap().connect_error = UpstreamErrorMode::None;
 }
 
 #[tokio::test]
