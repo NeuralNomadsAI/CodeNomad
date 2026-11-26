@@ -30,6 +30,7 @@ assert(!historyReturnOnly || webMobile&&!webAndroid)
 assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes('--web-mobile'))
 if(needsOwnedWindowsWorker(process.argv)){
   const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:['pipe','inherit','inherit']})
+  worker.stdin?.on('error',()=>{})
   const closed=new Promise(resolve=>worker.once('close',resolve))
   const graceMs=webAndroid?70000:12000
   let stopping
@@ -699,9 +700,12 @@ try{
     await http?.dispose()
     await stopServer()
     for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-    await writeFile(path.join(profile,'proof.json'),JSON.stringify({result:androidCleanup?.length||clientStopError?1:result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,clientStopError,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2));await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
+    if(interruptedSignal)result=1
+    const proofResult=androidCleanup?.length||clientStopError||interruptedSignal?1:result
+    await writeFile(path.join(profile,'proof.json'),JSON.stringify({result:proofResult,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,interruptedSignal:interruptedSignal??null,clientStopError,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2));await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
     if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
     if(web)await writeFile(path.join(profile,'browser-run.log'),webState.diagnostic)
+    if(interruptedSignal)result=1
     if(result===0){
       assert(!clientStopError,`Owned client cleanup failed: ${clientStopError}`)
       if(webState.deviceLease)assert.deepEqual(androidCleanup,[],'Android fixture cleanup must complete')
@@ -712,4 +716,4 @@ try{
     process.off('SIGTERM',onLauncherSignal)
   }
 }
-process.exitCode=result??1
+process.exitCode=interruptedSignal?1:(result??1)
