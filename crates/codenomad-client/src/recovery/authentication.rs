@@ -8,7 +8,7 @@ use crate::{
 };
 use std::{sync::atomic::Ordering::SeqCst, time::Duration};
 
-async fn close_for_authentication(wire: &stream::State, out: &Sender<Event>) {
+pub(super) async fn close_for_authentication(wire: &stream::State, out: &Sender<Event>) {
     wire.cancelled.store(true, SeqCst);
     while wire.running.load(SeqCst) && !out.is_closed() {
         runtime::sleep(Duration::from_millis(25)).await;

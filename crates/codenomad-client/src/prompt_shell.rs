@@ -1,16 +1,25 @@
-use crate::{backend::Backend, prompt::PromptError};
+use crate::backend::Backend;
 use serde_json::json;
 
 pub const MAX_SHELL_COMMAND_BYTES: usize = 128 * 1024;
+const PRE_DISPATCH_HEADER: &str = "x-codenomad-pre-dispatch";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellError {
+    Rejected,
+    Unconfirmed,
+    PreDispatchAuthenticationRequired,
+    UnconfirmedAuthenticationRequired,
+}
 
 impl Backend {
-    pub async fn prompt_shell(&self, command: &str) -> Result<(), PromptError> {
+    pub async fn prompt_shell(&self, command: &str) -> Result<(), ShellError> {
         if !crate::history::valid_id(&self.workspace)
             || !crate::history::valid_id(&self.session)
             || command.trim().is_empty()
             || command.len() > MAX_SHELL_COMMAND_BYTES
         {
-            return Err(PromptError::Rejected);
+            return Err(ShellError::Rejected);
         }
         let mut request = self
             .client
@@ -25,26 +34,40 @@ impl Backend {
         let response = request.send().await.map_err(|error| {
             #[cfg(not(target_arch = "wasm32"))]
             if error.is_connect() || error.is_builder() {
-                return PromptError::Rejected;
+                return ShellError::Rejected;
             }
             #[cfg(target_arch = "wasm32")]
             if error.is_builder() {
-                return PromptError::Rejected;
+                return ShellError::Rejected;
             }
-            PromptError::Unconfirmed
+            ShellError::Unconfirmed
         })?;
-        if cfg!(not(target_arch = "wasm32"))
-            && response.status() == reqwest::StatusCode::UNAUTHORIZED
-        {
-            Err(PromptError::AuthenticationRequired)
-        } else if response.status().is_success() {
+        let pre_dispatch = response
+            .headers()
+            .get(PRE_DISPATCH_HEADER)
+            .and_then(|value| value.to_str().ok())
+            == Some("1");
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            if cfg!(not(target_arch = "wasm32")) {
+                if pre_dispatch {
+                    Err(ShellError::PreDispatchAuthenticationRequired)
+                } else {
+                    Err(ShellError::UnconfirmedAuthenticationRequired)
+                }
+            } else if pre_dispatch {
+                Err(ShellError::Rejected)
+            } else {
+                Err(ShellError::Unconfirmed)
+            }
+        } else if status.is_success() {
             Ok(())
-        } else if response.status().is_client_error()
-            || response.status() == reqwest::StatusCode::NOT_IMPLEMENTED
-        {
-            Err(PromptError::Rejected)
+        } else if status == reqwest::StatusCode::REQUEST_TIMEOUT {
+            Err(ShellError::Unconfirmed)
+        } else if status.is_client_error() || status == reqwest::StatusCode::NOT_IMPLEMENTED {
+            Err(ShellError::Rejected)
         } else {
-            Err(PromptError::Unconfirmed)
+            Err(ShellError::Unconfirmed)
         }
     }
 }
@@ -65,7 +88,10 @@ mod tests {
     }
 
     async fn spawn_server(
-        handler: impl Fn(String, String) -> (u16, String) + Send + Sync + 'static,
+        handler: impl Fn(String, String) -> (u16, Vec<(&'static str, &'static str)>, String)
+        + Send
+        + Sync
+        + 'static,
     ) -> (String, tokio::task::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -111,9 +137,13 @@ mod tests {
                         .unwrap_or_default()
                         .to_owned();
                     let body = String::from_utf8_lossy(&buf[head_end..]).into_owned();
-                    let (status, resp_body) = handler(target, body);
+                    let (status, extra_headers, resp_body) = handler(target, body);
+                    let mut extra = String::new();
+                    for (k, v) in extra_headers {
+                        extra.push_str(&format!("{k}: {v}\r\n"));
+                    }
                     let raw = format!(
-                        "HTTP/1.1 {status} Status\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{resp_body}",
+                        "HTTP/1.1 {status} Status\r\nContent-Type: application/json\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{resp_body}",
                         resp_body.len()
                     );
                     let _ = socket.write_all(raw.as_bytes()).await;
@@ -129,14 +159,22 @@ mod tests {
         run(async {
             let captured = Arc::new(Mutex::new(Vec::<(String, serde_json::Value)>::new()));
             let seen = captured.clone();
-            let code = Arc::new(std::sync::atomic::AtomicU16::new(200));
+            let code = Arc::new(std::sync::atomic::AtomicU16::new(204));
+            let pre_dispatch = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let status_code = code.clone();
+            let marked = pre_dispatch.clone();
             let (base, server) = spawn_server(move |path, body| {
                 let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
                 seen.lock().unwrap().push((path, parsed));
+                let headers = if marked.load(std::sync::atomic::Ordering::SeqCst) {
+                    vec![(PRE_DISPATCH_HEADER, "1")]
+                } else {
+                    vec![]
+                };
                 (
                     status_code.load(std::sync::atomic::Ordering::SeqCst),
-                    "{}".into(),
+                    headers,
+                    String::new(),
                 )
             })
             .await;
@@ -147,19 +185,16 @@ mod tests {
             backend.session_directory = Some("/repo/wt".into());
 
             // Pre-send validation refuses without HTTP.
-            assert_eq!(
-                backend.prompt_shell("   ").await,
-                Err(PromptError::Rejected)
-            );
+            assert_eq!(backend.prompt_shell("   ").await, Err(ShellError::Rejected));
             assert_eq!(
                 backend
                     .prompt_shell(&"x".repeat(MAX_SHELL_COMMAND_BYTES + 1))
                     .await,
-                Err(PromptError::Rejected)
+                Err(ShellError::Rejected)
             );
             assert!(captured.lock().unwrap().is_empty());
 
-            // Success with directory query and exact JSON payload.
+            // 204 success with directory query and exact JSON payload.
             assert_eq!(backend.prompt_shell("git status").await, Ok(()));
             {
                 let requests = captured.lock().unwrap();
@@ -171,26 +206,38 @@ mod tests {
                 assert_eq!(requests[0].1, json!({ "command": "git status" }));
             }
 
-            // HTTP status classification.
+            // HTTP status classification, including pre-dispatch vs unmarked 401 and 408 timeout.
             code.store(400, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
                 backend.prompt_shell("echo 400").await,
-                Err(PromptError::Rejected)
+                Err(ShellError::Rejected)
+            );
+            code.store(408, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                backend.prompt_shell("echo 408").await,
+                Err(ShellError::Unconfirmed)
             );
             code.store(501, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
                 backend.prompt_shell("echo 501").await,
-                Err(PromptError::Rejected)
+                Err(ShellError::Rejected)
             );
             code.store(401, std::sync::atomic::Ordering::SeqCst);
+            pre_dispatch.store(false, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
-                backend.prompt_shell("echo 401").await,
-                Err(PromptError::AuthenticationRequired)
+                backend.prompt_shell("echo 401-unmarked").await,
+                Err(ShellError::UnconfirmedAuthenticationRequired)
             );
+            pre_dispatch.store(true, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                backend.prompt_shell("echo 401-pre").await,
+                Err(ShellError::PreDispatchAuthenticationRequired)
+            );
+            pre_dispatch.store(false, std::sync::atomic::Ordering::SeqCst);
             code.store(500, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(
                 backend.prompt_shell("echo 500").await,
-                Err(PromptError::Unconfirmed)
+                Err(ShellError::Unconfirmed)
             );
             server.abort();
         });
@@ -207,8 +254,52 @@ mod tests {
             backend.session = "ses_1".into();
             assert_eq!(
                 backend.prompt_shell("echo offline").await,
-                Err(PromptError::Rejected)
+                Err(ShellError::Rejected)
             );
         });
+    }
+
+    #[test]
+    fn decodes_shell_history_rows_for_running_and_completed_commands() {
+        let running = crate::history::decode_message(&json!({
+            "id": "msg_shell_1",
+            "type": "shell",
+            "shellID": "sh_1",
+            "command": "git status",
+            "status": "running",
+            "time": { "created": 1 }
+        }))
+        .unwrap();
+        assert_eq!(running.role, "shell");
+        assert!(!running.completed);
+        assert_eq!(running.body, "git status");
+
+        let exited = crate::history::decode_message(&json!({
+            "id": "msg_shell_2",
+            "type": "shell",
+            "shellID": "sh_2",
+            "command": "echo hi",
+            "status": "exited",
+            "exit": 0,
+            "output": { "output": "hi\n", "cursor": 3, "size": 3, "truncated": false },
+            "time": { "created": 2, "completed": 3 }
+        }))
+        .unwrap();
+        assert!(exited.completed);
+        assert_eq!(exited.body, "$ echo hi\nhi\n");
+
+        let empty_out = crate::history::decode_message(&json!({
+            "id": "msg_shell_3",
+            "type": "shell",
+            "shellID": "sh_3",
+            "command": "true",
+            "status": "exited",
+            "exit": 0,
+            "output": { "output": "", "cursor": 0, "size": 0, "truncated": false },
+            "time": { "created": 4 }
+        }))
+        .unwrap();
+        assert!(empty_out.completed);
+        assert_eq!(empty_out.body, "true");
     }
 }

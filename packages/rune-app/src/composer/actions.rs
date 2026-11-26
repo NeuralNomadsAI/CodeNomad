@@ -11,13 +11,14 @@ use crate::{
 use codenomad_client::prompt::{Delivery, message_id};
 use rune::{Tx, edit::TextEdit};
 
-#[derive(Default)]
 pub struct Owner {
     pub device: super::device::Device,
     pub draft: Draft,
     pub picker: super::picker::Picker,
     pub menu: rune_theme_codenomad::action_menu::State<State>,
     pub shell_mode: bool,
+    pub(super) draft_was_empty: std::cell::Cell<bool>,
+    pub(super) pasted_input: bool,
     sending: Option<Send>,
     pub send_error: bool,
     unconfirmed: Option<UnconfirmedPrompt>,
@@ -25,6 +26,26 @@ pub struct Owner {
     pub restored: bool,
     pub attachments_missing: bool,
     pub(crate) recall: Option<super::recall::Recall>,
+}
+impl Default for Owner {
+    fn default() -> Self {
+        Self {
+            device: Default::default(),
+            draft: Default::default(),
+            picker: Default::default(),
+            menu: Default::default(),
+            shell_mode: false,
+            draft_was_empty: std::cell::Cell::new(true),
+            pasted_input: false,
+            sending: None,
+            send_error: false,
+            unconfirmed: None,
+            command_unconfirmed: None,
+            restored: false,
+            attachments_missing: false,
+            recall: None,
+        }
+    }
 }
 impl Owner {
     pub fn pending(&self) -> bool {
@@ -322,7 +343,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             s.composer.sending = Some(Send {
                 id,
                 edit: s.draft.clone(),
-                draft: std::mem::take(&mut s.composer.draft),
+                draft: s.composer.draft.clone(),
                 was_running: s.phase == Phase::Streaming,
                 command: Some(attempt),
                 edited: s.composer.recall.is_some(),
@@ -330,6 +351,11 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             });
             s.composer.shell_mode = false;
             s.draft.clear();
+            s.composer
+                .draft
+                .attachments
+                .retain(|part| !matches!(part, super::draft::Attachment::Pasted { .. }));
+            s.composer.draft_was_empty.set(true);
             super::recall::restore(s);
             s.composer.picker.reset();
             renew_editor(s, tx);
@@ -493,7 +519,6 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
             outcome,
             PromptOutcome::Rejected | PromptOutcome::Unconfirmed
         ) && may_restore
-            && (!is_shell || s.composer.draft.attachments.is_empty())
         {
             super::recall::replace_edit(s, send.edit);
             s.composer.draft = send.draft;

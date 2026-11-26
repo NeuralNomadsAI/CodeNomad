@@ -54,12 +54,27 @@ pub fn decode_message(v: &Value) -> Result<Message> {
             .or_else(|| v["error"]["message"].as_str())
             .unwrap_or_default()
             .into(),
+        "shell" => {
+            let command = v["command"].as_str().unwrap_or_default();
+            let output = v["output"]["output"]
+                .as_str()
+                .or_else(|| v["output"].as_str())
+                .unwrap_or_default();
+            match (command.is_empty(), output.is_empty()) {
+                (false, false) => format!("$ {command}\n{output}"),
+                (true, false) => output.into(),
+                (false, true) => command.into(),
+                (true, true) => String::new(),
+            }
+        }
         _ => crate::content::text_body(&parts),
     };
     Ok(Message {
         id: id.into(),
         role: role.into(),
-        completed: role == "user" || !v["time"]["completed"].is_null(),
+        completed: role == "user"
+            || !v["time"]["completed"].is_null()
+            || (role == "shell" && v["status"].as_str().is_some_and(|s| s != "running")),
         body,
         usage: (role == "assistant")
             .then(|| crate::content::Usage::decode(v))

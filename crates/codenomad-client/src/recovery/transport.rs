@@ -208,7 +208,10 @@ pub(crate) async fn run_with_reading(
                 else {
                     return Ok(());
                 };
-                if matches!(outcome, PromptOutcome::Unconfirmed) {
+                if matches!(
+                    outcome,
+                    PromptOutcome::Confirmed(_) | PromptOutcome::Unconfirmed
+                ) {
                     reader.dirty = true;
                     reader.quiet = Instant::now();
                 }
@@ -677,7 +680,11 @@ pub(crate) async fn run_with_reading(
                         reader.dirty = true;
                         reader.quiet = Instant::now() + Duration::from_millis(100);
                     }
-                    "server.connected" | "session.inbox.enqueued" | "session.inbox.delivered" => {
+                    "server.connected"
+                    | "session.inbox.enqueued"
+                    | "session.inbox.delivered"
+                    | "session.shell.started"
+                    | "session.shell.ended" => {
                         reader.dirty = true;
                         reader.quiet = Instant::now() + Duration::from_millis(100);
                     }

@@ -399,3 +399,8 @@ pub(crate) fn locale(s: &State) -> &'static str {
 pub(crate) fn fixture_shortcuts(s: &State, overrides: serde_json::Value) {
     s.settings.shared.borrow_mut().fixture_shortcuts(overrides);
 }
+
+#[cfg(test)]
+pub(crate) fn fixture_config(s: &State, settings: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_config(settings);
+}

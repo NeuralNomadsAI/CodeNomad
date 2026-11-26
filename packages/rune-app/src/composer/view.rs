@@ -68,6 +68,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
             if s.composer.shell_mode {
                 layout::shell_send_button_tx(
                     t("promptInput.overlay.send"),
+                    t("promptInput.send.ariaLabel"),
                     !can_send(s),
                     screen::action_tx(&scope, |s, tx| send(s, tx, false)),
                 )
@@ -228,10 +229,12 @@ fn editor(s: &State, compact: bool) -> El {
     let input_key = "input";
     #[cfg(target_arch = "wasm32")]
     let input_key = format!("input-{}", s.web_composer_input_epoch);
-    let shell_status = s
+    s.composer.draft_was_empty.set(s.draft.text.is_empty());
+    let shell_description = s
         .composer
         .shell_mode
         .then(|| t("promptInput.overlay.shellModeActive"));
+    let shell_status = shell_description.filter(|_| s.draft.text.is_empty());
     let placeholder = t(if s.composer.shell_mode {
         "promptInput.placeholder.shell"
     } else {
@@ -240,7 +243,7 @@ fn editor(s: &State, compact: bool) -> El {
     let mut input = layout::composer_input(&s.draft, placeholder)
         .key(input_key)
         .label(t("rune.prompt"));
-    if let Some(status) = shell_status {
+    if let Some(status) = shell_description {
         input = input.description_static(status);
     }
     if s.composer.editing_locked() {
@@ -248,6 +251,7 @@ fn editor(s: &State, compact: bool) -> El {
             input.disabled(true),
             compact,
             false,
+            s.composer.shell_mode,
             shell_status,
         )
         .key("composer");
@@ -274,7 +278,11 @@ fn editor(s: &State, compact: bool) -> El {
             {
                 return true;
             }
-            super::long_paste::paste(s, content.text(), tx)
+            if super::long_paste::paste(s, content.text(), tx) {
+                return true;
+            }
+            s.composer.pasted_input = true;
+            false
         });
     #[cfg(not(target_arch = "wasm32"))]
     let input = {
@@ -296,8 +304,14 @@ fn editor(s: &State, compact: bool) -> El {
                 }
             })
     };
-    layout::composer_field_with_status(input, compact, s.draft.focused, shell_status)
-        .key("composer")
+    layout::composer_field_with_status(
+        input,
+        compact,
+        s.draft.focused,
+        s.composer.shell_mode,
+        shell_status,
+    )
+    .key("composer")
 }
 
 pub fn overlays(s: &State, layer: &mut Vec<El>) {
@@ -355,6 +369,26 @@ pub(super) fn changed(s: &mut State, tx: &mut Tx) {
     if let Some(read) = &s.composer.device.clipboard {
         read.set(false);
     }
+    let pasted = std::mem::take(&mut s.composer.pasted_input);
+    if !pasted
+        && !s.composer.shell_mode
+        && !s.composer.editing_locked()
+        && !s.composer.device.busy()
+        && !s.draft.is_composing()
+        && s.composer.draft_was_empty.get()
+        && s.draft.text == "!"
+        && s.draft.range() == (1, 1)
+    {
+        s.draft.clear();
+        s.composer.shell_mode = true;
+        s.composer.mark_edited();
+        s.composer.picker.reset();
+        s.composer.draft_was_empty.set(true);
+        layout::announce_polite(tx, t("promptInput.overlay.shellModeActive"));
+        crate::workspace::draft_changed(s, tx);
+        return;
+    }
+    s.composer.draft_was_empty.set(s.draft.text.is_empty());
     if s.composer.shell_mode {
         s.composer.picker.reset();
     } else {
@@ -406,11 +440,13 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if event.key == Key::Enter && s.composer.device.busy() {
         return true;
     }
-    if event.key == Key::Enter
-        && tx.key_repeat()
-        && (s.composer.shell_mode
-            || s.composer.picker.open()
-            || s.composer.picker.selected_command(&s.draft.text).is_some())
+    if tx.key_repeat()
+        && ((s.composer.shell_mode
+            && (event.key == Key::Enter
+                || crate::settings::matches_shortcut(s, "prompt-send", event, tx)))
+            || (event.key == Key::Enter
+                && (s.composer.picker.open()
+                    || s.composer.picker.selected_command(&s.draft.text).is_some())))
     {
         return true;
     }
@@ -464,11 +500,7 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             s.composer.picker.reset();
             return true;
         }
-        if event.key == Key::Backspace
-            && event.mods == rune::Mods::default()
-            && s.draft.text.is_empty()
-            && s.draft.range() == (0, 0)
-        {
+        if event.key == Key::Backspace && s.draft.text.is_empty() && s.draft.range() == (0, 0) {
             s.composer.exit_shell_mode();
             s.composer.picker.reset();
             return true;
@@ -490,6 +522,19 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if Action::Clear.matches(s, event, tx) {
         super::menu::clear(s, tx);
         true
+    } else if s.composer.shell_mode {
+        if Action::Alternate.matches(s, event, tx) {
+            true
+        } else if crate::settings::matches_shortcut(s, "prompt-newline", event, tx) {
+            s.draft.insert("\n");
+            changed(s, tx);
+            true
+        } else if crate::settings::matches_shortcut(s, "prompt-send", event, tx) {
+            send(s, tx, false);
+            true
+        } else {
+            super::menu::jump_key(s, event, tx)
+        }
     } else if Action::Alternate.matches(s, event, tx) {
         send(s, tx, true);
         true

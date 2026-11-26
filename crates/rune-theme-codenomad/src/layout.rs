@@ -173,8 +173,14 @@ pub fn editor_menu<S: 'static>(
     }
     tx.popup_menu(menu, point, pick);
 }
+const SHELL_PROMPT: rune::Icon = rune::Icon {
+    name: "shell-prompt",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 4-5 4"/><path d="M13 16h6"/></g>"#,
+};
 pub fn shell_send_button_tx<S: 'static>(
     label: &str,
+    aria_label: &str,
     disabled: bool,
     press: impl Fn(&mut S, &mut rune::Tx) + 'static,
 ) -> El {
@@ -182,10 +188,12 @@ pub fn shell_send_button_tx<S: 'static>(
     let mut theme = kit(dark()).clone();
     let fill = t.color("status-success");
     let ink = t.color("text-inverted");
+    theme.c.bg_icon_button_contrast = fill;
     theme.c.bg_contrast = fill;
     theme.c.contrast_hover = fill;
     theme.c.contrast_pressed = fill;
     theme.c.bg_accent = fill;
+    theme.c.submit_highlight = rune::Color::TRANSPARENT;
     theme.c.submit_hover = fill;
     theme.c.submit_fg = ink;
     theme.c.submit_icon = ink;
@@ -194,10 +202,12 @@ pub fn shell_send_button_tx<S: 'static>(
     let action = Rc::new(press);
     let press = action.clone();
     let button = rune_kit::Button::new(label)
+        .icon(&SHELL_PROMPT)
         .variant(rune_kit::ButtonVariant::Submit)
         .disabled(disabled)
         .on_press_tx(move |s, tx| press(s, tx))
-        .build(&theme);
+        .build(&theme)
+        .label(aria_label);
     if disabled {
         button
     } else {
@@ -205,12 +215,13 @@ pub fn shell_send_button_tx<S: 'static>(
     }
 }
 pub fn composer_field(editor: El, compact: bool, focused: bool) -> El {
-    composer_field_with_status(editor, compact, focused, None)
+    composer_field_with_status(editor, compact, focused, false, None)
 }
 pub fn composer_field_with_status(
     editor: El,
     compact: bool,
     focused: bool,
+    shell_mode: bool,
     shell_status: Option<&str>,
 ) -> El {
     let t = tokens(dark());
@@ -227,19 +238,21 @@ pub fn composer_field_with_status(
         .child(field)
         .fill(t.color("surface-field"));
     if let Some(status) = shell_status {
+        let sm = t.space(Space::Sm).px();
+        let xs = t.space(Space::Xs).px();
         box_el = box_el.child(
             rune::row()
                 .key("composer-shell-status")
                 .role("note")
-                .w_full()
-                .px(t.space(Space::Sm).px())
-                .pb(t.space(Space::Xs).px())
+                .pin(Some(sm), None, Some(sm), Some(xs))
                 .child(
                     rune::text(status)
                         .font(t.text(TextRole::Small))
                         .color(t.color("status-success")),
                 ),
         );
+    }
+    if shell_mode {
         box_el.outline(1.0, -1.0, t.color("status-success-ring"))
     } else if focused {
         box_el.outline(1.0, -1.0, t.color("focus-ring-color"))

@@ -49,6 +49,12 @@ fn chat_runtime() -> (Runtime<State>, codenomad_client::Receiver<Command>) {
 #[test]
 fn bang_enters_shell_mode_without_text_and_exposes_accessible_state() {
     let (mut rt, _rx) = chat_runtime();
+    let before_height = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some("composer"))
+        .expect("composer element")
+        .rect[3];
     send_key(
         &mut rt,
         Key::Text("!".into()),
@@ -59,6 +65,16 @@ fn bang_enters_shell_mode_without_text_and_exposes_accessible_state() {
     );
     assert!(rt.state.composer.shell_mode);
     assert!(rt.state.draft.text.is_empty());
+    let after_height = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some("composer"))
+        .expect("composer element")
+        .rect[3];
+    assert!(
+        (after_height - before_height).abs() < 0.5,
+        "shell status must stay inside the existing composer height ({before_height} vs {after_height})"
+    );
 
     let tree = rt.accessibility_json();
     let status = node(&tree, "composer-shell-status").expect("shell status note");
@@ -76,11 +92,21 @@ fn bang_enters_shell_mode_without_text_and_exposes_accessible_state() {
         input["description"],
         t("promptInput.overlay.shellModeActive")
     );
+    let send_btn = node(&tree, "send").expect("send button");
+    assert_eq!(send_btn["name"], t("promptInput.send.ariaLabel"));
 
-    // Typing '!' while already in shell mode inserts literally into the command.
+    // Typing '!' while already in shell mode inserts literally and hides the visual status overlay
+    // while keeping semantic description and shell mode active.
     send_key(&mut rt, Key::Text("!".into()), Mods::default());
     assert!(rt.state.composer.shell_mode);
     assert_eq!(rt.state.draft.text, "!");
+    let typing_tree = rt.accessibility_json();
+    assert!(node(&typing_tree, "composer-shell-status").is_none());
+    let typing_input = node(&typing_tree, "input").expect("composer input");
+    assert_eq!(
+        typing_input["description"],
+        t("promptInput.overlay.shellModeActive")
+    );
 
     // Typing '!' at index 0 when normal composer already has text does not enter shell mode.
     rt.update(|s, _| {
@@ -217,7 +243,8 @@ fn shell_send_handles_success_pre_send_rejection_and_unconfirmed_hold() {
     });
     rt.frame(0.0);
 
-    // Submit in shell mode: expands pasted placeholder, keeps @literal, exits shell mode, clears attachments.
+    // Submit in shell mode: expands pasted placeholder, keeps @literal, exits shell mode,
+    // consumes pasted placeholder while preserving unsent non-pasted attachments.
     rt.update(|s, tx| send(s, tx, true));
     let Command::Shell { attempt, command } = rx.try_recv().expect("shell command") else {
         panic!("expected Command::Shell");
@@ -225,7 +252,11 @@ fn shell_send_handles_success_pre_send_rejection_and_unconfirmed_hold() {
     assert_eq!(command, "echo world @literal");
     assert!(!rt.state.composer.shell_mode);
     assert!(rt.state.draft.text.is_empty());
-    assert!(rt.state.composer.draft.attachments.is_empty());
+    assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+    assert!(matches!(
+        rt.state.composer.draft.attachments[0],
+        Attachment::Skill { .. }
+    ));
     assert!(rt.state.messages.is_empty());
 
     // Pre-send rejection restores draft, attachments, and shell mode so user can retry.
@@ -316,5 +347,95 @@ fn switching_conversation_or_tab_resets_shell_mode() {
     rt.update(|s, tx| {
         crate::workspace::select_index(s, 0, tx);
     });
+    assert!(!rt.state.composer.shell_mode);
+}
+
+#[test]
+fn web_edit_bang_enters_shell_mode_but_paste_and_delete_to_bang_do_not() {
+    let (mut rt, _rx) = chat_runtime();
+
+    // Web bridge inserts '!' directly into the editor and invokes on_input_change.
+    rt.update(|s, tx| {
+        s.draft.insert("!");
+        super::view::changed(s, tx);
+    });
+    rt.frame(0.0);
+    assert!(rt.state.composer.shell_mode);
+    assert!(rt.state.draft.text.is_empty());
+
+    // Exit shell mode, then simulate pasting "!" into an empty composer: stays literal.
+    rt.update(|s, _| s.composer.exit_shell_mode());
+    rt.frame(0.0);
+    rt.update(|s, tx| {
+        s.composer.pasted_input = true;
+        s.draft.insert("!");
+        super::view::changed(s, tx);
+    });
+    rt.frame(0.0);
+    assert!(!rt.state.composer.shell_mode);
+    assert_eq!(rt.state.draft.text, "!");
+
+    // Deleting "!ls" down to "!" does not enter shell mode because the buffer was not empty.
+    rt.update(|s, _| {
+        s.draft = TextEdit::new("!ls");
+    });
+    rt.frame(0.0);
+    rt.update(|s, tx| {
+        s.draft = TextEdit::new("!");
+        super::view::changed(s, tx);
+    });
+    rt.frame(0.0);
+    assert!(!rt.state.composer.shell_mode);
+    assert_eq!(rt.state.draft.text, "!");
+}
+
+#[test]
+fn shell_mode_honors_prompt_submit_on_enter_and_ignores_alternate_send() {
+    let (mut rt, rx) = chat_runtime();
+    rt.update(|s, _| {
+        crate::settings::fixture_config(s, serde_json::json!({ "promptSubmitOnEnter": false }));
+    });
+    rt.frame(0.0);
+
+    send_key(&mut rt, Key::Text("!".into()), Mods::default());
+    send_key(&mut rt, Key::Text("echo hi".into()), Mods::default());
+    assert!(rt.state.composer.shell_mode);
+
+    // Alt+Enter (alternate delivery) must not execute in shell mode.
+    send_key(
+        &mut rt,
+        Key::Enter,
+        Mods {
+            alt: true,
+            ..Mods::default()
+        },
+    );
+    assert!(rx.try_recv().is_err());
+    assert!(rt.state.composer.shell_mode);
+
+    // With promptSubmitOnEnter=false, plain Enter inserts a newline instead of executing.
+    send_key(&mut rt, Key::Enter, Mods::default());
+    assert!(rx.try_recv().is_err());
+    assert!(rt.state.composer.shell_mode);
+    assert_eq!(rt.state.draft.text, "echo hi\n");
+
+    // Mod+Enter sends the shell command.
+    let primary = if cfg!(target_os = "macos") {
+        Mods {
+            cmd: true,
+            logo: true,
+            ..Mods::default()
+        }
+    } else {
+        Mods {
+            ctrl: true,
+            ..Mods::default()
+        }
+    };
+    send_key(&mut rt, Key::Enter, primary);
+    let Command::Shell { command, .. } = rx.try_recv().expect("shell command on Mod+Enter") else {
+        panic!("expected Command::Shell");
+    };
+    assert_eq!(command, "echo hi");
     assert!(!rt.state.composer.shell_mode);
 }

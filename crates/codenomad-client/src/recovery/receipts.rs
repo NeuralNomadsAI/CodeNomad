@@ -1,9 +1,10 @@
 //! One dispatch attempt and its correlated receipt.
-use super::authentication::rejected_by_authentication;
+use super::authentication::{close_for_authentication, rejected_by_authentication};
 use crate::{
     Sender, Wake,
     backend::Backend,
     prompt::Prompt,
+    prompt_shell::ShellError,
     stream,
     transport::{Event, PromptOutcome, publish},
 };
@@ -59,10 +60,54 @@ pub(super) async fn shell(
     let outcome = if admitted {
         match backend.prompt_shell(command).await {
             Ok(()) => PromptOutcome::Confirmed(attempt.into()),
-            Err(PromptError::Rejected) => PromptOutcome::Rejected,
-            Err(PromptError::Unconfirmed) => PromptOutcome::Unconfirmed,
-            Err(PromptError::AuthenticationRequired) => {
-                if rejected_by_authentication(backend, attempt, out, wake, wire).await {
+            Err(ShellError::Rejected) => PromptOutcome::Rejected,
+            Err(ShellError::Unconfirmed) => PromptOutcome::Unconfirmed,
+            Err(ShellError::PreDispatchAuthenticationRequired) => {
+                if matches!(backend.authentication_status().await, Ok(false)) {
+                    close_for_authentication(wire, out).await;
+                    publish(
+                        out,
+                        wake,
+                        Event::PromptAcknowledged {
+                            attempted: attempt.into(),
+                            outcome: PromptOutcome::Rejected,
+                        },
+                    )
+                    .await;
+                    publish(
+                        out,
+                        wake,
+                        Event::AuthenticationRequired(crate::transport::Authentication {
+                            backend: backend.clone(),
+                            confirmed: true,
+                        }),
+                    )
+                    .await;
+                    return None;
+                }
+                PromptOutcome::Rejected
+            }
+            Err(ShellError::UnconfirmedAuthenticationRequired) => {
+                if matches!(backend.authentication_status().await, Ok(false)) {
+                    close_for_authentication(wire, out).await;
+                    publish(
+                        out,
+                        wake,
+                        Event::PromptAcknowledged {
+                            attempted: attempt.into(),
+                            outcome: PromptOutcome::Unconfirmed,
+                        },
+                    )
+                    .await;
+                    publish(
+                        out,
+                        wake,
+                        Event::AuthenticationRequired(crate::transport::Authentication {
+                            backend: backend.clone(),
+                            confirmed: true,
+                        }),
+                    )
+                    .await;
                     return None;
                 }
                 PromptOutcome::Unconfirmed

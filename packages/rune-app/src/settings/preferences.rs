@@ -498,6 +498,11 @@ impl Preferences {
         self.config.snapshot = Some(json!({"settings": {"hotkeyOverrides": overrides}}));
     }
 
+    #[cfg(test)]
+    pub(super) fn fixture_config(&mut self, settings: Value) {
+        self.config.snapshot = Some(json!({"settings": settings}));
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn prepare_all_drains(&mut self, check_revisions: bool, retry_failed: bool) {
         let Some(backend) = &self.backend else {
