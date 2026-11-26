@@ -142,17 +142,22 @@ pub(super) async fn read(
             quota.transport(true);
         }
     });
+    let session_delete = state.session_delete_observer(b);
     let message = |kind: &'static str| -> Closure<dyn FnMut(MessageEvent)> {
         let tx = tx.clone();
         let overflow = overflow.clone();
         let queued_bytes = queued_bytes.clone();
         let source = source.clone();
         let quota = quota.clone();
+        let session_delete = session_delete.clone();
         let watchdog = watchdog.clone();
         Closure::new(move |event: MessageEvent| {
             watchdog.activity();
             let data = event.data().as_string().unwrap_or_default();
             let frame = if data.len() <= FRAME_LIMIT {
+                if let Some(observer) = &session_delete {
+                    observer.observe(kind, &data);
+                }
                 if kind == "message"
                     && let Some(quota) = &quota
                 {

@@ -163,7 +163,7 @@ pub(super) async fn read_frames_with<B: AsRef<[u8]>, C: Clock + Clone>(
                         // Waiting on the bounded local channel is UI backpressure, not server silence.
                         let _pause = read_watchdog.pause();
                         if let Err(err) =
-                            receive_chunk(&mut parser, bytes, quota.as_ref(), &send).await
+                            receive_chunk(b, state, &mut parser, bytes, quota.as_ref(), &send).await
                         {
                             return Ok(Err(err));
                         }
@@ -226,6 +226,8 @@ pub(super) async fn read_frames_with<B: AsRef<[u8]>, C: Clock + Clone>(
 }
 
 async fn receive_chunk(
+    b: &Backend,
+    state: &State,
     parser: &mut Parser,
     chunk: &[u8],
     quota: Option<&crate::provider_usage::Ingress>,
@@ -235,6 +237,9 @@ async fn receive_chunk(
     let unobserved = quota.map(crate::provider_usage::Ingress::chunk);
     for byte in chunk {
         if let Some(frame) = parser.byte(*byte)? {
+            if let Parsed::Data(kind, data) = &frame {
+                state.observe_frame(b, kind, data);
+            }
             if let Some(quota) = quota {
                 match &frame {
                     Parsed::Data(kind, data) if kind.is_empty() || kind == "message" => {

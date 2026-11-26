@@ -285,9 +285,15 @@ impl Ui {
                 if targeted.is_empty() {
                     continue;
                 }
-                if has_independent {
-                    // Prune only the superseded restored copy so an independent sibling edit
-                    // survives restart without being shadowed by a persisted "" tombstone.
+                let current_full = matches!(
+                    &tabs[idx],
+                    Tab::Workspace(current)
+                        if !current.drafts.contains_key(id)
+                            && current.drafts.len() >= super::MAX_DRAFTS
+                );
+                if has_independent || current_full {
+                    // Prune only the superseded restored copies so neither an independent sibling
+                    // edit nor per-tab MAX_DRAFTS shedding can defeat clear authority on restart.
                     for target_idx in targeted {
                         if let Tab::Workspace(stale) = &mut tabs[target_idx] {
                             stale.drafts.remove(id);
@@ -637,38 +643,55 @@ pub fn opened(s: &mut State, project: &Project) {
             w.workspace_id = Some(project.id.clone());
         }
     } else {
+        let reopen_scope = ProjectScope {
+            backend_id: backend_id.clone(),
+            server_id: if backend_id.is_some() {
+                l.server_id.clone()
+            } else {
+                None
+            },
+            folder: project.path.clone(),
+        };
+        let closed_keys: std::collections::BTreeSet<String> = ui
+            .closed
+            .iter()
+            .filter(|w| reopen_scope.matches(w))
+            .flat_map(|w| {
+                w.drafts
+                    .keys()
+                    .chain(w.attachment_drafts.iter())
+                    .chain(w.attachment_parts.keys())
+            })
+            .cloned()
+            .collect();
         let mut drafts = std::collections::BTreeMap::new();
         let mut attachment_drafts = std::collections::BTreeSet::new();
         let mut attachment_parts = std::collections::BTreeMap::new();
-        item.cleared.clear();
-        for w in ui.closed.iter().filter(|w| {
-            same_folder(&w.folder, &project.path)
-                && w.backend_id == backend_id
-                && (backend_id.is_none() || w.server_id == l.server_id)
-        }) {
-            for (id, text) in &w.drafts {
-                attachment_drafts.remove(id);
-                attachment_parts.remove(id);
-                if text.is_empty() {
-                    drafts.remove(id);
-                    item.cleared.insert(id.clone());
-                } else {
-                    drafts.insert(id.clone(), text.clone());
-                    item.cleared.remove(id);
+        let mut restored_keys = std::collections::HashSet::new();
+        let mut reopened_cleared = HashSet::new();
+        for id in closed_keys {
+            let clear_authorities = drafts::collect_open_clear_authorities(ui, &reopen_scope, &id);
+            let closed =
+                drafts::peek_closed_state_for_scope(ui, &reopen_scope, &id, &clear_authorities);
+            if let Some(bundle) = closed.bundle {
+                if let Some(text) = bundle.text
+                    && !text.is_empty()
+                {
+                    drafts.insert(id.clone(), text);
                 }
+                if bundle.attachment_draft || bundle.attachment_parts.is_some() {
+                    attachment_drafts.insert(id.clone());
+                }
+                if let Some(parts) = bundle.attachment_parts {
+                    attachment_parts.insert(id.clone(), parts);
+                }
+                if bundle.from_restored {
+                    restored_keys.insert(id);
+                }
+            } else if closed.explicitly_cleared {
+                reopened_cleared.insert(id);
             }
-            attachment_drafts.extend(w.attachment_drafts.iter().cloned());
-            for id in &w.attachment_drafts {
-                attachment_parts.remove(id);
-            }
-            attachment_parts.extend(w.attachment_parts.clone());
         }
-        item.pending_drafts = drafts
-            .keys()
-            .chain(item.cleared.iter())
-            .chain(attachment_drafts.iter())
-            .cloned()
-            .collect();
         let reopened_workspace = Workspace {
             backend_id: backend_id.clone(),
             server_id: if backend_id.is_some() {
@@ -685,18 +708,25 @@ pub fn opened(s: &mut State, project: &Project) {
             attachment_parts,
             view: Default::default(),
         };
+        let pending_deleted: Vec<String> = ui
+            .closed_pending_deleted
+            .iter()
+            .filter_map(|(scope, id)| scope.matches(&reopened_workspace).then(|| id.clone()))
+            .collect();
+        let item = &mut ui.entries[ui.active];
+        item.cleared = reopened_cleared;
+        item.pending_drafts = reopened_workspace
+            .drafts
+            .keys()
+            .chain(item.cleared.iter())
+            .chain(reopened_workspace.attachment_drafts.iter())
+            .cloned()
+            .collect();
         item.restored_drafts.clear();
         item.derived_from.clear();
         item.clear_authority.clear();
         item.superseded_on_delete.clear();
-        let copy_keys: std::collections::BTreeSet<String> = reopened_workspace
-            .drafts
-            .keys()
-            .chain(reopened_workspace.attachment_drafts.iter())
-            .chain(reopened_workspace.attachment_parts.keys())
-            .cloned()
-            .collect();
-        for id in copy_keys {
+        for id in restored_keys {
             if let Some(copy) = drafts::DraftCopy::from_workspace(&reopened_workspace, &id) {
                 item.restored_drafts.insert(id.clone(), copy.clone());
                 item.derived_from.insert(id, copy);
@@ -706,14 +736,11 @@ pub fn opened(s: &mut State, project: &Project) {
             item.clear_authority
                 .insert(id.clone(), drafts::ClearAuthority::Persisted);
         }
-        for (scope, id) in &ui.closed_pending_deleted {
-            if scope.matches(&reopened_workspace) {
-                item.pending_deleted.insert(id.clone());
-            }
-        }
+        item.pending_deleted.extend(pending_deleted);
         item.saved = Tab::Workspace(reopened_workspace);
         item.live_drafts.clear();
     }
+    let item = &mut ui.entries[ui.active];
     item.project = Some(project.clone());
     item.binding = l.connection.clone();
     if cfg!(target_os = "windows") {

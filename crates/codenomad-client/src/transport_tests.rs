@@ -380,8 +380,11 @@ fn sse_session_deleted_notifies_hook_at_ingress_even_after_conversation_receiver
             let mut backend = Backend::unauthenticated(&format!("http://{address}/")).unwrap();
             backend.workspace = "project-1".into();
             backend.session = "ses-del-1".into();
+            // Send a blocking `codenomad.client.ping` (pong never answered) followed immediately by
+            // `session.deleted`, then drop BOTH `events` and `commands` (manual close cancelling the
+            // routing queue). The frame-ingress observer must still fire before the cancellable queue.
             let (out, events) = bounded(16);
-            let (_commands, input) = bounded(1);
+            let (commands, input) = bounded(1);
             let (demand, observer) = demand::open();
             let (content, _snapshots) = bounded(1);
             demand.publish(None);
@@ -422,20 +425,23 @@ data: {\"type\":\"server.connected\"}\n\n",
                     break;
                 }
             }
-            // Drop the conversation receiver BEFORE the SSE server sends `session.deleted`:
-            // `StatsChanged` fails to publish on the closed channel, yet the ingress hook still fires.
-            drop(events);
             stream
                 .get_mut()
                 .write_all(
-                    b"data: {\"type\":\"instance.event\",\"instanceId\":\"project-1\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"ses-del-1\"}}}\n\n",
+                    b"event: codenomad.client.ping\ndata: {}\n\n\
+data: {\"type\":\"instance.event\",\"instanceId\":\"project-1\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"ses-del-1\"}}}\n\n",
                 )
                 .await
                 .unwrap();
+            // Accept the pong TCP connection and leave it stalled while manually closing both
+            // `commands` and `events`.
+            let _stalled_pong = listener.accept().await.unwrap();
+            drop(commands);
+            drop(events);
             deleted_rx
                 .recv()
                 .await
-                .expect("SSE ingress hook must fire for validated session.deleted even after receiver drops");
+                .expect("SSE frame-ingress hook must fire even when queued behind ping and cancelled by close");
             let _ = task.await;
         })
         .await

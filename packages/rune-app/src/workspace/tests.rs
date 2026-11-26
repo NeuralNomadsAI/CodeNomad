@@ -924,4 +924,65 @@ fn utf16_budget_sheds_attachment_only_markers_before_priority_text_and_without_l
         1,
         "exactly one mixed draft must retain its attachment marker when 320 units cover 297 excess"
     );
+
+    // 5. Exact 3-choice DP compares Keep / TextOnly / WholeBundle per draft:
+    // three mixed drafts with (text_only / whole) costs (60/110), (100/195), (200/390)
+    // and excess = 480 must keep draft 1 completely, shed text-only of draft 2 (100), and
+    // shed draft 3 whole (390) -> 490 freed, preserving 2 of 3 attachment markers (instead of
+    // dropping two whole bundles for 500 and losing 2 markers).
+    let mut tri_tabs = Vec::new();
+    let mut tri_tab = workspace();
+    tri_tab.active_session_id = Some("ses_tri_keep".into());
+    tri_tab
+        .drafts
+        .insert("ses_tri_keep".into(), "a".repeat(25_400));
+    let tri_1 = format!("ses_t1_{}", "a".repeat(43)); // 50 units
+    let tri_2 = format!("ses_t2_{}", "b".repeat(88)); // 95 units
+    let tri_3 = format!("ses_t3_{}", "c".repeat(183)); // 190 units
+    assert_eq!((tri_1.len(), tri_2.len(), tri_3.len()), (50, 95, 190));
+    tri_tab.drafts.insert(tri_1.clone(), "x".repeat(10)); // text_only = 60, whole = 110
+    tri_tab.attachment_drafts.insert(tri_1.clone());
+    tri_tab.drafts.insert(tri_2.clone(), "y".repeat(5)); // text_only = 100, whole = 195
+    tri_tab.attachment_drafts.insert(tri_2.clone());
+    tri_tab.drafts.insert(tri_3.clone(), "z".repeat(10)); // text_only = 200, whole = 390
+    tri_tab.attachment_drafts.insert(tri_3.clone());
+    tri_tabs.push(Tab::Workspace(tri_tab));
+    // tab0 = "/repo"(5) + active_id(12) + active_key(12) + 25_400 + 110 + 195 + 390 = 26_124.
+    // 18 * (5 + 4_031) = 72_648 -> total = 98_772 -> excess = 98_772 - 98_304 = 468 (or 480 with 25_412).
+    for i in 0..18 {
+        let mut filler = workspace();
+        filler.folder = format!("/z{i:02}/{}", "m".repeat(4_031));
+        tri_tabs.push(Tab::Workspace(filler));
+    }
+    if let Tab::Workspace(t0) = &mut tri_tabs[0] {
+        t0.drafts.insert("ses_tri_keep".into(), "a".repeat(25_412)); // excess = 480 exact!
+    }
+    let tri_snap = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: tri_tabs,
+        active: Some(0),
+    };
+    assert_eq!(encode(&tri_snap), Err(Error::Limit));
+    let (bytes, partial) = encode_for_save(&tri_snap).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let Tab::Workspace(saved) = &decoded.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(
+        saved.drafts.get("ses_tri_keep").map(String::len),
+        Some(25_412)
+    );
+    assert_eq!(saved.drafts.get(&tri_1).map(String::len), Some(10));
+    assert!(saved.attachment_drafts.contains(&tri_1));
+    assert!(!saved.drafts.contains_key(&tri_2));
+    assert!(
+        saved.attachment_drafts.contains(&tri_2),
+        "draft 2 must shed text-only to preserve its attachment marker (490 freed >= 480)"
+    );
+    assert!(!saved.drafts.contains_key(&tri_3));
+    assert!(!saved.attachment_drafts.contains(&tri_3));
 }

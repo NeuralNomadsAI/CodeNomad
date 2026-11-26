@@ -450,21 +450,9 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         return;
     }
     let scope = scope.clone();
-    let current = ui
-        .closed
-        .iter()
-        .rev()
-        .filter(|w| same_project(&scope, w))
-        .find_map(|w| {
-            let missing = w.attachment_drafts.contains(id);
-            (missing || w.drafts.contains_key(id)).then(|| {
-                (
-                    w.drafts.get(id).cloned(),
-                    missing,
-                    w.attachment_parts.get(id).cloned(),
-                )
-            })
-        });
+    let project_scope = super::ProjectScope::from_workspace(&scope);
+    let clear_authorities = collect_open_clear_authorities(ui, &project_scope, id);
+    let closed = peek_closed_state_for_scope(ui, &project_scope, id, &clear_authorities);
     for (index, item) in ui.entries.iter_mut().enumerate() {
         if !matches!(&item.saved, Tab::Workspace(w) if same_project(&scope, w))
             || !item.pending_drafts.remove(id)
@@ -484,33 +472,41 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         item.derived_from.remove(id);
         item.superseded_on_delete.remove(id);
         if index == ui.active {
-            if current.as_ref().is_some_and(|(_, marked, _)| *marked) {
-                saved.attachment_drafts.insert(id.into());
-            }
-            if let Some(parts) = current.as_ref().and_then(|(_, _, parts)| parts.as_ref()) {
-                saved.attachment_parts.insert(id.into(), parts.clone());
-            }
-            match current.as_ref().and_then(|(text, _, _)| text.as_ref()) {
-                Some(text) if !text.is_empty() => {
+            if let Some(bundle) = closed.bundle.as_ref() {
+                if let Some(text) = bundle.text.as_ref()
+                    && !text.is_empty()
+                {
                     saved.drafts.insert(id.into(), text.clone());
                 }
-                Some(_) => {
-                    item.cleared.insert(id.into());
-                    item.clear_authority
-                        .insert(id.into(), ClearAuthority::Persisted);
+                if bundle.attachment_draft || bundle.attachment_parts.is_some() {
+                    saved.attachment_drafts.insert(id.into());
                 }
-                None => {}
-            }
-            if let Some(copy) = DraftCopy::from_workspace(saved, id) {
-                item.restored_drafts.insert(id.into(), copy.clone());
-                item.derived_from.insert(id.into(), copy);
+                if let Some(parts) = bundle.attachment_parts.as_ref() {
+                    saved.attachment_parts.insert(id.into(), parts.clone());
+                }
+                if bundle.from_restored
+                    && let Some(copy) = DraftCopy::from_workspace(saved, id)
+                {
+                    item.restored_drafts.insert(id.into(), copy.clone());
+                    item.derived_from.insert(id.into(), copy);
+                }
+            } else if closed.explicitly_cleared {
+                item.cleared.insert(id.into());
+                item.clear_authority
+                    .insert(id.into(), ClearAuthority::Persisted);
             }
         }
     }
-    for w in ui.closed.iter_mut().filter(|w| same_project(&scope, w)) {
+    for (idx, w) in ui.closed.iter_mut().enumerate() {
+        if !same_project(&scope, w) {
+            continue;
+        }
         w.drafts.remove(id);
         w.attachment_drafts.remove(id);
         w.attachment_parts.remove(id);
+        if let Some(restored) = ui.closed_restored.get_mut(idx) {
+            restored.remove(id);
+        }
     }
 }
 
@@ -650,10 +646,11 @@ fn move_draft_between_keys(
     item.cleared.remove(to);
 }
 
-struct ClosedBundle {
-    text: Option<String>,
-    attachment_draft: bool,
-    attachment_parts: Option<SavedParts>,
+pub(super) struct ClosedBundle {
+    pub(super) text: Option<String>,
+    pub(super) attachment_draft: bool,
+    pub(super) attachment_parts: Option<SavedParts>,
+    pub(super) from_restored: bool,
 }
 
 impl ClosedBundle {
@@ -664,23 +661,46 @@ impl ClosedBundle {
     }
 }
 
-struct ClosedState {
-    bundle: Option<ClosedBundle>,
-    explicitly_cleared: bool,
+pub(super) struct ClosedState {
+    pub(super) bundle: Option<ClosedBundle>,
+    pub(super) explicitly_cleared: bool,
 }
 
-fn peek_closed_state(
+pub(super) fn collect_open_clear_authorities(
     ui: &Ui,
-    scope: &crate::workspace::Workspace,
+    scope: &super::ProjectScope,
+    session_id: &str,
+) -> Vec<ClearAuthority> {
+    ui.entries
+        .iter()
+        .filter_map(|entry| {
+            let Tab::Workspace(saved) = &entry.saved else {
+                return None;
+            };
+            if !scope.matches(saved)
+                || !entry.cleared.contains(session_id)
+                || has_draft_content(entry, saved, session_id)
+            {
+                return None;
+            }
+            entry.clear_authority.get(session_id).cloned()
+        })
+        .collect()
+}
+
+pub(super) fn peek_closed_state_for_scope(
+    ui: &Ui,
+    scope: &super::ProjectScope,
     session_id: &str,
     open_clear_authorities: &[ClearAuthority],
 ) -> ClosedState {
     let mut text: Option<String> = None;
     let mut attachment_draft = false;
     let mut attachment_parts: Option<SavedParts> = None;
+    let mut from_restored = false;
     let mut explicitly_cleared = false;
     for (idx, w) in ui.closed.iter().enumerate() {
-        if !same_project(scope, w) {
+        if !scope.matches(w) {
             continue;
         }
         let is_restored = ui
@@ -697,7 +717,9 @@ fn peek_closed_state(
                 continue;
             }
         }
+        let mut touched = false;
         if let Some(entry_text) = w.drafts.get(session_id) {
+            touched = true;
             attachment_draft = false;
             attachment_parts = None;
             if entry_text.is_empty() {
@@ -709,20 +731,26 @@ fn peek_closed_state(
             }
         }
         if w.attachment_drafts.contains(session_id) {
+            touched = true;
             attachment_draft = true;
             attachment_parts = None;
             explicitly_cleared = false;
         }
         if let Some(parts) = w.attachment_parts.get(session_id) {
+            touched = true;
             attachment_draft = true;
             attachment_parts = Some(parts.clone());
             explicitly_cleared = false;
+        }
+        if touched {
+            from_restored = is_restored;
         }
     }
     let bundle = ClosedBundle {
         text,
         attachment_draft,
         attachment_parts,
+        from_restored,
     };
     let bundle = bundle.has_content().then_some(bundle);
     ClosedState {
@@ -834,25 +862,10 @@ pub(super) fn recover_missing_session_draft_in(
             })
             .collect();
 
-        // Collect clear authorities across open sibling tabs FIRST so superseded restored copies
-        // in `ui.closed` are excluded before selecting closed drafts to recover.
-        let mut clear_authorities: Vec<ClearAuthority> = matching_tabs
-            .iter()
-            .filter_map(|&idx| {
-                let entry = &ui.entries[idx];
-                if !entry.cleared.contains(session_id) {
-                    return None;
-                }
-                let Tab::Workspace(saved) = &entry.saved else {
-                    return None;
-                };
-                if has_draft_content(entry, saved, session_id) {
-                    return None;
-                }
-                entry.clear_authority.get(session_id).cloned()
-            })
-            .collect();
-        let closed_state = peek_closed_state(ui, &scope, session_id, &clear_authorities);
+        let project_scope = super::ProjectScope::from_workspace(&scope);
+        let mut clear_authorities = collect_open_clear_authorities(ui, &project_scope, session_id);
+        let closed_state =
+            peek_closed_state_for_scope(ui, &project_scope, session_id, &clear_authorities);
         if closed_state.explicitly_cleared {
             clear_authorities.push(ClearAuthority::Persisted);
         }

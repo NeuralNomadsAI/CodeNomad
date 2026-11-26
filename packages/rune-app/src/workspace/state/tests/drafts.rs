@@ -1808,4 +1808,112 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
     let loaded = bound(&mut r5_m3, &backend("ses_open_empty"));
     assert_eq!(loaded, "");
     assert!(!r5_m3.composer.attachments_missing);
+
+    // 8. R6 Bloquant: A closes with independent draft, B closes with restored copy, C (still open)
+    // clears that restored copy, then 4th tab D opens & binds the session -> D must receive A's
+    // independent draft (not B's cleared copy), and a subsequent 404 must recover A's draft.
+    let mut r6_b = draft_state();
+    let mut a6 = closed("ses_r6_bloq", "");
+    a6.drafts.clear();
+    a6.active_session_id = Some("ses_r6_bloq".into());
+    let mut b6 = closed("ses_r6_bloq", "stale copy");
+    b6.occurrence = 1;
+    b6.active_session_id = None;
+    let mut c6 = closed("ses_r6_bloq", "stale copy");
+    c6.occurrence = 2;
+    c6.active_session_id = Some("ses_r6_bloq".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a6), Tab::Workspace(b6), Tab::Workspace(c6)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_r6_bloq"));
+    ui.entries[2].binding = Some(backend("ses_r6_bloq"));
+    r6_b.workspace = Some(ui);
+    r6_b.show_chat();
+    r6_b.draft = TextEdit::new("independent closed A");
+    capture(&mut r6_b);
+    close(&mut r6_b, "tab-0", &mut tx);
+    if let Some(l) = r6_b.screen.launcher_mut() {
+        l.pending = false;
+    }
+    close(&mut r6_b, "tab-1", &mut tx);
+    if let Some(l) = r6_b.screen.launcher_mut() {
+        l.pending = false;
+    }
+    // Tab C clears its restored copy without closing.
+    r6_b.draft = TextEdit::new("");
+    capture(&mut r6_b);
+    // Open a 4th tab D for the same project and bind `ses_r6_bloq`.
+    new_tab(&mut r6_b, &mut tx);
+    if let Some(l) = r6_b.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r6_b,
+        &Project {
+            id: "proj-d".into(),
+            path: "/fixture".into(),
+        },
+    );
+    let delivered = bound(&mut r6_b, &backend("ses_r6_bloq"));
+    assert_eq!(delivered, "independent closed A");
+    r6_b.show_launcher();
+    assert!(recover_missing_session_draft(&mut r6_b, "ses_r6_bloq"));
+    let Tab::Workspace(after_d) = &r6_b.workspace.as_ref().unwrap().entries[1].saved else {
+        panic!("expected tab D");
+    };
+    assert_eq!(
+        after_d.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+        Some("independent closed A")
+    );
+
+    // 9. R6 Moyen 1: Clearing tab already holds MAX_DRAFTS (24) recovered drafts -> snapshot
+    // directly prunes the sibling's targeted restored copy so per-tab shedding cannot undo the clear.
+    let mut r6_m1 = draft_state();
+    let mut a_full = closed("ses_full_clr", "stale copy");
+    a_full.active_session_id = None;
+    let mut b_full = closed("ses_full_clr", "stale copy");
+    b_full.occurrence = 1;
+    b_full.active_session_id = Some("ses_full_clr".into());
+    for i in 0..crate::workspace::MAX_DRAFTS {
+        b_full.drafts.insert(
+            format!(
+                "{}{i:08x}-1234-4234-8234-123456789abc",
+                crate::workspace::RECOVERED_DRAFT_PREFIX
+            ),
+            format!("rec-{i}"),
+        );
+    }
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a_full), Tab::Workspace(b_full)],
+        active: Some(1),
+    });
+    ui.ready = true;
+    ui.entries[1].binding = Some(backend("ses_full_clr"));
+    r6_m1.workspace = Some(ui);
+    r6_m1.draft = TextEdit::new("");
+    capture(&mut r6_m1);
+    let (bytes, _) =
+        crate::workspace::encode_for_save(&r6_m1.workspace.as_ref().unwrap().snapshot()).unwrap();
+    let mut restarted_full = draft_state();
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::decode(&bytes).unwrap());
+    ui.ready = true;
+    restarted_full.workspace = Some(ui);
+    restarted_full.show_launcher();
+    assert!(!recover_missing_session_draft(
+        &mut restarted_full,
+        "ses_full_clr"
+    ));
 }
