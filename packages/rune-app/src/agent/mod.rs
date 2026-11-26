@@ -599,6 +599,13 @@ impl Ui {
             && self.trailing.is_none()
             && self.catalog_trailing.is_none()
     }
+    #[cfg(test)]
+    pub(crate) fn fixture_ready(&mut self) {
+        self.reading = false;
+        self.known = true;
+        self.pending_known = true;
+        self.online = true;
+    }
     pub fn new(handle: Handle) -> Self {
         let mut ui = Self {
             handle,
