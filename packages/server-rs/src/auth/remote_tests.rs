@@ -1013,5 +1013,52 @@ async fn paired_browser_and_server_device_admit_provider_accounts_and_connect_ro
 
         server_task.abort();
     }
+
+    // Local auth middleware also returns Cache-Control: no-store on unauthenticated account refusals.
+    let local_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = local_listener.local_addr().unwrap();
+    let local_auth = auth::Auth::new(auth::Settings {
+        username: "codenomad".into(),
+        password: Some("secret-pass".into()),
+        file: None,
+        cookie: auth::DEFAULT_COOKIE.into(),
+        token: false,
+        managed_local: false,
+        skip: false,
+        idle: Duration::from_secs(60),
+        absolute: Duration::from_secs(60),
+    })
+    .unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(4);
+    let local_app = Arc::new(App::new(
+        local_auth,
+        local_addr.port(),
+        dir.0.clone(),
+        dir.0.clone(),
+        false,
+        settings::Settings::new(settings::document::Location::resolve(dir.0.join("local.yaml").to_str().unwrap())),
+        Value::Null,
+        opencode::Native::test_connection(native_addr),
+        PathBuf::new(),
+        None,
+        files::watch::Watches::new(tx),
+        None,
+    ));
+    let local_ws = Uuid::new_v4();
+    let local_router = crate::provider_usage::routes()
+        .route("/workspaces/{id}/instance/{*route}", any(opencode::proxy::relay))
+        .layer(from_fn_with_state(local_app.clone(), auth::admit))
+        .with_state(local_app);
+    let local_base = format!("http://{local_addr}");
+    let local_task = tokio::spawn(async move { axum::serve(local_listener, local_router).await.unwrap() });
+    for (method, url) in [
+        (Method::PUT, format!("{local_base}/api/workspaces/{local_ws}/provider-accounts/openai")),
+        (Method::POST, format!("{local_base}/workspaces/{local_ws}/instance/api/credential/cre_1/activate")),
+    ] {
+        let res = client.request(method.clone(), &url).send().await.unwrap();
+        assert_eq!(res.status(), Status::UNAUTHORIZED, "local unauth {method} {url}");
+        assert_eq!(res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+    }
+    local_task.abort();
     native_task.abort();
 }

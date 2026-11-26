@@ -9,7 +9,14 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use std::time::Duration;
+use std::{
+    path::{Path as FsPath, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use super::{Endpoint, plans, selection};
 use crate::{App, Error, Shared, auth::Principal, error, shared::now_ms};
@@ -38,11 +45,12 @@ struct Snapshot {
 pub(super) async fn get_route(
     State(app): State<Shared>,
     Extension(principal): Extension<Principal>,
-    Path((workspace, integration)): Path<(String, String)>,
+    path: Result<Path<(String, String)>, axum::extract::rejection::PathRejection>,
     query: Result<Query<ReadInput>, axum::extract::rejection::QueryRejection>,
 ) -> Response {
     let invalid = || error(Status::BAD_REQUEST, "Invalid provider accounts request");
     let work = async {
+        let Path((workspace, integration)) = path.map_err(|_| invalid())?;
         let Query(input) = query.map_err(|_| invalid())?;
         validate_params(&workspace, &integration, &input.directory)?;
         let snapshot = read_snapshot(&app, &workspace, &integration, &input.directory, false).await?;
@@ -63,13 +71,14 @@ pub(super) async fn get_route(
 pub(super) async fn put_route(
     State(app): State<Shared>,
     Extension(principal): Extension<Principal>,
-    Path((workspace, integration)): Path<(String, String)>,
+    path: Result<Path<(String, String)>, axum::extract::rejection::PathRejection>,
     headers: HeaderMap,
     bytes: Result<Bytes, axum::extract::rejection::BytesRejection>,
 ) -> Response {
     let invalid = || error(Status::BAD_REQUEST, "Invalid provider accounts request");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let work = async {
+        let Path((workspace, integration)) = path.map_err(|_| invalid())?;
         let bytes = bytes.map_err(|_| invalid())?;
         if bytes.len() > MAX_WRITE_BODY || !is_json_header(&headers) {
             return Err(invalid());
@@ -138,6 +147,25 @@ async fn write_policy(
     let endpoint = app.native.acquire(deadline).await.map_err(|_| unavailable())?;
     let foreign = || error(Status::FORBIDDEN, "Location does not belong to workspace");
     let owned = crate::worktrees::ownership::resolve(app, &workspace, &input.directory).await.ok_or_else(foreign)?;
+    let dir_path = PathBuf::from(&owned.directory);
+    let checkout_path = owned.checkout.clone();
+    let root_path = workspace.path.clone();
+    let (dir_anchor, dir_handle, checkout_handle, root_handle) = tokio::task::spawn_blocking(move || {
+        let anchor = crate::worktrees::ownership::existing_directory(&dir_path)?.to_path_buf();
+        let dir_handle = same_file::Handle::from_path(&anchor).ok()?;
+        let checkout_handle = same_file::Handle::from_path(&checkout_path).ok()?;
+        let root_handle = same_file::Handle::from_path(&root_path).ok()?;
+        Some((anchor, dir_handle, checkout_handle, root_handle))
+    })
+    .await
+    .ok()
+    .flatten()
+    .ok_or_else(foreign)?;
+    let physical_proof = if let Ok(phys) = dunce::canonicalize(&owned.directory) {
+        Some(crate::worktrees::ownership::capture_directory(app, &workspace, &phys).await.ok_or_else(foreign)?)
+    } else {
+        None
+    };
     let fence = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&owned.checkout)])?;
     let snapshot =
         snapshot_for_owned(app, &workspace, &endpoint, integration, &owned.directory, &owned.checkout).await?;
@@ -145,13 +173,23 @@ async fn write_policy(
     if !selection::supports(integration) || (input.enabled && !snapshot.supported) {
         return Err(error(Status::CONFLICT, "Automatic account selection unavailable"));
     }
-    let app_write = std::sync::Arc::clone(app);
+    struct AbortOnDrop(Arc<AtomicBool>);
+    impl Drop for AbortOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    let aborted = Arc::new(AtomicBool::new(false));
+    let _abort_guard = AbortOnDrop(Arc::clone(&aborted));
+    let app_write = Arc::clone(app);
     let principal_write = principal.clone();
     let workspace_write = workspace.clone();
-    let endpoint_write = std::sync::Arc::clone(&endpoint);
+    let endpoint_write = Arc::clone(&endpoint);
     let integration_write = integration.to_owned();
+    let raw_dir_write = input.directory.clone();
     let dir_write = owned.directory.clone();
     let checkout_write = owned.checkout.clone();
+    let aborted_write = Arc::clone(&aborted);
     let enabled = input.enabled;
     let persisted = tokio::task::spawn_blocking(move || -> Result<(), Error> {
         let _fence = fence;
@@ -162,7 +200,7 @@ async fn write_policy(
             "providerAccounts",
             json!({ "autoSelect": { &integration_write: enabled } }),
             |_, _| {
-                if principal_write.live().is_err() {
+                if aborted_write.load(Ordering::SeqCst) || principal_write.live().is_err() {
                     rejected = Some(crate::auth::unauthorized());
                     return Err(crate::settings::Failure::Conflict);
                 }
@@ -178,11 +216,18 @@ async fn write_policy(
                     rejected = Some(unavailable());
                     return Err(crate::settings::Failure::Unreadable);
                 }
-                let canonical = crate::files::paths::canonical(&app_write.scope, &dir_write);
-                if !canonical
-                    .as_deref()
-                    .is_some_and(|p| crate::worktrees::fence::checkout_root(&app_write.scope, p) == checkout_write)
-                {
+                let dir_target = FsPath::new(&dir_write);
+                let live_ok = crate::worktrees::ownership::resolve_directory(&raw_dir_write).as_deref()
+                    == Some(dir_target)
+                    && crate::worktrees::ownership::existing_directory(dir_target) == Some(dir_anchor.as_path())
+                    && same_file::Handle::from_path(&dir_anchor).ok().as_ref() == Some(&dir_handle)
+                    && dunce::canonicalize(&checkout_write).ok().as_deref() == Some(checkout_write.as_path())
+                    && same_file::Handle::from_path(&checkout_write).ok().as_ref() == Some(&checkout_handle)
+                    && dunce::canonicalize(&workspace_write.path).ok().as_deref()
+                        == Some(workspace_write.path.as_path())
+                    && same_file::Handle::from_path(&workspace_write.path).ok().as_ref() == Some(&root_handle)
+                    && physical_proof.as_ref().is_none_or(|p| p.live(dir_target));
+                if !live_ok {
                     rejected = Some(error(Status::FORBIDDEN, "Location does not belong to workspace"));
                     return Err(crate::settings::Failure::HostOnly);
                 }

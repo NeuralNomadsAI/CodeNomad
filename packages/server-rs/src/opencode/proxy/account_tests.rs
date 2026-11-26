@@ -460,12 +460,25 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
         assert_eq!(loc_dir.as_deref(), Some(linked_str.as_str()));
     }
 
+    // Equivalent canonical query selectors (directory + location[directory] pointing to same path) are accepted.
+    let root_encoded = percent_encoding::utf8_percent_encode(&root_str, percent_encoding::NON_ALPHANUMERIC).to_string();
+    let (status, cc, _) = call_relay(
+        &app,
+        Method::POST,
+        &format!("{base}/integration/openai/connect/key?directory={root_encoded}&location[directory]={root_encoded}"),
+        Some("application/json"),
+        Some(&json!({"key": "sk-eq"}).to_string()),
+        &[],
+    )
+    .await;
+    assert_eq!(status, Status::NO_CONTENT);
+    assert_eq!(cc, "no-store");
+
     let before_refusals = mock.lock().unwrap().calls.len();
 
     // 2. Refusals: foreign query/body locations, conflicting query/header/body locations, invalid bodies, disallowed routes, traversal.
     let linked_encoded =
         percent_encoding::utf8_percent_encode(&linked_str, percent_encoding::NON_ALPHANUMERIC).to_string();
-    let root_encoded = percent_encoding::utf8_percent_encode(&root_str, percent_encoding::NON_ALPHANUMERIC).to_string();
     // Query vs body location conflict -> 400
     let (status, cc, _) = call_relay(
         &app,
@@ -478,7 +491,7 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
     .await;
     assert_eq!(status, Status::BAD_REQUEST);
     assert_eq!(cc, "no-store");
-    // directory vs location[directory] conflicting query selectors -> 403
+    // directory vs location[directory] conflicting query selectors -> 400
     let (status, cc, _) = call_relay(
         &app,
         Method::POST,
@@ -488,7 +501,7 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
         &[],
     )
     .await;
-    assert_eq!(status, Status::FORBIDDEN);
+    assert_eq!(status, Status::BAD_REQUEST);
     assert_eq!(cc, "no-store");
     let (status, cc, _) = call_relay(
         &app,
@@ -624,7 +637,8 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
     .await;
     assert_eq!(status, Status::BAD_REQUEST);
     assert_eq!(cc, "no-store");
-    assert!(body_text.contains("INVALID_CREDENTIAL"));
+    assert!(body_text.contains("OpenCodeContractError"));
+    assert!(!body_text.contains("INVALID_CREDENTIAL"));
     assert!(!body_text.contains("sk-json-echo-secret-42"));
     assert!(!body_text.contains("internal trace"));
     mock.lock().unwrap().connect_error = UpstreamErrorMode::None;

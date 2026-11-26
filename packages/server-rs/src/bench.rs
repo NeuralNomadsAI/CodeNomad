@@ -226,6 +226,15 @@ pub async fn refusal_trace(req: Request, next: Next) -> Response {
             took()
         ))
     };
+    if response
+        .headers()
+        .get(axum::http::header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.to_ascii_lowercase().contains("no-store"))
+    {
+        line("<redacted>");
+        return response;
+    }
     if !small {
         line("<stream>");
         return response;

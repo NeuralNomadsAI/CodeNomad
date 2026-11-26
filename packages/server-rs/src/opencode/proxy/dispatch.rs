@@ -26,7 +26,6 @@ pub(super) struct DispatchContext {
     pub id: String,
     pub message_list: bool,
     pub account_route: bool,
-    pub secret_sentinels: Vec<String>,
     pub fork: bool,
     pub actual: Option<Value>,
     pub project: Option<String>,
@@ -35,82 +34,6 @@ pub(super) struct DispatchContext {
     pub mutation: Option<crate::worktrees::fence::Entered>,
     pub account_manual: Option<crate::provider_usage::selection::ManualGuard>,
     pub rules_lock: Option<tokio::sync::OwnedMutexGuard<()>>,
-}
-
-fn contains_secret(text: &str, sentinels: &[String]) -> bool {
-    sentinels.iter().any(|s| !s.is_empty() && text.contains(s.as_str()))
-}
-
-fn safe_error_string(value: &Value, sentinels: &[String]) -> Option<String> {
-    let text = value.as_str()?.trim();
-    if text.is_empty() || text.len() > 512 || contains_secret(text, sentinels) {
-        return None;
-    }
-    Some(text.to_owned())
-}
-
-fn sanitize_account_error_json(
-    raw: Value,
-    status: Status,
-    version: &str,
-    method: &str,
-    route: &str,
-    sentinels: &[String],
-) -> Value {
-    let fallback_msg = format!("OpenCode {version}: {method} {route} returned HTTP {}", status.as_u16());
-    let contract_fallback = || {
-        json!({
-            "_tag": "OpenCodeContractError",
-            "message": fallback_msg,
-            "status": status.as_u16(),
-            "profile": "modern",
-            "method": method,
-            "path": route,
-        })
-    };
-    let Value::Object(map) = raw else {
-        return contract_fallback();
-    };
-    let mut out = serde_json::Map::new();
-    if let Some(tag) = map.get("_tag").and_then(|v| safe_error_string(v, sentinels)) {
-        out.insert("_tag".into(), Value::String(tag));
-    }
-    if let Some(code) = map.get("code") {
-        if let Some(s) = safe_error_string(code, sentinels) {
-            out.insert("code".into(), Value::String(s));
-        } else if let Some(n) = code.as_i64() {
-            out.insert("code".into(), Value::from(n));
-        }
-    }
-    if let Some(err) = map.get("error") {
-        if let Some(s) = safe_error_string(err, sentinels) {
-            out.insert("error".into(), Value::String(s));
-        } else if let Some(obj) = err.as_object() {
-            let mut nested = serde_json::Map::new();
-            for key in ["code", "name", "message"] {
-                if let Some(s) = obj.get(key).and_then(|v| safe_error_string(v, sentinels)) {
-                    nested.insert(key.into(), Value::String(s));
-                }
-            }
-            if !nested.is_empty() {
-                out.insert("error".into(), Value::Object(nested));
-            }
-        }
-    }
-    if let Some(msg) = map.get("message") {
-        let safe = safe_error_string(msg, sentinels).unwrap_or_else(|| fallback_msg.clone());
-        out.insert("message".into(), Value::String(safe));
-    }
-    if let Some(code) = map.get("status").and_then(Value::as_u64) {
-        out.insert("status".into(), Value::from(code));
-    }
-    if out.is_empty() {
-        return contract_fallback();
-    }
-    if !out.contains_key("message") && !out.contains_key("error") {
-        out.insert("message".into(), Value::String(fallback_msg));
-    }
-    Value::Object(out)
 }
 
 pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, Error> {
@@ -127,7 +50,6 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         id,
         message_list,
         account_route,
-        secret_sentinels,
         fork,
         actual,
         project,
@@ -184,9 +106,8 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     Json(json!({"statusCode": 500, "error": "Internal Server Error", "message": "fetch failed"})),
                 ));
             }
-            if (message_list || account_route)
-                && !response.status().is_success()
-                && !is_transport_json_content_type(response.headers())
+            if !response.status().is_success()
+                && (account_route || (message_list && !is_transport_json_content_type(response.headers())))
             {
                 let status = response.status();
                 let unauthorized = status == Status::UNAUTHORIZED;
@@ -199,32 +120,18 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     app.native.invalidate(&endpoint);
                 }
                 let version = if endpoint.version.is_empty() { "v2" } else { endpoint.version.as_str() };
-                return Ok((
-                    status,
-                    Json(json!({
-                        "_tag": "OpenCodeContractError",
-                        "message": format!("OpenCode {version}: {method} {route} returned HTTP {}", status.as_u16()),
-                        "status": status.as_u16(),
-                        "profile": "modern",
-                        "method": method,
-                        "path": route,
-                    })),
-                )
-                    .into_response());
-            }
-            if account_route && !response.status().is_success() {
-                let status = response.status();
-                if status == Status::UNAUTHORIZED {
-                    app.native.invalidate(&endpoint);
+                let mut payload = json!({
+                    "_tag": "OpenCodeContractError",
+                    "message": format!("OpenCode {version}: {method} {route} returned HTTP {}", status.as_u16()),
+                    "status": status.as_u16(),
+                    "profile": "modern",
+                    "method": method,
+                    "path": route,
+                });
+                if account_route {
+                    payload["error"] = json!(status.canonical_reason().unwrap_or("Upstream Error"));
                 }
-                let version = if endpoint.version.is_empty() { "v2" } else { endpoint.version.as_str() };
-                let parsed = tokio::time::timeout(std::time::Duration::from_secs(2), read_json(response, 64 * 1024))
-                    .await
-                    .ok()
-                    .and_then(Result::ok)
-                    .unwrap_or(Value::Null);
-                let body = sanitize_account_error_json(parsed, status, version, &method, &route, &secret_sentinels);
-                return Ok((status, Json(body)).into_response());
+                return Ok((status, Json(payload)).into_response());
             }
             if message_list && response.status().is_success() {
                 if !app.native.current(&endpoint) {

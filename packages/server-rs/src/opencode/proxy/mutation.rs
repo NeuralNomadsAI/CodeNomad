@@ -24,7 +24,6 @@ pub(super) struct PreparedMutation {
     pub mutation: Option<crate::worktrees::fence::Entered>,
     pub account_manual: Option<crate::provider_usage::selection::ManualGuard>,
     pub account_context_dir: Option<String>,
-    pub secret_sentinels: Vec<String>,
     pub receipt: Option<crate::sessions::receipts::Prepared>,
 }
 
@@ -145,11 +144,10 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/'));
     let mut root_permissions = None;
     let mut input = None;
-    let mut account_verified_locs: Vec<(String, crate::worktrees::ownership::Owned)> = Vec::new();
+    let mut account_verified_locs: Vec<VerifiedAccountLocation> = Vec::new();
     let mut account_query_resolved: Option<String> = None;
     let mut account_body_resolved: Option<String> = None;
     let mut account_context_dir: Option<String> = None;
-    let mut secret_sentinels: Vec<String> = Vec::new();
     let mut has_body_location = false;
     if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE) {
         let mut body_empty = false;
@@ -204,16 +202,10 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             let resolved =
                 resolve_account_locations(app, workspace, &data, opened, requested_dirs, location_context_dir).await?;
             validate_account_body(route, &head.method, &data, body_empty)?;
-            if let Some(key) = data.get("key").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
-                secret_sentinels.push(key.to_owned());
-            }
-            if let Some(code) = data.get("code").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
-                secret_sentinels.push(code.to_owned());
-            }
-            account_query_resolved = resolved.queries.first().map(|(_, o)| o.directory.clone());
-            account_body_resolved = resolved.body.as_ref().map(|(_, o)| o.directory.clone());
-            if let Some((_, ctx_owned)) = &resolved.context {
-                account_context_dir = Some(ctx_owned.directory.clone());
+            account_query_resolved = resolved.queries.first().map(|loc| loc.owned.directory.clone());
+            account_body_resolved = resolved.body.as_ref().map(|loc| loc.owned.directory.clone());
+            if let Some(ctx_loc) = &resolved.context {
+                account_context_dir = Some(ctx_loc.owned.directory.clone());
             }
             has_body_location = resolved.body.is_some();
             if let Some(ref translated) = account_body_resolved
@@ -224,6 +216,9 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             account_verified_locs.extend(resolved.queries);
             for item in [resolved.context, resolved.body].into_iter().flatten() {
                 account_verified_locs.push(item);
+            }
+            if account_verified_locs.is_empty() && !route.starts_with("/api/credential/") {
+                account_verified_locs.push(capture_account_location(app, workspace, opened.to_owned()).await?);
             }
             if head.method != Method::DELETE && !body_empty {
                 input = Some(Value::Object(data));
@@ -300,11 +295,11 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         let empty = serde_json::Map::new();
         let resolved =
             resolve_account_locations(app, workspace, &empty, opened, requested_dirs, location_context_dir).await?;
-        if let Some((_, q_owned)) = resolved.queries.first() {
-            account_query_resolved = Some(q_owned.directory.clone());
+        if let Some(q_loc) = resolved.queries.first() {
+            account_query_resolved = Some(q_loc.owned.directory.clone());
         }
-        if let Some((_, ctx_owned)) = &resolved.context {
-            account_context_dir = Some(ctx_owned.directory.clone());
+        if let Some(ctx_loc) = &resolved.context {
+            account_context_dir = Some(ctx_loc.owned.directory.clone());
         }
     }
     let rules_lock = if permissions_patch {
@@ -367,8 +362,8 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             }
             checkouts.push(key);
         }
-        for (_, owned) in &account_verified_locs {
-            checkouts.push(fence::identity(&owned.checkout));
+        for loc in &account_verified_locs {
+            checkouts.push(fence::identity(&loc.owned.checkout));
         }
         checkouts.extend(session.map(fence::session));
         if trace_fence {
@@ -396,12 +391,8 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         if create && !crate::worktrees::owns(app, workspace, directory).await {
             return Err(foreign());
         }
-        for (raw, initial) in &account_verified_locs {
-            if !crate::worktrees::ownership::resolve(app, workspace, raw)
-                .await
-                .is_some_and(|latest| latest.directory == initial.directory && latest.checkout == initial.checkout)
-                || !crate::sessions::permission_mode::workspace_current(app, workspace)
-            {
+        for loc in &account_verified_locs {
+            if !verify_account_location_live(app, workspace, loc).await {
                 return Err(foreign());
             }
         }
@@ -409,7 +400,8 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     } else {
         None
     };
-    let account_manual = account_mutation.then(|| app.provider_usage.accounts.manual_fence(endpoint));
+    let account_manual =
+        if account_mutation { Some(app.provider_usage.accounts.manual_fence(endpoint).await) } else { None };
     if send_input {
         let session = session.ok_or_else(upstream_error)?;
         let mut url = endpoint.url.clone();
@@ -559,15 +551,71 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         mutation,
         account_manual,
         account_context_dir,
-        secret_sentinels,
         receipt,
     }))
 }
 
+struct VerifiedAccountLocation {
+    raw: String,
+    owned: crate::worktrees::ownership::Owned,
+    checkout_handle: same_file::Handle,
+    anchor: PathBuf,
+    anchor_handle: same_file::Handle,
+}
+
+async fn capture_account_location(
+    app: &Shared,
+    workspace: &Workspace,
+    raw: String,
+) -> Result<VerifiedAccountLocation, Error> {
+    let owned = crate::worktrees::ownership::resolve(app, workspace, &raw).await.ok_or_else(foreign)?;
+    let dir_path = PathBuf::from(&owned.directory);
+    let checkout_path = owned.checkout.clone();
+    let (checkout_handle, anchor, anchor_handle) = tokio::task::spawn_blocking(move || {
+        let checkout_handle = same_file::Handle::from_path(&checkout_path).ok()?;
+        let anchor = crate::worktrees::ownership::existing_directory(&dir_path)?.to_path_buf();
+        let anchor_handle = same_file::Handle::from_path(&anchor).ok()?;
+        Some((checkout_handle, anchor, anchor_handle))
+    })
+    .await
+    .ok()
+    .flatten()
+    .ok_or_else(foreign)?;
+    Ok(VerifiedAccountLocation { raw, owned, checkout_handle, anchor, anchor_handle })
+}
+
+async fn verify_account_location_live(app: &Shared, workspace: &Workspace, loc: &VerifiedAccountLocation) -> bool {
+    if !crate::sessions::permission_mode::workspace_current(app, workspace) {
+        return false;
+    }
+    let Some(latest) = crate::worktrees::ownership::resolve(app, workspace, &loc.raw).await else {
+        return false;
+    };
+    if latest.directory != loc.owned.directory || latest.checkout != loc.owned.checkout {
+        return false;
+    }
+    let dir_path = PathBuf::from(&latest.directory);
+    let checkout_path = latest.checkout;
+    let expected_anchor = loc.anchor.clone();
+    let handles = tokio::task::spawn_blocking(move || {
+        let checkout = same_file::Handle::from_path(&checkout_path).ok()?;
+        let anchor_live = crate::worktrees::ownership::existing_directory(&dir_path) == Some(expected_anchor.as_path());
+        if !anchor_live {
+            return None;
+        }
+        let anchor = same_file::Handle::from_path(&expected_anchor).ok()?;
+        Some((checkout, anchor))
+    })
+    .await
+    .ok()
+    .flatten();
+    handles.is_some_and(|(checkout, anchor)| checkout == loc.checkout_handle && anchor == loc.anchor_handle)
+}
+
 struct AccountLocations {
-    queries: Vec<(String, crate::worktrees::ownership::Owned)>,
-    context: Option<(String, crate::worktrees::ownership::Owned)>,
-    body: Option<(String, crate::worktrees::ownership::Owned)>,
+    queries: Vec<VerifiedAccountLocation>,
+    context: Option<VerifiedAccountLocation>,
+    body: Option<VerifiedAccountLocation>,
 }
 
 async fn resolve_account_locations(
@@ -601,31 +649,27 @@ async fn resolve_account_locations(
         None
     };
 
-    let resolve_one = |raw: String| async move {
-        let owned = crate::worktrees::ownership::resolve(app, workspace, &raw).await.ok_or_else(foreign)?;
-        Ok::<_, Error>((raw, owned))
-    };
     let mut queries = Vec::with_capacity(requested_dirs.len());
     for raw in requested_dirs {
-        queries.push(resolve_one(raw.clone()).await?);
+        queries.push(capture_account_location(app, workspace, raw.clone()).await?);
     }
     let context = match location_context_dir {
-        Some(raw) => Some(resolve_one(raw.to_owned()).await?),
+        Some(raw) => Some(capture_account_location(app, workspace, raw.to_owned()).await?),
         None => None,
     };
     let body = match body_raw {
-        Some(raw) => Some(resolve_one(raw).await?),
+        Some(raw) => Some(capture_account_location(app, workspace, raw).await?),
         None => None,
     };
 
     let mut canonical: Option<&str> = None;
     for item in queries.iter().chain(context.iter()).chain(body.iter()) {
         if let Some(prev) = canonical
-            && prev != item.1.directory
+            && prev != item.owned.directory
         {
             return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
         }
-        canonical = Some(item.1.directory.as_str());
+        canonical = Some(item.owned.directory.as_str());
     }
     Ok(AccountLocations { queries, context, body })
 }

@@ -78,11 +78,17 @@ pub(crate) struct DeviceAdmission {
 fn reply(code: Status, text: &str) -> Response {
     (code, [(header::CONNECTION, "close")], Json(json!({"error":text}))).into_response()
 }
-fn is_no_store_account_path(path: &str) -> bool {
-    (path.starts_with("/api/workspaces/") && path.contains("/provider-accounts/"))
-        || (path.starts_with("/workspaces/")
-            && (path.contains("/instance/api/credential")
-                || (path.contains("/instance/api/integration/") && path.contains("/connect/"))))
+pub(super) fn is_no_store_account_path(path: &str) -> bool {
+    let matches_raw = |p: &str| {
+        (p.starts_with("/api/workspaces/") && p.contains("/provider-accounts/"))
+            || (p.starts_with("/workspaces/")
+                && (p.contains("/instance/api/credential")
+                    || (p.contains("/instance/api/integration/") && p.contains("/connect/"))))
+    };
+    if matches_raw(path) {
+        return true;
+    }
+    percent_encoding::percent_decode_str(path).decode_utf8().ok().is_some_and(|decoded| matches_raw(&decoded))
 }
 fn status(paired: bool) -> Response {
     Json(if paired {

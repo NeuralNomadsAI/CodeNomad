@@ -40,7 +40,9 @@ struct MockState {
     entries: Vec<Value>,
     needs_auth: HashSet<String>,
     fail_activation: bool,
+    activate_status: Status,
     activate_delay: Duration,
+    activate_received: Option<Arc<std::sync::atomic::AtomicBool>>,
     activate_seen: Option<Arc<tokio::sync::Notify>>,
     fail_native: bool,
     calls: Vec<String>,
@@ -111,12 +113,22 @@ fn go_usage_payload(used: f64) -> Value {
 async fn fake_native(State(state): State<Arc<Mutex<MockState>>>, req: Request) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_owned();
+    let query_dir = req.uri().query().and_then(|q| {
+        reqwest::Url::parse(&format!("http://localhost/?{q}"))
+            .ok()?
+            .query_pairs()
+            .find(|(k, _)| k == "location[directory]")
+            .map(|(_, v)| v.into_owned())
+    });
     if method == Method::POST && path.starts_with("/api/credential/") && path.ends_with("/activate") {
-        let (delay, seen) = {
+        let (delay, received, seen) = {
             let mut s = state.lock().unwrap();
             s.calls.push(format!("{method} {path}"));
-            (s.activate_delay, s.activate_seen.clone())
+            (s.activate_delay, s.activate_received.clone(), s.activate_seen.clone())
         };
+        if let Some(flag) = received {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         if !delay.is_zero() {
             if let Some(notify) = seen {
                 notify.notify_one();
@@ -130,13 +142,14 @@ async fn fake_native(State(state): State<Arc<Mutex<MockState>>>, req: Request) -
         if s.fail_activation {
             return (Status::INTERNAL_SERVER_ERROR, Json(json!({"error": "secret-provider-error"}))).into_response();
         }
+        let status = s.activate_status;
         let id = path.trim_start_matches("/api/credential/").trim_end_matches("/activate").to_owned();
         s.order.retain(|item| item != &id);
         s.order.insert(0, id.clone());
         for entry in &mut s.entries {
             entry["active"] = json!(entry["id"] == id);
         }
-        return Status::NO_CONTENT.into_response();
+        return status.into_response();
     }
     let mut s = state.lock().unwrap();
     s.calls.push(format!("{method} {path}"));
@@ -188,7 +201,7 @@ async fn fake_native(State(state): State<Arc<Mutex<MockState>>>, req: Request) -
                 })
                 .collect();
             Json(json!({
-                "location": {"directory": s.directory},
+                "location": {"directory": query_dir.as_deref().unwrap_or(&s.directory)},
                 "data": {"id": iid, "name": "Fixture", "methods": [], "connections": connections}
             }))
             .into_response()
@@ -244,7 +257,9 @@ async fn setup_harness_with_timeout(
         entries,
         needs_auth: HashSet::new(),
         fail_activation: false,
+        activate_status: Status::NO_CONTENT,
         activate_delay: Duration::ZERO,
+        activate_received: None,
         activate_seen: None,
         fail_native: false,
         calls: Vec::new(),
@@ -464,6 +479,35 @@ async fn provider_accounts_get_and_put_enforce_ownership_policy_fence_and_redact
     assert_eq!(status, Status::OK);
     assert_eq!(body["enabled"], false);
 
+    // 6b. Non-Git workspace subfolder is accepted consistently by both GET and PUT.
+    let subfolder = PathBuf::from(&h.directory).join("nested-sub");
+    std::fs::create_dir_all(&subfolder).unwrap();
+    let subfolder_str = dunce::canonicalize(&subfolder).unwrap().to_string_lossy().into_owned();
+    let subfolder_encoded =
+        percent_encoding::utf8_percent_encode(&subfolder_str, percent_encoding::NON_ALPHANUMERIC).to_string();
+    let (status, cc, body) = send_route(
+        Arc::clone(&h.app),
+        h.principal.clone(),
+        Method::GET,
+        &format!("{base}/openai?directory={subfolder_encoded}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, Status::OK);
+    assert_eq!(cc, "no-store");
+    assert_eq!(body["supported"], false);
+    let (status, cc, body) = send_route(
+        Arc::clone(&h.app),
+        h.principal.clone(),
+        Method::PUT,
+        &format!("{base}/openai"),
+        Some(json!({"directory": subfolder_str, "enabled": false})),
+    )
+    .await;
+    assert_eq!(status, Status::OK);
+    assert_eq!(cc, "no-store");
+    assert_eq!(body["enabled"], false);
+
     // 7. Worktree deletion fence returns 409 on PUT.
     let key = crate::worktrees::fence::identity(&dunce::canonicalize(&h.directory).unwrap());
     let delete_guard = crate::worktrees::fence::block(&[key]).await.unwrap();
@@ -543,7 +587,7 @@ async fn before_send_rotates_exhausted_codex_serializes_and_fences_manual_and_po
             e["active"] = json!(e["id"] == "one");
         }
     }
-    let guard = h.app.provider_usage.accounts.manual_fence(&h.endpoint);
+    let guard = h.app.provider_usage.accounts.manual_fence(&h.endpoint).await;
     before_send(&h.app, &h.endpoint, &h.principal, "ses_1", |_| async { true }).await.unwrap();
     drop(guard);
     assert_eq!(h.state.lock().unwrap().order[0], "one");
@@ -566,13 +610,31 @@ async fn before_send_rotates_exhausted_codex_serializes_and_fences_manual_and_po
     .unwrap();
     assert_eq!(h.state.lock().unwrap().order[0], "one");
 
+    // Inconclusive 202 Accepted activation is treated as failed (502) and invalidates cached active.
+    h.state.lock().unwrap().activate_status = Status::ACCEPTED;
+    let err = before_send(&h.app, &h.endpoint, &h.principal, "ses_1", |_| async { true }).await.unwrap_err();
+    assert_eq!(err.0, Status::BAD_GATEWAY);
+    assert_eq!(err.1.0["error"], "PROVIDER_ACCOUNT_SELECTION_FAILED");
+    assert_eq!(
+        h.app.provider_usage.accounts.active_at(&h.endpoint, "openai", crate::shared::now_ms() as f64 + 10.0).flatten(),
+        None
+    );
+    {
+        let mut s = h.state.lock().unwrap();
+        s.activate_status = Status::NO_CONTENT;
+        s.order = vec!["one".into(), "two".into(), "three".into()];
+        for e in &mut s.entries {
+            e["active"] = json!(e["id"] == "one");
+        }
+    }
+
     // Ambiguous activation failure returns 502 PROVIDER_ACCOUNT_SELECTION_FAILED without secret or retry.
     h.state.lock().unwrap().fail_activation = true;
     let err = before_send(&h.app, &h.endpoint, &h.principal, "ses_1", |_| async { true }).await.unwrap_err();
     assert_eq!(err.0, Status::BAD_GATEWAY);
     assert_eq!(err.1.0["error"], "PROVIDER_ACCOUNT_SELECTION_FAILED");
     assert!(!err.1.0.to_string().contains("secret-provider-error"));
-    assert_eq!(h.state.lock().unwrap().calls.iter().filter(|c| c.ends_with("/activate")).count(), 2);
+    assert_eq!(h.state.lock().unwrap().calls.iter().filter(|c| c.ends_with("/activate")).count(), 3);
 }
 
 #[tokio::test]
@@ -657,7 +719,7 @@ async fn reactive_go_rotation_respects_marks_definite_4xx_and_console_scope() {
         watermark: None,
     };
     assert!(h.app.provider_usage.accounts.mark_quota_failure(&h.app, &h.endpoint, &failure_before_manual).await);
-    let _g = h.app.provider_usage.accounts.manual_fence(&h.endpoint);
+    let _g = h.app.provider_usage.accounts.manual_fence(&h.endpoint).await;
     drop(_g);
     // Because manual_fence cleared the mark on "one", before_send stays on "one" instead of rotating.
     before_send(&h.app, &h.endpoint, &h.principal, "ses_go", |_| async { true }).await.unwrap();
@@ -680,7 +742,7 @@ async fn before_send_returns_502_and_clears_active_on_stalled_activation() {
         "openai",
         "openai",
         vec![codex_entry("one", true, "default"), codex_entry("two", false, "default")],
-        Duration::from_millis(80),
+        Duration::from_millis(300),
     )
     .await;
     crate::settings::patch_owner(
@@ -704,16 +766,24 @@ async fn before_send_returns_502_and_clears_active_on_stalled_activation() {
     assert_eq!(h.app.provider_usage.accounts.active_at(&h.endpoint, "openai", now).flatten().as_deref(), Some("two"));
 
     // Flip quota so "two" is exhausted and "one" is available, then stall POST .../activate past timeout.
+    let received = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let seen = Arc::new(tokio::sync::Notify::new());
     {
         let mut s = h.state.lock().unwrap();
         s.quota_responses.insert("acct-two".into(), (200, codex_usage_payload(100.0, 3_600_000)));
         s.quota_responses.insert("acct-one".into(), (200, codex_usage_payload(10.0, 3_600_000)));
-        s.activate_delay = Duration::from_millis(250);
+        s.activate_delay = Duration::from_millis(1200);
+        s.activate_received = Some(Arc::clone(&received));
         s.activate_seen = Some(Arc::clone(&seen));
     }
     let err = before_send(&h.app, &h.endpoint, &h.principal, "ses_1", |_| async { true }).await.unwrap_err();
-    seen.notified().await;
+    tokio::time::timeout(Duration::from_secs(2), seen.notified())
+        .await
+        .expect("POST .../activate must have arrived upstream");
+    assert!(
+        received.load(std::sync::atomic::Ordering::SeqCst),
+        "timeout must have happened after POST .../activate reached upstream"
+    );
     assert_eq!(err.0, Status::BAD_GATEWAY);
     assert_eq!(err.1.0["error"], "PROVIDER_ACCOUNT_SELECTION_FAILED");
     let after = crate::shared::now_ms() as f64 + 10.0;
@@ -736,7 +806,8 @@ async fn put_provider_accounts_aborts_cleanly_when_cancelled_while_waiting_for_s
     let principal = Principal(cancel.clone());
     let base = format!("/api/workspaces/{}/provider-accounts", h.workspace_id);
 
-    // Hold the settings write lock in a blocking task so the PUT handler blocks entering patch_owner_checked.
+    // Hold the settings write lock in a blocking task so the PUT handler parks on settings.write.
+    let (enter_rx, exit_rx) = h.app.settings.arm_write_hooks();
     let app_lock = Arc::clone(&h.app);
     let (locked_tx, locked_rx) = tokio::sync::oneshot::channel();
     let (release_tx, release_rx) = tokio::sync::oneshot::channel();
@@ -760,11 +831,18 @@ async fn put_provider_accounts_aborts_cleanly_when_cancelled_while_waiting_for_s
         .await
     });
 
-    // Give the handler time to pass native/worktree checks and park on settings.write, then cancel principal.
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    // Wait deterministically until the PUT worker reaches patch_checked_committed, then cancel & release.
+    tokio::time::timeout(Duration::from_secs(5), enter_rx)
+        .await
+        .expect("PUT worker must reach settings.write lock")
+        .unwrap();
     cancel.cancel();
     let _ = release_tx.send(());
     lock_task.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), exit_rx)
+        .await
+        .expect("PUT worker must finish cleanly after release")
+        .unwrap();
 
     let (status, cc, _) = req_task.await.unwrap();
     assert_eq!(status, Status::UNAUTHORIZED);

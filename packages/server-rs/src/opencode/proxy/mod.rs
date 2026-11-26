@@ -124,6 +124,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         && session.is_some_and(|s| {
             route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
         });
+    let account_route = is_account_no_store_route(route, &head.method);
     let workspace_closed = || async {
         loop {
             let notified = app.workspace_closed.notified();
@@ -334,7 +335,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
                 if requested_checkout.is_none() {
                     requested_checkout = Some(proof);
                 }
-            } else if !crate::worktrees::owns(&app, &workspace, req).await {
+            } else if !account_route && !crate::worktrees::owns(&app, &workspace, req).await {
                 return Err(foreign());
             }
         }
@@ -544,7 +545,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             } else {
                 false
             };
-        if !reused_ok && !crate::worktrees::owns(&app, &workspace, directory).await {
+        if !account_route && !reused_ok && !crate::worktrees::owns(&app, &workspace, directory).await {
             return Err(foreign());
         }
     }
@@ -576,7 +577,6 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     } else {
         target.set_query(head.uri.query());
     }
-    let account_route = is_account_no_store_route(route, &head.method);
     let location_context_dir =
         parsed_location_context.as_ref().and_then(|v| v["directory"].as_str()).map(str::to_owned);
     if let Some(context) = parsed_location_context {
@@ -634,11 +634,12 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     for (key, value) in target.query_pairs() {
         match key.as_ref() {
             "directory" | "location[directory]" => {
-                if !message_list && (seen_directory || (prompt_query.is_none() && value != directory)) {
+                if !message_list && !account_route && (seen_directory || (prompt_query.is_none() && value != directory))
+                {
                     return Err(foreign());
                 }
                 seen_directory = true;
-                explicit = (key == "directory") == session_list;
+                explicit = account_route || (key == "directory") == session_list;
             }
             "project" if session_list => {
                 if value.is_empty() || project.replace(value.into_owned()).is_some() {
@@ -733,7 +734,6 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         mutation,
         account_manual,
         account_context_dir,
-        secret_sentinels,
         receipt,
     } = match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
         recheck: &recheck,
@@ -850,7 +850,6 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         id,
         message_list,
         account_route,
-        secret_sentinels,
         fork,
         actual,
         project,

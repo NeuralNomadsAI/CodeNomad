@@ -410,6 +410,7 @@ struct ConnectionInner {
 
 pub(crate) struct ConnectionState {
     gate: Arc<AsyncMutex<()>>,
+    activate_gate: Arc<AsyncMutex<()>>,
     observer_gate: Arc<AsyncMutex<()>>,
     observer_pending: AtomicUsize,
     inner: Mutex<ConnectionInner>,
@@ -419,6 +420,7 @@ impl Default for ConnectionState {
     fn default() -> Self {
         Self {
             gate: Arc::new(AsyncMutex::new(())),
+            activate_gate: Arc::new(AsyncMutex::new(())),
             observer_gate: Arc::new(AsyncMutex::new(())),
             observer_pending: AtomicUsize::new(0),
             inner: Mutex::new(ConnectionInner::default()),
@@ -497,14 +499,16 @@ impl AccountService {
 
     /// Fence local explicit credential/integration mutations immediately, including switches
     /// away and back. A manual account change also forgets reactive exhaustion marks.
-    pub(crate) fn manual_fence(&self, endpoint: &Arc<Endpoint>) -> ManualGuard {
+    pub(crate) async fn manual_fence(&self, endpoint: &Arc<Endpoint>) -> ManualGuard {
         let state = self.connection_state(endpoint);
+        let activate = state.activate_gate.lock().await;
         {
             let mut inner = state.inner.lock().unwrap();
             inner.epoch = inner.epoch.saturating_add(1);
             inner.manual = inner.manual.saturating_add(1);
             inner.marks.manual_change(now_ms());
         }
+        drop(activate);
         ManualGuard { state, released: false }
     }
 
@@ -858,6 +862,7 @@ where
             {
                 return Ok(());
             }
+            let _activate_lock = state.activate_gate.lock().await;
             principal.live()?;
             if !app.native.current(endpoint) {
                 return Err(crate::opencode::upstream_error());
@@ -888,7 +893,7 @@ where
                 .basic_auth("opencode", Some(&endpoint.password))
                 .send()
                 .await
-                .is_ok_and(|res| res.status().is_success());
+                .is_ok_and(|res| res.status() == Status::NO_CONTENT);
             if !activated {
                 return Err(selection_failed());
             }
