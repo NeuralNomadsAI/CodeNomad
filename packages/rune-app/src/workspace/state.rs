@@ -11,8 +11,9 @@ mod strip;
 
 pub use drafts::{
     adopt_recovered_draft, attachment_draft_admissible, bound, bound_with_adopt, capture,
-    check_restored_draft_sessions, draft_changed, note_session_deleted,
-    recover_missing_session_draft, session_deleted_hook, unconfirmed_drafts_full,
+    check_restored_draft_sessions, draft_changed, note_restored_draft_sessions_present,
+    note_session_deleted, recover_missing_session_draft, resume_restored_draft_checks,
+    session_deleted_hook, unconfirmed_drafts_full,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
@@ -171,19 +172,14 @@ pub struct Ui {
         codenomad_client::Sender<(ProjectScope, String)>,
         codenomad_client::Receiver<(ProjectScope, String)>,
     ),
-    restored_draft_checked: Vec<(ProjectScope, String)>,
-    restored_draft_in_flight: Vec<(ProjectScope, String)>,
+    restored_draft_presence_epoch: u64,
+    restored_draft_seen_present: Vec<(ProjectScope, String, u64)>,
+    restored_draft_checked: Vec<(ProjectScope, String, drafts::RestoredProbeOutcome)>,
+    restored_draft_in_flight: Vec<(ProjectScope, String, u64)>,
+    restored_draft_targets: Vec<drafts::RestoredProbeTarget>,
     restored_draft_checks: (
-        codenomad_client::Sender<(
-            ProjectScope,
-            String,
-            Option<Option<codenomad_client::catalog::SessionAbsence>>,
-        )>,
-        codenomad_client::Receiver<(
-            ProjectScope,
-            String,
-            Option<Option<codenomad_client::catalog::SessionAbsence>>,
-        )>,
+        codenomad_client::Sender<drafts::RestoredProbeResult>,
+        codenomad_client::Receiver<drafts::RestoredProbeResult>,
     ),
 }
 impl Ui {
@@ -244,9 +240,12 @@ impl Ui {
             closed_derived_from: Vec::new(),
             closed_pending_deleted: Vec::new(),
             deleted_sessions: codenomad_client::bounded(256),
+            restored_draft_presence_epoch: 0,
+            restored_draft_seen_present: Vec::new(),
             restored_draft_checked: Vec::new(),
             restored_draft_in_flight: Vec::new(),
-            restored_draft_checks: codenomad_client::bounded(128),
+            restored_draft_targets: Vec::new(),
+            restored_draft_checks: codenomad_client::bounded(256),
         }
     }
     fn changed(&mut self) {
@@ -368,124 +367,6 @@ impl Ui {
                 }
             }
         }
-        // Persist closed drafts whose deletion recovery was deferred (e.g. temporary CSPRNG
-        // outage) into available v1 snapshot slots (__no_session_draft__ and unoccupied sibling
-        // session_id slots) without mutating live state or changing v1 JSON.
-        // Limit: if CSPRNG fails and more closed drafts exist than available v1 slots, extra
-        // copies cannot be stored without substituting weak UUIDs or changing the v1 schema.
-        for (scope, id) in &self.closed_pending_deleted {
-            let clear_authorities = drafts::collect_open_clear_authorities(self, scope, id);
-            let (closed_bundles, _) =
-                drafts::collect_closed_bundles_for_recovery(self, scope, id, &clear_authorities);
-            if closed_bundles.is_empty() {
-                continue;
-            }
-            let projected_count = self
-                .entries
-                .iter()
-                .filter(|entry| {
-                    entry.pending_drafts.contains(id)
-                        && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
-                })
-                .count();
-            let mut no_session_free = !tabs.iter().any(|tab| {
-                matches!(tab, Tab::Workspace(w) if scope.matches(w)
-                    && (w.drafts.get(super::NO_SESSION_DRAFT_ID).is_some_and(|t| !t.is_empty())
-                        || w.attachment_drafts.contains(super::NO_SESSION_DRAFT_ID)
-                        || w.attachment_parts.contains_key(super::NO_SESSION_DRAFT_ID)))
-            });
-            let tab_has_room = |w: &Workspace, key: &str| -> bool {
-                let mut keys: HashSet<&str> = w
-                    .drafts
-                    .keys()
-                    .chain(w.attachment_drafts.iter())
-                    .chain(w.attachment_parts.keys())
-                    .map(String::as_str)
-                    .collect();
-                keys.insert(key);
-                keys.len() <= super::MAX_DRAFTS
-            };
-            let unprojected: Vec<_> = closed_bundles.into_iter().skip(projected_count).collect();
-            let need_session_slot = unprojected.len() > 1;
-            let can_host_session = |tabs: &[Tab], i: usize| -> bool {
-                matches!(
-                    &tabs[i],
-                    Tab::Workspace(w)
-                        if scope.matches(w)
-                            && !self.entries[i].cleared.contains(id)
-                            && !w.drafts.contains_key(id)
-                            && !w.attachment_drafts.contains(id)
-                            && !w.attachment_parts.contains_key(id)
-                            && tab_has_room(w, id)
-                )
-            };
-            let pick_no_session_dest = |tabs: &[Tab]| -> Option<usize> {
-                tabs.iter()
-                    .enumerate()
-                    .filter_map(|(i, tab)| {
-                        let Tab::Workspace(w) = tab else {
-                            return None;
-                        };
-                        if !scope.matches(w)
-                            || self.entries[i].cleared.contains(super::NO_SESSION_DRAFT_ID)
-                            || !tab_has_room(w, super::NO_SESSION_DRAFT_ID)
-                        {
-                            return None;
-                        }
-                        Some((
-                            (
-                                self.entries[i].closing_deferred,
-                                need_session_slot && can_host_session(tabs, i),
-                                i,
-                            ),
-                            i,
-                        ))
-                    })
-                    .min_by_key(|(rank, _)| *rank)
-                    .map(|(_, i)| i)
-            };
-            for bundle in unprojected {
-                let target = if no_session_free && let Some(dest) = pick_no_session_dest(&tabs) {
-                    no_session_free = false;
-                    Some((dest, super::NO_SESSION_DRAFT_ID))
-                } else {
-                    let find_empty = |prefer_surviving: bool| {
-                        tabs.iter().enumerate().find_map(|(i, tab)| {
-                            let Tab::Workspace(w) = tab else {
-                                return None;
-                            };
-                            if (prefer_surviving && self.entries[i].closing_deferred)
-                                || !scope.matches(w)
-                                || self.entries[i].cleared.contains(id)
-                                || w.drafts.contains_key(id)
-                                || w.attachment_drafts.contains(id)
-                                || w.attachment_parts.contains_key(id)
-                                || !tab_has_room(w, id)
-                            {
-                                return None;
-                            }
-                            Some((i, id.as_str()))
-                        })
-                    };
-                    find_empty(true).or_else(|| find_empty(false))
-                };
-                if let Some((dest, key)) = target
-                    && let Tab::Workspace(w) = &mut tabs[dest]
-                {
-                    if let Some(text) = bundle.text
-                        && !text.is_empty()
-                    {
-                        w.drafts.insert(key.into(), text);
-                    }
-                    if bundle.attachment_draft || bundle.attachment_parts.is_some() {
-                        w.attachment_drafts.insert(key.into());
-                    }
-                    if let Some(parts) = bundle.attachment_parts {
-                        w.attachment_parts.insert(key.into(), parts);
-                    }
-                }
-            }
-        }
         let mut snap = Snapshot {
             revision: self.revision,
             saved_at: self.saved_at,
@@ -509,6 +390,203 @@ impl Ui {
                         stale.drafts.remove(&id);
                         stale.attachment_drafts.remove(&id);
                         stale.attachment_parts.remove(&id);
+                    }
+                }
+            }
+        }
+        // Persist closed drafts whose deletion recovery was deferred (e.g. temporary CSPRNG
+        // outage) into available v1 snapshot slots (__no_session_draft__ and unoccupied sibling
+        // session_id slots) without mutating live state, changing v1 JSON, or exceeding any
+        // global v1 budget (so fallback projections never cause encode_for_save to evict an
+        // existing persistable draft).
+        // Limit: if CSPRNG fails and more closed drafts exist than available v1 slots or global
+        // v1 budget allows, extra copies cannot be stored without substituting weak UUIDs or
+        // changing the v1 schema.
+        if !self.closed_pending_deleted.is_empty() && super::encode(&snap).is_ok() {
+            let tab_has_room = |w: &Workspace, extra: &[&str]| -> bool {
+                let mut keys: HashSet<&str> = w
+                    .drafts
+                    .keys()
+                    .chain(w.attachment_drafts.iter())
+                    .chain(w.attachment_parts.keys())
+                    .map(String::as_str)
+                    .collect();
+                for key in extra {
+                    keys.insert(*key);
+                }
+                keys.len() <= super::MAX_DRAFTS
+            };
+            let try_insert =
+                |snap: &mut Snapshot, dest: usize, key: &str, bundle: &drafts::ClosedBundle| {
+                    let Tab::Workspace(w) = &mut snap.tabs[dest] else {
+                        return false;
+                    };
+                    let prev_text = w.drafts.get(key).cloned();
+                    let prev_att = w.attachment_drafts.contains(key);
+                    let prev_parts = w.attachment_parts.get(key).cloned();
+                    if let Some(text) = &bundle.text
+                        && !text.is_empty()
+                    {
+                        w.drafts.insert(key.into(), text.clone());
+                    }
+                    if bundle.attachment_draft || bundle.attachment_parts.is_some() {
+                        w.attachment_drafts.insert(key.into());
+                    }
+                    if let Some(parts) = &bundle.attachment_parts {
+                        w.attachment_parts.insert(key.into(), parts.clone());
+                    }
+                    if super::encode(snap).is_ok() {
+                        return true;
+                    }
+                    if let Tab::Workspace(w) = &mut snap.tabs[dest] {
+                        match prev_text {
+                            Some(t) => {
+                                w.drafts.insert(key.into(), t);
+                            }
+                            None => {
+                                w.drafts.remove(key);
+                            }
+                        }
+                        if prev_att {
+                            w.attachment_drafts.insert(key.into());
+                        } else {
+                            w.attachment_drafts.remove(key);
+                        }
+                        match prev_parts {
+                            Some(p) => {
+                                w.attachment_parts.insert(key.into(), p);
+                            }
+                            None => {
+                                w.attachment_parts.remove(key);
+                            }
+                        }
+                    }
+                    false
+                };
+            for (scope, id) in &self.closed_pending_deleted {
+                let clear_authorities = drafts::collect_open_clear_authorities(self, scope, id);
+                let (closed_bundles, _) = drafts::collect_closed_bundles_for_recovery(
+                    self,
+                    scope,
+                    id,
+                    &clear_authorities,
+                );
+                if closed_bundles.is_empty() {
+                    continue;
+                }
+                let projected_count = self
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.pending_drafts.contains(id)
+                            && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
+                    })
+                    .count();
+                let mut no_session_free = !snap.tabs.iter().any(|tab| {
+                    matches!(tab, Tab::Workspace(w) if scope.matches(w)
+                        && (w.drafts.get(super::NO_SESSION_DRAFT_ID).is_some_and(|t| !t.is_empty())
+                            || w.attachment_drafts.contains(super::NO_SESSION_DRAFT_ID)
+                            || w.attachment_parts.contains_key(super::NO_SESSION_DRAFT_ID)))
+                });
+                let unprojected: Vec<_> =
+                    closed_bundles.into_iter().skip(projected_count).collect();
+                let unprojected_len = unprojected.len();
+                let can_host_session = |tabs: &[Tab], i: usize| -> bool {
+                    matches!(
+                        &tabs[i],
+                        Tab::Workspace(w)
+                            if scope.matches(w)
+                                && !self.entries[i].cleared.contains(id)
+                                && !w.drafts.contains_key(id)
+                                && !w.attachment_drafts.contains(id)
+                                && !w.attachment_parts.contains_key(id)
+                                && tab_has_room(w, &[id.as_str()])
+                    )
+                };
+                let find_empty_session = |tabs: &[Tab], prefer_surviving: bool| {
+                    tabs.iter().enumerate().find_map(|(i, _)| {
+                        if (prefer_surviving && self.entries[i].closing_deferred)
+                            || !can_host_session(tabs, i)
+                        {
+                            return None;
+                        }
+                        Some(i)
+                    })
+                };
+                for (bundle_pos, bundle) in unprojected.iter().enumerate() {
+                    let remaining = unprojected_len - bundle_pos;
+                    let mut chosen_no_session = None;
+                    if no_session_free {
+                        let mut all_id_slots = 0usize;
+                        let mut surviving_id_slots = 0usize;
+                        for j in 0..snap.tabs.len() {
+                            if can_host_session(&snap.tabs, j) {
+                                all_id_slots += 1;
+                                if !self.entries[j].closing_deferred {
+                                    surviving_id_slots += 1;
+                                }
+                            }
+                        }
+                        let mut best_rank = (
+                            remaining.min(all_id_slots),
+                            remaining.min(surviving_id_slots),
+                            false,
+                            false,
+                            std::cmp::Reverse(usize::MAX),
+                        );
+                        for (i, tab) in snap.tabs.iter().enumerate() {
+                            let Tab::Workspace(w) = tab else {
+                                continue;
+                            };
+                            if !scope.matches(w)
+                                || self.entries[i].cleared.contains(super::NO_SESSION_DRAFT_ID)
+                                || !tab_has_room(w, &[super::NO_SESSION_DRAFT_ID])
+                            {
+                                continue;
+                            }
+                            let mut surviving_after = 0usize;
+                            let mut deferred_after = 0usize;
+                            for j in 0..snap.tabs.len() {
+                                if !can_host_session(&snap.tabs, j) {
+                                    continue;
+                                }
+                                if j == i
+                                    && !tab_has_room(w, &[super::NO_SESSION_DRAFT_ID, id.as_str()])
+                                {
+                                    continue;
+                                }
+                                if self.entries[j].closing_deferred {
+                                    deferred_after += 1;
+                                } else {
+                                    surviving_after += 1;
+                                }
+                            }
+                            let total_kept = remaining.min(1 + surviving_after + deferred_after);
+                            let surviving_kept = usize::from(!self.entries[i].closing_deferred)
+                                + (total_kept - 1).min(surviving_after);
+                            let rank = (
+                                total_kept,
+                                surviving_kept,
+                                true,
+                                !self.entries[i].closing_deferred,
+                                std::cmp::Reverse(i),
+                            );
+                            if rank > best_rank {
+                                best_rank = rank;
+                                chosen_no_session = Some(i);
+                            }
+                        }
+                    }
+                    if let Some(dest) = chosen_no_session
+                        && try_insert(&mut snap, dest, super::NO_SESSION_DRAFT_ID, bundle)
+                    {
+                        no_session_free = false;
+                        continue;
+                    }
+                    if let Some(dest) = find_empty_session(&snap.tabs, true)
+                        .or_else(|| find_empty_session(&snap.tabs, false))
+                    {
+                        let _ = try_insert(&mut snap, dest, id, bundle);
                     }
                 }
             }

@@ -84,7 +84,7 @@ pub struct Launcher {
     pub(crate) rebind_after_send: Option<String>,
     pub(crate) adopt_recovered_for: Option<(String, Option<u64>)>,
     resume_after_job: bool,
-    connection_generation: u64,
+    pub(crate) connection_generation: u64,
     pending_connection_generation: u64,
     selection_ticket: Option<u64>,
     close_mission_reader_on_bind: bool,
@@ -727,7 +727,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     .launcher()
                     .and_then(|l| Some((l.connection.clone()?, l.listed_sessions.clone())))
             {
-                crate::workspace::check_restored_draft_sessions(s, &backend, &project, &listed);
+                let empty = HashSet::new();
+                let verified_listed = if stale_connection { &empty } else { &listed };
+                crate::workspace::check_restored_draft_sessions(
+                    s,
+                    &backend,
+                    &project,
+                    verified_listed,
+                );
             }
             if stopped_in_flight {
                 crate::workspace::deliver_detached_events(
@@ -753,6 +760,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             linked::load(s);
         }
         Ok(Reply::Listed(rows, cursor)) => {
+            let listed_ids: HashSet<String> = rows.rows.iter().map(|row| row.id.clone()).collect();
+            let record_present = !l.authentication_required && !stale_connection;
             if let Some(cursor) = cursor {
                 l.consume_cursor(&cursor);
                 l.apply_listing(rows, true, selected.as_deref());
@@ -772,6 +781,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 #[cfg(target_arch = "wasm32")]
                 linked::load(s);
             }
+            if record_present && !listed_ids.is_empty() {
+                crate::workspace::note_restored_draft_sessions_present(s, &listed_ids);
+            }
         }
         Ok(Reply::Created(b, title, slug, submitted, dismiss, ticket)) => {
             if !submitted.is_empty() && l.title.text == submitted {
@@ -781,7 +793,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             let superseded = ticket.is_some_and(|t| t != s.notifications.navigation_ticket());
             let stopped_in_flight =
                 stopped_during_pending_overflow || stopped_during_pending.contains(&b.workspace);
-            if blocked || superseded || l.authentication_required || stopped_in_flight {
+            let created_id = b.session.clone();
+            let auth_required_now = l.authentication_required;
+            if blocked || superseded || auth_required_now || stopped_in_flight {
                 if !stopped_in_flight {
                     l.sessions.insert(
                         0,
@@ -809,6 +823,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             } else {
                 dismiss_origin_panel(s, dismiss, tx);
                 bind_created(s, b, title, &slug, tx);
+            }
+            if !stopped_in_flight && !auth_required_now && !stale_connection {
+                let mut present = HashSet::new();
+                present.insert(created_id);
+                crate::workspace::note_restored_draft_sessions_present(s, &present);
             }
         }
         Ok(Reply::CreatedUnbound(session, submitted)) => {
@@ -1187,6 +1206,7 @@ fn apply_connected(
             let live: HashSet<&str> = live_ids.iter().map(String::as_str).collect();
             crate::workspace::stop_unlisted_detached(s, &live);
         }
+        crate::workspace::resume_restored_draft_checks(s, live_ids.as_ref());
         if has_project && let Some(id) = selected {
             if s.composer.pending() && s.incoming.is_none() {
                 crate::composer::settle_pending(

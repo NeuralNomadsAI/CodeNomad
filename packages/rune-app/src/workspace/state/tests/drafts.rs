@@ -3634,6 +3634,10 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         let probed_srv = probed.clone();
         let list_calls = Arc::new(Mutex::new(0usize));
         let list_calls_srv = list_calls.clone();
+        let (probe_404_entered_tx, probe_404_entered_rx) = mpsc::channel::<()>();
+        let probe_404_entered_tx = Arc::new(Mutex::new(Some(probe_404_entered_tx)));
+        let (release_404_tx, release_404_rx) = mpsc::channel::<()>();
+        let release_404_rx = Arc::new(Mutex::new(release_404_rx));
         let listed_rows: Vec<serde_json::Value> = (0..48)
             .map(|i| {
                 serde_json::json!({
@@ -3650,84 +3654,103 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         .to_string();
         let (stop, stopped) = mpsc::channel::<()>();
         let server = std::thread::spawn(move || {
+            let mut workers = Vec::new();
             while matches!(stopped.try_recv(), Err(mpsc::TryRecvError::Empty)) {
                 let Ok((mut socket, _)) = listener.accept() else {
                     std::thread::sleep(Duration::from_millis(2));
                     continue;
                 };
-                socket.set_nonblocking(false).unwrap();
-                socket
-                    .set_read_timeout(Some(Duration::from_secs(2)))
-                    .unwrap();
-                let mut bytes = Vec::new();
-                let mut byte = [0];
-                while !bytes.ends_with(b"\r\n\r\n") {
-                    if socket.read_exact(&mut byte).is_err() {
-                        break;
+                let probed_srv = probed_srv.clone();
+                let list_calls_srv = list_calls_srv.clone();
+                let paginated_body = paginated_body.clone();
+                let probe_404_entered_tx = probe_404_entered_tx.clone();
+                let release_404_rx = release_404_rx.clone();
+                workers.push(std::thread::spawn(move || {
+                    socket.set_nonblocking(false).unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut bytes = Vec::new();
+                    let mut byte = [0];
+                    while !bytes.ends_with(b"\r\n\r\n") {
+                        if socket.read_exact(&mut byte).is_err() {
+                            break;
+                        }
+                        bytes.push(byte[0]);
                     }
-                    bytes.push(byte[0]);
-                }
-                let header = String::from_utf8_lossy(&bytes);
-                let line = header.lines().next().unwrap_or("").to_string();
-                let length = header
-                    .lines()
-                    .find_map(|l| {
-                        l.split_once(':')
-                            .filter(|(k, _)| k.eq_ignore_ascii_case("content-length"))
-                            .map(|(_, v)| v.trim().parse::<usize>().unwrap_or(0))
-                    })
-                    .unwrap_or(0);
-                let mut req_body = Vec::new();
-                if length > 0 && length < 16384 {
-                    req_body.resize(length, 0);
-                    let _ = socket.read_exact(&mut req_body);
-                }
-                let (status, body) = if line.starts_with("POST /api/workspaces ") {
-                    let req_id = serde_json::from_slice::<serde_json::Value>(&req_body)
-                        .ok()
-                        .and_then(|v| v["requestId"].as_str().map(str::to_owned))
-                        .unwrap_or_default();
-                    (
-                        201,
-                        serde_json::json!({
-                            "id": "ws-probe",
-                            "requestId": req_id,
-                            "location": { "directory": "/fixture" }
+                    let header = String::from_utf8_lossy(&bytes);
+                    let line = header.lines().next().unwrap_or("").to_string();
+                    let length = header
+                        .lines()
+                        .find_map(|l| {
+                            l.split_once(':')
+                                .filter(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                                .map(|(_, v)| v.trim().parse::<usize>().unwrap_or(0))
                         })
-                        .to_string(),
-                    )
-                } else if line.contains("/creation/release ") || line.contains("/creation/cancel ")
-                {
-                    (204, String::new())
-                } else if line.starts_with("GET /workspaces/ws-probe/instance/api/session?") {
-                    *list_calls_srv.lock().unwrap() += 1;
-                    (200, paginated_body.clone())
-                } else if line.contains("/instance/api/session/ses_probe_404 ") {
-                    probed_srv.lock().unwrap().push("ses_probe_404".into());
-                    (
-                        404,
-                        r#"{"_tag":"SessionNotFoundError","sessionID":"ses_probe_404"}"#.into(),
-                    )
-                } else if line.contains("/instance/api/session/ses_probe_403 ") {
-                    probed_srv.lock().unwrap().push("ses_probe_403".into());
-                    (403, r#"{"reason":"session_located_elsewhere"}"#.into())
-                } else if line.contains("/instance/api/session/ses_probe_200 ") {
-                    probed_srv.lock().unwrap().push("ses_probe_200".into());
-                    (
-                        200,
-                        r#"{"data":{"id":"ses_probe_200","title":"live","location":{"directory":"/fixture"}}}"#
-                            .into(),
-                    )
-                } else {
-                    (200, r#"{"data":[]}"#.into())
-                };
-                let _ = socket.write_all(
-                    format!(
-                        "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    )
-                    .as_bytes(),
-                );
+                        .unwrap_or(0);
+                    let mut req_body = Vec::new();
+                    if length > 0 && length < 16384 {
+                        req_body.resize(length, 0);
+                        let _ = socket.read_exact(&mut req_body);
+                    }
+                    let (status, body) = if line.starts_with("POST /api/workspaces ") {
+                        let req_id = serde_json::from_slice::<serde_json::Value>(&req_body)
+                            .ok()
+                            .and_then(|v| v["requestId"].as_str().map(str::to_owned))
+                            .unwrap_or_default();
+                        (
+                            201,
+                            serde_json::json!({
+                                "id": "ws-probe",
+                                "requestId": req_id,
+                                "location": { "directory": "/fixture" }
+                            })
+                            .to_string(),
+                        )
+                    } else if line.contains("/creation/release ")
+                        || line.contains("/creation/cancel ")
+                    {
+                        (204, String::new())
+                    } else if line.starts_with("GET /workspaces/ws-probe/instance/api/session?") {
+                        *list_calls_srv.lock().unwrap() += 1;
+                        (200, paginated_body)
+                    } else if line.contains("/instance/api/session/ses_probe_404 ") {
+                        probed_srv.lock().unwrap().push("ses_probe_404".into());
+                        if let Some(tx) = probe_404_entered_tx.lock().unwrap().take() {
+                            let _ = tx.send(());
+                        }
+                        let _ = release_404_rx
+                            .lock()
+                            .unwrap()
+                            .recv_timeout(Duration::from_secs(5));
+                        (
+                            404,
+                            r#"{"_tag":"SessionNotFoundError","sessionID":"ses_probe_404"}"#.into(),
+                        )
+                    } else if line.contains("/instance/api/session/ses_probe_403 ") {
+                        probed_srv.lock().unwrap().push("ses_probe_403".into());
+                        (403, r#"{"reason":"session_located_elsewhere"}"#.into())
+                    } else if line.contains("/instance/api/session/ses_probe_200 ") {
+                        probed_srv.lock().unwrap().push("ses_probe_200".into());
+                        (
+                            200,
+                            r#"{"data":{"id":"ses_probe_200","title":"live","location":{"directory":"/fixture"}}}"#
+                                .into(),
+                        )
+                    } else {
+                        (200, r#"{"data":[]}"#.into())
+                    };
+                    let _ = socket.write_all(
+                        format!(
+                            "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                }));
+            }
+            for worker in workers {
+                let _ = worker.join();
             }
         });
         let mut r17_http = draft_state();
@@ -3771,10 +3794,11 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         crate::platform::block_on(async {
             // 1. Real launcher::choose_project -> Reply::Opened with paginated cursor ("page-2")
             // and 48 listed sessions: must start bounded checks for tab 2's 3 unlisted keys
-            // immediately.
+            // immediately. ses_probe_404 is held in-flight on the HTTP server until sibling #2 opens.
             crate::launcher::choose_project(&mut r17_http, "/fixture", &mut tx);
             let deadline = Instant::now() + Duration::from_secs(5);
             let mut opened_once = false;
+            let mut held_in_flight = false;
             while Instant::now() < deadline {
                 let _ = crate::launcher::poll(&mut r17_http, &mut tx);
                 let _ = crate::workspace::poll(&mut r17_http, 1.0, &mut tx);
@@ -3785,26 +3809,31 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                 {
                     opened_once = true;
                 }
-                let done = opened_once
-                    && r17_http
-                        .workspace
-                        .as_ref()
-                        .unwrap()
-                        .restored_draft_in_flight
-                        .is_empty()
-                    && probed.lock().unwrap().len() >= 3;
-                if done {
+                if probe_404_entered_rx.try_recv().is_ok() {
+                    held_in_flight = true;
+                }
+                if opened_once && held_in_flight {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             assert!(opened_once, "Reply::Opened must receive paginated cursor");
-            assert_eq!(
-                *list_calls.lock().unwrap(),
-                1,
-                "first project open must fetch the paginated session list once"
+            assert!(
+                held_in_flight,
+                "ses_probe_404 HTTP request must be actively in-flight"
             );
-            // 2. Second sibling Reply::Opened for the same project: must send ZERO repeat probes.
+            assert!(
+                r17_http
+                    .workspace
+                    .as_ref()
+                    .unwrap()
+                    .restored_draft_in_flight
+                    .iter()
+                    .any(|(_, id, _)| id == "ses_probe_404"),
+                "ses_probe_404 must be tracked in-flight before sibling open"
+            );
+            // 2. Second sibling Reply::Opened WHILE ses_probe_404 is still in-flight: must neither
+            // cancel nor duplicate the in-flight probe, nor replay already-checked keys.
             crate::launcher::choose_project(&mut r17_http, "/fixture", &mut tx);
             let second_deadline = Instant::now() + Duration::from_secs(5);
             let mut opened_twice = false;
@@ -3824,12 +3853,34 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
             }
             assert!(
                 opened_twice,
-                "second sibling open must also complete Reply::Opened"
+                "second sibling open must complete Reply::Opened while probe is in-flight"
             );
-            let settle_deadline = Instant::now() + Duration::from_millis(120);
-            while Instant::now() < settle_deadline {
+            assert!(
+                r17_http
+                    .workspace
+                    .as_ref()
+                    .unwrap()
+                    .restored_draft_in_flight
+                    .iter()
+                    .any(|(_, id, _)| id == "ses_probe_404"),
+                "sibling Reply::Opened must NOT cancel the in-flight probe"
+            );
+            // Release the held 404 response and wait for all 3 probes to finish cleanly.
+            let _ = release_404_tx.send(());
+            let finish_deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < finish_deadline {
                 let _ = crate::launcher::poll(&mut r17_http, &mut tx);
                 let _ = crate::workspace::poll(&mut r17_http, 3.0, &mut tx);
+                if r17_http
+                    .workspace
+                    .as_ref()
+                    .unwrap()
+                    .restored_draft_in_flight
+                    .is_empty()
+                    && probed.lock().unwrap().len() >= 3
+                {
+                    break;
+                }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         });
@@ -3840,7 +3891,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         assert_eq!(
             seen_probes,
             vec!["ses_probe_200", "ses_probe_403", "ses_probe_404"],
-            "paginated Reply::Opened must probe each unlisted restored key once without starvation or replay"
+            "paginated Reply::Opened must probe each unlisted restored key once without starvation, cancellation, or duplication"
         );
         let Tab::Workspace(after_t2) = &r17_http.workspace.as_ref().unwrap().entries[2].saved
         else {
@@ -3862,6 +3913,649 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
             after_t2.drafts.get("ses_probe_200").map(String::as_str),
             Some("keep 200"),
             "200 OK session must remain intact"
+        );
+    }
+
+    // 34. R18 Bloquant 1 + Mineur 1 (all-full):
+    // (a) All tabs at 24/24: fallback must insert 0 over-quota drafts and preserve all 24 existing.
+    // (b) A at 23/24, B at 22/24, 3 closed drafts for S: __no_session_draft__ goes to B, S goes to
+    // both A and B, preserving ALL 3 drafts.
+    // (c) Surviving A at 23/24, closing_deferred B at 23/24 (already owns S), 2 closed drafts for
+    // S: __no_session_draft__ goes to B, S goes to A, preserving BOTH drafts.
+    {
+        // (a) All tabs full
+        let mut full_a = closed("ses_r18_full", "");
+        full_a.drafts.clear();
+        full_a.active_session_id = None;
+        let mut full_b = closed("ses_r18_full", "");
+        full_b.drafts.clear();
+        full_b.occurrence = 1;
+        full_b.active_session_id = None;
+        for i in 0..crate::workspace::MAX_DRAFTS {
+            full_a
+                .drafts
+                .insert(format!("ses_fa_{i:02}"), format!("fa {i}"));
+            full_b
+                .drafts
+                .insert(format!("ses_fb_{i:02}"), format!("fb {i}"));
+        }
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(full_a.clone()), Tab::Workspace(full_b)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.closed = vec![closed("ses_r18_full", "cannot fit")];
+        ui.closed_restored = vec![Default::default()];
+        ui.closed_derived_from = vec![Default::default()];
+        ui.closed_pending_deleted.push((
+            crate::workspace::state::ProjectScope::from_workspace(&full_a),
+            "ses_r18_full".into(),
+        ));
+        let snap = ui.snapshot();
+        assert!(crate::workspace::encode(&snap).is_ok());
+        for (i, tab) in snap.tabs.iter().enumerate() {
+            let Tab::Workspace(w) = tab else {
+                panic!("expected workspace {i}");
+            };
+            assert_eq!(w.drafts.len(), crate::workspace::MAX_DRAFTS);
+            assert!(!w.drafts.contains_key(NO_SESSION_DRAFT_ID));
+            assert!(!w.drafts.contains_key("ses_r18_full"));
+        }
+
+        // (b) A 23/24, B 22/24, 3 closed drafts for S -> all 3 preserved
+        let mut a23 = closed("ses_r18_max", "");
+        a23.drafts.clear();
+        a23.active_session_id = None;
+        for i in 0..(crate::workspace::MAX_DRAFTS - 1) {
+            a23.drafts
+                .insert(format!("ses_a23_{i:02}"), format!("a {i}"));
+        }
+        let mut b22 = closed("ses_r18_max", "");
+        b22.drafts.clear();
+        b22.occurrence = 1;
+        b22.active_session_id = None;
+        for i in 0..(crate::workspace::MAX_DRAFTS - 2) {
+            b22.drafts
+                .insert(format!("ses_b22_{i:02}"), format!("b {i}"));
+        }
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(a23.clone()), Tab::Workspace(b22)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.closed = vec![
+            closed("ses_r18_max", "max 1"),
+            closed("ses_r18_max", "max 2"),
+            closed("ses_r18_max", "max 3"),
+        ];
+        ui.closed_restored = vec![Default::default(); 3];
+        ui.closed_derived_from = vec![Default::default(); 3];
+        ui.closed_pending_deleted.push((
+            crate::workspace::state::ProjectScope::from_workspace(&a23),
+            "ses_r18_max".into(),
+        ));
+        let snap = ui.snapshot();
+        assert!(crate::workspace::encode(&snap).is_ok());
+        let Tab::Workspace(wa) = &snap.tabs[0] else {
+            panic!("tab A");
+        };
+        let Tab::Workspace(wb) = &snap.tabs[1] else {
+            panic!("tab B");
+        };
+        assert_eq!(wa.drafts.len(), crate::workspace::MAX_DRAFTS);
+        assert_eq!(wb.drafts.len(), crate::workspace::MAX_DRAFTS);
+        assert!(wb.drafts.contains_key(NO_SESSION_DRAFT_ID));
+        assert!(wa.drafts.contains_key("ses_r18_max"));
+        assert!(wb.drafts.contains_key("ses_r18_max"));
+
+        // (c) Surviving A 23/24 + closing_deferred B 23/24 (already owns S) + 2 closed drafts -> both kept
+        let mut a_surv = closed("ses_r18_def", "");
+        a_surv.drafts.clear();
+        a_surv.active_session_id = None;
+        for i in 0..(crate::workspace::MAX_DRAFTS - 1) {
+            a_surv
+                .drafts
+                .insert(format!("ses_as_{i:02}"), format!("as {i}"));
+        }
+        let mut b_def = closed("ses_r18_def", "b owns s");
+        b_def.occurrence = 1;
+        b_def.active_session_id = None;
+        for i in 0..(crate::workspace::MAX_DRAFTS - 2) {
+            b_def
+                .drafts
+                .insert(format!("ses_bd_{i:02}"), format!("bd {i}"));
+        }
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(a_surv.clone()), Tab::Workspace(b_def)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.entries[1].closing_deferred = true;
+        ui.closed = vec![
+            closed("ses_r18_def", "def 1"),
+            closed("ses_r18_def", "def 2"),
+        ];
+        ui.closed_restored = vec![Default::default(); 2];
+        ui.closed_derived_from = vec![Default::default(); 2];
+        ui.closed_pending_deleted.push((
+            crate::workspace::state::ProjectScope::from_workspace(&a_surv),
+            "ses_r18_def".into(),
+        ));
+        let snap = ui.snapshot();
+        assert!(crate::workspace::encode(&snap).is_ok());
+        let Tab::Workspace(wa) = &snap.tabs[0] else {
+            panic!("tab A");
+        };
+        let Tab::Workspace(wb) = &snap.tabs[1] else {
+            panic!("tab B");
+        };
+        assert_eq!(
+            wa.drafts.get("ses_r18_def").map(String::as_str),
+            Some("def 1")
+        );
+        assert_eq!(
+            wb.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+            Some("def 2")
+        );
+    }
+
+    // 35. R18 Bloquant 2: Global v1 budget protection — when existing drafts sit just under
+    // MAX_STRINGS, fallback projection must reject an oversized closed draft rather than causing
+    // encode_for_save to evict an existing ordinary draft.
+    {
+        let mut tab = closed("ses_r18_budget", "");
+        tab.drafts.clear();
+        tab.active_session_id = None;
+        let chunk = "x".repeat(30_000);
+        for i in 0..3 {
+            tab.drafts.insert(format!("ses_keep_{i:02}"), chunk.clone());
+        }
+        let mut probe_ui = Ui::new();
+        probe_ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(tab.clone())],
+            active: Some(0),
+        });
+        let base_units = crate::workspace::snapshot_string_units(&probe_ui.snapshot()).unwrap();
+        let remaining_units = crate::workspace::MAX_STRINGS.saturating_sub(base_units);
+        let pad_len = remaining_units.saturating_sub(200);
+        assert!(pad_len > 0 && pad_len <= crate::workspace::MAX_DRAFT);
+        tab.drafts
+            .insert("ses_keep_pad".into(), "p".repeat(pad_len));
+
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(tab.clone())],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.closed = vec![closed("ses_r18_budget", &"z".repeat(2_000))];
+        ui.closed_restored = vec![Default::default()];
+        ui.closed_derived_from = vec![Default::default()];
+        ui.closed_pending_deleted.push((
+            crate::workspace::state::ProjectScope::from_workspace(&tab),
+            "ses_r18_budget".into(),
+        ));
+        let snap = ui.snapshot();
+        let (bytes, partial) = crate::workspace::encode_for_save(&snap).unwrap();
+        assert!(
+            !partial,
+            "fallback projection must never push snapshot over v1 global budget"
+        );
+        let decoded = crate::workspace::decode(&bytes).unwrap();
+        let Tab::Workspace(w) = &decoded.tabs[0] else {
+            panic!("expected workspace");
+        };
+        for i in 0..3 {
+            assert!(
+                w.drafts.contains_key(&format!("ses_keep_{i:02}")),
+                "existing ordinary draft ses_keep_{i:02} must NOT be evicted by fallback"
+            );
+        }
+        assert!(
+            w.drafts.contains_key("ses_keep_pad"),
+            "existing ordinary draft ses_keep_pad must NOT be evicted by fallback"
+        );
+        assert!(
+            !w.drafts.contains_key(NO_SESSION_DRAFT_ID),
+            "oversized fallback must be dropped instead of evicting existing drafts"
+        );
+    }
+
+    // 36. R18 Bloquant 3: Late 404 probe results from a stale connection_generation OR
+    // contradicted by a fresher listing/bind presence proof must be ignored cleanly.
+    {
+        let mut s = draft_state();
+        let mut tab = closed("ses_stale_conn", "keep stale conn");
+        tab.active_session_id = None;
+        tab.drafts
+            .insert("ses_fresh_listed".into(), "keep fresh listed".into());
+        tab.drafts
+            .insert("ses_fresh_bound".into(), "keep fresh bound".into());
+        let scope = crate::workspace::state::ProjectScope::from_workspace(&tab);
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(tab)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        let base = s
+            .screen
+            .launcher()
+            .unwrap()
+            .connection
+            .as_ref()
+            .unwrap()
+            .base
+            .clone();
+        // (a) Probe started at conn_gen=0, then connection_generation advances to 1.
+        s.screen.launcher_mut().unwrap().connection_generation = 1;
+        ui.restored_draft_in_flight
+            .push((scope.clone(), "ses_stale_conn".into(), 0));
+        let _ = ui.restored_draft_checks.0.try_send(
+            crate::workspace::state::drafts::RestoredProbeResult {
+                scope: scope.clone(),
+                id: "ses_stale_conn".into(),
+                connection_generation: 0,
+                backend_base: base.clone(),
+                started_epoch: 0,
+                absence: Some(Some(codenomad_client::catalog::SessionAbsence::NotFound)),
+            },
+        );
+        // (b) Probe started at epoch=0 on conn_gen=1; fresher listing marks ses_fresh_listed present.
+        ui.restored_draft_in_flight
+            .push((scope.clone(), "ses_fresh_listed".into(), 1));
+        ui.restored_draft_in_flight
+            .push((scope.clone(), "ses_fresh_bound".into(), 1));
+        s.workspace = Some(ui);
+        let mut listed = std::collections::HashSet::new();
+        listed.insert("ses_fresh_listed".into());
+        crate::workspace::note_restored_draft_sessions_present(&mut s, &listed);
+        // (c) Bind ses_fresh_bound, then leave it before the late 404 arrives.
+        let bound_text = bound(&mut s, &backend("ses_fresh_bound"));
+        s.draft = TextEdit::new(bound_text);
+        s.show_chat();
+        unselect_session(&mut s, "ses_fresh_bound");
+        s.show_launcher();
+        let ui_ref = s.workspace.as_mut().unwrap();
+        let _ = ui_ref.restored_draft_checks.0.try_send(
+            crate::workspace::state::drafts::RestoredProbeResult {
+                scope: scope.clone(),
+                id: "ses_fresh_listed".into(),
+                connection_generation: 1,
+                backend_base: base.clone(),
+                started_epoch: 0,
+                absence: Some(Some(codenomad_client::catalog::SessionAbsence::NotFound)),
+            },
+        );
+        let _ = ui_ref.restored_draft_checks.0.try_send(
+            crate::workspace::state::drafts::RestoredProbeResult {
+                scope,
+                id: "ses_fresh_bound".into(),
+                connection_generation: 1,
+                backend_base: base,
+                started_epoch: 0,
+                absence: Some(Some(codenomad_client::catalog::SessionAbsence::NotFound)),
+            },
+        );
+        assert!(
+            !crate::workspace::state::drafts::poll_restored_draft_checks(&mut s),
+            "stale-connection and contradicted late 404 probes must NOT trigger recovery"
+        );
+        let Tab::Workspace(after) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+            panic!("expected workspace");
+        };
+        assert_eq!(
+            after.drafts.get("ses_stale_conn").map(String::as_str),
+            Some("keep stale conn")
+        );
+        assert_eq!(
+            after.drafts.get("ses_fresh_listed").map(String::as_str),
+            Some("keep fresh listed")
+        );
+        assert_eq!(
+            after.drafts.get("ses_fresh_bound").map(String::as_str),
+            Some("keep fresh bound")
+        );
+        assert!(
+            s.workspace.as_ref().unwrap().entries[0]
+                .pending_deleted
+                .is_empty()
+        );
+    }
+
+    // 37. R18 Moyen 1: Background poll_deleted_sessions must NOT treat sole closing_deferred tab A
+    // as an explicit close request; incoming delete events must stay deferred off tab A.
+    {
+        let mut s = draft_state();
+        let mut a = closed("ses_bg_del", "wait for sibling");
+        a.active_session_id = None;
+        let scope = crate::workspace::state::ProjectScope::from_workspace(&a);
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(a)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.entries[0].closing_deferred = true;
+        let _ = ui.deleted_sessions.0.try_send((scope, "ses_bg_del".into()));
+        s.workspace = Some(ui);
+        assert!(
+            !crate::workspace::state::drafts::drain_window_deleted_sessions(&mut s),
+            "background delete event must defer instead of depositing onto sole closing_deferred tab"
+        );
+        let Tab::Workspace(after_a) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+            panic!("expected tab A");
+        };
+        assert!(
+            !after_a
+                .drafts
+                .keys()
+                .any(|k| crate::workspace::is_local_draft_id(k)),
+            "sole closing_deferred tab A must not receive local recovered drafts from background poll"
+        );
+        assert!(
+            s.workspace.as_ref().unwrap().entries[0]
+                .pending_deleted
+                .contains("ses_bg_del")
+        );
+    }
+
+    // 38 & 39. R18 Moyens 2, 3, 4:
+    // - 49 distinct unlisted restored keys across 3 tabs: batch 1 launches 48, and as slots free
+    //   up key #49 is automatically launched without reopening a sibling.
+    // - Transient 500 error (ses_49_00) and resolved 200 keys are NOT replayed on a second trigger
+    //   in the same connection_generation.
+    // - Skipping checks while authentication_required == true and resuming via
+    //   resume_restored_draft_checks after reauthentication probes the skipped key AND retries the
+    //   earlier transient 500 on the new connection_generation.
+    {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            sync::{Arc, Mutex, mpsc},
+            time::{Duration, Instant},
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = format!("http://{}/", listener.local_addr().unwrap());
+        let probed = Arc::new(Mutex::new(Vec::<String>::new()));
+        let probed_srv = probed.clone();
+        let fail_first_00 = Arc::new(Mutex::new(true));
+        let fail_first_00_srv = fail_first_00.clone();
+        let (stop, stopped) = mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            while matches!(stopped.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let mut byte = [0];
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    if socket.read_exact(&mut byte).is_err() {
+                        break;
+                    }
+                    bytes.push(byte[0]);
+                }
+                let header = String::from_utf8_lossy(&bytes);
+                let line = header.lines().next().unwrap_or("").to_string();
+                let path = line.split_whitespace().nth(1).unwrap_or("");
+                let (status, body) = if let Some(id) =
+                    path.strip_prefix("/workspaces/ws-batch/instance/api/session/")
+                {
+                    probed_srv.lock().unwrap().push(id.to_owned());
+                    if id == "ses_49_48" || id == "ses_reauth_404" {
+                        (
+                            404,
+                            format!(r#"{{"_tag":"SessionNotFoundError","sessionID":"{id}"}}"#),
+                        )
+                    } else if id == "ses_49_00" {
+                        let mut first = fail_first_00_srv.lock().unwrap();
+                        if *first {
+                            *first = false;
+                            (500, r#"{"error":"transient"}"#.into())
+                        } else {
+                            (
+                                200,
+                                r#"{"data":{"id":"ses_49_00","title":"ok","location":{"directory":"/fixture"}}}"#
+                                    .into(),
+                            )
+                        }
+                    } else {
+                        (
+                            200,
+                            format!(
+                                r#"{{"data":{{"id":"{id}","title":"ok","location":{{"directory":"/fixture"}}}}}}"#
+                            ),
+                        )
+                    }
+                } else {
+                    (200, r#"{"data":[]}"#.into())
+                };
+                let _ = socket.write_all(
+                    format!(
+                        "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        let mut s = draft_state();
+        s.screen
+            .launcher_mut()
+            .unwrap()
+            .connection
+            .as_mut()
+            .unwrap()
+            .base = address.clone();
+        let proj = Project {
+            id: "ws-batch".into(),
+            path: "/fixture".into(),
+        };
+        let mut t0 = closed("ses_49_00", "");
+        t0.drafts.clear();
+        t0.active_session_id = None;
+        let mut t1 = closed("ses_49_24", "");
+        t1.drafts.clear();
+        t1.occurrence = 1;
+        t1.active_session_id = None;
+        for i in 0..24 {
+            t0.drafts
+                .insert(format!("ses_49_{i:02}"), format!("d0 {i}"));
+            t1.drafts
+                .insert(format!("ses_49_{:02}", i + 24), format!("d1 {i}"));
+        }
+        let mut t2 = closed("ses_49_48", "recover 49th key");
+        t2.occurrence = 2;
+        t2.active_session_id = None;
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(t0), Tab::Workspace(t1), Tab::Workspace(t2)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.entries[0].project = Some(proj.clone());
+        s.workspace = Some(ui);
+        let conn = s.screen.launcher().unwrap().connection.clone().unwrap();
+        let empty = std::collections::HashSet::new();
+        crate::platform::block_on(async {
+            // 1. Trigger once for 49 unlisted keys: must pump key #49 automatically as slots free.
+            crate::workspace::check_restored_draft_sessions(&mut s, &conn, &proj, &empty);
+            assert_eq!(
+                s.workspace.as_ref().unwrap().restored_draft_in_flight.len(),
+                48,
+                "initial batch must respect the 48 in-flight cap"
+            );
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                let _ = crate::workspace::poll(&mut s, 1.0, &mut tx);
+                if s.workspace
+                    .as_ref()
+                    .unwrap()
+                    .restored_draft_in_flight
+                    .is_empty()
+                    && probed.lock().unwrap().len() >= 49
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            assert_eq!(
+                probed.lock().unwrap().len(),
+                49,
+                "49th unlisted key must be probed automatically as earlier slots complete"
+            );
+            // 2. Second trigger on the SAME connection_generation: must NOT replay 200s OR the
+            // transient 500 error (ses_49_00).
+            crate::workspace::check_restored_draft_sessions(&mut s, &conn, &proj, &empty);
+            assert!(
+                s.workspace
+                    .as_ref()
+                    .unwrap()
+                    .restored_draft_in_flight
+                    .is_empty(),
+                "neither resolved keys nor same-generation transient errors may replay on sibling open"
+            );
+            // 3. Auth-expired open skips probes, then reauthentication resumes skipped keys AND
+            // retries the prior transient failure on the new connection_generation.
+            let mut t_auth = closed("ses_reauth_404", "recover after reauth");
+            t_auth.occurrence = 3;
+            t_auth.active_session_id = None;
+            let mut auth_entry = entry("tab-3".into(), Tab::Workspace(t_auth.clone()));
+            auth_entry.project = Some(proj.clone());
+            auth_entry.restored_drafts.insert(
+                "ses_reauth_404".into(),
+                crate::workspace::state::drafts::DraftCopy::from_workspace(
+                    &t_auth,
+                    "ses_reauth_404",
+                )
+                .unwrap(),
+            );
+            s.workspace.as_mut().unwrap().entries.push(auth_entry);
+            s.screen.launcher_mut().unwrap().authentication_required = true;
+            crate::workspace::check_restored_draft_sessions(&mut s, &conn, &proj, &empty);
+            assert!(
+                s.workspace
+                    .as_ref()
+                    .unwrap()
+                    .restored_draft_in_flight
+                    .is_empty(),
+                "no probe may start while authentication_required is armed"
+            );
+            // Reauthenticate: clear authentication_required, advance connection_generation, resume.
+            {
+                let l = s.screen.launcher_mut().unwrap();
+                l.authentication_required = false;
+                l.connection_generation = l.connection_generation.wrapping_add(1);
+            }
+            let mut live_ids = std::collections::HashSet::new();
+            live_ids.insert(proj.id.clone());
+            crate::workspace::resume_restored_draft_checks(&mut s, Some(&live_ids));
+            let reauth_deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < reauth_deadline {
+                let _ = crate::workspace::poll(&mut s, 2.0, &mut tx);
+                if s.workspace
+                    .as_ref()
+                    .unwrap()
+                    .restored_draft_in_flight
+                    .is_empty()
+                    && probed
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .any(|id| id == "ses_reauth_404")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        let _ = stop.send(());
+        let _ = server.join();
+        let all_probed = probed.lock().unwrap().clone();
+        assert_eq!(
+            all_probed
+                .iter()
+                .filter(|id| id.as_str() == "ses_49_48")
+                .count(),
+            1,
+            "49th key must be probed exactly once"
+        );
+        assert_eq!(
+            all_probed
+                .iter()
+                .filter(|id| id.as_str() == "ses_49_00")
+                .count(),
+            2,
+            "transient 500 must stay silent on same generation and retry once after reauth"
+        );
+        assert_eq!(
+            all_probed
+                .iter()
+                .filter(|id| id.as_str() == "ses_reauth_404")
+                .count(),
+            1,
+            "skipped restored draft check must run after reauthentication"
+        );
+        let Tab::Workspace(after_t2) = &s.workspace.as_ref().unwrap().entries[2].saved else {
+            panic!("tab 2");
+        };
+        assert!(
+            after_t2
+                .drafts
+                .iter()
+                .any(|(k, v)| crate::workspace::is_local_draft_id(k) && v == "recover 49th key"),
+            "49th key 404 must recover into local draft"
+        );
+        let Tab::Workspace(after_t3) = &s.workspace.as_ref().unwrap().entries[3].saved else {
+            panic!("tab 3");
+        };
+        assert!(
+            after_t3
+                .drafts
+                .iter()
+                .any(|(k, v)| crate::workspace::is_local_draft_id(k) && v == "recover after reauth"),
+            "reauth resumed 404 probe must recover into local draft"
         );
     }
 }

@@ -122,20 +122,18 @@ pub(super) fn drain_window_deleted_sessions_closing_with_uuid(
     let mut recovered = false;
     let mut deferred = false;
     for (scope, id) in incoming {
-        let effective_closing = closing_tab.or_else(|| {
-            s.workspace.as_ref().and_then(|ui| {
-                ui.entries.iter().position(|entry| {
-                    entry.closing_deferred
-                        && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
-                })
-            })
+        let event_closing_tab = closing_tab.filter(|&idx| {
+            s.workspace
+                .as_ref()
+                .and_then(|ui| ui.entries.get(idx))
+                .is_some_and(|entry| matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)))
         });
         let open_idx = s.workspace.as_ref().and_then(|ui| {
             ui.entries
                 .iter()
                 .enumerate()
                 .find_map(|(idx, entry)| {
-                    (Some(idx) != effective_closing
+                    (Some(idx) != event_closing_tab
                         && !entry.closing_deferred
                         && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)))
                     .then_some(idx)
@@ -150,12 +148,14 @@ pub(super) fn drain_window_deleted_sessions_closing_with_uuid(
             let outcome = recover_missing_session_draft_with_uuid_impl(
                 s,
                 Some(idx),
-                effective_closing,
+                event_closing_tab,
                 &id,
                 &mut next_uuid,
             );
             recovered |= outcome.recovered;
-            deferred |= outcome.deferred;
+            if closing_tab.is_none() || event_closing_tab.is_some() {
+                deferred |= outcome.deferred;
+            }
         } else if let Some(ui) = &mut s.workspace
             && ui
                 .closed
@@ -169,6 +169,8 @@ pub(super) fn drain_window_deleted_sessions_closing_with_uuid(
                 })
         {
             ui.closed_pending_deleted.push((scope, id));
+            ui.changed();
+            ui.stage();
         }
     }
     RecoveryOutcome {
@@ -474,6 +476,11 @@ pub fn bound_with_adopt(s: &mut State, backend: &Backend, adopt_recovered: bool)
         return String::new();
     };
     deliver_draft(ui, &backend.session);
+    if let Some(Tab::Workspace(saved)) = ui.entries.get(ui.active).map(|e| &e.saved) {
+        let scope = super::ProjectScope::from_workspace(saved);
+        let session = backend.session.clone();
+        note_session_present_in_scope(ui, &scope, &session);
+    }
     let item = &mut ui.entries[ui.active];
     item.binding = Some(backend.clone());
     let Tab::Workspace(saved) = &mut item.saved else {
@@ -1519,86 +1526,430 @@ fn recover_missing_session_draft_with_uuid_impl(
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RestoredProbeOutcome {
+    Resolved,
+    Transient(u64),
+}
+
+pub(super) struct RestoredProbeResult {
+    pub scope: super::ProjectScope,
+    pub id: String,
+    pub connection_generation: u64,
+    pub backend_base: String,
+    pub started_epoch: u64,
+    pub absence: Option<Option<codenomad_client::catalog::SessionAbsence>>,
+}
+
+pub(super) struct RestoredProbeTarget {
+    pub scope: super::ProjectScope,
+    pub backend: Backend,
+    pub project: crate::catalog::Project,
+    pub connection_generation: u64,
+}
+
+const RESTORED_DRAFT_PROBE_CAP: usize = super::super::MAX_DRAFTS * 2;
+
+fn current_probe_connection(s: &State) -> Option<(u64, String)> {
+    let l = s.screen.launcher()?;
+    if l.authentication_required {
+        return None;
+    }
+    let conn = l.connection.as_ref()?;
+    Some((l.connection_generation, conn.base.clone()))
+}
+
+fn scope_has_restored_key(ui: &Ui, scope: &super::ProjectScope, id: &str) -> bool {
+    !is_local_draft_id(id)
+        && ui.entries.iter().any(|entry| {
+            matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
+                && entry.restored_drafts.contains_key(id)
+        })
+}
+
+fn scope_has_in_flight_key(ui: &Ui, scope: &super::ProjectScope, id: &str) -> bool {
+    ui.restored_draft_in_flight
+        .iter()
+        .any(|(sc, existing_id, _)| sc.same_scope(scope) && existing_id == id)
+}
+
+fn set_restored_probe_outcome(
+    ui: &mut Ui,
+    scope: &super::ProjectScope,
+    id: &str,
+    outcome: RestoredProbeOutcome,
+) {
+    if !scope_has_restored_key(ui, scope, id) {
+        return;
+    }
+    if let Some((_, _, existing)) = ui
+        .restored_draft_checked
+        .iter_mut()
+        .find(|(sc, existing_id, _)| sc.same_scope(scope) && existing_id == id)
+    {
+        if *existing != RestoredProbeOutcome::Resolved {
+            *existing = outcome;
+        }
+    } else {
+        ui.restored_draft_checked
+            .push((scope.clone(), id.to_owned(), outcome));
+    }
+}
+
+fn note_session_present_in_scope(ui: &mut Ui, scope: &super::ProjectScope, id: &str) {
+    if is_local_draft_id(id) {
+        return;
+    }
+    let relevant = scope_has_restored_key(ui, scope, id) || scope_has_in_flight_key(ui, scope, id);
+    if !relevant {
+        return;
+    }
+    ui.restored_draft_presence_epoch = ui.restored_draft_presence_epoch.wrapping_add(1);
+    let epoch = ui.restored_draft_presence_epoch;
+    if let Some((_, _, existing_epoch)) = ui
+        .restored_draft_seen_present
+        .iter_mut()
+        .find(|(sc, existing_id, _)| sc.same_scope(scope) && existing_id == id)
+    {
+        *existing_epoch = epoch;
+    } else {
+        ui.restored_draft_seen_present
+            .push((scope.clone(), id.to_owned(), epoch));
+    }
+    set_restored_probe_outcome(ui, scope, id, RestoredProbeOutcome::Resolved);
+}
+
+fn prune_restored_probe_state(ui: &mut Ui, current_conn_gen: Option<u64>) {
+    let live_restored: Vec<(super::ProjectScope, String)> = {
+        let mut keys = Vec::new();
+        for entry in &ui.entries {
+            let Tab::Workspace(w) = &entry.saved else {
+                continue;
+            };
+            let scope = super::ProjectScope::from_workspace(w);
+            for id in entry.restored_drafts.keys() {
+                if !is_local_draft_id(id)
+                    && !keys
+                        .iter()
+                        .any(|(sc, existing): &(super::ProjectScope, String)| {
+                            sc.same_scope(&scope) && existing == id
+                        })
+                {
+                    keys.push((scope.clone(), id.clone()));
+                }
+            }
+        }
+        keys
+    };
+    let in_live = |scope: &super::ProjectScope, id: &str| {
+        live_restored
+            .iter()
+            .any(|(sc, existing)| sc.same_scope(scope) && existing == id)
+    };
+    ui.restored_draft_checked
+        .retain(|(sc, id, _)| in_live(sc, id));
+    let in_flight = &ui.restored_draft_in_flight;
+    ui.restored_draft_seen_present.retain(|(sc, id, _)| {
+        in_live(sc, id)
+            || in_flight
+                .iter()
+                .any(|(f_sc, f_id, _)| f_sc.same_scope(sc) && f_id == id)
+    });
+    ui.restored_draft_targets.retain(|target| {
+        current_conn_gen.is_none_or(|cg| target.connection_generation == cg)
+            && live_restored.iter().any(|(sc, id)| {
+                sc.same_scope(&target.scope)
+                    && !ui.restored_draft_checked.iter().any(|(c_sc, c_id, out)| {
+                        c_sc.same_scope(sc)
+                            && c_id == id
+                            && (*out == RestoredProbeOutcome::Resolved
+                                || *out
+                                    == RestoredProbeOutcome::Transient(
+                                        target.connection_generation,
+                                    ))
+                    })
+            })
+    });
+}
+
+fn session_currently_bound_in_scope(s: &State, scope: &super::ProjectScope, id: &str) -> bool {
+    let Some(ui) = &s.workspace else {
+        return false;
+    };
+    let active_matches = ui
+        .entries
+        .get(ui.active)
+        .is_some_and(|e| matches!(&e.saved, Tab::Workspace(w) if scope.matches(w)));
+    if active_matches && !s.screen.is_launcher() && super::active_session(s) == Some(id) {
+        return true;
+    }
+    ui.entries.iter().any(|entry| {
+        matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w) && w.active_session_id.as_deref() == Some(id))
+            && entry.binding.as_ref().is_some_and(|b| b.session == id)
+    })
+}
+
+fn pump_restored_draft_probes(s: &mut State) {
+    let Some((conn_gen, backend_base)) = current_probe_connection(s) else {
+        return;
+    };
+    let batches: Vec<(
+        super::ProjectScope,
+        Backend,
+        crate::catalog::Project,
+        u64,
+        Vec<String>,
+        codenomad_client::Sender<RestoredProbeResult>,
+    )> = {
+        let Some(ui) = &mut s.workspace else {
+            return;
+        };
+        prune_restored_probe_state(ui, Some(conn_gen));
+        let targets: Vec<(super::ProjectScope, Backend, crate::catalog::Project)> = ui
+            .restored_draft_targets
+            .iter()
+            .filter(|t| t.connection_generation == conn_gen && t.backend.base == backend_base)
+            .map(|t| (t.scope.clone(), t.backend.clone(), t.project.clone()))
+            .collect();
+        let mut launched = Vec::new();
+        for (scope, backend, project) in targets {
+            let in_flight_count = ui
+                .restored_draft_in_flight
+                .iter()
+                .filter(|(sc, _, cg)| sc.same_scope(&scope) && *cg == conn_gen)
+                .count();
+            let available = RESTORED_DRAFT_PROBE_CAP.saturating_sub(in_flight_count);
+            if available == 0 {
+                continue;
+            }
+            let order =
+                std::iter::once(ui.active).chain((0..ui.entries.len()).filter(|&i| i != ui.active));
+            let mut to_check = Vec::new();
+            for idx in order {
+                let entry = &ui.entries[idx];
+                if !matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)) {
+                    continue;
+                }
+                for id in entry.restored_drafts.keys() {
+                    if is_local_draft_id(id)
+                        || to_check.iter().any(|existing| existing == id)
+                        || ui
+                            .restored_draft_checked
+                            .iter()
+                            .any(|(sc, existing_id, out)| {
+                                sc.same_scope(&scope)
+                                    && existing_id == id
+                                    && (*out == RestoredProbeOutcome::Resolved
+                                        || *out == RestoredProbeOutcome::Transient(conn_gen))
+                            })
+                        || ui
+                            .restored_draft_in_flight
+                            .iter()
+                            .any(|(sc, existing_id, cg)| {
+                                sc.same_scope(&scope) && existing_id == id && *cg == conn_gen
+                            })
+                    {
+                        continue;
+                    }
+                    to_check.push(id.clone());
+                    if to_check.len() >= available {
+                        break;
+                    }
+                }
+                if to_check.len() >= available {
+                    break;
+                }
+            }
+            if to_check.is_empty() {
+                continue;
+            }
+            let started_epoch = ui.restored_draft_presence_epoch;
+            for id in &to_check {
+                ui.restored_draft_in_flight
+                    .push((scope.clone(), id.clone(), conn_gen));
+            }
+            launched.push((
+                scope,
+                backend,
+                project,
+                started_epoch,
+                to_check,
+                ui.restored_draft_checks.0.clone(),
+            ));
+        }
+        launched
+    };
+    let wake = s.wake.clone();
+    for (scope, backend, project, started_epoch, ids, out) in batches {
+        let wake = wake.clone();
+        let backend_base = backend.base.clone();
+        crate::platform::spawn(async move {
+            for id in ids {
+                let absence = backend.probe_session_absence(&project, &id).await;
+                if out
+                    .send(RestoredProbeResult {
+                        scope: scope.clone(),
+                        id,
+                        connection_generation: conn_gen,
+                        backend_base: backend_base.clone(),
+                        started_epoch,
+                        absence,
+                    })
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                wake();
+            }
+        });
+    }
+}
+
+/// Records fresh presence proof for listed/created sessions in the active workspace scope
+/// without cancelling any in-flight absence probes.
+pub fn note_restored_draft_sessions_present(
+    s: &mut State,
+    listed: &std::collections::HashSet<String>,
+) {
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    let Some(Tab::Workspace(active_ws)) = ui.entries.get(ui.active).map(|e| &e.saved) else {
+        return;
+    };
+    let scope = super::ProjectScope::from_workspace(active_ws);
+    for id in listed {
+        note_session_present_in_scope(ui, &scope, id);
+    }
+}
+
 /// Starts bounded, project-scoped absence checks for hydrated non-local draft session IDs not
 /// already present in `listed`, checked, or in-flight. Runs immediately on project open (even
-/// when the listing is paginated); only a confirmed 404 triggers draft recovery.
+/// when the listing is paginated); only a confirmed 404 from the current connection that is not
+/// contradicted by fresher presence proof triggers draft recovery.
 pub fn check_restored_draft_sessions(
     s: &mut State,
     backend: &Backend,
     project: &crate::catalog::Project,
     listed: &std::collections::HashSet<String>,
 ) {
-    let (scope, ids, out) = {
-        let Some(ui) = &mut s.workspace else {
-            return;
-        };
-        let Some(Tab::Workspace(active_ws)) = ui.entries.get(ui.active).map(|e| &e.saved) else {
-            return;
-        };
+    let Some((conn_gen, backend_base)) = current_probe_connection(s) else {
+        return;
+    };
+    if backend.base != backend_base {
+        return;
+    }
+    if let Some(ui) = &mut s.workspace
+        && let Some(Tab::Workspace(active_ws)) = ui.entries.get(ui.active).map(|e| &e.saved)
+    {
         let scope = super::ProjectScope::from_workspace(active_ws);
-        let scope_has = |list: &[(super::ProjectScope, String)], id: &str| {
-            list.iter().any(|(existing_scope, existing_id)| {
-                existing_scope.same_scope(&scope) && existing_id == id
-            })
-        };
-        let order =
-            std::iter::once(ui.active).chain((0..ui.entries.len()).filter(|&i| i != ui.active));
-        let mut to_check = Vec::new();
-        let mut newly_listed = Vec::new();
-        for idx in order {
-            let entry = &ui.entries[idx];
-            if !matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)) {
+        for id in listed {
+            note_session_present_in_scope(ui, &scope, id);
+        }
+        if let Some(existing) = ui
+            .restored_draft_targets
+            .iter_mut()
+            .find(|t| t.scope.same_scope(&scope))
+        {
+            existing.backend = backend.clone();
+            existing.project = project.clone();
+            existing.connection_generation = conn_gen;
+        } else {
+            ui.restored_draft_targets.push(RestoredProbeTarget {
+                scope,
+                backend: backend.clone(),
+                project: project.clone(),
+                connection_generation: conn_gen,
+            });
+        }
+    }
+    pump_restored_draft_probes(s);
+}
+
+/// Resumes restored-draft absence checks for already-open projects belonging to the newly
+/// reauthenticated connection (covering openings that completed while `authentication_required`
+/// was armed and transient failures from an earlier connection generation).
+pub fn resume_restored_draft_checks(
+    s: &mut State,
+    live_ids: Option<&std::collections::HashSet<String>>,
+) {
+    let Some((backend, backend_id, server_id, conn_gen, active_project_id, active_listed)) =
+        s.screen.launcher().and_then(|l| {
+            if l.authentication_required {
+                return None;
+            }
+            let backend = l.connection.clone()?;
+            let backend_id = (!l.local_connection()).then(|| {
+                if cfg!(target_arch = "wasm32") {
+                    "web".to_owned()
+                } else {
+                    "external".to_owned()
+                }
+            });
+            Some((
+                backend,
+                backend_id,
+                l.server_id.clone(),
+                l.connection_generation,
+                l.project.as_ref().map(|p| p.id.clone()),
+                l.listed_sessions.clone(),
+            ))
+        })
+    else {
+        return;
+    };
+    if let Some(ui) = &mut s.workspace {
+        let mut scopes = Vec::new();
+        for (idx, entry) in ui.entries.iter().enumerate() {
+            let Tab::Workspace(w) = &entry.saved else {
+                continue;
+            };
+            let Some(project) = &entry.project else {
+                continue;
+            };
+            if w.backend_id != backend_id
+                || (backend_id.is_some() && w.server_id != server_id)
+                || live_ids.is_some_and(|ids| !ids.contains(&project.id))
+            {
                 continue;
             }
-            for id in entry.restored_drafts.keys() {
-                if is_local_draft_id(id)
-                    || scope_has(&ui.restored_draft_checked, id)
-                    || scope_has(&ui.restored_draft_in_flight, id)
-                    || to_check.iter().any(|existing| existing == id)
-                {
-                    continue;
-                }
-                if listed.contains(id) {
-                    if !newly_listed.iter().any(|existing| existing == id) {
-                        newly_listed.push(id.clone());
-                    }
-                    continue;
-                }
-                to_check.push(id.clone());
-                if to_check.len() >= super::super::MAX_DRAFTS * 2 {
-                    break;
+            let scope = super::ProjectScope::from_workspace(w);
+            let is_active_listed =
+                idx == ui.active && active_project_id.as_deref() == Some(project.id.as_str());
+            if !scopes.iter().any(
+                |(sc, _, _): &(super::ProjectScope, crate::catalog::Project, bool)| {
+                    sc.same_scope(&scope)
+                },
+            ) {
+                scopes.push((scope, project.clone(), is_active_listed));
+            }
+        }
+        for (scope, project, is_active_listed) in scopes {
+            if is_active_listed {
+                for id in &active_listed {
+                    note_session_present_in_scope(ui, &scope, id);
                 }
             }
-            if to_check.len() >= super::super::MAX_DRAFTS * 2 {
-                break;
+            if let Some(existing) = ui
+                .restored_draft_targets
+                .iter_mut()
+                .find(|t| t.scope.same_scope(&scope))
+            {
+                existing.backend = backend.clone();
+                existing.project = project;
+                existing.connection_generation = conn_gen;
+            } else {
+                ui.restored_draft_targets.push(RestoredProbeTarget {
+                    scope,
+                    backend: backend.clone(),
+                    project,
+                    connection_generation: conn_gen,
+                });
             }
         }
-        for id in newly_listed {
-            if ui.restored_draft_checked.len() < super::super::MAX_DRAFTS * 8 {
-                ui.restored_draft_checked.push((scope.clone(), id));
-            }
-        }
-        if to_check.is_empty() {
-            return;
-        }
-        for id in &to_check {
-            ui.restored_draft_in_flight
-                .push((scope.clone(), id.clone()));
-        }
-        (scope, to_check, ui.restored_draft_checks.0.clone())
-    };
-    let backend = backend.clone();
-    let project = project.clone();
-    let wake = s.wake.clone();
-    crate::platform::spawn(async move {
-        for id in ids {
-            let result = backend.probe_session_absence(&project, &id).await;
-            if out.send((scope.clone(), id, result)).await.is_err() {
-                return;
-            }
-            wake();
-        }
-    });
+    }
+    pump_restored_draft_probes(s);
 }
 
 pub(super) fn poll_restored_draft_checks(s: &mut State) -> bool {
@@ -1615,27 +1966,62 @@ pub(super) fn poll_restored_draft_checks(s: &mut State) -> bool {
     if completed.is_empty() {
         return false;
     }
+    let active_conn = current_probe_connection(s);
     let mut deleted = Vec::new();
-    if let Some(ui) = &mut s.workspace {
-        for (scope, id, result) in completed {
-            ui.restored_draft_in_flight
-                .retain(|(existing_scope, existing_id)| {
-                    !(existing_scope.same_scope(&scope) && existing_id == &id)
+    for result in completed {
+        let bound_now = session_currently_bound_in_scope(s, &result.scope, &result.id);
+        let Some(ui) = &mut s.workspace else {
+            break;
+        };
+        ui.restored_draft_in_flight
+            .retain(|(existing_scope, existing_id, existing_gen)| {
+                !(existing_scope.same_scope(&result.scope)
+                    && existing_id == &result.id
+                    && *existing_gen == result.connection_generation)
+            });
+        let Some((current_gen, ref current_base)) = active_conn else {
+            continue;
+        };
+        if result.connection_generation != current_gen || result.backend_base != *current_base {
+            continue;
+        }
+        let contradicted_by_presence = bound_now
+            || ui
+                .restored_draft_seen_present
+                .iter()
+                .any(|(sc, existing_id, epoch)| {
+                    sc.same_scope(&result.scope)
+                        && existing_id == &result.id
+                        && *epoch > result.started_epoch
                 });
-            if let Some(absence) = result {
-                if !ui
-                    .restored_draft_checked
-                    .iter()
-                    .any(|(existing_scope, existing_id)| {
-                        existing_scope.same_scope(&scope) && existing_id == &id
-                    })
-                    && ui.restored_draft_checked.len() < super::super::MAX_DRAFTS * 8
-                {
-                    ui.restored_draft_checked.push((scope.clone(), id.clone()));
-                }
+        if contradicted_by_presence {
+            set_restored_probe_outcome(
+                ui,
+                &result.scope,
+                &result.id,
+                RestoredProbeOutcome::Resolved,
+            );
+            continue;
+        }
+        match result.absence {
+            Some(absence) => {
+                set_restored_probe_outcome(
+                    ui,
+                    &result.scope,
+                    &result.id,
+                    RestoredProbeOutcome::Resolved,
+                );
                 if absence == Some(codenomad_client::catalog::SessionAbsence::NotFound) {
-                    deleted.push((scope, id));
+                    deleted.push((result.scope, result.id));
                 }
+            }
+            None => {
+                set_restored_probe_outcome(
+                    ui,
+                    &result.scope,
+                    &result.id,
+                    RestoredProbeOutcome::Transient(result.connection_generation),
+                );
             }
         }
     }
@@ -1671,6 +2057,7 @@ pub(super) fn poll_restored_draft_checks(s: &mut State) -> bool {
             ui.stage();
         }
     }
+    pump_restored_draft_probes(s);
     changed
 }
 
