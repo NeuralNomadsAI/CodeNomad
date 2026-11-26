@@ -4,8 +4,11 @@ import { updateMissionProjectView } from "../../../src/stores/mission-view-state
 import { showSessionChatFor } from "../../../src/stores/session-previews"
 import { openFilePreview } from "../../../src/stores/files-preview"
 import { sseManager } from "../../../src/lib/sse-manager"
+import { instances } from "../../../src/stores/instances"
 
 const fixture = (window as any).fixture
+// The file view reads the project identity that keys its unsaved-edit recovery.
+Object.assign(instances().get("browser-instance")!.client as any, { location: { get: async () => ({ directory: "/fixture", project: { id: "fixture" } }) } })
 Object.assign(fixture, {
   // A running execution with an open text part, as message-scroll-switch.tsx starts it.
   startStream: () => {
