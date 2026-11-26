@@ -165,6 +165,8 @@ Fermer un projet ou CodeNomad n’arrête pas le travail natif OpenCode. Les pro
 
 Certaines actions de coordination et de récupération nécessitent le serveur CodeNomad.
 
+Une Mission ponctuelle en cours continue d’attribuer ses tâches et de transmettre leurs rapports même si aucune fenêtre CodeNomad n’a le projet ouvert. Les variables d’environnement et les réglages de permissions modifiés dans CodeNomad s’appliquent de nouveau à ces conversations dès que le projet est ouvert.
+
 ## Pause, arrêt et actions non confirmées {#controls-recovery}
 
 La **Pause** ponctuelle laisse les étapes en cours finir sans en démarrer de nouvelles. **Interrompre maintenant** demande une interruption immédiate. **Arrêter** est définitif et demande confirmation. La pause d’un programme natif ferme les lancements futurs et demande l’interruption du passage en cours. Des effets d’outils peuvent continuer après interruption ; vérifiez les résultats partiels.

@@ -146,6 +146,8 @@ CodeNomad zu schließen stoppt native Arbeit nicht. Aktivierte native Zeitpläne
 
 Einige Koordinations- und Wiederherstellungsaktionen benötigen den CodeNomad-Server.
 
+Eine laufende einmalige Mission weist ihre Aufgaben weiter zu und stellt deren Berichte zu, auch wenn kein CodeNomad-Fenster das Projekt geöffnet hat. In CodeNomad geänderte Umgebungsvariablen und Berechtigungseinstellungen gelten für diese Unterhaltungen wieder, sobald das Projekt geöffnet ist.
+
 ## Pause, Stopp und unbestätigte Aktionen {#controls-recovery}
 
 Einmalige Pause lässt aktuelle Schritte ohne neue Arbeit enden; sofortiges Unterbrechen fordert Unterbrechung an. Stopp ist endgültig und benötigt Bestätigung. Zeitplan-Pause sperrt neue Starts und fordert Unterbrechung des aktuellen Durchlaufs an. Werkzeugwirkungen können weiterlaufen.

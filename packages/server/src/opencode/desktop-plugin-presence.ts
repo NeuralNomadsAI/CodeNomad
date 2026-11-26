@@ -177,12 +177,15 @@ export const observeDesignRequest = (directory: string | readonly string[]) => o
 export const observeMemoryRequest = (directory: string | readonly string[]) => observeRequest(MEMORY, directory)
 
 // Serial reconciliation prevents overlapping setup/dispose and resurrection on unload.
+// `registerWithoutPresence` is read on every pass and must stay cheap; the returned
+// stop function carries `reconcile` for a caller that cannot wait for the next pass.
 export async function followPresence(
   directory: string | readonly string[],
   register: () => Promise<() => void | Promise<void>>,
   onError: (error: unknown) => void = console.error,
   retainWithoutPresence: () => Promise<boolean> = async () => false,
   readinessLocation?: string,
+  registerWithoutPresence: () => boolean = () => false,
 ) {
   const directories = [...new Set(typeof directory === "string" ? [directory] : directory)]
   const readers = directories.map(acquireSnapshot)
@@ -201,7 +204,7 @@ export async function followPresence(
     pending = (async () => {
       const observed = stopped ? [] : await Promise.all(readers.map(reader => reader.read()))
       const active = !stopped && observed.some(leases => leases.length > 0)
-      if (active && !dispose && !stopped) {
+      if ((active || registerWithoutPresence()) && !dispose && !stopped) {
         dispose = await register()
         if (readinessLocation && directories[0]) readiness = registeredReadiness(directories[0], readinessLocation, () => {
           if (stopped || !dispose) throw new Error("Pruning readiness scope disposed")
@@ -236,7 +239,7 @@ export async function followPresence(
   }
   const timer = setInterval(() => void reconcile().catch(onError), PRESENCE_INTERVAL_MS)
   timer.unref?.()
-  return () => cleanup ??= (async () => {
+  const stop = () => cleanup ??= (async () => {
     stopped = true
     clearInterval(timer)
     try {
@@ -250,4 +253,5 @@ export async function followPresence(
     cleanup = undefined
     throw error
   })
+  return Object.assign(stop, { reconcile })
 }

@@ -1,0 +1,209 @@
+// End-to-end isolated OpenCode test of a Mission calendar with the REAL bundled
+// `codenomad.missions` plugin and no CodeNomad at all (no presence lease, no bridge):
+// 1. Without CodeNomad and without work, Missions stays unregistered.
+// 2. A native Automation whose whole program is the calendar tool launches an ordinary
+//    one-time Mission: created, started, coordinator `/goal` armed.
+// 3. While that Mission is active, later runs launch nothing.
+// 4. The coordinator delegates an independent task: the plugin creates the root,
+//    prompts it and delivers its report by its own session API; the Mission completes.
+// 5. The next run launches a second Mission; OpenCode restarts in the middle of it and
+//    Missions registers again by itself, so the coordinator can finish.
+// Usage: node --import tsx scripts/test-mission-calendar-run-e2e.mjs <absolute-opencode-cli>
+import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
+import { randomUUID } from "node:crypto"
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises"
+import { createServer } from "node:http"
+import path from "node:path"
+import { pathToFileURL } from "node:url"
+import { setTimeout as delay } from "node:timers/promises"
+import { OpenCode } from "@opencode/client"
+import { Service } from "@opencode/client/service"
+import { CODENOMAD_MISSIONS_RPC } from "../packages/server/src/missions/rpc.ts"
+import { MISSION_CALENDAR_CARRIER, MISSION_CALENDAR_CODE, MISSION_CALENDAR_PERMISSIONS } from "../packages/server/src/missions/calendar-run.ts"
+import { fixtureEnvironment, fixtureParent } from "./native-product-fixture.mjs"
+import { stopFixtureChild } from "./native-fixture-guards.mjs"
+
+const cli = process.argv[2]
+assert(cli && path.isAbsolute(cli), "Pass absolute OpenCode CLI path")
+
+const bundlePath = path.resolve("packages/server/dist/plugins/missions/plugin.mjs")
+const root = await mkdtemp(path.join(await fixtureParent(), "mission-calendar-run-e2e-"))
+// CodeNomad never runs here: the presence directory stays empty.
+const presenceDir = path.join(root, "presence")
+await mkdir(presenceDir, { recursive: true })
+
+const password = randomUUID()
+const env = await fixtureEnvironment(root, {
+  OPENCODE_CONFIG_DIR: path.join(root, "config"),
+  OPENCODE_DB: path.join(root, "fixture.db"),
+  OPENCODE_CONFIG_PROJECT_DISABLE: "1",
+  OPENCODE_DISABLE_MODELS_FETCH: "1",
+  OPENCODE_DISABLE_FFF: "1",
+  OPENCODE_SERVER_PASSWORD: password,
+})
+const pluginDir = path.join(env.OPENCODE_CONFIG_DIR, "plugins", "codenomad-missions")
+await mkdir(pluginDir, { recursive: true })
+await writeFile(path.join(pluginDir, "package.json"), JSON.stringify({
+  name: "codenomad-missions-e2e-shim", type: "module", exports: { ".": "./index.mjs" }, opencode: { server: "./index.mjs" },
+}), "utf8")
+await writeFile(path.join(pluginDir, "index.mjs"), `
+import { desktopPlugin } from ${JSON.stringify(pathToFileURL(bundlePath).href)}
+export default desktopPlugin(${JSON.stringify(presenceDir)})
+`, "utf8")
+
+// A scripted model. A tool result ends the turn. The coordinator delegates one independent
+// task and reports once that task's report reaches it, or (held) reports after `holdMs`;
+// the task's root reports after `rootHoldMs`.
+const OBJECTIVE = "CALENDAR-OBJECTIVE review what changed", BRIEF = "ROOT-TASK inspect the change", DONE = "ROOT-DONE"
+const script = { mode: "delegate", holdMs: 0, rootHoldMs: 25_000 }
+const seen = { delegated: new Set(), rootReports: 0, finals: 0, coordinatorTurns: 0, heldTurns: 0, rootTurns: 0 }
+const provider = createServer(async (req, res) => {
+  try {
+    let raw = ""
+    for await (const chunk of req) raw += chunk
+    const body = JSON.parse(raw), tools = (Array.isArray(body.tools) ? body.tools : []).map(tool => tool?.function?.name)
+    const text = JSON.stringify(body.messages ?? body.input ?? "")
+    res.setHeader("Content-Type", "text/event-stream")
+    const chunk = (delta, finish_reason) => res.write(`data: ${JSON.stringify({ id: "r", object: "chat.completion.chunk", model: "fixture", choices: [{ index: 0, delta, finish_reason }] })}\n\n`)
+    const say = content => { chunk({ role: "assistant", content }, null); chunk({}, "stop"); res.end("data: [DONE]\n\n") }
+    const call = (name, input) => {
+      chunk({ role: "assistant", tool_calls: [{ index: 0, id: "call_" + randomUUID().slice(0, 8), type: "function", function: { name, arguments: JSON.stringify(input) } }] }, null)
+      chunk({}, "tool_calls"); res.end("data: [DONE]\n\n")
+    }
+    if (!tools.length) return say("Fixture title")
+    if (body.messages?.at(-1)?.role === "tool") return say("Noted.")
+    const report = tools.find(name => /mission[_.]report$/.test(name ?? "")), delegate = tools.find(name => /mission[_.]delegate$/.test(name ?? ""))
+    const mission = text.match(/msn_[A-Za-z0-9]+/)?.[0] ?? "unknown"
+    if (text.includes("Start or resume existing mission")) {
+      seen.coordinatorTurns++
+      if (!report || !delegate) return say("Mission tools missing.")
+      if (script.mode === "held") {
+        seen.heldTurns++
+        await delay(script.holdMs)
+        seen.finals++
+        return call(report, { outcome: "completed", summary: "Held Mission finished.", final: true })
+      }
+      if (text.includes(DONE)) { seen.finals++; return call(report, { outcome: "completed", summary: "Delegated work returned.", final: true }) }
+      if (!seen.delegated.has(mission)) {
+        seen.delegated.add(mission)
+        return call(delegate, { taskKey: "probe", title: "Probe", brief: BRIEF, role: "specialist", delivery: "queue",
+          executionMode: { kind: "independent", reason: "lifetime", explanation: "The probe outlives this turn." } })
+      }
+      await delay(2_000)
+      return say("Waiting for the probe.")
+    }
+    if (text.includes("ROOT-TASK")) {
+      seen.rootTurns++
+      if (!report) return say("Mission tools missing.")
+      await delay(script.rootHoldMs)
+      seen.rootReports++
+      return call(report, { outcome: "completed", summary: DONE })
+    }
+    return say("Nothing to do.")
+  } catch (error) { res.destroy(error) }
+})
+await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
+
+env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+  automations: true, plugins: [pluginDir], model: "fixture/fixture",
+  providers: { fixture: { package: "@opencode/ai/providers/openai-compatible",
+    settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: {} } } },
+})
+
+const location = { directory: root }, callOpts = { location, headers: { "x-opencode-directory": root } }
+async function startDaemon(label) {
+  let output = "", spawnError
+  const child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env, windowsHide: true })
+  const stopped = new Promise(resolve => child.once("close", resolve))
+  child.on("error", error => { spawnError = error })
+  child.stdout.on("data", data => { output += data })
+  child.stderr.on("data", data => { output += data })
+  const deadline = Date.now() + 30_000
+  while (!/http:\/\/127\.0\.0\.1:\d+/.test(output)) {
+    if (spawnError) throw spawnError
+    if (child.exitCode !== null || Date.now() > deadline) throw new Error(`${label} failed:\n${output.slice(-2000)}`)
+    await delay(25)
+  }
+  const file = path.join(env.XDG_STATE_HOME, "opencode/service.json")
+  let endpoint
+  while (!endpoint && Date.now() < deadline) {
+    try { if (JSON.parse(await readFile(file, "utf8")).pid === child.pid) endpoint = await Service.discover({ file }) } catch {}
+    if (!endpoint) await delay(25)
+  }
+  assert(endpoint, `${label} did not register isolated service.json`)
+  const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
+  return { client,
+    snapshot: () => client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, callOpts),
+    goal: async sessionID => (await client.rpc.call({ rpcID: "opencode.goal", method: "get", input: { sessionID }, location }, { headers: callOpts.headers })).output,
+    stop: async () => { await stopFixtureChild(child, stopped); await writeFile(path.join(root, `daemon-${label}.log`), output) } }
+}
+const until = async (label, read, done, ms = 60_000) => {
+  const end = Date.now() + ms
+  let last
+  while (Date.now() < end) {
+    try { last = await read(); if (done(last)) return last } catch (error) { last = { error: String(error?.message ?? error) } }
+    await delay(250)
+  }
+  throw new Error(`${label} timed out: ${JSON.stringify(last)?.slice(0, 1500)}`)
+}
+const missions = async daemon => (await daemon.snapshot()).missions
+
+let daemon
+try {
+  daemon = await startDaemon("1")
+  await delay(3_000)
+  await assert.rejects(daemon.snapshot(), "Missions is unregistered without CodeNomad and without work")
+  console.log("PASS 1 (no CodeNomad, no work: Missions unregistered)")
+
+  const carrier = await daemon.client.session.create({ location, title: "Mission calendars",
+    metadata: { [MISSION_CALENDAR_CARRIER]: { version: 1 } }, permissions: MISSION_CALENDAR_PERMISSIONS.map(rule => ({ ...rule })) })
+  const automation = await daemon.client.experimental.automation.create({ sessionID: carrier.id, name: "calendar-e2e",
+    trigger: { type: "every", every: "15 seconds" },
+    action: { type: "code", code: MISSION_CALENDAR_CODE, args: { objective: OBJECTIVE, title: "Calendar E2E", template: "custom", coordinatorGoal: true } } })
+  const row = () => daemon.client.experimental.automation.get({ automationID: automation.id })
+
+  const first = (await until("first Mission", () => missions(daemon), list => list.length === 1, 60_000).catch(async error => {
+    throw new Error(`${error.message}\nautomation: ${JSON.stringify(await row().catch(() => null))?.slice(0, 1500)}`)
+  }))[0]
+  assert.equal(first.title, "Calendar E2E")
+  assert.equal(first.status, "active")
+  await until("coordinator /goal", () => daemon.goal(first.coordinatorSessionId), goal => goal?.status === "active", 20_000)
+  console.log("PASS 2 (the Automation launched and started a one-time Mission, /goal armed)")
+
+  const launchedAt = (await row()).runCount
+  const later = await until("a later run", row, info => info.runCount >= launchedAt + 1, 45_000)
+  assert.notEqual(later.lastOutcome, "failed", later.lastOutput)
+  assert.deepEqual((await missions(daemon)).map(mission => [mission.id, mission.status]), [[first.id, "active"]], "a run launches nothing while the previous Mission is active")
+  console.log("PASS 3 (later runs wait for the active Mission)")
+
+  // The next run launches the following Mission as soon as this one completes: script it first.
+  const done = (await until("first Mission completes", () => missions(daemon), list => {
+    const finished = list.find(mission => mission.id === first.id)?.status === "completed"
+    if (finished) { script.mode = "held"; script.holdMs = 25_000 }
+    return finished
+  }, 90_000)).find(mission => mission.id === first.id)
+  assert.equal(done.tasks[0]?.key, "probe")
+  assert.ok(seen.rootReports >= 1 && seen.finals >= 1)
+  const actor = done.actors.find(actor => actor.kind !== "coordinator")
+  assert.ok(actor?.managed, "the independent root is a managed actor")
+  assert.equal((await daemon.client.session.get({ sessionID: actor.sessionId })).parentID, undefined)
+  console.log("PASS 4 (independent task: root created, prompted and reported without CodeNomad)")
+
+  const second = (await until("second Mission", () => missions(daemon), list => list.length === 2, 60_000)).find(mission => mission.id !== first.id)
+  await until("held coordinator turn", async () => seen.heldTurns, count => count > 0, 20_000)
+  await daemon.client.experimental.automation.pause({ automationID: automation.id })
+  await daemon.stop()
+  script.holdMs = 0
+  daemon = await startDaemon("2")
+  const restored = await until("Missions after restart", () => missions(daemon), list => list.some(mission => mission.id === second.id), 30_000)
+  assert.equal(restored.find(mission => mission.id === second.id).status, "active")
+  await until("second Mission completes after restart", () => missions(daemon), list => list.find(mission => mission.id === second.id)?.status === "completed", 120_000)
+  console.log("PASS 5 (after an OpenCode restart Missions registers again and the Mission finishes)")
+  await daemon.client.experimental.automation.delete({ automationID: automation.id })
+} finally {
+  console.log("seen:", JSON.stringify({ ...seen, delegated: [...seen.delegated] }))
+  if (daemon) await daemon.stop().catch(() => {})
+  provider.closeAllConnections()
+  await new Promise(resolve => provider.close(resolve))
+}

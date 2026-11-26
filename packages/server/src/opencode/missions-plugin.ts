@@ -1002,7 +1002,7 @@ const reviseSchema = {
   additionalProperties: false,
 }
 
-function parseCreateMissionInput(input: unknown): MissionCreateInput {
+export function parseCreateMissionInput(input: unknown): MissionCreateInput {
   const value = object(input)
   const template = requiredText(value.template, "template", 40)
   if (!isTemplate(template)) throw new Error("template is unsupported")
