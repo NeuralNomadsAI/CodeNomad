@@ -22,7 +22,7 @@ use crate::{
     App, Shared, Workspace,
     files::node_path::Style,
     opencode::Endpoint,
-    opencode_settings::{Scope, assert_current, fail, guard_current, has_control_chars, mapped, native_get, raw},
+    opencode_settings::{Scope, assert_current, fail, guard_current, has_control_chars, mapped, native_get},
     subagent_depth::{Fail, document::Document, fs, jsonc, resolve_targets, rules},
     worktrees::{fence, ownership},
 };
@@ -612,15 +612,24 @@ pub(super) async fn read_config_documents(
     location: &ControlLocation,
     principal: Option<&CancellationToken>,
     cancel: Option<&CancellationToken>,
-) -> Result<Vec<(ResolvedTarget, Document)>, Fail> {
+) -> Result<Vec<(ResolvedTarget, Document, Vec<PluginConfigEntry>)>, Fail> {
     let ctx = read_context(app, workspace_id, location, principal, cancel).await?;
     let targets = ctx.targets.clone();
     let docs = tokio::task::spawn_blocking(move || {
-        targets.into_iter().map(|t| fs::load(&t.io_path).map(|d| (t, d))).collect::<Result<Vec<_>, _>>()
+        targets
+            .into_iter()
+            .map(|t| {
+                let d = fs::load(&t.io_path)?;
+                let plugins = document_plugins(&d)?;
+                Ok((t, d, plugins))
+            })
+            .collect::<Result<Vec<_>, crate::subagent_depth::document::DocError>>()
     })
     .await
     .map_err(|_| Fail::Generic)?
-    .map_err(raw)?;
+    // Matches TS `readConfigDocuments`: document load/parse errors are NOT mapped to `PluginControlsError`,
+    // so `routes/plugin-sources.ts` renders `500 {"error":"Plugin source update failed"}`.
+    .map_err(|_| Fail::Generic)?;
     assert_current(app, &ctx.endpoint, &ctx.workspace, principal)?;
     check_cancelled(cancel)?;
     Ok(docs)
@@ -814,11 +823,20 @@ pub(super) struct EditTarget<'a> {
     pub(super) principal: Option<CancellationToken>,
 }
 
+/// Shared commit-admission state for `POST /plugin-sources` deadline arbitration:
+/// - `COMMIT_PENDING`: neither timed out past grace nor admitted to rename.
+/// - `COMMIT_ABORTED`: grace elapsed and timeout won; `rename` must not execute.
+/// - `COMMIT_ADMITTED`: `rename` admitted under `guard_current`; timeout must not be published.
+pub(super) const COMMIT_PENDING: u8 = 0;
+pub(super) const COMMIT_ABORTED: u8 = 1;
+pub(super) const COMMIT_ADMITTED: u8 = 2;
+
 /// Cancellable single-document edit for `POST /api/workspaces/:id/plugin-sources`.
 pub(super) async fn edit_config_document_cancellable<E, F>(
     app: &Shared,
     target_req: EditTarget<'_>,
     cancel: CancellationToken,
+    commit_state: Arc<std::sync::atomic::AtomicU8>,
     map_fail: impl Fn(Fail) -> E + Send + Copy + 'static,
     timeout_err: impl Fn() -> E + Send + Copy + 'static,
     edit: F,
@@ -861,14 +879,20 @@ where
         let plugins = document_plugins(&doc).map_err(|e| map_fail(mapped(e)))?;
         assert_current(&app_commit, &endpoint, &workspace, principal.as_ref()).map_err(map_fail)?;
         let updated = edit(&doc, &plugins)?;
-        let prepared = fs::prepare(&doc, &updated).map_err(|e| map_fail(mapped(e)))?;
-        prepared.commit_checked(
+        let mut prepared = fs::prepare(&doc, &updated).map_err(|e| map_fail(mapped(e)))?;
+        prepared.commit_in_place(
             |e| map_fail(mapped(e)),
+            || guard_current(&app_commit, &endpoint, None, &workspace, principal.as_ref()).map_err(map_fail),
             || {
-                if cancel.is_cancelled() {
+                use std::sync::atomic::Ordering;
+                if cancel.is_cancelled()
+                    || commit_state
+                        .compare_exchange(COMMIT_PENDING, COMMIT_ADMITTED, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_err()
+                {
                     return Err(timeout_err());
                 }
-                guard_current(&app_commit, &endpoint, None, &workspace, principal.as_ref()).map_err(map_fail)
+                Ok(())
             },
         )
     })
@@ -1004,13 +1028,16 @@ where
             prep.verify().map_err(|e| map_fail(mapped(e)))?;
         }
         // Safety commit order: dependent cleanup first, confirmed source document last.
+        // Keep every `Prepared` (and its replacement lock) alive until the whole batch completes.
         prepared.sort_by_key(|(item_scope, _)| usize::from(*item_scope == scope));
-        for (_, prep) in prepared {
-            prep.commit_checked(
+        for (_, prep) in &mut prepared {
+            prep.commit_in_place(
                 |e| map_fail(mapped(e)),
                 || guard_current(&app_commit, &endpoint, None, &workspace, principal.as_ref()).map_err(map_fail),
+                || Ok(()),
             )?;
         }
+        drop(prepared);
         Ok(())
     })
     .await

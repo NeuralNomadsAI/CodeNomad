@@ -237,12 +237,11 @@ fn trailing_line_comment(tail: &[u16]) -> Option<bool> {
     None
 }
 
-fn append_plugin_entry(text: &[u16], rule: &str, options: &Formatting) -> R<Text> {
+fn append_plugin_entry(text: &[u16], index: usize, rule: &str, options: &Formatting) -> R<Text> {
     let tree = jsonc::parse_tree(text, true);
     let array_id = find_plugins_array(&tree)
         .ok_or(DocError::Invalid("Unable to update OpenCode plugins without replacing the document"))?;
     let array = tree.node(array_id);
-    let quoted = jsonc::stringify(&J::s(rule), None);
 
     if let Some(&last_id) = array.children.last() {
         let last = tree.node(last_id);
@@ -251,6 +250,7 @@ fn append_plugin_entry(text: &[u16], rule: &str, options: &Formatting) -> R<Text
         if let Some(line_end) = index_of_lf(text, end)
             && let Some(has_comma) = trailing_line_comment(slice(text, end, line_end))
         {
+            let quoted = jsonc::stringify(&J::s(rule), None);
             let start = line_start(text, last.offset);
             let indent: Text =
                 slice(text, start, last.offset).iter().take_while(|&&c| c == 32 || c == 9).copied().collect();
@@ -269,79 +269,20 @@ fn append_plugin_entry(text: &[u16], rule: &str, options: &Formatting) -> R<Text
             out.extend_from_slice(slice(text, line_end + 1, i64::MAX));
             return Ok(out);
         }
-
-        // Check whether a trailing comma already follows the last element.
-        let mut scanner = Scanner::new(text);
-        scanner.set_position(end.max(0) as usize);
-        let mut tok = scanner.scan();
-        while tok.trivia() {
-            tok = scanner.scan();
-        }
-        let has_trailing_comma = tok == Kind::Comma;
-        let comma_end = if has_trailing_comma { scanner.offset() as i64 + 1 } else { end };
-
-        let multiline = slice(text, array.offset, array.offset + array.length).contains(&10);
-        if multiline {
-            let start = line_start(text, last.offset);
-            let indent: Text =
-                slice(text, start, last.offset).iter().take_while(|&&c| c == 32 || c == 9).copied().collect();
-            let mut insertion = Vec::new();
-            if !has_trailing_comma {
-                insertion.push(44);
-            }
-            insertion.extend_from_slice(&options.eol);
-            insertion.extend_from_slice(&indent);
-            insertion.extend_from_slice(&quoted);
-            if has_trailing_comma {
-                insertion.push(44);
-            }
-            return jsonc::apply_edits(text, &[edit(comma_end, 0, insertion)])
-                .ok_or(DocError::Invalid("Unable to update OpenCode plugins without replacing the document"));
-        }
-
-        // Compact single-line array: insert `, "rule"` (or ` "rule"` if trailing comma exists).
-        let mut insertion = Vec::new();
-        if !has_trailing_comma {
-            insertion.push(44);
-        }
-        if slice(text, array.offset, end).contains(&32) {
-            insertion.push(32);
-        }
-        insertion.extend_from_slice(&quoted);
-        if has_trailing_comma {
-            insertion.push(44);
-        }
-        return jsonc::apply_edits(text, &[edit(comma_end, 0, insertion)])
-            .ok_or(DocError::Invalid("Unable to update OpenCode plugins without replacing the document"));
     }
 
-    // Empty `plugins: []` array.
-    let close = array.offset + array.length - 1;
-    let inner = slice(text, array.offset + 1, close);
-    let multiline = inner.contains(&10);
-    if multiline {
-        let close_start = line_start(text, close);
-        let base_indent: Text =
-            slice(text, close_start, close).iter().take_while(|&&c| c == 32 || c == 9).copied().collect();
-        let unit: Text = if options.insert_spaces { vec![32; options.tab_size] } else { vec![9] };
-        let mut insertion = Vec::new();
-        insertion.extend_from_slice(&unit);
-        insertion.extend_from_slice(&quoted);
-        insertion.extend_from_slice(&options.eol);
-        insertion.extend_from_slice(&base_indent);
-        jsonc::apply_edits(text, &[edit(close, 0, insertion)])
-            .ok_or(DocError::Invalid("Unable to update OpenCode plugins without replacing the document"))
-    } else {
-        jsonc::apply_edits(text, &[edit(close, 0, quoted)])
-            .ok_or(DocError::Invalid("Unable to update OpenCode plugins without replacing the document"))
-    }
+    let edits = jsonc::modify(text, &[Seg::Key(utf16("plugins")), Seg::Index(index as i64)], Some(J::s(rule)), options)
+        .map_err(|_| DocError::Invalid("Unable to update OpenCode plugins without replacing the document"))?;
+    jsonc::apply_edits(text, &edits)
+        .ok_or(DocError::Invalid("Unable to update OpenCode plugins without replacing the document"))
 }
 
 /// Appends one string entry (activation rule or source spec) at the end of `plugins`.
 pub(super) fn append_plugin_control_rule(doc: &Document, rule: &str) -> R<Text> {
+    let plugins = document_plugins(doc)?;
     let options = infer_formatting(&doc.text);
-    let updated = if !document_plugins(doc)?.is_empty() || has_plugins_property(&doc.text) {
-        append_plugin_entry(&doc.text, rule, &options)?
+    let updated = if !plugins.is_empty() || has_plugins_property(&doc.text) {
+        append_plugin_entry(&doc.text, plugins.len(), rule, &options)?
     } else {
         let edits =
             jsonc::modify(&doc.text, &[Seg::Key(utf16("plugins"))], Some(J::Arr(vec![J::s(rule)])), &options)
@@ -349,6 +290,20 @@ pub(super) fn append_plugin_control_rule(doc: &Document, rule: &str) -> R<Text> 
         jsonc::apply_edits(&doc.text, &edits)
             .ok_or(DocError::Invalid("Unable to update OpenCode plugins without replacing the document"))?
     };
+    let (Some(mut expected), false) = jsonc::parse(&doc.text, true) else {
+        return Err(DocError::Invalid("Unable to update OpenCode plugins without changing other settings"));
+    };
+    let mut next_plugins = match expected.get("plugins").cloned() {
+        Some(J::Arr(items)) => items,
+        None => Vec::new(),
+        Some(_) => return Err(DocError::Invalid("Unable to update OpenCode plugins without changing other settings")),
+    };
+    next_plugins.push(J::s(rule));
+    expected.set(utf16("plugins"), J::Arr(next_plugins));
+    let (result, errors) = jsonc::parse(&updated, true);
+    if errors || result.as_ref() != Some(&expected) {
+        return Err(DocError::Invalid("Unable to update OpenCode plugins without changing other settings"));
+    }
     Ok(finish(doc, updated, &options.eol))
 }
 
@@ -479,7 +434,7 @@ pub(super) fn replace_plugin_control_rules(
     let removed_vec: Vec<usize> = removed.iter().copied().collect();
     let mut updated = delete_plugin_entries(&doc.text, &removed_vec)?;
     if let Some(rule) = rule {
-        updated = append_plugin_entry(&updated, rule, &options)?;
+        updated = append_plugin_entry(&updated, plugins.len() - removed.len(), rule, &options)?;
     }
     verify_plugins_mutation(
         &doc.text,

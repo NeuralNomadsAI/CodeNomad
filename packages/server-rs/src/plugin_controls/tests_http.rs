@@ -17,7 +17,7 @@ use axum::{
     http::{Method, StatusCode as Status, header},
     middleware,
     response::{IntoResponse, Response},
-    routing::any,
+    routing::{any, get},
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -669,8 +669,10 @@ async fn plugin_sources_add_remove_dependent_rules_stale_and_timeout() {
     )
     .await;
     let err = timed_out.err().expect("must time out");
-    assert_eq!(err.status, Status::SERVICE_UNAVAILABLE);
-    assert_eq!(err.code, Some("timeout"));
+    assert!(matches!(
+        err,
+        super::sources::SourceError::Refused { status: Status::SERVICE_UNAVAILABLE, code: Some("timeout") }
+    ));
     assert_eq!(parse_jsonc_file(&h.global_file).unwrap()["plugins"], json!([]));
     h.mock.lock().unwrap().config_delay = Duration::ZERO;
 
@@ -809,4 +811,194 @@ async fn remote_control_local_auth_and_meta_capabilities_cover_plugin_controls()
     let doc = meta::document(Uuid::new_v4(), 9898, Path::new("."), None, json!({})).unwrap();
     let caps = doc["capabilities"].as_array().unwrap();
     assert!(caps.iter().any(|c| c == "plugin-controls"), "missing plugin-controls capability: {caps:?}");
+}
+
+#[tokio::test]
+async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fastify() {
+    let h = Harness::new(false).await;
+    fs::write(&h.global_file, "{}\n").unwrap();
+    let project = h.project_str();
+
+    // 1. Lone surrogate `\uD800` in `spec` reaches business validation (`422 invalid-spec`), not `400`.
+    let surrogate = h
+        .client
+        .post(h.url("/plugin-sources"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(format!(
+            r#"{{"location":{{"directory":{}}},"scope":"global","spec":"\uD800"}}"#,
+            serde_json::to_string(&project).unwrap()
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(surrogate.status(), Status::UNPROCESSABLE_ENTITY);
+    assert_ne!(surrogate.headers().get(header::CONNECTION).and_then(|v| v.to_str().ok()), Some("close"));
+    assert_eq!(
+        surrogate.json::<Value>().await.unwrap(),
+        json!({ "error": "Plugin source update refused", "code": "invalid-spec" })
+    );
+
+    // Broken JSON containing `\uD800` still fails parsing with `400` + `Connection: close`.
+    let bad_json = h
+        .client
+        .post(h.url("/plugin-sources"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(r#"{"spec":"\uD800""#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_json.status(), Status::BAD_REQUEST);
+    assert_eq!(bad_json.headers().get(header::CONNECTION).and_then(|v| v.to_str().ok()), Some("close"));
+
+    // 2. Seed reviewed integration catalog (native `fixture` with Git prefix + api `mail`).
+    let git_prefix = "github:NeuralNomadsAI/opencode-integrations#";
+    h.app
+        .integration_catalog
+        .seed_for_test(super::catalog::IntegrationCatalog {
+            schema_version: 1,
+            integrations: vec![
+                super::catalog::IntegrationCatalogEntry {
+                    id: "fixture".into(),
+                    family: "native".into(),
+                    package: "@neuralnomads/opencode-fixture".into(),
+                    plugin: "neuralnomads.fixture".into(),
+                    rpc: "neuralnomads.fixture".into(),
+                    sources: Some(super::catalog::IntegrationCatalogSources { git: vec![git_prefix.into()] }),
+                },
+                super::catalog::IntegrationCatalogEntry {
+                    id: "mail".into(),
+                    family: "api".into(),
+                    package: "@neuralnomads/opencode-mail".into(),
+                    plugin: "neuralnomads.mail".into(),
+                    rpc: "neuralnomads.mail".into(),
+                    sources: None,
+                },
+            ],
+        })
+        .await;
+
+    // Native integration in Project scope refused with `422 global-only` (registry, alias, Git).
+    for spec in [
+        "@neuralnomads/opencode-fixture@^0.1",
+        "fx@NPM:@neuralnomads/opencode-fixture",
+        &format!("{git_prefix}path:/integrations/fixture"),
+    ] {
+        let resp = h
+            .client
+            .post(h.url("/plugin-sources"))
+            .json(&json!({ "location": { "directory": project }, "scope": "project", "spec": spec }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), Status::UNPROCESSABLE_ENTITY, "spec {spec}");
+        assert_eq!(resp.json::<Value>().await.unwrap()["code"], "global-only");
+    }
+    assert!(!h.project_file.exists(), "refused native project add writes nothing");
+
+    // Non-native (`api`) integration succeeds in Project scope.
+    let api_ok = h
+        .client
+        .post(h.url("/plugin-sources"))
+        .json(
+            &json!({ "location": { "directory": project }, "scope": "project", "spec": "@neuralnomads/opencode-mail" }),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(api_ok.status(), Status::OK);
+
+    // Git build and registry spec of the same integration collide with `409 duplicate`.
+    let git_ok = h
+        .client
+        .post(h.url("/plugin-sources"))
+        .json(&json!({
+            "location": { "directory": project },
+            "scope": "global",
+            "spec": format!("{git_prefix}fixture-v0.1.0::path:/integrations/fixture")
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(git_ok.status(), Status::OK);
+    let reg_dup = h
+        .client
+        .post(h.url("/plugin-sources"))
+        .json(&json!({ "location": { "directory": project }, "scope": "global", "spec": "@neuralnomads/opencode-fixture" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reg_dup.status(), Status::CONFLICT);
+    assert_eq!(reg_dup.json::<Value>().await.unwrap()["code"], "duplicate");
+
+    // Runtime-loaded plugin ID of an integration collides even if config is empty.
+    fs::write(&h.global_file, "{}\n").unwrap();
+    h.mock.lock().unwrap().runtime = vec![json!({
+        "id": "neuralnomads.fixture",
+        "source": { "type": "local", "path": "/builds/fixture/index.js" },
+        "state": { "status": "active" }
+    })];
+    let rt_dup = h
+        .client
+        .post(h.url("/plugin-sources"))
+        .json(&json!({ "location": { "directory": project }, "scope": "global", "spec": "@neuralnomads/opencode-fixture" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rt_dup.status(), Status::CONFLICT);
+    assert_eq!(rt_dup.json::<Value>().await.unwrap()["code"], "duplicate");
+
+    // 3. Malformed raw document on disk while daemon responds -> `500 {"error":"Plugin source update failed"}`.
+    h.mock.lock().unwrap().runtime.clear();
+    fs::write(&h.global_file, "{ not valid jsonc").unwrap();
+    let malformed = h
+        .client
+        .post(h.url("/plugin-sources"))
+        .json(&json!({ "location": { "directory": project }, "scope": "global", "spec": "fresh-pkg@1.0.0" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(malformed.status(), Status::INTERNAL_SERVER_ERROR);
+    assert_eq!(malformed.json::<Value>().await.unwrap(), json!({ "error": "Plugin source update failed" }));
+
+    // 4. Live catalog refresh over loopback HTTP + persistence to `integrations-catalog.json`.
+    let cat_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let cat_base = format!("http://{}", cat_listener.local_addr().unwrap());
+    let cat_asset_url = format!("{cat_base}/assets/catalog.json");
+    let cat_router = Router::new()
+        .route(
+            "/releases",
+            get(move || {
+                let asset = cat_asset_url.clone();
+                async move {
+                    Json(json!([{
+                        "tag_name": "catalog-v2",
+                        "draft": false,
+                        "prerelease": false,
+                        "assets": [{ "name": "catalog.json", "url": asset, "size": 512, "id": 42, "updated_at": "2026-01-01T00:00:00Z" }]
+                    }]))
+                }
+            }),
+        )
+        .route(
+            "/assets/catalog.json",
+            get(|| async {
+                Json(json!({
+                    "schemaVersion": 1,
+                    "integrations": [{
+                        "id": "blender",
+                        "family": "native",
+                        "package": "@neuralnomads/opencode-blender",
+                        "plugin": "neuralnomads.blender",
+                        "rpc": "neuralnomads.blender",
+                        "host": { "app": "blender" }
+                    }]
+                }))
+            }),
+        );
+    let cat_task = tokio::spawn(async move { axum::serve(cat_listener, cat_router).await.unwrap() });
+    h.app.integration_catalog.set_releases_url(Some(format!("{cat_base}/releases"))).await;
+    let refreshed = h.app.integration_catalog.read().await;
+    assert_eq!(refreshed.integrations.len(), 1);
+    assert_eq!(refreshed.integrations[0].id, "blender");
+    cat_task.abort();
 }

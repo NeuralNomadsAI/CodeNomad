@@ -236,7 +236,6 @@ pub(super) struct EvalContext<'a> {
 
 pub(super) struct SnapshotBase {
     pub(super) runtime: Vec<RuntimeEntry>,
-    pub(super) runtime_ids: HashSet<String>,
     pub(super) runtime_source_ids: HashMap<String, String>,
     pub(super) runtime_by_id: HashMap<String, RuntimeEntry>,
     pub(super) documents: Vec<ConfigDocumentView>,
@@ -472,19 +471,17 @@ pub(super) fn snapshot_base(ctx: &EvalContext<'_>) -> Result<SnapshotBase, Fail>
         }
         runtime.push(item);
     }
-    let mut runtime_ids = HashSet::new();
     let mut runtime_source_ids = HashMap::new();
     let mut runtime_by_id = HashMap::new();
     for entry in &runtime {
         let Some(ref id) = entry.id else { continue };
         runtime_by_id.entry(id.clone()).or_insert_with(|| entry.clone());
-        runtime_ids.insert(id.clone());
         if let RuntimeSource::Package { ref target, .. } = entry.source {
             runtime_source_ids.insert(target.clone(), id.clone());
         }
     }
     let (documents, source_orders) = config_documents(ctx);
-    Ok(SnapshotBase { runtime, runtime_ids, runtime_source_ids, runtime_by_id, documents, source_orders })
+    Ok(SnapshotBase { runtime, runtime_source_ids, runtime_by_id, documents, source_orders })
 }
 
 fn runtime_id_for_configured_target(
@@ -770,13 +767,28 @@ pub(super) fn evaluate_documents(
         }
     }
 
-    let mut ids: HashSet<String> = base.runtime_ids.iter().chain(&managed_ids).cloned().collect();
-    for rule in &rules {
-        if is_exact_selector(&rule.selector) {
-            ids.insert(rule.selector.clone());
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    let mut sorted_ids: Vec<String> = Vec::new();
+    let mut push_id = |id: &str| {
+        if valid_plugin_id(id) && seen_ids.insert(id.to_owned()) {
+            sorted_ids.push(id.to_owned());
+        }
+    };
+    for entry in &base.runtime {
+        if let Some(id) = entry.id.as_deref() {
+            push_id(id);
         }
     }
-    let mut sorted_ids: Vec<String> = ids.into_iter().filter(|id| valid_plugin_id(id)).collect();
+    for m in ctx.managed_plugins {
+        for id in &m.ids {
+            push_id(id);
+        }
+    }
+    for rule in &rules {
+        if is_exact_selector(&rule.selector) {
+            push_id(&rule.selector);
+        }
+    }
     sorted_ids.sort_by(|a, b| control_id_cmp(a, b));
 
     let controls: Vec<ActivationControl> = sorted_ids

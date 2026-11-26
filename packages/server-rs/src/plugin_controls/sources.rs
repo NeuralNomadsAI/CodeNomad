@@ -3,8 +3,11 @@
 //! - `DELETE /api/workspaces/:id/plugin-sources` (confirmed source removal with dependent rule cleanup, or orphan rule removal)
 
 use std::{
-    collections::{HashMap, HashSet},
-    sync::LazyLock,
+    collections::{BTreeMap, HashSet},
+    sync::{
+        Arc, LazyLock,
+        atomic::{AtomicU8, Ordering},
+    },
     time::Duration,
 };
 
@@ -16,8 +19,9 @@ use tokio_util::sync::CancellationToken;
 use crate::{Shared, opencode_settings::Scope, subagent_depth::Fail};
 
 use super::{
-    doc::{append_plugin_control_rule, document_plugins, remove_plugin_source_entry, replace_plugin_control_rules},
-    engine,
+    catalog::{IntegrationCatalog, integrations_for_spec},
+    doc::{append_plugin_control_rule, remove_plugin_source_entry, replace_plugin_control_rules},
+    engine::{self, COMMIT_ABORTED, COMMIT_PENDING},
     order::defined_before,
     snapshot::{ControlLocation, Snapshot},
     spec::{plugin_package_identities, validate_plugin_source_spec},
@@ -30,20 +34,20 @@ const PLUGIN_SOURCE_ABORT_GRACE: Duration = Duration::from_secs(5);
 static ADD_QUEUE: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[derive(Clone, Debug)]
-pub(super) struct SourceError {
-    pub(super) status: Status,
-    pub(super) code: Option<&'static str>,
+pub(super) enum SourceError {
+    Refused { status: Status, code: Option<&'static str> },
+    Failed,
 }
 
 impl SourceError {
     pub(super) const fn with_code(status: Status, code: &'static str) -> Self {
-        Self { status, code: Some(code) }
+        Self::Refused { status, code: Some(code) }
     }
 
     pub(super) fn from_fail(err: Fail) -> Self {
         match err {
-            Fail::Status(status, _) => Self { status, code: None },
-            Fail::Generic => Self { status: Status::SERVICE_UNAVAILABLE, code: None },
+            Fail::Status(status, _) => Self::Refused { status, code: None },
+            Fail::Generic => Self::Failed,
         }
     }
 }
@@ -96,13 +100,15 @@ pub(super) async fn add_with_timeouts(
     }
     let _turn = ADD_QUEUE.lock().await;
     let cancel = CancellationToken::new();
+    let commit_state = Arc::new(AtomicU8::new(COMMIT_PENDING));
     let cancel_timer = cancel.clone();
     let timer = tokio::spawn(async move {
         tokio::time::sleep(add_timeout).await;
         cancel_timer.cancel();
     });
-    let op = add_serialized(app, workspace_id, &req, principal, cancel.clone());
-    let outcome = match tokio::time::timeout(add_timeout + abort_grace, op).await {
+    let op = add_serialized(app, workspace_id, &req, principal, cancel.clone(), commit_state.clone());
+    tokio::pin!(op);
+    let outcome = match tokio::time::timeout(add_timeout + abort_grace, &mut op).await {
         Ok(Ok(res)) => Ok(res),
         Ok(Err(err)) => {
             if cancel.is_cancelled() {
@@ -113,7 +119,23 @@ pub(super) async fn add_with_timeouts(
         }
         Err(_) => {
             cancel.cancel();
-            Err(SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout"))
+            if commit_state.compare_exchange(COMMIT_PENDING, COMMIT_ABORTED, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+            {
+                // Proven: `rename` has not been admitted and will abort under `guard_current`.
+                Err(SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout"))
+            } else {
+                // `rename` was already admitted: await its actual outcome rather than publishing a false timeout.
+                match op.await {
+                    Ok(res) => Ok(res),
+                    Err(err) => {
+                        if cancel.is_cancelled() {
+                            Err(SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout"))
+                        } else {
+                            Err(err)
+                        }
+                    }
+                }
+            }
         }
     };
     timer.abort();
@@ -126,31 +148,55 @@ async fn add_serialized(
     req: &SourceAddRequest,
     principal: Option<CancellationToken>,
     cancel: CancellationToken,
+    commit_state: Arc<AtomicU8>,
 ) -> Result<SourceMutationResponse, SourceError> {
     let timeout_err = || SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout");
-    let (snap_res, raw_res) = tokio::join!(
+    let catalog_fut = async {
+        tokio::select! {
+            _ = cancel.cancelled() => None,
+            catalog = app.integration_catalog.read() => Some(catalog),
+        }
+    };
+    let (snap_res, raw_res, catalog_opt) = tokio::join!(
         engine::read(app, workspace_id, &req.location, principal.as_ref(), Some(&cancel)),
         engine::read_config_documents(app, workspace_id, &req.location, principal.as_ref(), Some(&cancel)),
+        catalog_fut,
     );
     if cancel.is_cancelled() {
         return Err(timeout_err());
     }
     let snapshot = snap_res.map_err(SourceError::from_fail)?;
     let raw_docs = raw_res.map_err(SourceError::from_fail)?;
+    let catalog = catalog_opt.unwrap_or_default();
 
-    let identities: HashSet<String> = plugin_package_identities(&req.spec).into_iter().collect();
+    // Integration catalog rules (`plugin-sources.ts:89-101`):
+    // 1. Native integrations install in Global configuration only (`422 global-only`).
+    // 2. Registry/Git specs of the same integration collide (`409 duplicate`).
+    // 3. An integration whose plugin ID is already loaded in runtime collides (`409 duplicate`).
+    let integrations = integrations_for_spec(&catalog, &req.spec);
+    if req.scope == Scope::Project && integrations.iter().any(|entry| entry.family == "native") {
+        return Err(SourceError::with_code(Status::UNPROCESSABLE_ENTITY, "global-only"));
+    }
+    let mut identities: HashSet<String> = plugin_package_identities(&req.spec).into_iter().collect();
+    for entry in &integrations {
+        identities.insert(format!("integration:{}", entry.id));
+    }
+    let loaded: HashSet<&str> = snapshot.runtime.iter().filter_map(|e| e.id.as_deref()).collect();
+    if integrations.iter().any(|entry| loaded.contains(entry.plugin.as_str())) {
+        return Err(SourceError::with_code(Status::CONFLICT, "duplicate"));
+    }
+
     let ids = known_plugin_ids(&snapshot);
 
     let configured_targets: Vec<&str> = snapshot.configured.sources.iter().map(|s| s.target.as_str()).collect();
-    assert_not_declared(&configured_targets, &identities, &HashSet::new())?;
+    assert_not_declared(&configured_targets, &identities, &HashSet::new(), &catalog)?;
 
     let mut raw_targets: Vec<String> = Vec::new();
-    for (_, doc) in &raw_docs {
-        let entries = document_plugins(doc).map_err(|e| SourceError::from_fail(crate::opencode_settings::mapped(e)))?;
-        raw_targets.extend(entries.into_iter().map(|e| e.target().to_owned()));
+    for (_, _, entries) in &raw_docs {
+        raw_targets.extend(entries.iter().map(|e| e.target().to_owned()));
     }
     let raw_refs: Vec<&str> = raw_targets.iter().map(String::as_str).collect();
-    assert_not_declared(&raw_refs, &identities, &ids)?;
+    assert_not_declared(&raw_refs, &identities, &ids, &catalog)?;
 
     if ids.contains(&req.spec) {
         return Err(SourceError::with_code(Status::UNPROCESSABLE_ENTITY, "plugin-id"));
@@ -162,6 +208,7 @@ async fn add_serialized(
         app,
         engine::EditTarget { workspace_id, location: &req.location, scope: req.scope, principal },
         cancel,
+        commit_state,
         SourceError::from_fail,
         timeout_err,
         move |doc, plugins| {
@@ -169,7 +216,7 @@ async fn add_serialized(
                 return Err(timeout_err());
             }
             let targets: Vec<&str> = plugins.iter().map(|e| e.target()).collect();
-            assert_not_declared(&targets, &identities, &ids)?;
+            assert_not_declared(&targets, &identities, &ids, &catalog)?;
             append_plugin_control_rule(doc, &spec)
                 .map_err(|e| SourceError::from_fail(crate::opencode_settings::mapped(e)))
         },
@@ -275,7 +322,8 @@ pub(super) async fn remove(
                     .map_err(map_doc_remove_error)?;
 
                     let mut updates = vec![(scope, own_updated)];
-                    let mut losing_by_doc: HashMap<usize, Vec<usize>> = HashMap::new();
+                    // Preserve native document order deterministically (matching TS `new Set(losing.map(e => e.document))`).
+                    let mut losing_by_doc: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
                     for entry in &view.sequence.entries {
                         if entry.document != own_order
                             && !entry.remove
@@ -308,7 +356,7 @@ pub(super) async fn remove(
 
     match result {
         Ok(()) => Ok(SourceMutationResponse { scope: scope.as_str(), spec: spec_out, reload_pending: true }),
-        Err(err) if err.status == Status::CONFLICT && err.code.is_none() => Err(stale()),
+        Err(SourceError::Refused { status: Status::CONFLICT, code: None }) => Err(stale()),
         Err(err) => Err(err),
     }
 }
@@ -345,12 +393,17 @@ fn assert_not_declared(
     targets: &[&str],
     identities: &HashSet<String>,
     ids: &HashSet<String>,
+    catalog: &IntegrationCatalog,
 ) -> Result<(), SourceError> {
     for &target in targets {
         if target.starts_with('-') || target.contains('*') || ids.contains(target) {
             continue;
         }
-        if plugin_package_identities(target).iter().any(|k| identities.contains(k)) {
+        let mut target_ids = plugin_package_identities(target);
+        for entry in integrations_for_spec(catalog, target) {
+            target_ids.push(format!("integration:{}", entry.id));
+        }
+        if target_ids.iter().any(|k| identities.contains(k)) {
             return Err(SourceError::with_code(Status::CONFLICT, "duplicate"));
         }
     }

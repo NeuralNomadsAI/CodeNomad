@@ -3,6 +3,7 @@
 //! - `GET`/`PATCH /api/workspaces/:id/plugin-controls`
 //! - `POST`/`DELETE /api/workspaces/:id/plugin-sources`
 
+pub(crate) mod catalog;
 mod discovery;
 mod doc;
 mod engine;
@@ -179,11 +180,18 @@ fn controls_error(err: Fail) -> Response {
 }
 
 fn sources_error(err: SourceError) -> Response {
-    let body = match err.code {
-        Some(code) => json!({ "error": "Plugin source update refused", "code": code }),
-        None => json!({ "error": "Plugin source update refused" }),
-    };
-    (err.status, Json(body)).into_response()
+    match err {
+        SourceError::Refused { status, code } => {
+            let body = match code {
+                Some(code) => json!({ "error": "Plugin source update refused", "code": code }),
+                None => json!({ "error": "Plugin source update refused" }),
+            };
+            (status, Json(body)).into_response()
+        }
+        SourceError::Failed => {
+            (Status::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Plugin source update failed" }))).into_response()
+        }
+    }
 }
 
 async fn get_controls(

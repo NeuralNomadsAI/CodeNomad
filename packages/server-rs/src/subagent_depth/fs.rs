@@ -218,6 +218,7 @@ pub(crate) struct Prepared {
     source: Document,
     temporary: String,
     lock: Option<Lock>,
+    committed: bool,
 }
 
 impl Drop for Prepared {
@@ -233,6 +234,9 @@ impl Drop for Prepared {
 
 impl Prepared {
     pub(crate) fn verify(&self) -> R<()> {
+        if self.committed {
+            return Err(DocError::Conflict("OpenCode configuration preparation is closed"));
+        }
         assert_unchanged(&self.source)?;
         if !self.lock.as_ref().is_some_and(Lock::verify) {
             return Err(DocError::Conflict("OpenCode configuration is being updated by another process"));
@@ -249,11 +253,26 @@ impl Prepared {
         map: impl Fn(DocError) -> E,
         before_rename: impl FnOnce() -> Result<G, E>,
     ) -> Result<(), E> {
+        self.commit_in_place(map, before_rename, || Ok(()))
+    }
+
+    /// Commits the prepared replacement while keeping its replacement lock held until `self` drops.
+    /// Re-verifies the source bytes and lock nonce both before and after `before_commit` (matching
+    /// `plugin-control-document.ts:314-328`), then calls `admit_rename` right before `rename`.
+    pub(crate) fn commit_in_place<E, G>(
+        &mut self,
+        map: impl Fn(DocError) -> E,
+        before_commit: impl FnOnce() -> Result<G, E>,
+        admit_rename: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), E> {
         self.verify().map_err(&map)?;
-        let guard = before_rename()?;
+        let guard = before_commit()?;
+        self.verify().map_err(&map)?;
+        admit_rename()?;
         let result = match std::fs::rename(&self.temporary, &self.source.write) {
             Ok(()) => {
                 self.temporary.clear();
+                self.committed = true;
                 Ok(())
             }
             Err(e)
@@ -274,21 +293,44 @@ impl Prepared {
     }
 }
 
+fn access_writable(path: &str) -> bool {
+    #[cfg(unix)]
+    {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let Ok(cstr) = CString::new(std::path::Path::new(path).as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: `cstr` is NUL-terminated for the duration of the syscall.
+        unsafe { libc::access(cstr.as_ptr(), libc::W_OK) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        let Ok(meta) = std::fs::metadata(path) else {
+            return false;
+        };
+        meta.is_dir() || !meta.permissions().readonly()
+    }
+}
+
 /// A caller may await a durable attempt while holding the exact replacement.
 /// Dropping the prepared edit discards its temporary bytes without publishing them.
 pub(crate) fn prepare(d: &Document, updated: &[u16]) -> R<Prepared> {
     let style = Style::host();
     let failed = DocError::Filesystem("Unable to atomically replace OpenCode configuration");
     let temporary = format!("{}.{}.{}.tmp", d.write, std::process::id(), hex(8)?);
-    let mut prepared = Prepared { source: d.clone(), temporary: String::new(), lock: None };
-    std::fs::create_dir_all(style.dirname(&d.write)).map_err(|_| failed.clone())?;
+    let mut prepared = Prepared { source: d.clone(), temporary: String::new(), lock: None, committed: false };
+    let directory = style.dirname(&d.write);
+    std::fs::create_dir_all(&directory).map_err(|_| failed.clone())?;
     if d.exists {
         if d.mode & 0o222 == 0 {
             return Err(DocError::Filesystem("OpenCode configuration is read-only"));
         }
-        if std::fs::metadata(&d.write).map_err(|_| failed.clone())?.permissions().readonly() {
+        if !access_writable(&d.write) {
             return Err(failed.clone());
         }
+    }
+    if !access_writable(&directory) {
+        return Err(failed.clone());
     }
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);

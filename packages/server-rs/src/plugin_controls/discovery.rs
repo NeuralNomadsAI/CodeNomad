@@ -209,11 +209,17 @@ pub(super) fn file_url_to_path(raw: &str, style: Style) -> Option<String> {
     if url.scheme() != "file" || url.query().is_some() || url.fragment().is_some() {
         return None;
     }
+    // Node `fileURLToPath` rejects percent-encoded path separators (`%2f`/`%2F`, and `%5c`/`%5C` on Windows).
+    let raw_path = url.path();
+    let lower_path = raw_path.to_ascii_lowercase();
+    if lower_path.contains("%2f") || (style == Style::Win32 && lower_path.contains("%5c")) {
+        return None;
+    }
     if style == Style::Posix {
-        if url.host_str().is_some_and(|h| !h.is_empty() && h != "localhost") {
+        if url.host_str().is_some_and(|h| !h.is_empty() && !h.eq_ignore_ascii_case("localhost")) {
             return None;
         }
-        let decoded = percent_encoding::percent_decode_str(url.path()).decode_utf8().ok()?;
+        let decoded = percent_encoding::percent_decode_str(raw_path).decode_utf8().ok()?;
         if decoded.contains('\0') {
             return None;
         }
@@ -228,7 +234,7 @@ pub(super) fn managed_desktop_plugin_for_source<'a>(
     source: &str,
     style: Style,
 ) -> Option<&'a ManagedDesktopPlugin> {
-    let local = if source.len() >= 5 && source[..5].eq_ignore_ascii_case("file:") {
+    let local = if source.as_bytes().get(..5).is_some_and(|p| p.eq_ignore_ascii_case(b"file:")) {
         file_url_to_path(source, style)?
     } else {
         source.to_owned()

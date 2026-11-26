@@ -12,11 +12,15 @@ use crate::{
 
 use super::{
     discovery::{
-        declared_entrypoint_of, discovery_entrypoint_of, discovery_entrypoint_shape, escapes, selected_entrypoint,
+        declared_entrypoint_of, discovery_entrypoint_of, discovery_entrypoint_shape, escapes, file_url_to_path,
+        managed_desktop_plugin_for_source, selected_entrypoint,
     },
     doc::{append_plugin_control_rule, remove_plugin_source_entry, replace_plugin_control_rules},
     order::{AppliedEntry, AppliedSequence, defined_before, enabled_through, matches_selector},
-    spec::{SpecErrorCode, git_plugin_revision, plugin_package_identities, validate_plugin_source_spec},
+    spec::{
+        SpecErrorCode, git_plugin_revision, plugin_package_identities, registry_package_name,
+        validate_plugin_source_spec,
+    },
 };
 
 fn doc_for(text: &str, bom: bool) -> crate::subagent_depth::document::Document {
@@ -45,7 +49,9 @@ fn spec_validation_and_identities_match_typescript() {
         "foo@latest",
         "foo@1.2.3",
         "bar@npm:foo@1",
+        "plugin@NPM:other@1",
         "github:user/repo",
+        "github:NeuralNomadsAI/opencode-integrations#fixture-v0.1.0::path:/integrations/fixture",
         "user/repo#v1",
         "git+https://github.com/user/repo.git#v1",
         "git+ssh://git@example.com/x.git",
@@ -65,6 +71,13 @@ fn spec_validation_and_identities_match_typescript() {
         ("\\\\server\\share\\plugin", SpecErrorCode::LocalPath),
         ("file:../plugin", SpecErrorCode::LocalPath),
         ("git+file:///tmp/repo", SpecErrorCode::LocalPath),
+        ("plugin.tgz", SpecErrorCode::LocalPath),
+        ("foo@plugin.tar.gz", SpecErrorCode::LocalPath),
+        ("foo@a/b/c", SpecErrorCode::LocalPath),
+        ("plugin@tag%", SpecErrorCode::InvalidSpec),
+        ("github:org/repo#main::other", SpecErrorCode::InvalidSpec),
+        ("github:org/repo#main::semver:^1.0.0", SpecErrorCode::InvalidSpec),
+        ("github:org/repo#path:/a::path:/b", SpecErrorCode::InvalidSpec),
         ("https://example.com/plugin.tgz", SpecErrorCode::InvalidSpec),
         ("foo@{env:VERSION}", SpecErrorCode::InvalidSpec),
         ("{file:./spec}", SpecErrorCode::InvalidSpec),
@@ -98,6 +111,11 @@ fn spec_validation_and_identities_match_typescript() {
     assert!(same("Foo", "foo@2"));
     assert!(same("bar@npm:foo@1", "foo"));
     assert!(same("bar@npm:foo@1", "bar@3"));
+    assert!(same("plugin@NPM:other@1", "other@2"));
+    assert!(same("plugin@NPM:other@1", "plugin"));
+    assert_eq!(registry_package_name("plugin@NPM:other@1").as_deref(), Some("other"));
+    assert_eq!(plugin_package_identities("plugin.tgz"), Vec::<String>::new());
+    assert_eq!(plugin_package_identities("github:org/repo#main::other"), Vec::<String>::new());
     assert!(same("github:user/repo", "git+https://github.com/user/repo.git#v2"));
     assert!(same("user/repo#main", "git+ssh://git@github.com/user/repo.git"));
     assert!(same("git+https://example.com/a/b.git", "git+ssh://git@example.com:2222/a/b.git#v1"));
@@ -201,6 +219,51 @@ fn jsonc_plugin_edits_preserve_comments_bom_crlf_and_compact_arrays() {
         remove_plugin_source_entry(&base, 0, "a", &[0], &["a"]),
         Err(crate::subagent_depth::document::DocError::Conflict(_))
     ));
+
+    // 6. Compact empty array expands via jsonc::modify just like TS `jsonc-parser.modify`.
+    let expanded = append_plugin_control_rule(&doc_for("{\"plugins\":[]}", false), "a").unwrap();
+    assert_eq!(jsonc::string(&expanded), "{\n  \"plugins\": [\n    \"a\"\n  ]\n}\n");
+
+    // 7. Deeply nested JSONC fails cleanly without stack overflow.
+    let deep = format!("{}{}", "[".repeat(1200), "]".repeat(1200));
+    let tree = jsonc::parse_tree(&jsonc::utf16(&deep), true);
+    assert!(tree.errors > 0);
+}
+
+#[test]
+fn utf8_prefix_file_url_and_prepared_lock_reverify_guards() {
+    // Non-ASCII 5-byte boundary (`abcdé` has byte 5 inside `é`) must never panic.
+    assert!(managed_desktop_plugin_for_source(&[], "abcdé", Style::Posix).is_none());
+
+    // Node `fileURLToPath` refuses encoded path separators (`%2F`, and `%5C` on Win32).
+    assert!(file_url_to_path("file:///tmp/a%2Fb", Style::Posix).is_none());
+    assert!(file_url_to_path("file:///tmp/a%2fb", Style::Posix).is_none());
+    assert_eq!(file_url_to_path("file:///tmp/a%20b", Style::Posix).as_deref(), Some("/tmp/a b"));
+    assert!(file_url_to_path("file:///C:/a%5Cb", Style::Win32).is_none());
+
+    // `Prepared::commit_in_place` re-verifies after `before_commit` and keeps its lock until Drop.
+    let dir = std::env::temp_dir().join(format!("cn-prep-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("opencode.jsonc");
+    std::fs::write(&file, "{}\n").unwrap();
+    let doc = crate::subagent_depth::fs::load(file.to_str().unwrap()).unwrap();
+    let mut prep = crate::subagent_depth::fs::prepare(&doc, &jsonc::utf16("{\"plugins\":[\"a\"]}\n")).unwrap();
+    let lock_path = format!("{}.codenomad-plugin-controls.lock", doc.write);
+    assert!(std::path::Path::new(&lock_path).exists());
+    // Mutating the file during `before_commit` must be caught by the post-guard `verify()`.
+    let conflict = prep.commit_in_place(
+        |e| e,
+        || {
+            std::fs::write(&file, "{\"changed\":true}\n").unwrap();
+            Ok(())
+        },
+        || Ok(()),
+    );
+    assert!(matches!(conflict, Err(crate::subagent_depth::document::DocError::Conflict(_))));
+    assert!(std::path::Path::new(&lock_path).exists(), "lock stays held until Prepared drops");
+    drop(prep);
+    assert!(!std::path::Path::new(&lock_path).exists(), "lock released on Drop");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

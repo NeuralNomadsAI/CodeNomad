@@ -67,6 +67,7 @@ pub struct App {
     pub usage: crate::usage::Usage,
     pub provider_usage: Arc<crate::provider_usage::State>,
     pub previews: crate::previews::Previews,
+    pub integration_catalog: crate::plugin_controls::catalog::CatalogSource,
 }
 
 #[derive(Default)]
@@ -115,12 +116,15 @@ impl App {
     ) -> Self {
         let mission_bridge = missions::run::new_token();
         let remote_control = crate::remote_control::Manager::new(&data);
+        let integration_catalog =
+            crate::plugin_controls::catalog::CatalogSource::new(Some(data.join("integrations-catalog.json")));
         Self {
             releases: crate::meta::releases::Monitor::new(&settings),
             sidecars: Lock::new(crate::sidecars::load(&settings.owner(crate::settings::Kind::Config, "server"))),
             usage: Default::default(),
             provider_usage: Default::default(),
             previews: Default::default(),
+            integration_catalog,
             bridge_token: mission_bridge.clone().or_else(crate::automation::new_token),
             human_answer: Default::default(),
             automation_pins: Default::default(),
