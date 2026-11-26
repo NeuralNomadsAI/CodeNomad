@@ -28,6 +28,7 @@ struct Demo {
     checked_a: bool,
     checked_b: bool,
     custom: rune::TextEdit,
+    locked: bool,
 }
 
 fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
@@ -53,7 +54,7 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                         Some("First choice"),
                         None,
                         s.radio == 0,
-                        false,
+                        s.locked,
                         true,
                         (1, 2),
                         |s: &mut Demo| s.radio = 0,
@@ -64,7 +65,7 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                         Some("unbroken_description_token_without_spaces_for_mobile_wrap_check_1234567890"),
                         None,
                         s.radio == 1,
-                        false,
+                        s.locked,
                         true,
                         (2, 2),
                         |s: &mut Demo| s.radio = 1,
@@ -75,7 +76,7 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                 "clear-btn",
                 "Clear",
                 "Choice · Clear",
-                false,
+                s.locked,
                 |s: &mut Demo, _| s.radio = 0,
             ))
             .child(form_textarea(
@@ -83,7 +84,7 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                 &s.custom,
                 "Other values",
                 None,
-                false,
+                s.locked,
                 true,
                 false,
                 |s: &mut Demo| &mut s.custom,
@@ -99,7 +100,7 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                         Some("Detailed output"),
                         Some("Question Required"),
                         s.checked_a,
-                        false,
+                        s.locked,
                         false,
                         |s: &mut Demo| s.checked_a = !s.checked_a,
                     ),
@@ -109,7 +110,7 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                         None,
                         Some("Question Required"),
                         s.checked_b,
-                        false,
+                        s.locked,
                         false,
                         |s: &mut Demo| s.checked_b = !s.checked_b,
                     ),
@@ -124,6 +125,7 @@ fn assert_palette_controls(label: &str, dark: bool) {
         checked_a: false,
         checked_b: true,
         custom: rune::TextEdit::new("Custom answer"),
+        locked: false,
     };
     let mut rt = Runtime::new(demo, demo_view, (240.0, 720.0), Env::new(dark, 1.0));
     rt.frame(0.0);
@@ -799,6 +801,131 @@ fn radio_and_checkbox_options_meet_contrast_focus_and_wrapping_across_all_palett
                 },
                 dark,
             );
+
+            // Locked (disabled) controls must stay readable (>= 4.5:1) with distinguishable
+            // selected radio and checked checkbox marks (>= 3:1) even on all-#848484 palettes.
+            let locked_demo = Demo {
+                radio: 0,
+                checked_a: false,
+                checked_b: true,
+                custom: rune::TextEdit::new("Locked answer"),
+                locked: true,
+            };
+            let mut lrt = Runtime::new(locked_demo, demo_view, (240.0, 720.0), Env::new(dark, 1.0));
+            lrt.frame(0.0);
+            let ltree = lrt.accessibility_json();
+            for disabled_key in ["opt-a", "opt-b", "clear-btn", "chk-a", "chk-b"] {
+                assert!(
+                    has_state(node(&ltree, disabled_key).unwrap(), "disabled"),
+                    "locked {disabled_key} must expose disabled state"
+                );
+            }
+            let lels = lrt.elements();
+            let t = tokens(dark);
+            let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+            let decode = |rgba: [f32; 4], srgb_blend: bool| -> Color {
+                let a = rgba[3].clamp(0.0, 1.0);
+                let ch = |v: f32| {
+                    let s = if a > 0.0 {
+                        (v / a).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    if srgb_blend { srgb_decode(s) } else { s }
+                };
+                Color {
+                    r: ch(rgba[0]),
+                    g: ch(rgba[1]),
+                    b: ch(rgba[2]),
+                    a,
+                }
+            };
+            let painted_fill = |key: &str| -> Color {
+                let el = lels.iter().find(|e| e.key.as_deref() == Some(key)).unwrap();
+                let inst = lrt
+                    .instances
+                    .iter()
+                    .find(|i| {
+                        i.params[1] == KIND_RECT
+                            && i.fill[3] > 0.0
+                            && (0..4).all(|k| (i.rect[k] - el.rect[k]).abs() <= 1.0)
+                    })
+                    .unwrap();
+                decode(inst.fill, lrt.srgb_blend())
+            };
+            let box_el = lels
+                .iter()
+                .find(|e| e.key.as_deref() == Some("custom-input"))
+                .unwrap();
+            let input_el = lels
+                .iter()
+                .find(|e| e.key.as_deref() == Some("input") && e.path.starts_with(&box_el.path))
+                .unwrap();
+            let f_bgs = effective_backgrounds(painted_fill("custom-input"), base);
+            assert!(
+                worst_contrast(input_el.text_color.unwrap(), &f_bgs) >= 4.5,
+                "locked custom-input text must stay readable on monochrome palette"
+            );
+            for card_key in ["opt-a", "chk-b", "clear-btn"] {
+                let card = lels
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some(card_key))
+                    .unwrap();
+                let c_bgs = effective_backgrounds(painted_fill(card_key), base);
+                let lbl = lels
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some("label") && e.path.starts_with(&card.path))
+                    .unwrap();
+                assert!(
+                    worst_contrast(lbl.text_color.unwrap(), &c_bgs) >= 4.5,
+                    "locked {card_key} label must stay readable on monochrome palette"
+                );
+            }
+            for checked_key in ["opt-a", "chk-b"] {
+                let card = lels
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some(checked_key))
+                    .unwrap();
+                let c_bgs = effective_backgrounds(painted_fill(checked_key), base);
+                let ind = lels
+                    .iter()
+                    .find(|e| {
+                        e.key.as_deref() == Some("indicator") && e.path.starts_with(&card.path)
+                    })
+                    .unwrap();
+                let mark = lels
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some("mark") && e.path.starts_with(&card.path))
+                    .unwrap();
+                let ind_bgs = composite_over(ind.fill, &c_bgs);
+                let mut border_bgs = ind_bgs.clone();
+                border_bgs.extend_from_slice(&c_bgs);
+                assert!(
+                    worst_contrast(ind.border_color.unwrap(), &border_bgs) >= 3.0,
+                    "locked {checked_key} indicator border must stay visible on monochrome palette"
+                );
+                let mark_color = if checked_key == "opt-a" {
+                    mark.fill
+                } else {
+                    lrt.instances
+                        .iter()
+                        .find(|i| {
+                            i.params[1] == KIND_GLYPH
+                                && i.fill[3] > 0.0
+                                && i.rect[0] >= ind.rect[0] - 1.0
+                                && i.rect[1] >= ind.rect[1] - 1.0
+                                && i.rect[0] + i.rect[2] <= ind.rect[0] + ind.rect[2] + 1.0
+                                && i.rect[1] + i.rect[3] <= ind.rect[1] + ind.rect[3] + 1.0
+                        })
+                        .map(|i| decode(i.fill, lrt.srgb_blend()))
+                        .or(mark.text_color)
+                        .expect("painted locked checkbox mark")
+                };
+                assert!(
+                    worst_contrast(mark_color, &ind_bgs) >= 3.0,
+                    "locked {checked_key} checked mark must stay distinguishable on monochrome palette"
+                );
+            }
         });
     }
 }
@@ -810,6 +937,7 @@ fn reduced_tab_order_reaches_radios_clear_and_checkboxes_with_full_keyboard_acce
         checked_a: false,
         checked_b: true,
         custom: rune::TextEdit::new(""),
+        locked: false,
     };
     let mut rt = Runtime::new(demo, demo_view, (240.0, 720.0), Env::new(true, 1.0));
     rt.frame(0.0);

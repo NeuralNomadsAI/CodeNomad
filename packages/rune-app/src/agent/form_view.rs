@@ -147,6 +147,14 @@ pub fn fields(s: &State, form: &Form) -> El {
         .fields
         .iter()
         .any(|f| agent_forms::active(f, &values) && agent_forms::field_unanswerable(f));
+    let has_invalid_hidden_active = form.fields.iter().any(|f| {
+        f["hidden"] == true
+            && agent_forms::active(f, &values)
+            && f["key"]
+                .as_str()
+                .and_then(|k| a.drafts.get(&(form.id.clone(), k.to_string())))
+                .is_none_or(|d| agent_forms::validate(f, d).is_err())
+    });
     let visible: Vec<&serde_json::Value> = form
         .fields
         .iter()
@@ -165,7 +173,7 @@ pub fn fields(s: &State, form: &Form) -> El {
             &form.title,
             header_required,
         ));
-    if !supported || has_unanswerable_active {
+    if !supported || has_unanswerable_active || has_invalid_hidden_active {
         body = body.child(form_controls::form_error(t("rune.unsupported_question")))
     }
     let untitled_count = visible.iter().filter(|f| field_title(f).is_none()).count();
@@ -306,6 +314,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                     ));
                     if field["required"] != true {
                         let id = identity.clone();
+                        let first_option_key = agent_forms::string_option_key(key, valid[0].value);
                         let clear_label = t("sessionList.selection.clearLabel");
                         let clear_accessible = format!("{field_name} · {clear_label}");
                         children.push(form_controls::clear_choice_button(
@@ -321,7 +330,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                                     .and_then(|a| a.drafts.get_mut(&id))
                                 {
                                     d.clear_choice();
-                                    tx.focus(form_controls::FORM_FOCUS_ANCHOR, tx.focus_visible());
+                                    tx.focus(first_option_key.clone(), tx.focus_visible());
                                 }
                             }),
                         ));
@@ -385,9 +394,15 @@ pub fn fields(s: &State, form: &Form) -> El {
                 let has_choices =
                     !valid.is_empty() || (allow_custom && !d.preserved_custom.is_empty());
                 let shared_required = required && has_choices && allow_custom;
+                let custom_conflict =
+                    validation_error == Some(agent_forms::ValidationError::SelectDeclaredOption);
+                let checkbox_invalid = is_invalid && !custom_conflict;
                 let req_note =
                     (required && has_choices).then(|| t("toolCall.question.status.required"));
-                let choice_note = join_notes(&[req_note, error_text.as_deref()]);
+                let choice_note = join_notes(&[
+                    req_note,
+                    checkbox_invalid.then_some(error_text.as_deref()).flatten(),
+                ]);
                 let group_desc = join_notes(&[field_desc, req_note, error_text.as_deref()]);
                 let mut items: Vec<El> = valid
                     .into_iter()
@@ -404,7 +419,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                             choice_note.as_deref(),
                             checked,
                             locked,
-                            is_invalid,
+                            checkbox_invalid,
                             crate::screen::action(&scope, move |s: &mut State| {
                                 if let Some(d) = s
                                     .agent
@@ -430,7 +445,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                             choice_note.as_deref(),
                             checked,
                             locked,
-                            is_invalid,
+                            checkbox_invalid,
                             crate::screen::action(&scope, move |s: &mut State| {
                                 if let Some(d) = s
                                     .agent

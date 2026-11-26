@@ -296,33 +296,50 @@ fn remove_promoted_lines(edit: &mut TextEdit, mut should_remove: impl FnMut(&str
     if !lines.iter().any(|&(_, _, _, remove)| remove) {
         return false;
     }
-    let mut new_text = String::with_capacity(text.len());
-    let mut spans: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
-    for &(start, content_end, full_end, remove) in &lines {
-        if remove {
+    // Delete only the byte spans of promoted lines (never rebuilding or dropping a trailing
+    // newline on kept lines), and merge adjacent deletions before remapping selection offsets.
+    let mut deletions: Vec<(usize, usize)> = Vec::new();
+    for (idx, &(start, content_end, full_end, remove)) in lines.iter().enumerate() {
+        if !remove {
             continue;
         }
-        if !new_text.is_empty() {
-            new_text.push('\n');
+        let del_start = if full_end > content_end {
+            start
+        } else if idx > 0 && !lines[idx - 1].3 {
+            // Removing the final line (without a trailing newline) also removes the newline
+            // separating it from the immediately preceding kept line.
+            lines[idx - 1].1
+        } else {
+            start
+        };
+        let del_end = full_end;
+        if let Some(last) = deletions.last_mut()
+            && del_start <= last.1
+        {
+            last.1 = last.1.max(del_end);
+        } else {
+            deletions.push((del_start, del_end));
         }
-        let new_start = new_text.len();
-        new_text.push_str(&text[start..content_end]);
-        let new_end = new_text.len();
-        spans.push((start, content_end, full_end, new_start, new_end));
     }
+    let mut new_text = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    for &(ds, de) in &deletions {
+        new_text.push_str(&text[cursor..ds]);
+        cursor = de;
+    }
+    new_text.push_str(&text[cursor..]);
     let map_pos = |old: usize| -> usize {
-        for &(old_cs, old_ce, old_fe, new_cs, new_ce) in &spans {
-            if old < old_cs {
-                return new_cs;
+        let mut removed = 0usize;
+        for &(ds, de) in &deletions {
+            if old <= ds {
+                break;
             }
-            if old <= old_ce {
-                return new_cs + (old - old_cs);
+            if old < de {
+                return ds - removed;
             }
-            if old < old_fe {
-                return new_ce;
-            }
+            removed += de - ds;
         }
-        new_text.len()
+        old - removed
     };
     let next_anchor = map_pos(edit.anchor).min(new_text.len());
     let next_focus = map_pos(edit.focus).min(new_text.len());
@@ -330,6 +347,22 @@ fn remove_promoted_lines(edit: &mut TextEdit, mut should_remove: impl FnMut(&str
     edit.anchor = next_anchor;
     edit.focus = next_focus;
     true
+}
+
+fn strip_leaked_choice_default(field: &Value, next: &mut Draft, provenance: &BTreeSet<String>) {
+    if field["hidden"] == true {
+        return;
+    }
+    if let Some(raw) = field["default"].as_str()
+        && provenance.contains(raw)
+    {
+        if next.edit.text == raw {
+            next.edit = TextEdit::new("");
+        }
+        if next.custom.text == raw {
+            next.custom = TextEdit::new("");
+        }
+    }
 }
 
 pub struct Draft {
@@ -540,13 +573,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                     }
                 }
                 let mut next = fresh_draft(field);
-                if !hidden
-                    && kind == FieldKind::StringFree
-                    && let Some(raw) = field["default"].as_str()
-                    && choice_provenance.contains(raw)
-                {
-                    next.edit = TextEdit::new("");
-                }
+                strip_leaked_choice_default(field, &mut next, &choice_provenance);
                 next.prior_choice_values.extend(choice_provenance);
                 *draft = next;
                 continue;
@@ -596,6 +623,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                     (FieldKind::StringFree, FieldKind::StringOptions) => {
                         if !draft.dirty && draft.edit.text.is_empty() {
                             let mut next = fresh_draft(field);
+                            strip_leaked_choice_default(field, &mut next, &choice_provenance);
                             next.prior_choice_values.extend(choice_provenance);
                             *draft = next;
                             continue;
@@ -606,6 +634,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                     }
                     _ => {
                         let mut next = fresh_draft(field);
+                        strip_leaked_choice_default(field, &mut next, &choice_provenance);
                         next.prior_choice_values.extend(choice_provenance);
                         *draft = next;
                         continue;
@@ -962,14 +991,16 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                             values.insert(item.clone());
                         }
                     }
-                    values.extend(
-                        d.custom
-                            .text
-                            .lines()
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty() && !is_declared(v))
-                            .map(str::to_string),
-                    );
+                    for line in d.custom.text.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if is_declared(trimmed) {
+                            return Err(ValidationError::SelectDeclaredOption);
+                        }
+                        values.insert(trimmed.to_string());
+                    }
                 }
             }
             if values

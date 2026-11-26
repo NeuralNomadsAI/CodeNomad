@@ -225,12 +225,17 @@ fn card_text_colors(
     card_fill: Color,
     hover_fill: Color,
 ) -> (Color, Color) {
-    if disabled {
-        let muted = t.color("text-muted");
-        return (muted, muted);
-    }
     let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
     let rest = effective_backgrounds(card_fill, base);
+    if disabled {
+        let muted = contrasting_color(
+            t,
+            &["text-muted", "text-secondary", "text-primary"],
+            &rest,
+            4.5,
+        );
+        return (muted, muted);
+    }
     if selected {
         let label = contrasting_color(t, &["text-primary", "text-secondary"], &rest, 4.5);
         let desc = contrasting_color(t, &["text-secondary", "text-primary"], &rest, 4.5);
@@ -242,6 +247,37 @@ fn card_text_colors(
         let desc = contrasting_color(t, &["text-secondary", "text-primary"], &backgrounds, 4.5);
         (label, desc)
     }
+}
+
+fn disabled_indicator_colors(t: &Tokens, card_fill: Color) -> (Color, Color, Color) {
+    let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+    let rest = effective_backgrounds(card_fill, base);
+    let mut fill = t.color("surface-control");
+    let mut ind_bgs = composite_over(fill, &rest);
+    let border_candidates = [
+        "border-muted",
+        "border-strong",
+        "text-muted",
+        "text-secondary",
+        "text-primary",
+    ];
+    let mut all_bgs = Vec::with_capacity(rest.len() + ind_bgs.len());
+    all_bgs.extend_from_slice(&rest);
+    all_bgs.extend_from_slice(&ind_bgs);
+    let border = if let Some(color) = try_contrasting_color(t, &border_candidates, &all_bgs, 3.0) {
+        color
+    } else {
+        fill = card_fill;
+        ind_bgs = rest.to_vec();
+        contrasting_color(t, &border_candidates, &rest, 3.0)
+    };
+    let mark = contrasting_color(
+        t,
+        &["text-muted", "text-secondary", "text-primary"],
+        &ind_bgs,
+        3.0,
+    );
+    (fill, border, mark)
 }
 
 fn unchecked_indicator_colors(t: &Tokens, card_fill: Color, hover_fill: Color) -> (Color, Color) {
@@ -493,7 +529,27 @@ pub fn form_textarea<S: 'static>(
         "text-primary",
     ];
     let border = if disabled {
-        t.color("border-muted")
+        let disabled_candidates = [
+            "border-muted",
+            "border-base",
+            "text-muted",
+            "text-secondary",
+            "text-primary",
+        ];
+        if worst_contrast(fill, &[base]) >= 3.0 {
+            t.color("border-muted")
+        } else if let Some(color) = try_contrasting_color(
+            t,
+            &disabled_candidates,
+            &[base, fill_bgs[0], fill_bgs[1]],
+            3.0,
+        ) {
+            color
+        } else {
+            fill = base;
+            fill_bgs = effective_backgrounds(fill, base);
+            contrasting_color(t, &disabled_candidates, &[base], 3.0)
+        }
     } else if invalid {
         let err_candidates = ["status-error", "text-primary", "text-secondary"];
         if let Some(color) =
@@ -520,7 +576,12 @@ pub fn form_textarea<S: 'static>(
         contrasting_color(t, &border_candidates, &[base], 3.0)
     };
     let ink = if disabled {
-        t.color("text-muted")
+        contrasting_color(
+            t,
+            &["text-muted", "text-secondary", "text-primary"],
+            &fill_bgs,
+            4.5,
+        )
     } else {
         contrasting_color(t, &["text-primary", "text-secondary"], &fill_bgs, 4.5)
     };
@@ -605,7 +666,24 @@ pub fn clear_choice_button<S: 'static>(
     let mut fill = card_fill(t, false, disabled);
     let mut hover = card_hover_fill(t, fill);
     let border = if disabled {
-        t.color("border-muted")
+        let rest = effective_backgrounds(fill, base);
+        let disabled_candidates = [
+            "border-muted",
+            "border-base",
+            "text-muted",
+            "text-secondary",
+            "text-primary",
+        ];
+        if worst_contrast(fill, &[base]) >= 3.0 {
+            t.color("border-muted")
+        } else if let Some(color) =
+            try_contrasting_color(t, &disabled_candidates, &[base, rest[0], rest[1]], 3.0)
+        {
+            color
+        } else {
+            fill = base;
+            contrasting_color(t, &disabled_candidates, &[base], 3.0)
+        }
     } else {
         let rest = effective_backgrounds(fill, base);
         let hover_bgs = effective_backgrounds(hover, base);
@@ -890,11 +968,7 @@ pub fn radio_option<S: 'static>(
     let card_fill = card_fill(t, selected, disabled);
     let hover_fill = card_hover_fill(t, card_fill);
     let (indicator_fill, indicator_border, mark_color) = if disabled {
-        (
-            t.color("surface-control"),
-            t.color("border-muted"),
-            t.color("text-muted"),
-        )
+        disabled_indicator_colors(t, card_fill)
     } else if selected {
         checked_radio_colors(t, card_fill)
     } else {
@@ -957,11 +1031,7 @@ pub fn checkbox_option<S: 'static>(
     let card_fill = card_fill(t, checked, disabled);
     let hover_fill = card_hover_fill(t, card_fill);
     let (indicator_fill, indicator_border, mark_color) = if disabled {
-        (
-            t.color("surface-control"),
-            t.color("border-muted"),
-            t.color("text-muted"),
-        )
+        disabled_indicator_colors(t, card_fill)
     } else if checked {
         checked_checkbox_colors(t, card_fill)
     } else {

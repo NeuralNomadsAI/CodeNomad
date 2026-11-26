@@ -1163,6 +1163,42 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
             d.custom_editor().text.push_str("\nnew");
         });
         mrt.frame(2.0);
+        // Typing declared option "prod" into custom-targets while Production is unchecked must
+        // block submission with a field-associated conflict instead of silently dropping it.
+        {
+            let a = mrt.state.agent.as_ref().unwrap();
+            let td = &a.drafts[&("form-multi-edges".into(), "targets".into())];
+            assert_eq!(
+                agent_forms::validate(&a.forms[0].fields[0], td),
+                Err(agent_forms::ValidationError::SelectDeclaredOption)
+            );
+            assert!(agent_forms::answer(&a.forms[0], &a.drafts).is_err());
+        }
+        let conflict_tree = mrt.accessibility_json();
+        assert!(has_state(
+            find_input(&conflict_tree, "custom-targets"),
+            "invalid"
+        ));
+        assert_eq!(
+            find_node(&conflict_tree, "field-error:7:targets").unwrap()["name"],
+            "Select an option"
+        );
+        assert!(has_state(
+            find_node(&conflict_tree, "answer-question").unwrap(),
+            "disabled"
+        ));
+        // Removing "prod" from custom-targets resolves the conflict and submits cleanly.
+        mrt.update(|s, _| {
+            let d = s
+                .agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-multi-edges".into(), "targets".into()))
+                .unwrap();
+            d.custom_editor().text = "extra-custom".into();
+        });
+        mrt.frame(3.0);
         let a = mrt.state.agent.as_ref().unwrap();
         let mans = agent_forms::answer(&a.forms[0], &a.drafts).expect("valid multiselect answer");
         assert_eq!(
@@ -1440,8 +1476,8 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             assert_eq!(md.custom.text, "prod");
             assert_eq!((md.custom.anchor, md.custom.focus), (0, 4));
             assert_eq!(
-                agent_forms::value(&a.forms[0].fields[0], md),
-                Ok(Some(json!([])))
+                agent_forms::validate(&a.forms[0].fields[0], md),
+                Err(agent_forms::ValidationError::SelectDeclaredOption)
             );
             let rd = &a.drafts[&("form-r6-ident".into(), "radio_env".into())];
             assert_eq!(rd.choice, None);
@@ -1458,6 +1494,14 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         }
         let id_tree = id_rt.accessibility_json();
         assert!(has_state(
+            find_input(&id_tree, "custom-multi_env"),
+            "invalid"
+        ));
+        assert_eq!(
+            find_node(&id_tree, "field-error:9:multi_env").unwrap()["name"],
+            "Select an option"
+        );
+        assert!(has_state(
             find_input(&id_tree, "custom-radio_env"),
             "invalid"
         ));
@@ -1469,7 +1513,19 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             find_node(&id_tree, "answer-question").unwrap(),
             "disabled"
         ));
-        // Selecting the declared radio resolves the conflict and submits "prod".
+        // Clearing "prod" from multi_env custom and selecting the declared radio resolves both conflicts.
+        id_rt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r6-ident".into(), "multi_env".into()))
+                .unwrap()
+                .custom_editor()
+                .text
+                .clear();
+        });
+        id_rt.frame(3.0 / 60.0);
         let radio_prod_key = agent_forms::string_option_key("radio_env", "prod");
         tap(&mut id_rt, &radio_prod_key);
         let id_resolved = id_rt.accessibility_json();
@@ -1477,6 +1533,11 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             find_node(&id_resolved, &radio_prod_key).unwrap(),
             "checked"
         ));
+        assert!(!has_state(
+            find_input(&id_resolved, "custom-multi_env"),
+            "invalid"
+        ));
+        assert!(find_node(&id_resolved, "field-error:9:multi_env").is_none());
         assert!(!has_state(
             find_input(&id_resolved, "custom-radio_env"),
             "invalid"
@@ -2266,4 +2327,207 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             ));
         });
     }
+
+    // 8. Round-9 regressions: hidden option provenance into custom editor, active hidden invalid
+    // form alert without leaking secrets, trailing-newline preservation on line promotion, and
+    // Clear returning focus to the cleared field's first radio without selecting it.
+    crate::strings::with_locale("en", || {
+        // 8a. Hidden string option value must NOT leak into custom editor when revealed with new options.
+        let hidden_opt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r9-hidden-opt".into(),
+            title: "Hidden option provenance".into(),
+            fields: vec![json!({
+                "key": "hidden_opt",
+                "title": "Target",
+                "type": "string",
+                "hidden": true,
+                "default": "internal_prod",
+                "options": [{"value": "internal_prod", "label": "Production"}]
+            })],
+        };
+        let (state, _rx) = state_with_form(hidden_opt_form);
+        let mut hopt = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+        hopt.frame(0.0);
+        hopt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields[0] = json!({
+                "key": "hidden_opt",
+                "title": "Target",
+                "type": "string",
+                "custom": true,
+                "default": "internal_prod",
+                "options": [{"value": "other", "label": "Other"}]
+            });
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        hopt.frame(1.0 / 60.0);
+        let hopt_tree = hopt.accessibility_json();
+        assert_eq!(
+            find_input(&hopt_tree, "custom-hidden_opt")["value"]
+                .as_str()
+                .unwrap_or(""),
+            "",
+            "prior hidden option value must not appear in custom textarea on reveal"
+        );
+        assert!(
+            !hopt.elements().iter().any(|e| e
+                .text
+                .as_deref()
+                .is_some_and(|t| t.contains("internal_prod"))),
+            "prior hidden option value must not appear visibly"
+        );
+
+        // 8b. Active hidden required field without default surfaces form-level alert without
+        // exposing hidden keys or values.
+        let hidden_invalid_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r9-hidden-invalid".into(),
+            title: "Hidden blocker".into(),
+            fields: vec![
+                json!({
+                    "key": "visible_note",
+                    "title": "Note",
+                    "type": "string",
+                    "default": "ok"
+                }),
+                json!({
+                    "key": "internal_secret_field",
+                    "title": "Secret",
+                    "type": "string",
+                    "hidden": true,
+                    "required": true
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(hidden_invalid_form);
+        let mut hinv = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+        hinv.frame(0.0);
+        let hinv_tree = hinv.accessibility_json();
+        assert!(has_state(
+            find_node(&hinv_tree, "answer-question").unwrap(),
+            "disabled"
+        ));
+        let alert = find_node(&hinv_tree, "form-unsupported")
+            .expect("active invalid hidden field must surface localized form-level alert");
+        assert_eq!(alert["role"], "alert");
+        assert_eq!(alert["name"], "Unsupported form");
+        assert!(
+            !hinv.elements().iter().any(|e| e
+                .text
+                .as_deref()
+                .is_some_and(|t| t.contains("internal_secret_field"))),
+            "hidden field key must never appear visibly"
+        );
+
+        // 8c. Promoting a multiselect line preserves trailing newline and caret on empty last line.
+        let trailing_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r9-trailing".into(),
+            title: "Trailing newline".into(),
+            fields: vec![json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "custom": true,
+                "options": []
+            })],
+        };
+        let mut tdrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&trailing_form), &mut tdrafts);
+        {
+            let d = tdrafts
+                .get_mut(&("form-r9-trailing".into(), "tags".into()))
+                .unwrap();
+            d.custom_editor().text = "target\nkeep\n".into();
+            d.custom.anchor = 12;
+            d.custom.focus = 12;
+        }
+        let mut refreshed = trailing_form.clone();
+        refreshed.fields[0] = json!({
+            "key": "tags",
+            "title": "Tags",
+            "type": "multiselect",
+            "custom": true,
+            "options": [{"value": "target", "label": "Target"}]
+        });
+        agent_forms::seed(std::slice::from_ref(&refreshed), &mut tdrafts);
+        {
+            let d = tdrafts
+                .get_mut(&("form-r9-trailing".into(), "tags".into()))
+                .unwrap();
+            assert!(d.selected.contains("target"));
+            assert_eq!(d.custom.text, "keep\n");
+            assert_eq!((d.custom.anchor, d.custom.focus), (5, 5));
+            d.custom.text.insert_str(d.custom.focus, "new");
+            assert_eq!(d.custom.text, "keep\nnew");
+        }
+
+        // 8d. Activating Clear on a mid-form optional choice returns focus to that field's first
+        // radio without selecting it, so the next Tab continues forward instead of restarting.
+        let clear_nav_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r9-clear-nav".into(),
+            title: "Clear focus continuity".into(),
+            fields: vec![
+                json!({
+                    "key": "first_bool",
+                    "title": "First",
+                    "type": "boolean",
+                    "default": true
+                }),
+                json!({
+                    "key": "mid_choice",
+                    "title": "Middle choice",
+                    "type": "string",
+                    "default": "b",
+                    "options": [
+                        {"value": "a", "label": "Alpha"},
+                        {"value": "b", "label": "Beta"}
+                    ]
+                }),
+                json!({
+                    "key": "last_tags",
+                    "title": "Last tags",
+                    "type": "multiselect",
+                    "options": [{"value": "z", "label": "Zeta"}]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(clear_nav_form);
+        let mut crt = Runtime::new(state, render_form, (420.0, 820.0), Env::new(false, 1.0));
+        crt.frame(0.0);
+        let mid_a = agent_forms::string_option_key("mid_choice", "a");
+        let mid_b = agent_forms::string_option_key("mid_choice", "b");
+        let mid_clear = agent_forms::clear_option_key("mid_choice");
+        let last_z = agent_forms::multi_option_key("last_tags", "z");
+        crt.update(|_, tx| tx.focus(mid_clear.clone(), true));
+        crt.frame(1.0 / 60.0);
+        assert_eq!(focused_key(&mut crt).as_deref(), Some(mid_clear.as_str()));
+        press_key(&mut crt, Key::Enter);
+        assert_eq!(
+            focused_key(&mut crt).as_deref(),
+            Some(mid_a.as_str()),
+            "Clear must return focus to the cleared field's first radio, not the top of the form"
+        );
+        let after_clear = crt.accessibility_json();
+        assert!(has_state(
+            find_node(&after_clear, &mid_a).unwrap(),
+            "unchecked"
+        ));
+        assert!(has_state(
+            find_node(&after_clear, &mid_b).unwrap(),
+            "unchecked"
+        ));
+        press_key(&mut crt, Key::Tab);
+        assert_eq!(
+            focused_key(&mut crt).as_deref(),
+            Some(last_z.as_str()),
+            "Tab after Clear must advance forward to the next field instead of revisiting earlier fields"
+        );
+    });
 }
