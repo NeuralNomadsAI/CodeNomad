@@ -144,6 +144,29 @@ impl Refresh {
     }
 }
 
+pub(super) fn drain_watch_hints(l: &crate::launcher::Launcher, ui: &mut super::Ui, now: f64) {
+    let Some(watch) = &l.catalogue_watch else {
+        return;
+    };
+    let changes = watch.take();
+    for entry in ui
+        .entries
+        .iter_mut()
+        .filter(|_| cfg!(target_os = "windows"))
+    {
+        let Some(project) = &entry.project else {
+            continue;
+        };
+        if match &changes {
+            CatalogueChanges::None => false,
+            CatalogueChanges::All => true,
+            CatalogueChanges::Workspaces(ids) => ids.contains(&project.id),
+        } {
+            entry.catalogue.schedule(now);
+        }
+    }
+}
+
 pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let visible = s.shell.visible(0)
         || s.screen
@@ -155,25 +178,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let Some(ui) = &mut s.workspace else {
         return false;
     };
-    if let Some(watch) = &l.catalogue_watch {
-        let changes = watch.take();
-        for entry in ui
-            .entries
-            .iter_mut()
-            .filter(|_| cfg!(target_os = "windows"))
-        {
-            let Some(project) = &entry.project else {
-                continue;
-            };
-            if match &changes {
-                CatalogueChanges::None => false,
-                CatalogueChanges::All => true,
-                CatalogueChanges::Workspaces(ids) => ids.contains(&project.id),
-            } {
-                entry.catalogue.schedule(now);
-            }
-        }
-    }
+    drain_watch_hints(l, ui, now);
     let entry = &mut ui.entries[ui.active];
     let refresh = &mut entry.catalogue;
     if refresh
@@ -505,5 +510,166 @@ mod tests {
                     .is_some()
             );
         });
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn queued_pre_create_watch_hint_is_fenced_and_preserves_uncertain_create_and_error() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            sync::Arc,
+            time::{Duration, Instant},
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (send_second_tx, send_second_rx) = std::sync::mpsc::channel::<()>();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut req = [0u8; 2048];
+            let _ = stream.read(&mut req);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n\
+data: {\"type\":\"workspace.worktreesChanged\",\"workspaceId\":\"p1\"}\n\n",
+            );
+            let _ = stream.flush();
+            if send_second_rx.recv_timeout(Duration::from_secs(5)).is_ok() {
+                let _ = stream.write_all(
+                    b"data: {\"type\":\"workspace.worktreesChanged\",\"workspaceId\":\"p1\"}\n\n",
+                );
+                let _ = stream.flush();
+            }
+            let _ = done_rx.recv_timeout(Duration::from_secs(5));
+        });
+
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        state.workspace = Some(workspace::Ui::new());
+        workspace::connected(&mut state);
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1400.0, 900.0),
+            rune::Env::new(false, 1.0),
+        );
+        let backend = crate::backend::Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+        let (watch, task) =
+            codenomad_client::stream::CatalogueWatch::new(backend.clone(), Arc::new(|| {}));
+        crate::platform::spawn(task);
+
+        let project = Project {
+            id: "p1".into(),
+            path: "/repo".into(),
+        };
+        rt.update(|s, _| {
+            {
+                let launcher = s.screen.launcher_mut().unwrap();
+                launcher.connection = Some(backend);
+                launcher.project = Some(project.clone());
+                launcher.catalogue_watch = Some(watch);
+            }
+            workspace::opened(s, &project);
+            s.shell.wanted = [Some([true, false]); 2];
+        });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        rt.update(|s, _| {
+            assert!(s.shell.visible(0));
+            // Clear the initial open schedule so the only queued hint comes from CatalogueWatch.
+            s.workspace.as_mut().unwrap().entries[0].catalogue.due = None;
+        });
+
+        let wait_worktrees_hint = |rt: &mut rune::Runtime<crate::State>, label: &str| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let observed = rt
+                    .state
+                    .screen
+                    .launcher()
+                    .and_then(|l| l.catalogue_watch.as_ref())
+                    .is_some_and(|w| {
+                        w.take_workspace_events().2.iter().any(|ev| {
+                            matches!(
+                                ev,
+                                codenomad_client::transport::WorkspaceEvent::WorktreesChanged {
+                                    workspace_id
+                                } if workspace_id == "p1"
+                            )
+                        })
+                    });
+                if observed {
+                    return;
+                }
+                assert!(Instant::now() < deadline, "timed out waiting for {label}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+
+        wait_worktrees_hint(&mut rt, "pre-create watch hint");
+
+        rt.update(|s, tx| {
+            assert!(
+                s.workspace.as_ref().unwrap().entries[0]
+                    .catalogue
+                    .due
+                    .is_none(),
+                "hint must still be sitting in CatalogueWatch before create starts"
+            );
+            workspace::fence_catalogue_for_create(s);
+            {
+                let entry = &s.workspace.as_ref().unwrap().entries[0];
+                assert!(
+                    entry.catalogue.due.is_some(),
+                    "pre-create watch hint must be drained and preserved as due"
+                );
+                assert!(
+                    entry.catalogue.pre_create_only,
+                    "drained pre-create watch hint must be fenced behind pre_create_only"
+                );
+            }
+            {
+                let launcher = s.screen.launcher_mut().unwrap();
+                launcher.pending = false;
+                launcher.creation_uncertain = true;
+                launcher.creation_uncertain_linked = None;
+                launcher.error = Some("rune.create_error");
+            }
+            let _ = super::poll(s, 3.0, tx);
+            let entry = &s.workspace.as_ref().unwrap().entries[0];
+            let launcher = s.screen.launcher().unwrap();
+            assert!(
+                entry.catalogue.request.is_none(),
+                "queued pre-create watch hint must not dispatch during uncertain root create"
+            );
+            assert!(launcher.creation_uncertain);
+            assert_eq!(launcher.error, Some("rune.create_error"));
+        });
+
+        let _ = send_second_tx.send(());
+        wait_worktrees_hint(&mut rt, "post-create watch hint");
+
+        rt.update(|s, tx| {
+            let _ = super::poll(s, 4.0, tx);
+            let entry = &s.workspace.as_ref().unwrap().entries[0];
+            assert!(
+                !entry.catalogue.pre_create_only,
+                "post-create watch hint must release pre_create_only hold"
+            );
+            assert!(
+                entry.catalogue.request.is_some(),
+                "post-create watch hint must dispatch reconciliation refresh"
+            );
+            // Stop watch task cleanly before dropping server.
+            s.screen.launcher_mut().unwrap().catalogue_watch = None;
+        });
+
+        let _ = done_tx.send(());
+        let _ = server.join();
     }
 }

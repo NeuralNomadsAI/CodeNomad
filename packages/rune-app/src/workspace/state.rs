@@ -565,9 +565,14 @@ pub fn schedule_catalogue_refresh(s: &mut State) {
 }
 
 pub fn fence_catalogue_for_create(s: &mut State) {
-    if let Some(ui) = &mut s.workspace {
-        ui.entries[ui.active].catalogue.fence_for_create(ui.clock);
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    let now = ui.clock;
+    if let Some(l) = s.screen.launcher() {
+        catalogue::drain_watch_hints(l, ui, now);
     }
+    ui.entries[ui.active].catalogue.fence_for_create(now);
 }
 pub fn has_conversation_stream(s: &State) -> bool {
     s.incoming
