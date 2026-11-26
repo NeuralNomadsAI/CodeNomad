@@ -111,9 +111,10 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       result = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, doc.id,
         { directory: props.directory, requestID: hold.requestID }, signal ?? AbortSignal.timeout(30_000))
     } catch (error) {
+      if (!current()) return
       if (hold.action === "check" && notDispatchedMissionScheduleAttempt(error, hold, doc.id) && holds.get(key) === hold) {
         if (hold.minimumRevision !== undefined) settle(key, hold, current, hold.minimumRevision)
-        else { holds.delete(key); bump(); if (current()) props.refresh() }
+        else { holds.delete(key); bump(); props.refresh() }
         return
       }
       const partial = partialReceipt(error)

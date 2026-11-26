@@ -182,7 +182,9 @@ export async function executeScheduledMission(deps: ScheduledMissionDeps, args: 
               await owned.refresh(); check(owned)
             }
             const ownCheckProof = checking && checkResult.pending === false ? (
-              checkResult.checkReceipt && checkResult.checkReceipt.id === missionID
+              checkResult.deleted === true && checkResult.document === null
+                && checkResult.deletionReceipt?.id === missionID
+                && checkResult.checkReceipt && checkResult.checkReceipt.id === missionID
                 && checkResult.checkReceipt.requestID === value.requestID
                 && checkResult.checkReceipt.expectedRevision === value.expectedRevision
                 && checkResult.checkReceipt.action === "check"
@@ -209,7 +211,7 @@ export async function executeScheduledMission(deps: ScheduledMissionDeps, args: 
             const borrowedCheckRead = method === "GET" && !!query.data.requestID && existing.hasCheck(query.data.requestID)
             const borrowedCheckPost = method === "POST" && value?.action === "check" && value.requestID !== existing.binding.requestID
             if (query.data.requestID && query.data.requestID !== existing.binding.requestID && !borrowedCheckRead
-              && !(borrowedCheckPost && query.data.requestID === value.requestID))
+              && !(method === "POST" && value && query.data.requestID === value.requestID))
               throw new ScheduledHoldError(409, "Exact held Mission request required")
             const workspace = manager.get(selected.data.id), base = manager.getServiceLocation(selected.data.id)
             const connection = await lifetime.wait(manager.getSharedServiceConnection(selected.data.id))

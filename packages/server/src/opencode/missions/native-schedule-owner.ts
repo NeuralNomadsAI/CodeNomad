@@ -126,7 +126,10 @@ export class NativeScheduleCalendarOwner {
   }
   private applyControl(input: NativeScheduleOwnerControl, processAfterCommit: boolean): Promise<MissionDocument> {
     return this.options.store.withExclusion(async locked => {
-      let doc = await this.required(locked, input.missionID)
+      const existing = await locked.read(input.missionID)
+      if (existing && "deletedAt" in existing && input.action === "check")
+        throw new NativeScheduleControlRefusal(input, "control-conflict")
+      let doc = existing && !("deletedAt" in existing) ? existing : await this.required(locked, input.missionID)
       const assertAutomaticStart = (value: MissionDocument) => {
         if (!input.automaticStart) return
         const creation = value.creation, start = creation?.automaticStart

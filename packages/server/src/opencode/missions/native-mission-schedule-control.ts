@@ -211,7 +211,14 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
         ...(request.transport.principal?.kind === "agent" && request.transport.principal.creationRequestID
           ? { automaticStart: { ...request.transport.principal, creationRequestID: request.transport.principal.creationRequestID,
             creationDigest: request.transport.principal.creationDigest! } } : {}) }))
-      if (prepared instanceof NativeScheduleControlRefusal) return { document: null, pending: false, refusal: prepared.refusal }
+      if (prepared instanceof NativeScheduleControlRefusal) {
+        if (action === "check") {
+          const latest = yield* Effect.promise(() => store.read(missionID))
+          if (latest && "deletedAt" in latest && latest.checks?.some(item => item.requestID === requestID && item.expectedRevision === expectedRevision))
+            return yield* Effect.promise(() => nativeMissionScheduleResult(ctx, latest, run, false, requestID))
+        }
+        return { document: null, pending: false, refusal: prepared.refusal }
+      }
       doc = prepared
       admitControl(doc)
       doc = yield* Effect.tryPromise(() => owner.reconcile(missionID))

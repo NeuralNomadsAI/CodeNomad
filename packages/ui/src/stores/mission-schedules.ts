@@ -109,14 +109,9 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
         pages++
         const merged = [...new Map([...snapshot(), ...collected.values()].map(row => [row.id, row])).values()]
         setRows(merged)
-<<<<<<< HEAD
-        setNext(after); setFresh(previous => new Set([...previous, ...collected.keys()])); setError(false)
-        writeScheduleListCache(scope, { rows: merged, next: after, client: owner.client, generation: owner.generation, attachment: owner.attachment })
-=======
         setNext(after); setFresh(previous => new Set([...previous, ...collected.keys()]))
         setRecovery(previous => new Set([...previous].filter(id => !collected.has(id)))); setError(false)
-        writeScheduleListCache(scope, { rows: merged, next: after, pages, client: owner.client, generation: owner.generation, attachment: owner.attachment })
->>>>>>> 0673d0ca3 (fix(missions): harden borrowed check recovery, compaction races, per-attempt busy conflicts, and out-of-page pending checks)
+        writeScheduleListCache(scope, { rows: merged, next: after, client: owner.client, generation: owner.generation, attachment: owner.attachment })
         published(owner, [...collected.values()])
         return
       }

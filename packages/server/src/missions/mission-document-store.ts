@@ -186,7 +186,9 @@ export class NativeMissionDocumentStore {
       for (const check of owner?.checks ?? [])
         if (completedOriginals.has(check.originalRequestID))
           settledChecks.set(check.requestID, { requestID: check.requestID, expectedRevision: check.expectedRevision })
-      const checks = [...settledChecks.values()].slice(-16)
+      const checks = [...settledChecks.values()]
+        .sort((a, b) => a.expectedRevision - b.expectedRevision)
+        .slice(-16)
       const tombstone = missionTombstoneSchema.parse({ version: 1, id, projectID: this.projectID, projectCanonical: this.projectCanonical,
         revision: expectedRevision + 1, requestID: doc.deletion.requestID, expectedRevision: doc.deletion.expectedRevision,
         deleteManagedSessions: doc.deletion.deleteManagedSessions, deletedAt: reservation.deletedAt, timeGeneration: doc.timeGeneration,
