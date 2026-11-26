@@ -1324,3 +1324,112 @@ fn r1_continuation_epoch_same_tick_401_and_retained_proof_revisions() {
         assert!(h.panel.schedules.instructions_open.is_empty());
     });
 }
+
+#[test]
+fn late_sibling_401_between_collect_and_apply_blocks_activation_play() {
+    crate::platform::block_on(async {
+        let mut h = H::new().await;
+        let mut s_a = row("msn_a", "Schedule A", "paused", 2, "null");
+        s_a["availableActions"] = js(r#"["play","delete"]"#);
+        s_a["scheduleActivation"] = Value::Null;
+        let mut s_b = row("msn_b", "Schedule B", "running", 3, "null");
+        s_b["availableActions"] = js(r#"["pause","delete"]"#);
+
+        let (s, c) = h.panel.schedule_parts();
+        s.show(true);
+        s.refresh(c);
+        h.http
+            .accept()
+            .await
+            .reply(200, list(vec![s_a.clone(), s_b.clone()], None))
+            .await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.rows.len() == 2)
+            .await;
+
+        // Start a Pause control on msn_b and leave its HTTP request open.
+        assert!(h.act(G::Select("msn_b".into())));
+        h.reply_lc(vec![s_a.clone(), s_b.clone()], true).await;
+        h.pump(|p, _| {
+            !p.schedules.loading()
+                && p.schedules.is_fresh("msn_b")
+                && p.schedules.capability == Some(Cap::Available)
+        })
+        .await;
+        assert!(h.act(G::Action(A::Pause)));
+        h.http.accept().await.reply(200, rdoc(s_b.clone())).await;
+        let kb = h.key("msn_b");
+        h.pump(|_, hs| matches!(hs.get(&kb), Some((P::Control(_, false), true))))
+            .await;
+        let ctrl_b = h.http.accept().await;
+
+        // Switch to msn_a and start Play activation while msn_b's control is still in flight.
+        assert!(h.act(G::Select("msn_a".into())));
+        h.reply_lc(vec![s_a.clone(), s_b.clone()], true).await;
+        h.pump(|p, _| {
+            !p.schedules.loading()
+                && p.schedules.is_fresh("msn_a")
+                && p.schedules.capability == Some(Cap::Available)
+        })
+        .await;
+        assert!(h.act(G::Action(A::Play)));
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, rdoc(s_a.clone())).await;
+            }
+        }
+        let ka = h.key("msn_a");
+        h.pump(|_, hs| {
+            matches!(
+                hs.get(&ka),
+                Some((
+                    P::Activation {
+                        action: A::Play,
+                        ..
+                    },
+                    true
+                ))
+            )
+        })
+        .await;
+        let act_a = h.http.accept().await;
+        let rid_a = act_a.body["requestID"].as_str().unwrap().to_owned();
+
+        // Activation replies Ready first and is collected by collect_ready.
+        act_a
+            .reply(
+                200,
+                json!({"document": {"revision": 3, "scheduleActivation": {"requestID": rid_a, "expectedRevision": 2, "state": "ready"}}}),
+            )
+            .await;
+        let mut exp = Vec::new();
+        let ready = loop {
+            let (changed, ready) = h.holds.collect_ready(&mut exp);
+            if changed {
+                break ready;
+            }
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(25), h.done.recv()).await;
+        };
+        assert!(exp.is_empty());
+
+        // Sibling control returns 401 AFTER collect_ready and BEFORE apply_ready.
+        while h.done.try_recv().is_ok() {}
+        ctrl_b.reply(401, json!({"error": "unauthorized"})).await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), h.done.recv()).await;
+
+        let av = h.panel.active_schedule_view("occ-1");
+        assert!(av.is_some());
+        let (_, evs) = h.holds.apply_ready(ready, av.as_ref(), &exp);
+        h.panel.apply_schedule_hold_events(&evs);
+
+        // Must settle to Publication(3) without chaining POST /missions/msn_a/schedule.
+        assert!(matches!(h.holds.get(&ka), Some((P::Publication(3), false))));
+        assert!(!h.holds.drain_auth_expired().is_empty());
+        let sa_rev3 = row("msn_a", "Schedule A", "paused", 3, "null");
+        h.reply_lc(vec![sa_rev3, s_b], true).await;
+        h.pump(|_, hs| hs.get(&ka).is_none()).await;
+        h.http.quiet().await;
+    });
+}

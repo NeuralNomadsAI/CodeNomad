@@ -445,15 +445,13 @@ impl ScheduleHolds {
 
     pub(crate) fn apply_ready(
         &mut self,
-        ready: ReadyScheduleReplies,
+        mut ready: ReadyScheduleReplies,
         active: Option<&ActiveScheduleView<'_>>,
         exp: &[Backend],
     ) -> (bool, Vec<ScheduleHoldEvent>) {
-        let mut changed = self.drain_auth_sink();
         let mut all_expired: Vec<Backend> = exp.to_vec();
-        for b in &self.auth_expired {
-            push_auth_expired(&mut all_expired, b.clone());
-        }
+        let (mut changed, extra) = self.collect_ready(&mut all_expired);
+        ready.0.extend(extra.0);
         let mut evs = Vec::new();
         for (key, b, reply) in ready.0 {
             changed = true;

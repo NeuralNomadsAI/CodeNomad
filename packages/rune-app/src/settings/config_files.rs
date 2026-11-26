@@ -45,7 +45,8 @@ impl Editor {
 
     pub fn request_file(&mut self, id: String) {
         self.requested_id = Some(id);
-        if self.read.is_none() && !self.busy() && self.confirm.is_none() {
+        if self.read.is_none() && !self.busy() {
+            self.confirm = None;
             self.notice = None;
         }
         self.apply_requested();
@@ -60,7 +61,7 @@ impl Editor {
             || self.read.is_some()
             || self.confirm.is_some()
             || self.goal.is_some()
-            || self.notice.is_some()
+            || self.notice.is_some_and(|key| key.contains(".errors."))
         {
             return false;
         }
@@ -79,7 +80,6 @@ impl Editor {
             return false;
         }
         if self.dirty() {
-            self.requested_id = None;
             self.confirm = Some(index);
         } else {
             self.reload(index);
@@ -161,8 +161,18 @@ impl Editor {
                     self.original = Some(input);
                     self.diagnose();
                 }
-                Read::Content(_, None) => {
-                    self.notice = Some("settings.configFiles.errors.loadContent")
+                Read::Content(index, None) => {
+                    let superseded = self.requested_id.as_deref().is_some_and(|id| {
+                        self.files.as_ref().is_some_and(|files| {
+                            files
+                                .iter()
+                                .position(|file| file.id == id)
+                                .is_some_and(|target| target != index)
+                        })
+                    });
+                    if !superseded {
+                        self.notice = Some("settings.configFiles.errors.loadContent");
+                    }
                 }
             }
             changed = true;
@@ -368,10 +378,13 @@ impl Editor {
                     move |s| {
                         let editor = edit(s);
                         editor.notice = None;
-                        editor.goal = editor
-                            .files
-                            .as_ref()
-                            .and_then(|list| (!list.is_empty()).then_some(0));
+                        editor.goal = editor.files.as_ref().and_then(|list| {
+                            editor
+                                .requested_id
+                                .as_deref()
+                                .and_then(|id| list.iter().position(|file| file.id == id))
+                                .or_else(|| (!list.is_empty()).then_some(0))
+                        });
                     },
                 ));
             }
@@ -379,8 +392,12 @@ impl Editor {
         if let Some(index) = self.confirm {
             layers.push(confirm_discard(move |s, accept, _| {
                 let editor = edit(s);
-                if editor.confirm.take() == Some(index) && accept {
-                    editor.reload(index);
+                if editor.confirm.take() == Some(index) {
+                    if accept {
+                        editor.reload(index);
+                    } else {
+                        editor.requested_id = None;
+                    }
                 }
             }));
         }
@@ -404,6 +421,23 @@ pub(super) fn confirm_discard<S: 'static>(
 mod tests {
     use super::*;
 
+    fn sample_files() -> Vec<api::File> {
+        vec![
+            api::File {
+                id: "a".into(),
+                label: "A".into(),
+                path: "/a.json".into(),
+                language: "json".into(),
+            },
+            api::File {
+                id: "b".into(),
+                label: "B".into(),
+                path: "/b.json".into(),
+                language: "json".into(),
+            },
+        ]
+    }
+
     #[test]
     fn switching_and_reloading_a_dirty_config_require_consent() {
         let mut editor = Editor {
@@ -420,6 +454,36 @@ mod tests {
         assert_eq!(editor.confirm.take(), Some(0));
         assert_eq!(editor.goal, None);
         editor.suspend();
+        assert_eq!(editor.draft.text, "{/* draft */}");
+    }
+
+    #[test]
+    fn requested_file_survives_dirty_confirm_suspend_and_superseded_read_error() {
+        let mut editor = Editor {
+            files: Some(sample_files()),
+            active: Some(0),
+            original: Some("{}".into()),
+            draft: TextEdit::new("{/* draft */}"),
+            ..Editor::default()
+        };
+        editor.request_file("b".into());
+        assert_eq!(editor.confirm, Some(1));
+        assert_eq!(editor.requested_id.as_deref(), Some("b"));
+        editor.suspend();
+        assert_eq!(editor.confirm, None);
+        assert_eq!(editor.requested_id.as_deref(), Some("b"));
+        assert!(editor.apply_requested());
+        assert_eq!(editor.confirm, Some(1));
+
+        // Accepting discard starts reload while preserving requested_id across suspend during read
+        editor.confirm = None;
+        editor.reload(1);
+        assert_eq!(editor.goal, Some(1));
+        editor.suspend();
+        assert_eq!(editor.goal, None);
+        assert_eq!(editor.requested_id.as_deref(), Some("b"));
+        assert!(editor.apply_requested());
+        assert_eq!(editor.confirm, Some(1));
         assert_eq!(editor.draft.text, "{/* draft */}");
     }
 }

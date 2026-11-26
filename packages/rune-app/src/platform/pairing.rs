@@ -49,6 +49,7 @@ pub fn available() -> bool {
 }
 
 pub fn observe(s: &mut State) {
+    crate::workspace::revoke_schedule_continuations(s);
     if s.pairing.result.is_some() || !available() {
         return;
     }

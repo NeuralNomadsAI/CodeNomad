@@ -897,6 +897,17 @@ pub(super) fn deliver_mission_auth_expired(
     if expired.is_empty() {
         return false;
     }
+    if let Some(ui) = &mut s.workspace {
+        for entry in &mut ui.entries {
+            if let Some(panel) = entry.missions.as_mut()
+                && expired
+                    .iter()
+                    .any(|b| panel.briefing_backend().client.same_connection(&b.client))
+            {
+                panel.schedules.revoke_continuation();
+            }
+        }
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut changed = false;
@@ -910,6 +921,17 @@ pub(super) fn deliver_mission_auth_expired(
         let _ = expired;
         crate::platform::pairing::observe(s);
         true
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn revoke_schedule_continuations(s: &mut State) {
+    if let Some(ui) = &mut s.workspace {
+        for entry in &mut ui.entries {
+            if let Some(panel) = entry.missions.as_mut() {
+                panel.schedules.revoke_continuation();
+            }
+        }
     }
 }
 

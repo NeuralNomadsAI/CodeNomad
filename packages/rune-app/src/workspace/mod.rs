@@ -17,6 +17,8 @@ pub(crate) use state::has_wake_lock_eligible_work;
 pub(crate) use state::native_window_store;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::poll_cached_notifications;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::revoke_schedule_continuations;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use state::set_files_tab;
 pub(crate) use state::{
