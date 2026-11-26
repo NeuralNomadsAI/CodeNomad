@@ -10,6 +10,7 @@ struct BrowserStage {
     window: web_sys::Window,
     storage: web_sys::Storage,
     payload: std::cell::RefCell<(Vec<u8>, Vec<(String, String)>)>,
+    pending_file_drafts: std::cell::RefCell<Option<Vec<u8>>>,
     restore: std::cell::Cell<RestoreMode>,
     snapshot_suppressed: std::cell::Cell<bool>,
     frozen: std::cell::Cell<bool>,
@@ -33,6 +34,15 @@ impl BrowserStage {
     fn depart(&self) {
         if self.departing.replace(true) {
             return;
+        }
+        if !self.frozen.get()
+            && self.restore.get() == RestoreMode::Enabled
+            && let Ok(pending) = self.pending_file_drafts.try_borrow()
+            && let Some(bytes) = pending.as_ref()
+            && bytes.len() <= FILE_DRAFT_BYTES
+            && let Ok(text) = std::str::from_utf8(bytes)
+        {
+            let _ = self.storage.set_item(Store::FILE_DRAFTS, text);
         }
         let current = self.payload.try_borrow();
         let release_records = if self.frozen.get() || self.restore.get() == RestoreMode::Unknown {
@@ -113,6 +123,7 @@ impl Store {
             window: window.clone(),
             storage: storage.clone(),
             payload: Default::default(),
+            pending_file_drafts: Default::default(),
             restore: std::cell::Cell::new(restore),
             snapshot_suppressed: std::cell::Cell::new(false),
             frozen: std::cell::Cell::new(false),
@@ -174,10 +185,15 @@ impl Store {
         self.staged.frozen.set(true);
         self.staged.bump_generation();
         self.staged.payload.borrow_mut().0.clear();
+        self.staged.pending_file_drafts.borrow_mut().take();
+    }
+    pub fn stage_pending_file_drafts(&self, bytes: Option<Vec<u8>>) {
+        *self.staged.pending_file_drafts.borrow_mut() = bytes;
     }
     pub async fn set_restore_enabled(&self, enabled: bool) -> Result<bool> {
         self.staged.frozen.set(true);
         self.staged.bump_generation();
+        self.staged.pending_file_drafts.borrow_mut().take();
         if enabled {
             // Only purge leftover startup keys when transitioning from a confirmed Disabled state;
             // an unreadable/malformed preference must not erase user data on enable.
@@ -218,6 +234,7 @@ impl Store {
         self.staged.frozen.set(true);
         self.staged.bump_generation();
         self.staged.payload.borrow_mut().0.clear();
+        self.staged.pending_file_drafts.borrow_mut().take();
         let outcome = self.remove_startup_keys();
         if outcome.state_ok {
             self.staged.snapshot_suppressed.set(true);
@@ -258,7 +275,9 @@ impl Store {
         }
         self.storage
             .set_item(Self::FILE_DRAFTS, std::str::from_utf8(bytes)?)
-            .map_err(|_| "file draft write failed".into())
+            .map_err(|_| "file draft write failed")?;
+        self.staged.pending_file_drafts.borrow_mut().take();
+        Ok(())
     }
     pub async fn load_outlines(&self) -> Result<Option<Vec<u8>>> {
         let raw = self
@@ -273,6 +292,12 @@ impl Store {
         &self,
         bytes: Vec<u8>,
     ) -> impl std::future::Future<Output = Result<()>> + 'static {
+        self.start_save_outlines_with(move || bytes)
+    }
+    pub fn start_save_outlines_with(
+        &self,
+        encode: impl FnOnce() -> Vec<u8> + 'static,
+    ) -> impl std::future::Future<Output = Result<()>> + 'static {
         let generation = self.staged.admit();
         let storage = self.storage.clone();
         let staged = self.staged.clone();
@@ -283,6 +308,7 @@ impl Store {
             if !staged.allows(generation) {
                 return Ok(());
             }
+            let bytes = encode();
             if bytes.len() > OUTLINE_BYTES || staged.departing.get() {
                 return Err("outline store unavailable".into());
             }

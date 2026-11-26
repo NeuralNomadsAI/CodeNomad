@@ -518,6 +518,13 @@ impl Persistence {
                 self.cleared_file_drafts_revision = Some(next_rev);
                 self.saved_file_drafts = drafts_rev;
                 self.attempted_file_drafts = drafts_rev;
+                #[cfg(target_arch = "wasm32")]
+                if let Some(store) = &self.store {
+                    let staged = documents
+                        .file_draft_snapshot(drafts_rev)
+                        .map(|(_, bytes)| bytes);
+                    store.stage_pending_file_drafts(staged);
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     self.file_drafts_dirty_revision = next_rev;
@@ -683,6 +690,10 @@ impl Persistence {
                 return;
             }
             self.cleared_file_drafts_revision = None;
+            #[cfg(target_arch = "wasm32")]
+            if let Some(store) = &self.store {
+                store.stage_pending_file_drafts(None);
+            }
         }
         #[cfg(target_arch = "wasm32")]
         {

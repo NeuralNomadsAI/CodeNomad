@@ -172,13 +172,25 @@ impl PaletteMutation {
         self.op.target_dark()
     }
 
-    pub(super) fn needs_fresh_snapshot(&self, _snapshot: &Value) -> bool {
-        matches!(
-            self.op,
+    pub(super) fn needs_fresh_snapshot(&self, snapshot: &Value) -> bool {
+        match &self.op {
             PaletteOp::SelectPreset { .. }
-                | PaletteOp::SelectCustom { .. }
-                | PaletteOp::SavePreset { .. }
-        )
+            | PaletteOp::SelectCustom { .. }
+            | PaletteOp::SavePreset { .. } => true,
+            PaletteOp::SaveOverride { dark, .. }
+            | PaletteOp::ResetOverride { dark, .. }
+            | PaletteOp::SaveCustom { dark, .. } => {
+                let sibling_dark = !*dark;
+                let sibling_mode = mode_str(sibling_dark);
+                !is_valid_mode(&snapshot["appearancePreferences"]["mode"])
+                    || (snapshot["appearancePreferences"][sibling_mode].is_null()
+                        && legacy_scheme(snapshot, &self.legacy_config)
+                            .is_some_and(|l| l.dark == sibling_dark))
+            }
+            PaletteOp::SelectBuiltIn { .. }
+            | PaletteOp::DeletePreset { .. }
+            | PaletteOp::SetMode { .. } => false,
+        }
     }
 
     pub(super) fn reject_before_send(&self, snapshot: &Value) -> bool {
@@ -274,6 +286,7 @@ impl PaletteMutation {
                 PaletteOp::SaveOverride { id, .. } | PaletteOp::ResetOverride { id, .. } => {
                     Some(*id)
                 }
+                PaletteOp::SaveCustom { .. } => Some("custom"),
                 _ => None,
             };
             migrate_active_builtin_override(
@@ -601,7 +614,7 @@ pub(super) fn migrate_active_builtin_override(
     if current.preset_id.is_some() {
         return;
     }
-    let Some(prev_id) = current.builtin_id.filter(|id| *id != "custom") else {
+    let Some(prev_id) = current.builtin_id else {
         return;
     };
     if skip_builtin == Some(prev_id) {
@@ -610,6 +623,20 @@ pub(super) fn migrate_active_builtin_override(
     let Some(prev_colors) = current.colors else {
         return;
     };
+    if prev_id == "custom" {
+        if snapshot["customColorScheme"].is_null()
+            && legacy_config["customColorScheme"].is_null()
+            && patch["customColorScheme"].is_null()
+            && (!prev_colors.is_default_custom() || !target_dark)
+        {
+            patch["customColorScheme"] = json!({
+                "id": "custom",
+                "appearance": mode_str(target_dark),
+                "colors": prev_colors.to_json(),
+            });
+        }
+        return;
+    }
     if !snapshot["colorSchemeOverrides"][prev_id].is_null()
         || !patch["colorSchemeOverrides"][prev_id].is_null()
     {

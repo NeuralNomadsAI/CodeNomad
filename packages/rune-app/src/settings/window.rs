@@ -111,26 +111,6 @@ pub(super) fn launch_preferences(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn reopen_detached(
-    shared: Rc<RefCell<Preferences>>,
-    request: Rc<view::CloseRequest>,
-    editor: Option<memory::editor::Editor>,
-    focused: Rc<Cell<bool>>,
-    locale: &'static str,
-) {
-    let token = Rc::new(Cell::new(false));
-    let mut state = view::Window::new(shared, token).with_close_request(request, editor);
-    state.focused = focused;
-    let spec = strings::with_locale(locale, view::spec);
-    let _ = rune::open_window(
-        rune::WindowSpec::new("preferences", spec)
-            .state(state)
-            .on_close(view::closed)
-            .on_focus(view::focus),
-    );
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn settle_close(shared: &RefCell<Preferences>, warn: impl FnOnce(&'static str)) {
     let mut prefs = shared.borrow_mut();
     if !prefs.flush() {
@@ -145,54 +125,48 @@ pub(super) fn warn_save_failed(locale: &'static str) {
     crate::platform::preferences_save_warning(locale, view::save_warning);
 }
 
+pub(crate) fn close_request(
+    s: &mut State,
+    _tx: &mut rune::Tx,
+) -> rune_theme_codenomad::shell::CloseResponse {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some((window, token, request)) = &s.settings.window {
+        let alive = Rc::strong_count(token) > 1;
+        let has_reopen = request.reopen.borrow().is_some()
+            || request.config_reopen.borrow().is_some()
+            || request.palette_reopen.borrow().is_some();
+        if (alive && request.guard_close.get()) || has_reopen {
+            request.requested.set(true);
+            if alive {
+                window.focus();
+                if let Some(wake) = &s.settings.shared.borrow().window_wake {
+                    wake();
+                }
+            } else {
+                let request = request.clone();
+                let editor = request.reopen.borrow_mut().take();
+                launch_preferences(s, request, editor);
+            }
+            return rune_theme_codenomad::shell::CloseResponse::Defer;
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = s;
+    rune_theme_codenomad::shell::CloseResponse::Close
+}
+
 pub(crate) fn close(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        s.notifications.preferences_focused.set(false);
-        s.settings.shared.borrow_mut().main_wake = None;
-        if let Some((window, token, request)) = s.settings.window.take() {
-            let alive = Rc::strong_count(&token) > 1;
-            let has_reopen = request.reopen.borrow().is_some()
-                || request.config_reopen.borrow().is_some()
-                || request.palette_reopen.borrow().is_some();
-            if (alive && request.guard_close.get()) || has_reopen {
-                request.detached.set(true);
-                request.requested.set(true);
-                if alive {
-                    window.focus();
-                    if let Some(wake) = &s.settings.shared.borrow().window_wake {
-                        wake();
-                    }
-                } else {
-                    let locale = s
-                        .settings
-                        .shared
-                        .borrow()
-                        .locale()
-                        .unwrap_or_else(strings::locale);
-                    let editor = request.reopen.borrow_mut().take();
-                    reopen_detached(
-                        s.settings.shared.clone(),
-                        request,
-                        editor,
-                        s.notifications.preferences_focused.clone(),
-                        locale,
-                    );
-                }
-                return;
-            }
-            #[cfg(target_os = "windows")]
-            crate::platform::preferences_placement::closed();
-            s.settings.shared.borrow_mut().hide_opencode();
-            settle_close(&s.settings.shared, warn_save_failed);
-            token.set(true);
-            window.close();
-            return;
-        }
         #[cfg(target_os = "windows")]
         crate::platform::preferences_placement::closed();
+        s.notifications.preferences_focused.set(false);
         s.settings.shared.borrow_mut().hide_opencode();
         settle_close(&s.settings.shared, warn_save_failed);
+        if let Some((window, token, _)) = s.settings.window.take() {
+            token.set(true);
+            window.close();
+        }
     }
     #[cfg(target_arch = "wasm32")]
     let _ = s;

@@ -96,14 +96,19 @@ fn titlebar_height() -> f32 {
 
 /// A producer can update an owning window independently of its next paint.
 pub type WindowFeed<S> = rune::AppHandle<S>;
+pub use rune::CloseResponse;
 
 pub fn app<S: 'static>(
     spec: AppSpec<S>,
+    close_request: fn(&mut S, &mut Tx) -> CloseResponse,
     closing: fn(&mut S, &mut Tx),
     native_chrome: bool,
     locale: &'static str,
 ) -> App<S> {
-    let mut app = App::new(spec).on_close(closing).on_quit(closing);
+    let mut app = App::new(spec)
+        .on_close_request(close_request)
+        .on_close(closing)
+        .on_quit(closing);
     if native_chrome {
         native_locale(locale);
         app = app.titlebar(rune::Titlebar::new(titlebar_height()));

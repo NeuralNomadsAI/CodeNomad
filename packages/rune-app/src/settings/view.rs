@@ -70,7 +70,6 @@ pub(super) struct Window {
 pub(super) struct CloseRequest {
     pub requested: Cell<bool>,
     pub guard_close: Cell<bool>,
-    pub detached: Cell<bool>,
     pub reopen: RefCell<Option<super::memory::editor::Editor>>,
     pub config_reopen: RefCell<Option<super::config_files::Editor>>,
     pub palette_reopen: RefCell<Option<super::general::Controls>>,
@@ -277,18 +276,7 @@ impl Window {
         }
         let mut prefs = self.shared.borrow_mut();
         prefs.window_wake = None;
-        if request.detached.get() {
-            let locale = prefs.locale().unwrap_or_else(crate::strings::locale);
-            drop(prefs);
-            let editor = request.reopen.borrow_mut().take();
-            super::reopen_detached(
-                self.shared.clone(),
-                request.clone(),
-                editor,
-                self.focused.clone(),
-                locale,
-            );
-        } else if let Some(wake) = &prefs.main_wake {
+        if let Some(wake) = &prefs.main_wake {
             wake();
         }
         true

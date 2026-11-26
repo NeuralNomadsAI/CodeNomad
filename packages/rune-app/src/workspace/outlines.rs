@@ -90,8 +90,8 @@ impl Cache {
                 .iter()
                 .map(|entry| entry.outline.clone())
                 .collect();
-            let bytes = timeline::encode_saved_outlines(&outlines);
-            let write = store.start_save_outlines(bytes);
+            let write =
+                store.start_save_outlines_with(move || timeline::encode_saved_outlines(&outlines));
             let (tx, rx) = bounded(1);
             self.saving = Some(rx);
             platform::spawn(async move {

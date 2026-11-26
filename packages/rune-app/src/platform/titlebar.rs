@@ -14,7 +14,13 @@ pub fn available() -> bool {
 pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
     #[cfg(any(target_os = "windows", target_arch = "wasm32"))]
     let init = spec.init;
-    let app = shell::app(spec, closing, available(), locale());
+    let app = shell::app(
+        spec,
+        crate::settings::close_request,
+        closing,
+        available(),
+        locale(),
+    );
     #[cfg(target_os = "windows")]
     let app = {
         let delivery = crate::shell::notifications::native_delivery();

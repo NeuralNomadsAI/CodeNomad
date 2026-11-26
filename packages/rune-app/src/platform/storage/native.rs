@@ -474,7 +474,14 @@ impl Store {
         &self,
         bytes: Vec<u8>,
     ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
-        // Capture generation synchronously at admission so a task polled after Clear cannot pass.
+        self.start_save_outlines_with(move || bytes)
+    }
+    pub fn start_save_outlines_with(
+        &self,
+        encode: impl FnOnce() -> Vec<u8> + Send + 'static,
+    ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
+        // Capture generation synchronously at admission so a task polled after Clear cannot pass,
+        // while keeping outline serialization and hashing off the UI thread.
         let generation = self.gate.lock().ok().and_then(|g| g.admit());
         let files = self.files.clone();
         let state_lock = self.state_lock.clone();
@@ -484,6 +491,14 @@ impl Store {
                 return Ok(());
             };
             tokio::task::spawn_blocking(move || {
+                if !gate
+                    .lock()
+                    .map_err(|_| "state store unavailable")?
+                    .allows(generation)
+                {
+                    return Ok(());
+                }
+                let bytes = encode();
                 let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
                 if !gate
                     .lock()

@@ -307,10 +307,15 @@ fn legacy_auto_and_sibling_slot_are_preserved_when_saving_palette() {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
 
-        // Legacy Auto profile (no appearancePreferences.mode, colorScheme = "system") preserves mode "system".
+        // Legacy Auto profile (no appearancePreferences.mode, colorScheme = "system") reads fresh
+        // before synthesizing mode "system", and preserves a newer mode written by another window.
         prefs.state.snapshot = Some(json!({ "colorScheme": "system" }));
         assert!(prefs.save_palette_override("mist", true, ColorSchemeColors::default_custom()));
+        let pre_get = poll_next_request(&mut prefs, &listener).await;
+        assert!(pre_get.first.starts_with("GET "));
+        pre_get.reply(200, json!({ "colorScheme": "system" })).await;
         let req = poll_next_request(&mut prefs, &listener).await;
+        assert!(req.first.starts_with("PATCH "));
         assert_eq!(req.body["appearancePreferences"]["mode"], "system");
         let body = req.body.clone();
         req.reply(200, body).await;
@@ -321,12 +326,48 @@ fn legacy_auto_and_sibling_slot_are_preserved_when_saving_palette() {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
 
+        // Legacy profile without mode: another window confirms "light" before SaveOverride sends ->
+        // preflight GET sees "light" and PATCH never overwrites mode.
+        prefs.state.snapshot = Some(json!({ "colorScheme": "system" }));
+        assert!(prefs.save_palette_override("mist", true, ColorSchemeColors::default_custom()));
+        let pre_get = poll_next_request(&mut prefs, &listener).await;
+        assert!(pre_get.first.starts_with("GET "));
+        pre_get
+            .reply(
+                200,
+                json!({
+                    "colorScheme": "system",
+                    "appearancePreferences": { "mode": "light" }
+                }),
+            )
+            .await;
+        let req = poll_next_request(&mut prefs, &listener).await;
+        assert!(req.first.starts_with("PATCH "));
+        assert!(
+            req.body["appearancePreferences"]["mode"].is_null(),
+            "SaveOverride must not overwrite a mode confirmed in another window: {}",
+            req.body
+        );
+        let mut body = req.body.clone();
+        body["appearancePreferences"]["mode"] = json!("light");
+        req.reply(200, body).await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while prefs.palette_saving() {
+            prefs.poll();
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
         // Explicit Choice::Mode in the same batch wins over legacy light colorScheme migration.
-        prefs.state.snapshot =
-            Some(json!({ "colorScheme": { "id": "porcelain", "appearance": "light" } }));
+        let legacy_light = json!({ "colorScheme": { "id": "porcelain", "appearance": "light" } });
+        prefs.state.snapshot = Some(legacy_light.clone());
         assert!(prefs.save_palette_override("mist", true, ColorSchemeColors::default_custom()));
         prefs.set_mode("dark");
+        let pre_get = poll_next_request(&mut prefs, &listener).await;
+        assert!(pre_get.first.starts_with("GET "));
+        pre_get.reply(200, legacy_light).await;
         let req = poll_next_request(&mut prefs, &listener).await;
+        assert!(req.first.starts_with("PATCH "));
         assert_eq!(req.body["appearancePreferences"]["mode"], "dark");
         let body = req.body.clone();
         req.reply(200, body).await;
@@ -827,5 +868,65 @@ fn builtin_selection_skips_stale_override_colors_and_migrates_legacy_config_over
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         assert!(prefs.has_saved_override("mist"));
+
+        // Switching away from a slot-only non-default custom scheme (no customColorScheme)
+        // preserves its colors into customColorScheme so "Saved custom" does not vanish.
+        let saved_custom = ColorSchemeColors::default_custom()
+            .with(ColorField::AccentPrimary, "#22CCAA")
+            .unwrap();
+        prefs.config.snapshot = Some(json!({
+            "settings": { "locale": "en", "highContrast": "system" }
+        }));
+        prefs.state.snapshot = Some(json!({
+            "appearancePreferences": {
+                "mode": "dark",
+                "dark": {
+                    "scheme": {
+                        "id": "custom",
+                        "appearance": "dark",
+                        "colors": saved_custom.to_json()
+                    },
+                    "presetId": null
+                }
+            }
+        }));
+        let mist_option = prefs
+            .palette_options(true)
+            .into_iter()
+            .find(|o| o.key == "builtin:mist")
+            .unwrap();
+        assert!(prefs.select_palette_option(&mist_option, false));
+        let custom_migrate_patch = poll_next_request(&mut prefs, &listener).await;
+        assert!(custom_migrate_patch.first.starts_with("PATCH "));
+        assert_eq!(
+            custom_migrate_patch.body["customColorScheme"]["colors"]["accentPrimary"], "#22CCAA",
+            "switching away from slot-only custom must preserve colors into customColorScheme: {}",
+            custom_migrate_patch.body
+        );
+        let migrated_custom = custom_migrate_patch.body["customColorScheme"].clone();
+        custom_migrate_patch
+            .reply(
+                200,
+                json!({
+                    "appearancePreferences": {
+                        "mode": "dark",
+                        "dark": { "scheme": { "id": "mist", "appearance": "dark", "colors": null }, "presetId": null }
+                    },
+                    "customColorScheme": migrated_custom
+                }),
+            )
+            .await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while prefs.state.requested(Choice::Palette(true)).is_some() {
+            prefs.poll();
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let custom_opt = prefs
+            .palette_options(true)
+            .into_iter()
+            .find(|o| o.key == "builtin:custom")
+            .expect("Saved custom must remain in options after switching to a built-in");
+        assert_eq!(custom_opt.colors.get(ColorField::AccentPrimary), "#22CCAA");
     });
 }
