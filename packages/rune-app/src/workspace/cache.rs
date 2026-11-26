@@ -70,7 +70,11 @@ impl Cache {
     }
 
     pub(super) fn has_confirmed_user_message(&self, id: &str) -> bool {
-        self.composer.has_confirmed_user_message(&self.messages, id)
+        self.composer.has_confirmed_prompt(
+            &self.messages,
+            self.transcript_display.queue.items(),
+            id,
+        )
     }
 
     pub(super) fn clear_unconfirmed_matching(&mut self, attempt_id: &str) -> bool {

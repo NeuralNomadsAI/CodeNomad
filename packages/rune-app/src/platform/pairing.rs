@@ -192,10 +192,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             s.pairing.retry_pending = None;
         } else if !s.pairing.state.required
             && !s.composer.pending()
+            && !s.screen.launcher().is_some_and(|l| l.pending)
             && s.workspace.as_ref().map(|ui| ui.active_key()) == target.as_deref()
         {
             s.pairing.retry_pending = None;
-            crate::retry_connection(s, tx);
+            if !matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming) {
+                crate::retry_connection(s, tx);
+            }
             return true;
         }
     }
@@ -273,7 +276,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 .unwrap_or_else(|| s.workspace.as_ref().map(|ui| ui.active_key().to_owned()));
             let active_matches =
                 s.workspace.as_ref().map(|ui| ui.active_key()) == target_tab.as_deref();
-            if active_matches && !s.composer.pending() {
+            let launcher_busy = s.screen.launcher().is_some_and(|l| l.pending);
+            if active_matches && !s.composer.pending() && !launcher_busy {
                 crate::retry_connection(s, tx);
                 s.pairing.retry_pending = None;
             } else if target_tab

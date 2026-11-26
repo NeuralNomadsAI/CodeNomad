@@ -184,8 +184,11 @@ pub(super) fn note_unconfirmed_for(
                 if same_backend(current, saved)
                     && current.active_session_id.as_deref() == Some(key)
         ) && if index == ui.active {
-            s.composer
-                .has_confirmed_user_message(&s.messages, attempt_id)
+            s.composer.has_confirmed_prompt(
+                &s.messages,
+                s.transcript_display.queue.items(),
+                attempt_id,
+            )
         } else {
             entry
                 .cache

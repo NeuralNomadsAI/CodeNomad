@@ -816,3 +816,89 @@ fn empty_inbox_before_resuming_history_page_preserves_committed_queued_bookmark(
         "resuming history page containing committed q-commit must retain saved bookmark"
     );
 }
+
+#[test]
+fn unconfirmed_queued_prompt_reconciles_on_authoritative_inbox_and_confirmed_cancel() {
+    let mut state = crate::init();
+    state.phase = crate::Phase::Streaming;
+    let backend = Backend {
+        client: codenomad_client::http::Http::new().unwrap(),
+        base: "http://127.0.0.1:9/".into(),
+        workspace: "ws-queue".into(),
+        session: "ses-queue".into(),
+        client_id: "fixture".into(),
+        session_directory: Some("/project".into()),
+        fresh_mode: false,
+    };
+    state.transcript_display.queue.bind(backend.clone());
+    let (cmd_tx, cmd_rx) = bounded(4);
+    let (ev_tx, ev_rx) = bounded(8);
+    state.commands = Some(cmd_tx);
+    state.incoming = Some(ev_rx);
+    state.draft = rune::edit::TextEdit::new("Queued follow-up");
+    let mut rt = Runtime::new(state, crate::view, (900.0, 640.0), Env::new(false, 1.0));
+
+    // Send while streaming (Delivery::Steer with optimistic row) and lose the HTTP ACK.
+    rt.update(|s, tx| crate::composer::send(s, tx, false));
+    let crate::transport::Command::Prompt(prompt) = cmd_rx.try_recv().unwrap() else {
+        panic!("expected steer prompt command");
+    };
+    let attempt_id = prompt.id.expect("steer prompt must carry an attempt id");
+    rt.update(|s, _| {
+        crate::composer::acknowledge(s, &attempt_id, crate::transport::PromptOutcome::Unconfirmed);
+    });
+    assert_eq!(
+        rt.state.composer.unconfirmed_id(),
+        Some(attempt_id.as_str())
+    );
+    assert_eq!(rt.state.draft.text, "Queued follow-up");
+    assert!(!crate::composer::can_send(&rt.state));
+
+    // Authoritative inbox containing the attempt replaces the optimistic row, confirms receipt,
+    // and clears the duplicate draft.
+    ev_tx
+        .try_send(Event::Inbox {
+            items: vec![queued(&attempt_id, Delivery::Steer, "Queued follow-up")],
+            authoritative: true,
+            fence: None,
+        })
+        .unwrap();
+    rt.update(|s, _| {
+        assert!(crate::chat::events::poll_chat(s, 8));
+    });
+    assert_eq!(rt.state.composer.unconfirmed_id(), None);
+    assert!(rt.state.draft.text.is_empty());
+    assert_eq!(rt.state.transcript_display.queue.items().len(), 1);
+    assert!(rt.state.messages.is_empty());
+
+    // Even if a confirmed cancel settles while an unconfirmed Delivery::Queue lock matches that ID,
+    // poll unlocks the conversation so it never deadlocks.
+    rt.state.draft = rune::edit::TextEdit::new("Second queued follow-up");
+    rt.update(|s, tx| crate::composer::send(s, tx, true));
+    let crate::transport::Command::Prompt(second) = cmd_rx.try_recv().unwrap() else {
+        panic!("expected second queued prompt command");
+    };
+    let second_id = second.id.expect("second prompt must carry an attempt id");
+    rt.update(|s, _| {
+        crate::composer::acknowledge(s, &second_id, crate::transport::PromptOutcome::Unconfirmed);
+    });
+    assert_eq!(rt.state.composer.unconfirmed_id(), Some(second_id.as_str()));
+    let (cancel_tx, _cancel_rx) = bounded(1);
+    let (done_tx, done_rx) = bounded(1);
+    rt.state.transcript_display.queue.busy = Some(Job {
+        owner: backend,
+        cancel: cancel_tx,
+        returned: done_rx,
+        suspended: false,
+    });
+    done_tx
+        .try_send(Ok(Outcome::Removed {
+            id: second_id.clone(),
+        }))
+        .unwrap();
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert_eq!(rt.state.composer.unconfirmed_id(), None);
+    assert!(rt.state.draft.text.is_empty());
+}

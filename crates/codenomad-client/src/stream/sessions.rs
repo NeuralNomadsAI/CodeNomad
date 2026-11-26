@@ -99,6 +99,7 @@ pub(super) async fn relay(
                     | "session.revert.staged"
                     | "session.revert.cleared"
                     | "session.inbox.cancelled"
+                    | "session.inbox.delivered"
                     | "session.compaction.started"
                     | "session.compaction.ended"
                     | "session.compaction.failed"
@@ -479,6 +480,7 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
                 "session.revert.staged",
                 "session.revert.cleared",
                 "session.inbox.cancelled",
+                "session.inbox.delivered",
                 "session.compaction.started",
                 "session.compaction.ended",
             ] {

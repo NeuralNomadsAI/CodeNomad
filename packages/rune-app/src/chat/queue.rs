@@ -187,7 +187,7 @@ impl Queue {
         self.items.len() != before
     }
 
-    pub(super) fn items(&self) -> &[QueuedPrompt] {
+    pub(crate) fn items(&self) -> &[QueuedPrompt] {
         &self.items
     }
 
@@ -353,10 +353,24 @@ pub(super) fn receive_authoritative(
         return false;
     }
     s.transcript_display.queue.deferred_snapshot = None;
-    items.retain(|item| !s.messages.iter().any(|row| row.id == item.id));
+    if let Some(opt) = s.composer.optimistic_id().map(str::to_owned)
+        && items.iter().any(|item| item.id == opt)
+    {
+        s.composer.clear_optimistic(Some(&opt));
+        if let Some(index) = s.messages.iter().position(|row| row.id == opt) {
+            s.messages.remove(index);
+        }
+    }
+    items.retain(|item| {
+        !s.messages
+            .iter()
+            .any(|row| row.id == item.id && s.composer.optimistic_id() != Some(row.id.as_str()))
+    });
     super::reader::preserve_anchor_on_inbox_change(s, &items);
     super::reader::reconcile_queued_bookmark(s, &items);
-    s.transcript_display.queue.set_items(items)
+    let changed = s.transcript_display.queue.set_items(items);
+    crate::composer::reconcile(s);
+    changed
 }
 
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
@@ -400,6 +414,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             request_sync(s, epoch, tx);
             match outcome {
                 Outcome::UpdatedDelivery { id, delivery } => {
+                    crate::composer::confirm_unconfirmed_id(s, &id);
                     if let Some(item) = s
                         .transcript_display
                         .queue
@@ -412,6 +427,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     s.revision += 1;
                 }
                 Outcome::Edited { id, text } => {
+                    crate::composer::confirm_unconfirmed_id(s, &id);
                     s.transcript_display
                         .queue
                         .items
@@ -425,6 +441,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     }
                 }
                 Outcome::Removed { id } => {
+                    crate::composer::confirm_unconfirmed_id(s, &id);
                     s.transcript_display
                         .queue
                         .items

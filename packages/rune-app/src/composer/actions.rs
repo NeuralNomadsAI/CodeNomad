@@ -83,6 +83,14 @@ impl Owner {
                 .iter()
                 .any(|row| row.id == id && row.role == "user")
     }
+    pub(crate) fn has_confirmed_prompt(
+        &self,
+        messages: &[crate::history::Row],
+        queued: &[codenomad_client::inbox::QueuedPrompt],
+        id: &str,
+    ) -> bool {
+        self.has_confirmed_user_message(messages, id) || queued.iter().any(|item| item.id == id)
+    }
     pub(crate) fn restore_unconfirmed(&mut self, pending: UnconfirmedPrompt) {
         self.unconfirmed = Some(pending);
     }
@@ -565,6 +573,21 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         return;
     }
     if matches!(outcome, PromptOutcome::Unconfirmed) {
+        if s.composer.has_confirmed_prompt(
+            &s.messages,
+            s.transcript_display.queue.items(),
+            attempted,
+        ) {
+            s.composer.clear_optimistic(Some(attempted));
+            s.composer.send_error = false;
+            s.composer.announce_send_error = false;
+            s.composer.announce_unconfirmed = false;
+            if s.workspace.is_some() {
+                workspace::confirm_unconfirmed(s, attempted);
+                workspace::capture(s);
+            }
+            return;
+        }
         let unconfirmed = if may_restore && s.composer.draft.attachments.is_empty() {
             let unconfirmed = UnconfirmedPrompt::from_send(&send);
             super::recall::replace_edit(s, send.edit);
@@ -638,22 +661,35 @@ pub fn settle_pending(s: &mut State, outcome: PromptOutcome) {
     }
 }
 
+pub(crate) fn confirm_unconfirmed_id(s: &mut State, attempt_id: &str) {
+    let had_local = s.composer.unconfirmed_id() == Some(attempt_id);
+    if had_local {
+        s.composer
+            .confirm_unconfirmed_matching(&mut s.draft, attempt_id);
+    }
+    if s.workspace.is_some() && (had_local || workspace::has_unconfirmed(s)) {
+        workspace::confirm_unconfirmed(s, attempt_id);
+        workspace::capture(s);
+    }
+}
+
 pub fn reconcile(s: &mut State) {
     let Some(attempt_id) = s
         .composer
         .unconfirmed
         .as_ref()
-        .filter(|send| s.composer.has_confirmed_user_message(&s.messages, &send.id))
+        .filter(|send| {
+            s.composer.has_confirmed_prompt(
+                &s.messages,
+                s.transcript_display.queue.items(),
+                &send.id,
+            )
+        })
         .map(|send| send.id.clone())
     else {
         return;
     };
-    s.composer
-        .confirm_unconfirmed_matching(&mut s.draft, &attempt_id);
-    if s.workspace.is_some() {
-        workspace::confirm_unconfirmed(s, &attempt_id);
-        workspace::capture(s);
-    }
+    confirm_unconfirmed_id(s, &attempt_id);
 }
 
 fn renew_editor(_s: &mut State, _tx: &mut Tx) {

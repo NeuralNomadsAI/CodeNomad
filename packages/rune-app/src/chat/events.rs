@@ -654,16 +654,22 @@ fn drain_chat(
                 }
             }
             Event::InboxDelta(delta) => {
-                if let codenomad_client::inbox::InboxDelta::Upsert(ref item) = delta
-                    && s.messages.iter().any(|row| row.id == item.id)
-                {
-                    continue;
+                if let codenomad_client::inbox::InboxDelta::Upsert(ref item) = delta {
+                    if s.composer.optimistic_id() == Some(item.id.as_str()) {
+                        s.composer.clear_optimistic(Some(&item.id));
+                        if let Some(index) = s.messages.iter().position(|row| row.id == item.id) {
+                            s.messages.remove(index);
+                        }
+                    } else if s.messages.iter().any(|row| row.id == item.id) {
+                        continue;
+                    }
                 }
                 let Some(next) = s.transcript_display.queue.preview_delta(&delta) else {
                     continue;
                 };
                 chat::reader::preserve_anchor_on_inbox_change(s, &next);
                 s.transcript_display.queue.apply_preview(next);
+                composer::reconcile(s);
             }
             Event::InboxFailed => {
                 s.transcript_display.queue.failed();
