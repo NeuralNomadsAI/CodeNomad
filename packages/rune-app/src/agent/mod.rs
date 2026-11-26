@@ -1,5 +1,7 @@
 //! Session-owned controls. Session, permissions, forms, model catalogue and stop use separate HTTP lanes.
 pub(crate) mod form_view;
+#[cfg(test)]
+mod form_view_tests;
 pub(crate) mod forms;
 #[cfg(test)]
 mod tests;
@@ -148,33 +150,32 @@ pub(crate) fn focused_control_key(
     if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
         let values = agent_forms::values(f, &a.drafts);
         let region = format!("pending-content-{}", f.id);
-        for field in f
+        for (field_index, field) in f
             .fields
             .iter()
-            .filter(|field| field["hidden"] != true && agent_forms::active(field, &values))
+            .enumerate()
+            .filter(|(_, field)| field["hidden"] != true && agent_forms::active(field, &values))
         {
             let Some(field_key) = field["key"].as_str() else {
                 continue;
             };
             let matched = match field["type"].as_str() {
                 Some("boolean") => {
-                    key == format!("bool-{field_key}-true")
-                        || key == format!("bool-{field_key}-false")
+                    key == agent_forms::bool_option_key(field_key, "true")
+                        || key == agent_forms::bool_option_key(field_key, "false")
                 }
-                Some("string") => field["options"].as_array().is_some_and(|options| {
-                    options.iter().take(64).any(|option| {
-                        option["value"]
-                            .as_str()
-                            .is_some_and(|value| format!("option-{field_key}-{value}") == key)
-                    })
-                }),
-                Some("multiselect") => field["options"].as_array().is_some_and(|options| {
-                    options.iter().take(64).any(|option| {
-                        option["value"]
-                            .as_str()
-                            .is_some_and(|value| format!("multi-{field_key}-{value}") == key)
-                    })
-                }),
+                Some("string") => agent_forms::normalized_options(field)
+                    .iter()
+                    .enumerate()
+                    .any(|(option_index, _)| {
+                        agent_forms::string_option_key(field_index, option_index) == key
+                    }),
+                Some("multiselect") => agent_forms::normalized_options(field)
+                    .iter()
+                    .enumerate()
+                    .any(|(option_index, _)| {
+                        agent_forms::multi_option_key(field_index, option_index) == key
+                    }),
                 _ => false,
             };
             if matched {
@@ -876,6 +877,9 @@ impl Ui {
     }
     pub fn forms_locked(&self) -> bool {
         self.scope_missing || self.forms_lane.locked(self.online)
+    }
+    pub fn forms_mutating(&self) -> bool {
+        self.forms_lane.mutation_pending()
     }
     pub fn ids(&self) -> Vec<String> {
         self.permissions

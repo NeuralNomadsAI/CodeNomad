@@ -2,7 +2,67 @@
 use crate::agent_api::Form;
 use rune::edit::TextEdit;
 use serde_json::{Value, json};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NormalizedOption<'a> {
+    pub value: &'a str,
+    pub label: Option<&'a str>,
+    pub description: Option<&'a str>,
+}
+
+/// Normalize form options once for rendering, focus resolution, and validation:
+/// enforce the 64-option bound, skip empty values that cannot be submitted as
+/// explicit string choices, and deduplicate by exact value (preserving first).
+pub fn normalized_options(field: &Value) -> Vec<NormalizedOption<'_>> {
+    let Some(options) = field["options"].as_array() else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for option in options.iter().take(64) {
+        let Some(value) = option["value"].as_str() else {
+            continue;
+        };
+        if value.is_empty() || !seen.insert(value) {
+            continue;
+        }
+        let label = option["label"]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then_some(trimmed)
+            });
+        let description = option["description"]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        out.push(NormalizedOption {
+            value,
+            label,
+            description,
+        });
+    }
+    out
+}
+
+pub fn bool_option_key(field_key: &str, value: &str) -> String {
+    format!("bool-{field_key}-{value}")
+}
+
+pub fn string_option_key(field_index: usize, option_index: usize) -> String {
+    format!("option-{field_index}-{option_index}")
+}
+
+pub fn multi_option_key(field_index: usize, option_index: usize) -> String {
+    format!("multi-{field_index}-{option_index}")
+}
+
+pub fn field_group_key(field_index: usize) -> String {
+    format!("form-group-{field_index}")
+}
 pub struct Draft {
     pub edit: TextEdit,
     pub custom: TextEdit,
@@ -125,12 +185,11 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
             {
                 return Err(());
             }
-            if field["custom"] != true
-                && field["options"]
-                    .as_array()
-                    .is_some_and(|v| !v.is_empty() && !v.iter().any(|o| o["value"] == text))
-            {
-                return Err(());
+            if field["custom"] != true {
+                let options = normalized_options(field);
+                if !options.is_empty() && !options.iter().any(|o| o.value == text) {
+                    return Err(());
+                }
             }
             Ok(Some(json!(text)))
         }
@@ -183,12 +242,14 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
             {
                 return Err(());
             }
-            if field["options"].as_array().is_some_and(|options| {
-                d.selected
+            if field["options"].as_array().is_some() {
+                let options = normalized_options(field);
+                if d.selected
                     .iter()
-                    .any(|value| !options.iter().any(|o| o["value"] == value.as_str()))
-            }) {
-                return Err(());
+                    .any(|value| !options.iter().any(|o| o.value == value.as_str()))
+                {
+                    return Err(());
+                }
             }
             Ok(Some(json!(values)))
         }

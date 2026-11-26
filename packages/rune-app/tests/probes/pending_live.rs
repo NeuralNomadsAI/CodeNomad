@@ -119,7 +119,7 @@ pub fn run() {
         "Réponse native Rune 🦀\nDeuxième ligne"
     );
     type_text(&mut rt, "field-count", "2");
-    tap(&mut rt, "field-enabled-true");
+    tap(&mut rt, "bool-enabled-true");
     capture(&rt, "typed-question", "answer-question");
     tap(&mut rt, "answer-question");
     wait(&mut rt, "native question answered", |s| {

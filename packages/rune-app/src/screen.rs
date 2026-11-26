@@ -141,11 +141,13 @@ impl State {
             Editor::Form(id) => self
                 .agent
                 .as_mut()
+                .filter(|a| !a.forms_mutating())
                 .and_then(|a| a.drafts.get_mut(&id))
                 .map(|d| d.editor()),
             Editor::Custom(id) => self
                 .agent
                 .as_mut()
+                .filter(|a| !a.forms_mutating())
                 .and_then(|a| a.drafts.get_mut(&id))
                 .map(|d| d.custom_editor()),
         };
