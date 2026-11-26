@@ -75,8 +75,10 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     const draft='Draft across device revocation'
     const group=page.getByRole('group',{name:messages['rune.prompt'],exact:true})
     const focus=async()=>{
-      const box=await group.boundingBox();assert(box)
-      await tap(box.x+box.width/2,box.y+box.height/2)
+      const box=await group.boundingBox()
+      const actions=await group.getByRole('button').evaluateAll(buttons=>Math.min(...buttons.map(button=>button.getBoundingClientRect().top)))
+      assert(box&&Number.isFinite(actions)&&actions>box.y)
+      await tap(box.x+box.width/2,(box.y+actions)/2)
       const editor=page.locator('textarea:focus')
       await editor.waitFor({timeout:2500})
       return editor

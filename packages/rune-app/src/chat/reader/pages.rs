@@ -121,6 +121,7 @@ pub(in crate::chat) fn install_page(
         s.attachments.cancel();
         s.history_detached = page.newer.is_some();
         if let Some(reader) = &mut s.reader {
+            reader.clear_sync_undo();
             reader.install(s.history_detached);
             if let Some(bookmark) = bookmark {
                 reader.bookmark = bookmark;
@@ -150,6 +151,7 @@ pub(crate) fn install_anchor(s: &mut State, page: crate::history::Page) {
     s.paging = false;
     s.history_error = false;
     if let Some(reader) = &mut s.reader {
+        reader.clear_sync_undo();
         reader.drain();
         reader.resume_pending = false;
         reader.pending_scroll = false;
