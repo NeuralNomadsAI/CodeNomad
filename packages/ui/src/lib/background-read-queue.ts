@@ -53,6 +53,7 @@ export const receiptReads = new BackgroundReadQueue(1)
 // outline or inventory scans in backgroundReads cannot starve the panel.
 export const missionReads = new BackgroundReadQueue(1)
 
-// Schedule documents and capabilities read native schedule state, slower and less
-// regular than the panel's journal reads: one of them never holds the panel's lane.
+// The schedule list and current-passage reads answer from native schedule state, slower
+// and less regular than the panel's journal reads: they never hold the panel's lane, nor
+// the reads of one schedule that a click waits for (shared budget, visible first).
 export const missionScheduleReads = new BackgroundReadQueue(1)

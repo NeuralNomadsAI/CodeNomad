@@ -116,8 +116,10 @@ function missionRead<T>(signal: AbortSignal | undefined, read: () => Promise<T>)
   return missionReads.run(signal ?? new AbortController().signal, read, "visible")
 }
 
-// Schedule documents and capabilities answer from native schedule state, which can be
-// slow: their own lane keeps one of them from holding the panel's journal reads.
+// The schedule list and a schedule's current passage answer from native schedule state,
+// which can be slow: their lane keeps them from holding the panel's journal reads. The
+// reads of one schedule (document, capability, saved request) stay on the shared budget,
+// so the ones a click waits for never queue behind a list read.
 function missionScheduleRead<T>(signal: AbortSignal | undefined, read: () => Promise<T>): Promise<T> {
   return missionScheduleReads.run(signal ?? new AbortController().signal, read, "visible")
 }
@@ -905,15 +907,15 @@ export function createServerApi(ctx: BackendHttp) {
     },
     fetchMissionScheduleCapability(instanceId: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleCapability> {
       const query = new URLSearchParams(directory === undefined ? {} : { directory })
-      return missionScheduleRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/capabilities?${query}`, { signal }))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/capabilities?${query}`, { signal }))
     },
     fetchMissionSchedule(instanceId: string, missionID: string, input: { directory?: string; requestID?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined) as [string, string][])
-      return missionScheduleRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
     },
     fetchMissionScheduleCreation(instanceId: string, requestID: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       const query = new URLSearchParams(directory === undefined ? {} : { directory })
-      return missionScheduleRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`, { signal }))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`, { signal }))
     },
     saveMissionSchedule(instanceId: string, input: import("../stores/mission-schedule-editor-holds").MissionScheduleEditorRequest, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       const { missionID, ...body } = input
@@ -929,7 +931,7 @@ export function createServerApi(ctx: BackendHttp) {
       const url = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule-settings`
       const live = signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000)
       return apply ? request(url, { method: "POST", body: JSON.stringify(input), signal: live })
-        : missionScheduleRead(live, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`, { signal: live }))
+        : secondaryRead(live, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`, { signal: live }))
     },
     /** The same read, with the full map, from the authoritative full snapshot, for admitting an application-authored prompt. */
     fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse<MissionMap>> {

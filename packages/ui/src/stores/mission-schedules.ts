@@ -24,7 +24,6 @@ export function unifiedScheduleHold(key: string) { holdVersion(); return unified
 type ScheduleListCacheEntry = {
   rows: UnifiedMissionSchedule[]
   next?: string
-  pages: number
   client: unknown
   generation: number
   attachment: AbortSignal
@@ -110,7 +109,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
         const merged = [...new Map([...snapshot(), ...collected.values()].map(row => [row.id, row])).values()]
         setRows(merged)
         setNext(after); setFresh(previous => new Set([...previous, ...collected.keys()])); setError(false)
-        writeScheduleListCache(scope, { rows: merged, next: after, pages, client: owner.client, generation: owner.generation, attachment: owner.attachment })
+        writeScheduleListCache(scope, { rows: merged, next: after, client: owner.client, generation: owner.generation, attachment: owner.attachment })
         published(owner, [...collected.values()])
         return
       }
@@ -122,7 +121,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
       const nextRows = [...collected.values(), ...(previous ? [previous] : [])]
       setRows(nextRows); setNext(after)
       setFresh(new Set([...collected.keys(), ...(previous && fresh().has(previous.id) ? [previous.id] : [])])); setError(false)
-      writeScheduleListCache(scope, { rows: nextRows, next: after, pages, client: owner.client, generation: owner.generation, attachment: owner.attachment })
+      writeScheduleListCache(scope, { rows: nextRows, next: after, client: owner.client, generation: owner.generation, attachment: owner.attachment })
       published(owner, [...collected.values()])
       if (selected && !collected.has(selected)) {
         try {
@@ -132,7 +131,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
           if (value.document) collected.set(selected, value.document)
           const resolvedRows = [...collected.values()]
           setRows(resolvedRows)
-          writeScheduleListCache(scope, { rows: resolvedRows, next: after, pages, client: owner.client, generation: owner.generation, attachment: owner.attachment })
+          writeScheduleListCache(scope, { rows: resolvedRows, next: after, client: owner.client, generation: owner.generation, attachment: owner.attachment })
           setSelectionError(value.pending ? "pending" : undefined)
           setFresh(previous => new Set([...previous].filter(id => id !== selected).concat(!value.pending && value.document ? [selected] : [])))
           if (!value.pending && value.document) published(owner, [value.document])
@@ -162,7 +161,9 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
       const cached = readScheduleListCache(scope, owner)
       setRows(cached ? cached.rows : [])
       setNext(cached?.next)
-      pages = cached?.pages ?? 1
+      // The cache shows what was loaded at once; revalidation restarts from the first page and
+      // its cursor, so the selected schedule never waits for every page loaded before.
+      pages = 1
     }
     displayScope = scope
     scheduler.cancel("list"); setError(false); setSelectionError(undefined); setFresh(new Set<string>()); setLoading(false)
