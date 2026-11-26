@@ -148,6 +148,25 @@ pub(crate) fn mission_has_editor(s: &State) -> bool {
     !mission_context_blocked(s) && mission_owner(s).is_some_and(missions::Panel::has_editor)
 }
 
+pub(crate) fn active_mission_editor_has_unsaved_draft(s: &State) -> bool {
+    let Some(ui) = s.workspace.as_ref() else {
+        return false;
+    };
+    ui.entries[ui.active]
+        .missions
+        .as_ref()
+        .is_some_and(|panel| panel.has_unsaved_editor_draft(&ui.mission_editor))
+}
+
+pub(crate) fn discard_active_mission_draft(s: &mut State, tx: &mut rune::Tx) {
+    if let Some(ui) = &mut s.workspace
+        && let Some(panel) = &mut ui.entries[ui.active].missions
+        && panel.discard_unsaved_editor_draft(&mut ui.mission_editor)
+    {
+        tx.instant();
+    }
+}
+
 pub(crate) fn close_mission_reader(s: &mut State) -> Option<String> {
     if let Some(ui) = &mut s.workspace {
         let entry = &mut ui.entries[ui.active];

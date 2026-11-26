@@ -50,6 +50,23 @@ pub fn view(s: &State) -> El {
             busy,
             crate::screen::action_tx(&scope, launcher::connect),
         ));
+        if l.authentication_required && crate::workspace::active_mission_editor_has_unsaved_draft(s)
+        {
+            body = body
+                .child(rune_theme_codenomad::git_panel::note(
+                    t("settings.configFiles.confirmDiscard.message"),
+                    "alert",
+                ))
+                .child(button_tx(
+                    "launcher-discard-mission-draft",
+                    t("settings.memory.discardConfirm"),
+                    false,
+                    crate::screen::action_tx(
+                        &scope,
+                        crate::workspace::discard_active_mission_draft,
+                    ),
+                ));
+        }
     } else {
         let mut browse = button_tx(
             "browse",

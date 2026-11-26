@@ -22,17 +22,18 @@ pub(crate) use observation::poll_cached_notifications;
 pub(super) use panel_state::event_workspace_id;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use panel_state::set_files_tab;
-pub use panel_state::{
-    capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
-};
 pub(crate) use panel_state::{
-    close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
+    active_mission_editor_has_unsaved_draft, close_mission_reader, deliver_detached_events,
+    detached_workspace_ids, discard_active_mission_draft, has_detached_panels,
     has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_editor,
     mission_has_reader, mission_observation_project, mission_panel, mission_reader,
     mission_supported, missions_composing, on_mission_transport_lost, reconcile_detached_online,
     request_close_mission_reader, restore_mission_reader_focus, right_panel_tab,
     set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_mission_briefing,
     suspend_missions,
+};
+pub use panel_state::{
+    capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
 };
 pub use polling::{file_draft_status, poll, poll_file_drafts, status};
 pub use strip::strip;

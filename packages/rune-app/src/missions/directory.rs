@@ -310,6 +310,18 @@ impl Panel {
         self.editor.has_unsaved_draft(&scope, &self.backend, holds)
     }
 
+    pub(crate) fn discard_unsaved_editor_draft(&mut self, holds: &mut EditorHolds) -> bool {
+        if !self.has_unsaved_editor_draft(holds) {
+            return false;
+        }
+        self.editor_suspended = false;
+        self.editor_auto_start_revoked = true;
+        let scope = self.creation_scope_key();
+        holds.revoke_auto_start_for_scope(&scope);
+        let _ = self.editor.close();
+        true
+    }
+
     pub(crate) fn close_reader_preserving_dirty_editor(
         &mut self,
         holds: &EditorHolds,

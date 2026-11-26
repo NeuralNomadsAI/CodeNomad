@@ -5422,7 +5422,8 @@ fn tab_close_requires_explicit_confirmation_for_uncertain_creation_and_retires_h
         "closing an auth-masked tab must retire its dead workspace creation hold"
     );
 
-    // By contrast, an unsaved Mission draft without a hold stays protected even during auth recovery.
+    // By contrast, an unsaved Mission draft without a hold stays protected during auth recovery,
+    // while the re-authentication screen exposes an explicit Discard action that unblocks tab close.
     let draft_backend = unattested_backend("http://127.0.0.1:9/".into());
     let mut draft_panel = Panel::new(
         draft_backend,
@@ -5439,7 +5440,7 @@ fn tab_close_requires_explicit_confirmation_for_uncertain_creation_and_retires_h
     }
     let mut rt_draft = Runtime::new(
         draft_state,
-        |_, _| rune::el(),
+        |s, _| crate::launcher::view::view(s),
         (1200.0, 800.0),
         Env::new(false, 1.0),
     );
@@ -5452,6 +5453,33 @@ fn tab_close_requires_explicit_confirmation_for_uncertain_creation_and_retires_h
         crate::workspace::test_tab_state_and_holds(&rt_draft.state, 0).0,
         draft_key,
         "unsaved Mission draft must remain protected against tab close during auth recovery"
+    );
+    let discard_rect = rt_draft
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("launcher-discard-mission-draft"))
+        .expect("re-authentication screen must expose explicit discard action for unsaved draft")
+        .rect;
+    rt_draft.pointer_down(
+        discard_rect[0] + discard_rect[2] * 0.5,
+        discard_rect[1] + discard_rect[3] * 0.5,
+    );
+    rt_draft.pointer_up(
+        discard_rect[0] + discard_rect[2] * 0.5,
+        discard_rect[1] + discard_rect[3] * 0.5,
+    );
+    rt_draft.frame(1.0 / 60.0);
+    assert!(
+        !crate::workspace::active_mission_editor_has_unsaved_draft(&rt_draft.state),
+        "explicit discard must clear the unsaved Mission draft"
+    );
+    rt_draft.update(|s, tx| {
+        crate::workspace::close(s, &draft_key, tx);
+    });
+    assert_ne!(
+        crate::workspace::test_tab_state_and_holds(&rt_draft.state, 0).0,
+        draft_key,
+        "tab must close once the user explicitly discarded the unsaved Mission draft"
     );
 }
 
