@@ -40,6 +40,10 @@ pub enum WorkspaceEvent {
     MentionsChanged,
     ComposerCataloguesChanged,
     MemoryChanged,
+    IntegrationsChanged {
+        workspace_id: String,
+        session_id: Option<String>,
+    },
     ProvidersChanged {
         workspace_id: String,
     },
