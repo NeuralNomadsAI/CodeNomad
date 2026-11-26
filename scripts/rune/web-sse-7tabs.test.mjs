@@ -27,6 +27,7 @@ test('assertSingleMultiplexedSse enforces 1 open HTTP 200 HTTP/1.1 hub EventSour
     activeCount: 1,
     openReadyCount: 1,
     cdpEventSourceRequests: 1,
+    redirected: false,
     protocols: ['http/1.1'],
     statuses: [200],
     closedFlags: [false],
@@ -38,6 +39,7 @@ test('assertSingleMultiplexedSse enforces 1 open HTTP 200 HTTP/1.1 hub EventSour
     activeCount: 1,
     openReadyCount: 1,
     cdpEventSourceRequests: 1,
+    redirected: false,
     protocol: 'http/1.1',
     status: 200,
     closed: false,
@@ -46,6 +48,7 @@ test('assertSingleMultiplexedSse enforces 1 open HTTP 200 HTTP/1.1 hub EventSour
 
   assert.throws(() => assertSingleMultiplexedSse({...base, constructorCalls: 7, activeCount: 7, openReadyCount: 7, cdpEventSourceRequests: 7}))
   assert.throws(() => assertSingleMultiplexedSse({...base, openReadyCount: 0}))
+  assert.throws(() => assertSingleMultiplexedSse({...base, redirected: true}))
   assert.throws(() => assertSingleMultiplexedSse({...base, protocols: ['h2']}))
   assert.throws(() => assertSingleMultiplexedSse({...base, statuses: [500]}))
   assert.throws(() => assertSingleMultiplexedSse({...base, closedFlags: [true]}))

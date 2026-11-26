@@ -31,10 +31,17 @@ assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes(
 if(needsOwnedWindowsWorker(process.argv)){
   const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:['pipe','inherit','inherit']})
   const closed=new Promise(resolve=>worker.once('close',resolve))
-  const stop=()=>void stopFixtureChild(worker,closed,8000,2000,{close:()=>{try{worker.stdin?.end('shutdown\n')}catch{}}}).catch(error=>console.error(error.message))
-  process.once('SIGINT',stop)
-  process.once('SIGTERM',stop)
+  const graceMs=webAndroid?70000:12000
+  let stopping
+  const stop=()=>{
+    stopping??=stopFixtureChild(worker,closed,graceMs,2000,{close:()=>{try{worker.stdin?.end('shutdown\n')}catch{}}}).catch(error=>console.error(error.message))
+  }
+  process.on('SIGINT',stop)
+  process.on('SIGTERM',stop)
   const code=await closed
+  await stopping
+  process.off('SIGINT',stop)
+  process.off('SIGTERM',stop)
   process.exit(code??1)
 }
 const webMissions=process.argv.includes('--web-missions')

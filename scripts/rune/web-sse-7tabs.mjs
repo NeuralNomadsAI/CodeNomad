@@ -1,5 +1,6 @@
 // 7-tab HTTPS HTTP/1.1 SSE multiplexing bench for the real Rune WASM bundle (B1 proof).
 import assert from 'node:assert/strict'
+import {spawn} from 'node:child_process'
 import {mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
@@ -33,6 +34,7 @@ export function assertSingleMultiplexedSse({
   activeCount,
   openReadyCount,
   cdpEventSourceRequests,
+  redirected = false,
   protocols,
   statuses,
   closedFlags,
@@ -42,7 +44,8 @@ export function assertSingleMultiplexedSse({
   assert.equal(constructorCalls, 1, `Expected exactly 1 EventSource constructor call, got ${constructorCalls}`)
   assert.equal(activeCount, expectedActive, `Expected ${expectedActive} active EventSource(s), got ${activeCount}`)
   assert.equal(openReadyCount, expectedActive, `Expected ${expectedActive} OPEN EventSource(s), got ${openReadyCount}`)
-  assert.equal(cdpEventSourceRequests, 1, `Expected exactly 1 CDP /api/events request, got ${cdpEventSourceRequests}`)
+  assert.equal(cdpEventSourceRequests, 1, `Expected exactly 1 raw CDP /api/events request, got ${cdpEventSourceRequests}`)
+  assert.equal(redirected, false, 'Expected zero redirects on /api/events')
   assert(Array.isArray(protocols) && protocols.length === 1, `Expected 1 SSE protocol entry, got ${JSON.stringify(protocols)}`)
   assert.equal(protocols[0], 'http/1.1', `Expected HTTP/1.1 on HTTPS /api/events, got ${protocols[0]}`)
   assert(Array.isArray(statuses) && statuses.length === 1, `Expected 1 SSE status entry, got ${JSON.stringify(statuses)}`)
@@ -57,6 +60,7 @@ export function assertSingleMultiplexedSse({
     activeCount,
     openReadyCount,
     cdpEventSourceRequests,
+    redirected,
     protocol: protocols[0],
     status: statuses[0],
     closed: closedFlags[0],
@@ -169,26 +173,24 @@ async function runBench() {
   const m = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/catalogues/fr.json'), 'utf8'))
   const assets = await bundleAssetPaths(path.resolve(root, process.env.RUNE_WEB_DIR ?? 'target/rune-web-connected'))
 
-  let browserServer
-  let browser
-  let context
+  let browserProc = null
+  let browser = null
+  let context = null
   let browserPid = null
   let browserExited = Promise.resolve(true)
-  let stopping = false
+  let stoppingSignal = null
+  let abortStartup = null
   let stopPromise = null
   const withTimeout = (promise, ms) => Promise.race([
     Promise.resolve(promise).catch(() => {}),
     new Promise(resolve => setTimeout(resolve, ms)),
   ])
-  const isProcExited = () => {
-    const proc = browserServer?.process()
-    return Boolean(!proc || proc.exitCode !== null || proc.signalCode !== null)
-  }
-  const killBrowserGroup = () => {
+  const isProcExited = () => Boolean(!browserProc || browserProc.exitCode !== null || browserProc.signalCode !== null)
+  const signalBrowserGroup = signal => {
     if (process.platform !== 'win32' && Number.isInteger(browserPid) && browserPid > 0) {
-      try { process.kill(-browserPid, 'SIGKILL') } catch {}
-    } else {
-      try { browserServer?.process()?.kill('SIGKILL') } catch {}
+      try { process.kill(-browserPid, signal) } catch {}
+    } else if (browserProc) {
+      try { browserProc.kill(signal) } catch {}
     }
   }
   const stopBrowserBounded = () => {
@@ -196,63 +198,105 @@ async function runBench() {
       stopPromise = (async () => {
         if (context) await withTimeout(context.close(), 1000)
         if (browser) await withTimeout(browser.close(), 1000)
-        if (browserServer) await withTimeout(browserServer.close(), 2000)
         if (!isProcExited()) {
-          await withTimeout(browserExited, 1000)
+          signalBrowserGroup('SIGTERM')
+          await withTimeout(browserExited, 2000)
         }
         if (!isProcExited()) {
-          killBrowserGroup()
-          await withTimeout(browserExited, 500)
+          signalBrowserGroup('SIGKILL')
+          await withTimeout(browserExited, 1500)
         }
         return isProcExited()
       })()
     }
     return stopPromise
   }
-  const onStopSignal = () => {
-    if (stopping) return
-    stopping = true
-    if (browserServer) void stopBrowserBounded().finally(() => process.exit(143))
+  const onStopSignal = signal => {
+    if (stoppingSignal) return
+    stoppingSignal = signal
+    process.exitCode = 143
+    abortStartup?.(signal)
+    if (browserProc) void stopBrowserBounded()
   }
-  process.once('SIGTERM', onStopSignal)
-  process.once('SIGINT', onStopSignal)
+  process.on('SIGTERM', onStopSignal)
+  process.on('SIGINT', onStopSignal)
 
   const errors = []
   const forbidden = []
   const cdpStreams = new Map()
+  let cdpRawEventSourceRequests = 0
+  let cdpEventSourceRedirected = false
   const cdpSseFrames = []
+  let cdpSseFramesOverflowed = false
   const cdpBatchRequests = new Map()
   const cdpRequestIdToBenchId = new Map()
   const openedWorkspaces = []
   let pendingProof = null
 
   try {
-    if (stopping) throw Error('Interrupted before Chromium launch')
-    browserServer = await chromium.launchServer({
-      headless: true,
-      handleSIGINT: false,
-      handleSIGTERM: false,
-      handleSIGHUP: false,
-      ...(values.executable ? {executablePath: values.executable} : {}),
-      args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader'],
+    if (stoppingSignal) throw Error(`Interrupted before Chromium launch (${stoppingSignal})`)
+    const chromiumPath = values.executable || chromium.executablePath()
+    const chromiumProfile = path.join(out, 'chromium-profile')
+    await mkdir(chromiumProfile, {recursive: true})
+    browserProc = spawn(chromiumPath, [
+      '--headless=new',
+      '--remote-debugging-port=0',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-background-networking',
+      '--disable-dev-shm-usage',
+      '--disable-features=BackForwardCache',
+      '--enable-unsafe-webgpu',
+      '--use-angle=swiftshader',
+      `--user-data-dir=${chromiumProfile}`,
+    ], {
+      detached: process.platform !== 'win32',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
     })
-    const browserProc = browserServer.process()
-    browserPid = browserProc?.pid ?? null
-    if (browserProc) {
-      browserExited = new Promise(resolve => {
-        if (browserProc.exitCode !== null || browserProc.signalCode !== null) return resolve(true)
-        browserProc.once('exit', () => resolve(true))
-        browserProc.once('close', () => {
-          if (browserProc.exitCode !== null || browserProc.signalCode !== null) resolve(true)
-        })
+    browserPid = browserProc.pid ?? null
+    browserProc.stdout?.resume()
+    browserExited = new Promise(resolve => {
+      if (browserProc.exitCode !== null || browserProc.signalCode !== null) return resolve(true)
+      browserProc.once('exit', () => resolve(true))
+      browserProc.once('close', () => {
+        if (browserProc.exitCode !== null || browserProc.signalCode !== null) resolve(true)
       })
-    }
-    if (stopping) throw Error('Interrupted while launching Chromium')
+    })
+    // Register the detached Chromium process group immediately upon spawn, before DevTools is ready.
+    const devToolsReady = new Promise((resolve, reject) => {
+      let stderrBuf = ''
+      let timer
+      const finish = (err, wsUrl) => {
+        clearTimeout(timer)
+        abortStartup = null
+        browserProc.stderr?.off('data', onData)
+        browserProc.stderr?.resume()
+        browserProc.off('exit', onExit)
+        browserProc.off('error', onError)
+        if (err) reject(err)
+        else resolve(wsUrl)
+      }
+      const onData = chunk => {
+        stderrBuf = (stderrBuf + chunk).slice(-32768)
+        const match = /DevTools listening on (ws:\/\/\S+)/.exec(stderrBuf)
+        if (match) finish(null, match[1])
+      }
+      const onExit = (code, signal) => finish(Error(`Chromium exited before DevTools ready (code=${code}, signal=${signal}): ${stderrBuf.slice(-400)}`))
+      const onError = err => finish(err)
+      abortStartup = signal => finish(Error(`Interrupted while starting Chromium (${signal})`))
+      timer = setTimeout(() => finish(Error(`Timed out waiting for Chromium DevTools endpoint: ${stderrBuf.slice(-400)}`)), 30000)
+      browserProc.stderr?.on('data', onData)
+      browserProc.once('exit', onExit)
+      browserProc.once('error', onError)
+    })
     if (Number.isInteger(browserPid) && browserPid > 0) {
       await ipc({type: 'browser-pid', pid: browserPid})
     }
-    if (stopping) throw Error('Interrupted while registering Chromium PID')
-    browser = await chromium.connect(browserServer.wsEndpoint())
+    if (stoppingSignal) throw Error(`Interrupted while registering Chromium PID (${stoppingSignal})`)
+    const wsEndpoint = await devToolsReady
+    if (stoppingSignal) throw Error(`Interrupted before CDP connect (${stoppingSignal})`)
+    browser = await chromium.connectOverCDP(wsEndpoint)
     const policy = workspacePolicy({
       origin: url.origin,
       project: values.project,
@@ -320,17 +364,26 @@ async function runBench() {
     cdp.on('Network.requestWillBeSent', event => {
       try {
         const requested = new URL(event.request.url)
+        if (cdpStreams.has(event.requestId) && event.redirectResponse) {
+          cdpEventSourceRedirected = true
+        }
         if (requested.origin === url.origin && requested.pathname === '/api/events') {
-          cdpStreams.set(event.requestId, {
-            requestId: event.requestId,
-            url: requested.pathname + requested.search,
-            clientId: requested.searchParams.get('clientId') ?? '',
-            connectionId: requested.searchParams.get('connectionId') ?? '',
-            protocol: null,
-            status: null,
-            closed: false,
-            closeReason: null,
-          })
+          cdpRawEventSourceRequests += 1
+          if (event.redirectResponse || cdpStreams.has(event.requestId)) {
+            cdpEventSourceRedirected = true
+          }
+          if (!cdpStreams.has(event.requestId)) {
+            cdpStreams.set(event.requestId, {
+              requestId: event.requestId,
+              url: requested.pathname + requested.search,
+              clientId: requested.searchParams.get('clientId') ?? '',
+              connectionId: requested.searchParams.get('connectionId') ?? '',
+              protocol: null,
+              status: null,
+              closed: false,
+              closeReason: null,
+            })
+          }
         }
         if (requested.origin === url.origin) {
           const benchHeader = Object.entries(event.request.headers ?? {}).find(([k]) => k.toLowerCase() === 'x-rune-bench-id')?.[1]
@@ -412,7 +465,10 @@ async function runBench() {
       }
     })
     cdp.on('Network.eventSourceMessageReceived', event => {
-      if (cdpSseFrames.length >= 2048) return
+      if (cdpSseFrames.length >= 4096) {
+        cdpSseFramesOverflowed = true
+        return
+      }
       let parsed
       try { parsed = JSON.parse(event.data) } catch {}
       cdpSseFrames.push({
@@ -513,7 +569,8 @@ async function runBench() {
           constructorCalls: pageProbe.constructorCalls,
           activeCount: pageProbe.activeCount,
           openReadyCount: pageProbe.openReadyCount,
-          cdpEventSourceRequests: streamsList.length,
+          cdpEventSourceRequests: cdpRawEventSourceRequests,
+          redirected: cdpEventSourceRedirected,
           protocols: streamsList.map(s => s.protocol),
           statuses: streamsList.map(s => s.status),
           closedFlags: streamsList.map(s => s.closed),
@@ -635,43 +692,45 @@ async function runBench() {
     }
     await page.waitForFunction(() => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes('Multiplex live Tab 7'))
 
+    const countMatchingTriples = triples => cdpSseFrames.filter(f =>
+      f.requestId === sseRequestId
+      && f.nativeType === 'session.text.delta'
+      && triples.some(t =>
+        t.workspaceId === f.instanceId && t.sessionID === f.sessionID && t.text === f.delta,
+      ),
+    ).length
+    const initialExpectedTriples = openedWorkspaces.flatMap(workspaceId =>
+      initialTargets.map(({sessionID, text}) => ({workspaceId, sessionID, text})),
+    )
+
     const waitMultiplexFrames = async (targets, workspaces) => {
-      const expectedTriples = workspaces.flatMap(workspaceId =>
-        targets.map(({sessionID, text}) => ({workspaceId, sessionID, text})),
-      )
       const deadline = Date.now() + 10000
       while (Date.now() < deadline) {
-        const matchedTriples = expectedTriples.filter(triple => cdpSseFrames.some(f =>
+        const matchedTriples = initialExpectedTriples.filter(triple => cdpSseFrames.some(f =>
           f.requestId === sseRequestId
           && f.nativeType === 'session.text.delta'
           && f.instanceId === triple.workspaceId
           && f.sessionID === triple.sessionID
           && f.delta === triple.text,
         ))
-        if (matchedTriples.length === expectedTriples.length) {
-          const observedFrames = cdpSseFrames.filter(f =>
-            f.requestId === sseRequestId
-            && f.nativeType === 'session.text.delta'
-            && expectedTriples.some(t =>
-              t.workspaceId === f.instanceId && t.sessionID === f.sessionID && t.text === f.delta,
-            ),
-          )
+        if (matchedTriples.length === initialExpectedTriples.length) {
+          const observedCount = countMatchingTriples(initialExpectedTriples)
           assert.equal(
-            observedFrames.length,
-            expectedTriples.length,
-            `Expected exactly ${expectedTriples.length} multiplexed SSE frames without duplicates, got ${observedFrames.length}`,
+            observedCount,
+            initialExpectedTriples.length,
+            `Expected exactly ${initialExpectedTriples.length} multiplexed SSE frames without duplicates, got ${observedCount}`,
           )
           return {
-            frameCount: observedFrames.length,
+            frameCount: observedCount,
             matchedTripleCount: matchedTriples.length,
-            expectedTripleCount: expectedTriples.length,
+            expectedTripleCount: initialExpectedTriples.length,
             matchedPairs: targets.map(({workspaceId, sessionID, text}) => ({workspaceId, sessionID, text})),
             workspaceCount: workspaces.length,
           }
         }
         await page.waitForTimeout(25)
       }
-      throw Error(`Timed out waiting for all ${expectedTriples.length} multiplexed SSE (workspaceId, sessionID, delta) triples on ${sseRequestId}`)
+      throw Error(`Timed out waiting for all ${initialExpectedTriples.length} multiplexed SSE (workspaceId, sessionID, delta) triples on ${sseRequestId}`)
     }
     const multiplexedFrames = await waitMultiplexFrames(initialTargets, openedWorkspaces)
 
@@ -827,7 +886,20 @@ async function runBench() {
     }
     const finalStream = cdpStreams.get(sseRequestId)
     assert.equal(pongAfterCloseStatus, 404, `Expected server pong 404 after page close (zero EventSource leak), got ${pongAfterCloseStatus}`)
+    assert.equal(cdpRawEventSourceRequests, 1, `Expected only 1 raw /api/events request throughout full lifecycle, got ${cdpRawEventSourceRequests}`)
+    assert.equal(cdpEventSourceRedirected, false, 'Expected zero redirects on /api/events throughout full lifecycle')
     assert.equal(cdpStreams.size, 1, `Expected only 1 EventSource throughout full lifecycle, got ${cdpStreams.size}`)
+    assert.equal(cdpSseFramesOverflowed, false, 'CDP SSE frame collector overflowed; duplicate audit incomplete')
+    const finalInitialTripleFrames = countMatchingTriples(initialExpectedTriples)
+    assert.equal(
+      finalInitialTripleFrames,
+      initialExpectedTriples.length,
+      `Expected exact ${initialExpectedTriples.length} initial multiplexed SSE frames at stream close, got ${finalInitialTripleFrames}`,
+    )
+    for (const activeCheck of [tab1Active, tab4Active]) {
+      const activeCount = countMatchingTriples([{workspaceId: activeCheck.workspaceId, sessionID: activeCheck.sessionID, text: activeCheck.text}])
+      assert.equal(activeCount, 1, `Expected 1 active SSE frame for (${activeCheck.workspaceId}, ${activeCheck.sessionID}), got ${activeCount}`)
+    }
     assert.equal(remainingWorkspaces.length, 0, `Expected 0 leaked workspaces after pagehide, got ${remainingWorkspaces.length}`)
     assert.deepEqual(errors, [], `Unexpected page errors: ${JSON.stringify(errors)}`)
     assert.deepEqual(forbidden, [], `Unexpected forbidden requests: ${JSON.stringify(forbidden)}`)
