@@ -144,6 +144,53 @@ impl Timeline {
         });
         self.previews.fixture_set_scope(scope, marker_id);
     }
+
+    pub(crate) fn outline_retained_bytes(
+        &self,
+        seen_outlines: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.outline.as_ref().map_or(0, |outline| {
+            if seen_outlines.insert(Arc::as_ptr(outline) as usize) {
+                outline_weight(outline)
+            } else {
+                0
+            }
+        })
+    }
+
+    pub(crate) fn evictable_outline_bytes(&self) -> usize {
+        self.outline.as_ref().map_or(0, |outline| {
+            if Arc::strong_count(outline) == 1 {
+                outline_weight(outline)
+            } else {
+                0
+            }
+        })
+    }
+
+    pub(crate) fn evict_inactive_outline(&mut self) {
+        if self.outline.is_none() && self.markers.is_empty() && self.resident.is_empty() {
+            return;
+        }
+        self.outline = None;
+        self.markers.clear();
+        self.folded.clear();
+        self.has_raw_markers = false;
+        self.resident.clear();
+        self.refresh = true;
+        self.version = self.version.wrapping_add(1);
+        self.changed = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_set_outline(&mut self, outline: Arc<Outline>) {
+        self.outline = Some(outline);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_outline(&self) -> bool {
+        self.outline.is_some()
+    }
 }
 
 #[cfg(test)]
@@ -151,6 +198,18 @@ impl Timeline {
     pub(crate) fn is_online(&self) -> bool {
         self.online
     }
+}
+
+pub(crate) fn outline_weight(outline: &Outline) -> usize {
+    outline.saved_weight().unwrap_or_else(|| {
+        outline.entries.iter().fold(0usize, |total, entry| {
+            total
+                .saturating_add(size_of::<codenomad_client::timeline::Entry>())
+                .saturating_add(entry.id.len())
+                .saturating_add(entry.layout.as_ref().map_or(0, String::len))
+                .saturating_add(entry.tool_name.as_ref().map_or(0, String::len))
+        })
+    })
 }
 
 fn owner(s: &mut State) -> &mut Timeline {

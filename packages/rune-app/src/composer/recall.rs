@@ -152,10 +152,11 @@ impl History {
                     active_tab.unwrap_or_default(),
                     active_session.unwrap_or_default(),
                 );
-            if !is_active && !protected_ids.contains(&entry.id) {
-                let weight = entry.bytes;
-                self.discard(index);
-                freed = freed.saturating_add(weight);
+            if !is_active
+                && !protected_ids.contains(&entry.id)
+                && let Some(removed) = self.discard(index)
+            {
+                freed = freed.saturating_add(entry_sole_owner_bytes(&removed));
             }
         }
         // Pass 2: if still over budget, evict oldest remaining entries except protected ones.
@@ -163,10 +164,10 @@ impl History {
         while index > 0 && freed < bytes_to_free {
             index -= 1;
             let entry = &self.entries[index];
-            if !protected_ids.contains(&entry.id) {
-                let weight = entry.bytes;
-                self.discard(index);
-                freed = freed.saturating_add(weight);
+            if !protected_ids.contains(&entry.id)
+                && let Some(removed) = self.discard(index)
+            {
+                freed = freed.saturating_add(entry_sole_owner_bytes(&removed));
             }
         }
         freed
@@ -174,15 +175,29 @@ impl History {
 
     #[cfg(test)]
     pub(crate) fn fixture_push(&mut self, tab: &str, session: &str, text: String) -> i64 {
+        self.fixture_push_with_draft(tab, session, text, Draft::default())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_push_with_draft(
+        &mut self,
+        tab: &str,
+        session: &str,
+        text: String,
+        draft: Draft,
+    ) -> i64 {
         self.next += 1;
-        let bytes = text.len().saturating_mul(2);
+        let bytes = text
+            .len()
+            .saturating_mul(2)
+            .saturating_add(draft.retained_bytes(&mut std::collections::HashSet::new()));
         let id = self.next;
         self.bytes = self.bytes.saturating_add(bytes);
         self.entries.push_front(Entry {
             project: Project::Unbound,
             origin: Some((tab.into(), session.into())),
             edit: TextEdit::new(&text),
-            draft: Draft::default(),
+            draft,
             resolved: text,
             bytes,
             id,
@@ -190,10 +205,10 @@ impl History {
         id
     }
 
-    fn discard(&mut self, index: usize) {
-        if let Some(entry) = self.entries.remove(index) {
-            self.bytes = self.bytes.saturating_sub(entry.bytes);
-        }
+    fn discard(&mut self, index: usize) -> Option<Entry> {
+        let entry = self.entries.remove(index)?;
+        self.bytes = self.bytes.saturating_sub(entry.bytes);
+        Some(entry)
     }
 
     fn count(&self, project: &Project) -> usize {
@@ -228,7 +243,47 @@ impl Recall {
     }
 }
 
+fn entry_sole_owner_bytes(entry: &Entry) -> usize {
+    entry
+        .edit
+        .text
+        .len()
+        .saturating_add(
+            entry
+                .edit
+                .marks()
+                .len()
+                .saturating_mul(size_of::<rune::edit::MarkRange>()),
+        )
+        .saturating_add(entry.resolved.len())
+        .saturating_add(entry.draft.sole_owner_bytes())
+}
+
 pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
+    record_with_limits(
+        s,
+        resolved,
+        slash,
+        crate::workspace::memory_budget::Limits::DEFAULT,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_record(
+    s: &mut State,
+    resolved: String,
+    slash: bool,
+    limits: crate::workspace::memory_budget::Limits,
+) -> bool {
+    record_with_limits(s, resolved, slash, limits)
+}
+
+fn record_with_limits(
+    s: &mut State,
+    resolved: String,
+    slash: bool,
+    limits: crate::workspace::memory_budget::Limits,
+) -> bool {
     let Some((project, tab, session)) = scope(s) else {
         return false;
     };
@@ -296,7 +351,7 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
         bytes,
         id: recorded_id,
     });
-    crate::workspace::memory_budget::enforce_protecting_recall(s, Some(recorded_id));
+    let _ = crate::workspace::memory_budget::enforce_with_recall(s, limits, Some(recorded_id));
     true
 }
 

@@ -282,7 +282,7 @@ fn global_ceiling_evicts_inactive_tabs_in_deterministic_lru_order() {
     assert_eq!(oldest_cache.history_weight().0, 0);
     assert_eq!(recent_cache.history_weight().0, 1);
     // Secondary caches on the oldest tab were evicted (files/git + mission body).
-    assert_eq!(oldest_cache.files_and_git_bytes(), 0);
+    assert_eq!(oldest_cache.files_and_git_bytes(&mut Default::default()), 0);
     assert_eq!(ui.entry_missions_ref(3).unwrap().retained_bytes(), 0);
     // Draft on evicted tab is still preserved when restored.
     let mut restored = crate::init();
@@ -337,9 +337,12 @@ fn non_evictable_mission_summaries_do_not_mask_evictable_file_caches_on_newer_ta
     // Both reader preview and clean editor buffers were evicted and armed for reload on return.
     assert!(files.reader.preview().is_none());
     assert!(files.reader.target().is_some());
-    assert_eq!(files.document.clean_retained_bytes(), 0);
+    assert_eq!(
+        files.document.clean_retained_bytes(&mut Default::default()),
+        0
+    );
     assert_eq!(files.document.fixture_receipt(), 0);
-    assert_eq!(files.retained_bytes(), 0);
+    assert_eq!(files.retained_bytes(&mut Default::default()), 0);
 }
 
 #[test]
@@ -424,7 +427,7 @@ fn extreme_pressure_protects_active_tab_streaming_tab_hovered_message_and_all_un
     // Protected streaming tab kept its transcript AND drafts, while shedding reloadable file/git caches.
     let live_cache = ui.take_entry_cache(1).unwrap();
     assert_eq!(live_cache.history_weight().0, 1);
-    assert_eq!(live_cache.files_and_git_bytes(), 0);
+    assert_eq!(live_cache.files_and_git_bytes(&mut Default::default()), 0);
     let mut restored_live = crate::init();
     live_cache.apply(&mut restored_live);
     assert_eq!(restored_live.draft.text, "live draft");
@@ -557,6 +560,7 @@ fn shared_clean_file_draft_stays_intact_in_active_tab_and_resyncs_on_reactivatio
         "shared.rs",
         &content,
     );
+    let active_preview_bytes = active_files.reader.retained_bytes();
     s.files = Some(active_files);
 
     // Inactive tab opens the exact same file against the same `shared_store`.
@@ -573,20 +577,37 @@ fn shared_clean_file_draft_stays_intact_in_active_tab_and_resyncs_on_reactivatio
     inactive_files
         .document
         .fixture_attach_shared(shared_store, "/project", "shared.rs", &content);
+    inactive_files.activate(false);
+    let inactive_preview_bytes = inactive_files.reader.retained_bytes();
     inactive_state.files = Some(inactive_files);
 
     let mut ui = Ui::new();
     ui.push_fixture_entry("tab-inactive", 1, Cache::take(&mut inactive_state), None);
     s.workspace = Some(ui);
 
+    // Before eviction, the shared clean Draft (text + original text + original wire = 3x content)
+    // is counted once globally, alongside both tabs' edit buffers (2x content) and reader previews.
+    let before_files = measure(&s).get(Pool::FilesAndGit);
+    assert_eq!(
+        before_files,
+        content.len() * 5 + active_preview_bytes + inactive_preview_bytes,
+        "expected 1x shared Draft (3x) + 2x edit + both previews"
+    );
+
     // Force extreme pressure so inactive tab's files caches are evicted.
-    let _ = enforce_with(
+    let after = enforce_with(
         &mut s,
         Limits {
             global_bytes: 1,
             inactive_history_bytes: usize::MAX,
             inactive_history_rows: usize::MAX,
         },
+    );
+    // After eviction, active tab retains 1x shared Draft (3x) + 1x edit + active preview.
+    assert_eq!(
+        after.get(Pool::FilesAndGit),
+        content.len() * 4 + active_preview_bytes,
+        "shared clean Draft must stay counted once after inactive tab eviction"
     );
 
     // Active tab's shared Draft and edit buffer remain completely intact and editable!
@@ -594,40 +615,149 @@ fn shared_clean_file_draft_stays_intact_in_active_tab_and_resyncs_on_reactivatio
     assert_eq!(active.document.edit().text, content);
     assert!(active.document.editable());
 
-    // Inactive tab shed its own edit buffer & reader preview, and resyncs from the shared Draft
-    // immediately on reactivation without leaving an empty editor.
+    // Inactive tab shed its own edit buffer & reader preview. Even when reactivated OFFLINE,
+    // it resyncs from the shared Draft immediately and never exposes an empty editable buffer.
     let mut inactive_cache = s.workspace.as_mut().unwrap().take_entry_cache(1).unwrap();
     let inactive = inactive_cache.files_mut().as_mut().unwrap();
     assert!(inactive.document.edit().text.is_empty());
     assert!(inactive.reader.preview().is_none());
-    inactive.online(true);
+    inactive.online(false);
     inactive.activate(true);
-    assert!(inactive.document.poll(&mut inactive.reader));
+    assert_eq!(inactive.document.edit().text, content);
+    assert!(inactive.document.editable());
+    assert!(!inactive.document.poll(&mut inactive.reader));
     assert_eq!(inactive.document.edit().text, content);
 }
 
 #[test]
-fn recall_eviction_protects_newly_recorded_entry_under_pressure() {
-    use super::memory_budget::enforce_with_recall;
+fn recall_record_protects_newly_recorded_entry_and_evicts_past_shared_arc_attachments() {
+    use crate::composer::draft::{Attachment, Draft};
 
     let mut s = crate::init();
-    s.workspace = Some(Ui::new());
-    let _old_id = s
-        .prompt_history
-        .fixture_push("tab-0", "ses-1", "o".repeat(8_000));
-    let new_id = s
-        .prompt_history
-        .fixture_push("tab-0", "ses-1", "n".repeat(4_000));
 
-    let _ = enforce_with_recall(
+    // Seed an oldest recall entry sharing an 8 KiB Arc<[u8]> with the active composer draft,
+    // plus a newer unshared 8 KiB recall entry.
+    let shared_bytes: Arc<[u8]> = Arc::from(vec![b's'; 8_192]);
+    let unshared_bytes: Arc<[u8]> = Arc::from(vec![b'u'; 8_192]);
+    s.composer.draft.attachments.push(Attachment::Device {
+        name: "shared.bin".into(),
+        mime: "application/octet-stream".into(),
+        bytes: Arc::clone(&shared_bytes),
+        token: None,
+    });
+    let shared_draft = Draft {
+        attachments: vec![Attachment::Device {
+            name: "shared.bin".into(),
+            mime: "application/octet-stream".into(),
+            bytes: shared_bytes,
+            token: None,
+        }],
+        literal_spans: Vec::new(),
+    };
+    let unshared_draft = Draft {
+        attachments: vec![Attachment::Device {
+            name: "unshared.bin".into(),
+            mime: "application/octet-stream".into(),
+            bytes: unshared_bytes,
+            token: None,
+        }],
+        literal_spans: Vec::new(),
+    };
+    let _oldest_shared =
+        s.prompt_history
+            .fixture_push_with_draft("tab-old", "ses-old", "a".into(), shared_draft);
+    let _middle_unshared =
+        s.prompt_history
+            .fixture_push_with_draft("tab-old", "ses-old", "b".into(), unshared_draft);
+
+    // Record a fresh prompt via the real `record` path under a tight budget:
+    // - the oldest shared-Arc entry frees only a few bytes, so eviction must NOT stop there
+    //   and must also evict the middle unshared-Arc entry;
+    // - the newly recorded entry itself must remain protected because `record` returns `true`.
+    let fresh_text = "fresh-attempt".repeat(20);
+    s.draft.replace_text(&fresh_text);
+    let tight = Limits {
+        global_bytes: 12_000,
+        inactive_history_bytes: usize::MAX,
+        inactive_history_rows: usize::MAX,
+    };
+    assert!(crate::composer::recall::fixture_record(
+        &mut s,
+        fresh_text.clone(),
+        false,
+        tight,
+    ));
+    let mut seen = std::collections::HashSet::new();
+    let _ = s.composer.draft.retained_bytes(&mut seen);
+    let remaining_recall = s.prompt_history.retained_bytes_dedup(&mut seen);
+    // Both old entries were evicted (unshared 8 KiB gone), only the newly recorded entry remains.
+    assert!(
+        remaining_recall >= fresh_text.len() * 2,
+        "newly recorded entry must stay intact, got {remaining_recall}"
+    );
+    assert!(
+        remaining_recall < 4_096,
+        "eviction must continue past shared-Arc entry to evict unshared 8 KiB entry, got {remaining_recall}"
+    );
+}
+
+#[test]
+fn shared_outline_in_saved_cache_and_inactive_timeline_is_counted_and_evicted() {
+    use codenomad_client::timeline::{Entry, Kind, Outline};
+
+    let entries: Vec<Entry> = (0..64)
+        .map(|i| Entry {
+            id: format!("msg-{i:04}"),
+            seq: i,
+            kind: Kind::Assistant,
+            tools: 0,
+            reasoning: 0,
+            text: Some(64),
+            tool_name: None,
+            layout: Some("plain".into()),
+            omitted: None,
+        })
+        .collect();
+    let outline = Arc::new(Outline {
+        entries,
+        total: 64,
+        cacheable: true,
+        saved: None,
+    });
+    let expected_weight = crate::timeline::outline_weight(&outline);
+    assert!(expected_weight > 2_000);
+
+    let mut s = crate::init();
+    s.saved_outlines.fixture_insert(Arc::clone(&outline));
+
+    let mut inactive_state = crate::init();
+    inactive_state
+        .transcript_display
+        .timeline
+        .fixture_set_outline(outline);
+
+    let mut ui = Ui::new();
+    ui.push_fixture_entry("tab-outline", 1, Cache::take(&mut inactive_state), None);
+    s.workspace = Some(ui);
+
+    // Counted once globally (in Pool::Rendered), not zero and not double-counted.
+    let before = measure(&s);
+    assert_eq!(before.get(Pool::Rendered), expected_weight);
+    assert_eq!(before.get(Pool::WindowCaches), 0);
+    assert_eq!(before.total(), expected_weight);
+
+    // Under pressure, Tier 0 removes it from `saved_outlines`, measure STILL sees it on the
+    // inactive Timeline (so eviction does NOT stop early), and Tier 1 evicts it from Timeline.
+    let after = enforce_with(
         &mut s,
         Limits {
             global_bytes: 1,
             inactive_history_bytes: usize::MAX,
             inactive_history_rows: usize::MAX,
         },
-        Some(new_id),
     );
-    // Older recall entry was evicted, while the newly recorded entry stayed intact.
-    assert_eq!(s.prompt_history.retained_bytes(), 8_000);
+    assert_eq!(s.saved_outlines.len(), 0);
+    let inactive_cache = s.workspace.as_mut().unwrap().take_entry_cache(1).unwrap();
+    assert!(!inactive_cache.timeline_ref().has_outline());
+    assert_eq!(after.total(), 0);
 }

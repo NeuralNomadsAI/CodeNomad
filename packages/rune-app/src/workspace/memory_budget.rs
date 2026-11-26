@@ -255,14 +255,22 @@ pub(crate) fn plan_evictions(
 pub(crate) fn measure(s: &State) -> PoolUsage {
     let mut usage = PoolUsage::default();
     let mut seen_draft_arcs = std::collections::HashSet::new();
+    let mut seen_file_drafts = std::collections::HashSet::new();
+    let mut seen_outlines = std::collections::HashSet::new();
     // Active tab live state.
     usage.add(
         Pool::Transcript,
         crate::history::retained_bytes(&s.messages),
     );
-    usage.add(Pool::Rendered, s.transcript_display.retained_bytes());
+    usage.add(
+        Pool::Rendered,
+        s.transcript_display.retained_bytes(&mut seen_outlines),
+    );
     if let Some(files) = &s.files {
-        usage.add(Pool::FilesAndGit, files.retained_bytes());
+        usage.add(
+            Pool::FilesAndGit,
+            files.retained_bytes(&mut seen_file_drafts),
+        );
     }
     usage.add(Pool::FilesAndGit, s.git.retained_bytes());
     usage.add(Pool::ProtectedDrafts, s.draft.text.len());
@@ -278,16 +286,9 @@ pub(crate) fn measure(s: &State) -> PoolUsage {
     }
     usage.add(Pool::ProtectedDrafts, s.git.draft_bytes());
 
-    // Window-global caches and protected file drafts.
-    usage.add(Pool::WindowCaches, s.rail_excerpts.retained_bytes());
-    usage.add(
-        Pool::WindowCaches,
-        s.prompt_history.retained_bytes_dedup(&mut seen_draft_arcs),
-    );
-    usage.add(Pool::WindowCaches, s.saved_outlines.retained_bytes());
-    usage.add(Pool::ProtectedDrafts, s.documents.retained_bytes());
-
     // Per-tab entries (active tab's missions + inactive tabs' caches & drafts).
+    // Measure tab Timelines before `saved_outlines` so outlines still held by a Timeline
+    // remain accounted under `Pool::Rendered` even if removed from `saved_outlines`.
     if let Some(ui) = &s.workspace {
         for (index, entry) in ui.entries_slice().iter().enumerate() {
             if let Some(missions) = entry.missions_ref() {
@@ -303,8 +304,11 @@ pub(crate) fn measure(s: &State) -> PoolUsage {
             if let Some(cache) = entry.cache_ref() {
                 let (_, transcript_bytes) = cache.history_weight();
                 usage.add(Pool::Transcript, transcript_bytes);
-                usage.add(Pool::Rendered, cache.rendered_bytes());
-                usage.add(Pool::FilesAndGit, cache.files_and_git_bytes());
+                usage.add(Pool::Rendered, cache.rendered_bytes(&mut seen_outlines));
+                usage.add(
+                    Pool::FilesAndGit,
+                    cache.files_and_git_bytes(&mut seen_file_drafts),
+                );
                 usage.add(
                     Pool::ProtectedDrafts,
                     cache.draft_bytes(&mut seen_draft_arcs),
@@ -312,15 +316,23 @@ pub(crate) fn measure(s: &State) -> PoolUsage {
             }
         }
     }
+
+    // Window-global caches and protected file drafts.
+    usage.add(Pool::WindowCaches, s.rail_excerpts.retained_bytes());
+    usage.add(
+        Pool::WindowCaches,
+        s.prompt_history.retained_bytes_dedup(&mut seen_draft_arcs),
+    );
+    usage.add(
+        Pool::WindowCaches,
+        s.saved_outlines.retained_bytes(&mut seen_outlines),
+    );
+    usage.add(Pool::ProtectedDrafts, s.documents.retained_bytes());
     usage
 }
 
 pub(crate) fn enforce(s: &mut State) {
     let _ = enforce_with_recall(s, Limits::DEFAULT, None);
-}
-
-pub(crate) fn enforce_protecting_recall(s: &mut State, protected_recall_id: Option<i64>) {
-    let _ = enforce_with_recall(s, Limits::DEFAULT, protected_recall_id);
 }
 
 #[cfg(test)]

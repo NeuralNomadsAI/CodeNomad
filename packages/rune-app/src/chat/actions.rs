@@ -140,9 +140,13 @@ impl Display {
             .saturating_add(live_ansi)
             .saturating_add(self.active.task_anchors_bytes())
             .saturating_add(self.saved_sessions_bytes())
+            .saturating_add(self.timeline.evictable_outline_bytes())
     }
 
-    pub(crate) fn retained_bytes(&self) -> usize {
+    pub(crate) fn retained_bytes(
+        &self,
+        seen_outlines: &mut std::collections::HashSet<usize>,
+    ) -> usize {
         let live_ansi: usize = self
             .live_ansi
             .borrow()
@@ -157,6 +161,7 @@ impl Display {
             .saturating_add(live_ansi)
             .saturating_add(self.active.retained_bytes())
             .saturating_add(self.saved_sessions_bytes())
+            .saturating_add(self.timeline.outline_retained_bytes(seen_outlines))
     }
 
     pub(crate) fn saved_sessions_bytes(&self) -> usize {
@@ -176,6 +181,7 @@ impl Display {
         self.suspend_rendered();
         self.receipts.clear();
         self.saved.clear();
+        self.timeline.evict_inactive_outline();
     }
     pub(super) fn suspend_rendered(&mut self) {
         self.messages.suspend();

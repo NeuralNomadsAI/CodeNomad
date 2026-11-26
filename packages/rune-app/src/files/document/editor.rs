@@ -104,7 +104,29 @@ impl Editor {
             draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some()
         })
     }
-    pub(crate) fn clean_retained_bytes(&self) -> usize {
+    pub(crate) fn clean_retained_bytes(
+        &self,
+        seen_drafts: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        if self.has_unsaved_edits() {
+            return 0;
+        }
+        let draft_bytes = self.draft.as_ref().map_or(0, |shared| {
+            // Count a shared clean Draft once across all tabs that view the same file.
+            if !seen_drafts.insert(std::sync::Arc::as_ptr(shared) as usize) {
+                return 0;
+            }
+            let draft = lock(shared);
+            draft.text.len().saturating_add(
+                draft
+                    .original
+                    .as_ref()
+                    .map_or(0, |snap| snap.text.len().saturating_add(snap.wire.len())),
+            )
+        });
+        self.edit.text.len().saturating_add(draft_bytes)
+    }
+    pub(crate) fn clean_evictable_bytes(&self) -> usize {
         if self.has_unsaved_edits() {
             return 0;
         }
@@ -127,7 +149,7 @@ impl Editor {
         if self.has_unsaved_edits() {
             return 0;
         }
-        let freed = self.clean_retained_bytes();
+        let freed = self.clean_evictable_bytes();
         if freed == 0 {
             return 0;
         }
@@ -333,7 +355,7 @@ impl Editor {
             && (self.project.is_none() || self.native_project.is_some())
             && self.draft.as_ref().is_some_and(|draft| {
                 let draft = lock(draft);
-                draft.original.is_some() || draft.recovered
+                self.revision == draft.revision && (draft.original.is_some() || draft.recovered)
             })
     }
     pub fn writable(&self) -> bool {
@@ -353,7 +375,7 @@ impl Editor {
             || self.project.is_some() && self.native_project.is_none()
             || self.draft.as_ref().is_none_or(|draft| {
                 let draft = lock(draft);
-                draft.original.is_none() && !draft.recovered
+                self.revision != draft.revision || (draft.original.is_none() && !draft.recovered)
             })
         {
             &mut self.rejected
@@ -436,8 +458,14 @@ impl Editor {
         self.position = Position::default();
     }
     pub fn activate(&mut self, active: bool) {
-        if active && !self.active {
-            self.restore_source_scroll();
+        if active {
+            if !self.active {
+                self.restore_source_scroll();
+            }
+            if let Some(shared) = self.draft.clone() {
+                let draft = lock(&shared);
+                self.sync_edit_from_draft(&draft);
+            }
         }
         self.active = active;
         if !active {
@@ -457,8 +485,10 @@ impl Editor {
         if let (Some(key), Some(shared)) = (&self.key, &self.draft) {
             {
                 let mut draft = lock(shared);
-                if draft.original.is_none() && !draft.recovered {
+                if self.revision != draft.revision || (draft.original.is_none() && !draft.recovered)
+                {
                     self.edit = TextEdit::new(&draft.text);
+                    self.revision = draft.revision;
                     return;
                 }
                 draft.text = lf(&self.edit.text);
@@ -558,7 +588,14 @@ impl Editor {
             }
         }
         if !self.ready(reader) {
-            return false;
+            if !self.active {
+                return false;
+            }
+            let Some(shared) = self.draft.clone() else {
+                return false;
+            };
+            let draft = lock(&shared);
+            return self.sync_edit_from_draft(&draft);
         }
         let Some(shared) = self.draft.clone() else {
             return false;
@@ -582,22 +619,7 @@ impl Editor {
             }
         }
         let draft = lock(&shared);
-        if self.revision != draft.revision {
-            self.position
-                .viewport
-                .before_text_replacement(&self.edit.text);
-            let live_selection = self
-                .position
-                .viewport
-                .mounted()
-                .then(|| SavedPosition::capture(&self.edit, Default::default()));
-            self.edit = TextEdit::new(&draft.text);
-            if let Some(saved) = live_selection {
-                saved.restore_selection(&mut self.edit);
-            }
-            self.revision = draft.revision;
-            changed = true;
-        }
+        changed |= self.sync_edit_from_draft(&draft);
         if draft.original.is_some() || draft.recovered {
             changed |= self.position.restore_selection(&mut self.edit);
         }
@@ -605,6 +627,25 @@ impl Editor {
         changed |= self.observed.as_ref() != Some(&observed);
         self.observed = Some(observed);
         changed
+    }
+    fn sync_edit_from_draft(&mut self, draft: &super::store::Draft) -> bool {
+        if self.revision == draft.revision {
+            return false;
+        }
+        self.position
+            .viewport
+            .before_text_replacement(&self.edit.text);
+        let live_selection = self
+            .position
+            .viewport
+            .mounted()
+            .then(|| SavedPosition::capture(&self.edit, Default::default()));
+        self.edit = TextEdit::new(&draft.text);
+        if let Some(saved) = live_selection {
+            saved.restore_selection(&mut self.edit);
+        }
+        self.revision = draft.revision;
+        true
     }
     fn adopt(&mut self, reader: &Reader, refreshed: bool) {
         if !reader.receipt().1 {

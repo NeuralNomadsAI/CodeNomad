@@ -55,11 +55,14 @@ impl Ui {
         &self.backend.workspace
     }
 
-    pub(crate) fn retained_bytes(&self) -> usize {
+    pub(crate) fn retained_bytes(
+        &self,
+        seen_file_drafts: &mut std::collections::HashSet<usize>,
+    ) -> usize {
         self.reader
             .retained_bytes()
             .saturating_add(self.presentation.retained_bytes())
-            .saturating_add(self.document.clean_retained_bytes())
+            .saturating_add(self.document.clean_retained_bytes(seen_file_drafts))
             .saturating_add(self.pictures.retained_bytes())
             .saturating_add(self.tree.retained_bytes())
             .saturating_add(self.rows.len().saturating_mul(size_of::<Row>()))
@@ -71,7 +74,7 @@ impl Ui {
         } else {
             self.reader
                 .retained_bytes()
-                .saturating_add(self.document.clean_retained_bytes())
+                .saturating_add(self.document.clean_evictable_bytes())
         };
         reader
             .saturating_add(self.presentation.retained_bytes())

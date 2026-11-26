@@ -113,10 +113,24 @@ impl Cache {
         }
     }
 
-    pub(crate) fn retained_bytes(&self) -> usize {
+    pub(crate) fn retained_bytes(&self, seen_outlines: &mut HashSet<usize>) -> usize {
         self.entries.iter().fold(0usize, |total, entry| {
-            total.saturating_add(entry.saved_weight().unwrap_or_default())
+            if seen_outlines.insert(Arc::as_ptr(entry) as usize) {
+                total.saturating_add(crate::timeline::outline_weight(entry))
+            } else {
+                total
+            }
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_insert(&mut self, outline: Arc<Outline>) {
+        self.entries.push(outline);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
     }
 
     pub(crate) fn evict_under_pressure(
@@ -139,7 +153,7 @@ impl Cache {
                 let removed = self.entries.remove(index);
                 // Count freed bytes only when no inactive Timeline still holds a strong Arc clone.
                 if Arc::strong_count(&removed) == 1 {
-                    freed = freed.saturating_add(removed.saved_weight().unwrap_or_default());
+                    freed = freed.saturating_add(crate::timeline::outline_weight(&removed));
                 }
             }
         }

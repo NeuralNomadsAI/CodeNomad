@@ -224,13 +224,19 @@ impl Cache {
             crate::history::retained_bytes(&self.messages),
         )
     }
-    pub(super) fn rendered_bytes(&self) -> usize {
-        self.transcript_display.retained_bytes()
+    pub(super) fn rendered_bytes(
+        &self,
+        seen_outlines: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.transcript_display.retained_bytes(seen_outlines)
     }
-    pub(super) fn files_and_git_bytes(&self) -> usize {
+    pub(super) fn files_and_git_bytes(
+        &self,
+        seen_file_drafts: &mut std::collections::HashSet<usize>,
+    ) -> usize {
         self.files
             .as_ref()
-            .map_or(0, crate::files::Ui::retained_bytes)
+            .map_or(0, |files| files.retained_bytes(seen_file_drafts))
             .saturating_add(self.git.retained_bytes())
     }
     pub(super) fn draft_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
@@ -272,16 +278,18 @@ impl Cache {
         if self.history_protected() {
             freed.saturating_add(self.transcript_display.evict_inactive_sessions())
         } else {
-            let before_display = self.transcript_display.retained_bytes();
+            let evictable = self.transcript_display.evictable_rendered_bytes();
             self.transcript_display.evict_rendered();
-            freed.saturating_add(
-                before_display.saturating_sub(self.transcript_display.retained_bytes()),
-            )
+            freed.saturating_add(evictable)
         }
     }
     #[cfg(test)]
     pub(super) fn files_mut(&mut self) -> &mut Option<crate::files::Ui> {
         &mut self.files
+    }
+    #[cfg(test)]
+    pub(super) fn timeline_ref(&self) -> &crate::timeline::Timeline {
+        &self.transcript_display.timeline
     }
     pub(super) fn history_protected(&self) -> bool {
         self.phase == Phase::Streaming
