@@ -2459,4 +2459,114 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
     }
     let second_delivered = bound(&mut r10_m1, &backend("ses_r10_order"));
     assert_eq!(second_delivered, "distinct first");
+
+    // 19. R12 Bloquant + Moyen 1:
+    // (a) Close 3 tabs with 3 distinct drafts, open 3 tabs (C, D, E), bind C -> snapshot before
+    // D or E binds must project ONE distinct remaining draft onto D and ONE onto E (all 3 survive).
+    // (b) Open an extra 4th tab F for the same project before restarting -> F must NOT duplicate
+    // any projected closed draft in the snapshot (1 projection per closed source).
+    let mut r12 = draft_state();
+    let mut t0 = closed("ses_r12_three", "");
+    t0.drafts.clear();
+    t0.active_session_id = Some("ses_r12_three".into());
+    let mut t1 = closed("ses_r12_three", "");
+    t1.drafts.clear();
+    t1.occurrence = 1;
+    t1.active_session_id = Some("ses_r12_three".into());
+    let mut t2 = closed("ses_r12_three", "");
+    t2.drafts.clear();
+    t2.occurrence = 2;
+    t2.active_session_id = Some("ses_r12_three".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(t0), Tab::Workspace(t1), Tab::Workspace(t2)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    for i in 0..3 {
+        ui.entries[i].binding = Some(backend("ses_r12_three"));
+    }
+    r12.workspace = Some(ui);
+    for (key, text) in [
+        ("tab-0", "draft one"),
+        ("tab-1", "draft two"),
+        ("tab-2", "draft three"),
+    ] {
+        r12.show_chat();
+        r12.draft = TextEdit::new(text);
+        capture(&mut r12);
+        close(&mut r12, key, &mut tx);
+        if let Some(l) = r12.screen.launcher_mut() {
+            l.pending = false;
+        }
+    }
+    // Open C (tab-3), D (tab-4), E (tab-5).
+    for id in ["proj-r12-c", "proj-r12-d", "proj-r12-e"] {
+        if id != "proj-r12-c" {
+            new_tab(&mut r12, &mut tx);
+            if let Some(l) = r12.screen.launcher_mut() {
+                l.pending = false;
+            }
+        }
+        opened(
+            &mut r12,
+            &Project {
+                id: id.into(),
+                path: "/fixture".into(),
+            },
+        );
+    }
+    // Bind C (tab-3): receives "draft three", while D and E project "draft two" and "draft one".
+    select(&mut r12, "tab-3", &mut tx);
+    if let Some(l) = r12.screen.launcher_mut() {
+        l.pending = false;
+    }
+    r12.show_chat();
+    r12.draft = TextEdit::new(bound(&mut r12, &backend("ses_r12_three")));
+    assert_eq!(r12.draft.text, "draft three");
+    capture(&mut r12);
+    let snap_3 = r12.workspace.as_ref().unwrap().snapshot();
+    let texts_3: Vec<&str> = snap_3
+        .tabs
+        .iter()
+        .filter_map(|t| match t {
+            Tab::Workspace(w) => w.drafts.get("ses_r12_three").map(String::as_str),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts_3.len(), 3);
+    assert!(texts_3.contains(&"draft three"));
+    assert!(texts_3.contains(&"draft two"));
+    assert!(texts_3.contains(&"draft one"));
+
+    // Open a 4th tab F before restart: still only 3 snapshot entries (zero duplication!).
+    new_tab(&mut r12, &mut tx);
+    if let Some(l) = r12.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r12,
+        &Project {
+            id: "proj-r12-f".into(),
+            path: "/fixture".into(),
+        },
+    );
+    let snap_4 = r12.workspace.as_ref().unwrap().snapshot();
+    let texts_4: Vec<&str> = snap_4
+        .tabs
+        .iter()
+        .filter_map(|t| match t {
+            Tab::Workspace(w) => w.drafts.get("ses_r12_three").map(String::as_str),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts_4.len(),
+        3,
+        "extra reopened tab must not duplicate a closed source in the snapshot"
+    );
 }

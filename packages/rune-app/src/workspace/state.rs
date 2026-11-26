@@ -697,38 +697,6 @@ pub fn opened(s: &mut State, project: &Project) {
             .cloned()
             .collect();
         let pending_keys: HashSet<String> = closed_keys.iter().cloned().collect();
-        let mut drafts = std::collections::BTreeMap::new();
-        let mut attachment_drafts = std::collections::BTreeSet::new();
-        let mut attachment_parts = std::collections::BTreeMap::new();
-        let mut restored_keys = std::collections::HashSet::new();
-        let mut derived_origins = std::collections::BTreeMap::new();
-        let mut reopened_cleared = HashSet::new();
-        for id in closed_keys {
-            let clear_authorities = drafts::collect_open_clear_authorities(ui, &reopen_scope, &id);
-            let closed =
-                drafts::peek_closed_state_for_scope(ui, &reopen_scope, &id, &clear_authorities);
-            if let Some(bundle) = closed.bundle {
-                if let Some(text) = bundle.text
-                    && !text.is_empty()
-                {
-                    drafts.insert(id.clone(), text);
-                }
-                if bundle.attachment_draft || bundle.attachment_parts.is_some() {
-                    attachment_drafts.insert(id.clone());
-                }
-                if let Some(parts) = bundle.attachment_parts {
-                    attachment_parts.insert(id.clone(), parts);
-                }
-                if let Some(origin) = bundle.derived_from {
-                    derived_origins.insert(id.clone(), origin);
-                }
-                if bundle.from_restored {
-                    restored_keys.insert(id);
-                }
-            } else if closed.explicitly_cleared {
-                reopened_cleared.insert(id);
-            }
-        }
         let reopened_workspace = Workspace {
             backend_id: backend_id.clone(),
             server_id: if backend_id.is_some() {
@@ -740,9 +708,9 @@ pub fn opened(s: &mut State, project: &Project) {
             occurrence,
             workspace_id: Some(project.id.clone()),
             active_session_id: None,
-            drafts,
-            attachment_drafts,
-            attachment_parts,
+            drafts: std::collections::BTreeMap::new(),
+            attachment_drafts: std::collections::BTreeSet::new(),
+            attachment_parts: std::collections::BTreeMap::new(),
             view: Default::default(),
         };
         let pending_deleted: Vec<String> = ui
@@ -751,25 +719,18 @@ pub fn opened(s: &mut State, project: &Project) {
             .filter_map(|(scope, id)| scope.matches(&reopened_workspace).then(|| id.clone()))
             .collect();
         let item = &mut ui.entries[ui.active];
-        item.cleared = reopened_cleared;
+        item.cleared.clear();
         item.pending_drafts = pending_keys;
         item.restored_drafts.clear();
-        item.derived_from = derived_origins;
+        item.derived_from.clear();
         item.clear_authority.clear();
         item.superseded_on_delete.clear();
-        for id in restored_keys {
-            if let Some(copy) = drafts::DraftCopy::from_workspace(&reopened_workspace, &id) {
-                item.restored_drafts.insert(id.clone(), copy.clone());
-                item.derived_from.entry(id).or_insert(copy);
-            }
-        }
-        for id in &item.cleared {
-            item.clear_authority
-                .insert(id.clone(), drafts::ClearAuthority::Persisted);
-        }
         item.pending_deleted.extend(pending_deleted);
         item.saved = Tab::Workspace(reopened_workspace);
         item.live_drafts.clear();
+        for id in &closed_keys {
+            drafts::sync_pending_closed_projections(ui, &reopen_scope, id);
+        }
     }
     let item = &mut ui.entries[ui.active];
     item.project = Some(project.clone());

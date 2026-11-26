@@ -556,31 +556,81 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         }
     }
     if !retired_siblings.is_empty()
-        && let Some(next_bundle) =
-            peek_closed_state_for_scope(ui, &project_scope, id, &clear_authorities).bundle
+        && peek_closed_state_for_scope(ui, &project_scope, id, &clear_authorities)
+            .bundle
+            .is_some()
     {
         for &idx in &retired_siblings {
             ui.entries[idx].pending_drafts.insert(id.into());
         }
-        // Project the next remaining closed draft into one rearmed sibling's snapshot state so a
-        // restart before that tab binds preserves it without delivering early.
-        let holder = &mut ui.entries[retired_siblings[0]];
+        sync_pending_closed_projections(ui, &project_scope, id);
+    }
+}
+
+/// Projects each remaining admissible closed-tab draft 1-to-1 onto available open tabs that
+/// still carry `id` in `pending_drafts`, so a restart before binding persists every distinct
+/// closed draft once without duplicating a single closed source across multiple tabs.
+pub(super) fn sync_pending_closed_projections(ui: &mut Ui, scope: &super::ProjectScope, id: &str) {
+    let pending_tabs: Vec<usize> = ui
+        .entries
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, entry)| {
+            (entry.pending_drafts.contains(id)
+                && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)))
+            .then_some(idx)
+        })
+        .collect();
+    if pending_tabs.is_empty() {
+        return;
+    }
+    for &idx in &pending_tabs {
+        let entry = &mut ui.entries[idx];
+        if let Tab::Workspace(saved) = &mut entry.saved {
+            saved.drafts.remove(id);
+            saved.attachment_drafts.remove(id);
+            saved.attachment_parts.remove(id);
+        }
+        entry.live_drafts.remove(id);
+        entry.cleared.remove(id);
+        entry.clear_authority.remove(id);
+        entry.restored_drafts.remove(id);
+        entry.derived_from.remove(id);
+        entry.superseded_on_delete.remove(id);
+    }
+    let clear_authorities = collect_open_clear_authorities(ui, scope, id);
+    let (bundles, explicitly_cleared) =
+        collect_closed_bundles_for_recovery(ui, scope, id, &clear_authorities);
+    if bundles.is_empty() {
+        if explicitly_cleared {
+            for &idx in &pending_tabs {
+                let entry = &mut ui.entries[idx];
+                entry.cleared.insert(id.into());
+                entry
+                    .clear_authority
+                    .insert(id.into(), ClearAuthority::Persisted);
+            }
+        }
+        return;
+    }
+    for (idx, bundle) in pending_tabs.into_iter().zip(bundles) {
+        let holder = &mut ui.entries[idx];
         if let Tab::Workspace(saved) = &mut holder.saved {
-            if let Some(text) = next_bundle.text.as_ref()
+            if let Some(text) = bundle.text.as_ref()
                 && !text.is_empty()
             {
                 saved.drafts.insert(id.into(), text.clone());
             }
-            if next_bundle.attachment_draft || next_bundle.attachment_parts.is_some() {
+            if bundle.attachment_draft || bundle.attachment_parts.is_some() {
                 saved.attachment_drafts.insert(id.into());
             }
-            if let Some(parts) = next_bundle.attachment_parts.as_ref() {
+            if let Some(parts) = bundle.attachment_parts.as_ref() {
                 saved.attachment_parts.insert(id.into(), parts.clone());
             }
-            if let Some(origin) = next_bundle.derived_from.as_ref() {
+            if let Some(origin) = bundle.derived_from.as_ref() {
                 holder.derived_from.insert(id.into(), origin.clone());
             }
-            if next_bundle.from_restored
+            if bundle.from_restored
                 && let Some(copy) = DraftCopy::from_workspace(saved, id)
             {
                 holder.restored_drafts.insert(id.into(), copy.clone());
@@ -1118,8 +1168,20 @@ fn recover_missing_session_draft_with_uuid(
         } else if let Some(targets) =
             reserve_recovery_keys_with(ui, &scope, closed_bundles.len(), &mut next_uuid)
         {
+            let closed_target_tab =
+                if occurrence_in_active_chat_on(on_launcher, ui, origin, session_id) {
+                    matching_tabs
+                        .iter()
+                        .copied()
+                        .find(|&idx| {
+                            !occurrence_in_active_chat_on(on_launcher, ui, idx, session_id)
+                        })
+                        .unwrap_or(origin)
+                } else {
+                    origin
+                };
             for (bundle, target) in closed_bundles.into_iter().zip(targets) {
-                if let Some(entry) = ui.entries.get_mut(origin)
+                if let Some(entry) = ui.entries.get_mut(closed_target_tab)
                     && let Tab::Workspace(saved) = &mut entry.saved
                 {
                     if let Some(text) = bundle.text
@@ -1157,6 +1219,16 @@ fn recover_missing_session_draft_with_uuid(
             true
         } else {
             ui.entries[origin].pending_deleted.insert(session_id.into());
+            if !ui
+                .closed_pending_deleted
+                .iter()
+                .any(|(existing_scope, existing_id)| {
+                    existing_scope.same_scope(&project_scope) && existing_id == session_id
+                })
+            {
+                ui.closed_pending_deleted
+                    .push((project_scope.clone(), session_id.into()));
+            }
             false
         };
 
@@ -1262,10 +1334,11 @@ fn recover_missing_session_draft_with_uuid(
             }
         }
 
-        let any_deferred = matching_tabs
-            .iter()
-            .any(|&idx| ui.entries[idx].pending_deleted.contains(session_id));
-        if closed_handled && !any_deferred {
+        let any_eligible_deferred = matching_tabs.iter().any(|&idx| {
+            ui.entries[idx].pending_deleted.contains(session_id)
+                && !occurrence_in_active_chat_on(on_launcher, ui, idx, session_id)
+        });
+        if closed_handled && !any_eligible_deferred {
             ui.closed_pending_deleted
                 .retain(|(c_scope, c_id)| !(c_scope.matches(&scope) && c_id == session_id));
         }
@@ -1609,5 +1682,67 @@ mod tests {
             !after2.drafts.values().any(|v| v == "cleared X"),
             "retry must not resurrect X cleared by open sibling"
         );
+
+        // R12 Moyen 2: SSE deletion arrives while Tab 0 displays the deleted session in active
+        // chat and Tab 1 (same project) is eligible on launcher. If UUID reservation fails once,
+        // project-level retry lets Tab 1 recover the closed drafts on the next poll even while
+        // Tab 0 remains in active chat.
+        let mut s3 = crate::init();
+        s3.show_chat();
+        let mut ui3 = Ui::new();
+        ui3.fixture_ready();
+        let make_ws3 =
+            |occ: u64, active_id: Option<&str>, text: Option<&str>| crate::workspace::Workspace {
+                backend_id: None,
+                server_id: None,
+                folder: "/repo".into(),
+                occurrence: occ,
+                workspace_id: Some("ws".into()),
+                active_session_id: active_id.map(str::to_owned),
+                drafts: text
+                    .map(|t| [("ses_r12_act".to_string(), t.to_string())].into())
+                    .unwrap_or_default(),
+                attachment_drafts: Default::default(),
+                attachment_parts: Default::default(),
+                view: Default::default(),
+            };
+        ui3.entries[0].saved =
+            Tab::Workspace(make_ws3(0, Some("ses_r12_act"), Some("open active")));
+        ui3.entries.push(super::super::entry(
+            "tab-1".into(),
+            Tab::Workspace(make_ws3(1, None, None)),
+        ));
+        ui3.active = 0;
+        ui3.closed = vec![
+            make_ws3(2, None, Some("closed one")),
+            make_ws3(3, None, Some("closed two")),
+        ];
+        ui3.closed_restored = vec![Default::default(), Default::default()];
+        ui3.closed_derived_from = vec![Default::default(), Default::default()];
+        s3.workspace = Some(ui3);
+        assert!(!recover_missing_session_draft_with_uuid(
+            &mut s3,
+            Some(0),
+            "ses_r12_act",
+            || None,
+        ));
+        assert!(
+            !s3.workspace
+                .as_ref()
+                .unwrap()
+                .closed_pending_deleted
+                .is_empty(),
+            "failed reservation while origin is in active chat must arm project-level retry"
+        );
+        // Tab 0 is STILL in active chat, yet Tab 1 is eligible and recovers both closed drafts.
+        assert!(poll_pending_deleted(&mut s3));
+        let ui3 = s3.workspace.as_ref().unwrap();
+        assert!(ui3.closed_pending_deleted.is_empty());
+        assert!(ui3.entries[0].pending_deleted.contains("ses_r12_act"));
+        let Tab::Workspace(tab1) = &ui3.entries[1].saved else {
+            panic!("expected workspace tab 1");
+        };
+        assert!(tab1.drafts.values().any(|v| v == "closed one"));
+        assert!(tab1.drafts.values().any(|v| v == "closed two"));
     }
 }

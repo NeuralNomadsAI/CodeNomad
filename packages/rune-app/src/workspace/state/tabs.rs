@@ -402,6 +402,9 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
                 .iter()
                 .any(|e| matches!(&e.saved, Tab::Workspace(w) if s.matches(w)))
         });
+        for id in &removed.pending_drafts {
+            super::drafts::sync_pending_closed_projections(ui, &scope, id);
+        }
     }
     if let (Some(backend), Some(project)) = (removed.binding, removed.project) {
         platform::spawn(async move {
