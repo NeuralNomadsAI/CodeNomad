@@ -10,7 +10,10 @@ function isWhitespace(byte: number): boolean {
   return byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d
 }
 
-/** Fixed-slab element buffer: at most `ceil(limit / 64 KiB)` Buffers even for 1-byte chunks. */
+/**
+ * Fixed-slab element buffer: at most `ceil(limit / 64 KiB)` slabs even for 1-byte chunks,
+ * copying out tight slices for small messages so downstream queues never pin 64 KiB slabs.
+ */
 class SlabBuffer {
   private slabs: Buffer[] = []
   private current: Buffer | null = null
@@ -42,15 +45,32 @@ class SlabBuffer {
 
   drainTo(emit: (chunk: Buffer) => void): void {
     for (const slab of this.slabs) emit(slab)
-    if (this.current && this.used > 0) emit(this.current.subarray(0, this.used))
+    if (this.current && this.used > 0) {
+      const slice = this.current.subarray(0, this.used)
+      emit(this.used < this.current.byteLength / 2 ? Buffer.from(slice) : slice)
+    }
     this.reset()
   }
 
   takeBuffer(): Buffer {
     if (this.slabs.length === 0) {
-      const out = this.current ? this.current.subarray(0, this.used) : Buffer.alloc(0)
-      this.reset()
-      return out
+      if (!this.current || this.used === 0) {
+        this.used = 0
+        this.bytes = 0
+        return Buffer.alloc(0)
+      }
+      const slice = this.current.subarray(0, this.used)
+      if (this.used < this.current.byteLength / 2) {
+        // Copy out a tight Buffer and reuse the 64 KiB slab for the next small message.
+        const out = Buffer.from(slice)
+        this.used = 0
+        this.bytes = 0
+        return out
+      }
+      this.current = null
+      this.used = 0
+      this.bytes = 0
+      return slice
     }
     const parts = this.current && this.used > 0
       ? [...this.slabs, this.current.subarray(0, this.used)]
@@ -85,7 +105,8 @@ function projectElement(raw: Buffer, scope: { workspaceId: string; sessionId: st
  * Streams a native `GET /api/session/:id/message` JSON envelope (`{"data":[...]}`)
  * while projecting each individual message object through `deferToolMedia` as soon
  * as it closes. Peak server memory stays bounded by one message (`maxElementBytes`)
- * packed into 64 KiB slabs, and `destroy()` immediately cancels a stalled upstream read.
+ * packed into 64 KiB slabs, pauses mid-chunk on downstream backpressure, and cancels
+ * upstream reads immediately on `destroy()`.
  */
 export function deferToolMediaStream(
   source: ReadableStream<Uint8Array>,
@@ -115,21 +136,42 @@ export function deferToolMediaStream(
   let capturing = false
   let elemOverflowed = false
 
+  // Unprocessed remainder of the current upstream chunk when backpressure pauses mid-chunk.
+  let pendingChunk: Uint8Array | null = null
+  let pendingIndex = 0
+
   const releaseReader = () => {
     try { reader.releaseLock() } catch { /* already released */ }
   }
 
-  const processChunk = (value: Uint8Array, emit: (chunk: Uint8Array) => void) => {
-    if (value.byteLength === 0) return
+  const processChunk = (
+    value: Uint8Array,
+    startAt: number,
+    emit: (chunk: Uint8Array) => boolean,
+  ): boolean => {
+    if (startAt >= value.byteLength) {
+      pendingChunk = null
+      pendingIndex = 0
+      return true
+    }
     if (passthrough) {
-      emit(value)
-      return
+      const end = Math.min(value.byteLength, startAt + SLAB_BYTES)
+      const wantMore = emit(value.subarray(startAt, end))
+      if (end < value.byteLength) {
+        pendingChunk = value
+        pendingIndex = end
+        return wantMore
+      }
+      pendingChunk = null
+      pendingIndex = 0
+      return wantMore
     }
 
-    let rawStart = 0
-    let elemStart = 0
+    let rawStart = startAt
+    let elemStart = startAt
+    let wantMore = true
 
-    for (let i = 0; i < value.byteLength; i++) {
+    for (let i = startAt; i < value.byteLength; i++) {
       const byte = value[i]!
 
       if (!started) {
@@ -204,17 +246,27 @@ export function deferToolMediaStream(
           if (depth === 2) {
             if (!elemOverflowed) {
               if (elem.tryAppend(value, elemStart, i + 1)) {
-                emit(projectElement(elem.takeBuffer(), scope))
+                wantMore = emit(projectElement(elem.takeBuffer(), scope)) && wantMore
               } else {
-                elem.drainTo(emit)
-                emit(value.subarray(elemStart, i + 1))
+                elem.drainTo(chunk => { wantMore = emit(chunk) && wantMore })
+                wantMore = emit(value.subarray(elemStart, i + 1)) && wantMore
               }
             } else {
-              emit(value.subarray(rawStart, i + 1))
+              wantMore = emit(value.subarray(rawStart, i + 1)) && wantMore
             }
             capturing = false
             elemOverflowed = false
             rawStart = i + 1
+            if (!wantMore) {
+              if (rawStart < value.byteLength) {
+                pendingChunk = value
+                pendingIndex = rawStart
+              } else {
+                pendingChunk = null
+                pendingIndex = 0
+              }
+              return false
+            }
           }
         }
         continue
@@ -222,10 +274,16 @@ export function deferToolMediaStream(
 
       if (inDataArray && depth === 2) {
         if (byte === 0x7b) {
-          if (i > rawStart) emit(value.subarray(rawStart, i))
+          if (i > rawStart) {
+            wantMore = emit(value.subarray(rawStart, i)) && wantMore
+            if (!wantMore) {
+              pendingChunk = value
+              pendingIndex = i
+              return false
+            }
+          }
           capturing = true
           elemOverflowed = false
-          elem.reset()
           elemStart = i
           depth = 3
         } else if (byte === 0x5d) {
@@ -276,13 +334,22 @@ export function deferToolMediaStream(
 
     if (capturing && !elemOverflowed) {
       if (!elem.tryAppend(value, elemStart, value.byteLength)) {
-        elem.drainTo(emit)
-        emit(value.subarray(elemStart))
+        elem.drainTo(chunk => { wantMore = emit(chunk) && wantMore })
+        wantMore = emit(value.subarray(elemStart)) && wantMore
         elemOverflowed = true
       }
     } else if (rawStart < value.byteLength) {
-      emit(value.subarray(rawStart))
+      const end = Math.min(value.byteLength, rawStart + SLAB_BYTES)
+      wantMore = emit(value.subarray(rawStart, end)) && wantMore
+      if (end < value.byteLength) {
+        pendingChunk = value
+        pendingIndex = end
+        return wantMore
+      }
     }
+    pendingChunk = null
+    pendingIndex = 0
+    return wantMore
   }
 
   const out = new Readable({
@@ -292,7 +359,15 @@ export function deferToolMediaStream(
       void (async () => {
         try {
           let wantMore = true
+          const emit = (chunk: Uint8Array): boolean => {
+            if (destroyed || chunk.byteLength === 0) return !destroyed
+            return out.push(chunk)
+          }
           while (wantMore && !destroyed && !finished) {
+            if (pendingChunk) {
+              wantMore = processChunk(pendingChunk, pendingIndex, emit)
+              continue
+            }
             const { done, value } = await reader.read()
             if (destroyed) return
             if (done) {
@@ -300,19 +375,17 @@ export function deferToolMediaStream(
               if (capturing && !elemOverflowed && elem.bytes > 0) {
                 elem.drainTo(chunk => { out.push(chunk) })
               }
+              elem.reset()
               releaseReader()
               out.push(null)
               return
             }
-            processChunk(value, chunk => {
-              if (!destroyed && chunk.byteLength > 0 && !out.push(chunk)) {
-                wantMore = false
-              }
-            })
+            wantMore = processChunk(value, 0, emit)
           }
         } catch (error) {
           if (!destroyed) {
             elem.reset()
+            pendingChunk = null
             releaseReader()
             out.destroy(error instanceof Error ? error : new Error("Stream read failed"))
           }
@@ -324,15 +397,13 @@ export function deferToolMediaStream(
     destroy(error, callback) {
       destroyed = true
       elem.reset()
-      if (finished) {
+      pendingChunk = null
+      if (!finished) {
+        void reader.cancel(error ?? undefined).catch(() => {}).finally(releaseReader)
+      } else {
         releaseReader()
-        callback(error)
-        return
       }
-      void reader.cancel(error ?? undefined).catch(() => {}).finally(() => {
-        releaseReader()
-        callback(error)
-      })
+      callback(error)
     },
   })
 

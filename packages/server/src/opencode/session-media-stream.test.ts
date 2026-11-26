@@ -98,35 +98,54 @@ test("deferToolMediaStream streams an oversized single message raw without skipp
   )
 })
 
-test("deferToolMediaStream packs 1-byte chunks into bounded slabs and preserves unchanged bytes verbatim", async () => {
+test("deferToolMediaStream packs 1-byte chunks across multiple slabs and preserves unchanged bytes verbatim", async () => {
   const bigUri = `data:image/png;base64,${"D".repeat(INLINE_MEDIA_LIMIT + 512)}`
   const digest = mediaDigest(bigUri)
-  // Unchanged message exceeds INLINE_MEDIA_LIMIT and contains a > 2^53 integer that JSON.parse would round.
-  const unchangedRaw = `{"id":"keep","type":"assistant","meta":{"big":9007199254740993},"content":[{"type":"text","text":"${"z".repeat(INLINE_MEDIA_LIMIT + 100)}"}]}`
+  // Unchanged message exceeds 64 KiB (spans 2 slabs) and has a > 2^53 integer that JSON.parse would round.
+  const unchangedRaw = `{"id":"keep","type":"assistant","meta":{"big":9007199254740993},"content":[{"type":"text","text":"${"z".repeat(70 * 1024)}"}]}`
   const projectedRaw = JSON.stringify(makeMessage("proj", bigUri))
   const raw = Buffer.from(`{"data":[${unchangedRaw},${projectedRaw}]}`, "utf8")
-  // Deliver 1 byte at a time across > 64 KiB to exercise fixed slab packing.
+  // Deliver 1 byte at a time across > 100 KiB to exercise multi-slab packing and concatenation.
   const singleByteChunks = Array.from({ length: raw.byteLength }, (_, i) => raw.subarray(i, i + 1))
   const out = await collect(
     deferToolMediaStream(makeStream(singleByteChunks), { workspaceId: "w", sessionId: "s" }, 128 * 1024),
   )
-  assert.ok(out.includes('"big":9007199254740993'), "unchanged message bytes must be preserved verbatim")
+  assert.ok(out.includes(unchangedRaw), "multi-slab unchanged message bytes must be preserved verbatim")
   assert.ok(out.includes(`/api/workspaces/w/session-media/s/proj/1/0/${digest}`))
 })
 
-test("deferToolMediaStream immediately cancels a stalled upstream reader when destroyed", async () => {
+test("deferToolMediaStream pauses mid-chunk on backpressure without pinning 64 KiB slabs per small message", async () => {
+  const messages = Array.from({ length: 200 }, (_, i) => ({
+    id: `m${i}`,
+    type: "assistant",
+    content: [{ type: "text", text: "x".repeat(5 * 1024) }],
+  }))
+  const bigChunk = Buffer.from(JSON.stringify({ data: messages }), "utf8")
+  const stream = deferToolMediaStream(makeStream([bigChunk]), { workspaceId: "w", sessionId: "s" })
+  // Trigger one read cycle without draining the stream.
+  stream.read(0)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.ok(
+    stream.readableLength < 64 * 1024,
+    `expected backpressure to stop near highWaterMark, got ${stream.readableLength} bytes queued`,
+  )
+  // Drain the rest and verify the full 200-message JSON still arrives intact.
+  const out = await collect(stream)
+  assert.equal(out, bigChunk.toString("utf8"))
+})
+
+test("deferToolMediaStream immediately cancels a stalled upstream reader and closes even if cancel stays pending", async () => {
   let cancelled = false
-  let resolvePull!: () => void
   const stalled = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(Buffer.from('{"data":[{"id":"m1",', "utf8"))
     },
     pull() {
-      return new Promise<void>(resolve => { resolvePull = resolve })
+      return new Promise<void>(() => {})
     },
     cancel() {
       cancelled = true
-      resolvePull?.()
+      return new Promise<void>(() => {})
     },
   })
   const stream = deferToolMediaStream(stalled, { workspaceId: "w", sessionId: "s" })
