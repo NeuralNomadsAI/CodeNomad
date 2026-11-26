@@ -98,6 +98,31 @@ impl Editor {
     pub fn key(&self) -> Option<&Key> {
         self.key.as_ref()
     }
+    pub(crate) fn has_unsaved_edits(&self) -> bool {
+        self.draft.as_ref().is_some_and(|shared| {
+            let draft = lock(shared);
+            draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some()
+        })
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_mark_dirty(&mut self, original: &str, edited: &str) {
+        let key = Key {
+            server: "transport".into(),
+            instance: self.instance.clone(),
+            native_project: None,
+            directory: "/project".into(),
+            path: "dirty.rs".into(),
+        };
+        let shared = self.store.open(&key);
+        {
+            let mut draft = lock(&shared);
+            draft.original = Some(Snapshot::loaded(original));
+            draft.text = edited.into();
+        }
+        self.store.sync(&key, &shared);
+        self.key = Some(key);
+        self.draft = Some(shared);
+    }
     #[cfg(test)]
     pub(crate) fn fixture_saved_key(&mut self, server: &str, project: &str) {
         if let Some(key) = &self.key {

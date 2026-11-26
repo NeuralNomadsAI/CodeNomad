@@ -1,5 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 mod cache;
+pub(crate) mod memory_budget;
+#[cfg(test)]
+mod memory_budget_tests;
 pub(crate) mod opening;
 pub(crate) mod outlines;
 mod persistence;

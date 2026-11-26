@@ -307,6 +307,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     } else {
         tx.instant();
     }
+    super::history_budget::enforce(s);
     capture(s);
 }
 pub(super) fn close_blocked(s: &State, index: usize) -> bool {

@@ -142,6 +142,33 @@ impl Panel {
         self.reader.is_open()
     }
 
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.reader
+            .retained_bytes()
+            .saturating_add(self.detail.retained_bytes())
+            .saturating_add(self.summaries.len().saturating_mul(256))
+            .saturating_add(self.cleanups.len().saturating_mul(128))
+    }
+
+    pub(crate) fn evict_inactive_caches(&mut self) -> usize {
+        self.reader
+            .evict_cache()
+            .saturating_add(self.detail.evict_snapshot())
+    }
+
+    pub(crate) fn evict_closed_reader_cache(&mut self) -> usize {
+        if self.reader.is_open() {
+            0
+        } else {
+            self.reader.evict_cache()
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_cache_body(&mut self, mission_id: &str, text: String) {
+        self.reader.fixture_cache_body(mission_id, text);
+    }
+
     pub(crate) fn close_reader(&mut self) -> Option<String> {
         let back = self.reader.take_return_focus();
         self.reader.close();

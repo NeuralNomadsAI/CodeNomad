@@ -73,10 +73,91 @@ struct SessionDisplay {
     execute_search: (u64, HashMap<String, bool>),
     compact_diffs: (u64, HashSet<String>),
 }
+impl SessionDisplay {
+    fn retained_bytes(&self) -> usize {
+        let keys_len = |set: &HashSet<String>| set.iter().map(String::len).sum::<usize>();
+        let map_keys_len =
+            |keys: usize, bytes: usize| keys.saturating_mul(32).saturating_add(bytes);
+        let mut total = keys_len(&self.toggled)
+            .saturating_add(map_keys_len(
+                self.expansion.len(),
+                self.expansion.keys().map(String::len).sum(),
+            ))
+            .saturating_add(keys_len(&self.group_search_collapsed.1))
+            .saturating_add(map_keys_len(
+                self.revealed.len(),
+                self.revealed.keys().map(String::len).sum(),
+            ))
+            .saturating_add(map_keys_len(
+                self.task_revealed.len(),
+                self.task_revealed.keys().map(String::len).sum(),
+            ))
+            .saturating_add(map_keys_len(
+                self.task_mount_gen.len(),
+                self.task_mount_gen.keys().map(String::len).sum(),
+            ))
+            .saturating_add(self.search_revealed.iter().map(String::len).sum::<usize>())
+            .saturating_add(keys_len(&self.compact_diffs.1));
+        for (key, state) in &self.task_anchors {
+            total = total
+                .saturating_add(key.len())
+                .saturating_add(state.visible.iter().map(String::len).sum::<usize>())
+                .saturating_add(state.selected.iter().map(String::len).sum::<usize>());
+        }
+        for (key, set) in &self.unwrapped {
+            total = total
+                .saturating_add(key.len())
+                .saturating_add(set.len().saturating_mul(size_of::<usize>()));
+        }
+        for (key, set) in &self.diagram_sources {
+            total = total
+                .saturating_add(key.len())
+                .saturating_add(set.len().saturating_mul(size_of::<usize>()));
+        }
+        total
+    }
+}
+
 impl Display {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        let saved: usize = self
+            .saved
+            .iter()
+            .map(|(id, session)| id.len().saturating_add(session.retained_bytes()))
+            .sum();
+        let live_ansi: usize = self
+            .live_ansi
+            .borrow()
+            .iter()
+            .map(|(key, _)| key.len().saturating_add(1024))
+            .sum();
+        self.diffs
+            .retained_bytes()
+            .saturating_add(self.pictures.retained_bytes())
+            .saturating_add(self.children.retained_bytes())
+            .saturating_add(self.task_deliveries.borrow().retained_bytes())
+            .saturating_add(live_ansi)
+            .saturating_add(self.active.retained_bytes())
+            .saturating_add(saved)
+    }
+
+    pub(crate) fn saved_sessions_bytes(&self) -> usize {
+        self.saved
+            .iter()
+            .map(|(id, session)| id.len().saturating_add(session.retained_bytes()))
+            .sum()
+    }
+
+    pub(crate) fn evict_inactive_sessions(&mut self) -> usize {
+        let freed = self.saved_sessions_bytes();
+        self.saved.clear();
+        freed
+    }
+
     pub(crate) fn evict_rendered(&mut self) {
         self.suspend_rendered();
         self.receipts.clear();
+        self.saved.clear();
     }
     pub(super) fn suspend_rendered(&mut self) {
         self.messages.suspend();

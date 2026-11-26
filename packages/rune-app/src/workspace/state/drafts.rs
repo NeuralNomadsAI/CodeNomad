@@ -15,6 +15,16 @@ pub(super) struct LiveDraft {
     command_unconfirmed: Option<crate::composer::UnconfirmedCommand>,
 }
 
+impl LiveDraft {
+    pub(super) fn retained_bytes(&self) -> usize {
+        self.text.as_ref().map_or(0, String::len).saturating_add(
+            self.parts
+                .as_ref()
+                .map_or(0, |(draft, _)| draft.inline_usage().1),
+        )
+    }
+}
+
 impl Ui {
     pub(crate) fn has_unsaved_large_drafts(&self) -> bool {
         self.entries

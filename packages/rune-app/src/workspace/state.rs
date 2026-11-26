@@ -71,6 +71,45 @@ pub(super) struct Entry {
     pending_drafts: HashSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
 }
+impl Entry {
+    pub(in crate::workspace) fn key_str(&self) -> &str {
+        &self.key
+    }
+    pub(in crate::workspace) fn saved_ref(&self) -> &Tab {
+        &self.saved
+    }
+    pub(in crate::workspace) fn cache_ref(&self) -> Option<&Cache> {
+        self.cache.as_ref()
+    }
+    pub(in crate::workspace) fn last_touched(&self) -> u64 {
+        self.history_touched
+    }
+    pub(in crate::workspace) fn project_id(&self) -> Option<&str> {
+        self.project.as_ref().map(|project| project.id.as_str())
+    }
+    pub(in crate::workspace) fn binding_ref(&self) -> Option<&Backend> {
+        self.binding.as_ref()
+    }
+    pub(in crate::workspace) fn missions_ref(&self) -> Option<&crate::missions::Panel> {
+        self.missions.as_ref()
+    }
+    pub(in crate::workspace) fn live_drafts_bytes(&self) -> usize {
+        self.live_drafts.values().fold(0usize, |total, draft| {
+            total.saturating_add(draft.retained_bytes())
+        })
+    }
+    pub(in crate::workspace) fn inactive_secondary_bytes(&self) -> usize {
+        let cache_secondary = self
+            .cache
+            .as_ref()
+            .map_or(0, Cache::evictable_secondary_bytes);
+        let missions = self
+            .missions
+            .as_ref()
+            .map_or(0, crate::missions::Panel::retained_bytes);
+        cache_secondary.saturating_add(missions)
+    }
+}
 pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
     let ui = s.workspace.as_ref()?;
     let entry = ui.entries.get(ui.active)?;
@@ -123,8 +162,67 @@ pub struct Ui {
     touched: bool,
     staged_revision: Option<u64>,
     closed: Vec<Workspace>,
+    memory_budget: super::memory_budget::Coordinator,
 }
 impl Ui {
+    pub(in crate::workspace) fn entries_slice(&self) -> &[Entry] {
+        &self.entries
+    }
+    pub(in crate::workspace) fn active_tab_index(&self) -> usize {
+        self.active
+    }
+    pub(in crate::workspace) fn entry_cache_mut(&mut self, index: usize) -> Option<&mut Cache> {
+        self.entries.get_mut(index)?.cache.as_mut()
+    }
+    pub(in crate::workspace) fn evict_entry_secondary_caches(&mut self, index: usize) -> usize {
+        let Some(entry) = self.entries.get_mut(index) else {
+            return 0;
+        };
+        let mut freed = entry
+            .cache
+            .as_mut()
+            .map_or(0, super::memory_budget::evict_cache_secondary);
+        if let Some(missions) = &mut entry.missions {
+            freed = freed.saturating_add(missions.evict_inactive_caches());
+        }
+        freed
+    }
+    pub(in crate::workspace) fn evict_active_closed_mission_cache(&mut self) -> usize {
+        self.entries
+            .get_mut(self.active)
+            .and_then(|entry| entry.missions.as_mut())
+            .map_or(0, crate::missions::Panel::evict_closed_reader_cache)
+    }
+    pub(in crate::workspace) fn memory_budget_mut(
+        &mut self,
+    ) -> &mut super::memory_budget::Coordinator {
+        &mut self.memory_budget
+    }
+    #[cfg(test)]
+    pub(in crate::workspace) fn push_fixture_entry(
+        &mut self,
+        key: &str,
+        touched: u64,
+        cache: Cache,
+        missions: Option<crate::missions::Panel>,
+    ) {
+        let mut item = entry(key.into(), Tab::Blank);
+        item.history_touched = touched;
+        item.cache = Some(cache);
+        item.missions = missions;
+        self.entries.push(item);
+    }
+    #[cfg(test)]
+    pub(in crate::workspace) fn take_entry_cache(&mut self, index: usize) -> Option<Cache> {
+        self.entries.get_mut(index)?.cache.take()
+    }
+    #[cfg(test)]
+    pub(in crate::workspace) fn entry_missions_ref(
+        &self,
+        index: usize,
+    ) -> Option<&crate::missions::Panel> {
+        self.entries.get(index)?.missions.as_ref()
+    }
     #[cfg(test)]
     pub(crate) fn mark_ready(&mut self) {
         self.ready = true;
@@ -178,6 +276,7 @@ impl Ui {
             touched: false,
             staged_revision: None,
             closed: Vec::new(),
+            memory_budget: super::memory_budget::Coordinator::new(),
         }
     }
     fn changed(&mut self) {

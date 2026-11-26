@@ -8,6 +8,9 @@ pub(crate) use persistence::poll;
 
 use codenomad_client::prompt_history::MAX_ENTRIES;
 const MAX_WINDOW_ENTRIES: usize = 3200;
+#[cfg(target_arch = "wasm32")]
+const MAX_BYTES: usize = 16 * 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_BYTES: usize = 80 * 1024 * 1024;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -103,9 +106,73 @@ pub(crate) struct History {
 }
 
 impl History {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    pub(crate) fn evict_under_pressure(
+        &mut self,
+        bytes_to_free: usize,
+        active_tab: Option<&str>,
+        active_session: Option<&str>,
+        active_recall_id: Option<i64>,
+    ) -> usize {
+        if bytes_to_free == 0 || self.entries.is_empty() {
+            return 0;
+        }
+        let mut freed = 0usize;
+        // Pass 1: evict oldest entries from inactive tabs/sessions first.
+        let mut index = self.entries.len();
+        while index > 0 && freed < bytes_to_free {
+            index -= 1;
+            let entry = &self.entries[index];
+            let is_active = active_tab.is_some()
+                && active_session.is_some()
+                && entry.originates_in(
+                    active_tab.unwrap_or_default(),
+                    active_session.unwrap_or_default(),
+                );
+            if !is_active && Some(entry.id) != active_recall_id {
+                let weight = entry.bytes;
+                self.discard(index);
+                freed = freed.saturating_add(weight);
+            }
+        }
+        // Pass 2: if still over budget, evict oldest remaining entries except the actively recalled one.
+        let mut index = self.entries.len();
+        while index > 0 && freed < bytes_to_free {
+            index -= 1;
+            let entry = &self.entries[index];
+            if Some(entry.id) != active_recall_id {
+                let weight = entry.bytes;
+                self.discard(index);
+                freed = freed.saturating_add(weight);
+            }
+        }
+        freed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_push(&mut self, tab: &str, session: &str, text: String) -> i64 {
+        self.next += 1;
+        let bytes = text.len().saturating_mul(2);
+        let id = self.next;
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.entries.push_front(Entry {
+            project: Project::Unbound,
+            origin: Some((tab.into(), session.into())),
+            edit: TextEdit::new(&text),
+            draft: Draft::default(),
+            resolved: text,
+            bytes,
+            id,
+        });
+        id
+    }
+
     fn discard(&mut self, index: usize) {
         if let Some(entry) = self.entries.remove(index) {
-            self.bytes -= entry.bytes;
+            self.bytes = self.bytes.saturating_sub(entry.bytes);
         }
     }
 
@@ -126,6 +193,12 @@ pub(crate) struct Recall {
     edit: TextEdit,
     draft: Draft,
     missing: bool,
+}
+
+impl Recall {
+    pub(crate) fn id(&self) -> i64 {
+        self.id
+    }
 }
 
 pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {

@@ -836,6 +836,16 @@ pub(super) struct Cache {
 }
 
 impl Cache {
+    pub(super) fn retained_bytes(&self) -> usize {
+        self.entries.iter().fold(0usize, |total, entry| {
+            total
+                .saturating_add(entry.key.len())
+                .saturating_add(entry.patch.len())
+                .saturating_add(entry.file.len())
+                .saturating_add(entry.lines.saturating_mul(96))
+        })
+    }
+
     pub(super) fn sync(&mut self, mode: impl Fn(&str) -> DiffMode) {
         for entry in &mut self.entries {
             entry.state.set_mode(mode(&entry.key));

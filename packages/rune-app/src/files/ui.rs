@@ -55,6 +55,41 @@ impl Ui {
         &self.backend.workspace
     }
 
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.reader
+            .retained_bytes()
+            .saturating_add(self.pictures.retained_bytes())
+            .saturating_add(self.tree.retained_bytes())
+            .saturating_add(self.rows.len().saturating_mul(size_of::<Row>()))
+    }
+
+    pub(crate) fn evictable_inactive_bytes(&self) -> usize {
+        let reader = if self.document.has_unsaved_edits() {
+            0
+        } else {
+            self.reader.retained_bytes()
+        };
+        reader
+            .saturating_add(self.pictures.retained_bytes())
+            .saturating_add(self.tree.retained_bytes())
+            .saturating_add(self.rows.len().saturating_mul(size_of::<Row>()))
+    }
+
+    pub(crate) fn evict_cached_worktrees(&mut self) -> usize {
+        self.tree.evict_cached_worktrees()
+    }
+
+    pub(crate) fn evict_inactive_caches(&mut self) -> usize {
+        let mut freed = self.pictures.evict();
+        freed = freed.saturating_add(self.tree.evict_listings());
+        freed = freed.saturating_add(self.rows.len().saturating_mul(size_of::<Row>()));
+        self.rows.clear();
+        if !self.document.has_unsaved_edits() {
+            freed = freed.saturating_add(self.reader.evict_preview());
+        }
+        freed
+    }
+
     pub(crate) fn uses_connection(&self, backend: &Backend) -> bool {
         self.backend.client.same_connection(&backend.client)
     }

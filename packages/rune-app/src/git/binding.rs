@@ -41,6 +41,18 @@ impl Default for Binding {
 }
 
 impl Binding {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.owner.as_ref().map_or(0, Ui::retained_bytes)
+    }
+
+    pub(crate) fn draft_bytes(&self) -> usize {
+        self.owner.as_ref().map_or(0, Ui::draft_bytes)
+    }
+
+    pub(crate) fn evict_inactive_caches(&mut self) -> usize {
+        self.owner.as_mut().map_or(0, Ui::evict_inactive_caches)
+    }
+
     pub(crate) fn take(binding: &mut Self) -> Self {
         let taken = std::mem::take(binding);
         binding.preferences = taken.preferences.clone();

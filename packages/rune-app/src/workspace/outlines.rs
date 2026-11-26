@@ -113,15 +113,49 @@ impl Cache {
         }
     }
 
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.entries.iter().fold(0usize, |total, entry| {
+            total.saturating_add(entry.saved_weight().unwrap_or_default())
+        })
+    }
+
+    pub(crate) fn evict_under_pressure(
+        &mut self,
+        bytes_to_free: usize,
+        active_backend: Option<&Backend>,
+        active_project: Option<&str>,
+    ) -> usize {
+        if bytes_to_free == 0 || self.dirty || self.saving.is_some() || self.entries.is_empty() {
+            return 0;
+        }
+        let mut freed = 0usize;
+        let mut index = self.entries.len();
+        while index > 0 && freed < bytes_to_free {
+            index -= 1;
+            let is_active = active_backend
+                .zip(active_project)
+                .is_some_and(|(backend, project)| self.entries[index].saved_for(backend, project));
+            if !is_active {
+                let removed = self.entries.remove(index);
+                freed = freed.saturating_add(removed.saved_weight().unwrap_or_default());
+            }
+        }
+        freed
+    }
+
     fn trim(&mut self) {
         let mut bytes = 0;
+        #[cfg(target_arch = "wasm32")]
+        const MAX_OUTLINE_BYTES: usize = 4 * 1024 * 1024;
+        #[cfg(not(target_arch = "wasm32"))]
+        const MAX_OUTLINE_BYTES: usize = 16 * 1024 * 1024;
         let keep = self
             .entries
             .iter()
             .take(16)
             .take_while(|entry| {
                 bytes += entry.saved_weight().unwrap_or_default();
-                bytes <= 16 * 1024 * 1024
+                bytes <= MAX_OUTLINE_BYTES
             })
             .count();
         self.entries.drain(keep..);

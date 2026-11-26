@@ -110,6 +110,21 @@ pub(crate) struct Timeline {
     search: search::Search,
 }
 
+impl Timeline {
+    pub(crate) fn excerpt_scope(&self) -> Option<u64> {
+        self.previews.cache_scope()
+    }
+
+    pub(crate) fn excerpt_target(&self) -> Option<&str> {
+        self.previews.active_target()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_set_excerpt_scope(&mut self, scope: u64, target: Option<String>) {
+        self.previews.fixture_set_scope(scope, target);
+    }
+}
+
 #[cfg(test)]
 impl Timeline {
     pub(crate) fn is_online(&self) -> bool {
