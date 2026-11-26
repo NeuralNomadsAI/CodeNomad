@@ -59,8 +59,17 @@ pub(super) struct SourceAddRequest {
 }
 
 pub(super) enum SourceRemoveTarget {
-    Entry { target: String, entry_index: usize },
-    Orphan { plugin_id: String },
+    Entry {
+        target: String,
+        entry_index: usize,
+    },
+    Orphan {
+        plugin_id: String,
+    },
+    /// Valid JS JSON body whose `target` or `pluginId` contains an unpaired UTF-16 surrogate:
+    /// runs every ordinary DELETE guard (queues, scope availability, ownership, fence, revision)
+    /// and refuses as `409 stale` at comparison time without writing.
+    Unrepresentable,
 }
 
 pub(super) struct SourceRemoveRequest {
@@ -246,6 +255,7 @@ pub(super) async fn remove(
     let spec_out = match &req.kind {
         SourceRemoveTarget::Entry { target, .. } => target.clone(),
         SourceRemoveTarget::Orphan { plugin_id } => plugin_id.clone(),
+        SourceRemoveTarget::Unrepresentable => String::new(),
     };
 
     let result = engine::edit_plugin_documents(
@@ -269,6 +279,7 @@ pub(super) async fn remove(
             };
 
             match &req.kind {
+                SourceRemoveTarget::Unrepresentable => Err(stale()),
                 SourceRemoveTarget::Orphan { plugin_id } => {
                     let is_orphan = view.controls.iter().any(|c| c.id == *plugin_id && c.orphan == Some(true));
                     let indexes = rules_of(plugin_id, &|_| false);

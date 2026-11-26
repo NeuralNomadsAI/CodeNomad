@@ -59,6 +59,7 @@ fn spec_validation_and_identities_match_typescript() {
         "foo@^1 || ^2",
         "pkg@>=1.0.0 ||",
         "pkg@garbage ||",
+        "pkg@>=1.0.0 garbage",
         "pkg@1.2.3+build.1",
         "gist:alice/123456",
     ] {
@@ -121,6 +122,7 @@ fn spec_validation_and_identities_match_typescript() {
     assert!(same("gist:alice/123456", "gist:123456"));
     assert!(same("gist:alice/123456", "https://gist.github.com/alice/123456"));
     assert!(same("pkg@garbage ||", "pkg@1.0.0"));
+    assert!(same("pkg@>=1.0.0 garbage", "pkg@1.0.0"));
     assert_eq!(registry_package_name("plugin@NPM:other@1").as_deref(), Some("other"));
     assert_eq!(plugin_package_identities("plugin.tgz"), Vec::<String>::new());
     assert_eq!(plugin_package_identities("pkg@1.2.3+%"), Vec::<String>::new());
@@ -277,6 +279,25 @@ fn utf8_prefix_file_url_and_prepared_lock_reverify_guards() {
                 "package": "@neuralnomads/opencode-mail",
                 "range": "^0.1.0",
                 "displayName": "OpenCode for Mail\u{2028}Next",
+                "family": "api",
+                "plugin": "neuralnomads.mail",
+                "rpc": "neuralnomads.mail",
+                "summary": { "en": "Mail integration" },
+                "app": { "name": "Mail" },
+                "docs": "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/mail",
+                "status": "preview"
+            }]
+        }))
+        .is_none()
+    );
+    assert!(
+        super::catalog::parse_catalog_value(&json!({
+            "schemaVersion": 1,
+            "integrations": [{
+                "id": "mail",
+                "package": "@neuralnomads/opencode-mail",
+                "range": "^0.1.0",
+                "displayName": "OpenCode for \u{feff}Mail",
                 "family": "api",
                 "plugin": "neuralnomads.mail",
                 "rpc": "neuralnomads.mail",

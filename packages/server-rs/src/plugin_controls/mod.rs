@@ -460,7 +460,7 @@ async fn delete_source(
             let Some((dir, ws)) = js.get_ascii("location").and_then(parse_location_u16) else {
                 return bad_request(INVALID_SOURCE);
             };
-            let Some(_scope) = parse_scope_u16(js.get_ascii("scope")) else {
+            let Some(scope) = parse_scope_u16(js.get_ascii("scope")) else {
                 return bad_request(INVALID_SOURCE);
             };
             let Some(rev_u16) = js.get_ascii("expectedRevision").and_then(JsVal::as_u16_str) else {
@@ -506,19 +506,23 @@ async fn delete_source(
             } else {
                 return bad_request(INVALID_SOURCE);
             }
-            if !workspace_exists(&app, &workspace_id) {
-                return sources_error(SourceError::Refused { status: Status::NOT_FOUND, code: None });
-            }
             let (Ok(directory), None) = (dir, ws) else {
+                if !workspace_exists(&app, &workspace_id) {
+                    return sources_error(SourceError::Refused { status: Status::NOT_FOUND, code: None });
+                }
                 return sources_error(SourceError::Refused { status: Status::FORBIDDEN, code: None });
             };
-            // Preserve business check order: verify workspace/location ownership & daemon readiness
-            // before refusing an unrepresentable `target`/`pluginId` as `409 stale`.
-            let location = ControlLocation { directory, workspace_id: None };
-            let token = principal_token(principal);
-            match engine::read(&app, &workspace_id, &location, token.as_ref(), None).await {
-                Ok(_) => sources_error(SourceError::with_code(Status::CONFLICT, "stale")),
-                Err(err) => sources_error(SourceError::from_fail(err)),
+            // Reuse the full ordinary DELETE pipeline (queues, scope availability, ownership,
+            // worktree fence, revision confirmation) and fail as `409 stale` at comparison time.
+            let req = SourceRemoveRequest {
+                location: ControlLocation { directory, workspace_id: None },
+                scope,
+                expected_revision: rev,
+                kind: SourceRemoveTarget::Unrepresentable,
+            };
+            match sources::remove(&app, &workspace_id, req, principal_token(principal)).await {
+                Ok(result) => (Status::OK, Json(result)).into_response(),
+                Err(err) => sources_error(err),
             }
         }
     }

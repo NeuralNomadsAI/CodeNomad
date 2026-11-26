@@ -341,8 +341,8 @@ fn valid_display_name(s: &str) -> bool {
     let Some(rest) = s.strip_prefix("OpenCode for ") else { return false };
     let mut chars = rest.chars();
     let Some(first) = chars.next() else { return false };
-    // ECMAScript `.` excludes `\n`, `\r`, U+2028 (Line Separator), and U+2029 (Paragraph Separator).
-    !first.is_whitespace()
+    // ECMAScript `\S` rejects all JS whitespace (including U+FEFF), and `.` excludes line terminators.
+    !crate::shared::js_space(first)
         && !rest.chars().any(|c| matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}'))
         && s.chars().count() <= 60
 }
@@ -554,12 +554,18 @@ pub(crate) fn parse_catalog_value(value: &Value) -> Option<IntegrationCatalog> {
     Some(IntegrationCatalog { integrations: out })
 }
 
+fn parse_utf8_json_strip_bom(bytes: &[u8]) -> Option<Value> {
+    // Matches JS `new TextDecoder("utf-8", { fatal: true }).decode(bytes)` which strips a leading UTF-8 BOM.
+    let body = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    serde_json::from_slice(body).ok()
+}
+
 fn load_persisted(path: &Path) -> Option<KnownCatalog> {
     let raw_bytes = std::fs::read(path).ok()?;
     if raw_bytes.len() > INTEGRATION_CATALOG_MAX_BYTES * 2 {
         return None;
     }
-    let val: Value = serde_json::from_slice(&raw_bytes).ok()?;
+    let val: Value = parse_utf8_json_strip_bom(&raw_bytes)?;
     let revision = val.get("revision")?.as_str()?;
     let fetched_at = val.get("fetchedAt")?.as_str()?;
     if !valid_revision(revision) || chrono::DateTime::parse_from_rfc3339(fetched_at).is_err() {
@@ -753,7 +759,7 @@ async fn fetch_newest_release(
         }
         let next = next_page(resp.headers().get(header::LINK).and_then(|v| v.to_str().ok()), &origin);
         let bytes = read_bounded(resp, RELEASE_LIST_MAX_BYTES).await?;
-        let json: Value = serde_json::from_slice(&bytes).map_err(|_| None)?;
+        let json: Value = parse_utf8_json_strip_bom(&bytes).ok_or(None)?;
         release = select_catalog_release(&json, &origin);
         url = next;
         page += 1;
@@ -777,7 +783,7 @@ async fn download_catalog(client: &Client, asset_url: &str) -> Result<(Integrati
         return Err(rate_limit_retry_at(resp.headers(), status, now_ms()));
     }
     let bytes = read_bounded(resp, INTEGRATION_CATALOG_MAX_BYTES).await?;
-    let val: Value = serde_json::from_slice(&bytes).map_err(|_| None)?;
+    let val: Value = parse_utf8_json_strip_bom(&bytes).ok_or(None)?;
     let catalog = parse_catalog_value(&val).ok_or(None)?;
     Ok((catalog, val))
 }

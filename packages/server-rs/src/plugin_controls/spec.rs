@@ -417,37 +417,34 @@ fn is_valid_semver_range(spec: &str) -> bool {
     if spec.is_empty() || spec == "*" {
         return true;
     }
-    // `node-semver` loose mode splits on `||`, discards invalid branches, and succeeds as long as
-    // at least one branch produces a non-empty comparator set (an empty branch parses as `*`).
+    // `node-semver` loose mode splits on `||`, filters out invalid comparators within each branch,
+    // and succeeds as long as at least one branch produces a non-empty comparator set (an empty
+    // branch parses as `*`).
     spec.split("||").any(|raw_branch| {
         let branch = crate::shared::js_trim(raw_branch);
         if branch.is_empty() {
             return true;
         }
         let tokens: Vec<&str> = branch.split_whitespace().collect();
+        let mut valid_any = false;
         let mut i = 0;
         while i < tokens.len() {
             let tok = tokens[i];
-            if tok == "-" {
-                if i == 0 || i + 1 >= tokens.len() || !is_partial_version(tokens[i + 1]) {
-                    return false;
+            if matches!(tok, ">" | ">=" | "<" | "<=" | "=" | "^" | "~" | "~>") {
+                if i + 1 < tokens.len() && is_partial_version(tokens[i + 1]) {
+                    valid_any = true;
+                    i += 2;
+                    continue;
                 }
-                i += 2;
+                i += 1;
                 continue;
             }
-            if matches!(tok, ">" | ">=" | "<" | "<=" | "=" | "^" | "~") {
-                if i + 1 >= tokens.len() || !is_partial_version(tokens[i + 1]) {
-                    return false;
-                }
-                i += 2;
-                continue;
-            }
-            if !is_comparator(tok) {
-                return false;
+            if is_comparator(tok) {
+                valid_any = true;
             }
             i += 1;
         }
-        true
+        valid_any
     })
 }
 

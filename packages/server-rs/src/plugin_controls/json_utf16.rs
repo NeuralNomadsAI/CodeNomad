@@ -3,6 +3,8 @@
 //! containing unpaired UTF-16 surrogate escapes (`\uD800`..`\uDFFF`) reaches schema/business
 //! validation without ever substituting `\uD800` for `\u{FFFD}`.
 
+use std::collections::HashMap;
+
 use serde_json::{Map, Number, Value};
 
 const MAX_DEPTH: usize = 128;
@@ -67,13 +69,16 @@ impl JsVal {
             Self::Str(units) => String::from_utf16(units).ok().map(Value::String),
             Self::Arr(items) => items.iter().map(Self::to_utf8_json).collect::<Option<Vec<_>>>().map(Value::Array),
             Self::Obj(entries) => {
-                // Keep only the final value for each key (matching JS `JSON.parse`), so a shadowed
-                // lone surrogate (`{"pluginId":"\uD800","pluginId":"id"}`) resolves cleanly to `"id"`.
+                // Keep only the final value for each key in O(N) (matching JS `JSON.parse`), so a
+                // shadowed lone surrogate (`{"pluginId":"\uD800","pluginId":"id"}`) resolves to `"id"`.
+                let mut index_by_key: HashMap<&[u16], usize> = HashMap::with_capacity(entries.len());
                 let mut dedup: Vec<(&[u16], &JsVal)> = Vec::with_capacity(entries.len());
                 for (k, v) in entries {
-                    if let Some(slot) = dedup.iter_mut().find(|(ek, _)| *ek == k.as_slice()) {
-                        slot.1 = v;
+                    if let Some(&idx) = index_by_key.get(k.as_slice()) {
+                        dedup[idx].1 = v;
                     } else {
+                        let idx = dedup.len();
+                        index_by_key.insert(k.as_slice(), idx);
                         dedup.push((k.as_slice(), v));
                     }
                 }

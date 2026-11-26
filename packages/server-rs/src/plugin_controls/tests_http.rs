@@ -1034,23 +1034,28 @@ async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fa
         .route(
             "/assets/catalog.json",
             get(|| async {
-                Json(json!({
-                    "schemaVersion": 1,
-                    "integrations": [{
-                        "id": "blender",
-                        "package": "@neuralnomads/opencode-blender",
-                        "range": "^0.1.0",
-                        "displayName": "OpenCode for Blender",
-                        "family": "native",
-                        "plugin": "neuralnomads.blender",
-                        "rpc": "neuralnomads.blender",
-                        "summary": { "en": "Control Blender from OpenCode" },
-                        "app": { "name": "Blender", "versions": ">=4.0.0" },
-                        "host": { "protocol": 1, "range": "^0.1.0" },
-                        "docs": "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender",
-                        "status": "preview"
-                    }]
-                }))
+                // Prefix with UTF-8 BOM to verify `TextDecoder`-compatible BOM stripping on download.
+                let body = format!(
+                    "\u{feff}{}",
+                    json!({
+                        "schemaVersion": 1,
+                        "integrations": [{
+                            "id": "blender",
+                            "package": "@neuralnomads/opencode-blender",
+                            "range": "^0.1.0",
+                            "displayName": "OpenCode for Blender",
+                            "family": "native",
+                            "plugin": "neuralnomads.blender",
+                            "rpc": "neuralnomads.blender",
+                            "summary": { "en": "Control Blender from OpenCode" },
+                            "app": { "name": "Blender", "versions": ">=4.0.0" },
+                            "host": { "protocol": 1, "range": "^0.1.0" },
+                            "docs": "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender",
+                            "status": "preview"
+                        }]
+                    })
+                );
+                ([(header::CONTENT_TYPE, "application/octet-stream")], body)
             }),
         );
     let cat_task = tokio::spawn(async move { axum::serve(cat_listener, cat_router).await.unwrap() });
