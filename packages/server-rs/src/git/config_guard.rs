@@ -1,63 +1,26 @@
-//! Repository configuration admitted before any Git display read or linked
-//! worktree lifecycle command (audit M3). The listing is the effective configuration of the directory
-//! Git actually runs in (local, `config.worktree` and command scopes; system
-//! and global host scopes are skipped), with includes named but never
-//! followed, plus every absorbed submodule's own configuration. Status and
-//! diff reads pass `--ignore-submodules=dirty`: gitlink commits stay visible
-//! (reference parity) and Git never runs in a submodule's work tree, whose
-//! configuration may live outside `.git/modules`.
-use super::run;
-use crate::{Error, error};
-use axum::http::StatusCode as Status;
-use std::path::{Path, PathBuf};
-
-fn refused() -> Error {
-    error(Status::FORBIDDEN, "Repository uses unqualified Git configuration")
-}
-
-/// Keys that run external programs, import or relocate configuration, or
-/// fetch objects on demand.
-pub fn forbidden(key: &str) -> bool {
-    let key = key.trim().to_ascii_lowercase();
-    key.starts_with("filter.")
-        || key.starts_with("include.")
-        || key.starts_with("includeif.")
-        || key == "extensions.worktreeconfig"
-        || key == "extensions.partialclone"
-        || key.ends_with(".promisor")
-        || key.starts_with("diff.") && (key.ends_with(".textconv") || key.ends_with(".command"))
-}
-
-fn check(listing: &str) -> Result<(), Error> {
-    if listing.split(['\0', '\t', '\n']).any(forbidden) { Err(refused()) } else { Ok(()) }
-}
-
-fn check_scoped(listing: &str) -> Result<(), Error> {
-    let mut parts = listing.split('\0');
-    while let Some(scope) = parts.next() {
-        if scope.is_empty() {
-            break;
-        }
-        let key = parts.next().ok_or_else(refused)?;
-        if matches!(scope, "system" | "global") {
-            continue;
-        }
-        if forbidden(key) {
-            return Err(refused());
-        }
-    }
-    Ok(())
-}
+//! Passive Git read guards (audit M3/M4): instead of refusing common repositories
+//! (LFS filters, `include`/`includeIf`, `extensions.worktreeConfig`, partial clones,
+//! alternates) with 403, passive working-tree reads (`status`, `diff`, worktree clean
+//! checks) neutralize every effective `filter.<name>.*` driver across all scopes
+//! (system, `~/.gitconfig`, XDG global, repo-local, `config.worktree`, and includes)
+//! via `-c filter.<name>.{clean=,smudge=,process=,required=false}`, while `git::command`
+//! keeps `core.hooksPath`, `core.fsmonitor=false`, `diff.external=`, `submodule.recurse=false`,
+//! and `GIT_NO_LAZY_FETCH=1`.
+use super::{bad, run};
+use crate::Error;
+use std::path::Path;
 
 /// Collect `-c filter.<name>.{clean,smudge,process,required}` overrides disabling every
-/// filter driver defined in host system/global config (including both `~/.gitconfig` and XDG
-/// global config plus their includes) so passive working-tree reads never invoke external
-/// filter commands referenced by repository `.gitattributes`.
-pub async fn host_filter_disables(dir: &Path) -> Result<Vec<String>, Error> {
+/// filter driver defined in effective Git configuration across all scopes (system,
+/// `~/.gitconfig`, XDG global, local, `config.worktree`, and includes) so passive
+/// working-tree reads never invoke external filter commands referenced by `.gitattributes`.
+/// Limit: Git has no single-process `--no-filters` flag that preserves `.gitattributes`
+/// `text`/`eol`/`binary` semantics; upgrade to a native flag if Git adds one.
+pub async fn filter_disables(dir: &Path) -> Result<Vec<String>, Error> {
     let args = ["config", "--show-scope", "--includes", "--name-only", "-z", "--list"];
-    let out = run(dir, &args, 64 * 1024).await?.ok()?;
+    let out = run(dir, &args, 256 * 1024).await?.ok()?;
     let mut names = std::collections::BTreeSet::new();
-    collect_host_filter_names(&out.text(), &mut names)?;
+    collect_filter_names(&out.text(), &mut names)?;
     let mut flags = Vec::with_capacity(names.len() * 8);
     for name in names {
         flags.push("-c".into());
@@ -72,16 +35,13 @@ pub async fn host_filter_disables(dir: &Path) -> Result<Vec<String>, Error> {
     Ok(flags)
 }
 
-fn collect_host_filter_names(listing: &str, out: &mut std::collections::BTreeSet<String>) -> Result<(), Error> {
+fn collect_filter_names(listing: &str, out: &mut std::collections::BTreeSet<String>) -> Result<(), Error> {
     let mut parts = listing.split('\0');
     while let Some(scope) = parts.next() {
         if scope.is_empty() {
             break;
         }
-        let raw = parts.next().ok_or_else(refused)?;
-        if !matches!(scope, "system" | "global") {
-            continue;
-        }
+        let raw = parts.next().ok_or_else(|| bad("Git configuration could not be read"))?;
         let Some((section, rest)) = raw.split_once('.') else { continue };
         if !section.eq_ignore_ascii_case("filter") {
             continue;
@@ -94,95 +54,11 @@ fn collect_host_filter_names(listing: &str, out: &mut std::collections::BTreeSet
     Ok(())
 }
 
-pub async fn effective(dir: &Path) -> Result<(), Error> {
-    let args = ["config", "--show-scope", "--no-includes", "--name-only", "-z", "--list"];
-    check_scoped(&run(dir, &args, 64 * 1024).await?.ok()?.text())
-}
-
-/// Every `config` of an absorbed submodule under `<main>/.git/modules`.
-pub async fn submodules(main: &Path) -> Result<(), Error> {
-    let base = main.join(".git").join("modules");
-    let files = tokio::task::spawn_blocking(move || module_configs(&base)).await.map_err(|_| refused())??;
-    for file in files {
-        let file = file.to_str().ok_or_else(refused)?;
-        let args = ["config", "--file", file, "--no-includes", "--name-only", "-z", "--list"];
-        check(&run(main, &args, 64 * 1024).await?.ok()?.text())?;
-    }
-    Ok(())
-}
-
-const MODULE_DIRECTORIES: usize = 512;
-const MODULE_CONFIGS: usize = 64;
-
-fn module_configs(base: &Path) -> Result<Vec<PathBuf>, Error> {
-    let mut found = Vec::new();
-    let mut pending = vec![base.to_path_buf()];
-    let mut visited = 0;
-    while let Some(dir) = pending.pop() {
-        visited += 1;
-        if visited > MODULE_DIRECTORIES {
-            return Err(refused());
-        }
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(e) if dir == base && e.kind() == std::io::ErrorKind::NotFound => return Ok(found),
-            Err(_) => return Err(refused()),
-        };
-        if dir.join("HEAD").is_file() {
-            // A submodule's Git directory: its configuration, then nested modules.
-            for name in ["config", "config.worktree"] {
-                let file = dir.join(name);
-                match std::fs::symlink_metadata(&file) {
-                    Ok(meta) if meta.is_file() => found.push(file),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    _ => return Err(refused()),
-                }
-            }
-            if found.len() > MODULE_CONFIGS {
-                return Err(refused());
-            }
-            let nested = dir.join("modules");
-            if std::fs::symlink_metadata(&nested).is_ok_and(|m| m.is_dir()) {
-                pending.push(nested);
-            }
-            continue;
-        }
-        // A grouping directory of a submodule name containing `/`.
-        for entry in entries {
-            let entry = entry.map_err(|_| refused())?;
-            let kind = entry.file_type().map_err(|_| refused())?;
-            if kind.is_dir() {
-                pending.push(entry.path());
-            }
-        }
-    }
-    Ok(found)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::process::Command;
-
-    #[test]
-    fn refused_keys() {
-        for key in [
-            "filter.x.clean",
-            "Filter.X.smudge",
-            "include.path",
-            "includeIf.gitdir:/x/.path",
-            "extensions.worktreeConfig",
-            "extensions.partialClone",
-            "remote.origin.promisor",
-            "diff.pdf.textconv",
-            "diff.x.command",
-        ] {
-            assert!(forbidden(key), "{key}");
-        }
-        for key in ["core.bare", "diff.renames", "user.name", "remote.origin.url", "core.hookspath"] {
-            assert!(!forbidden(key), "{key}");
-        }
-    }
 
     fn git(dir: &Path, args: &[&str]) {
         let status = Command::new("git")
@@ -231,67 +107,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(repo);
     }
 
-    #[tokio::test]
-    async fn worktree_config_and_submodule_filters_are_refused() {
-        let plain = repository("plain");
-        effective(&plain).await.unwrap();
-        submodules(&plain).await.unwrap();
-
-        let worktree = repository("worktree");
-        git(&worktree, &["config", "extensions.worktreeConfig", "true"]);
-        git(&worktree, &["config", "--worktree", "filter.x.clean", "cat"]);
-        assert_eq!(effective(&worktree).await.unwrap_err().0, Status::FORBIDDEN);
-
-        let module = repository("module");
-        let git_dir = module.join(".git").join("modules").join("group").join("sub");
-        std::fs::create_dir_all(&git_dir).unwrap();
-        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
-        std::fs::write(git_dir.join("config"), "[core]\n\tbare = false\n").unwrap();
-        submodules(&module).await.unwrap();
-        std::fs::write(git_dir.join("config"), "[filter \"x\"]\n\tclean = cat\n").unwrap();
-        assert_eq!(submodules(&module).await.unwrap_err().0, Status::FORBIDDEN);
-        for dir in [plain, worktree, module] {
-            let _ = std::fs::remove_dir_all(dir);
-        }
-    }
-
     #[test]
-    fn scoped_check_skips_system_and_global_host_config() {
-        let host_only =
-            "system\0filter.lfs.clean\0system\0diff.astextplain.textconv\0global\0include.path\0local\0core.bare\0";
-        assert!(check_scoped(host_only).is_ok());
-
-        for bad in [
-            "local\0filter.x.clean\0",
-            "worktree\0filter.x.clean\0",
-            "command\0include.path\0",
-            "unknown\0filter.x.clean\0",
-            "local",
-        ] {
-            assert_eq!(check_scoped(bad).unwrap_err().0, Status::FORBIDDEN, "{bad:?}");
-        }
-
+    fn filter_discovery_covers_all_scopes_including_xdg_local_worktree_and_includes() {
         let mut names = std::collections::BTreeSet::new();
-        collect_host_filter_names(
-            "system\0filter.lfs.clean\0global\0filter.My.Custom.smudge\0local\0filter.repo.clean\0global\0core.bare\0global\0filter.lfs.process\0",
+        collect_filter_names(
+            "system\0filter.lfs.clean\0global\0filter.My.Custom.smudge\0local\0filter.repo.clean\0worktree\0filter.wt.process\0global\0core.bare\0global\0filter.lfs.process\0",
             &mut names,
         )
         .unwrap();
-        assert_eq!(names, ["My.Custom", "lfs"].into_iter().map(str::to_owned).collect());
-        assert_eq!(collect_host_filter_names("global", &mut names).unwrap_err().0, Status::FORBIDDEN);
+        assert_eq!(names, ["My.Custom", "lfs", "repo", "wt"].into_iter().map(str::to_owned).collect());
+        assert_eq!(collect_filter_names("global", &mut names).unwrap_err().0, axum::http::StatusCode::BAD_REQUEST);
 
         // Verify real `git config --show-scope --includes --name-only -z --list` discovers
-        // a filter defined only in XDG global config even when `~/.gitconfig` also exists.
-        let env_root = crate::shared::test_dir("config-guard-xdg-global");
+        // filters from XDG global config alongside `~/.gitconfig`, local config, `include.path`,
+        // and `extensions.worktreeConfig` (`config.worktree`).
+        let env_root = crate::shared::test_dir("config-guard-all-scopes");
         let home = env_root.join("home");
         let xdg = env_root.join("xdg");
         let repo = env_root.join("repo");
+        let extra = env_root.join("included.gitconfig");
         std::fs::create_dir_all(xdg.join("git")).unwrap();
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-q"]);
         std::fs::write(home.join(".gitconfig"), "[user]\n\tname = Host\n").unwrap();
         std::fs::write(xdg.join("git").join("config"), "[filter \"xdgonly\"]\n\tclean = cat\n").unwrap();
+        std::fs::write(&extra, "[filter \"incfilter\"]\n\tsmudge = cat\n").unwrap();
+        git(&repo, &["config", "filter.localfilter.clean", "cat"]);
+        git(&repo, &["config", "include.path", &extra.to_string_lossy().replace('\\', "/")]);
+        git(&repo, &["config", "extensions.worktreeConfig", "true"]);
+        git(&repo, &["config", "--worktree", "filter.wtfilter.process", "cat"]);
+
         let out = Command::new("git")
             .arg("-C")
             .arg(&repo)
@@ -304,9 +150,11 @@ mod tests {
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        let mut xdg_names = std::collections::BTreeSet::new();
-        collect_host_filter_names(&String::from_utf8_lossy(&out.stdout), &mut xdg_names).unwrap();
-        assert!(xdg_names.contains("xdgonly"), "expected XDG global filter, got: {xdg_names:?}");
+        let mut found = std::collections::BTreeSet::new();
+        collect_filter_names(&String::from_utf8_lossy(&out.stdout), &mut found).unwrap();
+        for expected in ["xdgonly", "incfilter", "localfilter", "wtfilter"] {
+            assert!(found.contains(expected), "missing filter {expected} in {found:?}");
+        }
         let _ = std::fs::remove_dir_all(env_root);
     }
 }

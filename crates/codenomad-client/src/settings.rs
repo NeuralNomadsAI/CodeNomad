@@ -1,6 +1,7 @@
 //! Host-owned configuration and appearance, independent of any project location.
 pub mod config_files;
 pub mod info;
+pub mod integrations;
 pub mod memory;
 mod opencode_actions;
 mod providers;

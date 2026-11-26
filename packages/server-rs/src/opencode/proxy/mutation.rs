@@ -124,7 +124,14 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     let revert_stage = session.is_some() && route.ends_with("/revert/stage") && head.method == Method::POST;
     let background =
         route.starts_with("/api/session/") && route.ends_with("/background") && head.method == Method::POST;
-    let permissions_patch = session.is_some() && head.method == Method::PATCH;
+    let inbox_patch = session.is_some()
+        && head.method == Method::PATCH
+        && route.strip_prefix("/api/session/").and_then(|r| r.split_once("/inbox/")).is_some_and(|(sid, item)| {
+            !sid.is_empty() && !sid.contains('/') && !item.is_empty() && !item.contains('/')
+        });
+    let permissions_patch = session.is_some()
+        && head.method == Method::PATCH
+        && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/'));
     let mut root_permissions = None;
     let mut input = None;
     if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE) {
@@ -194,6 +201,8 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 &[]
             } else if permissions_patch {
                 &["permissions"]
+            } else if inbox_patch {
+                &["delivery"]
             } else if route.ends_with("/agent") {
                 &["agent"]
             } else if route.ends_with("/model") {
@@ -205,6 +214,12 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             };
             if !send_input && data.keys().any(|key| !fields.contains(&key.as_str())) {
                 return Ok(MutationOutcome::Early(unavailable()));
+            }
+            if inbox_patch
+                && let Some(delivery) = data.get("delivery")
+                && !matches!(delivery.as_str(), Some("steer" | "queue"))
+            {
+                return Err(error(Status::BAD_REQUEST, "Invalid inbox delivery"));
             }
             if send_input {
                 crate::opencode::prompt::validate(app, workspace, &data).await?;

@@ -820,8 +820,17 @@ pub(in crate::worktrees) async fn history_catalogue(
         .and_then(|hit| hit.snapshot.catalogue())
 }
 
+#[cfg(test)]
 pub async fn event_catalogue(app: &Shared, w: &Workspace) -> Option<Arc<Catalogue>> {
     sse_catalogue(app, w, &app.native.endpoint()?, true).await
+}
+
+pub async fn event_catalogue_at(
+    app: &Shared,
+    w: &Workspace,
+    endpoint: &Arc<crate::opencode::Endpoint>,
+) -> Option<Arc<Catalogue>> {
+    sse_catalogue(app, w, endpoint, true).await
 }
 
 pub(in crate::worktrees) async fn receipt_catalogue(

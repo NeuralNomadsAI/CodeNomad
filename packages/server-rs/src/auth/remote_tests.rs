@@ -106,6 +106,19 @@ async fn fake_native(State(state): State<Arc<NativeState>>, req: Request) -> Res
         }
         (Method::POST, "/api/session/ses_owned/revert/stage") => Json(json!({"staged": true})).into_response(),
         (Method::DELETE, "/api/session/ses_owned/revert") => Status::NO_CONTENT.into_response(),
+        (Method::GET, "/api/session/ses_owned/inbox") => {
+            Json(json!([{"id": "inb_1", "delivery": "queue"}])).into_response()
+        }
+        (Method::PATCH, "/api/session/ses_owned/inbox/inb_1") => {
+            let body = axum::body::to_bytes(req.into_body(), 4096).await.ok();
+            let parsed: Option<Value> = body.and_then(|b| serde_json::from_slice(&b).ok());
+            if parsed == Some(json!({"delivery": "steer"})) {
+                Status::NO_CONTENT.into_response()
+            } else {
+                Status::BAD_REQUEST.into_response()
+            }
+        }
+        (Method::DELETE, "/api/session/ses_owned/inbox/inb_1") => Status::NO_CONTENT.into_response(),
         (Method::POST, "/api/session/ses_owned/fork") => Json(json!({
             "data": {
                 "id": "ses_forked",
@@ -343,6 +356,28 @@ async fn paired_browser_and_server_device_admit_session_controls_and_reject_out_
         let redo = send(Method::DELETE, format!("{prefix}/revert"), None).await.unwrap();
         assert_eq!(redo.status(), Status::NO_CONTENT, "{label} delete revert");
 
+        // Inbox list, delivery toggle (PATCH) and cancel (DELETE)
+        let inbox_list = send(Method::GET, format!("{prefix}/inbox"), None).await.unwrap();
+        assert_eq!(inbox_list.status(), Status::OK, "{label} inbox list");
+        let inbox_steer =
+            send(Method::PATCH, format!("{prefix}/inbox/inb_1"), Some(json!({"delivery": "steer"}))).await.unwrap();
+        assert_eq!(inbox_steer.status(), Status::NO_CONTENT, "{label} inbox patch steer");
+        let inbox_bad_delivery =
+            send(Method::PATCH, format!("{prefix}/inbox/inb_1"), Some(json!({"delivery": "bogus"}))).await.unwrap();
+        assert_eq!(inbox_bad_delivery.status(), Status::BAD_REQUEST, "{label} inbox patch invalid delivery");
+        let inbox_extra_field =
+            send(Method::PATCH, format!("{prefix}/inbox/inb_1"), Some(json!({"delivery": "queue", "extra": 1})))
+                .await
+                .unwrap();
+        assert_eq!(inbox_extra_field.status(), Status::NOT_IMPLEMENTED, "{label} inbox patch extra field");
+        let inbox_cancel = send(Method::DELETE, format!("{prefix}/inbox/inb_1"), None).await.unwrap();
+        assert_eq!(inbox_cancel.status(), Status::NO_CONTENT, "{label} inbox cancel");
+        let inbox_cancel_meta =
+            send(Method::DELETE, format!("{prefix}/inbox/inb_1"), Some(json!({"metadata": {"schedule": true}})))
+                .await
+                .unwrap();
+        assert_eq!(inbox_cancel_meta.status(), Status::FORBIDDEN, "{label} inbox cancel reserved metadata");
+
         // Fork and session delete
         let forked = send(Method::POST, format!("{prefix}/fork"), Some(json!({}))).await.unwrap();
         assert_eq!(forked.status(), Status::OK, "{label} fork");
@@ -418,6 +453,15 @@ async fn paired_browser_and_server_device_admit_session_controls_and_reject_out_
         assert_eq!(foreign_perm.status(), Status::FORBIDDEN, "{label} foreign permission reply");
         let foreign_redo = send(Method::DELETE, format!("{foreign_prefix}/revert"), None).await.unwrap();
         assert_eq!(foreign_redo.status(), Status::FORBIDDEN, "{label} foreign delete revert");
+        let foreign_inbox_list = send(Method::GET, format!("{foreign_prefix}/inbox"), None).await.unwrap();
+        assert_eq!(foreign_inbox_list.status(), Status::FORBIDDEN, "{label} foreign inbox list");
+        let foreign_inbox_patch =
+            send(Method::PATCH, format!("{foreign_prefix}/inbox/inb_1"), Some(json!({"delivery": "steer"})))
+                .await
+                .unwrap();
+        assert_eq!(foreign_inbox_patch.status(), Status::FORBIDDEN, "{label} foreign inbox patch");
+        let foreign_inbox_cancel = send(Method::DELETE, format!("{foreign_prefix}/inbox/inb_1"), None).await.unwrap();
+        assert_eq!(foreign_inbox_cancel.status(), Status::FORBIDDEN, "{label} foreign inbox cancel");
         let unallowlisted =
             send(Method::POST, format!("{base}/workspaces/{ws_id}/instance/api/not-allowed"), Some(json!({})))
                 .await

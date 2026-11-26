@@ -51,7 +51,7 @@ use codenomad_client::{
     Wake,
     backend::Backend,
     catalog::Sessions,
-    git::{Details, Page, Refusal, Repository, Worktree, Worktrees},
+    git::{Details, GitError, Page, Refusal, Repository, Worktree, Worktrees},
     history::Error,
     same_server_path,
 };
@@ -653,7 +653,10 @@ impl Ui {
         if self.mode == Mode::Changes {
             self.changes = Changes::default();
             if let Some(error) = error {
-                self.read_failed(Lane::Changes, error.into());
+                self.read_failed(
+                    Lane::Changes,
+                    Refusal::new(500, None, Some(error.into())).into(),
+                );
             } else {
                 self.accept(
                     Lane::Changes,
@@ -663,7 +666,10 @@ impl Ui {
         } else if self.mode == Mode::History {
             self.history = History::default();
             if let Some(error) = error {
-                self.read_failed(Lane::History, error.into());
+                self.read_failed(
+                    Lane::History,
+                    Refusal::new(500, None, Some(error.into())).into(),
+                );
             } else {
                 self.accept(
                     Lane::History,

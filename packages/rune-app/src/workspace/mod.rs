@@ -37,12 +37,12 @@ pub(crate) use state::{
     strip, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
 };
 pub(crate) use state::{
-    close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
-    has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_reader,
-    mission_observation_project, mission_panel, mission_reader, mission_supported,
-    missions_composing, reconcile_detached_online, restore_mission_reader_focus, right_panel_tab,
-    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_mission_briefing,
-    suspend_missions,
+    close_mission_reader, deliver_detached_events, detached_workspace_ids, event_workspace_id,
+    has_detached_panels, has_unopened_detached_panels, mission_confirmation, mission_event,
+    mission_has_reader, mission_observation_project, mission_panel, mission_reader,
+    mission_supported, missions_composing, reconcile_detached_online, restore_mission_reader_focus,
+    right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
+    suspend_mission_briefing, suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;
