@@ -22,7 +22,6 @@ use rune::{El, col, text};
 use rune_theme_codenomad::{
     Space, TextRole,
     layout::{self, DrawnRect, Layout},
-    markdown,
     timeline::search::Query,
 };
 use std::{rc::Rc, sync::Arc};
@@ -171,19 +170,25 @@ pub(super) fn body(
             let pane_limit = PANE_LIMIT;
             result = result.child(text(t(label)).text_role(TextRole::Label));
             if !shown_value.trim().is_empty() {
-                result = result.child(markdown::tool_pane(
-                    super::super::document::prose_pane_search(
-                        s,
-                        message,
-                        key,
-                        format!("{key}-task-{section}"),
-                        shown_value,
-                        tool.status == "running" && section == "output",
-                        pane_limit,
-                        conversation,
-                        section_query,
-                    ),
+                let pane_key = format!("{key}-task-{section}");
+                let clip_key = format!("{pane_key}-pane");
+                result = result.child(super::super::document::clipped_tool_pane(
+                    s,
+                    &clip_key,
                     true,
+                    || {
+                        super::super::document::prose_pane_search(
+                            s,
+                            message,
+                            key,
+                            pane_key,
+                            shown_value,
+                            tool.status == "running" && section == "output",
+                            pane_limit,
+                            conversation,
+                            section_query,
+                        )
+                    },
                 ));
             }
             if truncated && expanded_full.is_none() {

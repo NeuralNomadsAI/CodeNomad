@@ -75,6 +75,16 @@ fn local_image_path_matches_solid_rules() {
         local_image_path("\u{0001}file:///tmp/chart.png/sub/.."),
         None
     );
+    assert_eq!(
+        local_image_path("fi\tle:///tmp/chart.png").as_deref(),
+        Some("/tmp/chart.png")
+    );
+    assert!(is_file_url("fi\tle:///tmp/chart.png"));
+    assert_eq!(local_image_path("fi\tle:///tmp/a/../chart.png"), None);
+    assert_eq!(
+        local_image_path("/tmp/chart.png\u{00A0}").as_deref(),
+        Some("/tmp/chart.png\u{00A0}")
+    );
     for rejected in [
         "",
         "   ",
@@ -469,7 +479,7 @@ fn replacing_failed_local_image_while_visible_recovers_in_short_and_memoized_pro
         } else {
             String::new()
         };
-        let prose_text = format!("{padding}![Corrupt chart](/tmp/out.png)");
+        let prose_text = format!("{padding}![Corrupt `inner` chart](/tmp/out.png)");
         let bad_tool = history::decode_message(&json!({
             "id":"m1","type":"assistant","time":{"completed":1},
             "content":[{
@@ -552,12 +562,13 @@ fn replacing_failed_local_image_while_visible_recovers_in_short_and_memoized_pro
                 "retained failure lease must keep entry settled (long={long_prose})"
             );
         });
-        // Failed matched image must fall back to searchable plain text, not an image block.
+        // Failed matched image must fall back to searchable plain text, not an image block,
+        // and paint `history-search-match` even when alt text contains inline code.
         let tree = rt.accessibility_json().to_string();
-        assert!(tree.contains("Corrupt chart"), "{tree}");
+        assert!(tree.contains("Corrupt inner chart"), "{tree}");
         assert_eq!(tree.matches("\"role\":\"image\"").count(), 0, "{tree}");
-        rt.update(|s, _| {
-            let terms = vec!["Corrupt".into()];
+        rt.update(|s, tx| {
+            let terms = vec!["Corrupt inner".into()];
             let query = rune_theme_codenomad::timeline::search::Query {
                 terms: &terms,
                 ranked: false,
@@ -575,6 +586,29 @@ fn replacing_failed_local_image_while_visible_recovers_in_short_and_memoized_pro
                 ),
                 "settled failed fallback text must match prose search (long={long_prose})"
             );
+            let hit = codenomad_client::search::Hit {
+                session: "s".into(),
+                message: "m2".into(),
+                role: "assistant".into(),
+                part: 0,
+                kind: codenomad_client::search::Kind::Text,
+                excerpt: String::new(),
+            };
+            s.transcript_display.search_highlight = Some(crate::chat::search_hit::SearchHit::new(
+                &hit,
+                "Corrupt inner",
+                false,
+            ));
+            tx.instant();
+        });
+        rt.frame(1.0 / 60.0);
+        assert!(
+            rt.find("history-search-match").is_some(),
+            "settled failed fallback with inline code must paint history-search-match (long={long_prose})"
+        );
+        rt.update(|s, tx| {
+            s.transcript_display.search_highlight = None;
+            tx.instant();
         });
 
         // Replace the failed image with a valid later completed tool at the same path while visible.
@@ -813,7 +847,72 @@ fn offscreen_failed_image_is_not_requeued_on_reconnect_while_other_prose_stays_v
             "offscreen failed image must stay unqueued across reconnect while tail prose is visible"
         );
     });
-    // Also verify nested image syntax renders the outer image cleanly without order inversion.
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn clipped_tool_pane_keeps_failed_image_unqueued_across_reconnect() {
+    let tool_msg = history::decode_message(&json!({
+        "id":"m1","type":"assistant","time":{"completed":1},
+        "content":[{
+            "type":"tool","id":"call-http","name":"read",
+            "state":{
+                "status":"completed",
+                "input":{"filePath":"/tmp/pane.png"},
+                "content":[{"type":"file","filename":"/tmp/pane.png","mime":"image/png","uri":"https://127.0.0.1:1/pane.png"}]
+            }
+        }]
+    }))
+    .unwrap();
+    let source = PictureSource::Http("https://127.0.0.1:1/pane.png".into());
+    let mut state = init();
+    state.phase = Phase::Ready;
+    state.messages = vec![tool_msg.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            let filler = "pane line\n\n".repeat(40);
+            crate::strings::with_locale("en", || {
+                super::super::clipped_tool_pane(s, "skill-pane-clip", false, || {
+                    super::super::prose_search(
+                        s,
+                        "m1",
+                        "skill-card",
+                        "skill-doc".into(),
+                        &format!("{filler}![Clipped image](/tmp/pane.png)"),
+                        Conversation::Root,
+                        None,
+                    )
+                })
+            })
+        },
+        (800.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    for _ in 0..5 {
+        rt.update(|s, tx| {
+            if crate::chat::events::poll_chat(s, 4) {
+                tx.instant();
+            }
+        });
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|s, _| {
+        s.transcript_display.pictures.retry_interrupted();
+        assert!(
+            !s.transcript_display.pictures.local_visible_or_queued(
+                "skill-doc-local-image-0",
+                &source,
+                "image/png",
+            ),
+            "image clipped below a scrollable tool pane must stay unqueued even when the pane is inside the window"
+        );
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn nested_images_flatten_local_and_remote_inner_destinations() {
     let nested_tool = history::decode_message(&json!({
         "id":"m3","type":"assistant","time":{"completed":3},
         "content":[{
@@ -826,34 +925,39 @@ fn offscreen_failed_image_is_not_requeued_on_reconnect_while_other_prose_stays_v
         }]
     }))
     .unwrap();
-    let nested_prose = history::decode_message(&json!({
-        "id":"m4","type":"assistant","time":{"completed":4},
-        "content":[{"type":"text","text":"![before ![inner](/tmp/nested.png) after](/tmp/nested.png)"}]
-    }))
-    .unwrap();
-    let mut nested_state = init();
-    nested_state.phase = Phase::Ready;
-    nested_state.messages = vec![nested_tool.into(), nested_prose.into()];
-    let mut nested_rt = Runtime::new(
-        nested_state,
-        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
-        (800.0, 400.0),
-        Env::new(false, 1.0),
-    );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        nested_rt.update(|s, tx| {
-            if crate::chat::events::poll_chat(s, 4) {
-                tx.instant();
+    for text in [
+        "![before ![inner](/tmp/nested.png) after](/tmp/nested.png)",
+        "![before ![inner](https://example.test/i.png) after](/tmp/nested.png)",
+    ] {
+        let nested_prose = history::decode_message(&json!({
+            "id":"m4","type":"assistant","time":{"completed":4},
+            "content":[{"type":"text","text":text}]
+        }))
+        .unwrap();
+        let mut nested_state = init();
+        nested_state.phase = Phase::Ready;
+        nested_state.messages = vec![nested_tool.clone().into(), nested_prose.into()];
+        let mut nested_rt = Runtime::new(
+            nested_state,
+            |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+            (800.0, 400.0),
+            Env::new(false, 1.0),
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            nested_rt.update(|s, tx| {
+                if crate::chat::events::poll_chat(s, 4) {
+                    tx.instant();
+                }
+            });
+            nested_rt.frame(1.0 / 60.0);
+            let tree = nested_rt.accessibility_json().to_string();
+            if tree.matches("\"role\":\"image\"").count() == 1 {
+                assert!(tree.contains("before inner after"), "{text}: {tree}");
+                break;
             }
-        });
-        nested_rt.frame(1.0 / 60.0);
-        let tree = nested_rt.accessibility_json().to_string();
-        if tree.matches("\"role\":\"image\"").count() == 1 {
-            assert!(tree.contains("before inner after"), "{tree}");
-            break;
+            assert!(std::time::Instant::now() < deadline, "{text}: {tree}");
+            std::thread::yield_now();
         }
-        assert!(std::time::Instant::now() < deadline, "{tree}");
-        std::thread::yield_now();
     }
 }

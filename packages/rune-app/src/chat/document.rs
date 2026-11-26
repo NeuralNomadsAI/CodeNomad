@@ -42,6 +42,21 @@ pub(super) fn search_limit_for(
     TOOL_LIMIT + if revealed { STEP } else { 0 }
 }
 
+pub(super) fn clipped_tool_pane(
+    s: &State,
+    clip_key: &str,
+    large: bool,
+    build: impl FnOnce() -> El,
+) -> El {
+    let clip = s.transcript_display.tool_clock.clip_rect(clip_key);
+    let nested = s.transcript_display.tool_clock.extend_clip(&clip);
+    let content = s
+        .transcript_display
+        .tool_clock
+        .with_active_clip(&nested, build);
+    markdown::tool_pane(content, large).drawn_rect_into(&clip)
+}
+
 pub(super) fn bounded_prose_matches(
     s: &State,
     key: &str,

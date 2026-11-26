@@ -6,9 +6,15 @@ use rune_kit::markdown::{Block, parse};
 use rune_kit::{CodeFrame, DiffFrame, Markdown, MarkdownStyle, syntax};
 use std::borrow::Cow;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiftedImage {
+    pub src: String,
+    pub alt: String,
+}
+
 pub fn prose_has_match(source: &str, query: crate::timeline::search::Query<'_>) -> bool {
     let source = literal_breaks(source);
-    let (ranges, active_image) = prose_ranges_with_images(&source, query, 1, &|_, _| None);
+    let (ranges, active_image) = prose_ranges_with_images(&source, query, 1, &|_| None);
     !ranges.is_empty() || active_image.is_some()
 }
 
@@ -17,25 +23,38 @@ pub fn prose_has_match_with_images(
     truncated: bool,
     query: crate::timeline::search::Query<'_>,
     fallback_label: &dyn Fn(&str, bool) -> Option<String>,
-    image_search_text: &dyn Fn(&str, &str) -> Option<(String, String)>,
+    image_search_text: &dyn Fn(&str) -> Option<(String, String)>,
 ) -> bool {
     let source = literal_breaks_with_images(source, truncated, fallback_label);
     let (ranges, active_image) = prose_ranges_with_images(&source, query, 1, image_search_text);
     !ranges.is_empty() || active_image.is_some()
 }
 
-/// Returns the source string of every lifted `Block::Image` occurrence in document order.
-/// Images inside headings, table cells, links, emphasis or another image's alt text are not
-/// liftable and are stripped before parsing so discovery matches rendered `Block::Image` order.
-pub fn prose_lifted_images(source: &str, truncated: bool) -> Vec<String> {
-    fn collect(blocks: Vec<Block>, found: &mut Vec<String>) {
+/// Returns every lifted `Block::Image` occurrence and its normalized plain alt text in document
+/// order. Non-liftable and nested images are flattened before parsing so discovery, search and
+/// rendering share the same block order and fallback labels.
+pub fn prose_lifted_images(source: &str, truncated: bool) -> Vec<LiftedImage> {
+    fn collect(
+        blocks: Vec<Block>,
+        alts: &mut std::collections::HashMap<String, std::collections::VecDeque<String>>,
+        found: &mut Vec<LiftedImage>,
+    ) {
         for block in blocks {
             match block {
-                Block::Image { src, .. } => found.push(src),
-                Block::Quote(items) => collect(items, found),
+                Block::Image { src, alt, .. } => {
+                    let normalized_alt = alts
+                        .get_mut(&src)
+                        .and_then(std::collections::VecDeque::pop_front)
+                        .unwrap_or(alt);
+                    found.push(LiftedImage {
+                        src,
+                        alt: normalized_alt,
+                    });
+                }
+                Block::Quote(items) => collect(items, alts, found),
                 Block::List { items, .. } => {
                     for item in items {
-                        collect(item, found);
+                        collect(item, alts, found);
                     }
                 }
                 _ => {}
@@ -48,8 +67,42 @@ pub fn prose_lifted_images(source: &str, truncated: bool) -> Vec<String> {
     let normalized = literal_breaks_with_images(source, truncated, &|_, liftable| {
         (!liftable).then(String::new)
     });
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
+    let mut alts: std::collections::HashMap<String, std::collections::VecDeque<String>> =
+        std::collections::HashMap::new();
+    let mut depth = 0usize;
+    let mut current_src = String::new();
+    let mut current_alt = String::new();
+    for event in Parser::new_ext(&normalized, options) {
+        if depth > 0 {
+            match event {
+                Event::Start(Tag::Image { .. }) => depth += 1,
+                Event::End(pulldown_cmark::TagEnd::Image) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        alts.entry(std::mem::take(&mut current_src))
+                            .or_default()
+                            .push_back(std::mem::take(&mut current_alt));
+                    }
+                }
+                Event::Text(text) | Event::Code(text) => current_alt.push_str(&text),
+                Event::SoftBreak | Event::HardBreak => current_alt.push(' '),
+                _ => {}
+            }
+            continue;
+        }
+        if let Event::Start(Tag::Image { dest_url, .. }) = event
+            && !dest_url.is_empty()
+        {
+            depth = 1;
+            current_src.clear();
+            current_src.push_str(&dest_url);
+            current_alt.clear();
+        }
+    }
     let mut found = Vec::new();
-    collect(parse(&normalized), &mut found);
+    collect(parse(&normalized), &mut alts, &mut found);
     found
 }
 
@@ -92,7 +145,7 @@ pub fn prose<S: 'static>(
         frame,
         diff_frame,
         |_, _| None,
-        |_, _| None,
+        |_| None,
         |_| None,
         |el, _, _| prose_image(el),
     )
@@ -112,7 +165,7 @@ pub fn prose_with_images<S: 'static>(
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
     diff_frame: impl Fn(El, &DiffFrame<'_>) -> El + 'static,
     fallback_label: impl Fn(&str, bool) -> Option<String>,
-    image_search_text: impl Fn(&str, &str) -> Option<(String, String)>,
+    image_search_text: impl Fn(&str) -> Option<(String, String)>,
     image: impl Fn(&str) -> Option<rune::Image> + 'static,
     image_frame: impl Fn(El, &ImageFrame<'_>, Option<&str>) -> El + 'static,
 ) -> El {
@@ -199,14 +252,14 @@ fn prose_ranges(
     query: crate::timeline::search::Query<'_>,
     limit: usize,
 ) -> Vec<Vec<std::ops::Range<usize>>> {
-    prose_ranges_with_images(source, query, limit, &|_, _| None).0
+    prose_ranges_with_images(source, query, limit, &|_| None).0
 }
 
 fn prose_ranges_with_images(
     source: &str,
     query: crate::timeline::search::Query<'_>,
     limit: usize,
-    image_search_text: &dyn Fn(&str, &str) -> Option<(String, String)>,
+    image_search_text: &dyn Fn(&str) -> Option<(String, String)>,
 ) -> (Vec<Vec<std::ops::Range<usize>>>, Option<String>) {
     if limit == 0 || source.is_empty() {
         return (Vec::new(), None);
@@ -279,7 +332,6 @@ fn prose_ranges_with_images(
     };
     let mut skipped_image_depth = 0usize;
     let mut skipped_image_src = String::new();
-    let mut skipped_image_alt = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
         if skipped_image_depth > 0 {
             match event {
@@ -287,8 +339,7 @@ fn prose_ranges_with_images(
                 Event::End(pulldown_cmark::TagEnd::Image) => {
                     skipped_image_depth = skipped_image_depth.saturating_sub(1);
                     if skipped_image_depth == 0 {
-                        if let Some((slot_key, label)) =
-                            image_search_text(&skipped_image_src, &skipped_image_alt)
+                        if let Some((slot_key, label)) = image_search_text(&skipped_image_src)
                             && out.is_empty()
                             && first_image_hit.is_none()
                             && query.matches(&label)
@@ -299,11 +350,8 @@ fn prose_ranges_with_images(
                             }
                         }
                         skipped_image_src.clear();
-                        skipped_image_alt.clear();
                     }
                 }
-                Event::Text(text) | Event::Code(text) => skipped_image_alt.push_str(&text),
-                Event::SoftBreak | Event::HardBreak => skipped_image_alt.push(' '),
                 _ => {}
             }
             continue;
@@ -323,7 +371,6 @@ fn prose_ranges_with_images(
                 skipped_image_depth = 1;
                 skipped_image_src.clear();
                 skipped_image_src.push_str(dest_url);
-                skipped_image_alt.clear();
             }
             Event::Text(ref text) | Event::Code(ref text) => {
                 if text.is_empty() {
@@ -559,6 +606,7 @@ fn literal_breaks_with_images<'a>(
     let mut in_list_item = 0usize;
     let mut quote_depth = 0usize;
     let mut non_liftable_depth = 0usize;
+    let mut kept_image_depth = 0usize;
     let mut stripped_image_depth = 0usize;
     let mut stripped_fallback = String::new();
     let mut stripped_alt = String::new();
@@ -627,6 +675,15 @@ fn literal_breaks_with_images<'a>(
                 continue;
             }
             Event::Start(Tag::Image { dest_url, .. }) => {
+                if kept_image_depth > 0 {
+                    // Flatten every image nested inside a kept image's alt text (regardless of its
+                    // destination) so discovery, search and rendering share the same lifted blocks.
+                    result.push_str(&source[last..range.start]);
+                    stripped_image_depth = 1;
+                    stripped_alt.clear();
+                    stripped_fallback.clear();
+                    continue;
+                }
                 if let Some(fallback) = fallback_label(dest_url, non_liftable_depth == 0) {
                     result.push_str(&source[last..range.start]);
                     stripped_image_depth = 1;
@@ -634,13 +691,11 @@ fn literal_breaks_with_images<'a>(
                     stripped_fallback = fallback;
                     continue;
                 }
-                // Any image nested inside a kept image's alt text is non-liftable so start-tag
-                // order matches Rune Kit's lifted Block::Image order.
-                non_liftable_depth += 1;
+                kept_image_depth += 1;
                 continue;
             }
             Event::End(pulldown_cmark::TagEnd::Image) => {
-                non_liftable_depth = non_liftable_depth.saturating_sub(1);
+                kept_image_depth = kept_image_depth.saturating_sub(1);
                 continue;
             }
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
@@ -1051,9 +1106,22 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
     assert!(ok_spans[0][0].start > rewritten.find("## ![Head]()").unwrap());
     assert_eq!(
         prose_lifted_images(
-            "![A](a.png)\n\n## ![B](b.png)\n\n*![C](c.png)*\n\n[![D](d.png)](https://example.test)\n\n> ![E](e.png)\n\n![outer ![inner](x.png)](outer.png)",
+            "![A](a.png)\n\n## ![B](b.png)\n\n*![C](c.png)*\n\n[![D](d.png)](https://example.test)\n\n> ![E](e.png)\n\n![outer ![inner](https://example.test/x.png) `code`](outer.png)",
             false
         ),
-        vec!["a.png", "e.png", "outer.png"]
+        vec![
+            LiftedImage {
+                src: "a.png".into(),
+                alt: "A".into(),
+            },
+            LiftedImage {
+                src: "e.png".into(),
+                alt: "E".into(),
+            },
+            LiftedImage {
+                src: "outer.png".into(),
+                alt: "outer inner code".into(),
+            },
+        ]
     );
 }

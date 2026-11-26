@@ -635,7 +635,8 @@ fn render_body(
                         claimed.set(true);
                     }
                 } else {
-                    block = block.child(markdown::tool_pane(
+                    let clip_key = format!("{output_key}-pane");
+                    block = block.child(document::clipped_tool_pane(s, &clip_key, false, || {
                         document::prose_search(
                             s,
                             message,
@@ -644,9 +645,8 @@ fn render_body(
                             parts[0],
                             owner_conversation,
                             query,
-                        ),
-                        false,
-                    ));
+                        )
+                    }));
                 }
             } else if tool.name == "apply_patch" && has_output && !is_tool_truncated {
                 let output_key = format!("{key}-tool_output");
@@ -667,7 +667,8 @@ fn render_body(
                         claimed.set(true);
                     }
                 } else {
-                    block = block.child(markdown::tool_pane(
+                    let clip_key = format!("{output_key}-pane");
+                    block = block.child(document::clipped_tool_pane(s, &clip_key, false, || {
                         document::prose_pane_search(
                             s,
                             message,
@@ -678,9 +679,8 @@ fn render_body(
                             TOOL_LIMIT,
                             owner_conversation,
                             query,
-                        ),
-                        false,
-                    ));
+                        )
+                    }));
                 }
             } else if (has_output || is_tool_truncated) && !specialized_task {
                 let structured_out = if expanded_tool_output.is_some() {

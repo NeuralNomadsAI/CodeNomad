@@ -13,7 +13,13 @@ use std::{
     time::Duration,
 };
 
-pub(super) struct ActiveClip(Option<Rc<Clip>>);
+pub(in crate::chat) struct ActiveClip(Option<Rc<Clip>>);
+
+impl ActiveClip {
+    pub(in crate::chat) fn is_clipped(&self) -> bool {
+        self.0.is_some()
+    }
+}
 
 impl Clone for ActiveClip {
     fn clone(&self) -> Self {
@@ -104,18 +110,22 @@ impl Clock {
         &self.stack_bounds
     }
 
-    pub(super) fn current_clip(&self) -> ActiveClip {
+    pub(in crate::chat) fn current_clip(&self) -> ActiveClip {
         ActiveClip(self.active_clip.borrow().clone())
     }
 
-    pub(super) fn extend_clip(&self, clip: &Rc<DrawnRect>) -> ActiveClip {
+    pub(in crate::chat) fn extend_clip(&self, clip: &Rc<DrawnRect>) -> ActiveClip {
         ActiveClip(Some(Rc::new(Clip {
             rect: clip.clone(),
             parent: self.active_clip.borrow().clone(),
         })))
     }
 
-    pub(super) fn with_active_clip<T>(&self, clip: &ActiveClip, render: impl FnOnce() -> T) -> T {
+    pub(in crate::chat) fn with_active_clip<T>(
+        &self,
+        clip: &ActiveClip,
+        render: impl FnOnce() -> T,
+    ) -> T {
         struct Restore<'a>(&'a RefCell<Option<Rc<Clip>>>, Option<Rc<Clip>>);
         impl Drop for Restore<'_> {
             fn drop(&mut self) {
@@ -127,7 +137,12 @@ impl Clock {
         render()
     }
 
-    pub(super) fn rect_in_view(&self, rect: [f32; 4], bounds: [f32; 4], clip: &ActiveClip) -> bool {
+    pub(in crate::chat) fn rect_in_view(
+        &self,
+        rect: [f32; 4],
+        bounds: [f32; 4],
+        clip: &ActiveClip,
+    ) -> bool {
         in_bounds(rect, bounds, self.stack_bounds.get(), clip.0.as_deref())
     }
 
