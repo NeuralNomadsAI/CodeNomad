@@ -153,6 +153,7 @@ pub fn capture(s: &mut State) {
     }
     ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
     s.workspace = Some(ui);
+    crate::shell::blank_cleanup::abort_if_protected(s);
 }
 
 pub fn unconfirmed_drafts_full(s: &State) -> bool {

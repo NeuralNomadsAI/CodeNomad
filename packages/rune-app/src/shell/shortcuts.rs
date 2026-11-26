@@ -220,16 +220,14 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
                 }
             }
         }
-        // Match Solid's registration priority: setupTabKeyboardShortcuts, then registerNavigationShortcuts.
+        // Match Solid's registration priority: setupTabKeyboardShortcuts,
+        // then registerNavigationShortcuts, then commandHotkeyDefinitions.
         if project_open && matches("session-new") {
             return Some(Action::SessionNew);
         }
         if has_workspace {
             if matches("new-instance") {
                 return Some(Action::NewInstance);
-            }
-            if matches("new-temporary-instance") {
-                return Some(Action::NewTemporaryInstance);
             }
             if matches("close-instance") {
                 return Some(Action::CloseInstance);
@@ -261,9 +259,12 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             if matches("session-next") {
                 return Some(Action::SessionNext);
             }
-            if can_cleanup_blank && matches("cleanup-blank-sessions") {
-                return Some(Action::CleanupBlankSessions);
-            }
+        }
+        if has_workspace && matches("new-temporary-instance") {
+            return Some(Action::NewTemporaryInstance);
+        }
+        if project_open && can_cleanup_blank && matches("cleanup-blank-sessions") {
+            return Some(Action::CleanupBlankSessions);
         }
         None
     }) else {

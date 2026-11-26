@@ -10,7 +10,9 @@ use crate::{
     strings::{locale, t, with_locale},
     workspace,
 };
-use codenomad_client::{Receiver, TryRecvError, blank_session_cleanup::BlankCleanupError, bounded};
+use codenomad_client::{
+    Receiver, Sender, TryRecvError, blank_session_cleanup::BlankCleanupError, bounded,
+};
 use rune::{El, Key, KeyEvent, Mods, Tx};
 use rune_theme_codenomad::{catalogue, shell::blank_cleanup as theme};
 use std::{
@@ -22,7 +24,11 @@ const MAX_MANUAL_CANDIDATES: usize = 2_000;
 
 struct ConfirmDialog {
     scope: Rc<()>,
-    project_id: String,
+    backend: Backend,
+    project: Project,
+    connection_generation: u64,
+    stream_generation: (u64, u64),
+    candidates: VecDeque<String>,
     return_focus: Option<String>,
 }
 
@@ -37,6 +43,12 @@ enum StepOutcome {
     },
 }
 
+struct InFlight {
+    session_id: String,
+    _cancel: Sender<()>,
+    rx: Receiver<StepOutcome>,
+}
+
 struct Sweep {
     generation: u64,
     backend: Backend,
@@ -44,7 +56,7 @@ struct Sweep {
     connection_generation: u64,
     stream_generation: (u64, u64),
     candidates: VecDeque<String>,
-    in_flight: Option<Receiver<StepOutcome>>,
+    in_flight: Option<InFlight>,
     deleted_count: usize,
 }
 
@@ -63,12 +75,45 @@ impl Host {
 
     pub(crate) fn cancel(&mut self) {
         self.dialog = None;
+        // Dropping `sweep` drops `InFlight::_cancel`, aborting any active HTTP request.
         self.sweep = None;
         self.generation = self.generation.wrapping_add(1);
     }
 
     pub(crate) fn is_sweeping(&self) -> bool {
         self.sweep.is_some()
+    }
+}
+
+/// Synchronously aborts any in-flight blank-cleanup request targeting `session_id`
+/// (and removes it from pending candidates) the moment the user selects or edits it.
+pub(crate) fn abort_for_session(s: &mut State, session_id: &str) {
+    let Some(sweep) = s.blank_cleanup.sweep.as_mut() else {
+        return;
+    };
+    sweep.candidates.retain(|id| id != session_id);
+    if sweep
+        .in_flight
+        .as_ref()
+        .is_some_and(|active| active.session_id == session_id)
+    {
+        // Dropping `InFlight` closes `_cancel`, aborting the in-flight HTTP future immediately.
+        sweep.in_flight = None;
+        (s.wake)();
+    }
+}
+
+/// Synchronously aborts the current in-flight blank-cleanup request if its target
+/// just became locally protected (e.g. a draft, attachment, or unconfirmed prompt appeared).
+pub(crate) fn abort_if_protected(s: &mut State) {
+    let target = s.blank_cleanup.sweep.as_ref().and_then(|sweep| {
+        let active = sweep.in_flight.as_ref()?;
+        Some((sweep.project.id.clone(), active.session_id.clone()))
+    });
+    if let Some((project_id, session_id)) = target
+        && workspace::session_cleanup_protected(s, &project_id, &session_id)
+    {
+        abort_for_session(s, &session_id);
     }
 }
 
@@ -125,11 +170,31 @@ pub(crate) fn open_confirm(s: &mut State, explicit_return: Option<String>, tx: &
     if !can_start(s) || is_open(s) || shortcuts::modal_open(s) {
         return false;
     }
-    let Some(project_id) = s
-        .screen
-        .launcher()
-        .and_then(|l| l.project.as_ref())
-        .map(|project| project.id.clone())
+    // Snapshot candidates before displaying the confirmation dialog (matching Solid
+    // `runSessionCleanup`) so sessions created while the dialog is open are never swept.
+    let Some((backend, project, connection_generation, stream_generation, candidates)) =
+        s.screen.launcher().and_then(|l| {
+            let project = l.project.clone()?;
+            let backend = l.connection.clone()?;
+            let stream_generation = (l.catalogue_generation, l.workspace_stream_generation);
+            let mut seen = HashSet::new();
+            let mut ids = VecDeque::new();
+            for row in l.sessions.iter().chain(l.linked.rows.iter()) {
+                if ids.len() >= MAX_MANUAL_CANDIDATES {
+                    break;
+                }
+                if !row.id.starts_with("ses_cn_schedule_") && seen.insert(row.id.clone()) {
+                    ids.push_back(row.id.clone());
+                }
+            }
+            Some((
+                backend,
+                project,
+                l.connection_generation(),
+                stream_generation,
+                ids,
+            ))
+        })
     else {
         return false;
     };
@@ -138,7 +203,11 @@ pub(crate) fn open_confirm(s: &mut State, explicit_return: Option<String>, tx: &
     let scope = s.input_scope.clone();
     s.blank_cleanup.dialog = Some(Box::new(ConfirmDialog {
         scope,
-        project_id,
+        backend,
+        project,
+        connection_generation,
+        stream_generation,
+        candidates,
         return_focus,
     }));
     tx.focus_when_shown(theme::CANCEL, true);
@@ -179,39 +248,24 @@ fn confirm(s: &mut State, tx: &mut Tx) {
     if !can_start(s) {
         return;
     }
-    let Some((backend, project, connection_generation, stream_generation, raw_ids)) =
-        s.screen.launcher().and_then(|l| {
-            let project = l.project.clone()?;
-            if project.id != dialog.project_id {
-                return None;
-            }
-            let backend = l.connection.clone()?;
-            let stream_generation = (l.catalogue_generation, l.workspace_stream_generation);
-            let mut seen = HashSet::new();
-            let mut ids = VecDeque::new();
-            for row in l.sessions.iter().chain(l.linked.rows.iter()) {
-                if ids.len() >= MAX_MANUAL_CANDIDATES {
-                    break;
-                }
-                if !row.id.starts_with("ses_cn_schedule_") && seen.insert(row.id.clone()) {
-                    ids.push_back(row.id.clone());
-                }
-            }
-            Some((
-                backend,
-                project,
-                l.connection_generation(),
-                stream_generation,
-                ids,
-            ))
-        })
-    else {
+    let still_current = s.screen.launcher().is_some_and(|l| {
+        l.project
+            .as_ref()
+            .is_some_and(|p| p.id == dialog.project.id)
+            && l.connection_generation() == dialog.connection_generation
+            && (l.catalogue_generation, l.workspace_stream_generation) == dialog.stream_generation
+            && l.connection
+                .as_ref()
+                .is_some_and(|conn| conn.client.same_connection(&dialog.backend.client))
+    });
+    if !still_current {
         return;
-    };
+    }
 
-    let candidates: VecDeque<String> = raw_ids
+    let candidates: VecDeque<String> = dialog
+        .candidates
         .into_iter()
-        .filter(|id| !workspace::session_cleanup_protected(s, &project.id, id))
+        .filter(|id| !workspace::session_cleanup_protected(s, &dialog.project.id, id))
         .collect();
     if candidates.is_empty() {
         return;
@@ -221,10 +275,10 @@ fn confirm(s: &mut State, tx: &mut Tx) {
     let generation = s.blank_cleanup.generation;
     s.blank_cleanup.sweep = Some(Box::new(Sweep {
         generation,
-        backend,
-        project,
-        connection_generation,
-        stream_generation,
+        backend: dialog.backend,
+        project: dialog.project,
+        connection_generation: dialog.connection_generation,
+        stream_generation: dialog.stream_generation,
         candidates,
         in_flight: None,
         deleted_count: 0,
@@ -264,44 +318,58 @@ fn sweep_current(s: &State, sweep: &Sweep) -> bool {
     }
 }
 
-fn spawn_verify(
-    s: &State,
-    backend: Backend,
-    project: Project,
-    session_id: String,
-) -> Receiver<StepOutcome> {
+fn spawn_verify(s: &State, backend: Backend, project: Project, session_id: String) -> InFlight {
+    let (cancel, cancelled) = bounded::<()>(1);
     let (out, rx) = bounded(1);
     let wake = s.wake.clone();
+    let id = session_id.clone();
     platform::spawn(async move {
-        let result = backend.verify_blank_session(&project, &session_id).await;
-        if out
-            .try_send(StepOutcome::Verified { session_id, result })
-            .is_ok()
+        if let Some(result) = backend
+            .verify_blank_session_cancellable(&project, &id, &cancelled)
+            .await
+            && !cancelled.is_closed()
+            && out
+                .try_send(StepOutcome::Verified {
+                    session_id: id,
+                    result,
+                })
+                .is_ok()
         {
             wake();
         }
     });
-    rx
+    InFlight {
+        session_id,
+        _cancel: cancel,
+        rx,
+    }
 }
 
-fn spawn_delete(
-    s: &State,
-    backend: Backend,
-    project: Project,
-    session_id: String,
-) -> Receiver<StepOutcome> {
+fn spawn_delete(s: &State, backend: Backend, project: Project, session_id: String) -> InFlight {
+    let (cancel, cancelled) = bounded::<()>(1);
     let (out, rx) = bounded(1);
     let wake = s.wake.clone();
+    let id = session_id.clone();
     platform::spawn(async move {
-        let result = backend.delete_blank_session(&project, &session_id).await;
-        if out
-            .try_send(StepOutcome::Deleted { session_id, result })
-            .is_ok()
+        if let Some(result) = backend
+            .delete_blank_session_cancellable(&project, &id, &cancelled)
+            .await
+            && !cancelled.is_closed()
+            && out
+                .try_send(StepOutcome::Deleted {
+                    session_id: id,
+                    result,
+                })
+                .is_ok()
         {
             wake();
         }
     });
-    rx
+    InFlight {
+        session_id,
+        _cancel: cancel,
+        rx,
+    }
 }
 
 fn finish_sweep(s: &mut State, sweep: Sweep, tx: &mut Tx) {
@@ -349,8 +417,8 @@ fn advance(s: &mut State, tx: &mut Tx) -> bool {
         if workspace::session_cleanup_protected(s, &sweep.project.id, &session_id) {
             continue;
         }
-        let rx = spawn_verify(s, sweep.backend.clone(), sweep.project.clone(), session_id);
-        sweep.in_flight = Some(rx);
+        let in_flight = spawn_verify(s, sweep.backend.clone(), sweep.project.clone(), session_id);
+        sweep.in_flight = Some(in_flight);
         s.blank_cleanup.sweep = Some(sweep);
         return true;
     }
@@ -365,13 +433,19 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if !sweep_current(s, &sweep) {
         return true;
     }
-    let Some(rx) = sweep.in_flight.take() else {
+    let Some(active) = sweep.in_flight.take() else {
         s.blank_cleanup.sweep = Some(sweep);
         return advance(s, tx);
     };
-    match rx.try_recv() {
+    // Abort the in-flight HTTP future immediately if local activity/drafts appear.
+    if workspace::session_cleanup_protected(s, &sweep.project.id, &active.session_id) {
+        drop(active);
+        s.blank_cleanup.sweep = Some(sweep);
+        return advance(s, tx);
+    }
+    match active.rx.try_recv() {
         Err(TryRecvError::Empty) => {
-            sweep.in_flight = Some(rx);
+            sweep.in_flight = Some(active);
             s.blank_cleanup.sweep = Some(sweep);
             false
         }
@@ -380,6 +454,10 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             Err(BlankCleanupError::Unauthorized) => {
                 let backend = sweep.backend.clone();
                 handle_unauthorized(s, &backend);
+                true
+            }
+            Err(err) if err.is_unavailable() => {
+                finish_sweep(s, *sweep, tx);
                 true
             }
             Ok(true) => {
@@ -394,7 +472,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     advance(s, tx)
                 }
             }
-            Ok(false) | Err(BlankCleanupError::RouteUnavailable | BlankCleanupError::Other(_)) => {
+            Ok(false) | Err(_) => {
                 s.blank_cleanup.sweep = Some(sweep);
                 advance(s, tx)
             }
@@ -405,8 +483,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 handle_unauthorized(s, &backend);
                 true
             }
-            Err(BlankCleanupError::RouteUnavailable) => {
-                // Route unavailable or workspace missing: degrade gracefully and stop sweeping.
+            Err(err) if err.is_unavailable() => {
+                // Route unavailable or server/network outage: stop sweeping immediately.
                 finish_sweep(s, *sweep, tx);
                 true
             }
@@ -416,7 +494,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 s.blank_cleanup.sweep = Some(sweep);
                 advance(s, tx)
             }
-            Ok(false) | Err(BlankCleanupError::Other(_)) => {
+            Ok(false) | Err(_) => {
                 s.blank_cleanup.sweep = Some(sweep);
                 advance(s, tx)
             }
@@ -428,10 +506,8 @@ pub(crate) fn handle_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if !is_open(s) || blocked_by_higher_modal(s) {
         return false;
     }
+    // Solid opens deepConfirm with dismissible: false, so Escape is consumed without dismissing.
     if event.key == Key::Escape && event.mods == Mods::default() {
-        if !tx.key_repeat() {
-            cancel(s, tx);
-        }
         return true;
     }
     if event.key == Key::Tab && !event.mods.ctrl && !event.mods.cmd && !event.mods.alt {

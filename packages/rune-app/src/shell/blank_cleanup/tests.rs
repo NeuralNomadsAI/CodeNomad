@@ -224,6 +224,10 @@ fn command_palette_and_shortcut_open_confirm_and_cancel_safely() {
     settle(&mut rt);
     assert!(is_open(&rt.state));
 
+    // Escape is consumed without dismissing (matches Solid dismissible: false).
+    send_key(&mut rt, Key::Escape, Mods::default());
+    assert!(is_open(&rt.state));
+
     // Pressing Enter on default Cancel focus cancels instead of confirming destructively.
     send_key(&mut rt, Key::Enter, Mods::default());
     assert!(!is_open(&rt.state));
@@ -235,7 +239,7 @@ fn command_palette_and_shortcut_open_confirm_and_cancel_safely() {
             .any(|el| el.key.as_deref() == Some(trigger) && el.focused)
     );
 
-    // Executing from Command Palette also opens confirmation and Escape restores focus.
+    // Executing from Command Palette also opens confirmation; Enter on Cancel restores focus.
     rt.update(|s, tx| command_palette::open(s, tx));
     settle(&mut rt);
     assert!(command_palette::is_open(&rt.state));
@@ -245,6 +249,8 @@ fn command_palette_and_shortcut_open_confirm_and_cancel_safely() {
     assert!(!command_palette::is_open(&rt.state));
     assert!(is_open(&rt.state));
     send_key(&mut rt, Key::Escape, Mods::default());
+    assert!(is_open(&rt.state));
+    send_key(&mut rt, Key::Enter, Mods::default());
     assert!(!is_open(&rt.state));
     assert!(server.requests().is_empty());
     assert!(
@@ -544,4 +550,219 @@ fn mid_preflight_local_draft_blocks_delete_dispatch() {
         "delete must not be dispatched after session became active mid-preflight"
     );
     assert_eq!(rt.state.screen.launcher().unwrap().sessions.len(), 1);
+}
+
+#[test]
+fn sessions_added_while_confirm_dialog_is_open_are_not_swept() {
+    let server = MockCleanupServer::start(|first| {
+        if first.starts_with("POST /api/workspaces/ws-clean/session-cleanup/") {
+            return (200, json!({"deleted": true}));
+        }
+        if first.contains("/message?") {
+            return (200, json!({"data": [], "cursor": {}}));
+        }
+        if first.starts_with("GET /workspaces/ws-clean/instance/api/session/ses_before HTTP/") {
+            return (
+                200,
+                json!({"data": {"id": "ses_before", "projectID": "proj-1", "location": {"directory": "/repo"}, "time": {"updated": 1}}}),
+            );
+        }
+        if first.contains("/inbox") {
+            return (200, json!({"data": []}));
+        }
+        if first.contains("parentID=") {
+            return (200, json!({"data": [], "cursor": {}}));
+        }
+        if first.contains("/api/session/active") {
+            return (200, json!({"data": {}}));
+        }
+        (404, json!({}))
+    });
+
+    let mut rt = cleanup_runtime(
+        server.backend.clone(),
+        vec![Session {
+            id: "ses_before".into(),
+            title: "Before".into(),
+        }],
+        None,
+    );
+
+    rt.update(|s, tx| {
+        assert!(open_confirm(s, None, tx));
+    });
+    // A blank session arrives while the confirmation dialog is open.
+    rt.state
+        .screen
+        .launcher_mut()
+        .unwrap()
+        .sessions
+        .push(Session {
+            id: "ses_during_dialog".into(),
+            title: "Created During Dialog".into(),
+        });
+
+    rt.update(|s, tx| confirm(s, tx));
+    drive_cleanup(&mut rt);
+
+    let remaining: Vec<_> = rt
+        .state
+        .screen
+        .launcher()
+        .unwrap()
+        .sessions
+        .iter()
+        .map(|s| s.id.as_str())
+        .collect();
+    assert_eq!(remaining, vec!["ses_during_dialog"]);
+    assert!(
+        !server
+            .requests()
+            .iter()
+            .any(|r| r.contains("ses_during_dialog"))
+    );
+}
+
+#[test]
+fn server_503_outage_stops_sweep_immediately_without_touching_remaining_candidates() {
+    let server = MockCleanupServer::start(|_| (503, json!({"error": "Unavailable"})));
+    let mut rt = cleanup_runtime(
+        server.backend.clone(),
+        vec![
+            Session {
+                id: "ses_blank_1".into(),
+                title: "Blank 1".into(),
+            },
+            Session {
+                id: "ses_blank_2".into(),
+                title: "Blank 2".into(),
+            },
+        ],
+        None,
+    );
+
+    rt.update(|s, tx| {
+        assert!(open_confirm(s, None, tx));
+        confirm(s, tx);
+    });
+    drive_cleanup(&mut rt);
+
+    assert!(!rt.state.blank_cleanup.is_sweeping());
+    assert!(can_start(&rt.state));
+    let seen = server.requests();
+    assert_eq!(seen.len(), 1);
+    assert!(!seen.iter().any(|r| r.contains("ses_blank_2")));
+}
+
+#[test]
+fn activating_session_during_inflight_delete_aborts_http_request() {
+    let (post_seen_tx, post_seen_rx) = std::sync::mpsc::channel::<()>();
+    let release = Arc::new(AtomicBool::new(false));
+    let release_flag = release.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = stop.clone();
+    let handle = thread::spawn(move || {
+        while !stop_flag.load(Ordering::SeqCst) {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            if stop_flag.load(Ordering::SeqCst) {
+                break;
+            }
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buf = [0u8; 4096];
+            let Ok(n) = stream.read(&mut buf) else {
+                continue;
+            };
+            if n == 0 {
+                continue;
+            }
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let first = req.lines().next().unwrap_or("");
+            if first.starts_with("POST /api/workspaces/ws-clean/session-cleanup/ses_abort") {
+                let _ = post_seen_tx.send(());
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while !release_flag.load(Ordering::SeqCst) && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                let payload = r#"{"deleted":true}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                    payload.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                continue;
+            }
+            let body = if first.contains("/message?") {
+                json!({"data": [], "cursor": {}})
+            } else if first
+                .starts_with("GET /workspaces/ws-clean/instance/api/session/ses_abort HTTP/")
+            {
+                json!({"data": {"id": "ses_abort", "projectID": "proj-1", "location": {"directory": "/repo"}, "time": {"updated": 1}}})
+            } else if first.contains("/inbox") {
+                json!({"data": []})
+            } else if first.contains("parentID=") {
+                json!({"data": [], "cursor": {}})
+            } else if first.contains("/api/session/active") {
+                json!({"data": {}})
+            } else {
+                json!({})
+            };
+            let payload = body.to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                payload.len()
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        }
+    });
+
+    let backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+    let mut rt = cleanup_runtime(
+        backend.clone(),
+        vec![Session {
+            id: "ses_abort".into(),
+            title: "Abort".into(),
+        }],
+        None,
+    );
+
+    rt.update(|s, tx| {
+        assert!(open_confirm(s, None, tx));
+        confirm(s, tx);
+    });
+
+    // Advance preflight until the POST reaches the server and blocks.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while post_seen_rx.try_recv().is_err() && Instant::now() < deadline {
+        rt.update(|s, tx| {
+            let _ = strings::with_locale("en", || poll(s, tx));
+        });
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    // Activate ses_abort while POST is still in-flight; poll must abort the task immediately.
+    let bound = Backend {
+        workspace: "ws-clean".into(),
+        session: "ses_abort".into(),
+        ..backend
+    };
+    workspace::bound(&mut rt.state, &bound);
+    rt.update(|s, tx| {
+        let _ = strings::with_locale("en", || poll(s, tx));
+    });
+    assert!(!rt.state.blank_cleanup.is_sweeping());
+    assert_eq!(rt.state.screen.launcher().unwrap().sessions.len(), 1);
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|el| el.text.as_deref().is_some_and(|t| t.contains("Cleaned up")))
+    );
+
+    release.store(true, Ordering::SeqCst);
+    stop.store(true, Ordering::SeqCst);
+    let _ = TcpStream::connect(addr);
+    let _ = handle.join();
 }

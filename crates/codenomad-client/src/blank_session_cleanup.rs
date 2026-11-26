@@ -16,7 +16,9 @@ pub enum BlankCleanupError {
     Unauthorized,
     /// The server does not expose the cleanup route or the workspace is absent (404/405/501).
     RouteUnavailable,
-    /// Any other HTTP, transport, or contract error (treated as unknown, never empty).
+    /// Transport/network failure or server 5xx outage (abort remaining sweep instead of looping).
+    Unavailable(String),
+    /// Any other HTTP or contract error (treated as unknown, never empty).
     Other(String),
 }
 
@@ -28,6 +30,10 @@ impl BlankCleanupError {
     pub fn is_route_unavailable(&self) -> bool {
         matches!(self, Self::RouteUnavailable)
     }
+
+    pub fn is_unavailable(&self) -> bool {
+        matches!(self, Self::RouteUnavailable | Self::Unavailable(_))
+    }
 }
 
 impl fmt::Display for BlankCleanupError {
@@ -35,7 +41,7 @@ impl fmt::Display for BlankCleanupError {
         match self {
             Self::Unauthorized => f.write_str("authentication required"),
             Self::RouteUnavailable => f.write_str("blank session cleanup route unavailable"),
-            Self::Other(message) => f.write_str(message),
+            Self::Unavailable(message) | Self::Other(message) => f.write_str(message),
         }
     }
 }
@@ -65,6 +71,11 @@ fn map_preflight_status(status: reqwest::StatusCode) -> Result<(), BlankCleanupE
         Err(BlankCleanupError::Unauthorized)
     } else if status.is_success() {
         Ok(())
+    } else if status.is_server_error() {
+        Err(BlankCleanupError::Unavailable(format!(
+            "HTTP {}",
+            status.as_u16()
+        )))
     } else {
         Err(BlankCleanupError::Other(format!(
             "HTTP {}",
@@ -97,7 +108,7 @@ impl Backend {
             .query(&[("limit", "1")])
             .send()
             .await
-            .map_err(|err| BlankCleanupError::Other(err.to_string()))?;
+            .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
         map_preflight_status(response.status())?;
         let page = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
         Ok(is_empty_page(&page))
@@ -116,7 +127,7 @@ impl Backend {
             ))
             .send()
             .await
-            .map_err(|err| BlankCleanupError::Other(err.to_string()))?;
+            .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
         map_preflight_status(response.status())?;
         let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
         Ok(unwrap_data(&body).clone())
@@ -168,7 +179,7 @@ impl Backend {
                 ))
                 .send()
                 .await
-                .map_err(|err| BlankCleanupError::Other(err.to_string()))?;
+                .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
             map_preflight_status(response.status())?;
             let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
             Ok::<bool, BlankCleanupError>(unwrap_data(&body).as_array().is_some_and(Vec::is_empty))
@@ -196,7 +207,7 @@ impl Backend {
                 .query(&children_query)
                 .send()
                 .await
-                .map_err(|err| BlankCleanupError::Other(err.to_string()))?;
+                .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
             map_preflight_status(response.status())?;
             let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
             Ok::<bool, BlankCleanupError>(is_empty_page(&body))
@@ -210,7 +221,7 @@ impl Backend {
                 ))
                 .send()
                 .await
-                .map_err(|err| BlankCleanupError::Other(err.to_string()))?;
+                .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
             map_preflight_status(response.status())?;
             let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
             Ok::<bool, BlankCleanupError>(
@@ -262,7 +273,7 @@ impl Backend {
             ))
             .send()
             .await
-            .map_err(|err| BlankCleanupError::Other(err.to_string()))?;
+            .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(BlankCleanupError::Unauthorized);
@@ -276,13 +287,53 @@ impl Backend {
             return Err(BlankCleanupError::RouteUnavailable);
         }
         if !status.is_success() {
-            return Err(BlankCleanupError::Other(format!(
-                "HTTP {}",
-                status.as_u16()
-            )));
+            let msg = format!("HTTP {}", status.as_u16());
+            return Err(if status.is_server_error() {
+                BlankCleanupError::Unavailable(msg)
+            } else {
+                BlankCleanupError::Other(msg)
+            });
         }
         let body = read_bounded(response, MAX_CLEANUP_BYTES).await?;
         Ok(body["deleted"].as_bool() == Some(true))
+    }
+
+    /// Cancellable wrapper around [`Self::verify_blank_session`] that immediately drops
+    /// the in-flight HTTP request when `cancelled` closes or receives a signal.
+    pub async fn verify_blank_session_cancellable(
+        &self,
+        project: &Project,
+        session_id: &str,
+        cancelled: &crate::Receiver<()>,
+    ) -> Option<Result<bool, BlankCleanupError>> {
+        if cancelled.is_closed() {
+            return None;
+        }
+        let abort = async {
+            let _ = cancelled.recv().await;
+            None
+        };
+        let work = async { Some(self.verify_blank_session(project, session_id).await) };
+        futures_lite::future::or(abort, work).await
+    }
+
+    /// Cancellable wrapper around [`Self::delete_blank_session`] that immediately drops
+    /// the in-flight HTTP request when `cancelled` closes or receives a signal.
+    pub async fn delete_blank_session_cancellable(
+        &self,
+        project: &Project,
+        session_id: &str,
+        cancelled: &crate::Receiver<()>,
+    ) -> Option<Result<bool, BlankCleanupError>> {
+        if cancelled.is_closed() {
+            return None;
+        }
+        let abort = async {
+            let _ = cancelled.recv().await;
+            None
+        };
+        let work = async { Some(self.delete_blank_session(project, session_id).await) };
+        futures_lite::future::or(abort, work).await
     }
 }
 
@@ -495,7 +546,7 @@ mod tests {
                 assert!(task.await.unwrap().unwrap_err().is_route_unavailable());
             }
 
-            // 503 -> Other
+            // 503 -> Unavailable (not RouteUnavailable)
             let task = tokio::spawn({
                 let backend = backend.clone();
                 let project = project.clone();
@@ -503,7 +554,7 @@ mod tests {
             });
             let _ = serve_once(&listener, 503, json!({})).await;
             let err = task.await.unwrap().unwrap_err();
-            assert!(!err.is_unauthorized() && !err.is_route_unavailable());
+            assert!(!err.is_unauthorized() && !err.is_route_unavailable() && err.is_unavailable());
         });
     }
 }

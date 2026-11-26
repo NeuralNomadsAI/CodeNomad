@@ -946,7 +946,8 @@ fn hidden_git_picker_does_not_block_global_shortcuts() {
     send_key(&mut rt, Key::Function(6), Mods::default());
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
 
-    // Solid registration priority: session-new wins over app-tab-1 when both share the same key.
+    // Solid registration priority: session-new wins over app-tab-1 when both share the same key,
+    // and app-tab-1 wins over command-palette hotkey new-temporary-instance when both share the same key.
     rt.state.screen.launcher_mut().unwrap().connection =
         Some(Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
     settings::fixture_shortcuts(
@@ -956,6 +957,15 @@ fn hidden_git_picker_does_not_block_global_shortcuts() {
     send_key(&mut rt, Key::Function(8), Mods::default());
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
     assert!(rt.state.screen.launcher().unwrap().pending);
+
+    rt.state.screen.launcher_mut().unwrap().pending = false;
+    settings::fixture_shortcuts(
+        &rt.state,
+        json!({"app-tab-1": [{"key": "f9"}], "new-temporary-instance": [{"key": "f9"}]}),
+    );
+    send_key(&mut rt, Key::Function(9), Mods::default());
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+    assert!(!rt.state.temporary.in_flight());
 }
 
 mod detached;

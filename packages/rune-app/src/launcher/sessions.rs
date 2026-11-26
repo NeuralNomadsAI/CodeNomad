@@ -341,6 +341,7 @@ pub(super) fn retry_mission_conversation(s: &mut State, id: String) {
 }
 
 pub(crate) fn choose_destination(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
+    crate::shell::blank_cleanup::abort_for_session(s, &id);
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())
         && s.phase != Phase::Failed
