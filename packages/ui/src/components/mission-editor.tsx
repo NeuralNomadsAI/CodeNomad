@@ -22,7 +22,6 @@ import { MissionBriefPicker, MissionBriefSave } from "./mission-model-library"
 import { MissionTaskModeControls } from "./mission-task-mode-controls"
 import { MissionSubagentDepth } from "./mission-subagent-depth"
 import { missionPanelScroll } from "./mission-panel-scroll"
-import { uncertainRecurrence } from "../stores/mission-recurrence"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "../../../server/src/missions/lifecycle-input"
 import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-read-budget"
 import { MISSION_TITLE_MAX, deriveMissionTitle } from "../../../server/src/missions/mission-title"
@@ -56,7 +55,6 @@ export function MissionEditor(props: {
   onOpenPreferences?: () => void
   /** Opens the selected playbook's details under the chosen task-session policy. */
   onShowPlaybook?: (template: MissionPanelMap["template"], taskMode: MissionTaskMode) => void
-  onRecurrenceSaved?: () => void
   onRecurrenceRefresh?: () => void
   /** On unmount: the idle draft to reopen, null to reopen as opened (an edit still reading
    * its fields), or undefined while a request is in flight or held. */
@@ -79,11 +77,10 @@ export function MissionEditor(props: {
   const scheduleScope = () => JSON.stringify([identity(), kind === "create" ? "create" : action.scheduleID ?? original?.id])
   const scheduleHold = missionScheduleEditorHold(scheduleScope())
   const held = kind === "create" ? uncertainMissionCreation(identity()) : undefined
-  const recurrenceHold = kind === "create" ? uncertainRecurrence(identity()) : undefined
   // An exact held contract wins over the draft this editor left when its panel unmounted.
-  const draft = scheduleHold?.draft ?? (held || recurrenceHold ? undefined : action.draft)
-  const [titleOverride, setTitleOverride] = createSignal<string | undefined>(recurrenceHold?.title ?? held?.title ?? draft?.titleOverride ?? original?.title)
-  const [watched, setWatched] = createSignal<string[]>([...recurrenceHold?.watchedConversationIDs ?? held?.watchedConversationIDs ?? draft?.watched ?? []])
+  const draft = scheduleHold?.draft ?? (held ? undefined : action.draft)
+  const [titleOverride, setTitleOverride] = createSignal<string | undefined>(held?.title ?? draft?.titleOverride ?? original?.title)
+  const [watched, setWatched] = createSignal<string[]>([...held?.watchedConversationIDs ?? draft?.watched ?? []])
   const [coordinatorSessionID, setCoordinatorSessionID] = createSignal<string | undefined>(draft?.coordinatorSessionID
     ?? draft?.scheduleDocument?.configuration.coordinatorSessionID)
   // An edit starts from the objective and notes of exactly the map it opened (its CAS
@@ -105,36 +102,36 @@ export function MissionEditor(props: {
   // Reading while a Reopen runs; a changed field, or a failed Reopen, offers Reopen.
   const offersReopen = () => reopen() === "failed" || reopen() === "idle" && prefillState() === "changed"
   // One shared draft: one-time objective or recurring permanent instructions.
-  const [objective, setObjective] = createSignal(recurrenceHold?.instructions ?? held?.objective ?? draft?.objective ?? "")
+  const [objective, setObjective] = createSignal(held?.objective ?? draft?.objective ?? "")
   const derivedTitle = () => deriveMissionTitle(objective())
   const title = () => titleOverride() ?? derivedTitle()
   const submittedTitle = () => title().trim() || derivedTitle()
-  const [notes, setNotes] = createSignal(recurrenceHold?.notes ?? held?.notes ?? draft?.notes ?? "")
+  const [notes, setNotes] = createSignal(held?.notes ?? draft?.notes ?? "")
   createEffect(() => {
     const objectiveField = editedObjective(), notesField = editedNotes()
     if (!prefilling() || reopen() === "pending" || objectiveField.state !== "ready" || notesField.state !== "ready") return
     setObjective(objectiveField.value ?? ""); setNotes(notesField.value ?? "")
     setPrefilling(false)
   })
-  const [template, setTemplate] = createSignal<MissionPanelMap["template"]>(recurrenceHold?.template ?? held?.template ?? draft?.template ?? original?.template ?? "custom")
-  const [profiles, setProfiles] = createSignal<MissionProfiles | undefined>(copyMissionProfiles(recurrenceHold?.profiles ?? held?.profiles ?? draft?.profiles ?? original?.profiles))
-  const [customProfiles, setCustomProfiles] = createSignal(Boolean(held || recurrenceHold || draft?.customProfiles))
+  const [template, setTemplate] = createSignal<MissionPanelMap["template"]>(held?.template ?? draft?.template ?? original?.template ?? "custom")
+  const [profiles, setProfiles] = createSignal<MissionProfiles | undefined>(copyMissionProfiles(held?.profiles ?? draft?.profiles ?? original?.profiles))
+  const [customProfiles, setCustomProfiles] = createSignal(Boolean(held || draft?.customProfiles))
   const [profilesOpen, setProfilesOpen] = createSignal(draft?.profileDetailsOpen ?? false)
   let profilesFold: HTMLDetailsElement | undefined
-  const [taskMode, setTaskMode] = createSignal<MissionTaskMode | undefined>(draft ? draft.taskMode : recurrenceHold?.taskMode ?? held?.taskMode ?? original?.taskMode ?? "native")
-  const [customTaskMode, setCustomTaskMode] = createSignal(Boolean(held || recurrenceHold || draft?.customTaskMode))
+  const [taskMode, setTaskMode] = createSignal<MissionTaskMode | undefined>(draft ? draft.taskMode : held?.taskMode ?? original?.taskMode ?? "native")
+  const [customTaskMode, setCustomTaskMode] = createSignal(Boolean(held || draft?.customTaskMode))
   const [defaults, setDefaults] = createSignal<MissionProfileDefault[]>(draft?.defaults ?? [])
-  const [defaultsReady, setDefaultsReady] = createSignal(kind !== "create" || Boolean(held || recurrenceHold || draft?.defaultsReady))
+  const [defaultsReady, setDefaultsReady] = createSignal(kind !== "create" || Boolean(held || draft?.defaultsReady))
   const [defaultsRefreshing, setDefaultsRefreshing] = createSignal(false)
   const [defaultsFailed, setDefaultsFailed] = createSignal(false)
-  const creationReady = () => defaultsReady() && (kind !== "create" || Boolean(held || recurrenceHold) || config.isUiConfigLoaded())
+  const creationReady = () => defaultsReady() && (kind !== "create" || Boolean(held) || config.isUiConfigLoaded())
   const effectiveProfiles = () => freezeCompareProfiles(template(), profiles())
   const compareError = () => template() === "compare" ? compareModelError(profiles()) : undefined
   const [selectedModel, setSelectedModel] = createSignal<UserMissionModel | undefined>(held ? submittedMissionModel(held.requestId)
-    : recurrenceHold ? submittedMissionModel(recurrenceHold.requestID) : draft?.selectedModel)
-  let draftId = held || recurrenceHold ? generateUUID() : draft?.draftId ?? generateUUID()
+    : draft?.selectedModel)
+  let draftId = held ? generateUUID() : draft?.draftId ?? generateUUID()
   const [savedBaselines, setSavedBaselines] = createSignal<UserMissionModel[]>(
-    held || recurrenceHold ? (selectedModel() ? [selectedModel()!] : [])
+    held ? (selectedModel() ? [selectedModel()!] : [])
       : draft?.savedBaselines ? [...draft.savedBaselines] : selectedModel() ? [selectedModel()!] : [],
   )
   const applySavedBaseline = (saved: UserMissionModel) => {
@@ -165,7 +162,6 @@ export function MissionEditor(props: {
     setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setTaskMode(missionTaskModeFor(loaded, template()))
     setDefaultsReady(true)
   })
-  const [recurrenceUncertain, setUncertain] = createSignal(Boolean(recurrenceHold))
   // A one-time hold is adopted when it is unknown at mount or met at submission;
   // a newer editor keeps its own draft while another request is merely pending.
   const [adopted, setAdopted] = createSignal(Boolean(held))
@@ -188,11 +184,11 @@ export function MissionEditor(props: {
   createEffect(on([() => creationHold()?.state, isActive, identity, () => instances().get(props.instanceId)?.client, () => getOpenCodeInstanceGeneration(props.instanceId)], () => {
     if (isActive() && creationHold()?.state === "uncertain") void reconcileCreation()
   }))
-  const uncertain = () => recurrenceUncertain() || creationHold()?.state === "uncertain" || schedule.held()?.state === "uncertain"
+  const uncertain = () => creationHold()?.state === "uncertain" || schedule.held()?.state === "uncertain"
   // The request whose exact draft this editor shows. An adopted hold from another
   // editor leaves this draft unsent; its wording must not claim otherwise.
   const [shownRequestId, setShownRequestId] = createSignal(held?.requestId)
-  const otherUncertain = () => !recurrenceUncertain() && creationHold()?.state === "uncertain"
+  const otherUncertain = () => creationHold()?.state === "uncertain"
     && creationHold()!.operation.requestId !== shownRequestId() || schedule.held()?.state === "uncertain"
       && JSON.parse(schedule.held()!.payload).requestID !== requestId
   const busy = () => pending() || uncertain() || creationPending() || !!schedule.held()
@@ -288,7 +284,7 @@ export function MissionEditor(props: {
     && !!sourceChoices.sources()["coordinator-session"]?.some(row => row.id === coordinatorSessionID())
   const sourceInputBudget = () => recurrenceInputBudget({ consigne: objective().trim(), watchedConversationIDs: watchedIDs(),
     roots: sourceLocation()?.key === sourceIdentity() ? [{ directory: sourceLocation()!.directory }] : [] })
-  let requestId = held?.requestId ?? recurrenceHold?.requestID ?? draft?.requestId ?? generateUUID(), lastPayload = draft?.lastPayload ?? ""
+  let requestId = held?.requestId ?? draft?.requestId ?? generateUUID(), lastPayload = draft?.lastPayload ?? ""
   const locked = () => !creationReady() || defaultsRefreshing() || busy() || prefilling() || !schedule.ready() || schedule.conflict() || schedule.reading()
   // Only an idle draft is kept: a request in flight or held settles through its own hold.
   const captureDraft = (): MissionEditorDraft => ({ mode: mode(), titleOverride: titleOverride(), time: time(), zone: zone(),
@@ -339,7 +335,6 @@ export function MissionEditor(props: {
         try { recurrenceStartText({ consigne: objective().trim(), template: template(), taskMode: taskMode() ?? "native" }) }
         catch { fail("objective", t("missions.recurrence.instructionsTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })); return }
       }
-      if (uncertainRecurrence(identity())) { setUncertain(true); return }
       if (missionCreationHold(identity())) { setAdopted(true); return }
       const selected = copyMissionProfiles(effectiveProfiles())
        if (mode() === "recurring" && !structuralLocked() && (!selected?.coordinator?.agent || !selected.coordinator.model?.providerID || !selected.coordinator.model.id
@@ -382,7 +377,6 @@ export function MissionEditor(props: {
     }
     // A hold learned after this editor opened still cannot become a new logical
     // creation merely because the user submits another draft in the same scope.
-    if (kind === "create" && uncertainRecurrence(identity())) { setUncertain(true); return }
     if (kind === "create" && missionCreationHold(identity())) {
       // Show an unknown contract exactly; a merely pending one leaves this draft alone.
       const existingHold = uncertainMissionCreation(identity())

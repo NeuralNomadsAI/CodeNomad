@@ -27,7 +27,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); if (events) { events.closeAllConnections(); await new Promise<void>(resolve => events.close(() => resolve())) } })
 
-for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current reader pages tasks, exact bodies and off-page native requests without a full-map escape`, async t => {
+for (const owner of ["scheduled"] as const) test(`${owner} real current reader pages tasks, exact bodies and off-page native requests without a full-map escape`, async t => {
   const f = await currentPassageFixture(owner), app = Fastify({ logger: false }), page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
   const errors: string[] = [], writes: string[] = [], selections: any[] = [], sizes: number[] = []
   const activityRows: unknown[] = []
@@ -87,9 +87,6 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
         return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
       }
       if (request.method() !== "GET") writes.push(path)
-      if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: f.root, location: owned, schedules: owner === "daily" ? [{
-        id: f.scheduleID, title: "Daily current", revision: 1, state: "interrupted", interruptionReason: "service-restart", clock: { time: "23:59", zone: "UTC" }, nextDueAt: null, actions: [], controls: [],
-        pending: { passageID: f.passage.passageID, missionID: map.id, conversationID: map.coordinatorSessionId, status: "running" }, latestResult: null, history: [] }] : [] } })
       if (path.endsWith("/missions/scheduled")) {
         const doc = owner === "scheduled" ? await f.documents.read(f.scheduleID) : undefined
         return route.fulfill({ json: { version: 1, projectID: "project", schedules: doc && "configuration" in doc ? [missionScheduleView(doc).document] : [] } })
@@ -204,7 +201,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
   } finally { releaseActivity?.(); await page.context().close(); await app.close(); await f.dispose() }
 })
 
-for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page back aborts its held continuation without a false error after real 31 seconds`, { timeout: 90_000 }, async t => {
+for (const owner of ["scheduled"] as const) test(`${owner} covered page back aborts its held continuation without a false error after real 31 seconds`, { timeout: 90_000 }, async t => {
   const f = await currentPassageFixture(owner), page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
   let release!: () => void, entered!: () => void, heldID: string | undefined, heldOffset: number | undefined
   const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })

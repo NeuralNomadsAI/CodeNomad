@@ -215,18 +215,6 @@ test("editor GitHub and coordinator payload reaches only its owning schedule con
   }
 })
 
-test("daily recurrence controls route remotely and reject stale view effects", async () => {
-  const read = deferred(), env = fixture({ controlMissionRecurrence: () => read.promise })
-  const run = production("./mission-recurrence-list.tsx", "act", { ...env,
-    props: { instanceId: id, schedule: { id: "s", revision: 1 }, directory: "/repo" }, generation: 1,
-    retryCapable: () => true, capable: () => true, key: () => "scope", createRecurrenceControlIntent: () => ({ requestID: "r", scheduleID: "s" }),
-    holdIntent: production("./mission-recurrence-list.tsx", "holdIntent", { unresolved: new Map(), setReleases: () => {} }),
-    setHeld: () => {}, setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, finish: () => assert.fail("stale recurrence publication"),
-  })
-  const pending = run("pause"); assert.equal(env.owners.length, 1)
-  env.replace(); read.resolve({}); await pending
-})
-
 test("current passage content dispatches remotely and fences detached prose", async () => {
   const read = deferred(), env = fixture({ fetchMissionCurrentContent: () => read.promise }), instance = { folder: "/repo", client: {} }
   let publications = 0, dispose!: () => void
@@ -238,21 +226,6 @@ test("current passage content dispatches remotely and fences detached prose", as
   }, "fetchMissionCurrentContent")
   createRoot(close => { dispose = close; createEffect(effect) }); assert.equal(env.owners.length, 1)
   env.revoke(); read.resolve({}); await flush(); assert.equal(publications, 0); dispose()
-})
-
-test("archive passage dispatches remotely and fences detached prose", async () => {
-  const read = deferred(), env = fixture({ fetchMissionRecurrencePassagePage: () => read.promise }), client = {}
-  const [value, setValue] = createSignal<any>(); let dispose!: () => void
-  const effect = production("./mission-recurrence-passage-reader.tsx", "createEffect", { ...env,
-    props: { instanceId: id, projectID: "p", scheduleID: "s", receipt: {} },
-    binding: () => "identity", section: () => 0, page: () => 0, refresh: () => 0, previousRefresh: 0,
-    previous: "", previousClient: undefined, previousGeneration: undefined, previousSignal: undefined,
-    connection: () => ({ client, generation: 1, signal: env.captureBackendOperation(id).signal }),
-    instances: () => new Map([[id, { folder: "/repo", client, metadata: { project: { id: "p" } } }]]),
-    getOpenCodeInstanceGeneration: () => 1, cache: new Map(), value, setValue, setError: () => {}, setLoading: () => {},
-  }, "fetchMissionRecurrencePassagePage")
-  createRoot(close => { dispose = close; createEffect(effect) }); assert.equal(env.owners.length, 1)
-  env.revoke(); read.resolve({}); await flush(); assert.equal(value(), undefined); dispose()
 })
 
 test("depth setting reads remotely; detached response cannot adopt the new depth", async () => {
@@ -478,27 +451,6 @@ test("cleanup retry reaches remote deletion after its positive intent read", asy
   })("row")
   assert.deepEqual(calls, ["read", "delete", "refresh"])
 })
-
-for (const action of ["run-now", "pause"] as const) {
-  test(`recurrence ${action} dispatch and explicit status each reach their remote sibling endpoint`, async () => {
-    const calls: any[] = [], intent = { scheduleID: "s", requestID: "r", action, expectedRevision: 1 }, settled: string[] = []
-    const api = Object.fromEntries(["runMissionRecurrenceNow", "controlMissionRecurrence", "missionRecurrenceRunNowStatus", "missionRecurrenceControlStatus"]
-      .map(method => [method, async (...args: any[]) => { calls.push([method, ...args]); return {} }]))
-    const env = fixture(api), scope = { ...env,
-      props: { instanceId: id, schedule: { id: "s", revision: 1 }, directory: "/repo", enabled: () => true, retryEnabled: () => true }, generation: 1,
-      retryCapable: () => true, capable: () => true, key: () => "scope", createRecurrenceControlIntent: () => intent,
-      holdIntent: production("./mission-recurrence-list.tsx", "holdIntent", { unresolved: new Map(), setReleases: () => {} }),
-      setHeld: () => {}, setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, busy: () => false,
-      completedRecurrenceManual: () => true, rejectedRecurrenceControl: () => undefined, partialRecurrenceControl: () => false,
-      finish: () => settled.push("control"), settle: () => settled.push("manual"), heldIntent: () => intent, witness: undefined,
-    }
-    await production("./mission-recurrence-list.tsx", "act", scope)(action)
-    await production("./mission-recurrence-list.tsx", "check", scope)()
-    assert.deepEqual(calls.map(call => call[0]), action === "run-now"
-      ? ["runMissionRecurrenceNow", "missionRecurrenceRunNowStatus"] : ["controlMissionRecurrence", "missionRecurrenceControlStatus"])
-    assert.ok(calls.every(call => call[1] === id)); assert.equal(settled.length, 2)
-  })
-}
 
 test("lifecycle reconcile authorizes only its exact request after its own read", async () => {
   const env = fixture({}), read = deferred(), input = { requestId: "r", action: "pause", expectedRevision: 1 }

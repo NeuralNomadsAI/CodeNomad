@@ -30,7 +30,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
     const docs = schedules(), scope = seenScope()
     if (list.error()) return
     const fresh = docs.filter(doc => list.fresh(doc.id))
-    untrack(() => { for (const doc of fresh) seedScheduleSuccessSeen(scope, "scheduled", doc.id,
+    untrack(() => { for (const doc of fresh) seedScheduleSuccessSeen(scope, doc.id,
       doc.latestResult?.outcome === "completed" ? doc.latestResult.id : undefined) })
   })
   createEffect(() => {
@@ -51,7 +51,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
     const requests = doc.id === props.selected && doc.pendingPassage?.id === props.selectedRequests?.passageID ? props.selectedRequests?.count ?? 0
       : missionPassageRequests(props.instanceId, doc.pendingPassage?.coordinatorSessionID)
     const held = unifiedScheduleHold(JSON.stringify([props.instanceId, props.projectID, props.directory, doc.id]))
-    const mark = unifiedScheduleMark(doc, requests, !doc.latestResult || scheduleSuccessSeen(seenScope(), "scheduled", doc.id, doc.latestResult.id),
+    const mark = unifiedScheduleMark(doc, requests, !doc.latestResult || scheduleSuccessSeen(seenScope(), doc.id, doc.latestResult.id),
       !list.error() && list.fresh(doc.id) && !held)
     const stateKey = missionMarkStateKey(mark)
     return { key: `scheduled:${doc.id}`, title: doc.configuration.title, mark, activityAt: unifiedScheduleActivityAt(doc),
@@ -139,8 +139,8 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
     && (doc.pendingPassage?.coordinatorSessionID === sessionID || doc.history.some(item => item.coordinatorSessionID === sessionID)))
   const markRead = (key: string) => {
     const doc = schedules().find(item => key === `scheduled:${item.id}`), result = doc?.latestResult, scope = seenScope()
-    return doc && result?.outcome === "completed" && !scheduleSuccessSeen(scope, "scheduled", doc.id, result.id)
-      ? () => markScheduleSuccessSeen(scope, "scheduled", doc.id, result.id) : undefined
+    return doc && result?.outcome === "completed" && !scheduleSuccessSeen(scope, doc.id, result.id)
+      ? () => markScheduleSuccessSeen(scope, doc.id, result.id) : undefined
   }
   return { entries, view, listView, refresh, ownsSession, loading: list.loading,
     next: list.next, more: list.more, retry: list.refresh, error: list.error, markRead,

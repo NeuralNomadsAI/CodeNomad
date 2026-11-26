@@ -5,8 +5,6 @@ import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionActorActivity, MissionMap, MissionTask } from "../../../server/src/api-types"
-import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
-import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { captureMissionView } from "./mission-view-capture"
 import { missionContentFixture } from "./mission-content-fixture"
 import { inlineMissionEntry, missionDetail, missionEntryStatus, missionGeneralAction, missionMenuItemState, missionPicker, missionRows,
@@ -57,15 +55,7 @@ const active = mission("migrate", { objective: "Migrate the storage layer to the
   history: [{ revision: 2, source: "coordinator", actorSessionId: "ses_migrate", reason: "Split the write path from cleanup", addedTaskKeys: ["cleanup"], retiredTasks: [], dependencyUpdates: [], createdAt: 2 }] })
 // Observed native activity: one task runs, one actor waits on a native question.
 const activeActivity: MissionActorActivity[] = [{ sessionId: "ses_runner", state: "running" }, { sessionId: "ses_worker", state: "form" }, { sessionId: "ses_writer", state: "idle-without-report" }]
-// Coherent clock: every run and the next one fall at 08:15 in the schedule's own zone (UTC).
-const nextRun = (() => { const now = Date.now(), at = new Date(now); at.setUTCHours(8, 15, 0, 0); return at.getTime() <= now ? at.getTime() + 24 * hour : at.getTime() })()
-const schedule: RecurrenceSchedule = { id: "rec_review", title: "Daily source review", revision: 2, state: "running", clock: { time: "08:15", zone: "UTC" },
-  nextDueAt: nextRun, pending: null, controls: [], actions: ["pause", "stop", "run-now"],
-  history: [{ passageID: "pas_1", dueAt: nextRun - 48 * hour, settledAt: nextRun - 47 * hour, outcome: "completed", missionID: "msn_1", conversationID: "ses_run_1" },
-    { passageID: "pas_2", dueAt: nextRun - 24 * hour, settledAt: nextRun - 23 * hour, outcome: "ended-without-report", missionID: "msn_2", conversationID: "ses_run_2" }], latestResult: null }
-schedule.latestResult = schedule.history.at(-1)!
-
-async function open(page: Page, missions: MissionMap[], schedules: RecurrenceSchedule[] = []) {
+async function open(page: Page, missions: MissionMap[]) {
   page.setDefaultTimeout(15_000)
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
@@ -74,18 +64,6 @@ async function open(page: Page, missions: MissionMap[], schedules: RecurrenceSch
     if (content) return route.fulfill({ json: content })
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(missions), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: missions.map(value => ({ missionId: value.id, actors: value === active ? activeActivity : [] })) } } })
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project",
-      projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules }) })
-    if (path.endsWith("/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: "rec_review", passageID: null } })
-    if (path.includes("/passages/")) {
-      // The latest run's archive is unreadable; the earlier one returns its exact journal page.
-      const passageID = path.split("/").at(-1)!, receipt = schedule.history.find(item => item.passageID === passageID)
-      if (!receipt || passageID === "pas_2") return route.fulfill({ status: 503, json: { error: "unavailable" } })
-      const text = "Reviewed 14 merged changes. Two follow-ups were filed for the release checklist."
-      return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: schedule.id, passageID, missionID: receipt.missionID,
-        conversationID: receipt.conversationID, revision: 3, section: 0, sectionCount: 1, sections: [{ index: 0, label: "summary", title: "", raw: false }],
-        page: 0, pageCount: 1, sourceText: text, markdownText: text } })
-    }
     return route.fulfill({ json: {} })
   })
   // The first load may wait for Vite's cold dependency optimization.
@@ -107,9 +85,9 @@ test("the list is a list: one-line titled entries, nothing below until a selecti
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   try {
-    await open(page, [active, finished, audit], [schedule])
-    await (await inlineMissionEntry(page, "Daily source review")).waitFor()
-    assert.equal(await inlineEntries(page).count(), 4)
+    await open(page, [active, finished, audit])
+    await (await inlineMissionEntry(page, /^Prepare the 2\.4/)).waitFor()
+    assert.equal(await inlineEntries(page).count(), 3)
     assert.equal(await detail(page).count(), 0, "no selection, no detail")
     assert.equal(await selectedMissionTitle(page).count(), 0, "nothing is selected by default")
     for (const entry of await inlineEntries(page).all()) {
@@ -119,8 +97,6 @@ test("the list is a list: one-line titled entries, nothing below until a selecti
         return [el.getBoundingClientRect().height, title.getBoundingClientRect().height, parseFloat(getComputedStyle(title).lineHeight)] })
       assert.ok(title <= line + 0.5 && row <= 32, "exactly one short line, even for long titles")
     }
-    assert.doesNotMatch(await missionEntryStatus(page, /^Prepare the 2\.4/), /Daily/, "one-time entries carry no Daily label")
-    assert.match(await missionEntryStatus(page, "Daily source review"), /^Daily · /)
     assert.match(await missionEntryStatus(page, /^Prepare the 2\.4/), /^Completed · 2 hours ago$/)
     assert.doesNotMatch(await page.locator(".mission-control").innerText(), /Release notes are drafted|engine is wired|ses_|task-/, "no prose or identifiers in the panel")
     await captureMissionView(page, "list-nothing-selected")
@@ -218,58 +194,6 @@ test("finished one-time Mission: titled entry, disabled inapplicable actions, pr
     await tree.locator(".mission-tree-task").nth(1).click()
     await page.locator(".mission-reader .window-title").getByText("Group by audience", { exact: true }).waitFor()
     assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
-
-test("recurring selected: Daily entry, Next in the schedule zone, current tree slot and compact past runs that open central readers", async () => {
-  // A viewer outside UTC sees every schedule time in UTC, labelled once per time.
-  const page = await browser.newPage({ locale: "en-US", timezoneId: "Europe/Paris", viewport: { width: 1100, height: 900 } })
-  const errors: string[] = []
-  page.on("pageerror", error => errors.push(error.message))
-  try {
-    await open(page, [audit, active], [schedule])
-    await (await inlineMissionEntry(page, "Daily source review")).waitFor()
-    assert.match(await missionEntryStatus(page, "Daily source review"), /^Daily · Waiting for scheduled run · Next: (today|tomorrow) 8:15 AM \(UTC\)( · |$)/)
-    assert.equal(await (await inlineMissionEntry(page, "Daily source review")).locator(".mission-row-mark").getAttribute("data-mark"), "waiting")
-    await selectMission(page, "Daily source review")
-    assert.deepEqual(await toolbar(page), [["Pause schedule Daily source review", false], ["Stop schedule Daily source review", false],
-      ["Run Daily source review now", false], ["Summary", false], ["Open conversation", true], ["Delete selected mission…", true], ["More actions", true]])
-    assert.doesNotMatch(await detail(page).innerText(), /Next:/, "the entry alone says when the next run is")
-    assert.deepEqual((await detail(page).locator(".mission-past-run").allInnerTexts()).map(text => text.replace(/^.* · /, "")), ["Ended without a report", "Completed"])
-    assert.doesNotMatch(await page.locator(".mission-control").innerText(), /\(archived\)|pas_|msn_|Last run/)
-    await captureMissionView(page, "recurring-selected")
-
-    // Schedule reader: rule, latest run (its archive fails plainly with Retry), every run, identifiers folded.
-    await missionToolbar(page).locator(".mission-overview-toggle").click()
-    const reader = page.locator(".mission-reader")
-    await reader.getByText("The result of this run couldn't be loaded.", { exact: false }).waitFor()
-    await reader.getByRole("button", { name: "Retry", exact: true }).waitFor()
-    assert.match(await reader.locator(".mission-recurrence-rule").innerText(), /^Every day at 8:15 AM \(UTC\) · Next: /)
-    assert.equal(await reader.locator("details.mission-report-technical").getAttribute("open"), null)
-    // A past run in the panel opens that run's reader.
-    await detail(page).locator(".mission-past-run").nth(1).click()
-    await reader.getByText("Reviewed 14 merged changes.", { exact: false }).waitFor()
-    assert.equal(await detail(page).locator(".mission-past-run").nth(1).getAttribute("aria-pressed"), "true")
-    await reader.locator("details.mission-report-technical > summary").click()
-    await reader.locator(".mission-technical").getByText("pas_1", { exact: true }).waitFor()
-    await captureMissionView(page, "passage-reader")
-
-    await selectMission(page, /^Migrate the storage layer/)
-    await page.evaluate(() => { (window as any).missionFixture.panelWidth("390px"); document.documentElement.dir = "rtl" })
-    await page.setViewportSize({ width: 390, height: 900 })
-    assert.equal(await page.locator("aside").evaluate(element => element.scrollWidth <= element.clientWidth), true)
-    await captureMissionView(page, "narrow-390-rtl")
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
-
-test("a viewer in the schedule's own zone sees no zone label", async () => {
-  const page = await browser.newPage({ locale: "en-US", timezoneId: "UTC", viewport: { width: 1100, height: 900 } })
-  try {
-    await open(page, [], [schedule])
-    await (await inlineMissionEntry(page, "Daily source review")).waitFor()
-    assert.match(await missionEntryStatus(page, "Daily source review"), /^Daily · Waiting for scheduled run · Next: (today|tomorrow) 8:15 AM( · |$)/)
-    assert.doesNotMatch(await missionEntryStatus(page, "Daily source review"), /\(UTC\)/)
   } finally { await page.close() }
 })
 

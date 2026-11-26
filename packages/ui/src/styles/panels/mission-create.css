@@ -1,3 +1,7 @@
+.mission-editor input:not([type="checkbox"]) {
+  min-width: 0; width: 100%; min-height: var(--touch-target-size-compact); padding: var(--space-xs);
+  color: var(--text-primary); background: var(--surface-field); border: 1px solid var(--border-base); border-radius: 0;
+}
 /* Compact, directly visible configuration fields. */
 .mission-editor .mission-create-field { display: grid; grid-template-columns: minmax(6em, 30%) minmax(0, 1fr); align-items: start; gap: var(--space-sm); }
 .mission-editor .mission-create-field > span { padding-block: var(--space-xs); overflow-wrap: anywhere; }
