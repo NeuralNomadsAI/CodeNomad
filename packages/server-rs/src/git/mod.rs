@@ -910,21 +910,38 @@ mod tests {
         raw_git(&clone_dir, &["config", "user.name", "test"]);
         raw_git(&clone_dir, &["config", "user.email", "test@example.com"]);
 
-        // Create two local commits in `clone_dir` and reset HEAD back 2 commits so `clone_mid_oid` is an
-        // ancestor of the `clone_rebased_oid` HEAD reflog entry (not directly in refs or reflog itself).
+        // Positive control for the `includeIf` filter driver via plain `git add`.
         std::fs::write(clone_dir.join("rebased.txt"), "mid\n").unwrap();
         raw_git(&clone_dir, &["add", "rebased.txt"]);
         assert!(marker.exists(), "positive control: plain git add must execute includeIf filter");
-        std::fs::remove_file(&marker).unwrap();
-        raw_git(&clone_dir, &["commit", "-q", "-m", "before-reset-mid"]);
-        let clone_mid_oid = String::from_utf8(raw_git(&clone_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
-        std::fs::write(clone_dir.join("rebased.txt"), "tip\n").unwrap();
-        raw_git(&clone_dir, &["add", "rebased.txt"]);
-        std::fs::remove_file(&marker).unwrap();
-        raw_git(&clone_dir, &["commit", "-q", "-m", "before-reset-tip"]);
-        let clone_rebased_oid =
-            String::from_utf8(raw_git(&clone_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
-        raw_git(&clone_dir, &["reset", "--hard", "-q", "HEAD~2"]);
+        let mid_tree = String::from_utf8(raw_git(&clone_dir, &["write-tree"])).unwrap().trim().to_owned();
+        let clone_base_oid = String::from_utf8(raw_git(&clone_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
+        // Create `clone_mid_oid` + `clone_rebased_oid` with `commit-tree` and advance HEAD directly to
+        // `clone_rebased_oid`, then reset back: `clone_mid_oid` never enters `HEAD` reflog directly and
+        // is reachable ONLY as an ancestor of `clone_rebased_oid` in the `HEAD` reflog.
+        let clone_mid_oid = String::from_utf8(raw_git(
+            &clone_dir,
+            &["commit-tree", &mid_tree, "-p", &clone_base_oid, "-m", "mid-not-in-reflog"],
+        ))
+        .unwrap()
+        .trim()
+        .to_owned();
+        let clone_rebased_oid = String::from_utf8(raw_git(
+            &clone_dir,
+            &["commit-tree", &mid_tree, "-p", &clone_mid_oid, "-m", "tip-in-reflog"],
+        ))
+        .unwrap()
+        .trim()
+        .to_owned();
+        raw_git(&clone_dir, &["reset", "--hard", "-q", &clone_rebased_oid]);
+        raw_git(&clone_dir, &["reset", "--hard", "-q", &clone_base_oid]);
+        let reflog_entries =
+            String::from_utf8(raw_git(&clone_dir, &["log", "--no-show-signature", "-g", "--format=%H", "HEAD"]))
+                .unwrap();
+        assert!(
+            !reflog_entries.lines().any(|line| line.trim() == clone_mid_oid),
+            "clone_mid_oid must not be a direct HEAD reflog entry"
+        );
         let _ = std::fs::remove_file(&marker);
 
         std::fs::write(clone_dir.join("file.txt"), "hello updated\n").unwrap();

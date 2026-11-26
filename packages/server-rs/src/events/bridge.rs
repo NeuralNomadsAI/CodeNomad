@@ -228,8 +228,11 @@ impl Routes {
     /// Pulses one workspace's status (`error`, then `connected`) so its clients run reconnect
     /// reconciliation for an event that could not be routed (TS `instance-events.ts:448-468`).
     fn request_routing_resync(self: &Arc<Self>, app: &Shared, workspace_id: Uuid, app_generation: u64) {
-        if app.inner.lock().unwrap().generation != app_generation {
-            return;
+        {
+            let store = app.inner.lock().unwrap();
+            if store.status != "connected" || store.generation != app_generation {
+                return;
+            }
         }
         let now = Instant::now();
         let immediate = {
@@ -931,7 +934,10 @@ async fn deliver(
             }
             let send = {
                 let store = app.inner.lock().unwrap();
-                if store.generation != app_generation || !store.workspaces.iter().any(|w| w.id == workspace.id) {
+                if store.status != "connected"
+                    || store.generation != app_generation
+                    || !store.workspaces.iter().any(|w| w.id == workspace.id)
+                {
                     break;
                 }
                 let send = {
@@ -1078,7 +1084,10 @@ async fn deliver(
             }
             {
                 let store = app.inner.lock().unwrap();
-                if store.generation != app_generation || !store.workspaces.iter().any(|w| w.id == workspace.id) {
+                if store.status != "connected"
+                    || store.generation != app_generation
+                    || !store.workspaces.iter().any(|w| w.id == workspace.id)
+                {
                     break;
                 }
                 if let Some(sid) = session_id.as_deref() {
@@ -1694,7 +1703,46 @@ mod tests {
         assert_eq!(fifo_frames[1]["status"], "error");
         assert_eq!(fifo_frames[2]["status"], "connected");
 
-        // 6. After SSE reconnect on the SAME endpoint (bumping app_generation), a stale worker
+        // 6a. After local SSE disconnect (`status = "error"`) BEFORE `connecting` bumps generation
+        // (same endpoint, same `app_generation`), in-flight workers must not emit, resync, or mutate `held`.
+        let err_gen = status(&app, "error", Some("Shared OpenCode event stream ended"));
+        assert_eq!(err_gen, app_gen);
+        let _ = drain_hub(&app, &sub);
+        deliver(
+            &app,
+            &routes,
+            ws.clone(),
+            Arc::new(json!({"type": "session.text.delta", "data": {"sessionID": "ses_disc_local", "delta": "late"}})),
+            Arc::clone(&endpoint),
+            (Instant::now(), 7),
+            Some(Arc::from(root_dir.to_string_lossy().into_owned())),
+            false,
+            Some(Arc::from("ses_disc_local")),
+            app_gen,
+        )
+        .await;
+        assert!(drain_hub(&app, &sub).is_empty(), "disconnected stream must not emit normal event");
+        assert!(!routes.held.lock().unwrap().has("ses_disc_local", ws.id), "disconnected stream must not mutate held");
+        deliver(
+            &app,
+            &routes,
+            ws.clone(),
+            Arc::new(json!({
+                "type": "session.moved",
+                "data": {"sessionID": "ses_disc_moved", "location": {"directory": root_dir.to_string_lossy()}}
+            })),
+            Arc::clone(&endpoint),
+            (Instant::now(), 8),
+            Some(Arc::from(foreign_dir.to_string_lossy().into_owned())),
+            false,
+            Some(Arc::from("ses_disc_moved")),
+            app_gen,
+        )
+        .await;
+        assert!(drain_hub(&app, &sub).is_empty(), "disconnected stream must not emit session.moved");
+        assert!(!routes.held.lock().unwrap().has("ses_disc_moved", ws.id), "disconnected moved must not mutate held");
+
+        // 6b. After SSE reconnect on the SAME endpoint (bumping app_generation), a stale worker
         // carrying the old `app_generation` must never emit resync pulses, emit native events,
         // or mutate `routes.held` on the new connection (including for `session.moved`).
         let _ = status(&app, "connecting", None);

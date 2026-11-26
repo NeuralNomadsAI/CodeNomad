@@ -66,13 +66,9 @@ async fn ensure_commit_reachable(dir: &Path, commit: &str, err_msg: &str) -> Res
             }
         }
         if !tips.is_empty() {
-            let check = run_with_stdin(
-                dir,
-                &["rev-list", "--max-count=1", "--ignore-missing", "--stdin"],
-                stdin.as_bytes(),
-                1024,
-            )
-            .await?;
+            // Omit `--ignore-missing` so a missing candidate `<resolved>` fails closed (exit 128)
+            // rather than producing an empty stdout that could be mistaken for ancestry.
+            let check = run_with_stdin(dir, &["rev-list", "--max-count=1", "--stdin"], stdin.as_bytes(), 1024).await?;
             if check.code == 0 && check.bytes.is_empty() {
                 return Ok(resolved);
             }
