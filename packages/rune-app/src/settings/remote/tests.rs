@@ -867,6 +867,132 @@ fn direct_access_client_errors_localize_while_server_errors_surface_verbatim() {
     });
 }
 
+#[test]
+fn remote_revoke_error_survives_reconciliation_and_stale_profile_submission_is_refused() {
+    platform::block_on(async {
+        let device_id = "22222222-3333-4444-5555-666666666666";
+        let devices_present = Arc::new(Mutex::new(true));
+        let devices_srv = devices_present.clone();
+        let server_a = MockServer::start(move |method, path, _| {
+            match (method, path) {
+            ("GET", "/api/remote-control/status") => (
+                200,
+                "application/json",
+                json!({
+                    "manageable": true,
+                    "enabled": true,
+                    "state": "connected",
+                    "remoteUrl": "https://codenomad-test.opentunnel.xyz",
+                    "pairedDevices": usize::from(*devices_srv.lock().unwrap()),
+                })
+                .to_string(),
+            ),
+            ("GET", "/api/remote-control/devices") => {
+                let list = if *devices_srv.lock().unwrap() {
+                    json!({"devices": [{
+                        "id": device_id,
+                        "name": "Phone",
+                        "origin": null,
+                        "lastSeenAt": "2026-11-25T10:00:00Z",
+                        "revocationPending": false
+                    }]})
+                } else {
+                    json!({"devices": []})
+                };
+                (200, "application/json", list.to_string())
+            }
+            ("DELETE", path) if path == format!("/api/remote-control/devices/{device_id}") => {
+                *devices_srv.lock().unwrap() = false;
+                (
+                    404,
+                    "application/json",
+                    json!({"error": "Remote device not found"}).to_string(),
+                )
+            }
+            ("GET", "/api/meta") => (
+                200,
+                "application/json",
+                json!({
+                    "listeningMode": "all",
+                    "localRequest": true,
+                    "localUrl": "http://127.0.0.1:9898",
+                    "addresses": []
+                })
+                .to_string(),
+            ),
+            ("GET", "/api/auth/status") => (
+                200,
+                "application/json",
+                json!({"authenticated": true, "username": "operator", "passwordUserProvided": true})
+                    .to_string(),
+            ),
+            _ => (
+                404,
+                "application/json",
+                json!({"error": "not found"}).to_string(),
+            ),
+        }
+        })
+        .await;
+
+        let server_b = MockServer::start(move |method, path, _| match (method, path) {
+            ("POST", "/api/auth/password") => (
+                200,
+                "application/json",
+                json!({"ok": true, "username": "other", "passwordUserProvided": true}).to_string(),
+            ),
+            _ => (
+                200,
+                "application/json",
+                json!({"manageable": true, "enabled": true, "state": "stopped"}).to_string(),
+            ),
+        })
+        .await;
+
+        let mut rt = new_runtime(&server_a.base);
+        pump(&mut rt, "revoke-load", |h| {
+            h.remote.snapshot.is_some() && h.remote.direct.meta_loaded()
+        })
+        .await;
+
+        // Revoke fails with explicit 404 while follow-up GET returns empty devices: error must stay visible.
+        click(&mut rt, &format!("remote-device-revoke-{device_id}"));
+        pump(&mut rt, "revoke-reconciled", |h| h.remote.flight.is_none()).await;
+        assert!(find_text(
+            &rt.accessibility_json(),
+            "Remote device not found"
+        ));
+
+        // Explicit manual Refresh clears the confirmed error.
+        click(&mut rt, "remote-control-refresh");
+        pump(&mut rt, "explicit-refresh", |h| h.remote.flight.is_none()).await;
+        assert!(!find_text(
+            &rt.accessibility_json(),
+            "Remote device not found"
+        ));
+
+        // Open password form on A, switch Preferences backend to B BEFORE Remote::poll runs,
+        // and submit the still-rendered form: profile B must receive zero POST /api/auth/password.
+        click(&mut rt, "remote-password-toggle");
+        rt.update(|s, _| {
+            s.remote
+                .direct
+                .set_password_drafts("secret-for-a", "secret-for-a");
+            s.shared.borrow_mut().backend = Some(Backend::unauthenticated(&server_b.base).unwrap());
+        });
+        click(&mut rt, "remote-password-save");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !server_b
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(m, p, _)| m == "POST" && p == "/api/auth/password")
+        );
+    });
+}
+
 fn count_text(tree: &Value, needle: &str) -> usize {
     let here = usize::from(
         tree["name"]

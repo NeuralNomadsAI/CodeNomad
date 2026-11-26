@@ -30,12 +30,21 @@ pub(super) struct Editor {
     goal: Option<usize>,
     confirm: Option<usize>,
     notice: Option<&'static str>,
+    reverify: bool,
+    conflict: bool,
 }
 
 enum Read {
     List(Option<Vec<api::File>>),
     Content(usize, Option<api::Content>),
+    Verify(usize, Option<api::Content>),
     Unverified,
+}
+
+enum ReadKind {
+    List,
+    Content(usize, String),
+    Verify(usize, String),
 }
 
 impl Editor {
@@ -60,7 +69,9 @@ impl Editor {
     }
 
     pub fn can_write(&self, prefs: &Preferences) -> bool {
-        prefs.can_retry()
+        !self.reverify
+            && !self.conflict
+            && prefs.can_retry()
             && !prefs.transport_lost()
             && prefs.backend.as_ref().is_some_and(|backend| {
                 self.owner
@@ -77,9 +88,14 @@ impl Editor {
             if owner.same_backend_server(backend) {
                 if owner.adopt_same_server(backend) {
                     // Re-authenticated to the same server: preserve loaded files and unsaved edits,
-                    // cancelling reads and fencing unsent writes from the previous connection.
+                    // cancelling reads and requiring a non-destructive baseline check before save.
                     self.authority.fetch_add(1, Ordering::SeqCst);
                     self.read = None;
+                    if self.active.is_some() && self.dirty() {
+                        self.reverify = true;
+                        self.conflict = false;
+                        self.notice = None;
+                    }
                     changed = true;
                 }
             } else {
@@ -172,10 +188,32 @@ impl Editor {
                                     let input = content.contents.replace("\r\n", "\n");
                                     self.draft = TextEdit::new(&input);
                                     self.original = Some(input);
+                                    self.reverify = false;
+                                    self.conflict = false;
                                     self.diagnose();
                                 }
                                 Read::Content(_, None) => {
                                     self.goal = None;
+                                    self.notice = Some("settings.configFiles.errors.loadContent");
+                                }
+                                Read::Verify(index, Some(content)) => {
+                                    if self.active == Some(index) {
+                                        let disk = content.contents.replace("\r\n", "\n");
+                                        let unchanged = content.exists == self.exists
+                                            && self.original.as_deref() == Some(disk.as_str());
+                                        self.reverify = false;
+                                        if unchanged {
+                                            self.conflict = false;
+                                            self.notice = None;
+                                        } else {
+                                            self.conflict = true;
+                                            self.notice = Some("settings.configFiles.errors.save");
+                                        }
+                                    } else {
+                                        self.reverify = false;
+                                    }
+                                }
+                                Read::Verify(_, None) => {
                                     self.notice = Some("settings.configFiles.errors.loadContent");
                                 }
                                 Read::Unverified => {}
@@ -204,7 +242,7 @@ impl Editor {
             && ServerOwner::backend_verified(backend)
         {
             if self.files.is_none() {
-                self.start_read(prefs, backend, stamp, wake, None);
+                self.start_read(prefs, backend, stamp, wake, ReadKind::List);
                 changed = true;
             } else if let Some(index) = self.goal.or_else(|| self.active.is_none().then_some(0))
                 && let Some(id) = self
@@ -214,7 +252,17 @@ impl Editor {
                     .map(|file| file.id.clone())
             {
                 self.goal = Some(index);
-                self.start_read(prefs, backend, stamp, wake, Some((index, id)));
+                self.start_read(prefs, backend, stamp, wake, ReadKind::Content(index, id));
+                changed = true;
+            } else if self.reverify
+                && let Some(index) = self.active
+                && let Some(id) = self
+                    .files
+                    .as_ref()
+                    .and_then(|files| files.get(index))
+                    .map(|file| file.id.clone())
+            {
+                self.start_read(prefs, backend, stamp, wake, ReadKind::Verify(index, id));
                 changed = true;
             }
         }
@@ -227,7 +275,7 @@ impl Editor {
         backend: &Backend,
         stamp: (u64, u64),
         wake: &Waker,
-        content: Option<(usize, String)>,
+        kind: ReadKind,
     ) {
         let (cancel, cancelled) = bounded(1);
         let (out, reply) = bounded(1);
@@ -255,15 +303,16 @@ impl Editor {
                 if !still_ok() {
                     return Read::Unverified;
                 }
-                let failed = |content: Option<(usize, String)>| match content {
-                    Some((index, _)) => Read::Content(index, None),
-                    None => Read::List(None),
+                let failed = |kind: &ReadKind| match kind {
+                    ReadKind::List => Read::List(None),
+                    ReadKind::Content(index, _) => Read::Content(*index, None),
+                    ReadKind::Verify(index, _) => Read::Verify(*index, None),
                 };
                 if backend.client.tracks_server_attestation()
                     && backend.attest_server().await.is_err()
                 {
                     return if still_ok() {
-                        failed(content)
+                        failed(&kind)
                     } else {
                         Read::Unverified
                     };
@@ -271,9 +320,14 @@ impl Editor {
                 if !still_ok() {
                     return Read::Unverified;
                 }
-                let result = match content {
-                    Some((index, id)) => Read::Content(index, api::read(&backend, &id).await.ok()),
-                    None => Read::List(api::list(&backend).await.ok()),
+                let result = match &kind {
+                    ReadKind::List => Read::List(api::list(&backend).await.ok()),
+                    ReadKind::Content(index, id) => {
+                        Read::Content(*index, api::read(&backend, id).await.ok())
+                    }
+                    ReadKind::Verify(index, id) => {
+                        Read::Verify(*index, api::read(&backend, id).await.ok())
+                    }
                 };
                 if !still_ok() {
                     return Read::Unverified;
@@ -282,10 +336,7 @@ impl Editor {
                     && backend.attest_server().await.is_err()
                 {
                     return if still_ok() {
-                        match result {
-                            Read::Content(index, _) => Read::Content(index, None),
-                            Read::List(_) | Read::Unverified => Read::List(None),
-                        }
+                        failed(&kind)
                     } else {
                         Read::Unverified
                     };
@@ -439,7 +490,16 @@ impl Editor {
         shared: &std::rc::Rc<std::cell::RefCell<Preferences>>,
         edit: fn(&mut S) -> &mut Editor,
     ) -> El {
-        let writable = self.can_write(&shared.borrow());
+        let prefs = shared.borrow();
+        let readable = prefs.can_retry()
+            && !prefs.transport_lost()
+            && prefs.backend.as_ref().is_some_and(|backend| {
+                self.owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.verified_for_write(backend))
+            });
+        let writable = self.can_write(&prefs);
+        drop(prefs);
         let waiting =
             self.busy() || self.read.is_some() || (self.goal.is_some() && self.notice.is_none());
         let files = self.files.as_deref().unwrap_or_default();
@@ -453,7 +513,7 @@ impl Editor {
                 t("settings.configFiles.selector.label"),
                 &names,
                 self.active,
-                waiting || !writable,
+                waiting || !readable,
                 move |s, index| {
                     let editor = edit(s);
                     if editor.active != Some(index) {
@@ -491,7 +551,7 @@ impl Editor {
                         ))
                         .child(layout::button(
                             t("settings.configFiles.actions.reload"),
-                            waiting || !writable,
+                            waiting || !readable,
                             move |s| edit(s).choose(index),
                         )),
                 )
@@ -689,16 +749,20 @@ mod tests {
                                     .swap(false, Ordering::SeqCst)
                                 {
                                     *server_id_srv.lock().unwrap() = "server-profile-b".to_owned();
-                                    "locale: uncertain\n"
+                                    "locale: uncertain\n".to_owned()
                                 } else {
                                     if swap_after_read_meta_srv.swap(false, Ordering::SeqCst) {
                                         *server_id_srv.lock().unwrap() =
                                             "server-profile-b".to_owned();
                                     }
                                     if *server_id_srv.lock().unwrap() == "server-profile-a" {
-                                        "locale: en\n"
+                                        saved_srv
+                                            .lock()
+                                            .unwrap()
+                                            .clone()
+                                            .unwrap_or_else(|| "locale: en\n".to_owned())
                                     } else {
-                                        "locale: foreign-b\n"
+                                        "locale: foreign-b\n".to_owned()
                                     }
                                 };
                                 (
@@ -957,6 +1021,7 @@ mod tests {
             // GET content: even when profile B serves identical content, post-readback
             // re-attestation must reject confirmation and keep the draft dirty.
             *server_id.lock().unwrap() = "server-profile-a".to_owned();
+            *saved_payload.lock().unwrap() = Some("locale: es\n".to_owned());
             let backend_readback_swap = Backend::connect(&base, "").await.unwrap();
             backend_readback_swap.attest_server().await.unwrap();
             prefs.bind(Some(backend_readback_swap.clone()));
@@ -1022,7 +1087,49 @@ mod tests {
             assert!(editor.dirty());
             assert_eq!(editor.draft.text, "locale: post-put-swap\n");
 
+            // External disk change during disconnect on same server: re-authentication must
+            // re-read without discarding the dirty draft, report conflict, block PUT, and allow
+            // explicit reload to recover.
+            *server_id.lock().unwrap() = "server-profile-a".to_owned();
+            *saved_payload.lock().unwrap() = Some("locale: external\n".to_owned());
+            let backend_conflict = Backend::connect(&base, "").await.unwrap();
+            backend_conflict.attest_server().await.unwrap();
+            prefs.bind(Some(backend_conflict));
+            for _ in 0..100 {
+                prefs.poll();
+                editor.poll(&prefs, &wake, true);
+                if !prefs.transport_lost() && !editor.reverify && editor.read.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!prefs.transport_lost());
+            assert!(editor.conflict);
+            assert!(!editor.can_write(&prefs));
+            assert!(editor.dirty());
+            assert_eq!(editor.draft.text, "locale: post-put-swap\n");
+            editor.save(&prefs);
+            assert!(!editor.busy());
+            assert_eq!(
+                saved_payload.lock().unwrap().as_deref(),
+                Some("locale: external\n")
+            );
+            editor.reload(0);
+            for _ in 0..100 {
+                editor.poll(&prefs, &wake, true);
+                if !editor.conflict && editor.read.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!editor.conflict);
+            assert!(editor.can_write(&prefs));
+            assert_eq!(editor.draft.text, "locale: external\n");
+            editor.draft = TextEdit::new("locale: dirty-before-profile-b\n");
+            assert!(editor.dirty());
+
             // Connecting to a different server profile on the same address must reset the draft.
+            *server_id.lock().unwrap() = "server-profile-b".to_owned();
             let backend_c = Backend::connect(&base, "").await.unwrap();
             backend_c.attest_server().await.unwrap();
             prefs.bind(Some(backend_c));

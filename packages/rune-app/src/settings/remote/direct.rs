@@ -20,6 +20,9 @@ pub(super) struct DirectAccess {
     owner: Option<String>,
     meta: Option<DirectAccessMeta>,
     meta_verified: bool,
+    meta_server: Option<String>,
+    meta_drop_gen: Option<u64>,
+    meta_auth_gen: u64,
     auth: Option<AuthStatus>,
     auth_error: Option<ErrorText>,
     auth_gen: u64,
@@ -46,6 +49,7 @@ pub(super) struct DirectAccess {
 struct MetaReply {
     meta: Result<DirectAccessMeta, remote::Error>,
     auth: Result<AuthStatus, remote::Error>,
+    verified: bool,
 }
 
 impl DirectAccess {
@@ -56,6 +60,26 @@ impl DirectAccess {
             open_seq,
             ..Self::default()
         };
+    }
+
+    pub fn on_unverified(&mut self) {
+        self.meta_flight = None;
+        self.meta_verified = false;
+        self.meta_drop_gen = None;
+        self.confirm_mode = None;
+    }
+
+    fn form_matches_backend(&self, prefs: &Preferences, backend: &Backend) -> bool {
+        self.meta_verified
+            && !prefs.transport_lost()
+            && super::super::ServerOwner::backend_verified(backend)
+            && self.owner.as_deref() == Some(backend.client_id.as_str())
+            && self.meta_drop_gen == Some(backend.client.drop_generation())
+            && self.meta_server.as_deref() == backend.client.server_identity()
+            && self.meta_auth_gen
+                == prefs
+                    .authority_handle()
+                    .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn wipe_password_fields(&mut self) {
@@ -78,18 +102,50 @@ impl DirectAccess {
         self.owner = Some(backend.client_id.clone());
         self.meta_error = None;
         let auth_gen = self.auth_gen;
+        let expected_server = backend.client.server_identity().map(str::to_owned);
+        let prepared_gen = backend.client.drop_generation();
+        let prefs_auth = prefs.authority_handle();
+        let prefs_gen = prefs_auth.load(std::sync::atomic::Ordering::SeqCst);
         let (cancel, cancelled) = bounded(1);
         let (out, input) = bounded(1);
         self.meta_flight = Some((auth_gen, cancel, input));
         let (backend, wake) = (backend.clone(), wake.clone());
         platform::spawn(async move {
-            let Some((meta, auth)) =
-                platform::reads::cancellable(&cancelled, remote::direct_access_snapshot(&backend))
-                    .await
-            else {
+            let still_ok = || {
+                prefs_auth.load(std::sync::atomic::Ordering::SeqCst) == prefs_gen
+                    && backend.client.drop_generation() == prepared_gen
+                    && super::super::ServerOwner::backend_verified(&backend)
+                    && expected_server
+                        .as_deref()
+                        .is_none_or(|id| backend.client.server_identity() == Some(id))
+            };
+            let task = async {
+                let pre_ok = still_ok()
+                    && (!backend.client.tracks_server_attestation()
+                        || backend.attest_server().await.is_ok())
+                    && still_ok();
+                if !pre_ok {
+                    return MetaReply {
+                        meta: Err(remote::Error::Transport),
+                        auth: Err(remote::Error::Transport),
+                        verified: false,
+                    };
+                }
+                let (meta, auth) = remote::direct_access_snapshot(&backend).await;
+                let verified = still_ok()
+                    && (!backend.client.tracks_server_attestation()
+                        || backend.attest_server().await.is_ok())
+                    && still_ok();
+                MetaReply {
+                    meta,
+                    auth,
+                    verified,
+                }
+            };
+            let Some(reply) = platform::reads::cancellable(&cancelled, task).await else {
                 return;
             };
-            if out.send(MetaReply { meta, auth }).await.is_ok() {
+            if out.send(reply).await.is_ok() {
                 wake();
             }
         });
@@ -106,6 +162,14 @@ impl DirectAccess {
             return true;
         }
         let mut changed = self.address_copy.poll();
+        if let Some(backend) = backend
+            && self.meta_verified
+            && !self.form_matches_backend(prefs, backend)
+        {
+            self.on_unverified();
+            self.refresh(prefs, backend, wake);
+            changed = true;
+        }
         if self.mode_flight.is_none()
             && self.password_flight.is_none()
             && prefs.take_finished_direct_access_lock(owner)
@@ -118,22 +182,33 @@ impl DirectAccess {
             match flight.try_recv() {
                 Ok(reply) => {
                     self.meta_flight = None;
+                    let verified = reply.verified
+                        && !prefs.transport_lost()
+                        && backend.is_some_and(super::super::ServerOwner::backend_verified);
                     match reply.meta {
-                        Ok(meta) => {
+                        Ok(meta) if verified => {
                             self.meta = Some(meta);
-                            self.meta_verified =
-                                backend.is_some_and(super::super::ServerOwner::backend_verified);
+                            self.meta_verified = true;
+                            self.meta_server =
+                                backend.and_then(|b| b.client.server_identity().map(str::to_owned));
+                            self.meta_drop_gen = backend.map(|b| b.client.drop_generation());
+                            self.meta_auth_gen = prefs
+                                .authority_handle()
+                                .load(std::sync::atomic::Ordering::SeqCst);
                             self.meta_error = None;
                             self.show_other_addresses = false;
                         }
+                        Ok(_) => {
+                            self.on_unverified();
+                            self.meta_error = Some(ErrorText::Key("rune.connect_error"));
+                        }
                         Err(err) => {
-                            self.meta_verified = false;
-                            self.confirm_mode = None;
+                            self.on_unverified();
                             self.meta_error =
                                 Some(ErrorText::from_remote(err, "rune.connect_error"))
                         }
                     }
-                    if flight_auth_gen == self.auth_gen {
+                    if flight_auth_gen == self.auth_gen && verified {
                         match reply.auth {
                             Ok(auth) => {
                                 self.auth = Some(auth);
@@ -151,9 +226,7 @@ impl DirectAccess {
                     changed = true;
                 }
                 Err(_) if flight.is_closed() => {
-                    self.meta_flight = None;
-                    self.meta_verified = false;
-                    self.confirm_mode = None;
+                    self.on_unverified();
                     self.meta_error = Some(ErrorText::Key("rune.connect_error"));
                     changed = true;
                 }
@@ -276,9 +349,7 @@ impl DirectAccess {
     ) {
         if self.mutating(prefs)
             || self.meta_flight.is_some()
-            || !self.meta_verified
-            || prefs.transport_lost()
-            || !super::super::ServerOwner::backend_verified(backend)
+            || !self.form_matches_backend(prefs, backend)
             || !self
                 .meta
                 .as_ref()
@@ -324,9 +395,7 @@ impl DirectAccess {
 
     fn submit_password(&mut self, prefs: &Preferences, backend: &Backend, wake: &Waker) {
         if self.mutating(prefs)
-            || !self.meta_verified
-            || prefs.transport_lost()
-            || !super::super::ServerOwner::backend_verified(backend)
+            || !self.form_matches_backend(prefs, backend)
             || !self.meta.as_ref().is_some_and(|m| m.local_request)
         {
             return;

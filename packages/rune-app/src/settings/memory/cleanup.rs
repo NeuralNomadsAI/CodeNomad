@@ -141,11 +141,12 @@ fn prompt_owner_current(s: &State, intent: &Intent, created_session: &str) -> bo
         && prefs.memory.visible
         && backend.client_id == intent.connection
         && project.id == intent.workspace
-        && (active == Some(created_session) || active == intent.session.as_deref())
-        && !launcher.pending
         && !launcher.authentication_required
         && !prefs.transport_lost()
         && ServerOwner::backend_verified(backend)
+        && (launcher.pending
+            || active == Some(created_session)
+            || active == intent.session.as_deref())
 }
 
 pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
@@ -155,8 +156,7 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             Err(_) if run.receiver.is_closed() => Reply::Failed,
             Err(_) => {
                 if let Some((created_session, guard)) = &run.prompt_guard
-                    && !(s.current_scope(&run.owner)
-                        && prompt_owner_current(s, &run.intent, created_session))
+                    && !prompt_owner_current(s, &run.intent, created_session)
                 {
                     guard.store(false, Ordering::SeqCst);
                 }
@@ -211,40 +211,45 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 let prompt_valid = Arc::new(AtomicBool::new(true));
                 let prompt_valid_task = prompt_valid.clone();
                 let (check_intent, expected) = (run.intent.clone(), run.expected_server.clone());
-                let mut next = advance(s, run.intent, run.owner, run.expected_server, async move {
-                    let prompt_ok = || {
-                        prompt_valid_task.load(Ordering::SeqCst)
-                            && prompt_token.load(Ordering::SeqCst) == prompt_token_gen
-                    };
-                    if !prompt_ok()
-                        || !attest_and_authorize(
-                            &backend,
-                            &check_intent,
-                            expected.as_deref(),
-                            false,
-                        )
-                        .await
-                        || !prompt_ok()
-                    {
-                        return Reply::Failed;
-                    }
-                    let Ok(id) = message_id() else {
-                        return Reply::Failed;
-                    };
-                    match backend
-                        .prompt(&Prompt {
-                            id: Some(id),
-                            text: prompt(scope),
-                            ..Prompt::default()
-                        })
-                        .await
-                    {
-                        Ok(_) => Reply::Sent,
-                        Err(_) => Reply::Failed,
-                    }
-                });
-                next.prompt_guard = Some((id, prompt_valid));
-                s.settings.memory_cleanup = Some(next);
+                s.settings.memory_cleanup = Some(advance_with_guard(
+                    s,
+                    run.intent,
+                    run.owner,
+                    run.expected_server,
+                    Some((id, prompt_valid)),
+                    async move {
+                        let prompt_ok = || {
+                            prompt_valid_task.load(Ordering::SeqCst)
+                                && prompt_token.load(Ordering::SeqCst) == prompt_token_gen
+                        };
+                        if !prompt_ok()
+                            || !attest_and_authorize(
+                                &backend,
+                                &check_intent,
+                                expected.as_deref(),
+                                false,
+                            )
+                            .await
+                            || !prompt_ok()
+                        {
+                            return Reply::Failed;
+                        }
+                        let Ok(id) = message_id() else {
+                            return Reply::Failed;
+                        };
+                        match backend
+                            .prompt(&Prompt {
+                                id: Some(id),
+                                text: prompt(scope),
+                                ..Prompt::default()
+                            })
+                            .await
+                        {
+                            Ok(_) => Reply::Sent,
+                            Err(_) => Reply::Failed,
+                        }
+                    },
+                ));
             }
             Reply::Sent => s
                 .settings
@@ -321,6 +326,17 @@ fn advance(
     expected_server: Option<String>,
     task: impl std::future::Future<Output = Reply> + platform::TaskBound + 'static,
 ) -> Run {
+    advance_with_guard(s, intent, owner, expected_server, None, task)
+}
+
+fn advance_with_guard(
+    s: &State,
+    intent: Intent,
+    owner: Rc<()>,
+    expected_server: Option<String>,
+    prompt_guard: Option<(String, Arc<AtomicBool>)>,
+    task: impl std::future::Future<Output = Reply> + platform::TaskBound + 'static,
+) -> Run {
     let (send, receiver) = bounded(1);
     let wake = s.wake.clone();
     platform::spawn(async move {
@@ -331,7 +347,7 @@ fn advance(
         intent,
         owner,
         expected_server,
-        prompt_guard: None,
+        prompt_guard,
         receiver,
     }
 }
