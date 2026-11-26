@@ -50,7 +50,123 @@ export async function openSessionSearch(page, sidebar, messages, tap) {
   }
 }
 
-export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,policy,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
+export async function admitLiveRoute(req, {policy, origin, forbiddenRequests}){
+  const requested=new URL(req.url())
+  const allowed=policy
+    ? await policy.request(req,{allowApi:true})
+    : requested.origin===origin&&Boolean((await req.allHeaders()).cookie)
+  if(!allowed)forbiddenRequests?.push({origin:requested.origin,path:requested.pathname})
+  return allowed
+}
+
+async function fetchOwnedStatus(route, origin){
+  const response=await route.fetch({maxRedirects:0})
+  assert.equal(new URL(response.url()).origin,origin,'Auth status response must stay on the owned origin')
+  assert.equal(response.status(),200,'Auth status response must return 200 without redirecting')
+  return response
+}
+
+async function verifySseAuthenticated503Recovery({
+  page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,
+}){
+  const again=new URL(await command('pair'))
+  assert.equal(again.origin,url.origin)
+  assert.equal(again.pathname,'/remote-pair')
+  again.searchParams.set('locale','he')
+  const dialog=page.getByRole('dialog',{name:messages['authRecovery.pairingTitle']})
+  const authStatusUrl=`${url.origin}/api/auth/status`
+  const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests})
+  let transient503s=0
+  let recoveredStatuses=0
+  let maxRetryGapMs=0
+  const tab=await context.newPage()
+  try {
+    const pairFlow=await preparePair(tab, again, {fromLink, waitUntil:'commit'})
+    try {
+      await page.bringToFront()
+      let injectTransient503=false
+      let routeError=null
+      const statusTimes=[]
+      const first503Served=Promise.withResolvers()
+      const recoveredCaptured=Promise.withResolvers()
+      void first503Served.promise.catch(()=>{})
+      void recoveredCaptured.promise.catch(()=>{})
+      const routeStatus=async route=>{
+        if(route.request().method()!=='GET')return route.fallback()
+        if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
+        if(!injectTransient503)return route.fallback()
+        statusTimes.push(performance.now())
+        if(transient503s<2){
+          transient503s++
+          await route.fulfill({status:503,contentType:'application/json',body:'{}'})
+          if(transient503s===1)first503Served.resolve()
+          return
+        }
+        try {
+          const response=await fetchOwnedStatus(route,url.origin)
+          const body=await response.json()
+          assert.equal(body.authenticated,true)
+          assert(!body.pairingRequired)
+          recoveredStatuses++
+          await route.fulfill({response})
+          recoveredCaptured.resolve()
+        } catch (err) {
+          routeError??=err
+          recoveredCaptured.reject(err)
+          await route.abort().catch(()=>{})
+        }
+      }
+      await page.route(authStatusUrl,routeStatus)
+      try {
+        await command('revoke')
+        await dialog.waitFor({timeout:15_000})
+        await page.getByText(messages['rune.pairing_guide'],{exact:true}).waitFor()
+        await page.evaluate(()=>{
+          globalThis.__runeSse503Signals=[]
+          const onFocus=()=>globalThis.__runeSse503Signals.push('focus')
+          const onVis=()=>{ if(document.visibilityState==='visible')globalThis.__runeSse503Signals.push('visibility') }
+          window.addEventListener('focus',onFocus)
+          document.addEventListener('visibilitychange',onVis)
+          globalThis.__runeCleanupSse503Signals=()=>{
+            window.removeEventListener('focus',onFocus)
+            document.removeEventListener('visibilitychange',onVis)
+            const signals=globalThis.__runeSse503Signals
+            delete globalThis.__runeSse503Signals
+            delete globalThis.__runeCleanupSse503Signals
+            return signals
+          }
+        })
+        const beforeSseAuth=eventSources()
+        injectTransient503=true
+        // Re-pair in the prepared tab without returning focus or clicking Check so authenticated SSE drives recovery.
+        await pairFlow.complete()
+        await withBudget(now()+20_000,'first transient 503 on SSE-driven /api/auth/status',()=>first503Served.promise)
+        assert.equal(await dialog.count(),1,'Pairing overlay must stay visible after a transient 503 status failure')
+        await withBudget(now()+20_000,'bounded retry /api/auth/status 200 after transient 503s',()=>recoveredCaptured.promise)
+        if(routeError)throw routeError
+        await dialog.waitFor({state:'detached',timeout:10_000})
+        const accidentalSignals=await page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()??[])
+        assert.deepEqual(accidentalSignals,[],'Authenticated SSE + 503 recovery must not rely on focus or visibility events')
+        assert(eventSources()>beforeSseAuth,'Authenticated SSE must reconnect before /api/auth/status recovers')
+        assert.equal(transient503s,2,'Two transient 503 /api/auth/status responses must be exercised')
+        assert(recoveredStatuses>=1,'Bounded retry must settle with 200 /api/auth/status')
+        assert(statusTimes.length>=3,'Expected two 503 attempts and a bounded retry 200 attempt')
+        maxRetryGapMs=Math.max(statusTimes[1]-statusTimes[0],statusTimes[2]-statusTimes[1])
+        assert(maxRetryGapMs>=750,`Expected bounded retry backoff (>=750 ms) between 503 attempts, observed ${Math.round(maxRetryGapMs)} ms`)
+      } finally {
+        await page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{})
+        await page.unroute(authStatusUrl,routeStatus).catch(()=>{})
+      }
+    } finally { await pairFlow.dispose() }
+  } finally { await tab.close().catch(()=>{}) }
+  await connecting.waitFor({state:'hidden',timeout:15_000})
+  assert.equal(await (await focus()).inputValue(),draft)
+  assert.equal(page.url(),url.href,'Original document stays on its conversation after SSE 503 recovery')
+  return {transient503s,recoveredStatuses,maxRetryGapMs:Math.round(maxRetryGapMs)}
+}
+
+export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,policy,forbiddenRequests=[],fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
+  const forbiddenBefore=forbiddenRequests.length
   const text=value=>page.getByText(value,{exact:true})
   const connecting=text(messages['instanceShell.connection.connecting'])
   const before=eventSources()
@@ -174,17 +290,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         void staleReceivedByBrowser.promise.catch(()=>{})
         page.on('requestfailed',onAuthFailed)
         page.on('response',onAuthResponse)
-        const admitRoute=async req=>{
-          if(policy)return await policy.request(req,{allowApi:true})
-          const requested=new URL(req.url())
-          return requested.origin===url.origin&&Boolean((await req.allHeaders()).cookie)
-        }
-        const fetchOwnedStatus=async route=>{
-          const response=await route.fetch({maxRedirects:0})
-          assert.equal(new URL(response.url()).origin,url.origin,'Auth status response must stay on the owned origin')
-          assert.equal(response.status(),200,'Auth status response must return 200 without redirecting')
-          return response
-        }
+        const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests})
         const holdEvents=async route=>{
           if(!blockEvents)return route.fallback()
           if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
@@ -199,7 +305,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
               heldFollowUp=true
               postStaleStatus++
               try {
-                const response=await fetchOwnedStatus(route)
+                const response=await fetchOwnedStatus(route,url.origin)
                 const body=await response.json()
                 assert.equal(body.authenticated,true)
                 assert(!body.pairingRequired)
@@ -221,7 +327,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           blockEvents=true
           staleRequest=route.request()
           try {
-            const response=await fetchOwnedStatus(route)
+            const response=await fetchOwnedStatus(route,url.origin)
             const body=await response.json()
             assert.equal(body.authenticated,false)
             assert.equal(body.pairingRequired,true)
@@ -321,7 +427,12 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     assert.equal(page.url(),url.href,'Original document stays on its conversation')
     evidence.repairedWithDraft=true
     evidence.crossOriginRePairLink=fromLink
+    evidence.sseAuthenticated503Recovery=await verifySseAuthenticated503Recovery({
+      page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,
+    })
   }
+  assert.equal(forbiddenRequests.length,forbiddenBefore,
+    `Mobile live intercepted forbidden requests: ${JSON.stringify(forbiddenRequests.slice(forbiddenBefore))}`)
   await command('reset')
   return evidence
 }
