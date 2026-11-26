@@ -76,7 +76,7 @@ impl Host {
 
     pub(crate) fn cancel(&mut self) {
         self.dialog = None;
-        // Dropping `sweep` drops `InFlight::_cancel`, aborting any active HTTP request.
+        // Dropping `sweep` drops `InFlight::cancel`, aborting any active HTTP request.
         self.sweep = None;
         self.generation = self.generation.wrapping_add(1);
     }
@@ -463,28 +463,19 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         s.blank_cleanup.sweep = Some(sweep);
         return advance(s, tx);
     };
+    if workspace::session_cleanup_protected(s, &sweep.project.id, &active.session_id) {
+        // Cancel HTTP and close `rx` atomically before reading any queued outcome so
+        // no producer can race a 401 in and a completed preflight never triggers POST.
+        active.cancel = None;
+        active.rx.close();
+        active.aborted = true;
+    }
     let outcome = match active.rx.try_recv() {
         Ok(outcome) => outcome,
         Err(TryRecvError::Empty) => {
-            // Abort the in-flight HTTP future immediately if local activity/drafts appear.
-            // Close `rx` atomically before draining once more so a concurrent 401 cannot be lost.
-            if workspace::session_cleanup_protected(s, &sweep.project.id, &active.session_id) {
-                active.cancel = None;
-                active.rx.close();
-                active.aborted = true;
-                match active.rx.try_recv() {
-                    Ok(outcome) => outcome,
-                    Err(_) => {
-                        drop(active);
-                        s.blank_cleanup.sweep = Some(sweep);
-                        return advance(s, tx);
-                    }
-                }
-            } else {
-                sweep.in_flight = Some(active);
-                s.blank_cleanup.sweep = Some(sweep);
-                return false;
-            }
+            sweep.in_flight = Some(active);
+            s.blank_cleanup.sweep = Some(sweep);
+            return false;
         }
         Err(TryRecvError::Closed) => {
             if active.aborted {

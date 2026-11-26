@@ -661,7 +661,8 @@ mod tests {
                     (200, json!({"data": [{"id": "queued-1"}]}))
                 } else if first.contains("parentID=") {
                     (200, json!({"data": [], "cursor": {}}))
-                } else if first.contains("/api/session/active") {
+                } else if first.starts_with("GET /workspaces/ws1/instance/api/session/active HTTP/")
+                {
                     saw_active_503 = true;
                     (503, json!({"error": "Unavailable"}))
                 } else {
