@@ -620,9 +620,6 @@ fn bind_at(
                     && expected_ticket
                         .is_none_or(|ticket| ticket == s.notifications.navigation_ticket())
             });
-    if should_adopt {
-        crate::workspace::adopt_recovered_draft(s, &b.session);
-    }
     if let Some(l) = s.screen.launcher_mut() {
         l.visits
             .record(&b.session, visit, l.listed_sessions.contains(&b.session));
@@ -640,7 +637,7 @@ fn bind_at(
             );
         }
     }
-    let draft = crate::workspace::bound(s, &b);
+    let draft = crate::workspace::bound_with_adopt(s, &b, should_adopt);
     s.transcript_display.bind(&b.base, &b.workspace, &b.session);
     s.chat_title = title;
     if !same_session {

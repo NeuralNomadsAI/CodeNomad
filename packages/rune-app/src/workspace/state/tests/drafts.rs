@@ -1331,3 +1331,205 @@ fn sibling_clear_suppresses_restored_copy_project_promotion_avoids_collision_and
         Some("unsent before close")
     );
 }
+
+#[test]
+fn independent_sibling_edit_survives_restart_clear_oversized_attachment_close_deferral_and_adopt() {
+    use crate::workspace::NO_SESSION_DRAFT_ID;
+
+    // 1. Bloquant 1: Tab A writes an independent draft, Tab B clears its own draft, app restarts:
+    // deleting the session must recover Tab A's independent draft (never drop it).
+    let mut s = draft_state();
+    {
+        let ui = s.workspace.as_mut().unwrap();
+        let mut tab_a = closed("ses_indep_r3", "");
+        tab_a.drafts.clear();
+        tab_a.active_session_id = Some("ses_indep_r3".into());
+        let mut tab_b = closed("ses_indep_r3", "");
+        tab_b.drafts.clear();
+        tab_b.occurrence = 1;
+        tab_b.active_session_id = Some("ses_indep_r3".into());
+        ui.entries = vec![
+            entry("tab-0".into(), Tab::Workspace(tab_a)),
+            entry("tab-1".into(), Tab::Workspace(tab_b)),
+        ];
+        ui.entries[0].binding = Some(backend("ses_indep_r3"));
+        ui.entries[1].binding = Some(backend("ses_indep_r3"));
+        ui.active = 0;
+    }
+    s.draft = TextEdit::new("independent draft from A");
+    capture(&mut s);
+    s.workspace.as_mut().unwrap().active = 1;
+    s.draft = TextEdit::new("temporary draft in B");
+    capture(&mut s);
+    s.draft = TextEdit::new("");
+    capture(&mut s);
+    let snap = s.workspace.as_ref().unwrap().snapshot();
+    let bytes = crate::workspace::encode(&snap).unwrap();
+    let mut restarted = draft_state();
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::decode(&bytes).unwrap());
+    ui.ready = true;
+    restarted.workspace = Some(ui);
+    restarted.show_launcher();
+    assert!(recover_missing_session_draft(
+        &mut restarted,
+        "ses_indep_r3"
+    ));
+    let Tab::Workspace(after_a) = &restarted.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected tab A");
+    };
+    assert_eq!(
+        after_a.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+        Some("independent draft from A")
+    );
+
+    // 2. Bloquant 2: oversized (>32 KiB UTF-16) live edit AND removing the last attachment both
+    // drop restored_drafts so a sibling Persisted clear cannot discard them.
+    let mut over_s = draft_state();
+    let mut tab_a = closed("ses_over", "restored baseline");
+    tab_a.attachment_drafts.insert("ses_att_rm".into());
+    tab_a.drafts.insert("ses_att_rm".into(), "keep text".into());
+    let mut tab_b = closed("ses_over", "");
+    tab_b.occurrence = 1;
+    tab_b.active_session_id = None;
+    tab_b.drafts.insert("ses_att_rm".into(), "".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(tab_a), Tab::Workspace(tab_b)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_over"));
+    over_s.workspace = Some(ui);
+    let huge = "x".repeat(crate::workspace::MAX_DRAFT + 10);
+    over_s.draft = TextEdit::new(huge.clone());
+    capture(&mut over_s);
+    // Removing the last attachment while keeping text must also mark `ses_att_rm` as live-edited.
+    over_s.draft = TextEdit::new(bound(&mut over_s, &backend("ses_att_rm")));
+    over_s.composer.draft.attachments.clear();
+    over_s.composer.attachments_missing = false;
+    capture(&mut over_s);
+    over_s.show_launcher();
+    assert!(recover_missing_session_draft(&mut over_s, "ses_over"));
+    assert!(recover_missing_session_draft(&mut over_s, "ses_att_rm"));
+    assert!(adopt_recovered_draft(&mut over_s, "ses_check_over"));
+    assert_eq!(bound(&mut over_s, &backend("ses_check_over")), huge);
+    assert!(adopt_recovered_draft(&mut over_s, "ses_check_att"));
+    assert_eq!(bound(&mut over_s, &backend("ses_check_att")), "keep text");
+
+    // 3. Moyen 1: B clears a restored copy then CLOSES, AND A is still displaying the conversation
+    // when deletion arrives; when A later leaves, A's untouched restored copy must NOT resurrect.
+    let mut m1 = draft_state();
+    let mut a_tab = closed("ses_m1", "stale copy");
+    a_tab.active_session_id = Some("ses_m1".into());
+    let mut b_tab = closed("ses_m1", "stale copy");
+    b_tab.occurrence = 1;
+    b_tab.active_session_id = Some("ses_m1".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a_tab), Tab::Workspace(b_tab)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_m1"));
+    ui.entries[1].binding = Some(backend("ses_m1"));
+    m1.workspace = Some(ui);
+    m1.show_chat();
+    m1.draft = TextEdit::new("stale copy");
+    let mut tx = rune::Tx::default();
+    // Switch to tab-1 so tab-0 stashes its live chat with its untouched restored copy.
+    select(&mut m1, "tab-1", &mut tx);
+    if let Some(l) = m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    m1.draft = TextEdit::new("");
+    capture(&mut m1);
+    close(&mut m1, "tab-1", &mut tx);
+    // Tab A is now active again (index 0) and still viewing `ses_m1` in chat.
+    assert!(!m1.screen.is_launcher());
+    assert!(!recover_missing_session_draft(&mut m1, "ses_m1"));
+    assert!(unselect_session(&mut m1, "ses_m1"));
+    let Tab::Workspace(after_m1) = &m1.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected tab A");
+    };
+    assert!(!after_m1.drafts.contains_key("ses_m1"));
+    assert!(!after_m1.drafts.contains_key(NO_SESSION_DRAFT_ID));
+
+    // 4. Moyen 2 & 4: queued SessionDeleted is drained on unselect_session (close_session) AND
+    // direct new-session binding via bound_with_adopt captures, recovers, and adopts the outgoing
+    // deleted session's draft into the newly created blank session.
+    let mut m4 = draft_state();
+    m4.draft = TextEdit::new(bound(&mut m4, &backend("ses_del_live")));
+    m4.show_chat();
+    m4.draft = TextEdit::new("typed right before new blank");
+    let (ev_tx, ev_rx) = bounded(2);
+    ev_tx
+        .try_send(crate::transport::Event::SessionDeleted)
+        .unwrap();
+    m4.incoming = Some(ev_rx);
+    let adopted_text = bound_with_adopt(&mut m4, &backend("ses_brand_new"), true);
+    assert_eq!(adopted_text, "typed right before new blank");
+    let Tab::Workspace(after_m4) = &m4.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected workspace");
+    };
+    assert_eq!(
+        after_m4.drafts.get("ses_brand_new").map(String::as_str),
+        Some("typed right before new blank")
+    );
+    assert!(!after_m4.drafts.contains_key("ses_del_live"));
+
+    // And unselect_session drains queued Event::SessionDeleted before dropping s.incoming.
+    let mut m2 = draft_state();
+    m2.draft = TextEdit::new(bound(&mut m2, &backend("ses_close_conv")));
+    m2.show_chat();
+    m2.draft = TextEdit::new("draft before close_session");
+    let (ev_tx2, ev_rx2) = bounded(2);
+    ev_tx2
+        .try_send(crate::transport::Event::SessionDeleted)
+        .unwrap();
+    m2.incoming = Some(ev_rx2);
+    assert!(unselect_session(&mut m2, "ses_close_conv"));
+    let Tab::Workspace(after_m2) = &m2.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected workspace");
+    };
+    assert_eq!(
+        after_m2.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+        Some("draft before close_session")
+    );
+
+    // 5. Moyen 3: deferred pending_deleted proof retries via poll_pending_deleted even after
+    // reopening a closed project carrying pending deletion proof.
+    let mut m3 = draft_state();
+    {
+        let ui = m3.workspace.as_mut().unwrap();
+        let closed_ws = closed("ses_retry_close", "survives close");
+        let scope = super::ProjectScope::from_workspace(&closed_ws);
+        ui.closed = vec![closed_ws];
+        ui.closed_pending_deleted = vec![(scope, "ses_retry_close".into())];
+    }
+    reopen(&mut m3);
+    assert!(super::super::drafts::poll_pending_deleted(&mut m3));
+    let Tab::Workspace(after_m3) = &m3.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected workspace");
+    };
+    assert_eq!(
+        after_m3.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+        Some("survives close")
+    );
+    assert!(!after_m3.drafts.contains_key("ses_retry_close"));
+    assert!(
+        m3.workspace
+            .as_ref()
+            .unwrap()
+            .closed_pending_deleted
+            .is_empty()
+    );
+}

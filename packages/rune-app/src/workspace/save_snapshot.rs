@@ -113,6 +113,12 @@ fn priority(active: bool, saved: &Workspace, id: &str) -> u8 {
     }
 }
 
+enum TextCandidate {
+    Text { tab: usize, id: String },
+    AttachmentMarker { tab: usize, id: String },
+    WholeBundle { tab: usize, id: String },
+}
+
 fn fit_text(snapshot: &mut Snapshot) -> Result<(), Error> {
     let excess = snapshot_string_units(snapshot)?.saturating_sub(MAX_STRINGS);
     if excess == 0 {
@@ -123,27 +129,100 @@ fn fit_text(snapshot: &mut Snapshot) -> Result<(), Error> {
         let Tab::Workspace(saved) = entry else {
             continue;
         };
+        let active = snapshot.active == Some(tab);
         for (id, text) in &saved.drafts {
             candidates.push((
-                tab,
-                id.clone(),
+                TextCandidate::Text {
+                    tab,
+                    id: id.clone(),
+                },
                 (
-                    priority(snapshot.active == Some(tab), saved, id),
-                    id.len() + text.encode_utf16().count(),
+                    priority(active, saved, id),
+                    id.encode_utf16().count() + text.encode_utf16().count(),
                 ),
             ));
         }
+        for id in &saved.attachment_drafts {
+            if saved.drafts.contains_key(id) {
+                continue;
+            }
+            candidates.push((
+                TextCandidate::AttachmentMarker {
+                    tab,
+                    id: id.clone(),
+                },
+                (priority(active, saved, id), id.encode_utf16().count()),
+            ));
+        }
     }
-    let weights = candidates
-        .iter()
-        .map(|(_, _, weight)| *weight)
-        .collect::<Vec<_>>();
-    for index in choose(&weights, excess).ok_or(Error::Limit)? {
-        let (tab, id, _) = &candidates[index];
-        if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
-            saved.drafts.remove(id);
-            if let Some(parts) = saved.attachment_parts.get_mut(id) {
-                parts.mark_incomplete();
+    let weights = candidates.iter().map(|(_, w)| *w).collect::<Vec<_>>();
+    let selected = if let Some(selected) = choose(&weights, excess) {
+        selected
+    } else {
+        // If shedding text and attachment-only markers cannot cover the UTF-16 overflow,
+        // shed mixed text+attachment bundles atomically so attachment keys also free space
+        // without stripping an attachment marker from a retained text draft.
+        candidates.clear();
+        for (tab, entry) in snapshot.tabs.iter().enumerate() {
+            let Tab::Workspace(saved) = entry else {
+                continue;
+            };
+            let active = snapshot.active == Some(tab);
+            for (id, text) in &saved.drafts {
+                let id_units = id.encode_utf16().count();
+                let mut units = id_units + text.encode_utf16().count();
+                let candidate = if saved.attachment_drafts.contains(id) {
+                    units += id_units;
+                    TextCandidate::WholeBundle {
+                        tab,
+                        id: id.clone(),
+                    }
+                } else {
+                    TextCandidate::Text {
+                        tab,
+                        id: id.clone(),
+                    }
+                };
+                candidates.push((candidate, (priority(active, saved, id), units)));
+            }
+            for id in &saved.attachment_drafts {
+                if saved.drafts.contains_key(id) {
+                    continue;
+                }
+                candidates.push((
+                    TextCandidate::AttachmentMarker {
+                        tab,
+                        id: id.clone(),
+                    },
+                    (priority(active, saved, id), id.encode_utf16().count()),
+                ));
+            }
+        }
+        let weights = candidates.iter().map(|(_, w)| *w).collect::<Vec<_>>();
+        choose(&weights, excess).ok_or(Error::Limit)?
+    };
+    for index in selected {
+        match &candidates[index].0 {
+            TextCandidate::Text { tab, id } => {
+                if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
+                    saved.drafts.remove(id);
+                    if let Some(parts) = saved.attachment_parts.get_mut(id) {
+                        parts.mark_incomplete();
+                    }
+                }
+            }
+            TextCandidate::AttachmentMarker { tab, id } => {
+                if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
+                    saved.attachment_drafts.remove(id);
+                    saved.attachment_parts.remove(id);
+                }
+            }
+            TextCandidate::WholeBundle { tab, id } => {
+                if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
+                    saved.drafts.remove(id);
+                    saved.attachment_drafts.remove(id);
+                    saved.attachment_parts.remove(id);
+                }
             }
         }
     }

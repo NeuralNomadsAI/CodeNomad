@@ -25,8 +25,8 @@ pub(crate) use state::{
     switch_tab_for_child, workspace_notification,
 };
 pub(crate) use state::{
-    Ui, active_session, adopt_recovered_draft, attachment_draft_admissible, bound, can_new,
-    capture, capture_files_mode, close, connected, conversation_stream_clients, draft_changed,
+    Ui, active_session, attachment_draft_admissible, bound, bound_with_adopt, can_new, capture,
+    capture_files_mode, close, connected, conversation_stream_clients, draft_changed,
     file_draft_status, file_wrap, files_tab, has_conversation_stream, input_ready, new_tab,
     note_session_deleted, opened, panel_width, poll, poll_file_drafts, prepare_open,
     recover_missing_session_draft, renew_connection, restore_files_mode, resume, retry,

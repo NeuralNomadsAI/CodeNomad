@@ -654,4 +654,177 @@ fn global_text_and_byte_budgets_preserve_distinct_priority_ranks_in_active_tab()
         "recovered payload must be trimmed before smaller active_session_id payload"
     );
     assert!(saved.attachment_drafts.contains(&recovered_3));
+
+    // When shedding recovered drafts alone cannot satisfy UTF-16 budget, __no_session_draft__
+    // (tier 5, larger) MUST yield before active_session_id (tier 6, smaller).
+    let mut tier_tabs = Vec::new();
+    let mut active_tab = workspace();
+    active_tab.active_session_id = Some(active_id.clone());
+    active_tab
+        .drafts
+        .insert(active_id.clone(), "a".repeat(20_000));
+    active_tab
+        .drafts
+        .insert(NO_SESSION_DRAFT_ID.into(), "n".repeat(32_000));
+    active_tab
+        .drafts
+        .insert(recovered_1.clone(), "r".repeat(10_000));
+    tier_tabs.push(Tab::Workspace(active_tab));
+    for i in 0..14 {
+        let mut filler = workspace();
+        filler.folder = format!("/f{i}/{}", "x".repeat(3_990));
+        tier_tabs.push(Tab::Workspace(filler));
+    }
+    let tier_snap = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: tier_tabs,
+        active: Some(0),
+    };
+    assert_eq!(encode(&tier_snap), Err(Error::Limit));
+    let (bytes, partial) = encode_for_save(&tier_snap).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let Tab::Workspace(saved) = &decoded.tabs[0] else {
+        panic!("expected active workspace tab");
+    };
+    assert_eq!(
+        saved.drafts.get(&active_id).map(String::len),
+        Some(20_000),
+        "active_session_id must survive when __no_session_draft__ can yield"
+    );
+    assert!(
+        !saved.drafts.contains_key(NO_SESSION_DRAFT_ID),
+        "__no_session_draft__ must yield before smaller active_session_id under UTF-16 pressure"
+    );
+
+    // Same distinction under global JSON byte pressure: escaped text fills ~576 KB of
+    // non-sheddable bytes while recovered_1 (40 KiB) cannot cover ~55 KiB excess, so
+    // __no_session_draft__ (255 KiB) must yield before smaller active_session_id (220 KiB).
+    let mut byte_tier_tabs = Vec::new();
+    let mut active_byte_tab = workspace();
+    active_byte_tab.active_session_id = Some(active_id.clone());
+    for (id, kb) in [
+        (active_id.clone(), 220),
+        (NO_SESSION_DRAFT_ID.to_string(), 255),
+        (recovered_1.clone(), 40),
+    ] {
+        active_byte_tab
+            .drafts
+            .insert(id.clone(), "[pasted #1]".into());
+        active_byte_tab.attachment_drafts.insert(id.clone());
+        active_byte_tab.attachment_parts.insert(id, pasted(kb));
+    }
+    byte_tier_tabs.push(Tab::Workspace(active_byte_tab));
+    for i in 0..3 {
+        let mut filler = workspace();
+        filler.folder = format!("/byte-filler-{i}");
+        filler
+            .drafts
+            .insert(format!("pad_{i}"), "\u{0001}".repeat(31_500));
+        byte_tier_tabs.push(Tab::Workspace(filler));
+    }
+    let byte_tier_snap = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: byte_tier_tabs,
+        active: Some(0),
+    };
+    assert_eq!(encode(&byte_tier_snap), Err(Error::Limit));
+    let (bytes, partial) = encode_for_save(&byte_tier_snap).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let Tab::Workspace(saved) = &decoded.tabs[0] else {
+        panic!("expected active workspace tab");
+    };
+    assert_eq!(
+        saved.attachment_parts.get(&active_id),
+        Some(&pasted(220)),
+        "active_session_id payload must survive when __no_session_draft__ can yield"
+    );
+    assert_ne!(
+        saved.attachment_parts.get(NO_SESSION_DRAFT_ID),
+        Some(&pasted(255)),
+        "__no_session_draft__ payload must yield before smaller active_session_id payload"
+    );
+}
+
+#[test]
+fn utf16_budget_sheds_attachment_only_markers_before_priority_text_and_without_limit_error() {
+    // 1. Ordinary attachment-only markers absorb a small UTF-16 overflow so priority active text survives.
+    let mut tabs = Vec::new();
+    let mut tab = workspace();
+    tab.active_session_id = Some("ses_active".into());
+    tab.drafts.insert("ses_active".into(), "a".repeat(26_000));
+    tab.attachment_drafts
+        .insert("ses_ordinary_attachment_only_marker_with_long_id_01".into());
+    tab.attachment_drafts
+        .insert("ses_ordinary_attachment_only_marker_with_long_id_02".into());
+    tabs.push(Tab::Workspace(tab));
+    // Fill remaining UTF-16 budget with non-sheddable folder paths so total exceeds MAX_STRINGS (98_304) by ~57 units
+    // (smaller than the two 51-unit ordinary attachment-only markers).
+    for i in 0..18 {
+        let mut filler = workspace();
+        filler.folder = format!("/m{i:02}/{}", "p".repeat(4_008));
+        tabs.push(Tab::Workspace(filler));
+    }
+    let snap = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs,
+        active: Some(0),
+    };
+    assert_eq!(encode(&snap), Err(Error::Limit));
+    let (bytes, partial) = encode_for_save(&snap).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let Tab::Workspace(saved) = &decoded.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(
+        saved.drafts.get("ses_active").map(String::len),
+        Some(26_000),
+        "priority active text must survive when ordinary attachment-only markers cover UTF-16 excess"
+    );
+    assert!(saved.attachment_drafts.len() < 2);
+
+    // 2. Attachment-only UTF-16 overflow (zero text drafts) sheds attachment markers instead of returning Limit.
+    let mut marker_only_tabs = Vec::new();
+    let mut marker_tab = workspace();
+    marker_tab.active_session_id = Some("ses_keep".into());
+    marker_tab.attachment_drafts.insert("ses_keep".into());
+    for i in 0..10 {
+        marker_tab
+            .attachment_drafts
+            .insert(format!("ses_drop_marker_{i:02}_{}", "k".repeat(120)));
+    }
+    marker_only_tabs.push(Tab::Workspace(marker_tab));
+    for i in 0..24 {
+        let mut filler = workspace();
+        filler.folder = format!("/n{i:02}/{}", "q".repeat(4_080));
+        marker_only_tabs.push(Tab::Workspace(filler));
+    }
+    let marker_snap = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: marker_only_tabs,
+        active: Some(0),
+    };
+    assert_eq!(encode(&marker_snap), Err(Error::Limit));
+    let (bytes, partial) = encode_for_save(&marker_snap).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let Tab::Workspace(saved) = &decoded.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert!(saved.attachment_drafts.contains("ses_keep"));
+    assert!(saved.attachment_drafts.len() < 11);
 }

@@ -472,7 +472,10 @@ fn drain_chat(
                 crate::timeline::admit(s, ticket, page, admit);
             }
             Event::AnchorFailed(ticket) => crate::timeline::failed(s, ticket),
-            Event::HistoryInvalidated => {
+            Event::HistoryInvalidated | Event::SessionDeleted => {
+                if matches!(event, Event::SessionDeleted) {
+                    session_deleted = true;
+                }
                 s.transcript_display.messages.invalidate_boundary();
                 chat::reader::cancel_page(s);
                 s.history_error = false;
@@ -488,9 +491,6 @@ fn drain_chat(
                 s.can_older = false;
                 s.paging = false;
                 s.phase = Phase::Reconnecting;
-            }
-            Event::SessionDeleted => {
-                session_deleted = true;
             }
             Event::WorkspaceMissing => {
                 s.conversation_stream_connected = false;

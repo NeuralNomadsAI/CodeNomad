@@ -303,6 +303,38 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
             .attachment_parts
             .retain(|id, _| !removed.pending_drafts.contains(id));
         // Clear authority belongs to this occurrence's live lifetime, outside text budgets.
+        let scope = super::ProjectScope::from_workspace(&saved);
+        for id in removed.pending_deleted {
+            if !ui
+                .closed_pending_deleted
+                .iter()
+                .any(|(existing_scope, existing_id)| {
+                    existing_scope.same_scope(&scope) && existing_id == &id
+                })
+            {
+                ui.closed_pending_deleted.push((scope.clone(), id));
+            }
+        }
+        for (id, auth) in removed.clear_authority {
+            if removed.cleared.contains(&id) && !removed.pending_drafts.contains(&id) {
+                ui.closed_clears.retain(|(existing_scope, existing_id, _)| {
+                    !(existing_scope.same_scope(&scope) && existing_id == &id)
+                });
+                ui.closed_clears.push((scope.clone(), id, auth));
+            }
+        }
+        for id in saved
+            .drafts
+            .iter()
+            .filter_map(|(id, text)| (!text.is_empty()).then_some(id))
+            .chain(saved.attachment_drafts.iter())
+        {
+            if !removed.restored_drafts.contains_key(id) {
+                ui.closed_clears.retain(|(existing_scope, existing_id, _)| {
+                    !(existing_scope.same_scope(&scope) && existing_id == id)
+                });
+            }
+        }
         saved.drafts.extend(
             removed
                 .cleared
@@ -313,6 +345,20 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         ui.closed.push(saved);
         if ui.closed.len() > 16 {
             ui.closed.remove(0);
+            let entries = &ui.entries;
+            let closed = &ui.closed;
+            ui.closed_clears.retain(|(s, _, _)| {
+                closed.iter().any(|w| s.matches(w))
+                    || entries
+                        .iter()
+                        .any(|e| matches!(&e.saved, Tab::Workspace(w) if s.matches(w)))
+            });
+            ui.closed_pending_deleted.retain(|(s, _)| {
+                closed.iter().any(|w| s.matches(w))
+                    || entries
+                        .iter()
+                        .any(|e| matches!(&e.saved, Tab::Workspace(w) if s.matches(w)))
+            });
         }
     }
     if let (Some(backend), Some(project)) = (removed.binding, removed.project) {

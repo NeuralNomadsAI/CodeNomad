@@ -301,13 +301,13 @@ pub(crate) async fn run_with_reading(
                     reader.quiet = Instant::now();
                     continue;
                 }
-                if matches!(kind, "session.deleted" | "session.revert.committed") {
+                if kind == "session.deleted" {
+                    publish(&out, &wake, Event::SessionDeleted).await;
+                    wire.cancelled.store(true, SeqCst);
+                    return Err("session scope changed".into());
+                }
+                if kind == "session.revert.committed" {
                     publish(&out, &wake, Event::HistoryInvalidated).await;
-                    if kind == "session.deleted" {
-                        publish(&out, &wake, Event::SessionDeleted).await;
-                        wire.cancelled.store(true, SeqCst);
-                        return Err("session scope changed".into());
-                    }
                     reader.clear_window_on_revert();
                     reader.parked = false;
                     reader.dirty = reader.active_reader;
