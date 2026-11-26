@@ -138,7 +138,7 @@ fn field_kind(field: &Value) -> FieldKind {
 }
 
 fn is_line_editable_custom(value: &str) -> bool {
-    !value.contains(['\n', '\r', ',', '"', '\\']) && value.trim() == value
+    !value.is_empty() && !value.contains(['\n', '\r', ',', '"', '\\']) && value.trim() == value
 }
 
 fn parse_u64_bound(field: &Value, key: &str) -> Result<Option<u64>, ()> {
@@ -363,8 +363,12 @@ fn parse_custom_entries(text: &str) -> Vec<CustomEntry> {
     while pos < bytes.len() {
         let start = pos;
         let mut i = pos;
-        while i < bytes.len() && matches!(bytes[i], b' ' | b'\t') {
-            i += 1;
+        while let Some(ch) = text[i..].chars().next() {
+            if ch != '\n' && ch != '\r' && ch.is_whitespace() {
+                i += ch.len_utf8();
+            } else {
+                break;
+            }
         }
         let mut in_quotes = if i < bytes.len() && bytes[i] == b'"' {
             i += 1;
@@ -415,8 +419,12 @@ fn parse_custom_entries(text: &str) -> Vec<CustomEntry> {
             i
         };
         if i < bytes.len() && bytes[i] == b',' {
-            while full_end < bytes.len() && bytes[full_end] == b' ' {
-                full_end += 1;
+            while let Some(ch) = text[full_end..].chars().next() {
+                if ch != '\n' && ch != '\r' && ch.is_whitespace() {
+                    full_end += ch.len_utf8();
+                } else {
+                    break;
+                }
             }
         }
         let value = decode_custom_entry(&text[start..content_end]);
@@ -582,6 +590,7 @@ pub struct Draft {
     pub selected: BTreeSet<String>,
     pub preserved_custom: Vec<String>,
     pub preserved_custom_selected: BTreeSet<String>,
+    pub explicit_multiselect_default: bool,
     pub hidden_multiselect: Option<Vec<String>>,
     pub hidden_multiselect_invalid: bool,
     pub declared_options: Option<BTreeSet<String>>,
@@ -656,6 +665,7 @@ impl Default for Draft {
             selected: BTreeSet::new(),
             preserved_custom: Vec::new(),
             preserved_custom_selected: BTreeSet::new(),
+            explicit_multiselect_default: false,
             hidden_multiselect: None,
             hidden_multiselect_invalid: false,
             declared_options: None,
@@ -722,6 +732,7 @@ fn fresh_draft(field: &Value) -> Draft {
                 d.hidden_multiselect_invalid = true;
             }
         } else if let Some(values) = value.as_array() {
+            d.explicit_multiselect_default = true;
             let allowed = normalized_options(field);
             let allow_custom = field["custom"] == true;
             let mut seen = HashSet::new();
@@ -736,7 +747,7 @@ fn fresh_draft(field: &Value) -> Draft {
                 } else if is_any_declared {
                     // Declared outside the 64-option render cap: never hydrate into visible custom text.
                     d.prior_choice_values.insert(raw.to_string());
-                } else if allow_custom && !raw.is_empty() && seen.insert(raw.to_string()) {
+                } else if allow_custom && seen.insert(raw.to_string()) {
                     if !is_line_editable_custom(raw) {
                         d.preserved_custom.push(raw.to_string());
                         d.preserved_custom_selected.insert(raw.to_string());
@@ -866,6 +877,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             draft.selected.clear();
                             draft.preserved_custom.clear();
                             draft.preserved_custom_selected.clear();
+                            draft.explicit_multiselect_default = false;
                             draft.hidden_multiselect = None;
                             draft.hidden_multiselect_invalid = false;
                             draft.hidden_value = None;
@@ -994,6 +1006,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.selected.clear();
                 draft.preserved_custom.clear();
                 draft.preserved_custom_selected.clear();
+                draft.explicit_multiselect_default = false;
                 draft.hidden_multiselect = None;
                 draft.hidden_multiselect_invalid = false;
                 let allowed = normalized_options(field);
@@ -1042,6 +1055,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.selected.clear();
                 draft.preserved_custom.clear();
                 draft.preserved_custom_selected.clear();
+                draft.explicit_multiselect_default = false;
                 draft.hidden_multiselect = None;
                 draft.hidden_multiselect_invalid = false;
                 draft.choice = None;
@@ -1360,7 +1374,7 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                     if item.encode_utf16().count() > 20_000 {
                         return Err(ValidationError::TooLong { max: 20_000 });
                     }
-                    if !item.is_empty() && !is_declared(item) {
+                    if !is_declared(item) {
                         values.insert(item.clone());
                     }
                 }
@@ -1402,18 +1416,18 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
             if field["required"] == true && count == 0 {
                 return Err(ValidationError::Required);
             }
+            if count == 0 && !d.is_dirty() && !d.explicit_multiselect_default {
+                return Ok(None);
+            }
             Ok(Some(json!(values)))
         }
         _ => Err(ValidationError::Unsupported),
     }
 }
 
-pub fn visible_validation_error(field: &Value, d: &Draft) -> Option<ValidationError> {
-    let Err(err) = validate(field, d) else {
-        return None;
-    };
+pub fn visible_validation_error_for(err: &ValidationError, d: &Draft) -> Option<ValidationError> {
     if !d.is_dirty() {
-        if err == ValidationError::Required {
+        if *err == ValidationError::Required {
             return None;
         }
         if matches!(err, ValidationError::TooFewItems { .. })
@@ -1424,11 +1438,42 @@ pub fn visible_validation_error(field: &Value, d: &Draft) -> Option<ValidationEr
             return None;
         }
     }
-    Some(err)
+    Some(err.clone())
+}
+
+pub fn visible_validation_error(field: &Value, d: &Draft) -> Option<ValidationError> {
+    let Err(err) = validate(field, d) else {
+        return None;
+    };
+    visible_validation_error_for(&err, d)
 }
 
 pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
     validate(field, d).map_err(|_| ())
+}
+
+pub fn evaluate_active_fields<'a>(
+    form: &'a Form,
+    drafts: &Drafts,
+) -> Vec<(&'a Value, Result<Option<Value>, ValidationError>)> {
+    let mut active_list = Vec::new();
+    let mut out = serde_json::Map::new();
+    for field in &form.fields {
+        if !active(field, &out) {
+            continue;
+        }
+        let result = field["key"]
+            .as_str()
+            .and_then(|k| drafts.get(&(form.id.clone(), k.into())))
+            .map_or(Err(ValidationError::Unsupported), |d| validate(field, d));
+        if let Ok(Some(v)) = &result
+            && let Some(key) = field["key"].as_str()
+        {
+            out.insert(key.into(), v.clone());
+        }
+        active_list.push((field, result));
+    }
+    active_list
 }
 pub fn active_fields<'a>(
     form: &'a Form,

@@ -3948,5 +3948,208 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
             qans["orgs"],
             json!(["Acme \"West\"", "Doe, \"Jr.\"", "Doe, Jane"])
         );
+
+        // Round 15 regressions:
+        // 1. Worst-case long regex (`a{256}a{256}a{256}a{256}b`) on a 20,000-char default finishes
+        // immediately within the match step budget without stalling the UI.
+        let long_a = "a".repeat(20_000);
+        let match_dos_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r15-match-dos".into(),
+            title: "Bounded match".into(),
+            fields: vec![json!({
+                "key": "big",
+                "title": "Big",
+                "type": "string",
+                "required": true,
+                "pattern": "a{256}a{256}a{256}a{256}b",
+                "default": long_a
+            })],
+        };
+        let t0 = std::time::Instant::now();
+        let (state, _rx) = state_with_form(match_dos_form);
+        let mut mrt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        mrt.frame(0.0);
+        let mtree = mrt.accessibility_json();
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(2),
+            "bounded regex matcher must not stall on 20,000-char input"
+        );
+        assert!(
+            !has_state(find_node(&mtree, "answer-question").unwrap(), "disabled"),
+            "match-budget deferral must keep Answer enabled instead of blocking"
+        );
+
+        // 2. Quantified assertion group `(^)?ok` is valid ECMAScript and enables Answer for `ok`,
+        // while bare `^?ok` stays a syntax error.
+        let group_assert_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r15-group-assert".into(),
+            title: "Group assertion".into(),
+            fields: vec![json!({
+                "key": "val",
+                "title": "Val",
+                "type": "string",
+                "required": true,
+                "pattern": "(^)?ok",
+                "default": "ok"
+            })],
+        };
+        let mut gadrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&group_assert_form), &mut gadrafts);
+        assert_eq!(
+            agent_forms::answer(&group_assert_form, &gadrafts).expect("(^)?ok must accept 'ok'")["val"],
+            json!("ok")
+        );
+        let bare_assert_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r15-bare-assert".into(),
+            title: "Bare assertion".into(),
+            fields: vec![json!({
+                "key": "val",
+                "title": "Val",
+                "type": "string",
+                "pattern": "^?ok"
+            })],
+        };
+        assert!(!agent_forms::supported(&bare_assert_form));
+
+        // 3. OpenCode 2.4.1 hidden format parity: `team..ops@example.com`, `" https://example.com "`,
+        // and `2026-11-26T24:00:00Z` on required hidden fields all enable Answer and submit.
+        let hidden_fmt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r15-hidden-formats".into(),
+            title: "Hidden formats".into(),
+            fields: vec![
+                json!({
+                    "key": "mail",
+                    "type": "string",
+                    "format": "email",
+                    "hidden": true,
+                    "required": true,
+                    "default": "team..ops@example.com"
+                }),
+                json!({
+                    "key": "uri",
+                    "type": "string",
+                    "format": "uri",
+                    "hidden": true,
+                    "required": true,
+                    "default": " https://example.com "
+                }),
+                json!({
+                    "key": "dt",
+                    "type": "string",
+                    "format": "date-time",
+                    "hidden": true,
+                    "required": true,
+                    "default": "2026-11-26T24:00:00Z"
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(hidden_fmt_form);
+        let mut hfrt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        hfrt.frame(0.0);
+        let hftree = hfrt.accessibility_json();
+        assert!(
+            !has_state(find_node(&hftree, "answer-question").unwrap(), "disabled"),
+            "OpenCode-accepted hidden email/uri/date-time defaults must enable Answer"
+        );
+        let hfans = agent_forms::answer(
+            &hfrt.state.agent.as_ref().unwrap().forms[0],
+            &hfrt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("OpenCode-accepted hidden format defaults must submit");
+        assert_eq!(hfans["mail"], json!("team..ops@example.com"));
+        assert_eq!(hfans["uri"], json!(" https://example.com "));
+        assert_eq!(hfans["dt"], json!("2026-11-26T24:00:00Z"));
+
+        // 4. Visible multiselect untouched parity: required custom `default: [""]` renders as a
+        // checkable preserved item and submits `[""]`; optional untouched multiselect with no
+        // default omits the key and does not trigger `when.neq`.
+        let vis_ms_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r15-vis-ms".into(),
+            title: "Visible multiselect".into(),
+            fields: vec![
+                json!({
+                    "key": "empty_item",
+                    "title": "Empty custom",
+                    "type": "multiselect",
+                    "required": true,
+                    "custom": true,
+                    "options": [],
+                    "default": [""]
+                }),
+                json!({
+                    "key": "tags",
+                    "title": "Tags",
+                    "type": "multiselect",
+                    "options": [{"value": "prod", "label": "Prod"}]
+                }),
+                json!({
+                    "key": "dep",
+                    "title": "Dependent",
+                    "type": "string",
+                    "required": true,
+                    "when": [{"key": "tags", "op": "neq", "value": "prod"}]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(vis_ms_form);
+        let mut vmrt = Runtime::new(state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        vmrt.frame(0.0);
+        let vmtree = vmrt.accessibility_json();
+        let empty_item_key = agent_forms::multi_option_key("empty_item", "");
+        assert!(has_state(
+            find_node(&vmtree, &empty_item_key).expect("empty custom default checkbox must render"),
+            "checked"
+        ));
+        assert!(
+            find_node(&vmtree, "field-dep").is_none(),
+            "untouched optional multiselect with no default must not activate when.neq"
+        );
+        assert!(
+            !has_state(find_node(&vmtree, "answer-question").unwrap(), "disabled"),
+            "Answer must stay enabled with untouched default [''] and absent optional multiselect"
+        );
+        let vmans = agent_forms::answer(
+            &vmrt.state.agent.as_ref().unwrap().forms[0],
+            &vmrt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("visible multiselect default [''] and omitted optional multiselect must submit");
+        assert_eq!(vmans, json!({"empty_item": [""]}));
+
+        // 5. Quoted custom multiselect entry after Unicode NBSP (`\u{00A0}`) stays one item under
+        // `maxItems: 2`.
+        let nbsp_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r15-nbsp".into(),
+            title: "Unicode whitespace".into(),
+            fields: vec![json!({
+                "key": "names",
+                "title": "Names",
+                "type": "multiselect",
+                "custom": true,
+                "maxItems": 2,
+                "options": []
+            })],
+        };
+        let mut ndrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&nbsp_form), &mut ndrafts);
+        ndrafts
+            .get_mut(&("form-r15-nbsp".into(), "names".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "red,\u{00A0}\"Doe, Jane\"".into();
+        let nans = agent_forms::answer(&nbsp_form, &ndrafts)
+            .expect("quoted entry preceded by NBSP must stay one item under maxItems=2");
+        assert_eq!(nans["names"], json!(["Doe, Jane", "red"]));
     });
 }

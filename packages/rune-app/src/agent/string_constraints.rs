@@ -13,7 +13,9 @@ const MAX_STATES: usize = 2048;
 const MAX_NESTING: usize = 32;
 const MAX_AST_NODES: usize = 1024;
 const MAX_COMPILE_WORK: usize = 4096;
+const MAX_MATCH_STEPS: usize = 200_000;
 const MAX_CACHE_ENTRIES: usize = 64;
+const MAX_MATCH_CACHE_ENTRIES: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CompileError {
@@ -23,6 +25,7 @@ enum CompileError {
 
 static PATTERN_CACHE: OnceLock<Mutex<HashMap<String, Result<Arc<Pattern>, CompileError>>>> =
     OnceLock::new();
+static MATCH_CACHE: OnceLock<Mutex<HashMap<(String, String), bool>>> = OnceLock::new();
 
 fn compile_cached(src: &str) -> Result<Arc<Pattern>, CompileError> {
     let cache = PATTERN_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -39,6 +42,25 @@ fn compile_cached(src: &str) -> Result<Arc<Pattern>, CompileError> {
         map.insert(src.to_string(), compiled.clone());
     }
     compiled
+}
+
+fn match_cached(src: &str, pat: &Pattern, value: &str) -> bool {
+    let cache = MATCH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (src.to_string(), value.to_string());
+    if let Ok(map) = cache.lock()
+        && let Some(&hit) = map.get(&key)
+    {
+        return hit;
+    }
+    // Defer to OpenCode (`true`) if matching hits the step budget.
+    let matched = pat.is_match(value).unwrap_or(true);
+    if let Ok(mut map) = cache.lock() {
+        if map.len() >= MAX_MATCH_CACHE_ENTRIES {
+            map.clear();
+        }
+        map.insert(key, matched);
+    }
+    matched
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,7 +123,7 @@ pub fn matches_string_constraints(field: &Value, value: &str) -> Result<bool, ()
         if !src.is_empty() {
             match compile_cached(src) {
                 Ok(pat) => {
-                    if !pat.is_match(value) {
+                    if !match_cached(src, &pat, value) {
                         return Ok(false);
                     }
                 }
@@ -131,64 +153,12 @@ fn is_valid_email(value: &str) -> bool {
     if parts.next().is_some() || local.is_empty() || domain.is_empty() {
         return false;
     }
-    if local.starts_with('.') || local.ends_with('.') || local.contains("..") {
-        return false;
-    }
-    if !local.chars().all(|c| {
-        if !c.is_ascii() {
-            !c.is_control() && !c.is_whitespace()
-        } else {
-            c.is_ascii_alphanumeric()
-                || matches!(
-                    c,
-                    '.' | '_'
-                        | '\''
-                        | '+'
-                        | '-'
-                        | '!'
-                        | '#'
-                        | '$'
-                        | '%'
-                        | '&'
-                        | '*'
-                        | '/'
-                        | '='
-                        | '?'
-                        | '^'
-                        | '`'
-                        | '{'
-                        | '|'
-                        | '}'
-                        | '~'
-                )
-        }
-    }) {
-        return false;
-    }
     let labels: Vec<&str> = domain.split('.').collect();
-    if labels.len() < 2 {
-        return false;
-    }
-    let tld = labels.last().copied().unwrap_or_default();
-    if tld.is_empty() || tld.chars().all(|c| c.is_ascii_digit()) {
-        return false;
-    }
-    labels.iter().all(|label| {
-        !label.is_empty()
-            && !label.starts_with('-')
-            && !label.ends_with('-')
-            && label.chars().all(|c| {
-                if !c.is_ascii() {
-                    !c.is_control() && !c.is_whitespace()
-                } else {
-                    c.is_ascii_alphanumeric() || c == '-'
-                }
-            })
-    })
+    labels.len() >= 2 && labels.iter().all(|label| !label.is_empty())
 }
 
 fn is_valid_uri(value: &str) -> bool {
-    if value.is_empty() || value.trim() != value || value.chars().any(|c| c.is_ascii_control()) {
+    if value.is_empty() {
         return false;
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -257,7 +227,7 @@ fn is_valid_date_time(value: &str) -> bool {
     let Some(minute) = parse_ascii_digits(&value[14..16]) else {
         return false;
     };
-    if hour > 23 || minute > 59 {
+    if hour > 24 || minute > 59 || (hour == 24 && minute != 0) {
         return false;
     }
     let mut rest = &value[16..];
@@ -268,13 +238,16 @@ fn is_valid_date_time(value: &str) -> bool {
         let Some(second) = parse_ascii_digits(&after_colon[0..2]) else {
             return false;
         };
-        if second > 59 {
+        if second > 59 || (hour == 24 && second != 0) {
             return false;
         }
         rest = &after_colon[2..];
         if let Some(after_dot) = rest.strip_prefix('.') {
             let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
             if frac_len == 0 {
+                return false;
+            }
+            if hour == 24 && !after_dot[..frac_len].bytes().all(|d| d == b'0') {
                 return false;
             }
             rest = &after_dot[frac_len..];
@@ -284,13 +257,17 @@ fn is_valid_date_time(value: &str) -> bool {
         return true;
     }
     let rb = rest.as_bytes();
-    if rb.len() != 6 || !matches!(rb[0], b'+' | b'-') || rb[3] != b':' {
-        return false;
-    }
-    let Some(tz_h) = parse_ascii_digits(&rest[1..3]) else {
+    let (tz_h_str, tz_m_str) = if rb.len() == 6 && matches!(rb[0], b'+' | b'-') && rb[3] == b':' {
+        (&rest[1..3], &rest[4..6])
+    } else if rb.len() == 5 && matches!(rb[0], b'+' | b'-') {
+        (&rest[1..3], &rest[3..5])
+    } else {
         return false;
     };
-    let Some(tz_m) = parse_ascii_digits(&rest[4..6]) else {
+    let Some(tz_h) = parse_ascii_digits(tz_h_str) else {
+        return false;
+    };
+    let Some(tz_m) = parse_ascii_digits(tz_m_str) else {
         return false;
     };
     tz_h <= 23 && tz_m <= 59
@@ -371,6 +348,7 @@ enum Expr {
     AssertStart,
     AssertEnd,
     AssertWord(bool),
+    Group(Box<Expr>),
     Concat(Vec<Expr>),
     Alt(Vec<Expr>),
     Repeat {
@@ -650,7 +628,11 @@ impl Parser {
                 if self.next() != Some(b')' as u16) {
                     return Err(CompileError::InvalidSyntax);
                 }
-                Ok(if deferred_group { Expr::Empty } else { inner })
+                Ok(if deferred_group {
+                    Expr::Empty
+                } else {
+                    Expr::Group(Box::new(inner))
+                })
             }
             x if x == b'[' as u16 => self.parse_class(),
             x if x == b'\\' as u16 => self.parse_escape(),
@@ -854,19 +836,32 @@ impl Pattern {
         Ok(Self { insts })
     }
 
-    pub fn is_match(&self, text: &str) -> bool {
+    pub fn is_match(&self, text: &str) -> Option<bool> {
         let units: Vec<u16> = text.encode_utf16().collect();
         let n = self.insts.len();
         let mut visited = vec![0u32; n];
         let mut stamp = 1u32;
-        let mut current = Vec::new();
-        let mut next = Vec::new();
-        self.add_state(0, 0, &units, &mut visited, stamp, &mut current);
+        let mut current = Vec::with_capacity(n.min(64));
+        let mut next = Vec::with_capacity(n.min(64));
+        let mut stack = Vec::with_capacity(n.min(64));
+        let mut steps = 0usize;
+        if !self.add_state(
+            0,
+            0,
+            &units,
+            &mut visited,
+            stamp,
+            &mut current,
+            &mut stack,
+            &mut steps,
+        ) {
+            return None;
+        }
         if current
             .iter()
             .any(|&pc| matches!(self.insts[pc], Inst::Match))
         {
-            return true;
+            return Some(true);
         }
         for (pos, &unit) in units.iter().enumerate() {
             stamp = stamp.wrapping_add(1);
@@ -878,32 +873,63 @@ impl Pattern {
             }
             next.clear();
             for &pc in &current {
+                steps = steps.saturating_add(1);
+                if steps > MAX_MATCH_STEPS {
+                    return None;
+                }
                 let matched = match &self.insts[pc] {
                     Inst::Literal(u) => unit == *u,
                     Inst::Any => !matches!(unit, 0x000A | 0x000D | 0x2028 | 0x2029),
                     Inst::Class { negated, items } => {
+                        steps = steps.saturating_add(items.len());
+                        if steps > MAX_MATCH_STEPS {
+                            return None;
+                        }
                         let hit = items.iter().any(|item| item.matches(unit));
                         if *negated { !hit } else { hit }
                     }
                     _ => false,
                 };
-                if matched {
-                    self.add_state(pc + 1, pos + 1, &units, &mut visited, stamp, &mut next);
+                if matched
+                    && !self.add_state(
+                        pc + 1,
+                        pos + 1,
+                        &units,
+                        &mut visited,
+                        stamp,
+                        &mut next,
+                        &mut stack,
+                        &mut steps,
+                    )
+                {
+                    return None;
                 }
             }
             // Unanchored ECMAScript RegExp.test semantics: a match may start at any UTF-16 offset.
-            self.add_state(0, pos + 1, &units, &mut visited, stamp, &mut next);
+            if !self.add_state(
+                0,
+                pos + 1,
+                &units,
+                &mut visited,
+                stamp,
+                &mut next,
+                &mut stack,
+                &mut steps,
+            ) {
+                return None;
+            }
             std::mem::swap(&mut current, &mut next);
             if current
                 .iter()
                 .any(|&pc| matches!(self.insts[pc], Inst::Match))
             {
-                return true;
+                return Some(true);
             }
         }
-        false
+        Some(false)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_state(
         &self,
         start: usize,
@@ -912,9 +938,16 @@ impl Pattern {
         visited: &mut [u32],
         stamp: u32,
         out: &mut Vec<usize>,
-    ) {
-        let mut stack = vec![start];
+        stack: &mut Vec<usize>,
+        steps: &mut usize,
+    ) -> bool {
+        stack.clear();
+        stack.push(start);
         while let Some(pc) = stack.pop() {
+            *steps = steps.saturating_add(1);
+            if *steps > MAX_MATCH_STEPS {
+                return false;
+            }
             if pc >= self.insts.len() || visited[pc] == stamp {
                 continue;
             }
@@ -947,6 +980,7 @@ impl Pattern {
                 _ => out.push(pc),
             }
         }
+        true
     }
 }
 
@@ -1007,6 +1041,7 @@ fn compile_expr(expr: &Expr, insts: &mut Vec<Inst>, work: &mut usize) -> Result<
             push_inst(insts, Inst::AssertWord(*b))?;
             Ok(())
         }
+        Expr::Group(inner) => compile_expr(inner, insts, work),
         Expr::Concat(items) => {
             for item in items {
                 compile_expr(item, insts, work)?;

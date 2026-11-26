@@ -151,26 +151,26 @@ pub fn fields(s: &State, form: &Form) -> El {
     let scope = s.input_scope.clone();
     let locked = a.forms_mutating();
     let supported = agent_forms::supported(form);
-    let (active_fields, _) = agent_forms::active_fields(form, &a.drafts);
-    let has_unanswerable_active = active_fields
+    let evaluated_active = agent_forms::evaluate_active_fields(form, &a.drafts);
+    let has_unanswerable_active = evaluated_active
         .iter()
-        .any(|f| agent_forms::field_unanswerable(f));
-    let has_invalid_hidden_active = active_fields.iter().any(|f| {
-        f["hidden"] == true
-            && f["key"]
-                .as_str()
-                .and_then(|k| a.drafts.get(&(form.id.clone(), k.to_string())))
-                .is_none_or(|d| agent_forms::validate(f, d).is_err())
-    });
-    let visible: Vec<&serde_json::Value> = active_fields
-        .into_iter()
-        .filter(|f| f["hidden"] != true)
+        .any(|(f, _)| agent_forms::field_unanswerable(f));
+    let has_invalid_hidden_active = evaluated_active
+        .iter()
+        .any(|(f, res)| f["hidden"] == true && res.is_err());
+    let visible: Vec<(
+        &serde_json::Value,
+        &Result<Option<serde_json::Value>, agent_forms::ValidationError>,
+    )> = evaluated_active
+        .iter()
+        .filter(|(f, _)| f["hidden"] != true)
+        .map(|(f, res)| (*f, res))
         .collect();
     let visible_count = visible.len();
     let header_required = visible_count == 1
-        && field_title(visible[0]).is_none()
+        && field_title(visible[0].0).is_none()
         && !form.title.trim().is_empty()
-        && agent_forms::field_required(visible[0]);
+        && agent_forms::field_required(visible[0].0);
     let mut body = col()
         .full_width()
         .separate(Space::Sm)
@@ -182,9 +182,12 @@ pub fn fields(s: &State, form: &Form) -> El {
     if !supported || has_unanswerable_active || has_invalid_hidden_active {
         body = body.child(form_controls::form_error(t("rune.unsupported_question")))
     }
-    let untitled_count = visible.iter().filter(|f| field_title(f).is_none()).count();
+    let untitled_count = visible
+        .iter()
+        .filter(|(f, _)| field_title(f).is_none())
+        .count();
     let mut untitled_ordinal = 0usize;
-    for field in visible {
+    for (field, field_result) in visible {
         let key = field["key"].as_str().unwrap_or_default();
         let identity = (form.id.clone(), key.to_string());
         let Some(d) = a.drafts.get(&identity) else {
@@ -206,7 +209,10 @@ pub fn fields(s: &State, form: &Form) -> El {
         let group_key = agent_forms::field_group_key(key);
         let container_key = format!("field-body:{}:{key}", key.len());
         let error_key = format!("field-error:{}:{key}", key.len());
-        let validation_error = agent_forms::visible_validation_error(field, d);
+        let validation_error = field_result
+            .as_ref()
+            .err()
+            .and_then(|err| agent_forms::visible_validation_error_for(err, d));
         let error_text = validation_error.as_ref().map(validation_message);
         let is_invalid = error_text.is_some();
         match field["type"].as_str() {
