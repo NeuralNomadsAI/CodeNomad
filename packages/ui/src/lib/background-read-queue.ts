@@ -52,3 +52,7 @@ export const receiptReads = new BackgroundReadQueue(1)
 // Visible Missions panel and schedule reads keep one dedicated lane so slow
 // outline or inventory scans in backgroundReads cannot starve the panel.
 export const missionReads = new BackgroundReadQueue(1)
+
+// Schedule documents and capabilities read native schedule state, slower and less
+// regular than the panel's journal reads: one of them never holds the panel's lane.
+export const missionScheduleReads = new BackgroundReadQueue(1)

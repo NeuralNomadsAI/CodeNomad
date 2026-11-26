@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js"
+import { createSignal, untrack } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { parseMissionChildTaskKey, parseMissionTaskSessions } from "../../../server/src/missions/task-sessions"
 import type { OpenCodeClient } from "./opencode-client"
@@ -84,7 +84,9 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
     const key = keyOf(instanceId, mission), connection = deps.connection(instanceId)
     if (!owners.get(key)?.size) return Promise.resolve()
     const generation = deps.generation(instanceId)
-    const entry = entries().get(key)
+    // A demand is an action: the effect making it must not subscribe to the entries it
+    // writes below, or two views at different pulses rerun each other without end.
+    const entry = untrack(entries).get(key)
     const sameOwner = entry?.generation === generation && entry.connection === connection && entry.signal === signal
     if (sameOwner && entry.revision > mission.revision) return Promise.resolve()
     const candidate = inFlight.get(key)
