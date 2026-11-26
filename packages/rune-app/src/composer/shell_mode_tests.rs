@@ -703,7 +703,9 @@ fn shell_reconciliation_clears_stashed_and_recalled_restores_and_held_enter_neve
         mods: Mods::default(),
     });
 
-    // Stashing before Unconfirmed restores plain draft with RestoredShell; history still clears it.
+    // Stashing before Unconfirmed restores plain draft with RestoredShell;
+    // even a held Enter repeat after tab stash must never submit it as an ordinary prompt,
+    // and history reconciliation clears the restored draft cleanly.
     rt.update(|s, _| {
         s.composer.shell_mode = true;
         s.draft.replace_text("echo pre-stash");
@@ -716,6 +718,15 @@ fn shell_reconciliation_clears_stashed_and_recalled_restores_and_held_enter_neve
     acknowledge(&mut rt.state, &a_pre, PromptOutcome::Unconfirmed);
     assert!(!rt.state.composer.shell_mode);
     assert_eq!(rt.state.draft.text, "echo pre-stash");
+    rt.repeat_key(KeyEvent {
+        key: Key::Enter,
+        mods: Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(
+        rx.try_recv().is_err(),
+        "repeated Enter after tab stash + Unconfirmed restore must not submit an ordinary prompt"
+    );
     rt.update(|s, _| {
         s.messages.push(std::sync::Arc::new(crate::Message {
             id: a_pre.clone(),
@@ -730,7 +741,8 @@ fn shell_reconciliation_clears_stashed_and_recalled_restores_and_held_enter_neve
     assert!(rt.state.draft.text.is_empty());
     assert_eq!(rt.state.composer.draft.attachments.len(), 1);
 
-    // Reconciling while forced recall is active clears the parked untouched fresh draft.
+    // Reconciling while forced recall is active (even after editing the recalled entry)
+    // clears the parked untouched fresh draft AND exits shell mode when leaving recall.
     rt.update(|s, _| {
         s.composer.shell_mode = true;
         s.draft.replace_text("echo recalled-restore");
@@ -744,6 +756,9 @@ fn shell_reconciliation_clears_stashed_and_recalled_restores_and_held_enter_neve
     assert_eq!(rt.state.draft.text, "echo recalled-restore");
     rt.update(|s, tx| {
         assert!(super::recall::step(s, true, true, tx));
+        // Editing the recalled entry must NOT mark the parked RestoredShell as edited.
+        s.draft.insert(" --flag");
+        s.composer.mark_edited();
     });
     assert!(rt.state.composer.recall.is_some());
     rt.update(|s, _| {
@@ -757,9 +772,43 @@ fn shell_reconciliation_clears_stashed_and_recalled_restores_and_held_enter_neve
         }));
         super::actions::reconcile(s);
     });
-    // Leaving recall must restore an empty fresh draft, not the already-executed shell command.
+    // Leaving recall restores an empty fresh draft in normal mode (not shell mode) with parked skill intact.
     rt.update(|s, _| super::recall::restore(s));
     assert!(rt.state.draft.text.is_empty());
-    assert!(!can_send(&rt.state));
+    assert!(!rt.state.composer.shell_mode);
     assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+
+    // Exiting shell mode after reconciliation during recall and pressing Clear still keeps parked attachments.
+    rt.update(|s, _| {
+        s.composer.shell_mode = true;
+        s.draft.replace_text("echo recalled-clear");
+    });
+    rt.update(|s, tx| send(s, tx, false));
+    let Command::Shell { attempt: a_clr, .. } = rx.try_recv().expect("recall-clear shell") else {
+        panic!("expected Command::Shell");
+    };
+    acknowledge(&mut rt.state, &a_clr, PromptOutcome::Unconfirmed);
+    rt.update(|s, tx| {
+        assert!(super::recall::step(s, true, true, tx));
+    });
+    rt.update(|s, _| {
+        s.messages.push(std::sync::Arc::new(crate::Message {
+            id: a_clr.clone(),
+            role: "shell".into(),
+            completed: true,
+            body: "$ echo recalled-clear\nok".into(),
+            usage: None,
+            parts: Vec::new(),
+        }));
+        super::actions::reconcile(s);
+        s.composer.exit_shell_mode();
+    });
+    rt.update(|s, tx| super::menu::clear(s, tx));
+    assert!(rt.state.draft.text.is_empty());
+    assert!(!rt.state.composer.shell_mode);
+    assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+    assert!(matches!(
+        rt.state.composer.draft.attachments[0],
+        Attachment::Skill { .. }
+    ));
 }

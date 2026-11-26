@@ -18,7 +18,6 @@ pub struct Owner {
     pub menu: rune_theme_codenomad::action_menu::State<State>,
     pub shell_mode: bool,
     pub(super) draft_was_empty: std::cell::Cell<bool>,
-    pub(super) suppress_key_repeat: Option<rune::Key>,
     sending: Option<Send>,
     pub send_error: bool,
     unconfirmed: Option<UnconfirmedPrompt>,
@@ -37,7 +36,6 @@ impl Default for Owner {
             menu: Default::default(),
             shell_mode: false,
             draft_was_empty: std::cell::Cell::new(true),
-            suppress_key_repeat: None,
             sending: None,
             send_error: false,
             unconfirmed: None,
@@ -67,7 +65,6 @@ impl Owner {
     }
     pub(crate) fn on_tab_stash(&mut self) {
         self.shell_mode = false;
-        self.suppress_key_repeat = None;
         if let Some(send) = &mut self.sending {
             send.stashed = true;
         }
@@ -88,7 +85,9 @@ impl Owner {
         if let Some(send) = &mut self.unconfirmed {
             send.edited = true;
         }
-        if let Some(restored) = &mut self.restored_shell {
+        if self.recall.is_none()
+            && let Some(restored) = &mut self.restored_shell
+        {
             restored.edited = true;
         }
     }
@@ -361,7 +360,9 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             .is_some_and(|pipe| pipe.try_send(command).is_ok())
         {
             s.command_receipts.reserve(id.clone(), attempt.clone());
-            s.composer.restored_shell = None;
+            if s.composer.recall.is_none() {
+                s.composer.restored_shell = None;
+            }
             let recallable = super::recall::record(s, command_text, true);
             s.composer.sending = Some(Send {
                 id,

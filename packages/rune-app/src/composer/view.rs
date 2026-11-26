@@ -443,11 +443,6 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     use super::shortcuts::Action;
-    if !tx.key_repeat() {
-        s.composer.suppress_key_repeat = None;
-    } else if s.composer.suppress_key_repeat.as_ref() == Some(&event.key) {
-        return true;
-    }
     #[cfg(not(target_arch = "wasm32"))]
     if event.edit_command() == Some('v') {
         super::clipboard::request(s, tx);
@@ -514,7 +509,6 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             if !tx.key_repeat() {
                 s.composer.exit_shell_mode();
                 s.composer.picker.reset();
-                s.composer.suppress_key_repeat = Some(event.key.clone());
             }
             return true;
         }
@@ -547,7 +541,6 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             true
         } else if crate::settings::matches_shortcut(s, "prompt-send", event, tx) {
             if !tx.key_repeat() {
-                s.composer.suppress_key_repeat = Some(event.key.clone());
                 send(s, tx, false);
             }
             true
@@ -557,10 +550,14 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             super::menu::jump_key(s, event, tx)
         }
     } else if Action::Alternate.matches(s, event, tx) {
-        send(s, tx, true);
+        if !tx.key_repeat() {
+            send(s, tx, true);
+        }
         true
     } else if event.key == Key::Enter && event.mods == rune::Mods::default() {
-        send(s, tx, false);
+        if !tx.key_repeat() {
+            send(s, tx, false);
+        }
         true
     } else {
         super::menu::jump_key(s, event, tx)

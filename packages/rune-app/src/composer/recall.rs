@@ -126,7 +126,8 @@ pub(crate) struct Recall {
     edit: TextEdit,
     draft: Draft,
     missing: bool,
-    shell_mode: bool,
+    preserve_attachments: bool,
+    fresh_shell_cleared: bool,
 }
 
 pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
@@ -211,6 +212,9 @@ pub(crate) fn restore(s: &mut State) {
         replace_edit(s, recall.edit);
         s.composer.draft = recall.draft;
         s.composer.attachments_missing = recall.missing;
+        if recall.fresh_shell_cleared {
+            s.composer.shell_mode = false;
+        }
     }
 }
 
@@ -229,7 +233,7 @@ pub(super) fn clear_fresh_shell(s: &mut State, expected_command: &str) -> bool {
             .draft
             .attachments
             .retain(|part| !matches!(part, Attachment::Pasted { .. }));
-        recall.shell_mode = false;
+        recall.fresh_shell_cleared = true;
         return true;
     }
     if s.composer.draft.resolve_shell(&s.draft).as_deref() != Some(expected_command) {
@@ -247,7 +251,7 @@ pub(super) fn clear_fresh_shell(s: &mut State, expected_command: &str) -> bool {
 
 pub(super) fn clear_recalled(s: &mut State) {
     if let Some(recall) = s.composer.recall.take()
-        && (s.composer.shell_mode || recall.shell_mode)
+        && (s.composer.shell_mode || recall.preserve_attachments)
     {
         for part in recall.draft.attachments {
             if !matches!(part, Attachment::Pasted { .. })
@@ -332,7 +336,8 @@ pub(crate) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> boo
                 edit: s.draft.clone(),
                 draft: s.composer.draft.clone(),
                 missing: s.composer.attachments_missing,
-                shell_mode: s.composer.shell_mode,
+                preserve_attachments: s.composer.shell_mode,
+                fresh_shell_cleared: false,
             });
         }
         edit.set_caret(edit.text.len());
