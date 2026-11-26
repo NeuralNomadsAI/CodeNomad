@@ -203,6 +203,32 @@ impl Store {
         self.has_matching_edits(|key| key.instance == tab_key)
     }
 
+    pub(crate) fn retained_bytes(&self) -> usize {
+        let (drafts, saved_bytes) = {
+            let store = lock(&self.0);
+            let saved = store.saved.iter().fold(0usize, |total, row| {
+                total
+                    .saturating_add(row.text.len())
+                    .saturating_add(row.key.path.len())
+                    .saturating_add(row.key.directory.len())
+            });
+            (store.drafts.values().cloned().collect::<Vec<_>>(), saved)
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut total = saved_bytes;
+        for shared in drafts {
+            if !seen.insert(Arc::as_ptr(&shared)) {
+                continue;
+            }
+            let draft = lock(&shared);
+            total = total
+                .saturating_add(draft.text.len())
+                .saturating_add(draft.original.as_ref().map_or(0, |snap| snap.text.len()))
+                .saturating_add(draft.uncertain.as_ref().map_or(0, |snap| snap.text.len()));
+        }
+        total
+    }
+
     pub(super) fn has_edits(&self, server: &str, instance: &str) -> bool {
         self.has_matching_edits(|key| key.server == server && key.instance == instance)
     }

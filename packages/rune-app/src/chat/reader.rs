@@ -33,6 +33,29 @@ struct SyncUndo {
     trimmed_older: bool,
     trimmed_newer: bool,
     age: u8,
+    last_clock: Option<f64>,
+}
+
+struct DeferredSync {
+    generation: u64,
+    connection: u64,
+    event: Event,
+    stage: u8,
+    min_seq: u64,
+    last_clock: Option<f64>,
+    last_seq: u64,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ManualProbeWait {
+    Idle,
+    Armed,
+    Waiting {
+        clock: f64,
+        scroll_seq: u64,
+        manual_seq: u64,
+    },
+    Settled(u64),
 }
 
 pub(crate) struct Reader {
@@ -46,9 +69,9 @@ pub(crate) struct Reader {
     resume_manual_seq: Option<u64>,
     reconciled_manual_scroll: bool,
     last_taken: Option<(u64, u64)>,
-    deferred_sync: Option<(u64, u64, Event, u8, u64)>,
+    deferred_sync: Option<DeferredSync>,
     sync_undo: Option<SyncUndo>,
-    awaiting_manual_probe: u8,
+    awaiting_manual_probe: ManualProbeWait,
     installed: bool,
     hidden: bool,
     resume_pending: bool,
@@ -93,7 +116,7 @@ impl Reader {
                 last_taken: None,
                 deferred_sync: None,
                 sync_undo: None,
-                awaiting_manual_probe: 0,
+                awaiting_manual_probe: ManualProbeWait::Idle,
                 installed: false,
                 hidden: false,
                 resume_pending: false,
@@ -121,7 +144,7 @@ impl Reader {
         self.last_taken = None;
         self.deferred_sync = None;
         self.sync_undo = None;
-        self.awaiting_manual_probe = 0;
+        self.awaiting_manual_probe = ManualProbeWait::Idle;
         self.generation = self.request.publish(None);
         self.drain();
     }
@@ -149,6 +172,7 @@ impl Reader {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn save_sync_undo(
         &mut self,
         page: crate::history::Page,
@@ -159,6 +183,7 @@ impl Reader {
         phase: crate::Phase,
         trimmed_older: bool,
         trimmed_newer: bool,
+        clock: Option<f64>,
     ) {
         let Some((generation, connection)) = self.last_taken else {
             return;
@@ -183,6 +208,7 @@ impl Reader {
             trimmed_older,
             trimmed_newer,
             age: 0,
+            last_clock: clock,
         });
     }
 
@@ -192,30 +218,40 @@ impl Reader {
         reading: &Reading,
         history_bounds: [f32; 4],
         cached_gap: bool,
+        clock: Option<f64>,
     ) -> Option<Event> {
         self.last_taken = None;
-        if let Some((generation, connection, event, stage, min_seq)) = self.deferred_sync.take() {
-            if !self.hidden
-                && generation == self.generation
-                && connection == self.connection.load(SeqCst)
-            {
-                if !defer_sync || !self.resume_pending {
-                    self.last_taken = Some((generation, connection));
-                    return Some(event);
-                }
-                let seq_ready = reading.scroll_seq() >= min_seq;
-                let ready = seq_ready
-                    && (reading.top_is_fresh()
-                        || reading
-                            .live_bookmark_fresh(history_bounds, cached_gap)
-                            .is_some());
-                if ready || stage >= 4 {
-                    self.last_taken = Some((generation, connection));
-                    return Some(event);
-                }
-                self.deferred_sync = Some((generation, connection, event, stage + 1, min_seq));
+        if let Some(deferred) = self.deferred_sync.take()
+            && !self.hidden
+            && deferred.generation == self.generation
+            && deferred.connection == self.connection.load(SeqCst)
+        {
+            if !defer_sync || !self.resume_pending {
+                self.last_taken = Some((deferred.generation, deferred.connection));
+                return Some(deferred.event);
+            }
+            let scroll_seq = reading.scroll_seq();
+            if clock.is_some() && deferred.last_clock == clock && scroll_seq == deferred.last_seq {
+                self.deferred_sync = Some(deferred);
                 return None;
             }
+            let seq_ready = scroll_seq >= deferred.min_seq;
+            let ready = seq_ready
+                && (reading.top_is_fresh()
+                    || reading
+                        .live_bookmark_fresh(history_bounds, cached_gap)
+                        .is_some());
+            if ready || deferred.stage >= 4 {
+                self.last_taken = Some((deferred.generation, deferred.connection));
+                return Some(deferred.event);
+            }
+            self.deferred_sync = Some(DeferredSync {
+                stage: deferred.stage + 1,
+                last_clock: clock,
+                last_seq: scroll_seq,
+                ..deferred
+            });
+            return None;
         }
         while let Ok((generation, connection, event)) = self.events.try_recv() {
             if !self.hidden
@@ -223,7 +259,15 @@ impl Reader {
                 && connection == self.connection.load(SeqCst)
             {
                 if defer_sync && self.resume_pending && matches!(event, Event::ReaderSync { .. }) {
-                    self.deferred_sync = Some((generation, connection, event, 0, 0));
+                    self.deferred_sync = Some(DeferredSync {
+                        generation,
+                        connection,
+                        event,
+                        stage: 0,
+                        min_seq: 0,
+                        last_clock: clock,
+                        last_seq: reading.scroll_seq(),
+                    });
                     return None;
                 }
                 self.last_taken = Some((generation, connection));
@@ -295,7 +339,7 @@ impl Reader {
         self.last_taken = None;
         self.deferred_sync = None;
         self.sync_undo = None;
-        self.awaiting_manual_probe = 0;
+        self.awaiting_manual_probe = ManualProbeWait::Idle;
         self.resume_manual_seq = None;
         self.reconciled_manual_scroll = false;
         self.bookmark = current;
@@ -327,7 +371,7 @@ impl Reader {
         self.width_grew_while_deferred = false;
         self.resume_manual_seq = None;
         self.reconciled_manual_scroll = false;
-        self.awaiting_manual_probe = 0;
+        self.awaiting_manual_probe = ManualProbeWait::Idle;
         self.pending_scroll = true;
     }
 
@@ -383,17 +427,85 @@ impl Reader {
         self.pending_scroll && self.bookmark_width > 0.0
     }
 
-    pub(crate) fn take_manual_probe_wait(&mut self) -> bool {
-        if self.awaiting_manual_probe == 1 {
-            self.awaiting_manual_probe = 2;
-            true
-        } else {
-            false
+    pub(super) fn take_manual_probe_wait(
+        &mut self,
+        clock: f64,
+        scroll_seq: u64,
+        manual_seq: u64,
+        pending_manual_commit: bool,
+    ) -> bool {
+        match self.awaiting_manual_probe {
+            ManualProbeWait::Armed => {
+                self.awaiting_manual_probe = ManualProbeWait::Waiting {
+                    clock,
+                    scroll_seq,
+                    manual_seq,
+                };
+                true
+            }
+            ManualProbeWait::Idle if pending_manual_commit => {
+                self.awaiting_manual_probe = ManualProbeWait::Waiting {
+                    clock,
+                    scroll_seq,
+                    manual_seq,
+                };
+                true
+            }
+            ManualProbeWait::Settled(settled_manual)
+                if pending_manual_commit && manual_seq != settled_manual =>
+            {
+                self.awaiting_manual_probe = ManualProbeWait::Waiting {
+                    clock,
+                    scroll_seq,
+                    manual_seq,
+                };
+                true
+            }
+            ManualProbeWait::Waiting {
+                clock: armed_clock,
+                scroll_seq: armed_seq,
+                ..
+            } if scroll_seq == armed_seq && clock == armed_clock => {
+                self.awaiting_manual_probe = ManualProbeWait::Waiting {
+                    clock,
+                    scroll_seq,
+                    manual_seq,
+                };
+                true
+            }
+            ManualProbeWait::Waiting {
+                manual_seq: armed_manual,
+                ..
+            } => {
+                if pending_manual_commit && manual_seq != armed_manual {
+                    self.awaiting_manual_probe = ManualProbeWait::Waiting {
+                        clock,
+                        scroll_seq,
+                        manual_seq,
+                    };
+                    true
+                } else {
+                    self.awaiting_manual_probe = if pending_manual_commit {
+                        ManualProbeWait::Settled(armed_manual)
+                    } else {
+                        ManualProbeWait::Idle
+                    };
+                    false
+                }
+            }
+            ManualProbeWait::Settled(_) if !pending_manual_commit => {
+                self.awaiting_manual_probe = ManualProbeWait::Idle;
+                false
+            }
+            ManualProbeWait::Idle | ManualProbeWait::Settled(_) => false,
         }
     }
 
     pub(crate) fn awaiting_manual_probe(&self) -> bool {
-        self.awaiting_manual_probe != 0
+        matches!(
+            self.awaiting_manual_probe,
+            ManualProbeWait::Armed | ManualProbeWait::Waiting { .. }
+        )
     }
 
     pub(crate) fn bookmark_at(&self, reading: &Reading, history_bounds: [f32; 4]) -> Bookmark {
@@ -418,7 +530,7 @@ impl Reader {
         tx: &mut Tx,
     ) -> bool {
         if std::mem::take(&mut self.pending_scroll) {
-            let _ = std::mem::take(&mut self.awaiting_manual_probe);
+            self.awaiting_manual_probe = ManualProbeWait::Idle;
             let had_manual_scroll = std::mem::take(&mut self.reconciled_manual_scroll);
             if self.user_scrolled_while_resuming(reading) {
                 if let Some(live) = reading.live_bookmark_fresh(history_bounds, self.gap) {
@@ -540,15 +652,32 @@ pub(crate) fn settle_bookmark(s: &mut State, attempted: &str, confirmed: Option<
     }
 }
 
-pub(crate) fn expire_sync_undo(s: &mut State) {
+pub(crate) fn take_manual_probe_wait(s: &mut State, tx: &Tx) -> bool {
+    let reading = s.transcript_display.reading();
+    let scroll_seq = reading.scroll_seq();
+    let manual_seq = reading.manual_scroll_seq();
+    let pending_commit = reading.pending_scroll_commit();
+    let clock = tx.clock();
+    s.reader.as_mut().is_some_and(|reader| {
+        let pending_manual =
+            reader.pending_scroll && pending_commit && reader.user_scrolled_while_resuming(reading);
+        reader.take_manual_probe_wait(clock, scroll_seq, manual_seq, pending_manual)
+    })
+}
+
+pub(crate) fn expire_sync_undo(s: &mut State, clock: f64) {
     let keep = s.transcript_display.reading().has_pending_restore_probe();
     if let Some(reader) = &mut s.reader
         && let Some(undo) = &mut reader.sync_undo
     {
+        if undo.last_clock == Some(clock) {
+            return;
+        }
         if !keep || undo.age >= 1 {
             reader.sync_undo = None;
         } else {
             undo.age += 1;
+            undo.last_clock = Some(clock);
         }
     }
 }
@@ -558,6 +687,7 @@ pub(crate) fn undo_sync_for_manual_scroll(s: &mut State, min_scroll_seq: u64, tx
         return false;
     };
     let manual_seq = s.transcript_display.reading().manual_scroll_seq();
+    let scroll_seq = s.transcript_display.reading().scroll_seq();
     s.messages = undo.messages;
     s.can_older = undo.can_older;
     s.history_detached = undo.history_detached;
@@ -572,17 +702,19 @@ pub(crate) fn undo_sync_for_manual_scroll(s: &mut State, min_scroll_seq: u64, tx
         reader.resume_pending = true;
         reader.pending_scroll = false;
         reader.reconciled_manual_scroll = false;
-        reader.awaiting_manual_probe = 0;
-        reader.deferred_sync = Some((
-            undo.generation,
-            undo.connection,
-            Event::ReaderSync {
+        reader.awaiting_manual_probe = ManualProbeWait::Idle;
+        reader.deferred_sync = Some(DeferredSync {
+            generation: undo.generation,
+            connection: undo.connection,
+            event: Event::ReaderSync {
                 page: undo.page,
                 version: undo.version,
             },
-            0,
-            min_scroll_seq,
-        ));
+            stage: 0,
+            min_seq: min_scroll_seq,
+            last_clock: Some(tx.clock()),
+            last_seq: scroll_seq,
+        });
     }
     tx.wake_after(std::time::Duration::ZERO);
     true
@@ -611,8 +743,8 @@ pub(crate) fn reconcile_bookmark(s: &mut State, page: &crate::history::Page) -> 
                     reader.bookmark = live;
                     reader.bookmark_width = 0.0;
                     reader.width_grew_while_deferred = false;
-                    reader.resume_manual_seq = None;
-                    reader.awaiting_manual_probe = 0;
+                    reader.resume_manual_seq = Some(reading.manual_scroll_seq());
+                    reader.awaiting_manual_probe = ManualProbeWait::Idle;
                 }
                 return false;
             }
@@ -643,10 +775,10 @@ pub(crate) fn reconcile_bookmark(s: &mut State, page: &crate::history::Page) -> 
             }
             if let Some(reader) = &mut s.reader {
                 reader.resume_manual_seq = Some(reading.manual_scroll_seq());
-                reader.awaiting_manual_probe = 0;
+                reader.awaiting_manual_probe = ManualProbeWait::Idle;
             }
         } else if let Some(reader) = &mut s.reader {
-            reader.awaiting_manual_probe = 1;
+            reader.awaiting_manual_probe = ManualProbeWait::Armed;
         }
     }
     if let Some(reader) = &mut s.reader
@@ -655,11 +787,11 @@ pub(crate) fn reconcile_bookmark(s: &mut State, page: &crate::history::Page) -> 
         && !rows.iter().any(|row| &row.id == id)
     {
         reader.bookmark = Bookmark::Latest;
-        if reader.awaiting_manual_probe == 0 {
-            reader.resume_manual_seq = None;
+        if !reader.awaiting_manual_probe() {
             s.transcript_display
                 .reading_mut()
                 .reset_to_latest(s.revision);
+            reader.resume_manual_seq = Some(s.transcript_display.reading().manual_scroll_seq());
         }
     }
     false
@@ -750,7 +882,7 @@ pub(crate) fn suspend(s: &mut State) {
             reader.bookmark_width = width;
             reader.width_grew_while_deferred = false;
             reader.resume_manual_seq = None;
-            reader.awaiting_manual_probe = 0;
+            reader.awaiting_manual_probe = ManualProbeWait::Idle;
         } else if reader.bookmark_width > 0.0
             && width.is_finite()
             && width > reader.bookmark_width + 0.5
@@ -820,7 +952,7 @@ pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
         reader.resume_manual_seq = None;
         reader.deferred_sync = None;
         reader.sync_undo = None;
-        reader.awaiting_manual_probe = 0;
+        reader.awaiting_manual_probe = ManualProbeWait::Idle;
     } else {
         if let Some(reader) = &mut s.reader {
             reader.bookmark = Bookmark::Latest;
@@ -830,7 +962,7 @@ pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
             reader.resume_manual_seq = None;
             reader.deferred_sync = None;
             reader.sync_undo = None;
-            reader.awaiting_manual_probe = 0;
+            reader.awaiting_manual_probe = ManualProbeWait::Idle;
         }
         Reading::restore(&Bookmark::Latest, tx);
     }
@@ -3398,6 +3530,265 @@ mod resume_tests {
             has_token,
             "live Text delta after trimmed ReaderSync must clear sync_undo and never be dropped by wheel rollback: parts={:?}",
             row20.parts
+        );
+    }
+
+    #[test]
+    fn manual_probe_wait_survives_same_frame_follow_up_poll() {
+        let (mut reader, _lane) = Reader::open();
+        reader.awaiting_manual_probe = ManualProbeWait::Armed;
+        assert!(reader.take_manual_probe_wait(1.0, 5, 1, false));
+        assert!(
+            reader.take_manual_probe_wait(1.0, 5, 1, false),
+            "same-frame follow-up poll at identical clock and scroll_seq must keep waiting"
+        );
+        assert!(
+            !reader.take_manual_probe_wait(1.0, 6, 1, false),
+            "advancing scroll_seq releases the wait immediately"
+        );
+        assert!(
+            !reader.awaiting_manual_probe(),
+            "released wait resets to Idle"
+        );
+        // Once released to Idle while layout still defers renderer_ready, a new wheel can re-arm.
+        assert!(
+            reader.take_manual_probe_wait(1.0, 6, 2, true),
+            "a subsequent wheel after release must re-arm the wait"
+        );
+        assert!(!reader.take_manual_probe_wait(1.016, 7, 2, false));
+
+        reader.awaiting_manual_probe = ManualProbeWait::Armed;
+        assert!(reader.take_manual_probe_wait(2.0, 10, 3, false));
+        assert!(
+            !reader.take_manual_probe_wait(2.016, 10, 3, false),
+            "next-frame clock releases the wait even when scroll_seq did not change"
+        );
+
+        // Post-reconcile wheel while pending_scroll is still deferred starts from Idle.
+        reader.awaiting_manual_probe = ManualProbeWait::Idle;
+        assert!(
+            reader.take_manual_probe_wait(3.0, 12, 4, true),
+            "pending manual scroll commit from Idle must defer renderer_ready in the same frame"
+        );
+        assert!(
+            reader.take_manual_probe_wait(3.0, 12, 4, true),
+            "repeated same-frame follow-up poll must keep waiting"
+        );
+        assert!(
+            !reader.take_manual_probe_wait(3.016, 12, 4, true),
+            "wait must stay bounded to one frame even if on_scroll_offset never arrives"
+        );
+        assert!(
+            !reader.awaiting_manual_probe(),
+            "settled wait no longer reports awaiting_manual_probe"
+        );
+        assert!(
+            !reader.take_manual_probe_wait(3.032, 12, 4, true),
+            "same manual_seq must not re-arm across subsequent frames"
+        );
+        // A newer wheel while layout still defers renderer_ready arms a fresh bounded wait.
+        assert!(
+            reader.take_manual_probe_wait(3.032, 12, 5, true),
+            "a new wheel after a settled wait must re-arm for the new manual_seq"
+        );
+        assert!(!reader.take_manual_probe_wait(3.048, 12, 5, true));
+
+        // Full reconcile_bookmark (including Latest fallback when bookmark vanished from page)
+        // keeps resume_manual_seq so a post-reconcile wheel while pending_scroll is deferred
+        // still arms take_manual_probe_wait.
+        let mut s = crate::init();
+        let (mut reader, _lane) = Reader::open();
+        reader.resume_watching(
+            Bookmark::Message {
+                id: "missing-row".into(),
+                offset: 0.0,
+            },
+            s.transcript_display.reading(),
+        );
+        let page = crate::history::Page {
+            rows: vec![],
+            older: None,
+            newer: None,
+            running: false,
+            user_file_references: false,
+        };
+        s.reader = Some(reader);
+        assert!(!reconcile_bookmark(&mut s, &page));
+        assert_eq!(s.reader.as_ref().unwrap().bookmark, Bookmark::Latest);
+        s.reader.as_mut().unwrap().install(false);
+        assert!(s.reader.as_ref().unwrap().has_pending_scroll());
+        // Wheel arrives after Latest-fallback reconcile_bookmark before renderer_ready runs.
+        s.transcript_display.reading().note_pending_manual_scroll();
+        let scroll_seq = s.transcript_display.reading().scroll_seq();
+        let manual_seq = s.transcript_display.reading().manual_scroll_seq();
+        let pending = s.transcript_display.reading().pending_scroll_commit()
+            && s.reader
+                .as_ref()
+                .unwrap()
+                .user_scrolled_while_resuming(s.transcript_display.reading());
+        assert!(pending);
+        assert!(
+            s.reader
+                .as_mut()
+                .unwrap()
+                .take_manual_probe_wait(4.0, scroll_seq, manual_seq, pending)
+        );
+        assert!(
+            !s.reader
+                .as_mut()
+                .unwrap()
+                .take_manual_probe_wait(4.016, scroll_seq, manual_seq, pending)
+        );
+    }
+
+    #[test]
+    fn deferred_sync_and_sync_undo_survive_same_frame_follow_up_poll() {
+        let mut s = crate::init();
+        let (mut reader, lane) = Reader::open();
+        reader.resume(Bookmark::Latest);
+        let generation = reader.generation;
+        let conn = reader.connection.load(SeqCst);
+        let msg = |id: &str| {
+            crate::Message {
+                usage: None,
+                id: id.into(),
+                role: "assistant".into(),
+                completed: true,
+                body: id.into(),
+                parts: vec![],
+            }
+            .into()
+        };
+        let page = crate::history::Page {
+            rows: vec![msg("m-1")],
+            older: None,
+            newer: None,
+            running: false,
+            user_file_references: false,
+        };
+        lane.events
+            .try_send((
+                generation,
+                conn,
+                Event::ReaderSync {
+                    page: page.clone(),
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        let reading = s.transcript_display.reading();
+        // Initial poll defers ReaderSync on frame clock 1.0.
+        assert!(
+            reader
+                .take_next(true, reading, [0.0; 4], false, Some(1.0))
+                .is_none()
+        );
+        assert!(reader.has_deferred_sync());
+        // Same-frame follow-up poll at clock 1.0 with unchanged scroll_seq must NOT consume or age
+        // even when `reading` is already fresh.
+        assert!(
+            reader
+                .take_next(true, reading, [0.0; 4], false, Some(1.0))
+                .is_none()
+        );
+        assert_eq!(reader.deferred_sync.as_ref().unwrap().stage, 0);
+        // Next frame at clock 1.016 releases the deferred ReaderSync.
+        assert!(matches!(
+            reader.take_next(true, reading, [0.0; 4], false, Some(1.016)),
+            Some(Event::ReaderSync { .. })
+        ));
+        assert!(!reader.has_deferred_sync());
+
+        // SyncUndo saved on frame clock 1.0 must survive a same-frame follow-up poll at 1.0
+        // and only age once per distinct frame clock.
+        reader.last_taken = Some((generation, conn));
+        reader.save_sync_undo(
+            page.clone(),
+            1,
+            vec![msg("m-0")],
+            false,
+            false,
+            crate::Phase::Ready,
+            true,
+            false,
+            Some(1.0),
+        );
+        s.messages = vec![msg("m-0"), msg("m-1")];
+        let mut rt = Runtime::new(s, crate::view, (390.0, 420.0), Env::new(false, 1.0));
+        rt.frame(0.02);
+        let s = &mut rt.state;
+        assert!(s.transcript_display.reading().scroll_seq() > 0);
+        s.reader = Some(reader);
+        s.transcript_display
+            .reading_mut()
+            .arm_frame_restore_for(&Bookmark::Latest, false);
+        assert!(s.transcript_display.reading().has_pending_restore_probe());
+        expire_sync_undo(s, 1.0);
+        assert_eq!(
+            s.reader.as_ref().unwrap().sync_undo.as_ref().unwrap().age,
+            0,
+            "same-frame follow-up poll must not age or clear SyncUndo"
+        );
+        expire_sync_undo(s, 1.016);
+        assert_eq!(
+            s.reader.as_ref().unwrap().sync_undo.as_ref().unwrap().age,
+            1,
+            "first distinct frame ages SyncUndo from 0 to 1 while probe is pending"
+        );
+        expire_sync_undo(s, 1.016);
+        assert_eq!(
+            s.reader.as_ref().unwrap().sync_undo.as_ref().unwrap().age,
+            1,
+            "follow-up poll on frame 2 must not expire SyncUndo before frame 2 probes run"
+        );
+        expire_sync_undo(s, 1.032);
+        assert!(
+            s.reader.as_ref().unwrap().sync_undo.is_none(),
+            "third distinct frame expires SyncUndo"
+        );
+
+        // Without a pending restore probe, SyncUndo still survives the same frame clock and clears
+        // on the next distinct frame (or immediately when saved without a clock).
+        s.transcript_display.reading_mut().reset_to_latest(1);
+        assert!(!s.transcript_display.reading().has_pending_restore_probe());
+        s.reader.as_mut().unwrap().last_taken = Some((generation, conn));
+        s.reader.as_mut().unwrap().save_sync_undo(
+            page.clone(),
+            2,
+            vec![msg("m-0")],
+            false,
+            false,
+            crate::Phase::Ready,
+            true,
+            false,
+            Some(2.0),
+        );
+        expire_sync_undo(s, 2.0);
+        assert!(
+            s.reader.as_ref().unwrap().sync_undo.is_some(),
+            "same-frame poll keeps SyncUndo even without a pending restore probe"
+        );
+        expire_sync_undo(s, 2.016);
+        assert!(
+            s.reader.as_ref().unwrap().sync_undo.is_none(),
+            "next distinct frame clears SyncUndo when no restore probe is pending"
+        );
+        s.reader.as_mut().unwrap().last_taken = Some((generation, conn));
+        s.reader.as_mut().unwrap().save_sync_undo(
+            page,
+            3,
+            vec![msg("m-0")],
+            false,
+            false,
+            crate::Phase::Ready,
+            true,
+            false,
+            None,
+        );
+        expire_sync_undo(s, 3.0);
+        assert!(
+            s.reader.as_ref().unwrap().sync_undo.is_none(),
+            "SyncUndo saved without a frame clock clears on the first frame without a probe"
         );
     }
 }

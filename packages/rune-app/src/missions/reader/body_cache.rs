@@ -167,6 +167,39 @@ pub(super) struct BodyCache {
 }
 
 impl BodyCache {
+    pub(super) fn retained_bytes(&self) -> usize {
+        self.entries.values().fold(0usize, |total, entry| {
+            total.saturating_add(entry.utf16_bytes())
+        })
+    }
+
+    pub(super) fn evict_all(&mut self) -> usize {
+        let before = self.retained_bytes();
+        self.cancel_all_flights();
+        self.entries.clear();
+        before
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_insert_body(&mut self, key: BodyKey, text: String) {
+        let utf16_len = text.encode_utf16().count() as u64;
+        self.entries.insert(
+            key,
+            BodyEntry {
+                status: BodyStatus::Ready,
+                display: Some(LoadedBody {
+                    digest: "fixture".into(),
+                    revision: 1,
+                    characters: utf16_len,
+                    json: false,
+                    text,
+                    utf16_len,
+                }),
+                ..BodyEntry::default()
+            },
+        );
+    }
+
     pub(super) fn suspend(&mut self) {
         self.cancel_all_flights();
     }

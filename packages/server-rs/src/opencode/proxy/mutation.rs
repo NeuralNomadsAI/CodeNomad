@@ -121,12 +121,13 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     let InputRecheck { app, workspace, endpoint, principal, session, directory, actual, .. } = *recheck;
     let create = route == "/api/session" && head.method == Method::POST;
     let fork = session.is_some() && route.ends_with("/fork") && head.method == Method::POST;
+    let revert_stage = session.is_some() && route.ends_with("/revert/stage") && head.method == Method::POST;
     let background =
         route.starts_with("/api/session/") && route.ends_with("/background") && head.method == Method::POST;
     let permissions_patch = session.is_some() && head.method == Method::PATCH;
     let mut root_permissions = None;
     let mut input = None;
-    if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH) {
+    if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE) {
         let mut body_empty = false;
         let data: Value = if let Some(data) = prompt_input.take() {
             data
@@ -187,7 +188,9 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 &["title", "location", "agent", "model"]
             } else if fork {
                 &["before"]
-            } else if background {
+            } else if revert_stage {
+                &["messageID", "partID"]
+            } else if background || head.method == Method::DELETE {
                 &[]
             } else if permissions_patch {
                 &["permissions"]
@@ -216,7 +219,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                     data.insert("permissions".into(), block.clone());
                 }
             }
-            if !(background && body_empty) {
+            if head.method != Method::DELETE && !(background && body_empty) {
                 input = Some(Value::Object(data));
             }
         }
@@ -366,12 +369,16 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     if !app.native.current(endpoint) {
         return Err(upstream_error());
     }
-    let permission_snapshot = if let Some(control) = control {
-        control.pending(app, endpoint, session.ok_or_else(upstream_error)?).await?
+    let permission_snapshot = if let Some(control) = control
+        && let Some(session_id) = session
+    {
+        control.pending(app, endpoint, session_id).await?
     } else {
         None
     };
-    if let Some(form) = human_answer::form_reply(route, &head.method) {
+    if session.is_some()
+        && let Some(form) = human_answer::form_reply(route, &head.method)
+    {
         if human_answer::reply(
             app,
             workspace,

@@ -7,15 +7,20 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
-    drain_chat(s, limit, true, true, false)
+    drain_chat(s, limit, true, true, false, None)
 }
 
 pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize, active_has_stream: bool) -> bool {
-    drain_chat(s, limit, false, !active_has_stream, false)
+    drain_chat(s, limit, false, !active_has_stream, false, None)
 }
 
-pub(crate) fn poll_chat_for_window(s: &mut State, limit: usize, defer_reader_sync: bool) -> bool {
-    drain_chat(s, limit, true, true, defer_reader_sync)
+pub(crate) fn poll_chat_for_window(
+    s: &mut State,
+    limit: usize,
+    defer_reader_sync: bool,
+    clock: f64,
+) -> bool {
+    drain_chat(s, limit, true, true, defer_reader_sync, Some(clock))
 }
 
 fn drain_chat(
@@ -24,6 +29,7 @@ fn drain_chat(
     visible: bool,
     affects_preferences: bool,
     defer_reader_sync: bool,
+    clock: Option<f64>,
 ) -> bool {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
     if changed
@@ -51,7 +57,13 @@ fn drain_chat(
             let cached_gap =
                 s.history_detached || s.reader.as_ref().is_some_and(chat::reader::Reader::has_gap);
             s.reader.as_mut().and_then(|reader| {
-                reader.take_next(defer_reader_sync, reading, history_bounds, cached_gap)
+                reader.take_next(
+                    defer_reader_sync,
+                    reading,
+                    history_bounds,
+                    cached_gap,
+                    clock,
+                )
             })
         });
         let Some(event) = event else { break };
@@ -357,6 +369,7 @@ fn drain_chat(
                             prev_phase,
                             trimmed_older,
                             trimmed_newer,
+                            clock,
                         );
                     }
                     reader.install(page.newer.is_some());

@@ -329,7 +329,7 @@ fn dropping_demand_during_active_sync_stops_sync_without_spinning() {
             let (socket, _) = listener.accept().await.unwrap();
             let mut sse = BufReader::new(socket);
             let req = read_request_line(&mut sse).await;
-            assert!(req.contains("connectionId=stream-1"), "got {req}");
+            assert!(req.contains("connectionId=hub-1"), "got {req}");
             sse.get_mut()
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
                 .await
@@ -405,7 +405,7 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
             let (socket, _) = listener.accept().await.unwrap();
             let mut sse1 = BufReader::new(socket);
             let req = read_request_line(&mut sse1).await;
-            assert!(req.contains("connectionId=stream-1"), "got {req}");
+            assert!(req.contains("connectionId=hub-1"), "got {req}");
             sse1.get_mut()
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
                 .await
@@ -497,7 +497,7 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
                 .unwrap();
             let mut sse3 = BufReader::new(socket);
             let req = read_request_line(&mut sse3).await;
-            assert!(req.contains("connectionId=stream-3"), "got {req}");
+            assert!(req.contains("connectionId=hub-3"), "got {req}");
 
             // 4. Close exits cleanly.
             commands.send(Command::Close).await.unwrap();

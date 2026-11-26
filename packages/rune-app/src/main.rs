@@ -251,7 +251,7 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 }
 
 fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    chat::reader::expire_sync_undo(s);
+    chat::reader::expire_sync_undo(s, tx.clock());
     let gesture = timeline::poll_edge(s, tx);
     let conversation_visible = !s.screen.is_launcher()
         && !git::has_preview(s)
@@ -259,7 +259,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         && !workspace::mission_has_reader(s);
     let defer_reader_sync = conversation_visible && !s.messages.is_empty();
     let chat = !timeline::input_precedes_admission(s, tx)
-        && chat::events::poll_chat_for_window(s, 64, defer_reader_sync);
+        && chat::events::poll_chat_for_window(s, 64, defer_reader_sync, tx.clock());
     shell::notifications::collect(s, workspace::notification_target);
     if s.reader
         .as_ref()
@@ -267,10 +267,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         tx.wake_after(std::time::Duration::ZERO);
     }
-    let wait_manual_probe = conversation_visible
-        && s.reader
-            .as_mut()
-            .is_some_and(chat::reader::Reader::take_manual_probe_wait);
+    let wait_manual_probe = conversation_visible && chat::reader::take_manual_probe_wait(s, tx);
     if wait_manual_probe {
         tx.wake_after(std::time::Duration::ZERO);
     }
@@ -340,6 +337,9 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     platform::launch::sync(s);
     workspace::capture_files_mode(s);
+    if changed {
+        workspace::enforce_memory_budget(s);
+    }
     timeline::poll_reveal(s, tx, changed);
     if changed {
         tx.instant();

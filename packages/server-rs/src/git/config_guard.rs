@@ -1,7 +1,7 @@
 //! Repository configuration admitted before any Git display read or linked
 //! worktree lifecycle command (audit M3). The listing is the effective configuration of the directory
 //! Git actually runs in (local, `config.worktree` and command scopes; system
-//! and global are disabled by `command`), with includes named but never
+//! and global host scopes are skipped), with includes named but never
 //! followed, plus every absorbed submodule's own configuration. Status and
 //! diff reads pass `--ignore-submodules=dirty`: gitlink commits stay visible
 //! (reference parity) and Git never runs in a submodule's work tree, whose
@@ -29,13 +29,74 @@ pub fn forbidden(key: &str) -> bool {
 }
 
 fn check(listing: &str) -> Result<(), Error> {
-    // Scope names (`local`, `worktree`, `command`) never match a refused key.
     if listing.split(['\0', '\t', '\n']).any(forbidden) { Err(refused()) } else { Ok(()) }
+}
+
+fn check_scoped(listing: &str) -> Result<(), Error> {
+    let mut parts = listing.split('\0');
+    while let Some(scope) = parts.next() {
+        if scope.is_empty() {
+            break;
+        }
+        let key = parts.next().ok_or_else(refused)?;
+        if matches!(scope, "system" | "global") {
+            continue;
+        }
+        if forbidden(key) {
+            return Err(refused());
+        }
+    }
+    Ok(())
+}
+
+/// Collect `-c filter.<name>.{clean,smudge,process,required}` overrides disabling every
+/// filter driver defined in host system/global config (including both `~/.gitconfig` and XDG
+/// global config plus their includes) so passive working-tree reads never invoke external
+/// filter commands referenced by repository `.gitattributes`.
+pub async fn host_filter_disables(dir: &Path) -> Result<Vec<String>, Error> {
+    let args = ["config", "--show-scope", "--includes", "--name-only", "-z", "--list"];
+    let out = run(dir, &args, 64 * 1024).await?.ok()?;
+    let mut names = std::collections::BTreeSet::new();
+    collect_host_filter_names(&out.text(), &mut names)?;
+    let mut flags = Vec::with_capacity(names.len() * 8);
+    for name in names {
+        flags.push("-c".into());
+        flags.push(format!("filter.{name}.clean="));
+        flags.push("-c".into());
+        flags.push(format!("filter.{name}.smudge="));
+        flags.push("-c".into());
+        flags.push(format!("filter.{name}.process="));
+        flags.push("-c".into());
+        flags.push(format!("filter.{name}.required=false"));
+    }
+    Ok(flags)
+}
+
+fn collect_host_filter_names(listing: &str, out: &mut std::collections::BTreeSet<String>) -> Result<(), Error> {
+    let mut parts = listing.split('\0');
+    while let Some(scope) = parts.next() {
+        if scope.is_empty() {
+            break;
+        }
+        let raw = parts.next().ok_or_else(refused)?;
+        if !matches!(scope, "system" | "global") {
+            continue;
+        }
+        let Some((section, rest)) = raw.split_once('.') else { continue };
+        if !section.eq_ignore_ascii_case("filter") {
+            continue;
+        }
+        let Some((name, _var)) = rest.rsplit_once('.') else { continue };
+        if !name.is_empty() && !name.contains(['\0', '\n', '\r']) {
+            out.insert(name.to_owned());
+        }
+    }
+    Ok(())
 }
 
 pub async fn effective(dir: &Path) -> Result<(), Error> {
     let args = ["config", "--show-scope", "--no-includes", "--name-only", "-z", "--list"];
-    check(&run(dir, &args, 64 * 1024).await?.ok()?.text())
+    check_scoped(&run(dir, &args, 64 * 1024).await?.ok()?.text())
 }
 
 /// Every `config` of an absorbed submodule under `<main>/.git/modules`.
@@ -192,5 +253,60 @@ mod tests {
         for dir in [plain, worktree, module] {
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    #[test]
+    fn scoped_check_skips_system_and_global_host_config() {
+        let host_only =
+            "system\0filter.lfs.clean\0system\0diff.astextplain.textconv\0global\0include.path\0local\0core.bare\0";
+        assert!(check_scoped(host_only).is_ok());
+
+        for bad in [
+            "local\0filter.x.clean\0",
+            "worktree\0filter.x.clean\0",
+            "command\0include.path\0",
+            "unknown\0filter.x.clean\0",
+            "local",
+        ] {
+            assert_eq!(check_scoped(bad).unwrap_err().0, Status::FORBIDDEN, "{bad:?}");
+        }
+
+        let mut names = std::collections::BTreeSet::new();
+        collect_host_filter_names(
+            "system\0filter.lfs.clean\0global\0filter.My.Custom.smudge\0local\0filter.repo.clean\0global\0core.bare\0global\0filter.lfs.process\0",
+            &mut names,
+        )
+        .unwrap();
+        assert_eq!(names, ["My.Custom", "lfs"].into_iter().map(str::to_owned).collect());
+        assert_eq!(collect_host_filter_names("global", &mut names).unwrap_err().0, Status::FORBIDDEN);
+
+        // Verify real `git config --show-scope --includes --name-only -z --list` discovers
+        // a filter defined only in XDG global config even when `~/.gitconfig` also exists.
+        let env_root = crate::shared::test_dir("config-guard-xdg-global");
+        let home = env_root.join("home");
+        let xdg = env_root.join("xdg");
+        let repo = env_root.join("repo");
+        std::fs::create_dir_all(xdg.join("git")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        std::fs::write(home.join(".gitconfig"), "[user]\n\tname = Host\n").unwrap();
+        std::fs::write(xdg.join("git").join("config"), "[filter \"xdgonly\"]\n\tclean = cat\n").unwrap();
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "--show-scope", "--includes", "--name-only", "-z", "--list"])
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GIT_CONFIG_GLOBAL")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let mut xdg_names = std::collections::BTreeSet::new();
+        collect_host_filter_names(&String::from_utf8_lossy(&out.stdout), &mut xdg_names).unwrap();
+        assert!(xdg_names.contains("xdgonly"), "expected XDG global filter, got: {xdg_names:?}");
+        let _ = std::fs::remove_dir_all(env_root);
     }
 }

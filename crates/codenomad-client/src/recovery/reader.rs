@@ -571,38 +571,45 @@ impl Reader {
         let wire = wire.clone();
         let inbox_tx = inbox_tx.clone();
         crate::runtime::spawn(async move {
-            let read = async {
-                match backend.session_inbox().await {
-                    Err(error)
-                        if crate::http::authentication_expired(&error)
-                            && matches!(backend.authentication_status().await, Ok(false)) =>
-                    {
-                        Err(InboxReadError::AuthenticationExpired)
+            if wire.is_placement_changed() || cancelled.is_closed() {
+                return;
+            }
+            let outcome = if wire.is_stream_closed() {
+                Some(Err(InboxReadError::StreamClosed))
+            } else {
+                let read = async {
+                    match backend.session_inbox().await {
+                        Err(error)
+                            if crate::http::authentication_expired(&error)
+                                && matches!(backend.authentication_status().await, Ok(false)) =>
+                        {
+                            Err(InboxReadError::AuthenticationExpired)
+                        }
+                        Ok(items) => Ok(items),
+                        Err(_) => Err(InboxReadError::Failed),
                     }
-                    Ok(items) => Ok(items),
-                    Err(_) => Err(InboxReadError::Failed),
-                }
-            };
-            let outcome = futures_lite::future::race(
-                async {
-                    let _ = cancelled.recv().await;
-                    None
-                },
+                };
                 futures_lite::future::race(
                     async {
-                        wire.placement_changed().await;
+                        let _ = cancelled.recv().await;
                         None
                     },
                     futures_lite::future::race(
                         async {
-                            wire.stream_closed().await;
-                            Some(Err(InboxReadError::StreamClosed))
+                            wire.placement_changed().await;
+                            None
                         },
-                        async { Some(read.await) },
+                        futures_lite::future::race(
+                            async {
+                                wire.stream_closed().await;
+                                Some(Err(InboxReadError::StreamClosed))
+                            },
+                            async { Some(read.await) },
+                        ),
                     ),
-                ),
-            )
-            .await;
+                )
+                .await
+            };
             if let Some(result) = outcome {
                 let _ = inbox_tx
                     .send(InboxReply {
@@ -856,6 +863,14 @@ async fn read_fenced<T>(
     wire: &stream::State,
     read: impl std::future::Future<Output = history::Result<T>>,
 ) -> Option<Result<T, PageFailure>> {
+    if wire.is_placement_changed()
+        || reading.is_some_and(|reading| reading.demand.current().generation != generation)
+    {
+        return None;
+    }
+    if wire.is_stream_closed() {
+        return Some(Err(PageFailure::StreamClosed));
+    }
     let page = async {
         match read.await {
             Err(error)
@@ -896,10 +911,15 @@ async fn read_fenced<T>(
         ),
     )
     .await;
-    result.filter(|_| {
-        !wire.is_placement_changed()
-            && reading.is_none_or(|reading| reading.demand.current().generation == generation)
-    })
+    if wire.is_placement_changed()
+        || reading.is_some_and(|reading| reading.demand.current().generation != generation)
+    {
+        return None;
+    }
+    if wire.is_stream_closed() {
+        return Some(Err(PageFailure::StreamClosed));
+    }
+    result
 }
 
 pub(super) async fn reader_event(
