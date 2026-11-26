@@ -793,6 +793,22 @@ pub async fn connect_external(
     check_empty_response(response).await
 }
 
+async fn cancel_on_close<T>(
+    cancelled: &crate::Receiver<()>,
+    task: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    use std::future::Future;
+    let mut task = std::pin::pin!(task);
+    let mut rx = std::pin::pin!(cancelled.recv());
+    std::future::poll_fn(|cx| {
+        if rx.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready(None);
+        }
+        task.as_mut().poll(cx).map(Some)
+    })
+    .await
+}
+
 pub async fn oauth_connect(
     backend: &Backend,
     workspace: &str,
@@ -800,29 +816,48 @@ pub async fn oauth_connect(
     integration_id: &str,
     method_id: &str,
     answer: Option<Value>,
-) -> std::result::Result<OAuthAttempt, AuthError> {
-    let url = instance_url(
+    cancelled: &crate::Receiver<()>,
+) -> Option<std::result::Result<OAuthAttempt, AuthError>> {
+    let url = match instance_url(
         backend,
         workspace,
         &["integration", integration_id, "connect", "oauth"],
-    )?;
+    ) {
+        Ok(url) => url,
+        Err(err) => return Some(Err(err)),
+    };
     let mut body = Map::new();
     body.insert("methodID".into(), Value::String(method_id.to_owned()));
     if let Some(answer) = answer {
         body.insert("answer".into(), answer);
     }
-    let response = backend
-        .client
-        .post(url)
-        .query(&[("location[directory]", directory)])
-        .json(&Value::Object(body))
-        .send()
-        .await
-        .map_err(|_| AuthError::Failed)?;
-    let value = check_json_response(response).await?;
-    verify_response_location(&value, directory)?;
+    let response = match cancel_on_close(
+        cancelled,
+        backend
+            .client
+            .post(url)
+            .query(&[("location[directory]", directory)])
+            .json(&Value::Object(body))
+            .send(),
+    )
+    .await?
+    {
+        Ok(response) => response,
+        Err(_) => return Some(Err(AuthError::Failed)),
+    };
+    // Once response headers arrive, decode the body and cancel any invalid-mode attemptID
+    // outside `cancel_on_close` so closing the dialog cannot abort the cleanup DELETE.
+    let value = match check_json_response(response).await {
+        Ok(value) => value,
+        Err(err) => return Some(Err(err)),
+    };
+    if let Err(err) = verify_response_location(&value, directory) {
+        return Some(Err(err));
+    }
     let data = &value["data"];
-    let attempt_id = clean_token(&data["attemptID"]).ok_or(AuthError::Failed)?;
+    let Some(attempt_id) = clean_token(&data["attemptID"]) else {
+        return Some(Err(AuthError::Failed));
+    };
     let auth_url = data["url"].as_str().unwrap_or_default().trim().to_owned();
     let instructions = sanitize_text(&data["instructions"]).unwrap_or_default();
     let mode = match data["mode"].as_str() {
@@ -830,15 +865,15 @@ pub async fn oauth_connect(
         Some("auto") => OAuthMode::Auto,
         _ => {
             oauth_cancel(backend, workspace, directory, integration_id, &attempt_id).await;
-            return Err(AuthError::Failed);
+            return Some(Err(AuthError::Failed));
         }
     };
-    Ok(OAuthAttempt {
+    Some(Ok(OAuthAttempt {
         attempt_id,
         url: auth_url,
         instructions,
         mode,
-    })
+    }))
 }
 
 pub async fn oauth_status(
@@ -936,23 +971,38 @@ pub async fn command_connect(
     directory: &str,
     integration_id: &str,
     method_id: &str,
-) -> std::result::Result<String, AuthError> {
-    let url = instance_url(
+    cancelled: &crate::Receiver<()>,
+) -> Option<std::result::Result<String, AuthError>> {
+    let url = match instance_url(
         backend,
         workspace,
         &["integration", integration_id, "connect", "command"],
-    )?;
-    let response = backend
-        .client
-        .post(url)
-        .query(&[("location[directory]", directory)])
-        .json(&json!({ "methodID": method_id }))
-        .send()
-        .await
-        .map_err(|_| AuthError::Failed)?;
-    let value = check_json_response(response).await?;
-    verify_response_location(&value, directory)?;
-    clean_token(&value["data"]["attemptID"]).ok_or(AuthError::Failed)
+    ) {
+        Ok(url) => url,
+        Err(err) => return Some(Err(err)),
+    };
+    let response = match cancel_on_close(
+        cancelled,
+        backend
+            .client
+            .post(url)
+            .query(&[("location[directory]", directory)])
+            .json(&json!({ "methodID": method_id }))
+            .send(),
+    )
+    .await?
+    {
+        Ok(response) => response,
+        Err(_) => return Some(Err(AuthError::Failed)),
+    };
+    let value = match check_json_response(response).await {
+        Ok(value) => value,
+        Err(err) => return Some(Err(err)),
+    };
+    if let Err(err) = verify_response_location(&value, directory) {
+        return Some(Err(err));
+    }
+    Some(clean_token(&value["data"]["attemptID"]).ok_or(AuthError::Failed))
 }
 
 pub async fn command_status(

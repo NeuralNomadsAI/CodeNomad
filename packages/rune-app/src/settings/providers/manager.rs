@@ -1474,65 +1474,70 @@ impl Manager {
                     {
                         return;
                     }
-                    let Some(outcome) = platform::reads::cancellable(&cancelled, async {
-                        match method {
-                            AuthMethod::Key { .. } => match provider_auth::connect_key(
+                    let Some(outcome) = (match method {
+                        AuthMethod::Key { .. } => platform::reads::cancellable(
+                            &cancelled,
+                            provider_auth::connect_key(
                                 &backend_cl,
                                 &ws_cl,
                                 &directory,
                                 &provider_id,
                                 &api_key,
                                 answer,
-                            )
-                            .await
-                            {
-                                Ok(()) => AuthFlightOutcome::Done,
-                                Err(err) => AuthFlightOutcome::Failed(err),
-                            },
-                            AuthMethod::External { id, .. } => {
-                                match provider_auth::connect_external(
-                                    &backend_cl,
-                                    &ws_cl,
-                                    &directory,
-                                    &provider_id,
-                                    &id,
-                                    answer,
-                                )
-                                .await
-                                {
-                                    Ok(()) => AuthFlightOutcome::Done,
-                                    Err(err) => AuthFlightOutcome::Failed(err),
-                                }
-                            }
-                            AuthMethod::OAuth { id, .. } => match provider_auth::oauth_connect(
+                            ),
+                        )
+                        .await
+                        .map(|res| match res {
+                            Ok(()) => AuthFlightOutcome::Done,
+                            Err(err) => AuthFlightOutcome::Failed(err),
+                        }),
+                        AuthMethod::External { id, .. } => platform::reads::cancellable(
+                            &cancelled,
+                            provider_auth::connect_external(
                                 &backend_cl,
                                 &ws_cl,
                                 &directory,
                                 &provider_id,
                                 &id,
                                 answer,
-                            )
-                            .await
-                            {
-                                Ok(attempt) => AuthFlightOutcome::OAuthStarted(attempt),
-                                Err(err) => AuthFlightOutcome::Failed(err),
-                            },
-                            AuthMethod::Command { id, .. } => match provider_auth::command_connect(
-                                &backend_cl,
-                                &ws_cl,
-                                &directory,
-                                &provider_id,
-                                &id,
-                            )
-                            .await
-                            {
-                                Ok(attempt_id) => AuthFlightOutcome::CommandStarted(attempt_id),
-                                Err(err) => AuthFlightOutcome::Failed(err),
-                            },
-                        }
-                    })
-                    .await
-                    else {
+                            ),
+                        )
+                        .await
+                        .map(|res| match res {
+                            Ok(()) => AuthFlightOutcome::Done,
+                            Err(err) => AuthFlightOutcome::Failed(err),
+                        }),
+                        // Matches Solid's AbortSignal on OAuth/command POSTs: cancel aborts the
+                        // request before response headers arrive; once headers arrive, decoding
+                        // and any cleanup DELETE run uninterruptibly through AuthHandover.
+                        AuthMethod::OAuth { id, .. } => provider_auth::oauth_connect(
+                            &backend_cl,
+                            &ws_cl,
+                            &directory,
+                            &provider_id,
+                            &id,
+                            answer,
+                            &cancelled,
+                        )
+                        .await
+                        .map(|res| match res {
+                            Ok(attempt) => AuthFlightOutcome::OAuthStarted(attempt),
+                            Err(err) => AuthFlightOutcome::Failed(err),
+                        }),
+                        AuthMethod::Command { id, .. } => provider_auth::command_connect(
+                            &backend_cl,
+                            &ws_cl,
+                            &directory,
+                            &provider_id,
+                            &id,
+                            &cancelled,
+                        )
+                        .await
+                        .map(|res| match res {
+                            Ok(attempt_id) => AuthFlightOutcome::CommandStarted(attempt_id),
+                            Err(err) => AuthFlightOutcome::Failed(err),
+                        }),
+                    }) else {
                         return;
                     };
                     let cancelled_outcome = {

@@ -629,7 +629,7 @@ fn accounts_rename_survives_refresh_and_failure_and_501_degrades_gracefully() {
 }
 
 #[test]
-fn closing_modal_mid_oauth_post_sends_delete_and_logical_clock_advances_polling() {
+fn closing_modal_mid_oauth_post_aborts_socket_and_logical_clock_advances_polling() {
     platform::block_on(async {
         let http = Http::new().await;
         let integrations = json!([
@@ -1020,10 +1020,32 @@ fn command_external_snapshotted_methods_and_absent_optional_fields() {
         ]);
         let acc_providers =
             json!([{ "id": "openai", "integrationID": "openai", "name": "OpenAI" }]);
-        reply_catalog(&http2, acc_integrations, acc_providers, json!([]), None).await;
+        reply_catalog(
+            &http2,
+            acc_integrations.clone(),
+            acc_providers.clone(),
+            json!([]),
+            None,
+        )
+        .await;
         poll_until(&mut rt2, 1.0, |h| h.catalog.manager.snapshot.is_some());
         click(&mut rt2, "provider-account-remove-openai", 1.0);
+        // Hint invalidates the catalog right before the tab becomes hidden: the queued account
+        // mutation must trigger a hidden catalog refresh and then dispatch DELETE.
+        rt2.update(|h, _| {
+            assert!(h.target.hint("ws1"));
+        });
         assert!(tick_with_visibility(&mut rt2, 1.0, false));
+        reply_catalog(&http2, acc_integrations, acc_providers, json!([]), None).await;
+        let deadline_acc = Instant::now() + Duration::from_secs(3);
+        while rt2.state.catalog.manager.catalog_flight_active() {
+            assert!(
+                Instant::now() < deadline_acc,
+                "hidden queued account remove catalog refresh did not settle"
+            );
+            let _ = tick_with_visibility(&mut rt2, 1.0, false);
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
         assert!(rt2.state.catalog.manager.any_account_busy());
         let del_req = http2.accept().await;
         assert!(
@@ -1167,7 +1189,9 @@ fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_label
         );
         del.reply(204, json!({})).await;
 
-        // Invalid OAuth mode on a server reply with a valid attemptID cancels the attempt immediately.
+        // Invalid OAuth mode on a server reply with a valid attemptID cancels the attempt
+        // immediately, and closing the modal while that cleanup DELETE is in flight does not
+        // abort the DELETE socket.
         click(&mut rt, "provider-account-add-openai", 2.5);
         click(&mut rt, "provider-auth-continue", 2.5);
         assert!(tick(&mut rt, 2.5));
@@ -1194,15 +1218,9 @@ fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_label
             "{}",
             del_bad.header
         );
-        del_bad.reply(204, json!({})).await;
-        poll_until(&mut rt, 2.5, |h| {
-            h.catalog
-                .manager
-                .connect
-                .as_ref()
-                .is_some_and(|f| f.stage == manager::AuthStage::Error)
-        });
         click(&mut rt, "provider-auth-close", 2.5);
+        assert!(rt.state.catalog.manager.connect.is_none());
+        del_bad.reply(204, json!({})).await;
 
         // Opening a foreground OAuth popup tab immediately hides the originating tab (visible=false)
         // before the next poll: even if a passive invalidation hint arrives before that poll, the
