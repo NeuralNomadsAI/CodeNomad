@@ -1,6 +1,7 @@
 //! Pure view assembly for recurring Mission schedules, controls and receipts.
 use super::{
-    ScheduleGesture as G, ScheduleHoldPhase as P, ScheduleHolds, list::SelectionError as SelErr,
+    Cap, ScheduleGesture as G, ScheduleHoldPhase as P, ScheduleHolds,
+    list::SelectionError as SelErr,
 };
 use crate::{
     missions::Panel,
@@ -110,6 +111,7 @@ pub(crate) fn detail_section<S: 'static>(
                 | "missions.scheduleList.conflict"
                 | "missions.scheduleList.readFailed"
                 | "missions.scheduleList.capacity"
+                | "missions.scheduleList.activationRefused"
         );
         reg = reg.child(note(k, if alert { "alert" } else { "status" }));
     }
@@ -127,6 +129,7 @@ fn action_bar<S: 'static>(
     act: ScheduleAct<S>,
 ) -> El {
     let en = !ui.editor.is_open();
+    let dir = ui.directory.as_deref();
     let prim = [A::Pause, A::Resume, A::Play];
     let primary = prim
         .into_iter()
@@ -137,7 +140,7 @@ fn action_bar<S: 'static>(
     if let Some(a) = primary {
         bar = bar.child(action_btn(
             a,
-            !ui.schedules.capable(doc, a, held, en),
+            !ui.schedules.capable(doc, a, held, en, dir),
             "mission-schedule-primary",
             act,
         ));
@@ -149,7 +152,7 @@ fn action_bar<S: 'static>(
     ] {
         bar = bar.child(action_btn(
             a,
-            !ui.schedules.capable(doc, a, held, en),
+            !ui.schedules.capable(doc, a, held, en, dir),
             key,
             act,
         ));
@@ -182,7 +185,7 @@ fn append_facts(mut reg: El, doc: &UnifiedSchedule) -> El {
     reg = reg
         .child(fact_t(
             "missions.scheduling.when",
-            &describe_criteria(lp).join("; "),
+            &describe_criteria(lp, doc.one_shot_at).join("; "),
         ))
         .child(fact_t(
             "missions.scheduleList.desired",
@@ -196,8 +199,18 @@ fn append_facts(mut reg: El, doc: &UnifiedSchedule) -> El {
             fact_t(next_key(doc), &opt_ts(doc.observation.next_due_at))
                 .help(t("missions.scheduleList.lateSlot")),
         );
-    if let Some(ends) = doc.slot_ends_at {
-        reg = reg.child(fact_t("missions.scheduling.until", &format_ts(ends)));
+    if doc.slot_ends_at.is_some() || lp.until.is_some() || lp.end_after_ms.is_some() {
+        let mut until = opt_ts(doc.slot_ends_at.or(lp.until));
+        if doc.first_played_at.is_none()
+            && let Some(ms) = lp.end_after_ms
+        {
+            let m = (ms / 60_000).to_string();
+            until = format!(
+                "{until} · {}",
+                fmt("missions.scheduleList.endAfter", &[("minutes", &m)])
+            );
+        }
+        reg = reg.child(fact_t("missions.scheduling.until", &until));
     }
     if lp.has_events {
         let ch = match &doc.checks {
@@ -381,8 +394,12 @@ fn status_key(
     if let Some(k) = ui.schedules.feedback_for(&doc.id) {
         return Some(k);
     }
-    if doc.configuration.launch.requires_calendar && ui.schedules.capability == Some(false) {
-        return Some("missions.scheduling.capability.missing");
+    if doc.configuration.launch.requires_calendar {
+        match ui.schedules.capability {
+            Some(Cap::Refused) => return Some("missions.scheduleList.activationRefused"),
+            Some(Cap::Missing) => return Some("missions.scheduling.capability.missing"),
+            _ => {}
+        }
     }
     None
 }
@@ -394,7 +411,7 @@ fn next_key(doc: &UnifiedSchedule) -> &'static str {
     }
 }
 fn row_status(doc: &UnifiedSchedule) -> String {
-    let crit = describe_criteria(&doc.configuration.launch).join("; ");
+    let crit = describe_criteria(&doc.configuration.launch, doc.one_shot_at).join("; ");
     let next = format!(
         "{} · {}",
         t(next_key(doc)),
@@ -406,13 +423,29 @@ fn row_status(doc: &UnifiedSchedule) -> String {
         .collect::<Vec<_>>()
         .join(" · ")
 }
-pub(crate) fn describe_criteria(policy: &LaunchPolicy) -> Vec<String> {
+pub(crate) fn describe_criteria(policy: &LaunchPolicy, one_shot: Option<u64>) -> Vec<String> {
+    let min = t("missions.scheduling.minutes");
     policy
         .connected_items()
         .into_iter()
         .map(|(conn, item)| {
             let line = match item {
                 LaunchItem::Now => t("missions.scheduling.source.now").into(),
+                LaunchItem::At(at, z) => format!(
+                    "{} · {} · {z}",
+                    t("missions.scheduling.frequency.at"),
+                    format_ts(one_shot.unwrap_or(*at))
+                ),
+                LaunchItem::In(ms) => format!(
+                    "{} · {} {min}",
+                    t("missions.scheduling.frequency.in"),
+                    ms / 60_000
+                ),
+                LaunchItem::Every(ms) => format!(
+                    "{} · {} {min}",
+                    t("missions.scheduling.frequency.every"),
+                    ms / 60_000
+                ),
                 LaunchItem::Cron(e, z) => {
                     format!("{} · {e} · {z}", t("missions.scheduling.shortcut.cron"))
                 }

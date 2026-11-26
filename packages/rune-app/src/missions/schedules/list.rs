@@ -17,6 +17,12 @@ use codenomad_client::{
 use std::collections::HashSet;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Cap {
+    Available,
+    Refused,
+    Missing,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SelectionError {
     Pending,
     Failed,
@@ -40,10 +46,11 @@ trait PlatformFut<O>: std::future::Future<Output = O> + 'static {}
 #[cfg(target_arch = "wasm32")]
 impl<O, F: std::future::Future<Output = O> + 'static> PlatformFut<O> for F {}
 
-struct Flight<T, M = ()>(M, Sender<()>, Receiver<T>);
+struct Flight<T, M = ()>(M, Backend, Sender<()>, Receiver<T>);
 impl<T: Send + 'static, M> Flight<T, M> {
     fn spawn<Fut: PlatformFut<Option<T>>>(
         meta: M,
+        backend: Backend,
         wake: Wake,
         f: impl FnOnce(Receiver<()>) -> Fut,
     ) -> Self {
@@ -56,7 +63,7 @@ impl<T: Send + 'static, M> Flight<T, M> {
                 wake();
             }
         });
-        Self(meta, cancel, rx)
+        Self(meta, backend, cancel, rx)
     }
     fn bg<Fut: PlatformFut<T>>(
         meta: M,
@@ -68,26 +75,40 @@ impl<T: Send + 'static, M> Flight<T, M> {
             ctx.directory.map(str::to_owned),
             ctx.reads.clone(),
         );
-        Self::spawn(meta, ctx.wake.clone(), move |c| async move {
-            let _p = r.background(&c).await?;
-            Some(f(b, d, c).await)
-        })
+        Self::spawn(
+            meta,
+            ctx.backend.clone(),
+            ctx.wake.clone(),
+            move |c| async move {
+                let _p = r.background(&c).await?;
+                Some(f(b, d, c).await)
+            },
+        )
     }
 }
-fn close<T, M>(s: &mut Option<Flight<T, M>>) {
+fn cancel<T, M>(
+    s: &mut Option<Flight<T, M>>,
+    auth: &mut Vec<Backend>,
+    is_auth: impl FnOnce(&T) -> bool,
+) {
     if let Some(f) = s.take() {
-        f.1.close();
+        f.2.close();
+        if let Ok(v) = f.3.try_recv()
+            && is_auth(&v)
+        {
+            push_auth_expired(auth, f.1);
+        }
     }
 }
-fn ready<T, M>(s: &mut Option<Flight<T, M>>) -> Option<(M, Option<T>)> {
+fn ready<T, M>(s: &mut Option<Flight<T, M>>) -> Option<(M, Backend, Option<T>)> {
     let f = s.take()?;
-    match f.2.try_recv() {
-        Ok(v) => Some((f.0, Some(v))),
+    match f.3.try_recv() {
+        Ok(v) => Some((f.0, f.1, Some(v))),
         Err(TryRecvError::Empty) => {
             *s = Some(f);
             None
         }
-        Err(TryRecvError::Closed) => Some((f.0, None)),
+        Err(TryRecvError::Closed) => Some((f.0, f.1, None)),
     }
 }
 
@@ -96,6 +117,7 @@ struct Pre {
     key: Key,
     act: Act,
     rev: u64,
+    epoch: u64,
     doc: UnifiedSchedule,
 }
 type PreOut = (Option<ReadOut>, Option<Fetch<ScheduleCapability>>);
@@ -103,25 +125,30 @@ type PreOut = (Option<ReadOut>, Option<Fetch<ScheduleCapability>>);
 #[derive(Default)]
 pub(crate) struct Schedules {
     visible: bool,
+    pub(crate) generation: u64,
     pub(crate) project_id: Option<String>,
     pub(crate) rows: Vec<UnifiedSchedule>,
     pub(crate) next: Option<String>,
-    fresh: HashSet<String>,
+    pub(super) fresh: HashSet<String>,
     pub(crate) error: bool,
     pub(crate) selection_error: Option<SelectionError>,
     pub(crate) selected: Option<String>,
     list_flight: Option<Flight<Fetch<ScheduleListPage>, bool>>,
     list_owed: bool,
     point_flight: Option<Flight<ReadOut, String>>,
-    pub(crate) capability: Option<bool>,
+    pub(crate) capability: Option<Cap>,
     cap_flight: Option<Flight<Fetch<ScheduleCapability>>>,
     pre: Option<Flight<PreOut, Pre>>,
+    pending_pre: Option<(Pre, Backend, PreOut)>,
     pub(crate) feedback: Option<(String, &'static str)>,
     pub(crate) instructions_open: HashSet<String>,
     auth_expired: Vec<Backend>,
 }
 
 impl Schedules {
+    pub(crate) fn visible(&self) -> bool {
+        self.visible
+    }
     pub(crate) fn loading(&self) -> bool {
         self.list_flight.is_some()
     }
@@ -139,6 +166,12 @@ impl Schedules {
             .as_ref()
             .filter(|f| f.0.key.schedule_id == id)
             .map(|f| f.0.act)
+            .or_else(|| {
+                self.pending_pre
+                    .as_ref()
+                    .filter(|(m, _, _)| m.key.schedule_id == id)
+                    .map(|(m, _, _)| m.act)
+            })
     }
     fn project<'a>(&'a self, ctx: ScheduleCtx<'a>) -> Option<&'a str> {
         ctx.project.or(self.project_id.as_deref())
@@ -177,16 +210,24 @@ impl Schedules {
     ) -> Option<(&'a Phase, bool)> {
         holds.get(&Key::new(ctx.backend, self.project(ctx)?, ctx.scope, id))
     }
-    pub(crate) fn capable(&self, doc: &UnifiedSchedule, act: Act, held: bool, en: bool) -> bool {
+    pub(crate) fn capable(
+        &self,
+        doc: &UnifiedSchedule,
+        act: Act,
+        held: bool,
+        en: bool,
+        dir: Option<&str>,
+    ) -> bool {
         let ok = self.visible
             && en
             && !self.error
             && self.fresh.contains(&doc.id)
             && self.pre_busy(&doc.id).is_none()
             && !held
+            && doc.owns_directory(dir)
             && doc.available_actions.contains(&act);
         ok && (!(doc.configuration.launch.requires_calendar && act.requires_calendar_check())
-            || self.capability == Some(true))
+            || self.capability == Some(Cap::Available))
     }
 
     pub(crate) fn show(&mut self, show: bool) {
@@ -195,21 +236,31 @@ impl Schedules {
         }
         self.visible = show;
         if !show {
+            self.generation = self.generation.wrapping_add(1);
             self.cancel_flights();
         }
     }
     pub(crate) fn suspend(&mut self) {
         self.visible = false;
+        self.generation = self.generation.wrapping_add(1);
         self.cancel_flights();
     }
     pub(crate) fn rebind(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
         self.cancel_flights();
         self.fresh.clear();
         self.capability = None;
     }
     pub(crate) fn invalidate(&mut self) {
-        close(&mut self.pre);
+        self.generation = self.generation.wrapping_add(1);
+        self.cancel_pre();
         self.fresh.clear();
+    }
+    pub(crate) fn cancel_pre(&mut self) {
+        self.pending_pre = None;
+        cancel(&mut self.pre, &mut self.auth_expired, |(r, c)| {
+            matches!(r, Some(ReadOut::AuthExpired)) || matches!(c, Some(Fetch::AuthExpired))
+        });
     }
     pub(crate) fn refresh(&mut self, ctx: ScheduleCtx<'_>) {
         if !self.visible {
@@ -235,11 +286,14 @@ impl Schedules {
         }
     }
     pub(crate) fn clear_selection(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
         self.selected = None;
         self.selection_error = None;
         self.feedback = None;
-        close(&mut self.pre);
-        close(&mut self.point_flight);
+        self.cancel_pre();
+        cancel(&mut self.point_flight, &mut self.auth_expired, |r| {
+            matches!(r, ReadOut::AuthExpired)
+        });
     }
 
     pub(crate) fn handle_gesture(
@@ -280,7 +334,13 @@ impl Schedules {
                 ) else {
                     return false;
                 };
-                if !self.capable(&doc, act, self.hold_for(holds, ctx, &doc.id).is_some(), en) {
+                if !self.capable(
+                    &doc,
+                    act,
+                    self.hold_for(holds, ctx, &doc.id).is_some(),
+                    en,
+                    ctx.directory,
+                ) {
                     return false;
                 }
                 self.feedback = None;
@@ -294,6 +354,7 @@ impl Schedules {
                         key,
                         act,
                         rev: doc.revision,
+                        epoch: self.generation,
                         doc,
                     },
                     true,
@@ -306,12 +367,19 @@ impl Schedules {
                 let Some(c) = holds.confirmation.take() else {
                     return false;
                 };
-                if !ok || c.occurrence != occ || !en || !self.visible {
+                if !ok
+                    || c.occurrence != occ
+                    || !en
+                    || !self.visible
+                    || c.generation != self.generation
+                {
                     return true;
                 }
                 if let Some(doc) = self.selected_document(holds, ctx).cloned()
                     && doc.id == c.key.schedule_id
+                    && self.is_fresh(&doc.id)
                     && doc.revision == c.expected_revision
+                    && doc.owns_directory(ctx.directory)
                     && self.hold_for(holds, ctx, &doc.id).is_none()
                 {
                     let m = Pre {
@@ -319,6 +387,7 @@ impl Schedules {
                         key: c.key,
                         act: c.action,
                         rev: c.expected_revision,
+                        epoch: self.generation,
                         doc,
                     };
                     if m.act.requires_calendar_check()
@@ -351,46 +420,73 @@ impl Schedules {
 
     pub(crate) fn poll(&mut self, holds: &mut ScheduleHolds, ctx: ScheduleCtx<'_>) -> bool {
         let mut changed = false;
-        if let Some((append, res)) = ready(&mut self.list_flight) {
+        if let Some((append, b, res)) = ready(&mut self.list_flight) {
             changed = true;
             let owed = std::mem::take(&mut self.list_owed);
             match res {
                 Some(Fetch::Ready(page)) => self.accept_page(append, page, holds, ctx),
-                Some(Fetch::AuthExpired) => {
-                    push_auth_expired(&mut self.auth_expired, ctx.backend.clone())
-                }
+                Some(Fetch::AuthExpired) => push_auth_expired(&mut self.auth_expired, b),
                 _ => self.error = true,
             }
             if owed && self.visible {
                 self.start_list(false, ctx);
             }
         }
-        if let Some((sid, res)) = ready(&mut self.point_flight) {
+        if let Some((sid, b, res)) = ready(&mut self.point_flight) {
             changed = true;
-            if self.selected.as_deref() == Some(sid.as_str()) {
+            if matches!(res, Some(ReadOut::AuthExpired)) {
+                push_auth_expired(&mut self.auth_expired, b);
+            } else if self.selected.as_deref() == Some(sid.as_str()) {
                 self.finish_point_read(sid, res, holds, ctx);
             }
         }
-        if let Some(((), res)) = ready(&mut self.cap_flight) {
+        if let Some(((), b, res)) = ready(&mut self.cap_flight) {
             changed = true;
             match res {
-                Some(Fetch::Ready(cap)) => self.capability = Some(cap.ready()),
-                Some(Fetch::AuthExpired) => {
-                    push_auth_expired(&mut self.auth_expired, ctx.backend.clone())
-                }
-                _ => self.capability = Some(false),
+                Some(Fetch::Ready(cap)) => self.capability = Some(cap_state(cap)),
+                Some(Fetch::AuthExpired) => push_auth_expired(&mut self.auth_expired, b),
+                _ => self.capability = Some(Cap::Missing),
             }
         }
-        if let Some((m, res)) = ready(&mut self.pre) {
+        if let Some((m, b, res)) = ready(&mut self.pre) {
             changed = true;
             match res {
-                Some(r) => self.finish_pre(m, r, holds, ctx),
+                Some((Some(ReadOut::AuthExpired), _)) | Some((_, Some(Fetch::AuthExpired))) => {
+                    push_auth_expired(&mut self.auth_expired, b);
+                }
+                Some(r) => self.pending_pre = Some((m, b, r)),
                 None => {
                     self.feedback = Some((m.key.schedule_id, "missions.scheduleList.readFailed"))
                 }
             }
         }
         changed
+    }
+
+    pub(crate) fn commit_pre(
+        &mut self,
+        holds: &mut ScheduleHolds,
+        ctx: ScheduleCtx<'_>,
+        en: bool,
+        auth_expired: &[Backend],
+    ) -> bool {
+        let Some((m, b, out)) = self.pending_pre.take() else {
+            return false;
+        };
+        let auth_hit = auth_expired.iter().any(|x| {
+            x.client.same_connection(&b.client) || x.client.same_connection(&ctx.backend.client)
+        });
+        if auth_hit
+            || !en
+            || !self.visible
+            || m.epoch != self.generation
+            || self.selected.as_deref() != Some(m.key.schedule_id.as_str())
+            || self.hold_for(holds, ctx, &m.key.schedule_id).is_some()
+        {
+            return true;
+        }
+        self.finish_pre(m, out, holds, ctx);
+        true
     }
 
     fn finish_point_read(
@@ -470,12 +566,17 @@ impl Schedules {
                         self.refresh(ctx);
                         return;
                     };
+                    if !doc.owns_directory(ctx.directory) {
+                        self.feedback = Some((m.key.schedule_id, "missions.scheduleList.conflict"));
+                        return;
+                    }
                     if m.act.requires_confirmation() {
                         holds.confirmation = Some(ScheduleConfirmation {
                             occurrence: m.occ,
                             key: m.key,
                             action: m.act,
                             expected_revision: m.rev,
+                            generation: m.epoch,
                             title: doc.configuration.title,
                         });
                         return;
@@ -499,18 +600,27 @@ impl Schedules {
                     return;
                 }
                 Fetch::Ready(c) => {
-                    self.capability = Some(c.ready());
+                    self.capability = Some(cap_state(c));
                     if !self.visible || self.selected.as_deref() != Some(m.key.schedule_id.as_str())
                     {
                         return;
                     }
                     if !c.ready() {
-                        self.feedback =
-                            Some((m.key.schedule_id, "missions.scheduling.capability.missing"));
+                        self.feedback = Some((
+                            m.key.schedule_id,
+                            if c.refused() {
+                                "missions.scheduleList.activationRefused"
+                            } else {
+                                "missions.scheduling.capability.missing"
+                            },
+                        ));
                         return;
                     }
                 }
             }
+        }
+        if !m.doc.owns_directory(ctx.directory) {
+            return;
         }
         self.dispatch_control(m, holds, ctx);
     }
@@ -591,7 +701,9 @@ impl Schedules {
                         self.fresh.insert(id.clone());
                     }
                 }
-                close(&mut self.point_flight);
+                cancel(&mut self.point_flight, &mut self.auth_expired, |r| {
+                    matches!(r, ReadOut::AuthExpired)
+                });
                 let mid = id.clone();
                 self.point_flight = Some(Flight::bg(id, ctx, move |b, d, c| async move {
                     b.mission_schedule_read(&mid, d.as_deref(), None, &c).await
@@ -608,39 +720,51 @@ impl Schedules {
         if append && after.is_none() {
             return;
         }
+        cancel(&mut self.list_flight, &mut self.auth_expired, |r| {
+            matches!(r, Fetch::AuthExpired)
+        });
         self.list_flight = Some(Flight::bg(append, ctx, move |b, d, c| async move {
             b.mission_schedules_page(after.as_deref(), SCHEDULE_PAGE_LIMIT, d.as_deref(), &c)
                 .await
         }));
     }
     fn start_cap(&mut self, ctx: ScheduleCtx<'_>) {
-        close(&mut self.cap_flight);
+        cancel(&mut self.cap_flight, &mut self.auth_expired, |r| {
+            matches!(r, Fetch::AuthExpired)
+        });
         self.cap_flight = Some(Flight::bg((), ctx, move |b, d, c| async move {
             b.mission_schedule_capability(d.as_deref(), &c).await
         }));
     }
     fn start_pre(&mut self, m: Pre, do_read: bool, do_cap: bool, ctx: ScheduleCtx<'_>) {
-        close(&mut self.pre);
+        self.cancel_pre();
         let (b, mid, d, rev) = (
             ctx.backend.clone(),
             m.key.schedule_id.clone(),
             ctx.directory.map(str::to_owned),
             m.rev,
         );
-        self.pre = Some(Flight::spawn(m, ctx.wake.clone(), move |c| async move {
-            let read = if do_read {
-                Some(b.mission_schedule_read(&mid, d.as_deref(), None, &c).await)
-            } else {
-                None
-            };
-            let ok = read.as_ref().is_none_or(|r| matches!(r, ReadOut::Ready(rd) if rd.document.as_ref().is_some_and(|x| x.id == mid && x.revision == rev)));
-            let cap = if do_cap && ok {
-                Some(b.mission_schedule_capability(d.as_deref(), &c).await)
-            } else {
-                None
-            };
-            Some((read, cap))
-        }));
+        self.pre = Some(Flight::spawn(
+            m,
+            ctx.backend.clone(),
+            ctx.wake.clone(),
+            move |c| async move {
+                let read = if do_read {
+                    Some(b.mission_schedule_read(&mid, d.as_deref(), None, &c).await)
+                } else {
+                    None
+                };
+                let ok = read.as_ref().is_none_or(|r| {
+                    matches!(r, ReadOut::Ready(rd) if rd.document.as_ref().is_some_and(|x| x.id == mid && x.revision == rev))
+                });
+                let cap = if do_cap && ok {
+                    Some(b.mission_schedule_capability(d.as_deref(), &c).await)
+                } else {
+                    None
+                };
+                Some((read, cap))
+            },
+        ));
     }
     fn dispatch_control(&mut self, m: Pre, holds: &mut ScheduleHolds, ctx: ScheduleCtx<'_>) {
         if !holds.has_capacity_for(&m.key) {
@@ -655,11 +779,26 @@ impl Schedules {
         holds.dispatch_control(m.key, m.occ, req, m.doc, ctx);
     }
     fn cancel_flights(&mut self) {
-        close(&mut self.list_flight);
+        cancel(&mut self.list_flight, &mut self.auth_expired, |r| {
+            matches!(r, Fetch::AuthExpired)
+        });
         self.list_owed = false;
-        close(&mut self.point_flight);
-        close(&mut self.cap_flight);
-        close(&mut self.pre);
+        cancel(&mut self.point_flight, &mut self.auth_expired, |r| {
+            matches!(r, ReadOut::AuthExpired)
+        });
+        cancel(&mut self.cap_flight, &mut self.auth_expired, |r| {
+            matches!(r, Fetch::AuthExpired)
+        });
+        self.cancel_pre();
+    }
+}
+fn cap_state(c: ScheduleCapability) -> Cap {
+    if c.ready() {
+        Cap::Available
+    } else if c.refused() {
+        Cap::Refused
+    } else {
+        Cap::Missing
     }
 }
 impl Drop for Schedules {

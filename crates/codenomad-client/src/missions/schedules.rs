@@ -150,6 +150,9 @@ pub struct ScheduleDeletionReceipt {
 pub enum LaunchItem {
     Now,
     Cron(String, String),
+    At(u64, String),
+    In(u64),
+    Every(u64),
     Condition(String, String, String),
 }
 impl LaunchItem {
@@ -164,45 +167,63 @@ pub struct LaunchPolicy {
     pub requires_calendar: bool,
     pub launch_limit: Option<u64>,
     pub has_events: bool,
+    pub until: Option<u64>,
+    pub end_after_ms: Option<u64>,
 }
 impl LaunchPolicy {
     pub fn from_value(raw: &Value) -> std::result::Result<Self, String> {
-        let (items, requires_calendar, launch_limit) = if let Some(w) = raw["when"].as_array() {
-            let items: Vec<_> = w
-                .iter()
-                .map(parse_crit)
-                .collect::<std::result::Result<_, _>>()?;
-            let one_now = items.len() == 1 && matches!(items[0], LaunchItem::Now);
-            let cal = !items.is_empty() && !one_now;
-            (items, cal, (!cal).then_some(1))
-        } else if let Some(k) = raw["timing"]["kind"].as_str() {
-            let cal = k != "immediate" || raw.get("condition").is_some_and(|v| !v.is_null());
-            let mut items = Vec::new();
-            if k == "cron" {
-                items.push(parse_cron(&raw["timing"])?);
-            } else if k != "immediate" {
-                items.push(LaunchItem::Condition(
-                    k.into(),
-                    format!("missions.scheduling.frequency.{k}"),
-                    String::new(),
-                ));
-            }
-            if let Some(c) = raw.get("condition").filter(|v| !v.is_null()) {
-                items.push(parse_cond(c)?);
-            }
-            let lim = raw["ends"]["maxLaunches"]
-                .as_u64()
-                .or_else(|| (!cal).then_some(1));
-            (items, cal, lim)
-        } else {
-            return Err("launch".into());
-        };
+        let (items, requires_calendar, launch_limit, until, end_after_ms) =
+            if let Some(w) = raw["when"].as_array() {
+                let items: Vec<_> = w
+                    .iter()
+                    .map(parse_crit)
+                    .collect::<std::result::Result<_, _>>()?;
+                let one_now = items.len() == 1 && matches!(items[0], LaunchItem::Now);
+                let cal = !items.is_empty() && !one_now;
+                (items, cal, (!cal).then_some(1), None, None)
+            } else if let Some(k) = raw["timing"]["kind"].as_str() {
+                let t = &raw["timing"];
+                let mut items = match k {
+                    "immediate" => Vec::new(),
+                    "cron" => vec![parse_cron(t)?],
+                    "at" => vec![LaunchItem::At(
+                        t["at"].as_u64().ok_or("at")?,
+                        t["zone"].as_str().ok_or("z")?.into(),
+                    )],
+                    "in" => vec![LaunchItem::In(t["delayMs"].as_u64().ok_or("delay")?)],
+                    "every" => vec![LaunchItem::Every(t["intervalMs"].as_u64().ok_or("int")?)],
+                    "multi" => t["calendars"]
+                        .as_array()
+                        .ok_or("cals")?
+                        .iter()
+                        .map(parse_cron)
+                        .collect::<std::result::Result<Vec<_>, _>>()?,
+                    _ => return Err("timing".into()),
+                };
+                if let Some(c) = raw.get("condition").filter(|v| !v.is_null()) {
+                    items.push(parse_cond(c)?);
+                }
+                let cal = !items.is_empty();
+                let repeats = matches!(k, "every" | "cron" | "multi");
+                let lim = if !cal || !repeats {
+                    Some(1)
+                } else {
+                    raw["ends"]["maxLaunches"].as_u64()
+                };
+                let until = raw["ends"]["at"].as_u64();
+                let end_after_ms = raw["ends"]["afterMs"].as_u64();
+                (items, cal, lim, until, end_after_ms)
+            } else {
+                return Err("launch".into());
+            };
         let has_events = items.iter().any(|i| !i.is_schedule());
         Ok(Self {
             items,
             requires_calendar,
             launch_limit,
             has_events,
+            until,
+            end_after_ms,
         })
     }
     pub fn connected_items(&self) -> Vec<(Option<&'static str>, &LaunchItem)> {
@@ -278,10 +299,17 @@ fn parse_cond(v: &Value) -> std::result::Result<LaunchItem, String> {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct ScheduleRoot {
+    pub directory: String,
+}
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ScheduleConfiguration {
     pub title: String,
     pub objective: String,
     pub notes: Option<String>,
+    #[serde(default)]
+    pub roots: Vec<ScheduleRoot>,
     #[serde(deserialize_with = "de_launch")]
     pub launch: LaunchPolicy,
 }
@@ -292,6 +320,8 @@ pub struct UnifiedSchedule {
     pub kind: String,
     pub revision: u64,
     pub state: ScheduleState,
+    pub first_played_at: Option<u64>,
+    pub one_shot_at: Option<u64>,
     pub slot_ends_at: Option<u64>,
     #[serde(default)]
     pub launched_count: u64,
@@ -311,6 +341,14 @@ pub struct UnifiedSchedule {
 impl UnifiedSchedule {
     pub fn is_schedule(&self) -> bool {
         self.kind == "schedule"
+    }
+    pub fn owns_directory(&self, dir: Option<&str>) -> bool {
+        dir.is_some_and(|d| {
+            self.configuration
+                .roots
+                .iter()
+                .any(|r| crate::same_server_path(&r.directory, d))
+        })
     }
     pub fn owns_session(&self, sid: &str) -> bool {
         self.pending_passage
@@ -347,10 +385,15 @@ pub struct ScheduleListPage {
 pub struct ScheduleCapability {
     pub api_available: bool,
     pub enabled: bool,
+    pub activation_available: bool,
+    pub activation_refused: bool,
 }
 impl ScheduleCapability {
     pub const fn ready(self) -> bool {
-        self.api_available && self.enabled
+        self.api_available && self.enabled && self.activation_available && !self.activation_refused
+    }
+    pub const fn refused(self) -> bool {
+        self.api_available && !self.activation_available && self.activation_refused
     }
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -550,9 +593,13 @@ fn parse_read(b: &Value) -> std::result::Result<ScheduleRead, String> {
         .ok_or_else(|| "doc".into())
 }
 fn parse_cap(b: &Value) -> std::result::Result<ScheduleCapability, String> {
+    let act = &b["activation"];
     Ok(ScheduleCapability {
         api_available: b["api"]["available"].as_bool().ok_or("api")?,
         enabled: b["enabled"].as_bool().ok_or("enabled")?,
+        activation_available: act["available"].as_bool().ok_or("activation")?,
+        activation_refused: act["refusal"].is_object()
+            || act["code"].as_str() == Some("schedule-activation-refused"),
     })
 }
 
@@ -755,7 +802,7 @@ mod tests {
     }
     fn sample(id: &str, rev: u64, control: &str) -> Value {
         js(&format!(
-            r#"{{"id":"{id}","kind":"schedule","revision":{rev},"state":"paused","firstPlayedAt":1700000000000,"oneShotAt":null,"slotEndsAt":null,"launchedCount":2,"successfulCount":1,"checks":null,"configuration":{{"title":"Nightly audit","objective":"Audit changes","notes":"Server crates","launch":{{"when":[{{"kind":"cron","expression":"0 9 * * *","zone":"UTC"}},{{"kind":"files-changed","paths":["src/main.rs"]}},{{"kind":"cron","expression":"0 18 * * *","zone":"UTC"}}]}}}},"observation":{{"state":"known","nativeStatus":"paused","nextDueAt":1700003600000,"kind":"check"}},"availableActions":["resume","stop","run-now","delete","configure"],"blockReason":null,"pendingPassage":null,"history":[{{"id":"psg_1","coordinatorSessionID":"ses_c1","dueAt":1700000000000,"outcome":"completed"}}],"control":{control}}}"#
+            r#"{{"id":"{id}","kind":"schedule","revision":{rev},"state":"paused","firstPlayedAt":1700000000000,"oneShotAt":null,"slotEndsAt":null,"launchedCount":2,"successfulCount":1,"checks":null,"configuration":{{"title":"Nightly audit","objective":"Audit changes","notes":"Server crates","roots":[{{"mode":"directory-only","directory":"/owned"}}],"launch":{{"when":[{{"kind":"cron","expression":"0 9 * * *","zone":"UTC"}},{{"kind":"files-changed","paths":["src/main.rs"]}},{{"kind":"cron","expression":"0 18 * * *","zone":"UTC"}}]}}}},"observation":{{"state":"known","nativeStatus":"paused","nextDueAt":1700003600000,"kind":"check"}},"availableActions":["resume","stop","run-now","delete","configure"],"blockReason":null,"pendingPassage":null,"history":[{{"id":"psg_1","coordinatorSessionID":"ses_c1","dueAt":1700000000000,"outcome":"completed"}}],"control":{control}}}"#
         ))
     }
 
@@ -774,6 +821,9 @@ mod tests {
             d.is_schedule()
                 && l.requires_calendar
                 && l.has_events
+                && d.owns_directory(Some("/owned"))
+                && !d.owns_directory(Some("/other"))
+                && !d.owns_directory(None)
                 && d.owns_session("ses_c1")
                 && !d.owns_session("ses_x")
         );
@@ -787,12 +837,30 @@ mod tests {
             ]
         );
         let now = LaunchPolicy::from_value(&js(r#"{"when":[{"kind":"now"}]}"#)).unwrap();
-        let leg = LaunchPolicy::from_value(&js(r#"{"timing":{"kind":"every","intervalMs":3600000},"condition":{"kind":"branch-commits","directory":"/r","ref":"refs/heads/main"},"ends":{"at":1800000000000,"afterMs":null,"maxLaunches":5}}"#)).unwrap();
+        let leg = LaunchPolicy::from_value(&js(r#"{"timing":{"kind":"every","intervalMs":3600000},"condition":{"kind":"branch-commits","directory":"/r","ref":"refs/heads/main"},"ends":{"at":1800000000000,"afterMs":600000,"maxLaunches":5}}"#)).unwrap();
+        let leg_cs: Vec<_> = leg.connected_items().into_iter().map(|(c, _)| c).collect();
+        let pure_ev = LaunchPolicy::from_value(&js(r#"{"timing":{"kind":"every","intervalMs":3600000},"condition":null,"ends":{"at":null,"afterMs":null,"maxLaunches":null}}"#)).unwrap();
+        let multi = LaunchPolicy::from_value(&js(r#"{"timing":{"kind":"multi","calendars":[{"expression":"0 9 * * *","zone":"UTC"},{"expression":"0 18 * * *","zone":"UTC"}]},"condition":null,"ends":{"at":null,"afterMs":null,"maxLaunches":null}}"#)).unwrap();
         assert!(
             !now.requires_calendar
                 && now.launch_limit == Some(1)
                 && leg.requires_calendar
+                && leg.has_events
+                && leg_cs == [None, Some("missions.scheduling.connector.if")]
                 && leg.launch_limit == Some(5)
+                && leg.until == Some(1800000000000)
+                && leg.end_after_ms == Some(600000)
+                && !pure_ev.has_events
+                && multi.items.len() == 2
+                && !multi.has_events
+        );
+        let masked_cap = parse_cap(&js(r#"{"api":{"available":true},"enabled":true,"activation":{"available":false,"reason":"forbidden","code":"schedule-activation-refused","refusal":{"reason":"masked"}}}"#)).unwrap();
+        let ready_cap = parse_cap(&js(r#"{"api":{"available":true},"enabled":true,"activation":{"available":true,"targets":[]}}"#)).unwrap();
+        assert!(
+            !masked_cap.ready()
+                && masked_cap.refused()
+                && ready_cap.ready()
+                && !ready_cap.refused()
         );
         list["schedules"] = Value::Array(
             (0..9)

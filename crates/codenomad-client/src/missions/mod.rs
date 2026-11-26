@@ -54,6 +54,6 @@ pub use schedules::{
     ScheduleChecks, ScheduleConfiguration, ScheduleControlOutcome, ScheduleControlRequest,
     ScheduleControlState, ScheduleDeletionReceipt, ScheduleFetch, ScheduleListPage,
     ScheduleObservation, SchedulePassageReceipt, SchedulePendingPassage, ScheduleRead,
-    ScheduleReadOutcome, ScheduleState, UnifiedSchedule, classify_schedule_control_read,
-    valid_schedule_id, valid_schedule_request_id,
+    ScheduleReadOutcome, ScheduleRoot, ScheduleState, UnifiedSchedule,
+    classify_schedule_control_read, valid_schedule_id, valid_schedule_request_id,
 };

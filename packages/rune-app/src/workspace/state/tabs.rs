@@ -273,6 +273,14 @@ fn close_inner(s: &mut State, id: &str, allow_uncertain_creation: bool, tx: &mut
     let mut removed = ui.entries.remove(index);
     s.notifications.forget_tab(id);
     ui.mission_editor.revoke_auto_start_for_occurrence(id);
+    if ui
+        .mission_schedules
+        .confirmation
+        .as_ref()
+        .is_some_and(|c| c.occurrence == id)
+    {
+        ui.mission_schedules.confirmation = None;
+    }
     let mut dropped_auth = Vec::new();
     if let Some(mut panel) = removed.missions.take() {
         panel.suspend();
@@ -317,6 +325,7 @@ fn close_inner(s: &mut State, id: &str, allow_uncertain_creation: bool, tx: &mut
         });
         if !still_referenced {
             ui.mission_editor.retire_creation_workspace(&ws_backend);
+            ui.mission_schedules.retire_workspace(&ws_backend);
         }
         platform::spawn(async move {
             let _ = backend.release_project(&project.id).await;
@@ -367,7 +376,14 @@ fn close_blocked_inner(s: &State, index: usize, allow_uncertain_creation: bool) 
                 .creation(&panel.creation_scope_key())
                 .is_some()
         };
-        creation_blocks || panel.has_unsaved_editor_draft(&ui.mission_editor)
+        let sched_blocks = if masked_by_auth_or_launcher {
+            ui.mission_schedules
+                .has_in_flight_control_for_workspace(&panel.backend)
+        } else {
+            ui.mission_schedules
+                .has_unresolved_control_for_workspace(&panel.backend)
+        };
+        creation_blocks || sched_blocks || panel.has_unsaved_editor_draft(&ui.mission_editor)
     }) {
         return true;
     }
@@ -378,12 +394,20 @@ fn close_blocked_inner(s: &State, index: usize, allow_uncertain_creation: bool) 
         .is_some_and(|(backend, project)| {
             let mut ws_backend = backend.clone();
             ws_backend.workspace.clone_from(&project.id);
-            if allow_uncertain {
+            let ed_blocks = if allow_uncertain {
                 ui.mission_editor
                     .has_in_flight_creation_for_workspace(&ws_backend)
             } else {
                 ui.mission_editor.has_creation_for_workspace(&ws_backend)
-            }
+            };
+            let sched_blocks = if masked_by_auth_or_launcher {
+                ui.mission_schedules
+                    .has_in_flight_control_for_workspace(&ws_backend)
+            } else {
+                ui.mission_schedules
+                    .has_unresolved_control_for_workspace(&ws_backend)
+            };
+            ed_blocks || sched_blocks
         })
     {
         return true;

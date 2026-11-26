@@ -6,7 +6,7 @@ mod view;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use list::{ScheduleCtx, Schedules};
+pub(crate) use list::{Cap, ScheduleCtx, Schedules};
 pub(crate) use view::{confirmation, detail_section, list_section};
 
 use crate::platform;
@@ -78,6 +78,7 @@ pub(crate) struct ScheduleConfirmation {
     pub key: ScheduleHoldKey,
     pub action: Act,
     pub expected_revision: u64,
+    pub generation: u64,
     pub title: String,
 }
 
@@ -116,6 +117,7 @@ enum Reply {
 
 struct Entry {
     phase: ScheduleHoldPhase,
+    workspace: String,
     doc: UnifiedSchedule,
     min_rev: Option<u64>,
     checking: bool,
@@ -135,6 +137,41 @@ impl ScheduleHolds {
     }
     pub(crate) fn has_capacity_for(&self, key: &ScheduleHoldKey) -> bool {
         self.entries.len() < HOLD_CAPACITY || self.entries.contains_key(key)
+    }
+    pub(crate) fn has_unresolved_control_for_workspace(&self, b: &Backend) -> bool {
+        let srv = owner(b);
+        self.entries.iter().any(|(k, e)| {
+            k.server == srv
+                && e.workspace == b.workspace
+                && matches!(e.phase, ScheduleHoldPhase::Control(..))
+        })
+    }
+    pub(crate) fn has_in_flight_control_for_workspace(&self, b: &Backend) -> bool {
+        let srv = owner(b);
+        self.entries.iter().any(|(k, e)| {
+            k.server == srv
+                && e.workspace == b.workspace
+                && e.checking
+                && matches!(e.phase, ScheduleHoldPhase::Control(..))
+        })
+    }
+    pub(crate) fn retire_workspace(&mut self, b: &Backend) {
+        let srv = owner(b);
+        self.entries.retain(|k, e| {
+            if k.server == srv && e.workspace == b.workspace {
+                if let Some((fb, rx)) = e.flight.take()
+                    && let Ok(
+                        Reply::Ctrl(_, _, _, CtrlOut::AuthExpired)
+                        | Reply::Read(_, ReadOut::AuthExpired),
+                    ) = rx.try_recv()
+                {
+                    push_auth_expired(&mut self.auth_expired, fb);
+                }
+                false
+            } else {
+                true
+            }
+        });
     }
     pub(crate) fn held_documents<'a>(
         &'a self,
@@ -198,6 +235,7 @@ impl ScheduleHolds {
         let min_rev = self.entries.get(&key).and_then(|e| e.min_rev);
         let entry = Entry {
             phase: ScheduleHoldPhase::Control(req, false),
+            workspace: ctx.backend.workspace.clone(),
             doc,
             min_rev,
             checking: true,
@@ -212,7 +250,7 @@ impl ScheduleHolds {
         let Some(e) = self.entries.get_mut(key) else {
             return false;
         };
-        if e.checking {
+        if e.checking || e.workspace != ctx.backend.workspace {
             return false;
         }
         match &e.phase {

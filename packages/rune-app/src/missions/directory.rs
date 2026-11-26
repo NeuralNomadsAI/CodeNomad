@@ -48,14 +48,14 @@ struct Completion {
 }
 
 pub(crate) struct Panel {
-    pub(super) backend: Backend,
+    pub(crate) backend: Backend,
     pub(super) reads: Reads,
     pub(super) wake: Wake,
     out: Sender<Completion>,
     incoming: Receiver<Completion>,
     pub(super) project: Option<String>,
     pub(super) owner_scope: String,
-    directory: Option<String>,
+    pub(super) directory: Option<String>,
     serial: u64,
     visible: bool,
     refresh_due: Option<f64>,
@@ -216,6 +216,7 @@ impl Panel {
     ) {
         self.reader.close();
         self.detail.cancel_lookup();
+        self.schedules.cancel_pre();
         self.editor_suspended = false;
         let scope = self.creation_scope_key();
         self.editor.open_create(
@@ -258,6 +259,7 @@ impl Panel {
         }
         self.reader.close();
         self.detail.cancel_lookup();
+        self.schedules.cancel_pre();
         self.editor_suspended = false;
         let scope = self.creation_scope_key();
         if let Some(snapshot) = self.detail.snapshot.as_ref()
@@ -513,6 +515,7 @@ impl Panel {
 
     pub(crate) fn reopen_editor(&mut self, holds: &EditorHolds) {
         if self.editor.begin_reopen(&self.backend, holds, 0) {
+            self.schedules.cancel_pre();
             if let Some(mid) = self.editor.editing_mission_id().map(str::to_owned)
                 && self.selected.as_deref() != Some(mid.as_str())
             {
@@ -1480,6 +1483,39 @@ impl Panel {
             self.project = self.schedules.project_id.clone();
         }
         changed
+    }
+
+    pub(crate) fn commit_schedule_pre(
+        &mut self,
+        holds: &mut super::schedules::ScheduleHolds,
+        en: bool,
+        auth_expired: &[Backend],
+    ) -> bool {
+        let allow = en && !self.editor.is_open();
+        let (s, c) = self.schedule_parts();
+        s.commit_pre(holds, c, allow, auth_expired)
+    }
+
+    pub(crate) fn schedule_confirmation_valid(
+        &self,
+        holds: &super::schedules::ScheduleHolds,
+        c: &super::schedules::ScheduleConfirmation,
+    ) -> bool {
+        !self.editor.is_open()
+            && self.schedules.visible()
+            && self.schedules.generation == c.generation
+            && self.selected_schedule_hold_key().as_ref() == Some(&c.key)
+            && self.schedules.is_fresh(&c.key.schedule_id)
+            && self
+                .schedules
+                .selected_document(holds, self.schedule_ctx())
+                .is_some_and(|d| {
+                    d.revision == c.expected_revision && d.owns_directory(self.directory.as_deref())
+                })
+            && self
+                .schedules
+                .hold_for(holds, self.schedule_ctx(), &c.key.schedule_id)
+                .is_none()
     }
 
     pub(crate) fn apply_schedule_hold_events(

@@ -326,6 +326,7 @@ fn mission_editor_act(s: &mut State, gesture: missions::EditorGesture, tx: &mut 
         if let Some(panel) = entry.missions.as_mut() {
             opened = panel.editor_gesture(&entry.key, &mut ui.mission_editor, gesture);
             if opening && opened {
+                ui.mission_schedules.confirmation = None;
                 focus_target = panel.take_editor_initial_focus();
             }
         }
@@ -396,12 +397,13 @@ pub(crate) fn mission_confirmation(s: &State) -> Option<El> {
     {
         return missions::briefing_confirmation(&ui.mission_briefing, briefing_act);
     }
-    if let Some(selected_key) = panel.selected_schedule_hold_key()
-        && ui
-            .mission_schedules
-            .confirmation
-            .as_ref()
-            .is_some_and(|confirm| confirm.occurrence == entry.key && confirm.key == selected_key)
+    if !mission_context_blocked(s)
+        && let Some(selected_key) = panel.selected_schedule_hold_key()
+        && ui.mission_schedules.confirmation.as_ref().is_some_and(|c| {
+            c.occurrence == entry.key
+                && c.key == selected_key
+                && panel.schedule_confirmation_valid(&ui.mission_schedules, c)
+        })
     {
         return missions::schedule_confirmation(&ui.mission_schedules, mission_schedule_act);
     }
@@ -728,17 +730,6 @@ pub(super) fn poll_missions(
     };
     changed |= schedules_changed;
     extend_unique_auth(&mut auth_expired, ui.mission_schedules.drain_auth_expired());
-    let keep_confirm = ui.mission_schedules.confirmation.as_ref().is_some_and(|c| {
-        !blocked
-            && mounted
-            && matches!(&ui.entries[ui.active].saved, Tab::Workspace(s) if s.view.right_panel == RightPanelTab::Missions)
-            && ui.entries[ui.active].key == c.occurrence
-            && ui.entries[ui.active].missions.as_ref().and_then(missions::Panel::selected_schedule_hold_key).as_ref() == Some(&c.key)
-    });
-    if ui.mission_schedules.confirmation.is_some() && !keep_confirm {
-        ui.mission_schedules.confirmation = None;
-        changed = true;
-    }
 
     let (editor_changed, editor_events) = {
         let active_entry = &ui.entries[ui.active];
@@ -757,6 +748,21 @@ pub(super) fn poll_missions(
     extend_unique_auth(&mut auth_expired, ui.mission_editor.drain_auth_expired());
 
     let any_auth_expired = !auth_expired.is_empty();
+    let keep_confirm = ui.mission_schedules.confirmation.as_ref().is_some_and(|c| {
+        !any_auth_expired
+            && !blocked
+            && mounted
+            && matches!(&ui.entries[ui.active].saved, Tab::Workspace(s) if s.view.right_panel == RightPanelTab::Missions)
+            && ui.entries[ui.active].key == c.occurrence
+            && ui.entries[ui.active]
+                .missions
+                .as_ref()
+                .is_some_and(|p| p.schedule_confirmation_valid(&ui.mission_schedules, c))
+    });
+    if ui.mission_schedules.confirmation.is_some() && !keep_confirm {
+        ui.mission_schedules.confirmation = None;
+        changed = true;
+    }
     if active_polled {
         let entry = &mut ui.entries[ui.active];
         if let (Tab::Workspace(saved), Some(panel)) = (&mut entry.saved, &mut entry.missions) {
@@ -764,6 +770,17 @@ pub(super) fn poll_missions(
                 changed |= panel.commit_editor_submit(&mut ui.mission_editor, &auth_expired);
             }
             changed |= panel.apply_editor_events(&entry.key, &editor_events);
+            if panel.commit_schedule_pre(
+                &mut ui.mission_schedules,
+                active_visible && !blocked && panel.supported(),
+                &auth_expired,
+            ) {
+                changed = true;
+                if ui.mission_schedules.confirmation.is_some() {
+                    ui.mission_lifecycle.confirmation = None;
+                    ui.mission_briefing.confirmation = None;
+                }
+            }
             changed |= panel.apply_schedule_hold_events(&schedule_events);
             if let Some(text) = panel.take_reader_copy()
                 && !any_auth_expired
