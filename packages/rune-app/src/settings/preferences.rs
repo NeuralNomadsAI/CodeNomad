@@ -1380,6 +1380,21 @@ impl Preferences {
     }
 
     #[cfg(test)]
+    pub(super) fn fixture_appearance(
+        &mut self,
+        light_scheme: &str,
+        dark_scheme: &str,
+        high_contrast: &str,
+    ) {
+        self.config.snapshot =
+            Some(json!({"settings":{"locale":"en","highContrast":high_contrast}}));
+        self.state.snapshot = Some(
+            json!({"appearancePreferences":{"mode":"system","light":{"scheme":{"id":light_scheme}},"dark":{"scheme":{"id":dark_scheme}}}}),
+        );
+        self.revision += 1;
+    }
+
+    #[cfg(test)]
     pub(super) fn fixture_mode(&mut self, mode: &'static str) {
         if let Some(state) = &mut self.state.snapshot {
             state["appearancePreferences"]["mode"] = json!(mode);

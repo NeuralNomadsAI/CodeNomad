@@ -28,9 +28,9 @@ pub(crate) fn reasoning_visible(s: &State) -> bool {
     settings::transcript_mode(s, TranscriptRow::Thinking) != "hidden"
 }
 
-pub(crate) fn part_visible(s: &State, row: &Row, index: usize) -> bool {
+pub(crate) fn part_visible(s: &State, rows: &[Row], row: &Row, index: usize) -> bool {
     match &row.parts[index] {
-        Part::Tool(tool) => super::tools::visible(s, &row.id, tool),
+        Part::Tool(tool) => super::tools::visible_in_rows(s, rows, &row.id, tool),
         Part::Reasoning(_) => reasoning_visible(s),
         _ => true,
     }
@@ -199,7 +199,18 @@ pub(crate) fn collapsed_group_target(
     shown_steps: usize,
     part: usize,
 ) -> Option<(String, String)> {
-    super::tool_groups::Groups::project_with_steps(s, rows, Some((row_index, shown_steps)))
+    collapsed_group_target_at(s, rows, !s.history_detached, row_index, shown_steps, part)
+}
+
+pub(crate) fn collapsed_group_target_at(
+    s: &State,
+    rows: &[Row],
+    at_tail: bool,
+    row_index: usize,
+    shown_steps: usize,
+    part: usize,
+) -> Option<(String, String)> {
+    super::tool_groups::Groups::project_with_steps(s, rows, at_tail, Some((row_index, shown_steps)))
         .collapsed_target(s, row_index, part)
 }
 

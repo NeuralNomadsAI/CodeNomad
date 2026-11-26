@@ -557,10 +557,13 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             |s: &mut Window, focused, _| {
                 if !focused {
                     s.recording_shortcut = false;
-                } else if s.section == Section::OpenCode {
-                    s.check_opencode(Some(false));
-                } else if focused && s.section == Section::General {
-                    s.shared.borrow_mut().memory.invalidate();
+                } else {
+                    codenomad_client::stream::probe_stale();
+                    if s.section == Section::OpenCode {
+                        s.check_opencode(Some(false));
+                    } else if s.section == Section::General {
+                        s.shared.borrow_mut().memory.invalidate();
+                    }
                 }
             },
         )

@@ -1,4 +1,4 @@
-use super::{INSET, LINE_HEIGHT, code_kit, drawing_width};
+use super::{drawing_width, metrics};
 use rune::TextStyle;
 use rune::text::{RichLayoutOptions, TextSystem};
 use std::cell::RefCell;
@@ -21,6 +21,7 @@ pub struct LineAnchor {
 pub struct SourceLayout {
     wrap_width: Option<f32>,
     style: TextStyle,
+    padding: f32,
 }
 
 struct LayoutCache {
@@ -113,13 +114,13 @@ fn with_line_layout<R>(
 
 impl SourceLayout {
     pub fn new(dark: bool, text: &str, wrap: bool, width: Option<f32>) -> Self {
-        let mut style = code_kit(dark).ty.ui;
-        style.line_height = LINE_HEIGHT;
+        let m = metrics(dark);
         Self {
             wrap_width: width
                 .filter(|w| wrap && w.is_finite())
-                .map(|w| (drawing_width(dark, text, w) - 2.0 * INSET).max(1.0)),
-            style,
+                .map(|w| (drawing_width(dark, text, w) - 2.0 * m.padding).max(1.0)),
+            style: m.style,
+            padding: m.padding,
         }
     }
 
@@ -137,7 +138,7 @@ impl SourceLayout {
     }
 
     pub fn capture(self, text: &str, offset: f32) -> Option<LineAnchor> {
-        let mut delta = offset - INSET;
+        let mut delta = offset - self.padding;
         if !delta.is_finite() || delta < 0.0 {
             return None;
         }
@@ -185,7 +186,7 @@ impl SourceLayout {
     }
 
     pub fn restore(self, text: &str, anchor: LineAnchor) -> Option<f32> {
-        let mut y = INSET;
+        let mut y = self.padding;
         for (line, raw) in text.split('\n').enumerate() {
             let trimmed = raw.trim_end_matches('\r');
             if line == anchor.line {
@@ -247,8 +248,9 @@ mod tests {
 
     #[test]
     fn segment_anchor_matches_parley_row_starts_across_widths_and_punctuation() {
-        let mut style = code_kit(false).ty.ui;
-        style.line_height = LINE_HEIGHT;
+        let m = metrics(false);
+        let style = m.style;
+        let inset = m.padding;
         // Initialize measure state before checking font_epoch invariance.
         let _ = rune::text::advance("0", style);
         let epoch_before = rune::text::font_epoch();
@@ -272,9 +274,10 @@ mod tests {
                 let layout = SourceLayout {
                     wrap_width: Some(width),
                     style,
+                    padding: inset,
                 };
                 for (row, (range, top)) in rows.iter().enumerate() {
-                    let y = INSET + top + 3.5;
+                    let y = inset + top + 3.5;
                     let anchor = layout.capture(sample, y).expect("anchor");
                     assert_eq!(anchor.line, 0);
                     assert!(
@@ -297,9 +300,10 @@ mod tests {
                         let target_layout = SourceLayout {
                             wrap_width: Some(target_width),
                             style,
+                            padding: inset,
                         };
                         let restored = target_layout.restore(sample, anchor).expect("restored");
-                        let expected_y = INSET + expected_top + 3.5;
+                        let expected_y = inset + expected_top + 3.5;
                         assert!(
                             (restored - expected_y).abs() < 0.01,
                             "width={width}->{target_width} row={row} start={} expected_y={expected_y} got {restored} in {sample:?}",
@@ -314,43 +318,48 @@ mod tests {
 
     #[test]
     fn segment_anchor_handles_crlf_leading_line_separators_unwrapped_and_non_finite() {
-        let mut style = code_kit(false).ty.ui;
-        style.line_height = LINE_HEIGHT;
+        let m = metrics(false);
+        let style = m.style;
+        let inset = m.padding;
+        let line_height = style.line_px();
         let mut oracle = build_text_system(style);
         let first_line = "alpha beta gamma ".repeat(20);
         let text = format!("{first_line}\r\nsecond");
         let narrow = SourceLayout {
             wrap_width: Some(150.0),
             style,
+            padding: inset,
         };
         let wide = SourceLayout {
             wrap_width: Some(320.0),
             style,
+            padding: inset,
         };
         let unwrapped = SourceLayout {
             wrap_width: None,
             style,
+            padding: inset,
         };
         let row5_top = layout_rows(&mut oracle, &first_line, style, 150.0)[5].1;
-        let anchor = narrow.capture(&text, INSET + row5_top + 2.0).unwrap();
+        let anchor = narrow.capture(&text, inset + row5_top + 2.0).unwrap();
         assert_eq!(anchor.line, 0);
         assert!(anchor.column > 0);
         assert!((anchor.subline - 2.0).abs() < 0.01);
         let wide_y = wide.restore(&text, anchor).unwrap();
-        assert!(wide_y > INSET + LINE_HEIGHT && wide_y < INSET + row5_top);
-        assert_eq!(unwrapped.restore(&text, anchor), Some(INSET + 2.0));
+        assert!(wide_y > inset + line_height && wide_y < inset + row5_top);
+        assert_eq!(unwrapped.restore(&text, anchor), Some(inset + 2.0));
         let shortened = "short\r\nsecond";
-        assert_eq!(narrow.restore(shortened, anchor), Some(INSET + 2.0));
+        assert_eq!(narrow.restore(shortened, anchor), Some(inset + 2.0));
 
         // Leading Unicode line/paragraph separators capture row 1 with its own subline.
         for sep in ['\u{2028}', '\u{2029}'] {
             let line = format!("{sep}x");
-            let anchor = unwrapped.capture(&line, INSET + LINE_HEIGHT + 2.0).unwrap();
+            let anchor = unwrapped.capture(&line, inset + line_height + 2.0).unwrap();
             assert_eq!(anchor.line, 0);
             assert_eq!(anchor.column, 1);
             assert!((anchor.subline - 1.5).abs() <= 0.6, "{anchor:?}");
             let replaced = unwrapped.restore("x", anchor).unwrap();
-            assert!((replaced - (INSET + anchor.subline)).abs() < 0.01);
+            assert!((replaced - (inset + anchor.subline)).abs() < 0.01);
         }
 
         // Non-finite inputs fail safely.

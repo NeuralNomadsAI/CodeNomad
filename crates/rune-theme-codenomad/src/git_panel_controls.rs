@@ -176,7 +176,7 @@ pub fn section_button<S: 'static>(
         .border_layout();
     Button::new(label)
         .variant(ButtonVariant::GhostMuted)
-        .control_size(ControlSize::Large)
+        .control_size(ControlSize::Regular)
         .expanded(open)
         .label_with(move |_, ink| {
             row()
