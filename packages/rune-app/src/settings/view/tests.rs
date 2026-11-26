@@ -623,6 +623,7 @@ fn pending_permissions_keep_tab_focus_and_refuse_new_selections() {
         "Tab navigation still includes the pending control"
     );
     press(&mut rt, rune::Key::Enter);
+    press(&mut rt, rune::Key::Down);
     let (x, y) = rt.find(KEY).unwrap();
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
@@ -631,6 +632,40 @@ fn pending_permissions_keep_tab_focus_and_refuse_new_selections() {
     assert_eq!(
         rt.state.shared.borrow().new_conversation_permissions(),
         "autonomous"
+    );
+}
+
+#[test]
+fn behavior_permissions_picker_steps_closed_without_opening_popup() {
+    const KEY: &str = "new-conversation-permissions-trigger";
+    let state = Window::default();
+    {
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture_locale("en");
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    rt.update(|_, tx| tx.focus(KEY, true));
+    rt.frame(0.02);
+    assert!(
+        !rt.state
+            .shared
+            .borrow()
+            .new_conversation_permissions_pending()
+    );
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Down,
+        mods: Default::default(),
+    });
+    rt.frame(0.02);
+    assert!(listbox(&rt.accessibility_json()).is_none());
+    assert!(
+        rt.state
+            .shared
+            .borrow()
+            .new_conversation_permissions_pending()
     );
 }
 

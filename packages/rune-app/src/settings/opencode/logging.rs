@@ -42,7 +42,7 @@ impl Logging {
         let press = toggle.clone();
         let (choose, retry) = (shared.clone(), shared.clone());
         let trigger = chrome::build_picker(
-            chrome::picker(KEY, title, &labels)
+            chrome::stepping_picker(KEY, title, &labels)
                 .current(current)
                 .disabled(!prefs.log_level_available())
                 .open(self.0 && !pending)
@@ -51,10 +51,13 @@ impl Logging {
                 })
                 .on_close(move |s| access(s).close())
                 .on_choose(move |s, label, _| {
-                    if std::mem::take(&mut access(s).0)
+                    access(s).close();
+                    let mut prefs = choose.borrow_mut();
+                    if prefs.log_level_available()
+                        && !prefs.log_level_pending()
                         && let Some(index) = labels.iter().position(|&candidate| candidate == label)
                     {
-                        choose.borrow_mut().set_log_level(index);
+                        prefs.set_log_level(index);
                     }
                 }),
             layers,
