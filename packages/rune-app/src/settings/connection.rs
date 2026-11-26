@@ -59,9 +59,11 @@ pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::B
             s.command_palette.dismiss();
             s.tab_rename.dismiss();
             s.temporary.cancel_for_auth();
+            s.blank_cleanup.cancel();
             s.workspace_open.cancel();
         } else {
             s.temporary.cancel_for_auth();
+            s.blank_cleanup.cancel();
             s.workspace_open.cancel();
             s.show_launcher();
         }

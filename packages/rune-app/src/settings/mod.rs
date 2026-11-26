@@ -49,7 +49,9 @@ pub(crate) use connection::{
 use connection::{provider_changed, provider_stopped};
 pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_notification};
 #[cfg(test)]
-pub(crate) use delivery::{notification_fixture, notification_test_config};
+pub(crate) use delivery::{
+    notification_fixture, notification_fixture_for, notification_test_config,
+};
 pub(crate) use shortcuts::{shortcut_label, with_shortcut_label, with_shortcut_label_excluding};
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
@@ -203,6 +205,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         s.command_palette.dismiss();
         s.tab_rename.dismiss();
         s.temporary.cancel_for_auth();
+        s.blank_cleanup.cancel();
     }
     {
         let watch = s.screen.launcher().and_then(|l| l.catalogue_watch.as_ref());

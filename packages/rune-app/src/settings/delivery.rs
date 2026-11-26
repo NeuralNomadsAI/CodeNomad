@@ -92,3 +92,16 @@ pub(crate) fn notification_test_config(s: &State, snapshot: impl Into<Option<ser
         .borrow_mut()
         .notification_test_config(snapshot.into());
 }
+
+#[cfg(test)]
+pub(crate) fn notification_fixture_for(
+    s: &State,
+    backend: crate::backend::Backend,
+    snapshot: serde_json::Value,
+) {
+    let mut prefs = s.settings.shared.borrow_mut();
+    prefs.fixture_appearance("default", "default", "standard");
+    prefs.backend = Some(backend);
+    prefs.reset_notification_fixture();
+    prefs.notification_test_config(Some(snapshot));
+}
