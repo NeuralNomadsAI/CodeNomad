@@ -399,27 +399,37 @@ pub(crate) fn enforce_with_recall(
 
     // Tier 1: inactive tabs' reloadable secondary caches (files, git diffs/history, missions,
     // inactive rendered/session display caches) in deterministic LRU order.
-    if remaining > limits.global_bytes
-        && let Some(ui) = &mut s.workspace
-    {
-        let candidates: Vec<Evictable> = ui
-            .entries_slice()
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| *index != ui.active_tab_index())
-            .map(|(index, entry)| Evictable {
-                id: index,
-                tier: 1,
-                last_used: entry.last_touched(),
-                bytes: entry.inactive_secondary_bytes(),
-                protected: false,
-            })
-            .collect();
-        for index in plan_evictions(remaining, limits.global_bytes, &candidates) {
-            let freed = ui.evict_entry_secondary_caches(index);
-            remaining = remaining.saturating_sub(freed);
-            if remaining <= limits.global_bytes {
-                break;
+    // Re-plan after re-measuring so an `Arc<Outline>` shared across multiple inactive tabs
+    // releases its allocation once all inactive holders are visited before Tier 2 runs.
+    let active_outline_ptr = s.transcript_display.timeline.outline_ptr();
+    let mut tier1_visited = std::collections::HashSet::new();
+    while remaining > limits.global_bytes {
+        let planned = {
+            let Some(ui) = &s.workspace else { break };
+            let candidates: Vec<Evictable> = ui
+                .entries_slice()
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| {
+                    *index != ui.active_tab_index() && !tier1_visited.contains(index)
+                })
+                .map(|(index, entry)| Evictable {
+                    id: index,
+                    tier: 1,
+                    last_used: entry.last_touched(),
+                    bytes: entry.inactive_secondary_bytes(active_outline_ptr),
+                    protected: false,
+                })
+                .collect();
+            plan_evictions(remaining, limits.global_bytes, &candidates)
+        };
+        if planned.is_empty() {
+            break;
+        }
+        if let Some(ui) = &mut s.workspace {
+            for index in planned {
+                tier1_visited.insert(index);
+                let _ = ui.evict_entry_secondary_caches(index, active_outline_ptr);
             }
         }
         remaining = sync_and_total(s, measure(s));
@@ -437,7 +447,8 @@ pub(crate) fn enforce_with_recall(
             .filter_map(|(index, entry)| {
                 let cache = entry.cache_ref()?;
                 let (rows, bytes) = cache.history_weight();
-                let weight = bytes.saturating_add(cache.evictable_rendered_bytes());
+                let weight =
+                    bytes.saturating_add(cache.evictable_rendered_bytes(active_outline_ptr));
                 (rows > 0 || weight > 0).then_some(Evictable {
                     id: index,
                     tier: 2,
@@ -450,7 +461,8 @@ pub(crate) fn enforce_with_recall(
         for index in plan_evictions(remaining, limits.global_bytes, &candidates) {
             if let Some(cache) = ui.entry_cache_mut(index) {
                 let (_, bytes) = cache.history_weight();
-                let weight = bytes.saturating_add(cache.evictable_rendered_bytes());
+                let weight =
+                    bytes.saturating_add(cache.evictable_rendered_bytes(active_outline_ptr));
                 cache.evict_history();
                 remaining = remaining.saturating_sub(weight);
             }
@@ -572,6 +584,6 @@ fn active_tab_identity(
     )
 }
 
-pub(super) fn evict_cache_secondary(cache: &mut Cache) -> usize {
-    cache.evict_secondary_caches()
+pub(super) fn evict_cache_secondary(cache: &mut Cache, active_outline_ptr: Option<usize>) -> usize {
+    cache.evict_secondary_caches(active_outline_ptr)
 }

@@ -252,10 +252,11 @@ impl Cache {
             )
             .saturating_add(self.git.draft_bytes())
     }
-    pub(super) fn evictable_rendered_bytes(&self) -> usize {
-        self.transcript_display.evictable_rendered_bytes()
+    pub(super) fn evictable_rendered_bytes(&self, active_outline_ptr: Option<usize>) -> usize {
+        self.transcript_display
+            .evictable_rendered_bytes(active_outline_ptr)
     }
-    pub(super) fn evictable_secondary_bytes(&self) -> usize {
+    pub(super) fn evictable_secondary_bytes(&self, active_outline_ptr: Option<usize>) -> usize {
         let files = self
             .files
             .as_ref()
@@ -263,13 +264,14 @@ impl Cache {
         let display = if self.history_protected() {
             self.transcript_display.saved_sessions_bytes()
         } else {
-            self.transcript_display.evictable_rendered_bytes()
+            self.transcript_display
+                .evictable_rendered_bytes(active_outline_ptr)
         };
         files
             .saturating_add(self.git.retained_bytes())
             .saturating_add(display)
     }
-    pub(super) fn evict_secondary_caches(&mut self) -> usize {
+    pub(super) fn evict_secondary_caches(&mut self, active_outline_ptr: Option<usize>) -> usize {
         let mut freed = self
             .files
             .as_mut()
@@ -278,7 +280,9 @@ impl Cache {
         if self.history_protected() {
             freed.saturating_add(self.transcript_display.evict_inactive_sessions())
         } else {
-            let evictable = self.transcript_display.evictable_rendered_bytes();
+            let evictable = self
+                .transcript_display
+                .evictable_rendered_bytes(active_outline_ptr);
             self.transcript_display.evict_rendered();
             freed.saturating_add(evictable)
         }

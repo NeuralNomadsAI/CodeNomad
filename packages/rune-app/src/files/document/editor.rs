@@ -158,7 +158,7 @@ impl Editor {
             if std::sync::Arc::strong_count(shared) == 1 {
                 let mut draft = lock(shared);
                 draft.original = None;
-                draft.text.clear();
+                draft.text = String::new();
                 draft.version = None;
                 draft.revision += 1;
                 self.revision = draft.revision;

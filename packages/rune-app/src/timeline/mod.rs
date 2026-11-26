@@ -145,6 +145,12 @@ impl Timeline {
         self.previews.fixture_set_scope(scope, marker_id);
     }
 
+    pub(crate) fn outline_ptr(&self) -> Option<usize> {
+        self.outline
+            .as_ref()
+            .map(|outline| Arc::as_ptr(outline) as usize)
+    }
+
     pub(crate) fn outline_retained_bytes(
         &self,
         seen_outlines: &mut std::collections::HashSet<usize>,
@@ -158,12 +164,13 @@ impl Timeline {
         })
     }
 
-    pub(crate) fn evictable_outline_bytes(&self) -> usize {
+    pub(crate) fn evictable_outline_bytes(&self, active_outline_ptr: Option<usize>) -> usize {
         self.outline.as_ref().map_or(0, |outline| {
-            if Arc::strong_count(outline) == 1 {
-                outline_weight(outline)
-            } else {
+            let ptr = Arc::as_ptr(outline) as usize;
+            if active_outline_ptr == Some(ptr) {
                 0
+            } else {
+                outline_weight(outline)
             }
         })
     }

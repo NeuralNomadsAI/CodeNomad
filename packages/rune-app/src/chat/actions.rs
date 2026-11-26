@@ -125,7 +125,7 @@ impl SessionDisplay {
 }
 
 impl Display {
-    pub(crate) fn evictable_rendered_bytes(&self) -> usize {
+    pub(crate) fn evictable_rendered_bytes(&self, active_outline_ptr: Option<usize>) -> usize {
         let live_ansi: usize = self
             .live_ansi
             .borrow()
@@ -140,7 +140,7 @@ impl Display {
             .saturating_add(live_ansi)
             .saturating_add(self.active.task_anchors_bytes())
             .saturating_add(self.saved_sessions_bytes())
-            .saturating_add(self.timeline.evictable_outline_bytes())
+            .saturating_add(self.timeline.evictable_outline_bytes(active_outline_ptr))
     }
 
     pub(crate) fn retained_bytes(

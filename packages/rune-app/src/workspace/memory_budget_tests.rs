@@ -616,7 +616,8 @@ fn shared_clean_file_draft_stays_intact_in_active_tab_and_resyncs_on_reactivatio
     assert!(active.document.editable());
 
     // Inactive tab shed its own edit buffer & reader preview. Even when reactivated OFFLINE,
-    // it resyncs from the shared Draft immediately and never exposes an empty editable buffer.
+    // it resyncs from the shared Draft immediately and an offline edit appends to the real body
+    // without clobbering the active tab's content.
     let mut inactive_cache = s.workspace.as_mut().unwrap().take_entry_cache(1).unwrap();
     let inactive = inactive_cache.files_mut().as_mut().unwrap();
     assert!(inactive.document.edit().text.is_empty());
@@ -626,7 +627,14 @@ fn shared_clean_file_draft_stays_intact_in_active_tab_and_resyncs_on_reactivatio
     assert_eq!(inactive.document.edit().text, content);
     assert!(inactive.document.editable());
     assert!(!inactive.document.poll(&mut inactive.reader));
-    assert_eq!(inactive.document.edit().text, content);
+    let scope = inactive.document.scope();
+    let edited = format!("{content}// offline edit\n");
+    inactive.document.input(scope).replace_text(&edited);
+    inactive.document.changed(scope);
+    assert_eq!(inactive.document.edit().text, edited);
+    let active = s.files.as_mut().unwrap();
+    assert!(active.document.poll(&mut active.reader));
+    assert_eq!(active.document.edit().text, edited);
 }
 
 #[test]
@@ -670,13 +678,12 @@ fn recall_record_protects_newly_recorded_entry_and_evicts_past_shared_arc_attach
         s.prompt_history
             .fixture_push_with_draft("tab-old", "ses-old", "b".into(), unshared_draft);
 
-    // Record a fresh prompt via the real `record` path under a tight budget:
-    // - the oldest shared-Arc entry frees only a few bytes, so eviction must NOT stop there
-    //   and must also evict the middle unshared-Arc entry;
-    // - the newly recorded entry itself must remain protected because `record` returns `true`.
+    // Record a fresh prompt via the real `record` path under a mid-range budget:
+    // the oldest shared-Arc entry frees only a few bytes, so eviction must NOT stop there
+    // and must also evict the middle unshared-Arc entry.
     let fresh_text = "fresh-attempt".repeat(20);
     s.draft.replace_text(&fresh_text);
-    let tight = Limits {
+    let mid_budget = Limits {
         global_bytes: 12_000,
         inactive_history_bytes: usize::MAX,
         inactive_history_rows: usize::MAX,
@@ -685,12 +692,11 @@ fn recall_record_protects_newly_recorded_entry_and_evicts_past_shared_arc_attach
         &mut s,
         fresh_text.clone(),
         false,
-        tight,
+        mid_budget,
     ));
     let mut seen = std::collections::HashSet::new();
     let _ = s.composer.draft.retained_bytes(&mut seen);
     let remaining_recall = s.prompt_history.retained_bytes_dedup(&mut seen);
-    // Both old entries were evicted (unshared 8 KiB gone), only the newly recorded entry remains.
     assert!(
         remaining_recall >= fresh_text.len() * 2,
         "newly recorded entry must stay intact, got {remaining_recall}"
@@ -699,10 +705,39 @@ fn recall_record_protects_newly_recorded_entry_and_evicts_past_shared_arc_attach
         remaining_recall < 4_096,
         "eviction must continue past shared-Arc entry to evict unshared 8 KiB entry, got {remaining_recall}"
     );
+
+    // Record another prompt under an extreme 1-byte ceiling (below the new entry's own size):
+    // evicting the previous entry is NOT enough to drop below 1 byte, yet the newly recorded entry
+    // must remain protected because `record` returns `true`.
+    let latest_text = "latest-protected".repeat(20);
+    s.draft.replace_text(&latest_text);
+    let extreme = Limits {
+        global_bytes: 1,
+        inactive_history_bytes: usize::MAX,
+        inactive_history_rows: usize::MAX,
+    };
+    assert!(crate::composer::recall::fixture_record(
+        &mut s,
+        latest_text.clone(),
+        false,
+        extreme,
+    ));
+    let mut seen = std::collections::HashSet::new();
+    let _ = s.composer.draft.retained_bytes(&mut seen);
+    let protected_remaining = s.prompt_history.retained_bytes_dedup(&mut seen);
+    assert!(
+        protected_remaining >= latest_text.len() * 2,
+        "newly recorded entry must survive extreme 1-byte ceiling, got {protected_remaining}"
+    );
+    assert!(
+        protected_remaining < latest_text.len() * 2 + 128,
+        "older recall entry must be evicted under 1-byte ceiling, got {protected_remaining}"
+    );
 }
 
 #[test]
-fn shared_outline_in_saved_cache_and_inactive_timeline_is_counted_and_evicted() {
+fn shared_outline_in_saved_cache_and_two_inactive_timelines_is_evicted_without_losing_transcripts()
+{
     use codenomad_client::timeline::{Entry, Kind, Outline};
 
     let entries: Vec<Entry> = (0..64)
@@ -730,34 +765,51 @@ fn shared_outline_in_saved_cache_and_inactive_timeline_is_counted_and_evicted() 
     let mut s = crate::init();
     s.saved_outlines.fixture_insert(Arc::clone(&outline));
 
-    let mut inactive_state = crate::init();
-    inactive_state
+    // Two inactive tabs share the exact same Arc<Outline>; the newer tab also holds a transcript.
+    let mut oldest_state = crate::init();
+    oldest_state
+        .transcript_display
+        .timeline
+        .fixture_set_outline(Arc::clone(&outline));
+
+    let mut newer_state = crate::init();
+    newer_state
+        .messages
+        .push(message_with_size("keep-msg", 4_000));
+    let transcript_weight = crate::history::retained_bytes(&newer_state.messages);
+    newer_state
         .transcript_display
         .timeline
         .fixture_set_outline(outline);
 
     let mut ui = Ui::new();
-    ui.push_fixture_entry("tab-outline", 1, Cache::take(&mut inactive_state), None);
+    ui.push_fixture_entry("tab-outline-1", 1, Cache::take(&mut oldest_state), None);
+    ui.push_fixture_entry("tab-outline-2", 2, Cache::take(&mut newer_state), None);
     s.workspace = Some(ui);
 
     // Counted once globally (in Pool::Rendered), not zero and not double-counted.
     let before = measure(&s);
     assert_eq!(before.get(Pool::Rendered), expected_weight);
     assert_eq!(before.get(Pool::WindowCaches), 0);
-    assert_eq!(before.total(), expected_weight);
+    assert_eq!(before.total(), expected_weight + transcript_weight);
 
-    // Under pressure, Tier 0 removes it from `saved_outlines`, measure STILL sees it on the
-    // inactive Timeline (so eviction does NOT stop early), and Tier 1 evicts it from Timeline.
+    // Budget fits the newer tab's transcript once the shared outline is freed from saved_outlines
+    // AND both inactive tabs. Tier 1 must drop both references instead of falling through to Tier 2.
+    let limit = transcript_weight + 512;
     let after = enforce_with(
         &mut s,
         Limits {
-            global_bytes: 1,
+            global_bytes: limit,
             inactive_history_bytes: usize::MAX,
             inactive_history_rows: usize::MAX,
         },
     );
     assert_eq!(s.saved_outlines.len(), 0);
-    let inactive_cache = s.workspace.as_mut().unwrap().take_entry_cache(1).unwrap();
-    assert!(!inactive_cache.timeline_ref().has_outline());
-    assert_eq!(after.total(), 0);
+    let oldest_cache = s.workspace.as_mut().unwrap().take_entry_cache(1).unwrap();
+    let newer_cache = s.workspace.as_mut().unwrap().take_entry_cache(2).unwrap();
+    assert!(!oldest_cache.timeline_ref().has_outline());
+    assert!(!newer_cache.timeline_ref().has_outline());
+    assert_eq!(newer_cache.history_weight().0, 1);
+    assert_eq!(after.get(Pool::Rendered), 0);
+    assert_eq!(after.total(), transcript_weight);
 }

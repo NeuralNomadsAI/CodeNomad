@@ -107,11 +107,13 @@ impl Entry {
             total.saturating_add(draft.retained_bytes(seen))
         })
     }
-    pub(in crate::workspace) fn inactive_secondary_bytes(&self) -> usize {
-        let cache_secondary = self
-            .cache
-            .as_ref()
-            .map_or(0, Cache::evictable_secondary_bytes);
+    pub(in crate::workspace) fn inactive_secondary_bytes(
+        &self,
+        active_outline_ptr: Option<usize>,
+    ) -> usize {
+        let cache_secondary = self.cache.as_ref().map_or(0, |cache| {
+            cache.evictable_secondary_bytes(active_outline_ptr)
+        });
         let missions = self
             .missions
             .as_ref()
@@ -183,14 +185,17 @@ impl Ui {
     pub(in crate::workspace) fn entry_cache_mut(&mut self, index: usize) -> Option<&mut Cache> {
         self.entries.get_mut(index)?.cache.as_mut()
     }
-    pub(in crate::workspace) fn evict_entry_secondary_caches(&mut self, index: usize) -> usize {
+    pub(in crate::workspace) fn evict_entry_secondary_caches(
+        &mut self,
+        index: usize,
+        active_outline_ptr: Option<usize>,
+    ) -> usize {
         let Some(entry) = self.entries.get_mut(index) else {
             return 0;
         };
-        let mut freed = entry
-            .cache
-            .as_mut()
-            .map_or(0, super::memory_budget::evict_cache_secondary);
+        let mut freed = entry.cache.as_mut().map_or(0, |cache| {
+            super::memory_budget::evict_cache_secondary(cache, active_outline_ptr)
+        });
         if let Some(missions) = &mut entry.missions {
             freed = freed.saturating_add(missions.evict_inactive_caches());
         }
