@@ -20,8 +20,8 @@ pub(super) struct DirectAccess {
     meta: Option<DirectAccessMeta>,
     auth: Option<AuthStatus>,
     meta_flight: Option<(Sender<()>, Receiver<MetaReply>)>,
-    mode_flight: Option<Receiver<Result<(), String>>>,
-    password_flight: Option<Receiver<Result<AuthStatus, String>>>,
+    mode_flight: Option<Receiver<Result<(), remote::Error>>>,
+    password_flight: Option<Receiver<Result<AuthStatus, remote::Error>>>,
     meta_error: Option<ErrorText>,
     disclosure_override: Option<bool>,
     locked_info_open: bool,
@@ -39,8 +39,8 @@ pub(super) struct DirectAccess {
 }
 
 struct MetaReply {
-    meta: Result<DirectAccessMeta, String>,
-    auth: Result<AuthStatus, String>,
+    meta: Result<DirectAccessMeta, remote::Error>,
+    auth: Result<AuthStatus, remote::Error>,
 }
 
 impl DirectAccess {
@@ -102,7 +102,10 @@ impl DirectAccess {
                             self.meta_error = None;
                             self.show_other_addresses = false;
                         }
-                        Err(err) => self.meta_error = Some(ErrorText::Raw(err)),
+                        Err(err) => {
+                            self.meta_error =
+                                Some(ErrorText::from_remote(err, "rune.connect_error"))
+                        }
                     }
                     self.auth = reply.auth.ok();
                     changed = true;
@@ -129,7 +132,8 @@ impl DirectAccess {
                         }
                         Err(err) => {
                             self.restart_notice = false;
-                            self.mode_error = Some(ErrorText::Raw(err));
+                            self.mode_error =
+                                Some(ErrorText::from_remote(err, "settings.preferenceSaveFailed"));
                         }
                     }
                     changed = true;
@@ -154,7 +158,8 @@ impl DirectAccess {
                             self.password_error = None;
                         }
                         Err(err) => {
-                            self.password_error = Some(ErrorText::Raw(err));
+                            self.password_error =
+                                Some(ErrorText::from_remote(err, "settings.preferenceSaveFailed"));
                             if let Some(backend) = backend {
                                 self.refresh(backend, wake);
                             }
@@ -203,9 +208,7 @@ impl DirectAccess {
         self.mode_flight = Some(input);
         let (backend, wake) = (backend.clone(), wake.clone());
         platform::spawn(async move {
-            let result = remote::set_listening_mode(&backend, target)
-                .await
-                .map_err(|e| e.to_string());
+            let result = remote::set_listening_mode(&backend, target).await;
             if out.send(result).await.is_ok() {
                 wake();
             }
@@ -234,9 +237,7 @@ impl DirectAccess {
         self.password_flight = Some(input);
         let (backend, wake) = (backend.clone(), wake.clone());
         platform::spawn(async move {
-            let result = remote::set_password(&backend, &next)
-                .await
-                .map_err(|e| e.to_string());
+            let result = remote::set_password(&backend, &next).await;
             if out.send(result).await.is_ok() {
                 wake();
             }
@@ -713,6 +714,11 @@ impl DirectAccess {
     #[cfg(test)]
     pub(super) fn meta_loaded(&self) -> bool {
         self.meta_flight.is_none() && self.meta.is_some()
+    }
+
+    #[cfg(test)]
+    pub(super) fn mode_idle(&self) -> bool {
+        self.mode_flight.is_none()
     }
 
     #[cfg(test)]

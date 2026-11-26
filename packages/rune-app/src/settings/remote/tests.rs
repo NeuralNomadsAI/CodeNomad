@@ -716,3 +716,142 @@ fn partial_stop_and_devices_failure_keep_status_recheck_and_stop_available() {
         assert!(rt.find("remote-control-start").is_some());
     });
 }
+
+#[test]
+fn direct_access_client_errors_localize_while_server_errors_surface_verbatim() {
+    fn fr_view(s: &Harness, cx: &mut rune::Cx<Harness>) -> El {
+        crate::strings::with_locale("fr", || {
+            layout::render(cx, |_| {
+                s.remote.view(
+                    &s.shared,
+                    |s: &mut Harness| Some(&mut s.remote),
+                    |s| &mut s.remote,
+                )
+            })
+        })
+    }
+
+    platform::block_on(async {
+        let server = MockServer::start(move |method, path, body| match (method, path) {
+            ("GET", "/api/remote-control/status") => (
+                200,
+                "application/json",
+                json!({
+                    "manageable": true,
+                    "enabled": false,
+                    "state": "stopped",
+                    "pairedDevices": 0,
+                })
+                .to_string(),
+            ),
+            ("GET", "/api/remote-control/devices") => {
+                (200, "application/json", json!({"devices": []}).to_string())
+            }
+            ("GET", "/api/meta") => (
+                200,
+                "application/json",
+                json!({
+                    "listeningMode": "all",
+                    "localRequest": true,
+                    "localUrl": "http://127.0.0.1:9898",
+                    "addresses": []
+                })
+                .to_string(),
+            ),
+            ("GET", "/api/auth/status") => (
+                200,
+                "application/json",
+                json!({"authenticated": true, "username": "codenomad", "passwordUserProvided": true})
+                    .to_string(),
+            ),
+            ("PATCH", "/api/storage/config/server") => (400, "application/json", String::new()),
+            ("POST", "/api/auth/password") => {
+                if body.contains("unconfirmed-pass") {
+                    (200, "application/json", json!({"ok": false}).to_string())
+                } else {
+                    (
+                        409,
+                        "application/json",
+                        json!({"error": "Server password is provided via CLI/env"}).to_string(),
+                    )
+                }
+            }
+            _ => (
+                404,
+                "application/json",
+                json!({"error": "not found"}).to_string(),
+            ),
+        })
+        .await;
+
+        let wake: Waker = Arc::new(|| {});
+        let shared = Rc::new(RefCell::new(Preferences::default()));
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs.fixture_locale("fr");
+            prefs.backend = Some(Backend::unauthenticated(&server.base).unwrap());
+            prefs.window_wake = Some(wake.clone());
+        }
+        let mut rt = Runtime::new(
+            Harness {
+                shared,
+                remote: Remote::default(),
+                wake,
+            },
+            fr_view,
+            (960.0, 2000.0),
+            Env::new(false, 1.0),
+        );
+
+        pump(&mut rt, "initial-load-fr", |h| {
+            h.remote.snapshot.is_some() && h.remote.direct.meta_loaded()
+        })
+        .await;
+
+        // Rejected listening-mode PATCH must display localized French error, not English Rust prose.
+        click(&mut rt, "remote-listening-mode-switch");
+        click(&mut rt, "remote-listening-confirm-apply");
+        pump(&mut rt, "listening-mode-rejected", |h| {
+            h.remote.direct.mode_idle()
+        })
+        .await;
+        let tree = rt.accessibility_json();
+        let expected_fr = crate::strings::with_locale("fr", || t("settings.preferenceSaveFailed"));
+        assert!(find_text(&tree, expected_fr));
+        assert!(!find_text(&tree, "Listening mode change"));
+
+        // Unconfirmed password response (ok: false) must also display the localized French error.
+        click(&mut rt, "remote-password-toggle");
+        rt.update(|s, _| {
+            s.remote
+                .direct
+                .set_password_drafts("unconfirmed-pass", "unconfirmed-pass");
+        });
+        rt.frame(0.02);
+        click(&mut rt, "remote-password-save");
+        pump(&mut rt, "password-unconfirmed", |h| {
+            h.remote.direct.password_idle()
+        })
+        .await;
+        let tree = rt.accessibility_json();
+        assert!(find_text(&tree, expected_fr));
+        assert!(!find_text(&tree, "Password update was not confirmed"));
+
+        // Explicit server error message still surfaces verbatim.
+        rt.update(|s, _| {
+            s.remote
+                .direct
+                .set_password_drafts("conflict-pass", "conflict-pass");
+        });
+        rt.frame(0.02);
+        click(&mut rt, "remote-password-save");
+        pump(&mut rt, "password-server-error", |h| {
+            h.remote.direct.password_idle()
+        })
+        .await;
+        assert!(find_text(
+            &rt.accessibility_json(),
+            "Server password is provided via CLI/env"
+        ));
+    });
+}

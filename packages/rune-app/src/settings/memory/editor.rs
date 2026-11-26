@@ -136,7 +136,11 @@ impl Editor {
                         Confirmation::Forget => {
                             if let Some(edit) = editor.edit.clone() {
                                 let admitted = apply(s, Action::Write(edit, None));
-                                access(s).submitted = admitted;
+                                let state = access(s);
+                                if admitted {
+                                    state.error = None;
+                                }
+                                state.submitted = admitted;
                             }
                         }
                     }
@@ -212,7 +216,11 @@ impl Editor {
                                     kind,
                                 };
                                 let admitted = apply(s, Action::Write(edit, Some(fields)));
-                                access(s).submitted = admitted;
+                                let state = access(s);
+                                if admitted {
+                                    state.error = None;
+                                }
+                                state.submitted = admitted;
                             }
                         },
                     ))

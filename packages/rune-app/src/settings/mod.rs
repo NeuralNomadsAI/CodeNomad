@@ -57,11 +57,69 @@ pub(crate) use window::{close, direct_entry, entries, open_providers};
 #[cfg(not(target_arch = "wasm32"))]
 use window::{launch_preferences, settle_close, warn_save_failed};
 
-use crate::{State, strings};
+use crate::{State, backend::Backend, strings};
 use preferences::Preferences;
 #[cfg(not(target_arch = "wasm32"))]
 use std::cell::Cell;
 use std::{cell::RefCell, rc::Rc};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ServerOwner {
+    client_id: String,
+    base: String,
+    server: Option<String>,
+}
+
+impl ServerOwner {
+    pub fn from_backend(backend: &Backend) -> Self {
+        Self {
+            client_id: backend.client_id.clone(),
+            base: backend.base.clone(),
+            server: backend.client.server_identity().map(str::to_owned),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn fixture() -> Self {
+        Self {
+            client_id: "fixture".into(),
+            base: "http://127.0.0.1/".into(),
+            server: Some("fixture".into()),
+        }
+    }
+
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    pub fn seen_key(&self) -> &str {
+        self.server.as_deref().unwrap_or(&self.base)
+    }
+
+    pub fn same_server(&self, other: &Self) -> bool {
+        self.client_id == other.client_id
+            || (self.base == other.base && self.server.is_some() && self.server == other.server)
+    }
+
+    pub fn same_backend_server(&self, backend: &Backend) -> bool {
+        self.client_id == backend.client_id
+            || (self.base == backend.base
+                && self.server.is_some()
+                && self.server.as_deref() == backend.client.server_identity())
+    }
+
+    pub fn adopt_same_server(&mut self, backend: &Backend) -> bool {
+        if self.server.is_none() {
+            self.server = backend.client.server_identity().map(str::to_owned);
+        }
+        if self.client_id != backend.client_id {
+            self.client_id = backend.client_id.clone();
+            true
+        } else {
+            false
+        }
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Host {

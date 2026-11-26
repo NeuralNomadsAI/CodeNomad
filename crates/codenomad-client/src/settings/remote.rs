@@ -1,6 +1,5 @@
 use crate::{
     backend::{Backend, read_json_limited},
-    history::Result,
     settings::{Owner, PatchOutcome, info::listener_origin},
 };
 use reqwest::Url;
@@ -11,6 +10,16 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 const MAX_ERROR_BYTES: usize = 4096;
 const MAX_ERROR_CHARS: usize = 320;
 const MAX_ADDRESSES: usize = 128;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Error {
+    Server(String),
+    Transport,
+    InvalidResponse,
+    SaveFailed,
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -201,22 +210,16 @@ pub fn parse_direct_access_meta(value: &Value) -> DirectAccessMeta {
 }
 
 pub async fn direct_access_meta(backend: &Backend) -> Result<DirectAccessMeta> {
-    let value = crate::settings::info::metadata(backend).await?;
+    let value = crate::settings::info::metadata(backend)
+        .await
+        .map_err(|_| Error::Transport)?;
     Ok(parse_direct_access_meta(&value))
 }
 
 pub async fn direct_access_snapshot(
     backend: &Backend,
-) -> (
-    std::result::Result<DirectAccessMeta, String>,
-    std::result::Result<AuthStatus, String>,
-) {
-    let (meta, auth) =
-        futures_lite::future::zip(direct_access_meta(backend), auth_status(backend)).await;
-    (
-        meta.map_err(|e| e.to_string()),
-        auth.map_err(|e| e.to_string()),
-    )
+) -> (Result<DirectAccessMeta>, Result<AuthStatus>) {
+    futures_lite::future::zip(direct_access_meta(backend), auth_status(backend)).await
 }
 
 pub async fn status(backend: &Backend) -> Result<Status> {
@@ -225,8 +228,12 @@ pub async fn status(backend: &Backend) -> Result<Status> {
         .get(format!("{}api/remote-control/status", backend.base));
     #[cfg(target_arch = "wasm32")]
     let request = request.fetch_cache_no_store();
-    let response = check_response(request.send().await?).await?;
-    parse_status(read_json_limited(response, 8192).await?)
+    let response = check_response(request.send().await.map_err(|_| Error::Transport)?).await?;
+    parse_status(
+        read_json_limited(response, 8192)
+            .await
+            .map_err(|_| Error::InvalidResponse)?,
+    )
 }
 
 pub async fn start(backend: &Backend) -> Result<StartResponse> {
@@ -235,14 +242,16 @@ pub async fn start(backend: &Backend) -> Result<StartResponse> {
         .client
         .post(format!("{}api/remote-control/start", backend.base))
         .timeout(std::time::Duration::from_secs(300));
-    let response = check_response(request.send().await?).await?;
-    let mut value = read_json_limited(response, 16384).await?;
+    let response = check_response(request.send().await.map_err(|_| Error::Transport)?).await?;
+    let mut value = read_json_limited(response, 16384)
+        .await
+        .map_err(|_| Error::InvalidResponse)?;
     let status = parse_status(value["status"].take())?;
     let expected = status
         .remote_url
         .as_deref()
         .and_then(origin)
-        .ok_or("Missing Remote Control tunnel origin")?;
+        .ok_or(Error::InvalidResponse)?;
     let pairing = pairing_result(&value["pairing"], &expected)?;
     Ok(StartResponse { status, pairing })
 }
@@ -253,10 +262,15 @@ pub async fn stop(backend: &Backend) -> Result<Status> {
             .client
             .delete(format!("{}api/remote-control", backend.base))
             .send()
-            .await?,
+            .await
+            .map_err(|_| Error::Transport)?,
     )
     .await?;
-    parse_status(read_json_limited(response, 8192).await?)
+    parse_status(
+        read_json_limited(response, 8192)
+            .await
+            .map_err(|_| Error::InvalidResponse)?,
+    )
 }
 
 pub async fn set_previews(backend: &Backend, enabled: bool) -> Result<Status> {
@@ -266,10 +280,15 @@ pub async fn set_previews(backend: &Backend, enabled: bool) -> Result<Status> {
             .put(format!("{}api/remote-control/previews", backend.base))
             .json(&json!({"enabled": enabled}))
             .send()
-            .await?,
+            .await
+            .map_err(|_| Error::Transport)?,
     )
     .await?;
-    parse_status(read_json_limited(response, 8192).await?)
+    parse_status(
+        read_json_limited(response, 8192)
+            .await
+            .map_err(|_| Error::InvalidResponse)?,
+    )
 }
 
 pub async fn devices(backend: &Backend) -> Result<Option<Vec<Device>>> {
@@ -278,14 +297,17 @@ pub async fn devices(backend: &Backend) -> Result<Option<Vec<Device>>> {
         .get(format!("{}api/remote-control/devices", backend.base));
     #[cfg(target_arch = "wasm32")]
     let request = request.fetch_cache_no_store();
-    let response = request.send().await?;
+    let response = request.send().await.map_err(|_| Error::Transport)?;
     // Loopback-only servers may have no paired-device registry.
     if response.status() == reqwest::StatusCode::NOT_IMPLEMENTED {
         return Ok(None);
     }
     let response = check_response(response).await?;
-    let mut value = read_json_limited(response, 32768).await?;
-    let devices: Vec<Device> = serde_json::from_value(value["devices"].take())?;
+    let mut value = read_json_limited(response, 32768)
+        .await
+        .map_err(|_| Error::InvalidResponse)?;
+    let devices: Vec<Device> =
+        serde_json::from_value(value["devices"].take()).map_err(|_| Error::InvalidResponse)?;
     if devices.len() > 32
         || devices.iter().any(|device| {
             !device_id(&device.id)
@@ -299,7 +321,7 @@ pub async fn devices(backend: &Backend) -> Result<Option<Vec<Device>>> {
                 || OffsetDateTime::parse(&device.last_seen_at, &Rfc3339).is_err()
         })
     {
-        return Err("Invalid paired device list".into());
+        return Err(Error::InvalidResponse);
     }
     Ok(Some(devices))
 }
@@ -309,34 +331,40 @@ pub async fn pairing(
     direct_origin: Option<&str>,
     expected_origin: &str,
 ) -> Result<Pairing> {
-    let expected = origin(expected_origin).ok_or("Invalid HTTPS pairing origin")?;
+    let expected = origin(expected_origin).ok_or(Error::InvalidResponse)?;
     let mut request = backend
         .client
         .post(format!("{}api/remote-control/pairings", backend.base));
     if let Some(direct) = direct_origin {
         if origin(direct).is_none() {
-            return Err("Invalid HTTPS pairing origin".into());
+            return Err(Error::InvalidResponse);
         }
         request = request.json(&json!({"origin": direct}));
     }
-    let response = check_response(request.send().await?).await?;
-    pairing_result(&read_json_limited(response, 4096).await?, &expected)
+    let response = check_response(request.send().await.map_err(|_| Error::Transport)?).await?;
+    pairing_result(
+        &read_json_limited(response, 4096)
+            .await
+            .map_err(|_| Error::InvalidResponse)?,
+        &expected,
+    )
 }
 
 pub async fn revoke(backend: &Backend, id: &str) -> Result<()> {
     if !device_id(id) {
-        return Err("Invalid paired device identity".into());
+        return Err(Error::InvalidResponse);
     }
     let response = check_response(
         backend
             .client
             .delete(format!("{}api/remote-control/devices/{id}", backend.base))
             .send()
-            .await?,
+            .await
+            .map_err(|_| Error::Transport)?,
     )
     .await?;
     if response.status() != reqwest::StatusCode::NO_CONTENT {
-        return Err("Unconfirmed device revocation".into());
+        return Err(Error::SaveFailed);
     }
     Ok(())
 }
@@ -347,8 +375,10 @@ pub async fn auth_status(backend: &Backend) -> Result<AuthStatus> {
         .get(format!("{}api/auth/status", backend.base));
     #[cfg(target_arch = "wasm32")]
     let request = request.fetch_cache_no_store();
-    let response = check_response(request.send().await?).await?;
-    let value = read_json_limited(response, 4096).await?;
+    let response = check_response(request.send().await.map_err(|_| Error::Transport)?).await?;
+    let value = read_json_limited(response, 4096)
+        .await
+        .map_err(|_| Error::InvalidResponse)?;
     let authenticated = value["authenticated"].as_bool().unwrap_or(false);
     Ok(AuthStatus {
         authenticated,
@@ -367,12 +397,15 @@ pub async fn set_password(backend: &Backend, password: &str) -> Result<AuthStatu
             .post(format!("{}api/auth/password", backend.base))
             .json(&json!({"password": password}))
             .send()
-            .await?,
+            .await
+            .map_err(|_| Error::Transport)?,
     )
     .await?;
-    let value = read_json_limited(response, 4096).await?;
+    let value = read_json_limited(response, 4096)
+        .await
+        .map_err(|_| Error::InvalidResponse)?;
     if value["ok"].as_bool() != Some(true) {
-        return Err("Password update was not confirmed".into());
+        return Err(Error::SaveFailed);
     }
     // Saving a server password revokes the active session cookie; confirm current auth status
     // rather than assuming the caller remains authenticated.
@@ -395,23 +428,26 @@ pub async fn set_listening_mode(backend: &Backend, mode: ListeningMode) -> Resul
             if doc["listeningMode"].as_str().unwrap_or("local") == target {
                 Ok(())
             } else {
-                Err("Listening mode change was not applied".into())
+                Err(Error::SaveFailed)
             }
         }
-        PatchOutcome::Rejected => Err("Listening mode change was rejected".into()),
+        PatchOutcome::Rejected => Err(Error::SaveFailed),
         PatchOutcome::Uncertain => {
-            let doc = Owner::Server.read(backend).await?;
+            let doc = Owner::Server
+                .read(backend)
+                .await
+                .map_err(|_| Error::Transport)?;
             if doc["listeningMode"].as_str().unwrap_or("local") == target {
                 Ok(())
             } else {
-                Err("Listening mode change was not confirmed".into())
+                Err(Error::SaveFailed)
             }
         }
     }
 }
 
 fn parse_status(value: Value) -> Result<Status> {
-    let mut status: Status = serde_json::from_value(value)?;
+    let mut status: Status = serde_json::from_value(value).map_err(|_| Error::InvalidResponse)?;
     status
         .direct_origins
         .retain(|value| origin(value).is_some());
@@ -428,10 +464,10 @@ async fn check_response(response: reqwest::Response) -> Result<reqwest::Response
     if status.is_success() {
         return Ok(response);
     }
-    let message = read_error_message(response).await;
-    Err(message
-        .unwrap_or_else(|| format!("HTTP {}", status.as_u16()))
-        .into())
+    match read_error_message(response).await {
+        Some(message) => Err(Error::Server(message)),
+        None => Err(Error::Transport),
+    }
 }
 
 async fn read_error_message(response: reqwest::Response) -> Option<String> {
@@ -481,8 +517,8 @@ fn pairing_result(value: &Value, origin: &Url) -> Result<Pairing> {
     let raw = value["url"]
         .as_str()
         .filter(|s| s.len() <= 2048)
-        .ok_or("Invalid pairing link")?;
-    let url = Url::parse(raw)?;
+        .ok_or(Error::InvalidResponse)?;
+    let url = Url::parse(raw).map_err(|_| Error::InvalidResponse)?;
     if url.origin() != origin.origin()
         || !url.username().is_empty()
         || url.password().is_some()
@@ -495,15 +531,16 @@ fn pairing_result(value: &Value, origin: &Url) -> Result<Pairing> {
                     .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
         })
     {
-        return Err("Invalid pairing link".into());
+        return Err(Error::InvalidResponse);
     }
     let expires_at_rfc3339 = value["expiresAt"]
         .as_str()
-        .ok_or("Missing pairing expiry")?
+        .ok_or(Error::InvalidResponse)?
         .to_owned();
     Ok(Pairing {
         url: raw.to_owned(),
-        expires_at: OffsetDateTime::parse(&expires_at_rfc3339, &Rfc3339)?,
+        expires_at: OffsetDateTime::parse(&expires_at_rfc3339, &Rfc3339)
+            .map_err(|_| Error::InvalidResponse)?,
         expires_at_rfc3339,
     })
 }

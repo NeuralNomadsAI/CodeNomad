@@ -227,17 +227,17 @@ impl Panel {
             changed = true;
         }
         let capable = self.scope.config_files(prefs);
-        if self.section == Section::ConfigFiles && !capable {
+        changed |= self.config_files.poll(
+            prefs,
+            wake,
+            shown && capable && self.section == Section::ConfigFiles,
+        );
+        if self.section == Section::ConfigFiles && !capable && !self.config_files.dirty() {
             self.section = Section::General;
             prefs.memory.show(true);
             changed = true;
         }
         changed
-            | self.config_files.poll(
-                prefs,
-                wake,
-                shown && capable && self.section == Section::ConfigFiles,
-            )
     }
 
     fn local(&self, prefs: &Preferences) -> bool {
@@ -373,7 +373,10 @@ pub(super) fn view(
     .into_iter()
     .filter(|section| match section {
         Section::OpenCode | Section::Remote => local,
-        Section::ConfigFiles => panel.scope.config_files(prefs),
+        Section::ConfigFiles => {
+            panel.scope.config_files(prefs)
+                || (panel.section == Section::ConfigFiles && panel.config_files.dirty())
+        }
         Section::Stats => super::stats::supported(prefs),
         _ => true,
     })
@@ -585,12 +588,16 @@ pub(super) fn view(
             },
             |s: &mut State| &mut s.settings.web.remote,
         ),
-        Section::ConfigFiles if panel.scope.config_files(prefs) => {
-            panel
-                .config_files
-                .view(&mut layers, &s.settings.shared, |s: &mut State| {
-                    &mut s.settings.web.config_files
-                })
+        Section::ConfigFiles => {
+            if panel.scope.config_files(prefs) {
+                panel
+                    .config_files
+                    .view(&mut layers, &s.settings.shared, |s: &mut State| {
+                        &mut s.settings.web.config_files
+                    })
+            } else {
+                text(t("rune.loading")).role("status")
+            }
         }
         Section::Advanced => col()
             .full_width()
@@ -626,7 +633,7 @@ pub(super) fn view(
             },
             local.then_some(open_remote),
         ),
-        Section::OpenCode | Section::Remote | Section::ConfigFiles => rune::el(),
+        Section::OpenCode | Section::Remote => rune::el(),
     };
     if let Some(editor) = prefs.memory.editor_view(
         &panel.memory_editor,

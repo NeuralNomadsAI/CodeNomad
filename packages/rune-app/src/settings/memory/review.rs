@@ -1,5 +1,8 @@
 use super::{El, Layout, chrome, col, layout, t, text};
-use crate::{platform, settings::providers::Target};
+use crate::{
+    platform,
+    settings::{ServerOwner, providers::Target},
+};
 use codenomad_client::{
     Receiver, Sender,
     backend::Backend,
@@ -40,8 +43,7 @@ impl Edit {
                 flagged: false,
             },
             key: Key {
-                connection: "fixture".into(),
-                server: "fixture".into(),
+                owner: ServerOwner::fixture(),
                 scope: Scope::Global,
                 context: None,
             },
@@ -77,12 +79,19 @@ pub(super) struct Review {
     seen: super::seen::Seen,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 struct Key {
-    connection: String,
-    server: String,
+    owner: ServerOwner,
     scope: Scope,
     context: Option<(String, Option<String>)>,
+}
+
+impl Key {
+    fn same_target(&self, other: &Self) -> bool {
+        self.owner.same_server(&other.owner)
+            && self.scope == other.scope
+            && self.context == other.context
+    }
 }
 
 impl Review {
@@ -126,7 +135,7 @@ impl Review {
             Action::Fold => {
                 self.expanded = !self.expanded;
                 if let Some((key, list)) = self.key.as_ref().zip(self.snapshot.as_ref()) {
-                    self.seen.observe(&key.server, list, self.expanded);
+                    self.seen.observe(key.owner.seen_key(), list, self.expanded);
                 }
             }
             Action::Scope(scope)
@@ -169,7 +178,7 @@ impl Review {
         let directory = list.cleanup_directory.clone()?;
         Some(cleanup::Intent {
             epoch: self.epoch,
-            connection: key.connection.clone(),
+            connection: key.owner.client_id().to_owned(),
             workspace: workspace.into(),
             session: session.map(str::to_owned),
             directory,
@@ -184,7 +193,7 @@ impl Review {
         self.tidy_attempted
             && self.epoch == intent.epoch
             && self.key.as_ref().is_some_and(|key| {
-                key.connection == intent.connection
+                key.owner.client_id() == intent.connection
                     && key.scope == intent.scope
                     && key.context.as_ref().is_some_and(|(workspace, session)| {
                         *workspace == intent.workspace && *session == intent.session
@@ -193,10 +202,9 @@ impl Review {
     }
     pub fn cleanup_failed(&mut self, intent: &cleanup::Intent) {
         if self.epoch == intent.epoch
-            && self
-                .key
-                .as_ref()
-                .is_some_and(|key| key.connection == intent.connection && key.scope == intent.scope)
+            && self.key.as_ref().is_some_and(|key| {
+                key.owner.client_id() == intent.connection && key.scope == intent.scope
+            })
         {
             self.tidy_failed = true;
         }
@@ -223,8 +231,22 @@ impl Review {
         ))
     }
 
+    #[cfg(test)]
+    pub(super) fn first_edit(&self) -> Option<Edit> {
+        let key = self.key.as_ref()?.clone();
+        let list = self.snapshot.as_ref()?;
+        let entry = list.entries.first()?.clone();
+        Some(Edit {
+            entry,
+            key,
+            namespace: list.scope_key.clone(),
+        })
+    }
+
     pub fn is_current(&self, edit: &Edit) -> bool {
-        self.key.as_ref() == Some(&edit.key)
+        self.key
+            .as_ref()
+            .is_some_and(|key| key.same_target(&edit.key))
             && self.snapshot.as_ref().is_some_and(|list| {
                 list.scope_key == edit.namespace
                     && list.entries.iter().any(|entry| {
@@ -254,7 +276,7 @@ impl Review {
         self.write_result
             .as_ref()
             .filter(|(sent, _)| {
-                sent.key == edit.key
+                sent.key.same_target(&edit.key)
                     && sent.entry.id == edit.entry.id
                     && sent.entry.revision == edit.entry.revision
             })
@@ -272,26 +294,42 @@ impl Review {
         if backend.is_some() && project.is_some() {
             self.scope.get_or_insert(scope);
         }
-        let key = backend
+        let next_key = backend
             .filter(|_| scope == Scope::Global || project.is_some_and(Target::online))
             .map(|backend| Key {
-                connection: backend.client_id.clone(),
-                server: backend
-                    .client
-                    .server_identity()
-                    .unwrap_or(&backend.base)
-                    .to_owned(),
+                owner: ServerOwner::from_backend(backend),
                 scope,
                 context: project.filter(|target| target.online()).map(|target| {
                     let (workspace, session) = target.location();
                     (workspace.to_owned(), session.map(str::to_owned))
                 }),
             });
-        let mut changed = self.key != key;
-        if changed {
-            self.suspend();
-            self.key = key;
-            self.invalidate();
+        let mut changed = false;
+        match (&mut self.key, next_key) {
+            (Some(current), Some(next)) if current.same_target(&next) => {
+                if let Some(backend) = backend
+                    && current.owner.adopt_same_server(backend)
+                {
+                    // Re-authenticated to the same server and scope: keep the loaded snapshot
+                    // so open entry drafts stay current while a fresh read confirms revisions.
+                    self.epoch = self.epoch.wrapping_add(1);
+                    self.flight = None;
+                    self.failed = None;
+                    self.tidy = None;
+                    self.cleanup = None;
+                    self.tidy_attempted = false;
+                    self.tidy_failed = false;
+                    self.invalidate();
+                    changed = true;
+                }
+            }
+            (None, None) => {}
+            (_, next) => {
+                self.suspend();
+                self.key = next;
+                self.invalidate();
+                changed = true;
+            }
         }
         if let Some(reply) = &self.write {
             let result = match reply.try_recv() {
@@ -316,7 +354,8 @@ impl Review {
             self.flight = None;
             self.failed = result.as_ref().err().copied();
             if let Ok(list) = result {
-                self.seen.observe(&key.server, &list, self.expanded);
+                self.seen
+                    .observe(key.owner.seen_key(), &list, self.expanded);
                 self.snapshot = Some(list);
             }
             changed = true;
@@ -512,7 +551,7 @@ impl Review {
                     if badge == "settings.memory.flagged" {
                         entry.flagged
                     } else {
-                        self.seen.badge(&key.server, list, entry) == Some(badge)
+                        self.seen.badge(key.owner.seen_key(), list, entry) == Some(badge)
                     }
                 }) {
                     label.push(' ');
@@ -547,7 +586,7 @@ impl Review {
                         .child(text(kind))
                         .children(
                             self.seen
-                                .badge(&key.server, list, entry)
+                                .badge(key.owner.seen_key(), list, entry)
                                 .map(|badge| text(t(badge))),
                         )
                         .children(entry.flagged.then(|| text(t("settings.memory.flagged")))),

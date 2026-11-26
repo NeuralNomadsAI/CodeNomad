@@ -82,6 +82,21 @@ impl Setting {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn review_first_edit(&self) -> Option<review::Edit> {
+        self.review.first_edit()
+    }
+
+    #[cfg(test)]
+    pub(super) fn review_is_current(&self, edit: &review::Edit) -> bool {
+        self.review.is_current(edit)
+    }
+
+    #[cfg(test)]
+    pub(super) fn review_writable(&self, edit: &review::Edit) -> bool {
+        self.review.writable(edit)
+    }
+
     pub fn poll_editor(&self, editor: &mut editor::Editor) -> bool {
         editor.poll(&self.review)
     }

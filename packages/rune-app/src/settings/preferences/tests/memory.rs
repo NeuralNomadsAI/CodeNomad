@@ -84,6 +84,153 @@ fn failed_memory_reads_keep_the_last_confirmed_switch_value() {
     });
 }
 
+#[test]
+fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different_profile_invalidates()
+ {
+    use crate::settings::memory::{
+        editor::Editor,
+        review::{Action, Fields},
+        review_action,
+    };
+
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let rev = "a".repeat(64);
+        let next_rev = "b".repeat(64);
+        let before = prefs.backend.as_ref().unwrap().clone();
+        attest(&listener, &before, "profile-a").await;
+        prefs.memory.show(true);
+        assert!(prefs.poll());
+        let settings_req = request(&listener).await;
+        assert_eq!(settings_req.first, "GET /api/memory/settings HTTP/1.1");
+        settings_req.reply(200, json!({"enabled": true})).await;
+        wait_until(|| prefs.poll()).await;
+
+        let list_req = request(&listener).await;
+        assert_eq!(list_req.first, "POST /api/memory HTTP/1.1");
+        assert_eq!(list_req.body["operation"]["action"], "list");
+        let list_body = json!({
+            "scope": "global",
+            "scopeKey": "global",
+            "observedAt": "2026-01-01T00:00:00Z",
+            "entries": [{
+                "id": "entry-1",
+                "title": "Original",
+                "type": "fact",
+                "text": "Original text",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-01T00:00:00Z",
+                "revision": rev,
+                "flagged": false
+            }]
+        });
+        list_req.reply(200, list_body.clone()).await;
+        wait_until(|| prefs.poll()).await;
+
+        let edit = prefs
+            .memory
+            .review_first_edit()
+            .expect("loaded memory edit");
+        assert!(prefs.memory.review_is_current(&edit));
+        assert!(prefs.memory.review_writable(&edit));
+        let mut editor = Editor::default();
+        editor.open(edit.clone());
+
+        // Re-authenticate on the same server (new client_id, same base + server_identity).
+        let reauthed = Backend::connect(&before.base, "").await.unwrap();
+        attest(&listener, &reauthed, "profile-a").await;
+        assert_ne!(reauthed.client_id, before.client_id);
+        prefs.bind(Some(reauthed));
+        assert!(prefs.poll());
+        // The open edit must remain current while the fresh list is in flight (no false conflict).
+        assert!(prefs.memory.review_is_current(&edit));
+        assert!(!prefs.memory.review_writable(&edit));
+
+        let mut saw_list = false;
+        let mut saw_settings = false;
+        let mut saw_config = false;
+        let mut saw_state = false;
+        while !saw_list || !saw_settings || !saw_config || !saw_state {
+            let req = poll_next_request(&mut prefs, &listener).await;
+            match req.first.as_str() {
+                "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
+                    saw_config = true;
+                    req.reply(200, json!({"settings":{"locale":"en"}})).await;
+                }
+                "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" => {
+                    saw_state = true;
+                    req.reply(200, json!({})).await;
+                }
+                "GET /api/memory/settings HTTP/1.1" => {
+                    saw_settings = true;
+                    req.reply(200, json!({"enabled": true})).await;
+                }
+                "POST /api/memory HTTP/1.1" if req.body["operation"]["action"] == "list" => {
+                    saw_list = true;
+                    req.reply(200, list_body.clone()).await;
+                }
+                other => panic!("unexpected request after re-auth: {other}"),
+            }
+        }
+        wait_until(|| prefs.poll() && prefs.memory.review_writable(&edit)).await;
+
+        let admitted = review_action(
+            &mut prefs,
+            Action::Write(
+                edit.clone(),
+                Some(Fields {
+                    title: "Updated".into(),
+                    text: "Updated text".into(),
+                    kind: codenomad_client::settings::memory::Kind::Fact,
+                }),
+            ),
+        );
+        assert!(admitted);
+        let save_req = poll_next_request(&mut prefs, &listener).await;
+        assert_eq!(save_req.first, "POST /api/memory HTTP/1.1");
+        assert_eq!(save_req.body["operation"]["action"], "save");
+        assert_eq!(save_req.body["operation"]["id"], "entry-1");
+        assert_eq!(save_req.body["operation"]["revision"], rev);
+        save_req
+            .reply(200, json!({"id": "entry-1", "revision": next_rev}))
+            .await;
+        let post_save_list = poll_next_request(&mut prefs, &listener).await;
+        assert_eq!(post_save_list.first, "POST /api/memory HTTP/1.1");
+        assert_eq!(post_save_list.body["operation"]["action"], "list");
+        let updated_list = json!({
+            "scope": "global",
+            "scopeKey": "global",
+            "observedAt": "2026-01-01T00:01:00Z",
+            "entries": [{
+                "id": "entry-1",
+                "title": "Updated",
+                "type": "fact",
+                "text": "Updated text",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-01T00:01:00Z",
+                "revision": next_rev,
+                "flagged": false
+            }]
+        });
+        post_save_list.reply(200, updated_list).await;
+        wait_until(|| prefs.poll()).await;
+        let updated_edit = prefs
+            .memory
+            .review_first_edit()
+            .expect("updated memory edit");
+        assert!(prefs.memory.review_is_current(&updated_edit));
+        assert!(prefs.memory.review_writable(&updated_edit));
+
+        // Switching to a different server profile on the same address must invalidate the edit.
+        let other = Backend::connect(&before.base, "").await.unwrap();
+        attest(&listener, &other, "profile-b").await;
+        prefs.bind(Some(other));
+        assert!(!prefs.memory.review_is_current(&updated_edit));
+        assert!(!prefs.memory.review_writable(&updated_edit));
+        assert!(editor.shown());
+    });
+}
+
 fn find_name<'a>(tree: &'a Value, name: &str) -> Option<&'a Value> {
     if tree["name"] == name && matches!(tree["role"].as_str(), Some("switch" | "button" | "alert"))
     {

@@ -26,6 +26,15 @@ pub(super) enum ErrorText {
 }
 
 impl ErrorText {
+    pub fn from_remote(err: remote::Error, fallback_key: &'static str) -> Self {
+        match err {
+            remote::Error::Server(message) => Self::Raw(message),
+            remote::Error::Transport
+            | remote::Error::InvalidResponse
+            | remote::Error::SaveFailed => Self::Key(fallback_key),
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         match self {
             Self::Key(key) => t(key),
@@ -55,7 +64,7 @@ type Snapshot = (Status, Option<Vec<Device>>);
 struct SnapshotRead {
     status: Status,
     devices: Option<Vec<Device>>,
-    devices_error: Option<String>,
+    devices_error: Option<remote::Error>,
 }
 
 pub(super) struct ActivePairing {
@@ -83,18 +92,18 @@ enum Mutation {
 }
 
 enum Reply {
-    Snapshot(Result<SnapshotRead, String>),
-    Started(Result<(Status, Pairing, Option<Vec<Device>>), String>),
-    Status(Result<Status, String>),
-    Pairing(Result<(Pairing, bool), String>),
+    Snapshot(Result<SnapshotRead, remote::Error>),
+    Started(Result<(Status, Pairing, Option<Vec<Device>>), remote::Error>),
+    Status(Result<Status, remote::Error>),
+    Pairing(Result<(Pairing, bool), remote::Error>),
 }
 
-async fn snapshot(backend: &Backend) -> Result<SnapshotRead, String> {
-    let status = remote::status(backend).await.map_err(|e| e.to_string())?;
+async fn snapshot(backend: &Backend) -> Result<SnapshotRead, remote::Error> {
+    let status = remote::status(backend).await?;
     let (devices, devices_error) = if status.manageable {
         match remote::devices(backend).await {
             Ok(devices) => (devices, None),
-            Err(err) => (None, Some(err.to_string())),
+            Err(err) => (None, Some(err)),
         }
     } else {
         (None, None)
@@ -190,7 +199,7 @@ impl Remote {
                 if self.needs_read {
                     self.error = read
                         .devices_error
-                        .map(ErrorText::Raw)
+                        .map(|err| ErrorText::from_remote(err, "remoteControl.state.error"))
                         .or(Some(ErrorText::Key("remoteControl.state.error")));
                 } else {
                     let failed = match self.unconfirmed.take() {
@@ -207,7 +216,8 @@ impl Remote {
                     };
                     if let Some(err) = read.devices_error {
                         if !failed || self.error.is_none() {
-                            self.error = Some(ErrorText::Raw(err));
+                            self.error =
+                                Some(ErrorText::from_remote(err, "remoteControl.state.error"));
                         }
                     } else if !failed {
                         self.error = None;
@@ -219,7 +229,7 @@ impl Remote {
             }
             Reply::Snapshot(Err(err)) => {
                 self.needs_read = true;
-                self.error = Some(ErrorText::Raw(err));
+                self.error = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
             }
             Reply::Started(Ok((status, pairing, devices))) => {
                 self.unconfirmed = None;
@@ -230,7 +240,7 @@ impl Remote {
                 self.set_pairing(pairing, false);
             }
             Reply::Started(Err(err)) => {
-                self.error = Some(ErrorText::Raw(err));
+                self.error = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
                 if let Some(backend) = backend {
                     self.start(backend, wake, Action::Refresh);
                 } else {
@@ -255,7 +265,7 @@ impl Remote {
                 self.snapshot = Some((status, devices));
             }
             Reply::Status(Err(err)) => {
-                self.error = Some(ErrorText::Raw(err));
+                self.error = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
                 if let Some(backend) = backend {
                     self.start(backend, wake, Action::Refresh);
                 } else {
@@ -270,7 +280,7 @@ impl Remote {
                 self.set_pairing(pairing, direct);
             }
             Reply::Pairing(Err(err)) => {
-                self.error = Some(ErrorText::Raw(err));
+                self.error = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
                 if let Some(backend) = backend {
                     self.start(backend, wake, Action::Refresh);
                 } else {
@@ -403,30 +413,24 @@ impl Remote {
                         let devices = remote::devices(&backend).await.ok().flatten();
                         Reply::Started(Ok((started.status, started.pairing, devices)))
                     }
-                    Err(err) => Reply::Started(Err(err.to_string())),
+                    Err(err) => Reply::Started(Err(err)),
                 },
-                Action::Stop => {
-                    Reply::Status(remote::stop(&backend).await.map_err(|e| e.to_string()))
+                Action::Stop => Reply::Status(remote::stop(&backend).await),
+                Action::SetPreviews(enabled) => {
+                    Reply::Status(remote::set_previews(&backend, enabled).await)
                 }
-                Action::SetPreviews(enabled) => Reply::Status(
-                    remote::set_previews(&backend, enabled)
-                        .await
-                        .map_err(|e| e.to_string()),
-                ),
                 Action::PairTunnel => match tunnel_origin {
                     Some(origin) => Reply::Pairing(
                         remote::pairing(&backend, None, &origin)
                             .await
-                            .map(|p| (p, false))
-                            .map_err(|e| e.to_string()),
+                            .map(|p| (p, false)),
                     ),
-                    None => Reply::Pairing(Err("Missing Remote Control tunnel origin".into())),
+                    None => Reply::Pairing(Err(remote::Error::InvalidResponse)),
                 },
                 Action::PairDirect(origin) => Reply::Pairing(
                     remote::pairing(&backend, Some(&origin), &origin)
                         .await
-                        .map(|p| (p, true))
-                        .map_err(|e| e.to_string()),
+                        .map(|p| (p, true)),
                 ),
                 Action::Revoke(id) => {
                     let _ = remote::revoke(&backend, &id).await;

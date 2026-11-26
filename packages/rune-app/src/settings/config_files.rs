@@ -1,4 +1,4 @@
-use super::Preferences;
+use super::{Preferences, ServerOwner};
 use crate::{backend::Backend, platform, strings::t};
 use codenomad_client::{Receiver, Sender, bounded, settings::config_files as api};
 use rune::{El, TextEdit, Waker, col, text};
@@ -11,7 +11,7 @@ mod syntax;
 
 #[derive(Default)]
 pub(super) struct Editor {
-    owner: Option<String>,
+    owner: Option<ServerOwner>,
     files: Option<Vec<api::File>>,
     active: Option<usize>,
     original: Option<String>,
@@ -53,29 +53,50 @@ impl Editor {
             self.suspend();
             return false;
         };
-        let mut changed = self.owner.is_some() && self.owner.as_deref() != Some(&backend.client_id);
-        if changed {
-            *self = Self {
-                owner: Some(backend.client_id.clone()),
-                ..Self::default()
-            };
-        }
-        if let Some((draft, saved)) = self.write.as_ref().and_then(|inbox| inbox.try_recv().ok()) {
-            self.write = None;
-            if saved {
-                self.original = Some(draft);
-                self.exists = true;
-                self.notice = Some("settings.configFiles.toast.saveSuccess");
+        let mut changed = false;
+        if let Some(owner) = self.owner.as_mut() {
+            if owner.same_backend_server(backend) {
+                if owner.adopt_same_server(backend) {
+                    // Re-authenticated to the same server: preserve loaded files and unsaved edits,
+                    // cancelling only reads started on the previous connection.
+                    self.read = None;
+                    changed = true;
+                }
             } else {
-                self.notice = Some("settings.configFiles.errors.save");
+                *self = Self {
+                    owner: Some(ServerOwner::from_backend(backend)),
+                    ..Self::default()
+                };
+                changed = true;
             }
-            changed = true;
+        }
+        if let Some(inbox) = self.write.as_ref() {
+            match inbox.try_recv() {
+                Ok((draft, saved)) => {
+                    self.write = None;
+                    if saved {
+                        self.original = Some(draft);
+                        self.exists = true;
+                        self.notice = Some("settings.configFiles.toast.saveSuccess");
+                    } else {
+                        self.notice = Some("settings.configFiles.errors.save");
+                    }
+                    changed = true;
+                }
+                Err(_) if inbox.is_closed() => {
+                    self.write = None;
+                    self.notice = Some("settings.configFiles.errors.save");
+                    changed = true;
+                }
+                Err(_) => {}
+            }
         }
         if !visible {
             self.suspend();
             return changed;
         }
-        self.owner.get_or_insert_with(|| backend.client_id.clone());
+        self.owner
+            .get_or_insert_with(|| ServerOwner::from_backend(backend));
         if let Some(result) = self
             .read
             .as_ref()
@@ -174,11 +195,13 @@ impl Editor {
     }
 
     fn save(&mut self, prefs: &Preferences) {
-        let Some(backend) = prefs
-            .backend
-            .as_ref()
-            .filter(|b| prefs.can_retry() && Some(&b.client_id) == self.owner.as_ref())
-        else {
+        let Some(backend) = prefs.backend.as_ref().filter(|b| {
+            prefs.can_retry()
+                && self
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.same_backend_server(b))
+        }) else {
             return;
         };
         let Some(file) = self
@@ -356,5 +379,180 @@ mod tests {
         assert_eq!(editor.goal, None);
         editor.suspend();
         assert_eq!(editor.draft.text, "{/* draft */}");
+    }
+
+    #[test]
+    fn reauthentication_on_same_server_preserves_dirty_draft_and_different_profile_resets() {
+        use serde_json::{Value, json};
+        use std::{
+            sync::{Arc, Mutex},
+            time::Duration,
+        };
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+
+        platform::block_on(async {
+            let saved_payload = Arc::new(Mutex::new(None::<String>));
+            let saved_srv = saved_payload.clone();
+            let server_id = Arc::new(Mutex::new("server-profile-a".to_owned()));
+            let server_id_srv = server_id.clone();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}/", listener.local_addr().unwrap());
+            tokio::spawn(async move {
+                while let Ok((mut stream, _)) = listener.accept().await {
+                    let saved_srv = saved_srv.clone();
+                    let server_id_srv = server_id_srv.clone();
+                    tokio::spawn(async move {
+                        let mut raw = Vec::new();
+                        let mut tmp = [0u8; 4096];
+                        let header_end = loop {
+                            let Ok(n) = stream.read(&mut tmp).await else {
+                                return;
+                            };
+                            if n == 0 {
+                                return;
+                            }
+                            raw.extend_from_slice(&tmp[..n]);
+                            if let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                                break pos + 4;
+                            }
+                        };
+                        let head = String::from_utf8_lossy(&raw[..header_end]).into_owned();
+                        let content_len = head
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())
+                                    .flatten()
+                            })
+                            .unwrap_or(0);
+                        while raw.len() < header_end + content_len {
+                            let Ok(n) = stream.read(&mut tmp).await else {
+                                return;
+                            };
+                            if n == 0 {
+                                break;
+                            }
+                            raw.extend_from_slice(&tmp[..n]);
+                        }
+                        let first = head.lines().next().unwrap_or_default();
+                        let mut parts = first.split_whitespace();
+                        let method = parts.next().unwrap_or_default();
+                        let path = parts.next().unwrap_or_default();
+                        let body = String::from_utf8_lossy(
+                            &raw[header_end..header_end + content_len.min(raw.len() - header_end)],
+                        );
+                        let (status, reply) = match (method, path) {
+                            ("GET", "/api/meta") => (
+                                "200 OK",
+                                json!({
+                                    "apiContract": 1,
+                                    "serverId": server_id_srv.lock().unwrap().clone(),
+                                })
+                                .to_string(),
+                            ),
+                            ("GET", "/api/config-files") => (
+                                "200 OK",
+                                json!([{
+                                    "id": "codenomad",
+                                    "label": "CodeNomad",
+                                    "path": "/tmp/config.yaml",
+                                    "language": "yaml"
+                                }])
+                                .to_string(),
+                            ),
+                            ("GET", "/api/config-files/codenomad/content") => (
+                                "200 OK",
+                                json!({
+                                    "id": "codenomad",
+                                    "exists": true,
+                                    "contents": "locale: en\n"
+                                })
+                                .to_string(),
+                            ),
+                            ("PUT", "/api/config-files/codenomad/content") => {
+                                let parsed: Value = serde_json::from_str(&body).unwrap();
+                                *saved_srv.lock().unwrap() =
+                                    parsed["contents"].as_str().map(str::to_owned);
+                                ("204 No Content", String::new())
+                            }
+                            _ => ("404 Not Found", json!({"error": "not found"}).to_string()),
+                        };
+                        let response = format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                            reply.len()
+                        );
+                        let _ = stream.write_all(response.as_bytes()).await;
+                    });
+                }
+            });
+
+            let wake: Waker = Arc::new(|| {});
+            let backend_a = Backend::connect(&base, "").await.unwrap();
+            backend_a.attest_server().await.unwrap();
+            assert_eq!(backend_a.client.server_identity(), Some("server-profile-a"));
+
+            let mut prefs = Preferences::default();
+            prefs.main_wake = Some(wake.clone());
+            prefs.backend = Some(backend_a);
+
+            let mut editor = Editor::default();
+            for _ in 0..100 {
+                editor.poll(&prefs, &wake, true);
+                if editor.active == Some(0) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert_eq!(editor.active, Some(0));
+            editor.draft = TextEdit::new("locale: fr\n");
+            assert!(editor.dirty());
+
+            // Re-authenticate on the same server (new client_id, same base + server_identity).
+            let backend_b = Backend::connect(&base, "").await.unwrap();
+            backend_b.attest_server().await.unwrap();
+            assert_ne!(
+                backend_b.client_id,
+                prefs.backend.as_ref().unwrap().client_id
+            );
+            prefs.backend = Some(backend_b);
+
+            assert!(editor.poll(&prefs, &wake, true));
+            assert!(editor.dirty());
+            assert_eq!(editor.draft.text, "locale: fr\n");
+
+            editor.save(&prefs);
+            assert!(editor.busy());
+            for _ in 0..100 {
+                editor.poll(&prefs, &wake, true);
+                if !editor.busy() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!editor.dirty());
+            assert_eq!(
+                editor.notice,
+                Some("settings.configFiles.toast.saveSuccess")
+            );
+            assert_eq!(
+                saved_payload.lock().unwrap().as_deref(),
+                Some("locale: fr\n")
+            );
+
+            // Editing again and connecting to a different server profile on the same address must reset.
+            editor.draft = TextEdit::new("locale: de\n");
+            assert!(editor.dirty());
+            *server_id.lock().unwrap() = "server-profile-b".to_owned();
+            let backend_c = Backend::connect(&base, "").await.unwrap();
+            backend_c.attest_server().await.unwrap();
+            prefs.backend = Some(backend_c);
+            assert!(editor.poll(&prefs, &wake, true));
+            assert!(!editor.dirty());
+            assert!(editor.draft.text.is_empty());
+        });
     }
 }

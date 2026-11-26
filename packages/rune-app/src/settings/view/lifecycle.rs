@@ -68,11 +68,6 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 if let Some(wake) = prefs.window_wake.clone() {
                     config_changed = s.host_support.poll(&prefs, &wake, !s.closing);
                     let capable = s.host_support.config_files(&prefs);
-                    if s.section == Section::ConfigFiles && !capable && !s.config_files.dirty() {
-                        s.section = Section::General;
-                        prefs.memory.show(true);
-                        config_changed = true;
-                    }
                     config_changed |= s.config_files.poll(
                         &prefs,
                         &wake,
@@ -81,6 +76,11 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                             && !s.confirm_close
                             && !s.closing,
                     );
+                    if s.section == Section::ConfigFiles && !capable && !s.config_files.dirty() {
+                        s.section = Section::General;
+                        prefs.memory.show(true);
+                        config_changed = true;
+                    }
                 }
                 if updated {
                     tx.set_title(crate::strings::with_locale(
