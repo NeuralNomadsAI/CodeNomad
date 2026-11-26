@@ -20,6 +20,14 @@ pub enum CatalogueChanges {
     All,
 }
 
+#[derive(Default)]
+pub enum SessionCatalogueChanges {
+    #[default]
+    None,
+    Sessions(HashSet<(String, String)>),
+    All,
+}
+
 const MAX_WORKSPACE_EVENTS: usize = 256;
 const MAX_WORKSPACE_EVENT_BYTES: usize = 512 * 1024;
 
@@ -82,7 +90,7 @@ pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
     integrations: Mutex<CatalogueChanges>,
-    integration_sessions: Mutex<CatalogueChanges>,
+    integration_sessions: Mutex<SessionCatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
@@ -108,7 +116,7 @@ impl Signals {
         if self.mark(&self.pending, None)
             | self.mark(&self.providers, None)
             | self.mark(&self.integrations, None)
-            | self.mark(&self.integration_sessions, None)
+            | mark_session_changes(&mut self.integration_sessions.lock().unwrap(), None)
             | workspace
         {
             (self.wake)();
@@ -119,7 +127,7 @@ impl Signals {
         self.mark(&self.pending, None);
         self.mark(&self.providers, None);
         self.mark(&self.integrations, None);
-        self.mark(&self.integration_sessions, None);
+        mark_session_changes(&mut self.integration_sessions.lock().unwrap(), None);
         self.generation.fetch_add(1, SeqCst);
         let _ = self
             .workspace_generation
@@ -187,6 +195,31 @@ fn mark_changes(pending: &mut CatalogueChanges, workspace: Option<&str>) -> bool
     }
 }
 
+fn mark_session_changes(
+    pending: &mut SessionCatalogueChanges,
+    target: Option<(&str, &str)>,
+) -> bool {
+    match (&mut *pending, target) {
+        (SessionCatalogueChanges::All, _) => false,
+        (_, None) => {
+            *pending = SessionCatalogueChanges::All;
+            true
+        }
+        (SessionCatalogueChanges::None, Some((ws, ses))) => {
+            *pending =
+                SessionCatalogueChanges::Sessions(HashSet::from([(ws.to_owned(), ses.to_owned())]));
+            true
+        }
+        (SessionCatalogueChanges::Sessions(pairs), Some((ws, ses))) if pairs.len() < 128 => {
+            pairs.insert((ws.to_owned(), ses.to_owned()))
+        }
+        (SessionCatalogueChanges::Sessions(_), Some(_)) => {
+            *pending = SessionCatalogueChanges::All;
+            true
+        }
+    }
+}
+
 impl Signals {
     pub(super) fn observe(&self, frame: &Value) {
         let workspace_event =
@@ -211,11 +244,11 @@ impl Signals {
         let provider_changed = crate::settings::provider_change(frame)
             .is_some_and(|id| self.mark(&self.providers, Some(id)));
         let integration_changed = match crate::settings::integrations::change_event(frame) {
-            Some((ws, None)) => {
-                self.mark(&self.integrations, Some(ws))
-                    | self.mark(&self.integration_sessions, Some(ws))
-            }
-            Some((ws, Some(_))) => self.mark(&self.integration_sessions, Some(ws)),
+            Some((ws, None)) => self.mark(&self.integrations, Some(ws)),
+            Some((ws, Some(ses))) => mark_session_changes(
+                &mut self.integration_sessions.lock().unwrap(),
+                Some((ws, ses)),
+            ),
             None => false,
         };
         let kind = frame["type"].as_str();
@@ -437,7 +470,7 @@ impl CatalogueWatch {
         )
     }
 
-    pub fn take_integration_changes(&self) -> (CatalogueChanges, CatalogueChanges) {
+    pub fn take_integration_changes(&self) -> (CatalogueChanges, SessionCatalogueChanges) {
         (
             std::mem::take(&mut *self.signals.integrations.lock().unwrap()),
             std::mem::take(&mut *self.signals.integration_sessions.lock().unwrap()),

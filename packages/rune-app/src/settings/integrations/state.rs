@@ -90,7 +90,7 @@ struct DetailFlight {
 
 enum DetailReply {
     Binding(String, BindingState),
-    Offers(String, Vec<HostOffer>),
+    Offers(String, Result<Vec<HostOffer>, IntegrationError>),
 }
 
 struct AttachProbe {
@@ -108,6 +108,7 @@ struct AttachProbe {
 
 struct MutationFlight {
     rx: Receiver<MutationReply>,
+    scope: (String, String),
     authority: u64,
 }
 
@@ -159,6 +160,14 @@ pub(in crate::settings) struct Panel {
 impl Panel {
     pub(super) fn available(&self) -> bool {
         self.scope.is_some() && self.online
+    }
+
+    pub(super) fn fresh(&self) -> bool {
+        self.available()
+            && !self.stale
+            && self.read_flight.is_none()
+            && self.due.is_none()
+            && matches!(self.load, LoadState::Ready(_))
     }
 
     pub(super) fn reading(&self) -> bool {
@@ -217,8 +226,11 @@ impl Panel {
     pub(in crate::settings) fn suspend(&mut self) {
         self.cancel_reads();
         self.revoke_intents();
-        self.mutation = None;
-        *self = Self::default();
+        let in_flight = self.mutation.take();
+        *self = Self {
+            mutation: in_flight,
+            ..Self::default()
+        };
     }
 
     pub(super) fn refresh(&mut self) {
@@ -230,6 +242,11 @@ impl Panel {
         self.docs_link.clear();
         self.refresh_error = false;
         self.directory = None;
+        self.bindings.clear();
+        self.offers.clear();
+        if matches!(self.load, LoadState::Ready(_)) {
+            self.stale = true;
+        }
         self.epoch = self.epoch.wrapping_add(1);
         self.cancel_reads();
         self.dirty_while_reading = false;
@@ -240,7 +257,7 @@ impl Panel {
     }
 
     pub(super) fn request_catalog_install(&mut self, id: &str) {
-        if !self.available() || self.busy() || self.confirm.is_some() {
+        if !self.fresh() || self.busy() || self.confirm.is_some() {
             return;
         }
         let Some(directory) = self.directory.clone() else {
@@ -263,7 +280,7 @@ impl Panel {
     }
 
     pub(super) fn request_host_install(&mut self, id: &str) {
-        if !self.available() || self.busy() || self.confirm.is_some() {
+        if !self.fresh() || self.busy() || self.confirm.is_some() {
             return;
         }
         let Some(directory) = self.directory.clone() else {
@@ -297,7 +314,7 @@ impl Panel {
         let Some(pending) = self.confirm.take() else {
             return;
         };
-        if !accept || !self.available() || self.busy() {
+        if !accept || !self.fresh() || self.busy() {
             return;
         }
         let Some((backend, workspace, wake)) = self
@@ -309,6 +326,7 @@ impl Panel {
         else {
             return;
         };
+        let mutation_scope = (backend.base.clone(), workspace.clone());
         match pending {
             PendingConfirm::CatalogInstall {
                 id,
@@ -326,7 +344,11 @@ impl Panel {
                     return;
                 }
                 let (out, rx) = bounded(1);
-                self.mutation = Some(MutationFlight { rx, authority });
+                self.mutation = Some(MutationFlight {
+                    rx,
+                    scope: mutation_scope,
+                    authority,
+                });
                 platform::spawn(async move {
                     let result =
                         api::install_catalog(&backend, &workspace, &directory, &id, scope).await;
@@ -356,7 +378,11 @@ impl Panel {
                     return;
                 }
                 let (out, rx) = bounded(1);
-                self.mutation = Some(MutationFlight { rx, authority });
+                self.mutation = Some(MutationFlight {
+                    rx,
+                    scope: mutation_scope,
+                    authority,
+                });
                 platform::spawn(async move {
                     let result = api::install_host(&backend, &workspace, &directory, &id).await;
                     if out.send(MutationReply::HostInstall(result)).await.is_ok() {
@@ -368,10 +394,13 @@ impl Panel {
     }
 
     pub(super) fn request_attach(&mut self, id: &str, expected_offer: Option<String>) {
-        if !self.available() || self.busy() || self.confirm.is_some() {
+        if !self.fresh() || self.busy() || self.confirm.is_some() {
             return;
         }
-        if matches!(self.bindings.get(id), Some(BindingState::Attached(_))) {
+        let Some(binding) = self.bindings.get(id) else {
+            return;
+        };
+        if matches!(binding, BindingState::Attached(_)) {
             return;
         }
         let Some(entry) = self.entry(id) else {
@@ -431,13 +460,14 @@ impl Panel {
         let Some(chooser) = self.chooser.take() else {
             return;
         };
-        if !self.available()
+        if !self.fresh()
             || self.busy()
             || chooser.authority != self.authority
             || chooser.epoch != self.epoch
             || chooser.session_epoch != self.session_epoch
             || self.directory.as_deref() != Some(chooser.directory.as_str())
             || self.session.as_deref() != Some(chooser.session_id.as_str())
+            || !self.bindings.contains_key(&chooser.id)
             || matches!(
                 self.bindings.get(&chooser.id),
                 Some(BindingState::Attached(_))
@@ -453,7 +483,7 @@ impl Panel {
     }
 
     pub(super) fn request_detach(&mut self, id: &str) {
-        if !self.available() || self.busy() || self.confirm.is_some() {
+        if !self.fresh() || self.busy() || self.confirm.is_some() {
             return;
         }
         if !matches!(self.bindings.get(id), Some(BindingState::Attached(_))) {
@@ -480,6 +510,7 @@ impl Panel {
         let id = id.to_owned();
         self.mutation = Some(MutationFlight {
             rx,
+            scope: (backend.base.clone(), workspace.clone()),
             authority: self.authority,
         });
         platform::spawn(async move {
@@ -516,8 +547,13 @@ impl Panel {
             session.map(str::to_owned),
         );
         let new_scope = self.scope.as_ref() != Some(&scope);
+        let ws_scope = (backend.base.clone(), workspace.to_owned());
         if new_scope {
             self.suspend();
+            self.mutation = self
+                .mutation
+                .take()
+                .filter(|m| m.scope == ws_scope && m.authority == authority);
             self.wake = Some(wake.clone());
             self.scope = Some(scope);
             self.backend = Some(backend.clone());
@@ -534,12 +570,15 @@ impl Panel {
             self.backend = Some(backend.clone());
             self.authority = authority;
             self.online = online;
+            self.directory = None;
+            self.bindings.clear();
+            self.offers.clear();
             self.cancel_reads();
             self.revoke_intents();
             if self
                 .mutation
                 .as_ref()
-                .is_some_and(|m| m.authority != authority)
+                .is_some_and(|m| m.scope != ws_scope || m.authority != authority)
             {
                 self.mutation = None;
             }
@@ -565,6 +604,8 @@ impl Panel {
             self.visible = false;
             self.cancel_reads();
             self.revoke_intents();
+            self.bindings.clear();
+            self.offers.clear();
             self.due = None;
             self.dirty_while_reading = false;
             if matches!(self.load, LoadState::Ready(_)) {
@@ -581,21 +622,20 @@ impl Panel {
         }
 
         let mut paint = new_scope || transport_changed || became_visible;
-        if self.last_hint != hint {
+        let ws_changed = self.last_hint != hint;
+        let ses_changed = self.last_session_hint != session_hint;
+        if ws_changed || ses_changed {
             self.last_hint = hint;
             self.last_session_hint = session_hint;
-            self.epoch = self.epoch.wrapping_add(1);
-            self.session_epoch = self.session_epoch.wrapping_add(1);
-            self.revoke_intents();
-            if matches!(self.load, LoadState::Ready(_)) {
-                self.stale = true;
+            if ws_changed {
+                self.epoch = self.epoch.wrapping_add(1);
             }
-            self.schedule_coalesced(now);
-            paint = true;
-        } else if self.last_session_hint != session_hint {
-            self.last_session_hint = session_hint;
-            self.session_epoch = self.session_epoch.wrapping_add(1);
-            self.directory = None;
+            if ses_changed {
+                self.session_epoch = self.session_epoch.wrapping_add(1);
+                self.directory = None;
+            }
+            self.bindings.clear();
+            self.offers.clear();
             self.revoke_intents();
             if matches!(self.load, LoadState::Ready(_)) {
                 self.stale = true;
@@ -731,15 +771,7 @@ impl Panel {
                     self.start_detail_reads(&directory);
                 }
                 ReadReply::Unsupported => {
-                    self.cancel_reads();
-                    self.revoke_intents();
-                    self.bindings.clear();
-                    self.offers.clear();
-                    self.stale = false;
-                    self.refresh_error = false;
-                    self.dirty_while_reading = false;
-                    self.due = None;
-                    self.load = LoadState::Unsupported;
+                    self.mark_unsupported();
                 }
                 ReadReply::Failed => {
                     self.directory = None;
@@ -813,16 +845,9 @@ impl Panel {
                 )
             })
             .collect();
-        self.bindings
-            .retain(|id, _| valid_ids.iter().any(|(known, _)| known == id));
-        self.offers.retain(|id, _| {
-            valid_ids
-                .iter()
-                .any(|(known, count)| known == id && *count > 0)
-        });
+        self.bindings.clear();
+        self.offers.clear();
         let Some(session_id) = self.session.clone() else {
-            self.bindings.clear();
-            self.offers.clear();
             return;
         };
         for (id, offer_count) in valid_ids {
@@ -875,13 +900,13 @@ impl Panel {
                     session_epoch: self.session_epoch,
                 });
                 platform::spawn(async move {
-                    if let Some(Ok(offers)) = platform::reads::cancellable(
+                    if let Some(result) = platform::reads::cancellable(
                         &cancelled,
                         api::list_hosts(&backend, &workspace, &dir, &id_clone),
                     )
                     .await
                         && out
-                            .send(DetailReply::Offers(id_clone, offers))
+                            .send(DetailReply::Offers(id_clone, result))
                             .await
                             .is_ok()
                     {
@@ -902,8 +927,11 @@ impl Panel {
                         DetailReply::Binding(id, state) => {
                             self.bindings.insert(id, state);
                         }
-                        DetailReply::Offers(id, list) => {
+                        DetailReply::Offers(id, Ok(list)) => {
                             self.offers.insert(id, list);
+                        }
+                        DetailReply::Offers(id, Err(_)) => {
+                            self.offers.remove(&id);
                         }
                     }
                     changed = true;
@@ -927,7 +955,8 @@ impl Panel {
         let Some(probe) = self.attach_probe.take() else {
             return false;
         };
-        if probe.authority != self.authority
+        if !self.fresh()
+            || probe.authority != self.authority
             || probe.epoch != self.epoch
             || probe.session_epoch != self.session_epoch
             || self.directory.as_deref() != Some(probe.directory.as_str())
@@ -1004,6 +1033,7 @@ impl Panel {
         let (out, rx) = bounded(1);
         self.mutation = Some(MutationFlight {
             rx,
+            scope: (backend.base.clone(), workspace.clone()),
             authority: self.authority,
         });
         platform::spawn(async move {
@@ -1020,6 +1050,31 @@ impl Panel {
                 wake();
             }
         });
+    }
+
+    fn mark_unsupported(&mut self) {
+        self.cancel_reads();
+        self.revoke_intents();
+        self.bindings.clear();
+        self.offers.clear();
+        self.stale = false;
+        self.refresh_error = false;
+        self.dirty_while_reading = false;
+        self.due = None;
+        self.load = LoadState::Unsupported;
+    }
+
+    fn reconcile_after_mutation(&mut self) {
+        self.cancel_reads();
+        self.revoke_intents();
+        self.bindings.clear();
+        self.offers.clear();
+        self.epoch = self.epoch.wrapping_add(1);
+        if matches!(self.load, LoadState::Ready(_)) {
+            self.stale = true;
+        }
+        self.dirty_while_reading = false;
+        self.due = Some(0.0);
     }
 
     fn poll_mutation(&mut self) -> bool {
@@ -1040,10 +1095,10 @@ impl Panel {
                     text: t("integrations.message.installRequested").to_owned(),
                     error: false,
                 });
-                self.schedule_read(0.0);
+                self.reconcile_after_mutation();
             }
             MutationReply::CatalogInstall(Err(IntegrationError::RouteUnsupported)) => {
-                self.load = LoadState::Unsupported;
+                self.mark_unsupported();
             }
             MutationReply::CatalogInstall(Err(IntegrationError::Code(code)))
                 if code == "global-only" =>
@@ -1052,14 +1107,14 @@ impl Panel {
                     text: t("integrations.section.scopeGlobalOnly").to_owned(),
                     error: true,
                 });
-                self.schedule_read(0.0);
+                self.reconcile_after_mutation();
             }
             MutationReply::CatalogInstall(Err(_)) => {
                 self.notice = Some(Notice {
                     text: t("integrations.install.error").to_owned(),
                     error: true,
                 });
-                self.schedule_read(0.0);
+                self.reconcile_after_mutation();
             }
             MutationReply::HostInstall(Ok(outcome)) => {
                 let (key, error) = match outcome {
@@ -1073,10 +1128,10 @@ impl Panel {
                     text: t(key).to_owned(),
                     error,
                 });
-                self.schedule_read(0.0);
+                self.reconcile_after_mutation();
             }
             MutationReply::HostInstall(Err(IntegrationError::RouteUnsupported)) => {
-                self.load = LoadState::Unsupported;
+                self.mark_unsupported();
             }
             MutationReply::HostInstall(Err(IntegrationError::Code(code)))
                 if code == "unsupported" =>
@@ -1085,14 +1140,14 @@ impl Panel {
                     text: t("integrations.installHost.unsupported").to_owned(),
                     error: true,
                 });
-                self.schedule_read(0.0);
+                self.reconcile_after_mutation();
             }
             MutationReply::HostInstall(Err(_)) => {
                 self.notice = Some(Notice {
                     text: t("integrations.installHost.error").to_owned(),
                     error: true,
                 });
-                self.schedule_read(0.0);
+                self.reconcile_after_mutation();
             }
             MutationReply::Attach(Ok(outcome)) => {
                 match outcome {
@@ -1118,31 +1173,31 @@ impl Panel {
                         });
                     }
                 }
-                self.schedule_read(0.0);
+                self.reconcile_after_mutation();
             }
             MutationReply::Attach(Err(IntegrationError::RouteUnsupported)) => {
-                self.load = LoadState::Unsupported;
+                self.mark_unsupported();
             }
             MutationReply::Attach(Err(_)) => {
                 self.notice = Some(Notice {
                     text: t("integrations.error.retry").to_owned(),
                     error: true,
                 });
-                self.schedule_read(0.0);
+                self.reconcile_after_mutation();
             }
             MutationReply::Detach(Ok(DetachOutcome::Detached | DetachOutcome::None)) => {
                 self.notice = None;
-                self.schedule_read(0.0);
+                self.reconcile_after_mutation();
             }
             MutationReply::Detach(Err(IntegrationError::RouteUnsupported)) => {
-                self.load = LoadState::Unsupported;
+                self.mark_unsupported();
             }
             MutationReply::Detach(Err(_)) => {
                 self.notice = Some(Notice {
                     text: t("integrations.error.retry").to_owned(),
                     error: true,
                 });
-                self.schedule_read(0.0);
+                self.reconcile_after_mutation();
             }
         }
         true

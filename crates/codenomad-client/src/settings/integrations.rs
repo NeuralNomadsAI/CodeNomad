@@ -344,14 +344,13 @@ pub async fn install_catalog(
         "{}api/workspaces/{workspace}/integrations/{integration_id}/install",
         backend.base
     );
-    let response = send_post(
+    let value = send_post_json(
         backend,
         &url,
         &[("directory", directory)],
         &json!({ "scope": scope.as_str() }),
     )
     .await?;
-    let value = parse_ok_json(response).await?;
     let Some(map) = value.as_object() else {
         return Err(IntegrationError::Failed);
     };
@@ -383,8 +382,7 @@ pub async fn install_host(
         "{}api/workspaces/{workspace}/integrations/{integration_id}/install-host",
         backend.base
     );
-    let response = send_post(backend, &url, &[("directory", directory)], &json!({})).await?;
-    let value = parse_ok_json(response).await?;
+    let value = send_post_json(backend, &url, &[("directory", directory)], &json!({})).await?;
     match value.get("outcome").and_then(Value::as_str) {
         Some("installed") => Ok(InstallOutcome::Installed),
         Some("updated") => Ok(InstallOutcome::Updated),
@@ -470,14 +468,13 @@ pub async fn attach_host(
         "{}api/workspaces/{workspace}/integrations/{integration_id}/attach",
         backend.base
     );
-    let response = send_post(
+    let value = send_post_json(
         backend,
         &url,
         &[("directory", directory)],
         &json!({ "sessionID": session_id, "offerID": offer_id }),
     )
     .await?;
-    let value = parse_ok_json(response).await?;
     match value.get("outcome").and_then(Value::as_str) {
         Some("attached") => Ok(AttachOutcome::Attached),
         Some("busy") => Ok(AttachOutcome::Busy),
@@ -505,14 +502,13 @@ pub async fn detach_host(
         "{}api/workspaces/{workspace}/integrations/{integration_id}/detach",
         backend.base
     );
-    let response = send_post(
+    let value = send_post_json(
         backend,
         &url,
         &[("directory", directory)],
         &json!({ "sessionID": session_id }),
     )
     .await?;
-    let value = parse_ok_json(response).await?;
     match value.get("outcome").and_then(Value::as_str) {
         Some("detached") => Ok(DetachOutcome::Detached),
         Some("none") => Ok(DetachOutcome::None),
@@ -535,36 +531,134 @@ async fn send_get(
     request.send().await.map_err(|_| IntegrationError::Failed)
 }
 
-async fn send_post(
+#[cfg(not(target_arch = "wasm32"))]
+async fn send_post_json(
     backend: &Backend,
     url: &str,
     query: &[(&str, &str)],
     body: &Value,
-) -> IntegrationResult<reqwest::Response> {
+) -> IntegrationResult<Value> {
     let request = backend
         .client
         .post(url)
         .query(query)
         .header(reqwest::header::CACHE_CONTROL, "no-store")
         .json(body);
-    #[cfg(target_arch = "wasm32")]
-    let request = request.fetch_cache_no_store();
-    request.send().await.map_err(|_| IntegrationError::Failed)
+    let response = request.send().await.map_err(|_| IntegrationError::Failed)?;
+    parse_ok_json(response).await
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn send_post_json(
+    _backend: &Backend,
+    url: &str,
+    query: &[(&str, &str)],
+    body: &Value,
+) -> IntegrationResult<Value> {
+    use wasm_bindgen::{JsCast, JsValue, closure::Closure};
+    use wasm_bindgen_futures::JsFuture;
+    use web_sys::{AbortController, Headers, Request, RequestCredentials, RequestInit, Response};
+
+    struct AbortGuard {
+        controller: AbortController,
+        window: web_sys::Window,
+        timer: i32,
+        _on_timeout: Closure<dyn FnMut()>,
+    }
+    impl Drop for AbortGuard {
+        fn drop(&mut self) {
+            self.window.clear_timeout_with_handle(self.timer);
+            self.controller.abort();
+        }
+    }
+
+    let mut full_url = reqwest::Url::parse(url).map_err(|_| IntegrationError::Failed)?;
+    {
+        let mut pairs = full_url.query_pairs_mut();
+        for (key, value) in query {
+            pairs.append_pair(key, value);
+        }
+    }
+    let window = web_sys::window().ok_or(IntegrationError::Failed)?;
+    let controller = AbortController::new().map_err(|_| IntegrationError::Failed)?;
+    let deadline = controller.clone();
+    let on_timeout = Closure::wrap(Box::new(move || deadline.abort()) as Box<dyn FnMut()>);
+    let timer = window
+        .set_timeout_with_callback_and_timeout_and_arguments_0(
+            on_timeout.as_ref().unchecked_ref(),
+            crate::http::REQUEST_TIMEOUT.as_millis() as i32,
+        )
+        .map_err(|_| IntegrationError::Failed)?;
+    let abort = AbortGuard {
+        controller,
+        window,
+        timer,
+        _on_timeout: on_timeout,
+    };
+    let headers = Headers::new().map_err(|_| IntegrationError::Failed)?;
+    headers
+        .set("content-type", "application/json")
+        .map_err(|_| IntegrationError::Failed)?;
+    headers
+        .set("cache-control", "no-store")
+        .map_err(|_| IntegrationError::Failed)?;
+    let payload = serde_json::to_string(body).map_err(|_| IntegrationError::Failed)?;
+    let init = RequestInit::new();
+    init.set_method("POST");
+    init.set_credentials(RequestCredentials::SameOrigin);
+    init.set_headers(&headers);
+    init.set_body(&JsValue::from_str(&payload));
+    init.set_signal(Some(&abort.controller.signal()));
+    // Reject HTTP redirects (including 307/308) so single-shot mutations are never replayed.
+    js_sys::Reflect::set(
+        &init,
+        &JsValue::from_str("redirect"),
+        &JsValue::from_str("error"),
+    )
+    .map_err(|_| IntegrationError::Failed)?;
+    js_sys::Reflect::set(
+        &init,
+        &JsValue::from_str("cache"),
+        &JsValue::from_str("no-store"),
+    )
+    .map_err(|_| IntegrationError::Failed)?;
+    let request = Request::new_with_str_and_init(full_url.as_str(), &init)
+        .map_err(|_| IntegrationError::Failed)?;
+    let response: Response = JsFuture::from(abort.window.fetch_with_request(&request))
+        .await
+        .and_then(JsCast::dyn_into)
+        .map_err(|_| IntegrationError::Failed)?;
+    let status =
+        reqwest::StatusCode::from_u16(response.status()).map_err(|_| IntegrationError::Failed)?;
+    let text = JsFuture::from(response.text().map_err(|_| IntegrationError::Failed)?)
+        .await
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default();
+    let parsed = (text.len() <= 1_048_576)
+        .then(|| serde_json::from_str::<Value>(&text).ok())
+        .flatten();
+    classify_json_response(status, parsed)
 }
 
 async fn parse_ok_json(response: reqwest::Response) -> IntegrationResult<Value> {
     let status = response.status();
+    let body = read_json(response).await.ok();
+    classify_json_response(status, body)
+}
+
+fn classify_json_response(
+    status: reqwest::StatusCode,
+    body: Option<Value>,
+) -> IntegrationResult<Value> {
     if status.is_success() {
-        return read_json(response)
-            .await
-            .map_err(|_| IntegrationError::Failed);
+        return body.ok_or(IntegrationError::Failed);
     }
     if status == reqwest::StatusCode::METHOD_NOT_ALLOWED
         || status == reqwest::StatusCode::NOT_IMPLEMENTED
     {
         return Err(IntegrationError::RouteUnsupported);
     }
-    let body = read_json(response).await.ok();
     if let Some(code) = body
         .as_ref()
         .and_then(|v| v.get("code"))

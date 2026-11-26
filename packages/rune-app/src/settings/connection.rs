@@ -184,6 +184,9 @@ pub(crate) fn connection_event(
                 provider_transport(s, true);
             }
         }
+        Event::Reconnecting if affects_preferences => {
+            provider_transport(s, false);
+        }
         Event::ConnectionLost => {
             if affects_preferences {
                 s.settings.transcript_filters.close_preset_menu();

@@ -556,3 +556,340 @@ fn sse_events_coalesce_over_300ms_with_one_trailing_followup() {
         http.quiet().await;
     });
 }
+
+#[test]
+fn stale_state_blocks_confirm_and_detach_until_reloaded() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let target = Target::fixture(http.backend.clone(), "owned", Some("ses_1"));
+        let mut rt = make_runtime(target);
+        poll_frame(&mut rt, 0.0);
+
+        http.accept()
+            .await
+            .reply(200, session_json("ses_1", "/repo"))
+            .await;
+        http.accept()
+            .await
+            .reply(200, sample_catalog("/repo", "absent", 0))
+            .await;
+        settle_next(&mut rt, 0.05).await;
+        http.accept()
+            .await
+            .reply(
+                200,
+                json!({ "state": "attached", "label": "Blender — a.blend" }),
+            )
+            .await;
+        settle_next(&mut rt, 0.1).await;
+        assert!(rt.state.panel.fresh());
+
+        rt.state
+            .target
+            .as_mut()
+            .unwrap()
+            .integrations_hint("owned", None);
+        poll_frame(&mut rt, 0.15);
+        assert!(rt.state.panel.stale);
+        assert!(!rt.state.panel.fresh());
+        assert!(rt.state.panel.bindings.is_empty());
+
+        rt.state.panel.request_catalog_install("godot");
+        rt.state.panel.request_host_install("blender");
+        rt.state.panel.request_detach("blender");
+        assert!(rt.state.panel.confirm.is_none());
+        assert!(!rt.state.panel.busy());
+        http.quiet().await;
+
+        poll_frame(&mut rt, 0.15 + EVENT_COALESCE_SECS + 0.05);
+        http.accept()
+            .await
+            .reply(200, sample_catalog("/repo", "absent", 0))
+            .await;
+        settle_next(&mut rt, 0.55).await;
+        http.accept()
+            .await
+            .reply(
+                200,
+                json!({ "state": "attached", "label": "Blender — b.blend" }),
+            )
+            .await;
+        settle_next(&mut rt, 0.6).await;
+        assert!(rt.state.panel.fresh());
+        assert_eq!(
+            rt.state.panel.bindings.get("blender"),
+            Some(&BindingState::Attached("Blender — b.blend".into()))
+        );
+
+        rt.state.panel.request_detach("blender");
+        let req_detach = http.accept().await;
+        assert!(req_detach.header.starts_with(
+            "POST /api/workspaces/owned/integrations/blender/detach?directory=%2Frepo "
+        ));
+        req_detach
+            .reply(200, json!({ "outcome": "detached" }))
+            .await;
+    });
+}
+
+#[test]
+fn suspend_and_reenter_keeps_in_flight_mutation_lock_and_reconciles() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let target = Target::fixture(http.backend.clone(), "owned", Some("ses_1"));
+        let mut rt = make_runtime(target);
+        poll_frame(&mut rt, 0.0);
+
+        http.accept()
+            .await
+            .reply(200, session_json("ses_1", "/repo"))
+            .await;
+        http.accept()
+            .await
+            .reply(200, sample_catalog("/repo", "ok", 0))
+            .await;
+        settle_next(&mut rt, 0.05).await;
+        http.accept()
+            .await
+            .reply(200, json!({ "state": "none" }))
+            .await;
+        settle_next(&mut rt, 0.1).await;
+
+        rt.state.panel.request_catalog_install("godot");
+        assert!(rt.state.panel.confirm.is_some());
+        rt.state.panel.decide_confirm(true);
+        let install_req = http.accept().await;
+        assert!(rt.state.panel.busy());
+
+        rt.update(|s, _| s.active = false);
+        poll_frame(&mut rt, 0.15);
+        rt.update(|s, _| s.active = true);
+        poll_frame(&mut rt, 0.2);
+
+        http.accept()
+            .await
+            .reply(200, session_json("ses_1", "/repo"))
+            .await;
+        http.accept()
+            .await
+            .reply(200, sample_catalog("/repo", "ok", 0))
+            .await;
+        settle_next(&mut rt, 0.25).await;
+        http.accept()
+            .await
+            .reply(200, json!({ "state": "none" }))
+            .await;
+        settle_next(&mut rt, 0.3).await;
+
+        assert!(rt.state.panel.busy());
+        rt.state.panel.request_catalog_install("godot");
+        assert!(rt.state.panel.confirm.is_none());
+
+        install_req.reply(200, json!({ "ok": true })).await;
+        settle_next(&mut rt, 0.35).await;
+        assert!(!rt.state.panel.busy());
+        assert!(rt.state.panel.stale);
+        let reconcile = http.accept().await;
+        assert!(
+            reconcile
+                .header
+                .starts_with("GET /api/workspaces/owned/integrations?directory=%2Frepo "),
+            "{}",
+            reconcile.header
+        );
+        reconcile.reply(200, sample_catalog("/repo", "ok", 0)).await;
+        settle_next(&mut rt, 0.4).await;
+        http.accept()
+            .await
+            .reply(200, json!({ "state": "none" }))
+            .await;
+        settle_next(&mut rt, 0.45).await;
+        assert!(rt.state.panel.fresh());
+    });
+}
+
+#[test]
+fn simultaneous_workspace_and_session_hints_re_resolve_moved_directory() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let target = Target::fixture(http.backend.clone(), "owned", Some("ses_1"));
+        let mut rt = make_runtime(target);
+        poll_frame(&mut rt, 0.0);
+
+        http.accept()
+            .await
+            .reply(200, session_json("ses_1", "/repo/wt1"))
+            .await;
+        http.accept()
+            .await
+            .reply(200, sample_catalog("/repo/wt1", "ok", 0))
+            .await;
+        settle_next(&mut rt, 0.05).await;
+        http.accept()
+            .await
+            .reply(200, json!({ "state": "none" }))
+            .await;
+        settle_next(&mut rt, 0.1).await;
+
+        {
+            let target = rt.state.target.as_mut().unwrap();
+            target.integrations_hint("owned", None);
+            target.integrations_hint("owned", Some("ses_1"));
+        }
+        poll_frame(&mut rt, 0.15);
+        poll_frame(&mut rt, 0.15 + EVENT_COALESCE_SECS + 0.05);
+
+        let req_session = http.accept().await;
+        assert!(
+            req_session
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/ses_1 "),
+            "{}",
+            req_session.header
+        );
+        req_session
+            .reply(200, session_json("ses_1", "/repo/wt2"))
+            .await;
+        let req_catalog = http.accept().await;
+        assert!(
+            req_catalog
+                .header
+                .starts_with("GET /api/workspaces/owned/integrations?directory=%2Frepo%2Fwt2 "),
+            "{}",
+            req_catalog.header
+        );
+        req_catalog
+            .reply(200, sample_catalog("/repo/wt2", "ok", 0))
+            .await;
+        settle_next(&mut rt, 0.55).await;
+        http.accept()
+            .await
+            .reply(200, json!({ "state": "none" }))
+            .await;
+        settle_next(&mut rt, 0.6).await;
+        assert!(rt.state.panel.fresh());
+    });
+}
+
+#[test]
+fn unrelated_session_change_does_not_revoke_current_session_confirm() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let target = Target::fixture(http.backend.clone(), "owned", Some("ses_1"));
+        let mut rt = make_runtime(target);
+        poll_frame(&mut rt, 0.0);
+
+        http.accept()
+            .await
+            .reply(200, session_json("ses_1", "/repo"))
+            .await;
+        http.accept()
+            .await
+            .reply(200, sample_catalog("/repo", "ok", 0))
+            .await;
+        settle_next(&mut rt, 0.05).await;
+        http.accept()
+            .await
+            .reply(200, json!({ "state": "none" }))
+            .await;
+        settle_next(&mut rt, 0.1).await;
+
+        rt.state.panel.request_catalog_install("godot");
+        assert!(rt.state.panel.confirm.is_some());
+
+        let mut other = std::collections::HashSet::new();
+        other.insert(("owned".to_owned(), "ses_other".to_owned()));
+        rt.state.target.as_mut().unwrap().integrations_catalogue(
+            &codenomad_client::stream::CatalogueChanges::None,
+            &codenomad_client::stream::SessionCatalogueChanges::Sessions(other),
+        );
+        poll_frame(&mut rt, 0.2);
+        assert!(rt.state.panel.confirm.is_some());
+        assert!(rt.state.panel.fresh());
+        http.quiet().await;
+
+        let mut current = std::collections::HashSet::new();
+        current.insert(("owned".to_owned(), "ses_1".to_owned()));
+        rt.state.target.as_mut().unwrap().integrations_catalogue(
+            &codenomad_client::stream::CatalogueChanges::None,
+            &codenomad_client::stream::SessionCatalogueChanges::Sessions(current),
+        );
+        poll_frame(&mut rt, 0.25);
+        assert!(rt.state.panel.confirm.is_none());
+        assert!(rt.state.panel.stale);
+    });
+}
+
+#[test]
+fn failed_hosts_detail_read_clears_cached_offers() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let target = Target::fixture(http.backend.clone(), "owned", Some("ses_1"));
+        let mut rt = make_runtime(target);
+        poll_frame(&mut rt, 0.0);
+
+        http.accept()
+            .await
+            .reply(200, session_json("ses_1", "/repo"))
+            .await;
+        http.accept()
+            .await
+            .reply(200, sample_catalog("/repo", "ok", 1))
+            .await;
+        settle_next(&mut rt, 0.05).await;
+        for _ in 0..2 {
+            let req = http.accept().await;
+            if req.header.contains("/binding?") {
+                req.reply(200, json!({ "state": "none" })).await;
+            } else {
+                req.reply(200, json!({ "offers": [] })).await;
+            }
+        }
+        settle_next(&mut rt, 0.1).await;
+        assert_eq!(rt.state.panel.offers.get("blender").map(Vec::len), Some(0));
+
+        rt.state.panel.refresh();
+        poll_frame(&mut rt, 0.15);
+        http.accept()
+            .await
+            .reply(200, session_json("ses_1", "/repo"))
+            .await;
+        http.accept()
+            .await
+            .reply(200, sample_catalog("/repo", "ok", 1))
+            .await;
+        settle_next(&mut rt, 0.2).await;
+        for _ in 0..2 {
+            let req = http.accept().await;
+            if req.header.contains("/binding?") {
+                req.reply(200, json!({ "state": "none" })).await;
+            } else {
+                req.reply(500, json!({ "error": "boom" })).await;
+            }
+        }
+        settle_next(&mut rt, 0.25).await;
+        assert!(rt.state.panel.offers.get("blender").is_none());
+
+        rt.state.panel.request_attach("blender", None);
+        let probe = http.accept().await;
+        assert!(probe.header.starts_with(
+            "GET /api/workspaces/owned/integrations/blender/hosts?directory=%2Frepo "
+        ));
+        probe
+            .reply(
+                200,
+                json!({
+                    "offers": [
+                        { "offerID": "offer_333333", "label": "Blender — c.blend", "document": "c.blend", "protocol": "ok" }
+                    ]
+                }),
+            )
+            .await;
+        settle_next(&mut rt, 0.3).await;
+        let attach = http.accept().await;
+        assert!(attach.header.starts_with(
+            "POST /api/workspaces/owned/integrations/blender/attach?directory=%2Frepo "
+        ));
+        attach.reply(200, json!({ "outcome": "attached" })).await;
+    });
+}

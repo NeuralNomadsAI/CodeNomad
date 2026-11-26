@@ -687,10 +687,19 @@ pub(super) fn view(
                 screen::action(&s.input_scope, close),
             )
             .key("close-preferences"),
-            close,
+            close_or_dismiss_overlay,
         )
         .children(layers),
     )
+}
+
+fn close_or_dismiss_overlay(s: &mut State) {
+    if s.settings.web.section == Section::Integrations
+        && s.settings.web.integrations.dismiss_overlay()
+    {
+        return;
+    }
+    close(s);
 }
 
 fn open_remote(s: &mut State) {

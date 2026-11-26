@@ -4,7 +4,7 @@ use crate::{State, backend::Backend, platform, strings::t};
 use codenomad_client::{
     Receiver, Sender, bounded,
     settings::{Provider, providers},
-    stream::CatalogueChanges,
+    stream::{CatalogueChanges, SessionCatalogueChanges},
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{Space, TextRole, layout::Layout, settings as chrome};
@@ -153,14 +153,22 @@ impl Target {
     pub(super) fn integrations_catalogue(
         &mut self,
         changes: &CatalogueChanges,
-        session_changes: &CatalogueChanges,
+        session_changes: &SessionCatalogueChanges,
     ) -> bool {
         let mut changed = false;
         if self.matches(changes) {
             self.integrations = self.integrations.wrapping_add(1);
             changed = true;
         }
-        if self.matches(session_changes) {
+        let session_matched = match session_changes {
+            SessionCatalogueChanges::None => false,
+            SessionCatalogueChanges::All => true,
+            SessionCatalogueChanges::Sessions(pairs) => self
+                .session
+                .as_ref()
+                .is_some_and(|ses| pairs.contains(&(self.workspace.clone(), ses.clone()))),
+        };
+        if session_matched {
             self.integrations_session = self.integrations_session.wrapping_add(1);
             changed = true;
         }
@@ -174,7 +182,6 @@ impl Target {
         match session {
             None => {
                 self.integrations = self.integrations.wrapping_add(1);
-                self.integrations_session = self.integrations_session.wrapping_add(1);
                 true
             }
             Some(ses) if self.session.as_deref() == Some(ses) => {

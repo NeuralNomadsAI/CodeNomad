@@ -22,6 +22,7 @@ pub(in crate::settings) fn view<S: 'static>(
 ) -> El {
     let mut body = col().full_width().separate(Space::Sm);
     let busy = panel.busy();
+    let can_act = panel.fresh() && !busy;
     let header_status = match &panel.load {
         _ if !panel.available() => {
             Some((t("settings.providers.empty.noInstance").to_owned(), false))
@@ -100,7 +101,13 @@ pub(in crate::settings) fn view<S: 'static>(
             .collect();
 
         for entry in recognized {
-            body = body.child(recognized_card(panel, entry, current_locale, busy, access));
+            body = body.child(recognized_card(
+                panel,
+                entry,
+                current_locale,
+                !can_act,
+                access,
+            ));
         }
 
         let mut catalog_col = col().full_width().separate(Space::Sm).child(
@@ -115,8 +122,13 @@ pub(in crate::settings) fn view<S: 'static>(
             }
         } else {
             for entry in installable {
-                catalog_col =
-                    catalog_col.child(installable_card(panel, entry, current_locale, busy, access));
+                catalog_col = catalog_col.child(installable_card(
+                    panel,
+                    entry,
+                    current_locale,
+                    !can_act,
+                    access,
+                ));
             }
         }
         body = body.child(chrome::card(catalog_col));
@@ -147,6 +159,7 @@ fn recognized_card<S: 'static>(
         panel.has_session(),
         host_key.is_some() && !busy,
     );
+    let binding_ready = binding.is_some();
     let header = entry_header(panel, entry, current_locale, access);
     let mut card = col().full_width().separate(Space::Sm).child(header);
 
@@ -162,7 +175,7 @@ fn recognized_card<S: 'static>(
         }
         Some(RowAction::Attach(expected)) => {
             let target_id = id.clone();
-            layout::button(&line.text, busy, move |s: &mut S| {
+            layout::button(&line.text, busy || !binding_ready, move |s: &mut S| {
                 if let Some(panel) = access(s) {
                     panel.request_attach(&target_id, expected.clone());
                 }
@@ -176,7 +189,7 @@ fn recognized_card<S: 'static>(
                 .child(
                     layout::button(
                         t("integrations.detachConversation"),
-                        busy,
+                        busy || !binding_ready,
                         move |s: &mut S| {
                             if let Some(panel) = access(s) {
                                 panel.request_detach(&target_id);
