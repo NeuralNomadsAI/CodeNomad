@@ -19,6 +19,7 @@ pub(super) struct DirectAccess {
     owner: Option<String>,
     meta: Option<DirectAccessMeta>,
     auth: Option<AuthStatus>,
+    auth_error: Option<ErrorText>,
     meta_flight: Option<(Sender<()>, Receiver<MetaReply>)>,
     mode_flight: Option<Receiver<Result<(), remote::Error>>>,
     password_flight: Option<Receiver<Result<AuthStatus, remote::Error>>>,
@@ -107,7 +108,19 @@ impl DirectAccess {
                                 Some(ErrorText::from_remote(err, "rune.connect_error"))
                         }
                     }
-                    self.auth = reply.auth.ok();
+                    match reply.auth {
+                        Ok(auth) => {
+                            self.auth = Some(auth);
+                            self.auth_error = None;
+                        }
+                        Err(err) => {
+                            self.auth = None;
+                            self.auth_error = Some(ErrorText::from_remote(
+                                err,
+                                "remoteAccess.authStatus.unavailable",
+                            ));
+                        }
+                    }
                     changed = true;
                 }
                 Err(_) if flight.is_closed() => {
@@ -447,7 +460,12 @@ impl DirectAccess {
             .child(text(t("remoteAccess.sections.serverPassword.help")).wrap());
 
         let Some(auth) = self.auth.as_ref().filter(|a| a.authenticated) else {
-            return chrome::card(card.child(text(t("remoteAccess.authStatus.unavailable")).wrap()));
+            let message = self
+                .auth_error
+                .as_ref()
+                .map(ErrorText::as_str)
+                .unwrap_or_else(|| t("remoteAccess.authStatus.unavailable"));
+            return chrome::card(card.child(text(message).wrap()));
         };
 
         let username = auth.username.as_deref().unwrap_or("codenomad");

@@ -183,7 +183,9 @@ impl Panel {
         } else {
             false
         };
-        let editor = prefs.memory.poll_editor(&mut self.memory_editor);
+        let editor = prefs
+            .memory
+            .poll_editor(prefs.backend.as_ref(), &mut self.memory_editor);
         picker_closed
             | editor
             | scope_changed
@@ -373,10 +375,7 @@ pub(super) fn view(
     .into_iter()
     .filter(|section| match section {
         Section::OpenCode | Section::Remote => local,
-        Section::ConfigFiles => {
-            panel.scope.config_files(prefs)
-                || (panel.section == Section::ConfigFiles && panel.config_files.dirty())
-        }
+        Section::ConfigFiles => panel.scope.config_files(prefs) || panel.config_files.dirty(),
         Section::Stats => super::stats::supported(prefs),
         _ => true,
     })
@@ -398,7 +397,9 @@ pub(super) fn view(
             if !panel.shown
                 || (section == Section::Stats && !super::stats::supported(&prefs))
                 || (matches!(section, Section::OpenCode | Section::Remote) && !panel.local(&prefs))
-                || section == Section::ConfigFiles && !panel.scope.config_files(&prefs)
+                || (section == Section::ConfigFiles
+                    && !panel.scope.config_files(&prefs)
+                    && !panel.config_files.dirty())
                 || panel.config_files.busy()
             {
                 return;
@@ -595,6 +596,21 @@ pub(super) fn view(
                     .view(&mut layers, &s.settings.shared, |s: &mut State| {
                         &mut s.settings.web.config_files
                     })
+            } else if panel.scope.config_files_failed(prefs) {
+                layout::action_row()
+                    .child(text(t("rune.connect_error")).role("alert").wrap())
+                    .child(layout::button(
+                        t("sessionList.loadError.retry"),
+                        false,
+                        |s: &mut State| {
+                            s.settings.web.scope.retry();
+                            (s.wake)();
+                        },
+                    ))
+            } else if panel.scope.config_files_unsupported(prefs) {
+                text(t("settings.configFiles.errors.loadList"))
+                    .role("alert")
+                    .wrap()
             } else {
                 text(t("rune.loading")).role("status")
             }

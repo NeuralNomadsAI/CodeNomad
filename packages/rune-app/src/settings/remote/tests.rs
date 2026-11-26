@@ -817,10 +817,11 @@ fn direct_access_client_errors_localize_while_server_errors_surface_verbatim() {
         .await;
         let tree = rt.accessibility_json();
         let expected_fr = crate::strings::with_locale("fr", || t("settings.preferenceSaveFailed"));
-        assert!(find_text(&tree, expected_fr));
+        assert_eq!(count_text(&tree, expected_fr), 1);
         assert!(!find_text(&tree, "Listening mode change"));
 
-        // Unconfirmed password response (ok: false) must also display the localized French error.
+        // Unconfirmed password response (ok: false) must also display the localized French error
+        // independently on the password card.
         click(&mut rt, "remote-password-toggle");
         rt.update(|s, _| {
             s.remote
@@ -833,8 +834,18 @@ fn direct_access_client_errors_localize_while_server_errors_surface_verbatim() {
             h.remote.direct.password_idle()
         })
         .await;
+        assert!(
+            server
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(m, p, b)| m == "POST"
+                    && p == "/api/auth/password"
+                    && b.contains("unconfirmed-pass"))
+        );
         let tree = rt.accessibility_json();
-        assert!(find_text(&tree, expected_fr));
+        assert_eq!(count_text(&tree, expected_fr), 2);
         assert!(!find_text(&tree, "Password update was not confirmed"));
 
         // Explicit server error message still surfaces verbatim.
@@ -854,4 +865,15 @@ fn direct_access_client_errors_localize_while_server_errors_surface_verbatim() {
             "Server password is provided via CLI/env"
         ));
     });
+}
+
+fn count_text(tree: &Value, needle: &str) -> usize {
+    let here = usize::from(
+        tree["name"]
+            .as_str()
+            .is_some_and(|name| name.contains(needle)),
+    );
+    here + tree["children"].as_array().map_or(0, |children| {
+        children.iter().map(|c| count_text(c, needle)).sum()
+    })
 }

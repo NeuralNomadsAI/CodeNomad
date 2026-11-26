@@ -726,6 +726,15 @@ impl Preferences {
         self.backend.is_some() && !self.authentication_required
     }
 
+    pub fn transport_lost(&self) -> bool {
+        self.transport_lost
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_transport_lost(&mut self) {
+        self.transport_lost = false;
+    }
+
     pub(super) fn awaiting_appearance(&self) -> bool {
         self.can_retry()
             && (self.config.awaiting_initial_read() || self.state.awaiting_initial_read())

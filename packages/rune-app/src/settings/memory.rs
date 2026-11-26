@@ -24,6 +24,7 @@ pub(super) struct Setting {
     pending: Option<bool>,
     flight: Option<Receiver<(Option<bool>, bool)>>,
     review: review::Review,
+    owner_gen: u64,
 }
 
 impl Setting {
@@ -47,9 +48,11 @@ impl Setting {
         if same {
             self.invalidate();
         } else {
+            let owner_gen = self.owner_gen.wrapping_add(1);
             *self = Self {
                 visible: self.visible,
                 refresh: self.visible,
+                owner_gen,
                 ..Self::default()
             };
         }
@@ -97,8 +100,8 @@ impl Setting {
         self.review.writable(edit)
     }
 
-    pub fn poll_editor(&self, editor: &mut editor::Editor) -> bool {
-        editor.poll(&self.review)
+    pub fn poll_editor(&self, backend: Option<&Backend>, editor: &mut editor::Editor) -> bool {
+        editor.poll(&self.review, backend, self.owner_gen)
     }
 
     pub fn cleanup_current(&self, intent: &cleanup::Intent) -> bool {

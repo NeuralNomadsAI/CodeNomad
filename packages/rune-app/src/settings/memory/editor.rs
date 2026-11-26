@@ -10,6 +10,7 @@ use rune_theme_codenomad::{Space, field_kit};
 #[derive(Default)]
 pub(in crate::settings) struct Editor {
     edit: Option<Edit>,
+    owner_gen: Option<u64>,
     title: TextEdit,
     text: TextEdit,
     kind: Option<Kind>,
@@ -53,6 +54,11 @@ impl Editor {
         self.text = TextEdit::new("Unsaved text");
     }
 
+    #[cfg(test)]
+    pub(in crate::settings) fn mark_submitted(&mut self) {
+        self.submitted = true;
+    }
+
     pub fn dismiss(&mut self) {
         if self.submitted {
             return;
@@ -73,21 +79,41 @@ impl Editor {
             || self.kind != Some(edit.entry.kind)
     }
 
-    pub(super) fn poll(&mut self, review: &Review) -> bool {
-        if self.submitted
-            && let Some(result) = self
+    pub(super) fn poll(
+        &mut self,
+        review: &Review,
+        backend: Option<&codenomad_client::backend::Backend>,
+        owner_gen: u64,
+    ) -> bool {
+        if let Some(edit) = self.edit.as_ref() {
+            let switched_owner = self.owner_gen.is_some_and(|seen| seen != owner_gen)
+                || backend.is_some_and(|b| !edit.belongs_to_backend(b));
+            if switched_owner {
+                *self = Self::default();
+                return true;
+            }
+            self.owner_gen = Some(owner_gen);
+        }
+        if self.submitted {
+            if let Some(result) = self
                 .edit
                 .as_ref()
                 .and_then(|edit| review.write_result(edit))
-        {
-            match result {
-                Ok(()) => *self = Self::default(),
-                Err(error) => {
-                    self.error = Some(error);
-                    self.submitted = false;
-                }
-            };
-            return true;
+            {
+                match result {
+                    Ok(()) => *self = Self::default(),
+                    Err(error) => {
+                        self.error = Some(error);
+                        self.submitted = false;
+                    }
+                };
+                return true;
+            }
+            if !review.writing() {
+                self.error = Some("settings.memory.error.conflict");
+                self.submitted = false;
+                return true;
+            }
         }
         false
     }
@@ -101,8 +127,12 @@ impl Editor {
         let edit = self.edit.as_ref()?;
         let disabled = self.submitted || review.writing() || !review.writable(edit);
         let key = "settings.memory.error.conflict";
+        let revalidation_error = review
+            .failed()
+            .filter(|_| !self.submitted && review.is_current(edit));
         let error = self
             .error
+            .or(revalidation_error)
             .or_else(|| (!review.is_current(edit) && !self.submitted).then_some(key));
         let dark = layout::dark();
         if let Some(confirm) = self.confirmation {
@@ -159,6 +189,7 @@ impl Editor {
                 Kind::Reference => "settings.memory.type.reference",
             })
         });
+        let save_apply = apply.clone();
         let form = col()
             .full_width()
             .separate(Space::Sm)
@@ -215,7 +246,7 @@ impl Editor {
                                     text: state.text.text.clone(),
                                     kind,
                                 };
-                                let admitted = apply(s, Action::Write(edit, Some(fields)));
+                                let admitted = save_apply(s, Action::Write(edit, Some(fields)));
                                 let state = access(s);
                                 if admitted {
                                     state.error = None;
@@ -231,11 +262,27 @@ impl Editor {
                             access(s).confirmation = Some(Confirmation::Forget);
                         },
                     ))
-                    .children(error.map(|_| {
-                        layout::button(t("settings.memory.reload"), self.submitted, move |s| {
-                            access(s).confirmation = Some(Confirmation::Reload);
-                        })
-                    })),
+                    .children(
+                        (revalidation_error.is_some() && self.error.is_none()).then(|| {
+                            let retry = apply.clone();
+                            layout::button(
+                                t("settings.memory.retry"),
+                                self.submitted || review.loading(),
+                                move |s| {
+                                    retry(s, Action::Retry);
+                                },
+                            )
+                        }),
+                    )
+                    .children(
+                        (error.is_some()
+                            && !(revalidation_error.is_some() && self.error.is_none()))
+                        .then(|| {
+                            layout::button(t("settings.memory.reload"), self.submitted, move |s| {
+                                access(s).confirmation = Some(Confirmation::Reload);
+                            })
+                        }),
+                    ),
             );
         Some(chrome::embedded_section(
             &edit.entry.title,

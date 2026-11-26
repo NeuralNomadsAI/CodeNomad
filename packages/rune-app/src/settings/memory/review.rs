@@ -28,6 +28,12 @@ pub(in crate::settings) struct Edit {
     namespace: String,
 }
 
+impl Edit {
+    pub(super) fn belongs_to_backend(&self, backend: &Backend) -> bool {
+        self.key.owner.same_backend_server(backend)
+    }
+}
+
 #[cfg(test)]
 impl Edit {
     pub(in crate::settings) fn fixture() -> Self {
@@ -75,6 +81,7 @@ pub(super) struct Review {
     cleanup: Option<cleanup::Intent>,
     tidy_attempted: bool,
     tidy_failed: bool,
+    unverified: bool,
     epoch: u64,
     seen: super::seen::Seen,
 }
@@ -254,8 +261,18 @@ impl Review {
                     })
             })
     }
+    pub fn failed(&self) -> Option<&'static str> {
+        self.failed
+    }
+
+    pub fn loading(&self) -> bool {
+        self.flight.is_some() || self.refresh
+    }
+
     pub fn writable(&self, edit: &Edit) -> bool {
         self.is_current(edit)
+            && !self.unverified
+            && !self.refresh
             && self.failed.is_none()
             && self.flight.is_none()
             && self.snapshot.as_ref().is_some_and(|list| {
@@ -304,6 +321,7 @@ impl Review {
                     (workspace.to_owned(), session.map(str::to_owned))
                 }),
             });
+        self.unverified = backend.is_some_and(|b| !ServerOwner::backend_verified(b));
         let mut changed = false;
         match (&mut self.key, next_key) {
             (Some(current), Some(next)) if current.same_target(&next) => {
@@ -317,8 +335,9 @@ impl Review {
                     self.failed = None;
                     self.tidy = None;
                     self.cleanup = None;
-                    self.tidy_attempted = false;
-                    self.tidy_failed = false;
+                    if self.tidy_attempted {
+                        self.tidy_failed = true;
+                    }
                     self.invalidate();
                     changed = true;
                 }
@@ -360,8 +379,11 @@ impl Review {
             }
             changed = true;
         }
-        if let Some((edit, fields)) = self.pending.take() {
-            if self.writable(&edit) {
+        if !self.refresh
+            && self.flight.is_none()
+            && let Some((edit, fields)) = self.pending.take()
+        {
+            if self.writable(&edit) && key.owner.verified_for_write(backend) {
                 self.start_write(backend, edit, fields, main, window);
             } else {
                 self.write_result = Some((edit, Err("settings.memory.error.conflict")));
@@ -423,29 +445,50 @@ impl Review {
             input["content"] =
                 json!({"title":fields.title,"type":fields.kind.key(),"text":fields.text});
         }
+        let expected_server = edit.key.owner.server().map(str::to_owned);
+        let prepared_gen = backend.client.drop_generation();
         let (out, reply) = bounded(1);
         self.write_result = None;
         self.writing = Some(edit);
         self.write = Some(reply);
         let (backend, main, window) = (backend.clone(), main.clone(), window.clone());
         platform::spawn(async move {
-            let context = workspace
-                .as_deref()
-                .map(|workspace| (workspace, directory.as_deref()));
-            let result = memory::operation(&backend, scope, context, input)
-                .await
-                .map_err(error_key)
-                .and_then(|ack| {
-                    if (save
-                        && ack["id"] == entry_id
-                        && ack["revision"].as_str().is_some_and(|r| r.len() == 64))
-                        || (!save && ack["deleted"] == true)
-                    {
-                        Ok(())
-                    } else {
-                        Err(UNAVAILABLE)
-                    }
-                });
+            let verified = if backend.client.tracks_server_attestation()
+                && (!ServerOwner::backend_verified(&backend)
+                    || backend.client.drop_generation() != prepared_gen)
+            {
+                backend.attest_server().await.is_ok()
+                    && ServerOwner::backend_verified(&backend)
+                    && expected_server
+                        .as_deref()
+                        .is_none_or(|id| backend.client.server_identity() == Some(id))
+            } else {
+                ServerOwner::backend_verified(&backend)
+                    && expected_server
+                        .as_deref()
+                        .is_none_or(|id| backend.client.server_identity() == Some(id))
+            };
+            let result = if !verified {
+                Err(UNAVAILABLE)
+            } else {
+                let context = workspace
+                    .as_deref()
+                    .map(|workspace| (workspace, directory.as_deref()));
+                memory::operation(&backend, scope, context, input)
+                    .await
+                    .map_err(error_key)
+                    .and_then(|ack| {
+                        if (save
+                            && ack["id"] == entry_id
+                            && ack["revision"].as_str().is_some_and(|r| r.len() == 64))
+                            || (!save && ack["deleted"] == true)
+                        {
+                            Ok(())
+                        } else {
+                            Err(UNAVAILABLE)
+                        }
+                    })
+            };
             let _ = out.send(result).await;
             for wake in [main, window].into_iter().flatten() {
                 wake();

@@ -135,6 +135,12 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         assert!(prefs.memory.review_writable(&edit));
         let mut editor = Editor::default();
         editor.open(edit.clone());
+        assert!(
+            !prefs
+                .memory
+                .poll_editor(prefs.backend.as_ref(), &mut editor)
+        );
+        assert!(editor.shown());
 
         // Re-authenticate on the same server (new client_id, same base + server_identity).
         let reauthed = Backend::connect(&before.base, "").await.unwrap();
@@ -142,6 +148,12 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         assert_ne!(reauthed.client_id, before.client_id);
         prefs.bind(Some(reauthed));
         assert!(prefs.poll());
+        assert!(
+            !prefs
+                .memory
+                .poll_editor(prefs.backend.as_ref(), &mut editor)
+        );
+        assert!(editor.shown());
         // The open edit must remain current while the fresh list is in flight (no false conflict).
         assert!(prefs.memory.review_is_current(&edit));
         assert!(!prefs.memory.review_writable(&edit));
@@ -221,13 +233,38 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         assert!(prefs.memory.review_is_current(&updated_edit));
         assert!(prefs.memory.review_writable(&updated_edit));
 
-        // Switching to a different server profile on the same address must invalidate the edit.
+        // Switching to a different server profile while a save is submitted must invalidate the
+        // review and close the stale editor instead of leaving it stuck on submitted = true.
+        let mut inflight_editor = Editor::default();
+        inflight_editor.open(updated_edit.clone());
+        assert!(
+            !prefs
+                .memory
+                .poll_editor(prefs.backend.as_ref(), &mut inflight_editor)
+        );
+        assert!(review_action(
+            &mut prefs,
+            Action::Write(
+                updated_edit.clone(),
+                Some(Fields {
+                    title: "Stale".into(),
+                    text: "Stale text".into(),
+                    kind: codenomad_client::settings::memory::Kind::Fact,
+                }),
+            ),
+        ));
+        inflight_editor.mark_submitted();
         let other = Backend::connect(&before.base, "").await.unwrap();
         attest(&listener, &other, "profile-b").await;
         prefs.bind(Some(other));
         assert!(!prefs.memory.review_is_current(&updated_edit));
         assert!(!prefs.memory.review_writable(&updated_edit));
-        assert!(editor.shown());
+        assert!(
+            prefs
+                .memory
+                .poll_editor(prefs.backend.as_ref(), &mut inflight_editor)
+        );
+        assert!(!inflight_editor.shown());
     });
 }
 

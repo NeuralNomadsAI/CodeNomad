@@ -1,6 +1,6 @@
 use crate::{
     backend::{Backend, read_json_limited},
-    settings::{Owner, PatchOutcome, info::listener_origin},
+    settings::info::listener_origin,
 };
 use reqwest::Url;
 use serde::Deserialize;
@@ -210,9 +210,21 @@ pub fn parse_direct_access_meta(value: &Value) -> DirectAccessMeta {
 }
 
 pub async fn direct_access_meta(backend: &Backend) -> Result<DirectAccessMeta> {
-    let value = crate::settings::info::metadata(backend)
+    let request = backend.client.get(format!("{}api/meta", backend.base));
+    #[cfg(target_arch = "wasm32")]
+    let request = request.fetch_cache_no_store();
+    let response = check_response(request.send().await.map_err(|_| Error::Transport)?).await?;
+    let value = read_json_limited(response, 256 * 1024)
         .await
-        .map_err(|_| Error::Transport)?;
+        .map_err(|_| Error::InvalidResponse)?;
+    if !value.is_object()
+        || backend
+            .client
+            .server_identity()
+            .is_some_and(|id| value["serverId"] != id)
+    {
+        return Err(Error::InvalidResponse);
+    }
     Ok(parse_direct_access_meta(&value))
 }
 
@@ -420,29 +432,75 @@ pub async fn set_password(backend: &Backend, password: &str) -> Result<AuthStatu
 /// On an uncertain write, re-reads the authoritative server config instead of replaying.
 pub async fn set_listening_mode(backend: &Backend, mode: ListeningMode) -> Result<()> {
     let target = mode.as_str();
-    match Owner::Server
-        .patch(backend, &json!({"listeningMode": target}), false)
-        .await
-    {
-        PatchOutcome::Applied(doc) => {
-            if doc["listeningMode"].as_str().unwrap_or("local") == target {
-                Ok(())
-            } else {
-                Err(Error::SaveFailed)
+    let url = format!("{}api/storage/config/server", backend.base);
+    let response = backend
+        .client
+        .patch(&url)
+        .json(&json!({"listeningMode": target}))
+        .send()
+        .await;
+    match response {
+        Ok(resp) if resp.status().is_success() => {
+            if let Ok(doc) = read_json_limited(resp, 65536).await
+                && doc.is_object()
+            {
+                return if matches_listening_mode(&doc, target) {
+                    Ok(())
+                } else {
+                    Err(Error::SaveFailed)
+                };
             }
+            confirm_listening_mode(backend, &url, target, Error::SaveFailed).await
         }
-        PatchOutcome::Rejected => Err(Error::SaveFailed),
-        PatchOutcome::Uncertain => {
-            let doc = Owner::Server
-                .read(backend)
-                .await
-                .map_err(|_| Error::Transport)?;
-            if doc["listeningMode"].as_str().unwrap_or("local") == target {
-                Ok(())
-            } else {
-                Err(Error::SaveFailed)
-            }
+        Ok(resp) if resp.status().is_server_error() => {
+            let err = match read_error_message(resp).await {
+                Some(message) => Error::Server(message),
+                None => Error::SaveFailed,
+            };
+            confirm_listening_mode(backend, &url, target, err).await
         }
+        Ok(resp) => match read_error_message(resp).await {
+            Some(message) => Err(Error::Server(message)),
+            None => Err(Error::SaveFailed),
+        },
+        Err(_) => confirm_listening_mode(backend, &url, target, Error::Transport).await,
+    }
+}
+
+async fn confirm_listening_mode(
+    backend: &Backend,
+    url: &str,
+    target: &str,
+    fallback: Error,
+) -> Result<()> {
+    let request = backend
+        .client
+        .get(url)
+        .query(&[("authoritative", "1")])
+        .header(reqwest::header::CACHE_CONTROL, "no-store");
+    #[cfg(target_arch = "wasm32")]
+    let request = request.fetch_cache_no_store();
+    let Ok(resp) = request.send().await else {
+        return Err(fallback);
+    };
+    let Ok(resp) = check_response(resp).await else {
+        return Err(fallback);
+    };
+    let Ok(doc) = read_json_limited(resp, 65536).await else {
+        return Err(fallback);
+    };
+    if doc.is_object() && matches_listening_mode(&doc, target) {
+        Ok(())
+    } else {
+        Err(fallback)
+    }
+}
+
+fn matches_listening_mode(doc: &Value, target: &str) -> bool {
+    match doc.get("listeningMode") {
+        None | Some(Value::Null) => target == ListeningMode::Local.as_str(),
+        Some(Value::String(value)) => value == target,
+        Some(_) => false,
     }
 }
 
@@ -472,6 +530,18 @@ async fn check_response(response: reqwest::Response) -> Result<reqwest::Response
 
 async fn read_error_message(response: reqwest::Response) -> Option<String> {
     use futures_lite::StreamExt;
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+        });
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();
     while let Some(chunk) = stream.next().await {
@@ -485,14 +555,20 @@ async fn read_error_message(response: reqwest::Response) -> Option<String> {
         }
     }
     let text = std::str::from_utf8(&bytes).ok()?;
-    if let Ok(value) = serde_json::from_str::<Value>(text)
-        && let Some(msg) = value["error"]
+    parse_error_message(content_type.as_deref(), text)
+}
+
+fn parse_error_message(content_type: Option<&str>, text: &str) -> Option<String> {
+    if let Ok(value) = serde_json::from_str::<Value>(text) {
+        return value["error"]
             .as_str()
             .or_else(|| value["message"].as_str())
-    {
-        return clean_text(Some(msg), MAX_ERROR_CHARS);
+            .and_then(|msg| clean_text(Some(msg), MAX_ERROR_CHARS));
     }
-    clean_text(Some(text), MAX_ERROR_CHARS)
+    if content_type == Some("text/plain") {
+        return clean_text(Some(text), MAX_ERROR_CHARS);
+    }
+    None
 }
 
 fn clean_text(value: Option<&str>, max_chars: usize) -> Option<String> {
@@ -628,5 +704,39 @@ mod tests {
         assert_eq!(rec.unwrap().ip, "192.168.1.10");
         assert_eq!(hidden.len(), 1);
         assert_eq!(hidden[0].ip, "10.0.0.5");
+    }
+
+    #[test]
+    fn listening_mode_and_error_body_parsing_reject_malformed_payloads() {
+        assert!(matches_listening_mode(&json!({}), "local"));
+        assert!(matches_listening_mode(
+            &json!({"listeningMode": null}),
+            "local"
+        ));
+        assert!(matches_listening_mode(
+            &json!({"listeningMode": "all"}),
+            "all"
+        ));
+        assert!(!matches_listening_mode(
+            &json!({"listeningMode": 42}),
+            "local"
+        ));
+
+        assert_eq!(
+            parse_error_message(Some("application/json"), r#"{"error":"Locked by CLI"}"#),
+            Some("Locked by CLI".into())
+        );
+        assert_eq!(
+            parse_error_message(Some("application/json"), r#"{"detail":"unexpected"}"#),
+            None
+        );
+        assert_eq!(
+            parse_error_message(Some("text/html"), "<html>502 Bad Gateway</html>"),
+            None
+        );
+        assert_eq!(
+            parse_error_message(Some("text/plain"), "Plain server error"),
+            Some("Plain server error".into())
+        );
     }
 }

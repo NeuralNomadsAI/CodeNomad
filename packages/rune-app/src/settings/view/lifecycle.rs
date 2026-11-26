@@ -63,7 +63,9 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 if !prefs.transcript_ready() {
                     s.transcript_picker.set(None);
                 }
-                let editor_changed = prefs.memory.poll_editor(&mut s.memory_editor);
+                let editor_changed = prefs
+                    .memory
+                    .poll_editor(prefs.backend.as_ref(), &mut s.memory_editor);
                 let mut config_changed = false;
                 if let Some(wake) = prefs.window_wake.clone() {
                     config_changed = s.host_support.poll(&prefs, &wake, !s.closing);

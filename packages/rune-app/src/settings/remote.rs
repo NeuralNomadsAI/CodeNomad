@@ -92,7 +92,7 @@ enum Mutation {
 }
 
 enum Reply {
-    Snapshot(Result<SnapshotRead, remote::Error>),
+    Snapshot(Result<SnapshotRead, remote::Error>, Option<remote::Error>),
     Started(Result<(Status, Pairing, Option<Vec<Device>>), remote::Error>),
     Status(Result<Status, remote::Error>),
     Pairing(Result<(Pairing, bool), remote::Error>),
@@ -178,7 +178,7 @@ impl Remote {
         };
         self.flight = None;
         match result {
-            Reply::Snapshot(Ok(read)) => {
+            Reply::Snapshot(Ok(read), revoke_err) => {
                 let status = read.status;
                 let keep_direct = self.pairing.as_ref().is_some_and(|p| p.direct);
                 if !status.manageable
@@ -197,8 +197,9 @@ impl Remote {
                 self.needs_read = matches!(self.unconfirmed, Some(Mutation::Revoke(_)))
                     && (read.devices_error.is_some() || devices.is_none());
                 if self.needs_read {
-                    self.error = read
-                        .devices_error
+                    self.error = revoke_err
+                        .filter(|err| matches!(err, remote::Error::Server(_)))
+                        .or(read.devices_error)
                         .map(|err| ErrorText::from_remote(err, "remoteControl.state.error"))
                         .or(Some(ErrorText::Key("remoteControl.state.error")));
                 } else {
@@ -221,15 +222,21 @@ impl Remote {
                         }
                     } else if !failed {
                         self.error = None;
+                    } else if let Some(err) = revoke_err {
+                        self.error = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
                     } else if self.error.is_none() {
                         self.error = Some(ErrorText::Key("remoteControl.state.error"));
                     }
                 }
                 self.snapshot = Some((status, devices));
             }
-            Reply::Snapshot(Err(err)) => {
+            Reply::Snapshot(Err(err), revoke_err) => {
                 self.needs_read = true;
-                self.error = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
+                let chosen = match revoke_err {
+                    Some(server @ remote::Error::Server(_)) => server,
+                    _ => err,
+                };
+                self.error = Some(ErrorText::from_remote(chosen, "remoteControl.state.error"));
             }
             Reply::Started(Ok((status, pairing, devices))) => {
                 self.unconfirmed = None;
@@ -406,7 +413,7 @@ impl Remote {
                     else {
                         return;
                     };
-                    Reply::Snapshot(result)
+                    Reply::Snapshot(result, None)
                 }
                 Action::Start => match remote::start(&backend).await {
                     Ok(started) => {
@@ -433,8 +440,8 @@ impl Remote {
                         .map(|p| (p, true)),
                 ),
                 Action::Revoke(id) => {
-                    let _ = remote::revoke(&backend, &id).await;
-                    Reply::Snapshot(snapshot(&backend).await)
+                    let revoke_err = remote::revoke(&backend, &id).await.err();
+                    Reply::Snapshot(snapshot(&backend).await, revoke_err)
                 }
             };
             let expiry = match &result {

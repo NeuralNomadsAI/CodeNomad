@@ -48,13 +48,21 @@ impl Editor {
         self.confirm = None;
     }
 
+    pub fn can_write(&self, prefs: &Preferences) -> bool {
+        prefs.can_retry()
+            && !prefs.transport_lost()
+            && prefs.backend.as_ref().is_some_and(|backend| {
+                self.owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.verified_for_write(backend))
+            })
+    }
+
     pub fn poll(&mut self, prefs: &Preferences, wake: &Waker, visible: bool) -> bool {
-        let Some(backend) = prefs.backend.as_ref().filter(|_| prefs.can_retry()) else {
-            self.suspend();
-            return false;
-        };
         let mut changed = false;
-        if let Some(owner) = self.owner.as_mut() {
+        if let Some(backend) = prefs.backend.as_ref()
+            && let Some(owner) = self.owner.as_mut()
+        {
             if owner.same_backend_server(backend) {
                 if owner.adopt_same_server(backend) {
                     // Re-authenticated to the same server: preserve loaded files and unsaved edits,
@@ -70,6 +78,8 @@ impl Editor {
                 changed = true;
             }
         }
+        // Drain in-flight saves even while authentication/transport is down so busy() never
+        // locks Preferences open; a foreign owner adoption above already dropped stale writes.
         if let Some(inbox) = self.write.as_ref() {
             match inbox.try_recv() {
                 Ok((draft, saved)) => {
@@ -91,54 +101,78 @@ impl Editor {
                 Err(_) => {}
             }
         }
+        let Some(backend) = prefs.backend.as_ref().filter(|_| prefs.can_retry()) else {
+            self.suspend();
+            return changed;
+        };
         if !visible {
             self.suspend();
             return changed;
         }
         self.owner
             .get_or_insert_with(|| ServerOwner::from_backend(backend));
-        if let Some(result) = self
-            .read
-            .as_ref()
-            .and_then(|(_, inbox)| inbox.try_recv().ok())
-        {
-            self.read = None;
-            match result {
-                Read::List(Some(files)) => {
-                    self.goal = (!files.is_empty()).then_some(0);
-                    self.files = Some(files);
+        if let Some((_, inbox)) = self.read.as_ref() {
+            match inbox.try_recv() {
+                Ok(result) => {
+                    self.read = None;
+                    match result {
+                        Read::List(Some(files)) => {
+                            self.goal = (!files.is_empty()).then_some(0);
+                            self.files = Some(files);
+                        }
+                        Read::List(None) => {
+                            self.notice = Some("settings.configFiles.errors.loadList");
+                        }
+                        Read::Content(index, Some(content)) => {
+                            if self.goal == Some(index) {
+                                self.goal = None;
+                            }
+                            self.active = Some(index);
+                            self.exists = content.exists;
+                            self.crlf = content.contents.contains("\r\n")
+                                && !content.contents.replace("\r\n", "").contains('\n');
+                            let input = content.contents.replace("\r\n", "\n");
+                            self.draft = TextEdit::new(&input);
+                            self.original = Some(input);
+                            self.diagnose();
+                        }
+                        Read::Content(_, None) => {
+                            self.goal = None;
+                            self.notice = Some("settings.configFiles.errors.loadContent");
+                        }
+                    }
+                    changed = true;
                 }
-                Read::List(None) => self.notice = Some("settings.configFiles.errors.loadList"),
-                Read::Content(index, Some(content)) => {
-                    self.active = Some(index);
-                    self.exists = content.exists;
-                    self.crlf = content.contents.contains("\r\n")
-                        && !content.contents.replace("\r\n", "").contains('\n');
-                    let input = content.contents.replace("\r\n", "\n");
-                    self.draft = TextEdit::new(&input);
-                    self.original = Some(input);
-                    self.diagnose();
+                Err(_) if inbox.is_closed() => {
+                    self.read = None;
+                    self.goal = None;
+                    self.notice = Some(if self.files.is_none() {
+                        "settings.configFiles.errors.loadList"
+                    } else {
+                        "settings.configFiles.errors.loadContent"
+                    });
+                    changed = true;
                 }
-                Read::Content(_, None) => {
-                    self.notice = Some("settings.configFiles.errors.loadContent")
-                }
+                Err(_) => {}
             }
-            changed = true;
         }
-        if self.read.is_none() && !self.busy() && self.notice.is_none() {
+        if self.read.is_none()
+            && !self.busy()
+            && self.notice.is_none()
+            && !prefs.transport_lost()
+            && ServerOwner::backend_verified(backend)
+        {
             if self.files.is_none() {
                 self.start_read(backend, wake, None);
                 changed = true;
-            } else if let Some(index) = self
-                .goal
-                .take()
-                .or_else(|| self.active.is_none().then_some(0))
+            } else if let Some(index) = self.goal.or_else(|| self.active.is_none().then_some(0))
                 && let Some(id) = self
                     .files
                     .as_ref()
                     .and_then(|files| files.get(index))
                     .map(|file| file.id.clone())
             {
+                self.goal = Some(index);
                 self.start_read(backend, wake, Some((index, id)));
                 changed = true;
             }
@@ -195,13 +229,10 @@ impl Editor {
     }
 
     fn save(&mut self, prefs: &Preferences) {
-        let Some(backend) = prefs.backend.as_ref().filter(|b| {
-            prefs.can_retry()
-                && self
-                    .owner
-                    .as_ref()
-                    .is_some_and(|owner| owner.same_backend_server(b))
-        }) else {
+        if !self.can_write(prefs) {
+            return;
+        }
+        let Some(backend) = prefs.backend.as_ref() else {
             return;
         };
         let Some(file) = self
@@ -227,6 +258,11 @@ impl Editor {
             file.id.clone(),
             self.draft.text.clone(),
         );
+        let expected_server = self
+            .owner
+            .as_ref()
+            .and_then(|o| o.server().map(str::to_owned));
+        let prepared_gen = backend.client.drop_generation();
         let payload = if self.crlf {
             draft.replace('\n', "\r\n")
         } else {
@@ -235,11 +271,36 @@ impl Editor {
         self.write = Some(inbox);
         self.notice = None;
         platform::spawn(async move {
-            let saved = match api::save(&backend, &id, &payload).await {
-                Ok(()) => true,
-                Err(_) => api::read(&backend, &id)
-                    .await
-                    .is_ok_and(|content| content.exists && content.contents == payload),
+            let verified = if backend.client.tracks_server_attestation()
+                && (!ServerOwner::backend_verified(&backend)
+                    || backend.client.drop_generation() != prepared_gen)
+            {
+                backend.attest_server().await.is_ok()
+                    && ServerOwner::backend_verified(&backend)
+                    && expected_server
+                        .as_deref()
+                        .is_none_or(|id| backend.client.server_identity() == Some(id))
+            } else {
+                ServerOwner::backend_verified(&backend)
+                    && expected_server
+                        .as_deref()
+                        .is_none_or(|id| backend.client.server_identity() == Some(id))
+            };
+            let saved = if !verified {
+                false
+            } else {
+                match api::save(&backend, &id, &payload).await {
+                    Ok(()) => true,
+                    Err(_) => {
+                        ServerOwner::backend_verified(&backend)
+                            && expected_server
+                                .as_deref()
+                                .is_none_or(|id| backend.client.server_identity() == Some(id))
+                            && api::read(&backend, &id)
+                                .await
+                                .is_ok_and(|content| content.exists && content.contents == payload)
+                    }
+                }
             };
             if out.try_send((draft, saved)).is_ok() {
                 wake();
@@ -253,7 +314,9 @@ impl Editor {
         shared: &std::rc::Rc<std::cell::RefCell<Preferences>>,
         edit: fn(&mut S) -> &mut Editor,
     ) -> El {
-        let waiting = self.busy() || self.read.is_some() || self.goal.is_some();
+        let writable = self.can_write(&shared.borrow());
+        let waiting =
+            self.busy() || self.read.is_some() || (self.goal.is_some() && self.notice.is_none());
         let files = self.files.as_deref().unwrap_or_default();
         let names: Vec<_> = files.iter().map(|file| file.label.as_str()).collect();
         let mut view = col().full_width().separate(Space::Sm);
@@ -265,7 +328,7 @@ impl Editor {
                 t("settings.configFiles.selector.label"),
                 &names,
                 self.active,
-                waiting,
+                waiting || !writable,
                 move |s, index| {
                     let editor = edit(s);
                     if editor.active != Some(index) {
@@ -282,7 +345,7 @@ impl Editor {
                     layout::textarea(&self.draft)
                         .rows(12)
                         .label(t("settings.configFiles.title"))
-                        .disabled(waiting || self.confirm.is_some())
+                        .disabled(waiting || !writable || self.confirm.is_some())
                         .on_edit(move |s| &mut edit(s).draft)
                         .on_change(move |s, _| edit(s).diagnose())
                         .build(field_kit(layout::dark())),
@@ -295,12 +358,15 @@ impl Editor {
                     layout::action_row()
                         .child(chrome::primary_action(
                             t("settings.configFiles.actions.save"),
-                            waiting || !self.dirty() || self.draft.text.len() > api::MAX_CONTENT,
+                            waiting
+                                || !writable
+                                || !self.dirty()
+                                || self.draft.text.len() > api::MAX_CONTENT,
                             move |s| edit(s).save(&shared.borrow()),
                         ))
                         .child(layout::button(
                             t("settings.configFiles.actions.reload"),
-                            waiting,
+                            waiting || !writable,
                             move |s| edit(s).choose(index),
                         )),
                 )
@@ -543,13 +609,53 @@ mod tests {
                 Some("locale: fr\n")
             );
 
-            // Editing again and connecting to a different server profile on the same address must reset.
-            editor.draft = TextEdit::new("locale: de\n");
+            // An in-flight save that completes while authentication is required must still drain
+            // so busy() does not lock Preferences open.
+            editor.draft = TextEdit::new("locale: es\n");
             assert!(editor.dirty());
+            editor.save(&prefs);
+            assert!(editor.busy());
+            prefs.require_authentication();
+            assert!(!prefs.can_retry());
+            for _ in 0..100 {
+                editor.poll(&prefs, &wake, true);
+                if !editor.busy() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!editor.busy());
+            assert!(!editor.dirty());
+            assert_eq!(
+                saved_payload.lock().unwrap().as_deref(),
+                Some("locale: es\n")
+            );
+
+            // Re-bind on the same server, then revoke attestation on the SAME client_id when
+            // another profile takes over the address: draft stays read-only and save must NOT
+            // send PUT to the foreign server.
+            let backend_reauth = Backend::connect(&base, "").await.unwrap();
+            backend_reauth.attest_server().await.unwrap();
+            prefs.bind(Some(backend_reauth.clone()));
+            prefs.clear_transport_lost();
+            editor.poll(&prefs, &wake, true);
+            editor.draft = TextEdit::new("locale: it\n");
+            assert!(editor.dirty());
+            *saved_payload.lock().unwrap() = None;
             *server_id.lock().unwrap() = "server-profile-b".to_owned();
+            assert!(backend_reauth.attest_server().await.is_err());
+            assert!(backend_reauth.client.attestation_revoked());
+            assert!(!editor.can_write(&prefs));
+            editor.save(&prefs);
+            assert!(!editor.busy());
+            assert_eq!(saved_payload.lock().unwrap().as_deref(), None);
+            assert!(editor.dirty());
+            assert_eq!(editor.draft.text, "locale: it\n");
+
+            // Connecting to a different server profile on the same address must reset the draft.
             let backend_c = Backend::connect(&base, "").await.unwrap();
             backend_c.attest_server().await.unwrap();
-            prefs.backend = Some(backend_c);
+            prefs.bind(Some(backend_c));
             assert!(editor.poll(&prefs, &wake, true));
             assert!(!editor.dirty());
             assert!(editor.draft.text.is_empty());

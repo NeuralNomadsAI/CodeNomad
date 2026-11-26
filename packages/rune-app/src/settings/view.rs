@@ -277,15 +277,18 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ]
             .into_iter()
             .filter(|(key, _, _)| *key != "settings-stats" || super::stats::supported(&prefs))
-            .chain(s.host_support.config_files(&prefs).then_some((
-                "settings-config-files",
-                config_label,
-                s.section == Section::ConfigFiles,
-            )))
+            .chain(
+                (s.host_support.config_files(&prefs) || s.config_files.dirty()).then_some((
+                    "settings-config-files",
+                    config_label,
+                    s.section == Section::ConfigFiles,
+                )),
+            )
             .chain([("settings-info", info_label, s.section == Section::Info)]),
             |s: &mut Window, key| {
                 if key == "settings-config-files"
                     && !s.host_support.config_files(&s.shared.borrow())
+                    && !s.config_files.dirty()
                 {
                     return;
                 }
@@ -455,6 +458,18 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 if s.host_support.config_files(&prefs) {
                     s.config_files
                         .view(&mut layers, &s.shared, |s: &mut Window| &mut s.config_files)
+                } else if s.host_support.config_files_failed(&prefs) {
+                    layout::action_row()
+                        .child(text(t("rune.connect_error")).role("alert").wrap())
+                        .child(layout::button(
+                            t("sessionList.loadError.retry"),
+                            false,
+                            |s: &mut Window| s.host_support.retry(),
+                        ))
+                } else if s.host_support.config_files_unsupported(&prefs) {
+                    text(t("settings.configFiles.errors.loadList"))
+                        .role("alert")
+                        .wrap()
                 } else {
                     text(t("rune.loading")).role("status")
                 },
