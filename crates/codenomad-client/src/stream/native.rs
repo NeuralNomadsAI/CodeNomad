@@ -6,7 +6,9 @@ use super::{
     staleness::{Clock, ProbeSource, STALE_THRESHOLD, Watchdog},
 };
 #[cfg(test)]
-use super::{Input, Result, Sender, State, dispatch, limits::reread, opened};
+use super::{
+    Input, Result, Sender, State, limits::reread_marked, opened, routing::dispatch_marked,
+};
 use serde_json::json;
 use std::sync::{
     Arc,
@@ -464,7 +466,7 @@ pub(super) async fn read_frames_with<B: AsRef<[u8]>, C: Clock + Clone>(
             let _pause = watchdog.pause();
             opened(epoch, out, state).await?;
         }
-        while let Ok(frame) = receive.recv().await {
+        while let Ok((frame, mark)) = receive.recv().await {
             match frame {
                 Parsed::Data(kind, data) if kind == "codenomad.client.ping" => {
                     // Pong POST is an independent network wait: a forked watchdog ensures frames
@@ -478,7 +480,10 @@ pub(super) async fn read_frames_with<B: AsRef<[u8]>, C: Clock + Clone>(
                         },
                         async {
                             Next::Ready(
-                                dispatch(b, epoch, out, state, connection, &kind, &data).await,
+                                dispatch_marked(
+                                    b, epoch, out, state, connection, &kind, &data, mark,
+                                )
+                                .await,
                             )
                         },
                     )
@@ -493,12 +498,12 @@ pub(super) async fn read_frames_with<B: AsRef<[u8]>, C: Clock + Clone>(
                 }
                 Parsed::Data(kind, data) => {
                     let _pause = watchdog.pause();
-                    dispatch(b, epoch, out, state, connection, &kind, &data).await?;
+                    dispatch_marked(b, epoch, out, state, connection, &kind, &data, mark).await?;
                 }
                 Parsed::Skipped => {
                     let _pause = watchdog.pause();
                     b.client.children().invalidate_all(b);
-                    reread(epoch, out, state).await?;
+                    reread_marked(epoch, out, state, mark).await?;
                 }
             }
         }
@@ -515,13 +520,36 @@ async fn receive_chunk(
     quota: Option<&crate::provider_usage::Ingress>,
     b: &Backend,
     state: &State,
-    frames: &Sender<Parsed>,
+    frames: &Sender<(Parsed, u64)>,
 ) -> Result<()> {
     // Bytes already delivered by HTTP may still contain a revocation past the next queued frame.
     let unobserved = quota.map(crate::provider_usage::Ingress::chunk);
+    struct InboxChunk<'a>(Option<&'a crate::inbox::InboxWire>);
+    impl InboxChunk<'_> {
+        fn finish(mut self) {
+            if let Some(inbox) = self.0.take()
+                && let Some(wake) = inbox.end_chunk_quiet(true)
+            {
+                wake();
+            }
+        }
+    }
+    impl Drop for InboxChunk<'_> {
+        fn drop(&mut self) {
+            if let Some(inbox) = self.0.take()
+                && let Some(wake) = inbox.end_chunk_quiet(false)
+            {
+                wake();
+            }
+        }
+    }
+    let inbox_chunk = state.catalogue.is_none().then(|| {
+        state.inbox.begin_chunk();
+        InboxChunk(Some(&state.inbox))
+    });
     for byte in chunk {
         if let Some(frame) = parser.byte(*byte)? {
-            match &frame {
+            let mark = match &frame {
                 Parsed::Data(kind, data) if kind.is_empty() || kind == "message" => {
                     if let Some(quota) = quota {
                         quota.frame(data);
@@ -530,9 +558,11 @@ async fn receive_chunk(
                         super::sessions::note_inbox_frame(
                             &b.workspace,
                             &b.session,
-                            &state.inbox_version,
+                            &state.inbox,
                             data,
-                        );
+                        )
+                    } else {
+                        0
                     }
                 }
                 Parsed::Skipped => {
@@ -540,15 +570,18 @@ async fn receive_chunk(
                         quota.skipped();
                     }
                     if state.catalogue.is_none() {
-                        state
-                            .inbox_version
-                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        state.inbox.record_ingress()
+                    } else {
+                        0
                     }
                 }
-                _ => {}
-            }
-            frames.send(frame).await?;
+                _ => 0,
+            };
+            frames.send((frame, mark)).await?;
         }
+    }
+    if let Some(chunk) = inbox_chunk {
+        chunk.finish();
     }
     if let Some(chunk) = unobserved {
         chunk.finish();

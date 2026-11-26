@@ -543,16 +543,11 @@ fn drain_chat(
                 }
             }
             Event::Inbox {
-                mut items,
+                items,
                 authoritative,
                 fence,
             } => {
-                if !authoritative || fence.as_ref().is_some_and(|f| !f.is_valid()) {
-                    continue;
-                }
-                items.retain(|item| !s.messages.iter().any(|row| row.id == item.id));
-                chat::reader::preserve_anchor_on_inbox_change(s, &items);
-                if !s.transcript_display.queue.set_items(items) {
+                if !authoritative || !chat::queue::receive_authoritative(s, items, fence) {
                     continue;
                 }
             }

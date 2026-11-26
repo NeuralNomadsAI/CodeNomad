@@ -88,7 +88,7 @@ pub enum Command {
     Older,
     Page(HistoryEdge, Receiver<()>),
     Anchor(crate::timeline::Jump),
-    SyncInbox,
+    SyncInbox(u64),
     Latest,
     Retry,
     Close,

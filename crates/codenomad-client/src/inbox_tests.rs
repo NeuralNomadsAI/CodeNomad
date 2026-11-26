@@ -877,7 +877,7 @@ fn background_inbox_read_does_not_block_streaming_or_stall_and_generation_switch
             st.inbox = vec![inbox_json("q-stale", "queue", "from old gen")];
             st.hold_inbox = Some((old_entered.clone(), old_release.clone()));
         }
-        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        cmd_tx.send(Command::SyncInbox(0)).await.unwrap();
         tokio::time::timeout(Duration::from_secs(3), async {
             while !old_entered.load(SeqCst) {
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -916,13 +916,13 @@ fn background_inbox_read_does_not_block_streaming_or_stall_and_generation_switch
         // Persistent inbox failure emits Event::InboxFailed after bounded retries,
         // and a subsequent successful GET with identical rows still republishes authoritative: true.
         server.state.lock().unwrap().inbox_status = 500;
-        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        cmd_tx.send(Command::SyncInbox(0)).await.unwrap();
         recv_reader(&reader_rx, |seen_gen, event| {
             seen_gen == gen2 && matches!(event, Event::InboxFailed)
         })
         .await;
         server.state.lock().unwrap().inbox_status = 200;
-        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        cmd_tx.send(Command::SyncInbox(0)).await.unwrap();
         recv_reader(&reader_rx, |seen_gen, event| {
             seen_gen == gen2
                 && matches!(
@@ -995,7 +995,7 @@ fn persistent_inbox_history_overlap_prefers_committed_and_bounds_repairs() {
 
         // Next SyncInbox hits repair #2 (the cap); wait for its history repair to settle.
         let page_calls_before = server.state.lock().unwrap().page_calls;
-        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        cmd_tx.send(Command::SyncInbox(0)).await.unwrap();
         recv_reader(&reader_rx, |seen_gen, event| {
             seen_gen == gen1 && matches!(event, Event::ReaderSync { .. })
         })
@@ -1009,7 +1009,7 @@ fn persistent_inbox_history_overlap_prefers_committed_and_bounds_repairs() {
 
         // Further SyncInbox triggers with persistent overlap must NOT schedule any more history repairs.
         for _ in 0..3 {
-            cmd_tx.send(Command::SyncInbox).await.unwrap();
+            cmd_tx.send(Command::SyncInbox(0)).await.unwrap();
             recv_reader(&reader_rx, |seen_gen, event| {
                 seen_gen == gen1
                     && matches!(
@@ -1035,7 +1035,7 @@ fn persistent_inbox_history_overlap_prefers_committed_and_bounds_repairs() {
             st.inbox = vec![inbox_json("u1", "queue", "stale duplicate")];
             st.rows = vec![user_json("u1", "committed"), user_json("q2", "real queued")];
         }
-        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        cmd_tx.send(Command::SyncInbox(0)).await.unwrap();
         let mut saw_committed_q2 = false;
         recv_reader(&reader_rx, |seen_gen, event| {
             if seen_gen == gen1
@@ -1143,7 +1143,7 @@ fn available_retry_and_queued_sse_cancel_fence_and_resync_inbox() {
             let mut st = server.state.lock().unwrap();
             st.hold_inbox = Some((entered.clone(), release.clone()));
         }
-        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        cmd_tx.send(Command::SyncInbox(0)).await.unwrap();
         tokio::time::timeout(Duration::from_secs(3), async {
             while !entered.load(SeqCst) {
                 tokio::time::sleep(Duration::from_millis(5)).await;

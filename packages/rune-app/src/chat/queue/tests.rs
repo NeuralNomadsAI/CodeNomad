@@ -108,9 +108,51 @@ fn queued_prompt_gestures_guard_double_submit_recover_from_errors_and_edit_draft
         })
         .await;
         assert!(
-            matches!(cmd_rx.try_recv().ok(), Some(Command::SyncInbox)),
-            "settled gesture triggers authoritative inbox sync"
+            matches!(cmd_rx.try_recv().ok(), Some(Command::SyncInbox(1))),
+            "settled gesture advances publication fence and triggers authoritative inbox sync"
         );
+        // An already-queued older authoritative snapshot (sync_epoch 0) must NOT undo the settled
+        // delivery change; only a snapshot with sync_epoch >= 1 may apply.
+        let (ev_tx, ev_rx) = bounded(4);
+        rt.update(|s, _| s.incoming = Some(ev_rx));
+        let rev = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+        ev_tx
+            .try_send(Event::Inbox {
+                items: vec![
+                    queued("q1", Delivery::Queue, "Queued follow-up"),
+                    queued("q2", Delivery::Queue, "Second queued"),
+                ],
+                authoritative: true,
+                fence: Some(
+                    codenomad_client::inbox::InboxFence::from_revision(rev.clone(), 1)
+                        .with_sync_epoch(0),
+                ),
+            })
+            .unwrap();
+        rt.update(|s, _| {
+            let _ = crate::chat::events::poll_chat(s, 4);
+        });
+        assert_eq!(
+            rt.state.transcript_display.queue.items()[0].delivery,
+            Delivery::Steer,
+            "older queued snapshot (sync_epoch 0) must not undo settled mutation"
+        );
+        ev_tx
+            .try_send(Event::Inbox {
+                items: vec![
+                    queued("q1", Delivery::Steer, "Queued follow-up"),
+                    queued("q2", Delivery::Queue, "Second queued"),
+                ],
+                authoritative: true,
+                fence: Some(
+                    codenomad_client::inbox::InboxFence::from_revision(rev, 1).with_sync_epoch(1),
+                ),
+            })
+            .unwrap();
+        rt.update(|s, _| {
+            let _ = crate::chat::events::poll_chat(s, 4);
+            s.incoming = None;
+        });
         settle(&mut rt);
         assert!(
             rt.find("queued-badge-q1").is_none(),
@@ -136,7 +178,10 @@ fn queued_prompt_gestures_guard_double_submit_recover_from_errors_and_edit_draft
             !s.transcript_display.queue.pending() && s.transcript_display.queue.has_error()
         })
         .await;
-        assert!(matches!(cmd_rx.try_recv().ok(), Some(Command::SyncInbox)));
+        assert!(matches!(
+            cmd_rx.try_recv().ok(),
+            Some(Command::SyncInbox(1))
+        ));
         assert!(rt.elements().iter().any(|e| {
             e.role == "alert" && e.text.as_deref() == Some("Unable to update the prompt queue")
         }));
@@ -470,11 +515,14 @@ fn edit_preserves_prompt_in_recovery_slot_when_draft_changes_or_tab_suspends() {
         // Even once authoritative inbox re-enables actions and draft is empty, a second Edit is blocked while saved_edit is populated.
         let (ev_tx, ev_rx) = bounded(4);
         rt.update(|s, _| s.incoming = Some(ev_rx));
+        let rev = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
         ev_tx
             .try_send(Event::Inbox {
                 items: vec![queued("q2", Delivery::Queue, "Second queued")],
                 authoritative: true,
-                fence: None,
+                fence: Some(
+                    codenomad_client::inbox::InboxFence::from_revision(rev, 1).with_sync_epoch(1),
+                ),
             })
             .unwrap();
         rt.update(|s, _| {

@@ -1,16 +1,15 @@
 //! Native session relay, child observations and scoped lifecycle hints.
 use super::{Backend, Input, Result, Sender, SeqCst, State, children, mission_events};
-use crate::transport::WorkspaceEvent;
+use crate::{inbox::InboxWire, transport::WorkspaceEvent};
 use serde_json::Value;
-use std::sync::atomic::AtomicU64;
 
-/// Advance `inbox_version` synchronously on frame arrival before any routing queue or side send.
+/// Advance `inbox` ingress synchronously on frame arrival before any routing queue or side send.
 pub(super) fn note_inbox_frame(
     workspace: &str,
     session: &str,
-    inbox_version: &AtomicU64,
+    inbox: &InboxWire,
     data: &str,
-) {
+) -> u64 {
     if data.is_empty()
         || !(data.contains("session.inbox.")
             || data.contains("instance.eventStatus")
@@ -19,21 +18,23 @@ pub(super) fn note_inbox_frame(
             || data.contains("session.deleted")
             || data.contains("session.revert."))
     {
-        return;
+        return 0;
     }
-    if let Ok(value) = serde_json::from_str::<Value>(data.trim()) {
-        note_inbox_value(workspace, session, inbox_version, &value);
-    }
+    serde_json::from_str::<Value>(data.trim())
+        .ok()
+        .map_or(0, |value| {
+            note_inbox_value(workspace, session, inbox, &value)
+        })
 }
 
 pub(super) fn note_inbox_value(
     workspace: &str,
     session: &str,
-    inbox_version: &AtomicU64,
+    inbox: &InboxWire,
     value: &Value,
-) {
+) -> u64 {
     if value["instanceId"] != workspace {
-        return;
+        return 0;
     }
     let native = &value["event"];
     let invalidates = value["type"] == "instance.eventStatus"
@@ -52,7 +53,9 @@ pub(super) fn note_inbox_value(
                             )
                     }))));
     if invalidates {
-        inbox_version.fetch_add(1, SeqCst);
+        inbox.record_ingress()
+    } else {
+        0
     }
 }
 
@@ -62,6 +65,7 @@ pub(super) async fn relay(
     out: &Sender<Input>,
     state: &State,
     value: &Value,
+    inbox_mark: u64,
 ) -> Result<()> {
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
@@ -114,7 +118,7 @@ pub(super) async fn relay(
         && native["data"]["sessionID"] != b.session
         && crate::content::FamilyChange::tracks(native)
     {
-        return Ok(out.send(Input::Native(epoch, 0, native.clone())).await?);
+        return Ok(out.send(Input::Native(epoch, 0, 0, native.clone())).await?);
     }
     let catalogues = (own && value["type"] == "instance.event")
         .then(|| match native["type"].as_str() {
@@ -166,9 +170,9 @@ pub(super) async fn relay(
         }
         let version = state.version.fetch_add(1, SeqCst) + 1;
         out.send(if ready {
-            Input::Available(epoch, version)
+            Input::Available(epoch, version, inbox_mark)
         } else {
-            Input::Unavailable(epoch)
+            Input::Unavailable(epoch, inbox_mark)
         })
         .await?;
     } else if own
@@ -181,10 +185,10 @@ pub(super) async fn relay(
             .as_str()
             .is_some_and(|t| t.len() <= 256 * 1024)
         {
-            out.send(Input::Native(epoch, version, native.clone()))
+            out.send(Input::Native(epoch, version, 0, native.clone()))
                 .await?;
         } else {
-            out.send(Input::Hint(epoch, version)).await?;
+            out.send(Input::Hint(epoch, version, 0)).await?;
         }
     } else if own
         && value["type"] == "instance.event"
@@ -222,14 +226,14 @@ pub(super) async fn relay(
             // Closing the signal fences the current body and every later read on this wire.
             cancel.close();
         }
-        out.send(Input::Native(epoch, version, native.clone()))
+        out.send(Input::Native(epoch, version, inbox_mark, native.clone()))
             .await?;
     } else if own
         && value["type"] == "instance.event"
         && native["data"]["sessionID"] != b.session
         && crate::content::FamilyChange::tracks(native)
     {
-        out.send(Input::Native(epoch, 0, native.clone())).await?;
+        out.send(Input::Native(epoch, 0, 0, native.clone())).await?;
     }
     Ok(())
 }
@@ -260,6 +264,7 @@ fn instance_storage_updates_leave_the_window_valid_but_native_hints_do_not() {
                     "type":"instance.dataChanged", "instanceId":"project",
                     "data":{"messageHistory":["attempt"],"agentModelSelections":{}}
                 }),
+                0,
             )
             .await
             .unwrap();
@@ -275,10 +280,11 @@ fn instance_storage_updates_leave_the_window_valid_but_native_hints_do_not() {
                     "type":"instance.event", "instanceId":"project",
                     "event":{"type":"session.synthetic","data":{"sessionID":"session"}}
                 }),
+                0,
             )
             .await
             .unwrap();
             assert!(!state.valid(stamp));
-            assert!(matches!(inbox.try_recv().unwrap(), Input::Hint(1, _)));
+            assert!(matches!(inbox.try_recv().unwrap(), Input::Hint(1, _, _)));
         });
 }

@@ -786,6 +786,15 @@ pub(crate) fn reconcile_bookmark(s: &mut State, page: &crate::history::Page) -> 
         && let Bookmark::Message { id, .. } = &reader.bookmark
         && !rows.iter().any(|row| &row.id == id)
     {
+        if page.newer.is_none()
+            && s.transcript_display
+                .queue
+                .items()
+                .iter()
+                .any(|item| &item.id == id)
+        {
+            return false;
+        }
         reader.bookmark = Bookmark::Latest;
         if !reader.awaiting_manual_probe() {
             s.transcript_display
@@ -865,6 +874,26 @@ pub(crate) fn preserve_anchor_on_inbox_change(
     }
 }
 
+pub(crate) fn reconcile_queued_bookmark(
+    s: &mut State,
+    items: &[codenomad_client::inbox::QueuedPrompt],
+) {
+    if let Some(reader) = &mut s.reader
+        && (reader.resume_pending || reader.pending_scroll)
+        && let Bookmark::Message { id, .. } = &reader.bookmark
+        && !s.messages.iter().any(|row| row.id == *id)
+        && !items.iter().any(|item| item.id == *id)
+    {
+        reader.bookmark = Bookmark::Latest;
+        if !reader.awaiting_manual_probe() {
+            s.transcript_display
+                .reading_mut()
+                .reset_to_latest(s.revision);
+            reader.resume_manual_seq = Some(s.transcript_display.reading().manual_scroll_seq());
+        }
+    }
+}
+
 pub(crate) fn suspend(s: &mut State) {
     let width = s.tool_diff_preferences.history_width();
     let history_bounds = s.tool_diff_preferences.history_bounds.get();
@@ -910,7 +939,13 @@ pub(crate) fn resume(s: &mut State, tx: &mut Tx) {
             if reading_visible {
                 let target = match &reader.bookmark {
                     Bookmark::Message { id, offset }
-                        if s.messages.iter().any(|row| row.id == *id) =>
+                        if s.messages.iter().any(|row| row.id == *id)
+                            || (!s.history_detached
+                                && s.transcript_display
+                                    .queue
+                                    .items()
+                                    .iter()
+                                    .any(|item| item.id == *id)) =>
                     {
                         Bookmark::Message {
                             id: id.clone(),

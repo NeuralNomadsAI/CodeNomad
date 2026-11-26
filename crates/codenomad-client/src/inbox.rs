@@ -10,26 +10,203 @@ use serde_json::{Value, json};
 use std::{
     collections::HashSet,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering::SeqCst},
     },
     time::Duration,
 };
 
+/// Result of checking a live authoritative inbox publication fence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FenceState {
+    /// Wire ingress matches the captured revision and no received SSE chunk is mid-parse.
+    Valid,
+    /// A received native SSE chunk is still being classified; hold publication until wake.
+    Deferred,
+    /// Wire ingress moved past the captured revision or has unapplied events; reject snapshot.
+    Invalid,
+}
+
+#[derive(Default)]
+struct InboxWireInner {
+    ingress: u64,
+    applied: u64,
+    chunk_active: bool,
+    publication_waiting: bool,
+    wake: Option<crate::Wake>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct InboxWire {
+    inner: Arc<Mutex<InboxWireInner>>,
+}
+
+impl std::fmt::Debug for InboxWire {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let inner = self.inner.lock().unwrap();
+        f.debug_struct("InboxWire")
+            .field("ingress", &inner.ingress)
+            .field("applied", &inner.applied)
+            .field("chunk_active", &inner.chunk_active)
+            .finish()
+    }
+}
+
+impl InboxWire {
+    pub(crate) fn with_wake(wake: crate::Wake) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(InboxWireInner {
+                wake: Some(wake),
+                ..InboxWireInner::default()
+            })),
+        }
+    }
+
+    fn bump_ingress(inner: &mut InboxWireInner) -> u64 {
+        inner.ingress = inner.ingress.wrapping_add(1);
+        if inner.ingress == 0 {
+            inner.ingress = 1;
+        }
+        inner.ingress
+    }
+
+    pub(crate) fn ingress(&self) -> u64 {
+        self.inner.lock().unwrap().ingress
+    }
+
+    pub(crate) fn record_ingress(&self) -> u64 {
+        let mut inner = self.inner.lock().unwrap();
+        Self::bump_ingress(&mut inner)
+    }
+
+    pub(crate) fn advance_applied(&self, mark: u64) {
+        if mark == 0 {
+            return;
+        }
+        let mut inner = self.inner.lock().unwrap();
+        if mark > inner.applied {
+            inner.applied = mark;
+        }
+    }
+
+    pub(crate) fn bump_applied(&self) -> u64 {
+        let mut inner = self.inner.lock().unwrap();
+        let next = Self::bump_ingress(&mut inner);
+        if next > inner.applied {
+            inner.applied = next;
+        }
+        next
+    }
+
+    pub(crate) fn invalidate_closed(&self) {
+        let wake = {
+            let mut inner = self.inner.lock().unwrap();
+            Self::bump_ingress(&mut inner);
+            inner.chunk_active = false;
+            std::mem::take(&mut inner.publication_waiting)
+                .then(|| inner.wake.clone())
+                .flatten()
+        };
+        if let Some(wake) = wake {
+            wake();
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn begin_chunk(&self) {
+        self.inner.lock().unwrap().chunk_active = true;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn end_chunk_quiet(&self, clean: bool) -> Option<crate::Wake> {
+        let mut inner = self.inner.lock().unwrap();
+        if !clean {
+            Self::bump_ingress(&mut inner);
+        }
+        inner.chunk_active = false;
+        std::mem::take(&mut inner.publication_waiting)
+            .then(|| inner.wake.clone())
+            .flatten()
+    }
+
+    pub(crate) fn applied_caught_up(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.applied >= inner.ingress
+    }
+
+    pub(crate) fn is_admissible(&self, captured: u64) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.ingress == captured && inner.applied >= captured
+    }
+
+    pub(crate) fn check(&self, captured: u64) -> FenceState {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.ingress != captured || inner.applied < captured {
+            return FenceState::Invalid;
+        }
+        if inner.chunk_active {
+            inner.publication_waiting = true;
+            return FenceState::Deferred;
+        }
+        FenceState::Valid
+    }
+
+    pub(crate) fn fence(&self, captured: u64, sync_epoch: u64) -> InboxFence {
+        InboxFence {
+            backing: FenceBacking::Wire(self.clone()),
+            captured,
+            sync_epoch,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum FenceBacking {
+    Wire(InboxWire),
+    Atomic(Arc<AtomicU64>),
+}
+
 /// Live invalidation fence carried by authoritative [`crate::transport::Event::Inbox`] snapshots.
 #[derive(Clone, Debug)]
 pub struct InboxFence {
-    current: Arc<AtomicU64>,
+    backing: FenceBacking,
     captured: u64,
+    sync_epoch: u64,
 }
 
 impl InboxFence {
     pub fn from_revision(current: Arc<AtomicU64>, captured: u64) -> Self {
-        Self { current, captured }
+        Self {
+            backing: FenceBacking::Atomic(current),
+            captured,
+            sync_epoch: 0,
+        }
+    }
+
+    pub fn with_sync_epoch(mut self, sync_epoch: u64) -> Self {
+        self.sync_epoch = sync_epoch;
+        self
+    }
+
+    pub fn sync_epoch(&self) -> u64 {
+        self.sync_epoch
+    }
+
+    pub fn check(&self) -> FenceState {
+        match &self.backing {
+            FenceBacking::Wire(wire) => wire.check(self.captured),
+            FenceBacking::Atomic(current) => {
+                if current.load(SeqCst) == self.captured {
+                    FenceState::Valid
+                } else {
+                    FenceState::Invalid
+                }
+            }
+        }
     }
 
     pub fn is_valid(&self) -> bool {
-        self.current.load(SeqCst) == self.captured
+        self.check() == FenceState::Valid
     }
 }
 

@@ -5,7 +5,7 @@ use crate::{
 };
 use codenomad_client::{
     Receiver, Sender, bounded,
-    inbox::{InboxDelta, InboxUnavailable, QueuedPrompt},
+    inbox::{FenceState, InboxDelta, InboxFence, InboxUnavailable, QueuedPrompt},
     prompt::Delivery,
 };
 use rune::{El, Tx, col, text};
@@ -26,6 +26,9 @@ pub(crate) struct Queue {
     saved_edit: Option<String>,
     error: Option<&'static str>,
     announce_error: Option<&'static str>,
+    mutation_epoch: u64,
+    pending_sync: Option<u64>,
+    deferred_snapshot: Option<(Vec<QueuedPrompt>, InboxFence)>,
 }
 
 struct Job {
@@ -70,11 +73,16 @@ impl Queue {
             };
         } else {
             self.backend = Some(backend);
+            self.stale = true;
+            self.mutation_epoch = 0;
+            self.pending_sync = None;
+            self.deferred_snapshot = None;
         }
     }
 
     pub(super) fn suspend(&mut self) {
         self.stale = true;
+        self.deferred_snapshot = None;
         if let Some(job) = self.busy.as_mut() {
             job.suspended = true;
         }
@@ -82,6 +90,7 @@ impl Queue {
 
     pub(super) fn offline(&mut self) {
         self.stale = true;
+        self.deferred_snapshot = None;
         if let Some(job) = self.busy.as_mut() {
             job.suspended = true;
         }
@@ -96,6 +105,9 @@ impl Queue {
         self.saved_edit = None;
         self.error = None;
         self.announce_error = None;
+        self.mutation_epoch = 0;
+        self.pending_sync = None;
+        self.deferred_snapshot = None;
     }
 
     pub(super) fn set_items(&mut self, items: Vec<QueuedPrompt>) -> bool {
@@ -150,8 +162,22 @@ impl Queue {
 
     pub(super) fn failed(&mut self) {
         self.stale = true;
+        self.deferred_snapshot = None;
         self.error = Some("promptQueue.error.message");
         self.announce_error = Some("promptQueue.error.message");
+    }
+
+    fn advance_mutation_epoch(&mut self) -> u64 {
+        self.mutation_epoch = self.mutation_epoch.saturating_add(1);
+        self.pending_sync = Some(self.mutation_epoch);
+        if self
+            .deferred_snapshot
+            .as_ref()
+            .is_some_and(|(_, fence)| fence.sync_epoch() < self.mutation_epoch)
+        {
+            self.deferred_snapshot = None;
+        }
+        self.mutation_epoch
     }
 
     pub(super) fn prune_committed(&mut self, committed: &[crate::history::Row]) -> bool {
@@ -195,6 +221,9 @@ impl Queue {
         self.saved_edit = None;
         self.error = None;
         self.announce_error = None;
+        self.mutation_epoch = 0;
+        self.pending_sync = None;
+        self.deferred_snapshot = None;
     }
 }
 
@@ -281,8 +310,65 @@ fn restore_draft(s: &mut State, text: &str, tx: &mut Tx) {
     crate::workspace::capture(s);
 }
 
+fn request_sync(s: &mut State, epoch: u64, tx: &mut Tx) {
+    let Some(commands) = &s.commands else {
+        s.transcript_display.queue.pending_sync = None;
+        return;
+    };
+    match commands.try_send(Command::SyncInbox(epoch)) {
+        Ok(()) => s.transcript_display.queue.pending_sync = None,
+        Err(err) if err.is_full() => {
+            s.transcript_display.queue.pending_sync = Some(
+                s.transcript_display
+                    .queue
+                    .pending_sync
+                    .map_or(epoch, |prior| prior.max(epoch)),
+            );
+            tx.wake_after(std::time::Duration::from_millis(16));
+        }
+        Err(_) => {
+            s.transcript_display.queue.pending_sync = None;
+        }
+    }
+}
+
+pub(super) fn receive_authoritative(
+    s: &mut State,
+    mut items: Vec<QueuedPrompt>,
+    fence: Option<InboxFence>,
+) -> bool {
+    if let Some(fence) = fence {
+        if fence.sync_epoch() < s.transcript_display.queue.mutation_epoch {
+            return false;
+        }
+        match fence.check() {
+            FenceState::Invalid => return false,
+            FenceState::Deferred => {
+                s.transcript_display.queue.deferred_snapshot = Some((items, fence));
+                return false;
+            }
+            FenceState::Valid => {}
+        }
+    } else if s.transcript_display.queue.mutation_epoch > 0 {
+        return false;
+    }
+    s.transcript_display.queue.deferred_snapshot = None;
+    items.retain(|item| !s.messages.iter().any(|row| row.id == item.id));
+    super::reader::preserve_anchor_on_inbox_change(s, &items);
+    super::reader::reconcile_queued_bookmark(s, &items);
+    s.transcript_display.queue.set_items(items)
+}
+
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let mut changed = false;
+    if let Some(epoch) = s.transcript_display.queue.pending_sync {
+        request_sync(s, epoch, tx);
+    }
+    if let Some((items, fence)) = s.transcript_display.queue.deferred_snapshot.take()
+        && receive_authoritative(s, items, Some(fence))
+    {
+        changed = true;
+    }
     if let Some(error) = s.transcript_display.queue.announce_error.take() {
         layout::announce_alert(tx, t(error));
         changed = true;
@@ -306,43 +392,50 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if !same_session {
         return true;
     }
-    if let Some(commands) = &s.commands {
-        let _ = commands.try_send(Command::SyncInbox);
-    }
     match result {
-        Some(Ok(Outcome::UpdatedDelivery { id, delivery })) => {
-            if let Some(item) = s
-                .transcript_display
-                .queue
-                .items
-                .iter_mut()
-                .find(|item| item.id == id)
-            {
-                item.delivery = delivery;
+        Some(Ok(outcome)) => {
+            // Advance the publication fence before applying the local mutation so already-queued
+            // older snapshots cannot undo the settled change or resurrect a canceled row.
+            let epoch = s.transcript_display.queue.advance_mutation_epoch();
+            request_sync(s, epoch, tx);
+            match outcome {
+                Outcome::UpdatedDelivery { id, delivery } => {
+                    if let Some(item) = s
+                        .transcript_display
+                        .queue
+                        .items
+                        .iter_mut()
+                        .find(|item| item.id == id)
+                    {
+                        item.delivery = delivery;
+                    }
+                    s.revision += 1;
+                }
+                Outcome::Edited { id, text } => {
+                    s.transcript_display
+                        .queue
+                        .items
+                        .retain(|item| item.id != id);
+                    s.revision += 1;
+                    if !job_suspended && !s.screen.is_launcher() && empty_draft(s) {
+                        s.transcript_display.queue.saved_edit = None;
+                        restore_draft(s, &text, tx);
+                    } else {
+                        s.transcript_display.queue.saved_edit = Some(text);
+                    }
+                }
+                Outcome::Removed { id } => {
+                    s.transcript_display
+                        .queue
+                        .items
+                        .retain(|item| item.id != id);
+                    s.revision += 1;
+                }
             }
-            s.revision += 1;
-        }
-        Some(Ok(Outcome::Edited { id, text })) => {
-            s.transcript_display
-                .queue
-                .items
-                .retain(|item| item.id != id);
-            s.revision += 1;
-            if !job_suspended && !s.screen.is_launcher() && empty_draft(s) {
-                s.transcript_display.queue.saved_edit = None;
-                restore_draft(s, &text, tx);
-            } else {
-                s.transcript_display.queue.saved_edit = Some(text);
-            }
-        }
-        Some(Ok(Outcome::Removed { id })) => {
-            s.transcript_display
-                .queue
-                .items
-                .retain(|item| item.id != id);
-            s.revision += 1;
         }
         Some(Err(err)) => {
+            let epoch = s.transcript_display.queue.mutation_epoch;
+            request_sync(s, epoch, tx);
             let key = if err.is::<InboxUnavailable>() {
                 "session.messageActions.serverUnavailable"
             } else {
@@ -352,6 +445,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             layout::announce_alert(tx, t(key));
         }
         None => {
+            let epoch = s.transcript_display.queue.mutation_epoch;
+            request_sync(s, epoch, tx);
             s.transcript_display.queue.error = Some("promptQueue.error.message");
             layout::announce_alert(tx, t("promptQueue.error.message"));
         }

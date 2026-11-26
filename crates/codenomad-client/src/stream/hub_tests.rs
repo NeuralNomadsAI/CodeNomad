@@ -1019,7 +1019,7 @@ fn overflow_preserves_pending_session_moved_and_signals_placement_and_close() {
                 conversation: Some(("ws-1".into(), session.into())),
                 closed: Some(state.closed_signal()),
                 placement: state.placement_signal(),
-                inbox_version: Some(state.inbox_version.clone()),
+                inbox: Some(state.inbox.clone()),
             },
         )
     };
@@ -1127,7 +1127,7 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             conversation: None,
             closed: Some(state.closed_signal()),
             placement: None,
-            inbox_version: Some(state.inbox_version.clone()),
+            inbox: Some(state.inbox.clone()),
         },
     );
     let shared = Arc::new(SharedStream {
@@ -1181,7 +1181,7 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             conversation: None,
             closed: Some(state2.closed_signal()),
             placement: None,
-            inbox_version: Some(state2.inbox_version.clone()),
+            inbox: Some(state2.inbox.clone()),
         },
     );
     let (stop_tx2, _stop_rx2) = bounded(1);
@@ -1222,6 +1222,94 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             auth_expired: false
         })
     ));
+}
+
+#[test]
+fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
+    use crate::inbox::FenceState;
+
+    let hub = Arc::new(Hub::default());
+    let (stop_tx, _stop_rx) = bounded(1);
+    let (_done_tx, done_rx) = bounded(1);
+    let (ev_tx, _ev_rx) = bounded(4);
+    let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let wake_count = wakes.clone();
+    let state = State::observing_preferences(
+        ev_tx,
+        Arc::new(move || {
+            wake_count.fetch_add(1, SeqCst);
+        }),
+    );
+    let sub = Subscriber::with_signals(
+        1,
+        None,
+        None,
+        SubscriberSignals {
+            conversation: Some(("ws-1".into(), "ses-1".into())),
+            closed: Some(state.closed_signal()),
+            placement: state.placement_signal(),
+            inbox: Some(state.inbox.clone()),
+        },
+    );
+    let shared = Arc::new(SharedStream {
+        base: "http://127.0.0.1:3/".into(),
+        inner: Mutex::new(StreamInner {
+            phase: Phase::Connecting,
+            subscribers: vec![sub.clone()],
+            replays: HashMap::new(),
+            replays_overflowed: false,
+            chunk_active: false,
+            stop: Some(stop_tx),
+        }),
+        done: done_rx,
+    });
+    assert!(shared.mark_open());
+
+    // Chunk 1: unrelated text frame followed by inbox cancellation in the same HTTP chunk.
+    let fence1 = state.inbox.fence(0, 0);
+    let chunk1 = shared.begin_chunk();
+    shared.broadcast_frame(
+        &hub,
+        "message".into(),
+        r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.text.delta","data":{"sessionID":"ses-1","delta":"hi"}}}"#.into(),
+    );
+    assert_eq!(
+        fence1.check(),
+        FenceState::Deferred,
+        "snapshot must be held while the received chunk is still being parsed"
+    );
+    shared.broadcast_frame(
+        &hub,
+        "message".into(),
+        r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.inbox.cancelled","data":{"sessionID":"ses-1","inboxID":"q1"}}}"#.into(),
+    );
+    assert_eq!(
+        fence1.check(),
+        FenceState::Invalid,
+        "cancellation in second frame of chunk must invalidate the fence immediately"
+    );
+    chunk1.finish();
+    assert_eq!(
+        wakes.load(SeqCst),
+        1,
+        "finishing a chunk with a waiting inbox publication must wake the UI"
+    );
+
+    // Chunk 2: unrelated frame only -> Deferred during chunk, then Valid after chunk finishes.
+    let mark = state.inbox.ingress();
+    state.inbox.advance_applied(mark);
+    let fence2 = state.inbox.fence(mark, 0);
+    let chunk2 = shared.begin_chunk();
+    assert_eq!(fence2.check(), FenceState::Deferred);
+    shared.broadcast_frame(
+        &hub,
+        "message".into(),
+        r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.text.delta","data":{"sessionID":"ses-1","delta":"ok"}}}"#.into(),
+    );
+    assert_eq!(fence2.check(), FenceState::Deferred);
+    chunk2.finish();
+    assert_eq!(wakes.load(SeqCst), 2);
+    assert_eq!(fence2.check(), FenceState::Valid);
 }
 
 #[test]
@@ -1295,7 +1383,7 @@ fn read_shared_delivers_session_moved_before_closed_after_overflow() {
             let mut saw_closed = false;
             while let Ok(item) = inbox.recv().await {
                 match item {
-                    Input::Native(1, _, native) if native["type"] == "session.moved" => {
+                    Input::Native(1, _, _, native) if native["type"] == "session.moved" => {
                         assert!(
                             !saw_closed,
                             "session.moved must arrive before Input::Closed"

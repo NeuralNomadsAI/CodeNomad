@@ -58,6 +58,7 @@ pub(super) struct Reader {
     pub(super) inbox_retries: u8,
     pub(super) inbox_overlap_repairs: u8,
     pub(super) inbox_version: u64,
+    pub(super) inbox_sync_epoch: u64,
     pub(super) inbox_quiet: Instant,
     inbox_flight: Option<(u64, u64, u64, Sender<()>)>,
 }
@@ -100,6 +101,7 @@ impl Reader {
             inbox_retries: 0,
             inbox_overlap_repairs: 0,
             inbox_version: 0,
+            inbox_sync_epoch: 0,
             inbox_quiet: Instant::now(),
             inbox_flight: None,
         }
@@ -135,9 +137,9 @@ impl Reader {
             && wire.upstream.load(SeqCst)
             && !wire.is_stream_closed()
             && !wire.is_placement_changed()
-            && self.inbox_flight.is_none()
-            && (!self.dirty || self.historical || self.parked))
-            .then_some(self.inbox_quiet)
+            && wire.inbox.applied_caught_up()
+            && self.inbox_flight.is_none())
+        .then_some(self.inbox_quiet)
     }
 
     pub(super) fn demand(&mut self, reading: Option<&ReadingLane>) {
@@ -564,7 +566,8 @@ impl Reader {
         }
         let generation = self.generation;
         let seq = self.inbox_version;
-        let wire_inbox = wire.inbox_version.load(SeqCst);
+        let sync_epoch = self.inbox_sync_epoch;
+        let wire_inbox = wire.inbox.ingress();
         let (cancel, cancelled) = crate::bounded(1);
         self.inbox_flight = Some((epoch, generation, seq, cancel));
         let backend = backend.clone();
@@ -616,6 +619,7 @@ impl Reader {
                         epoch,
                         generation,
                         seq,
+                        sync_epoch,
                         wire_inbox,
                         result,
                     })
@@ -634,6 +638,7 @@ impl Reader {
             epoch: read_epoch,
             generation,
             seq,
+            sync_epoch,
             wire_inbox,
             result,
         } = reply;
@@ -652,7 +657,7 @@ impl Reader {
         if !matches!(
             result,
             Err(InboxReadError::AuthenticationExpired | InboxReadError::StreamClosed)
-        ) && wire.inbox_version.load(SeqCst) != wire_inbox
+        ) && !wire.inbox.is_admissible(wire_inbox)
         {
             self.inbox_dirty = self.active_reader;
             self.inbox_quiet = Instant::now() + Duration::from_millis(100);
@@ -684,10 +689,7 @@ impl Reader {
                 if !self.inbox_published || self.inbox != items {
                     let previous = std::mem::replace(&mut self.inbox, items);
                     self.inbox_published = true;
-                    let fence = crate::inbox::InboxFence::from_revision(
-                        wire.inbox_version.clone(),
-                        wire_inbox,
-                    );
+                    let fence = wire.inbox.fence(wire_inbox, sync_epoch);
                     if !reader_event(
                         reading,
                         self.generation,
@@ -703,7 +705,7 @@ impl Reader {
                     {
                         return Ok(Turn::Stop);
                     }
-                    if wire.inbox_version.load(SeqCst) != wire_inbox {
+                    if !wire.inbox.is_admissible(wire_inbox) {
                         self.inbox = previous;
                         self.inbox_published = false;
                         self.inbox_dirty = self.active_reader;
@@ -719,10 +721,7 @@ impl Reader {
                 if !self.inbox_published || !self.inbox.is_empty() {
                     let previous = std::mem::take(&mut self.inbox);
                     self.inbox_published = true;
-                    let fence = crate::inbox::InboxFence::from_revision(
-                        wire.inbox_version.clone(),
-                        wire_inbox,
-                    );
+                    let fence = wire.inbox.fence(wire_inbox, sync_epoch);
                     if !reader_event(
                         reading,
                         self.generation,
@@ -738,7 +737,7 @@ impl Reader {
                     {
                         return Ok(Turn::Stop);
                     }
-                    if wire.inbox_version.load(SeqCst) != wire_inbox {
+                    if !wire.inbox.is_admissible(wire_inbox) {
                         self.inbox = previous;
                         self.inbox_supported = true;
                         self.inbox_published = false;
@@ -830,6 +829,7 @@ pub(super) struct InboxReply {
     pub(super) epoch: u64,
     pub(super) generation: u64,
     pub(super) seq: u64,
+    pub(super) sync_epoch: u64,
     pub(super) wire_inbox: u64,
     pub(super) result: Result<Option<Vec<crate::inbox::QueuedPrompt>>, InboxReadError>,
 }
@@ -1080,10 +1080,7 @@ mod diagnostic_tests {
             backend::Backend, bounded, inbox::QueuedPrompt, prompt::Delivery, stream,
             transport::Event,
         };
-        use std::{
-            sync::{Arc, atomic::Ordering::SeqCst},
-            time::Duration,
-        };
+        use std::{sync::Arc, time::Duration};
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1119,9 +1116,9 @@ mod diagnostic_tests {
                 editable: true,
             };
 
-            // 1. Reader seq still matches, but SSE ingress already bumped wire.inbox_version -> rejected.
-            let captured = wire.inbox_version.load(SeqCst);
-            wire.inbox_version.fetch_add(1, SeqCst);
+            // 1. Reader seq still matches, but SSE ingress already bumped wire.inbox -> rejected.
+            let captured = wire.inbox.ingress();
+            let mark1 = wire.inbox.record_ingress();
             let _ = reader
                 .finish_inbox_read(
                     &lane,
@@ -1130,6 +1127,7 @@ mod diagnostic_tests {
                         epoch: 1,
                         generation: reader.generation,
                         seq: reader.inbox_version,
+                        sync_epoch: 0,
                         wire_inbox: captured,
                         result: Ok(Some(vec![stale_item.clone()])),
                     },
@@ -1139,15 +1137,37 @@ mod diagnostic_tests {
             assert!(reader_rx.is_empty());
             assert!(reader.inbox_dirty && !reader.inbox_published);
 
-            // 2. Reader channel is full while finish_inbox_read awaits send; SSE bumps wire.inbox_version
+            // 1b. Capturing an unapplied ingress watermark must also be rejected before recovery catches up.
+            let _ = reader
+                .finish_inbox_read(
+                    &lane,
+                    1,
+                    InboxReply {
+                        epoch: 1,
+                        generation: reader.generation,
+                        seq: reader.inbox_version,
+                        sync_epoch: 0,
+                        wire_inbox: mark1,
+                        result: Ok(Some(vec![stale_item.clone()])),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(
+                reader_rx.is_empty(),
+                "snapshot must not be admitted while applied watermark lags ingress"
+            );
+            wire.inbox.advance_applied(mark1);
+
+            // 2. Reader channel is full while finish_inbox_read awaits send; SSE bumps wire.inbox
             // before the slot drains -> emitted Event::Inbox carries an invalidated fence and reader reschedules.
             reader_tx.send((0, 0, Event::Done)).await.unwrap();
-            let captured2 = wire.inbox_version.load(SeqCst);
+            let captured2 = wire.inbox.ingress();
             let wire_for_bump = wire.clone();
             let rx_for_drain = reader_rx.clone();
             let unblocker = tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(20)).await;
-                wire_for_bump.inbox_version.fetch_add(1, SeqCst);
+                wire_for_bump.inbox.record_ingress();
                 let first = rx_for_drain.recv().await.unwrap();
                 assert!(matches!(first.2, Event::Done));
                 rx_for_drain.recv().await.unwrap()
@@ -1160,6 +1180,7 @@ mod diagnostic_tests {
                         epoch: 1,
                         generation: reader.generation,
                         seq: reader.inbox_version,
+                        sync_epoch: 0,
                         wire_inbox: captured2,
                         result: Ok(Some(vec![stale_item])),
                     },
@@ -1206,13 +1227,14 @@ mod diagnostic_tests {
             let (rx_tx, rx) = bounded(32);
             let (inbox_tx, inbox_rx) = bounded(4);
             for i in 0..16u64 {
-                rx_tx.send(Input::Hint(1, i + 1)).await.unwrap();
+                rx_tx.send(Input::Hint(1, i + 1, 0)).await.unwrap();
             }
             inbox_tx
                 .send(InboxReply {
                     epoch: 1,
                     generation: 0,
                     seq: 0,
+                    sync_epoch: 0,
                     wire_inbox: 0,
                     result: Ok(Some(Vec::new())),
                 })
@@ -1241,16 +1263,23 @@ mod diagnostic_tests {
     }
 
     #[test]
-    fn parked_dirty_history_reader_still_allows_inbox_deadline() {
+    fn dirty_history_and_applied_watermark_control_inbox_deadline() {
         let mut reader = super::Reader::new();
         reader.active_reader = true;
         reader.historical = false;
         reader.dirty = true;
-        reader.parked = true;
+        reader.parked = false;
         reader.inbox_dirty = true;
         let wire = crate::stream::State::default();
         wire.upstream
             .store(true, std::sync::atomic::Ordering::SeqCst);
+        // Dirty unparked history must NOT block independent inbox scheduling.
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_some(),
+            "dirty unparked history must not stall inbox refresh"
+        );
+        // Parked dirty history also allows inbox refresh.
+        reader.parked = true;
         assert!(
             reader.next_sync_at(true, &wire, None).is_none(),
             "parked history reader must not schedule history sync"
@@ -1258,6 +1287,17 @@ mod diagnostic_tests {
         assert!(
             reader.inbox_deadline(true, &wire, None).is_some(),
             "parked dirty history reader must still allow scheduled inbox refresh"
+        );
+        // Unapplied inbox ingress blocks starting a new GET until recovery drains the watermark.
+        let mark = wire.inbox.record_ingress();
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_none(),
+            "inbox_deadline must wait while applied watermark lags ingress"
+        );
+        wire.inbox.advance_applied(mark);
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_some(),
+            "inbox_deadline must resume once applied watermark catches up"
         );
     }
 }
