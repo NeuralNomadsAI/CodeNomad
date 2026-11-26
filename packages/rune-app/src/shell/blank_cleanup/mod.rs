@@ -46,7 +46,7 @@ enum StepOutcome {
 struct InFlight {
     session_id: String,
     aborted: bool,
-    _cancel: Sender<()>,
+    cancel: Option<Sender<()>>,
     rx: Receiver<StepOutcome>,
 }
 
@@ -96,13 +96,13 @@ pub(crate) fn abort_for_session(s: &mut State, session_id: &str) {
     if let Some(active) = sweep.in_flight.as_mut()
         && active.session_id == session_id
     {
+        // Drop `cancel` to abort any in-flight HTTP request and atomically close `rx`
+        // before checking emptiness so no producer can race a 401 in after the check.
+        active.cancel = None;
+        active.rx.close();
+        active.aborted = true;
         if active.rx.is_empty() {
-            // Dropping `InFlight` closes `_cancel`, aborting the in-flight HTTP future immediately.
             sweep.in_flight = None;
-        } else {
-            // A completed outcome is already queued (for example a 401): keep it for `poll`
-            // while marking this target aborted so a completed preflight never triggers POST.
-            active.aborted = true;
         }
         (s.wake)();
     }
@@ -365,7 +365,7 @@ fn spawn_verify(s: &State, backend: Backend, project: Project, session_id: Strin
     InFlight {
         session_id,
         aborted: false,
-        _cancel: cancel,
+        cancel: Some(cancel),
         rx,
     }
 }
@@ -393,7 +393,7 @@ fn spawn_delete(s: &State, backend: Backend, project: Project, session_id: Strin
     InFlight {
         session_id,
         aborted: false,
-        _cancel: cancel,
+        cancel: Some(cancel),
         rx,
     }
 }
@@ -459,24 +459,43 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if !sweep_current(s, &sweep) {
         return true;
     }
-    let Some(active) = sweep.in_flight.take() else {
+    let Some(mut active) = sweep.in_flight.take() else {
         s.blank_cleanup.sweep = Some(sweep);
         return advance(s, tx);
     };
-    match active.rx.try_recv() {
+    let outcome = match active.rx.try_recv() {
+        Ok(outcome) => outcome,
         Err(TryRecvError::Empty) => {
             // Abort the in-flight HTTP future immediately if local activity/drafts appear.
+            // Close `rx` atomically before draining once more so a concurrent 401 cannot be lost.
             if workspace::session_cleanup_protected(s, &sweep.project.id, &active.session_id) {
-                drop(active);
+                active.cancel = None;
+                active.rx.close();
+                active.aborted = true;
+                match active.rx.try_recv() {
+                    Ok(outcome) => outcome,
+                    Err(_) => {
+                        drop(active);
+                        s.blank_cleanup.sweep = Some(sweep);
+                        return advance(s, tx);
+                    }
+                }
+            } else {
+                sweep.in_flight = Some(active);
+                s.blank_cleanup.sweep = Some(sweep);
+                return false;
+            }
+        }
+        Err(TryRecvError::Closed) => {
+            if active.aborted {
                 s.blank_cleanup.sweep = Some(sweep);
                 return advance(s, tx);
             }
-            sweep.in_flight = Some(active);
-            s.blank_cleanup.sweep = Some(sweep);
-            false
+            return true;
         }
-        Err(TryRecvError::Closed) => true,
-        Ok(StepOutcome::Verified { session_id, result }) => match result {
+    };
+    match outcome {
+        StepOutcome::Verified { session_id, result } => match result {
             Err(BlankCleanupError::Unauthorized) => {
                 let backend = sweep.backend.clone();
                 handle_unauthorized(s, &backend);
@@ -505,7 +524,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 advance(s, tx)
             }
         },
-        Ok(StepOutcome::Deleted { session_id, result }) => match result {
+        StepOutcome::Deleted { session_id, result } => match result {
             Err(BlankCleanupError::Unauthorized) => {
                 let backend = sweep.backend.clone();
                 handle_unauthorized(s, &backend);

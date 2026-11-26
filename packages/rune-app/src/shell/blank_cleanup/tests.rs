@@ -701,9 +701,20 @@ fn activating_session_during_inflight_delete_aborts_http_request() {
                                 err.kind(),
                                 std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                             ) => {}
-                        Err(_) => {
+                        Err(err)
+                            if matches!(
+                                err.kind(),
+                                std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::ConnectionAborted
+                                    | std::io::ErrorKind::BrokenPipe
+                                    | std::io::ErrorKind::UnexpectedEof
+                            ) =>
+                        {
                             closed = true;
                             break;
+                        }
+                        Err(err) => {
+                            panic!("unexpected socket read error while awaiting abort: {err}");
                         }
                     }
                 }

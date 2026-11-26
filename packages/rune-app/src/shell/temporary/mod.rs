@@ -514,6 +514,7 @@ fn start_discard(
     let Some(stashed) = workspace::stash_for_discard(s, tab_key, return_focus, tx) else {
         return;
     };
+    crate::shell::blank_cleanup::abort_for_project(s, &stashed.project.id);
     s.temporary.generation = s.temporary.generation.wrapping_add(1);
     let generation = s.temporary.generation;
     let (out, rx) = bounded(1);

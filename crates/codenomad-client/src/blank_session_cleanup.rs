@@ -635,8 +635,15 @@ mod tests {
                 let project = project.clone();
                 async move { backend.verify_blank_session(&project, "ses_old").await }
             });
+            let mut saw_active_503 = false;
             for _ in 0..5 {
-                let (mut socket, _) = listener.accept().await.unwrap();
+                let (mut socket, _) = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    listener.accept(),
+                )
+                .await
+                .expect("timed out waiting for preflight request")
+                .unwrap();
                 let mut buf = vec![0u8; 4096];
                 let n = socket.read(&mut buf).await.unwrap();
                 let req = String::from_utf8_lossy(&buf[..n]);
@@ -654,8 +661,11 @@ mod tests {
                     (200, json!({"data": [{"id": "queued-1"}]}))
                 } else if first.contains("parentID=") {
                     (200, json!({"data": [], "cursor": {}}))
-                } else {
+                } else if first.contains("/api/session/active") {
+                    saw_active_503 = true;
                     (503, json!({"error": "Unavailable"}))
+                } else {
+                    panic!("unexpected preflight request: {first}");
                 };
                 let payload = body.to_string();
                 let resp = format!(
@@ -664,6 +674,7 @@ mod tests {
                 );
                 socket.write_all(resp.as_bytes()).await.unwrap();
             }
+            assert!(saw_active_503, "expected /api/session/active to receive 503");
             let err = client.await.unwrap().unwrap_err();
             assert!(!err.is_unauthorized() && err.is_unavailable());
         });

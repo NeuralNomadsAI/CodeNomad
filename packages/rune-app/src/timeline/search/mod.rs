@@ -553,6 +553,7 @@ fn open_result(s: &mut State, _: &mut Tx) {
     let Some(project) = s.screen.launcher().and_then(|l| l.project.clone()) else {
         return;
     };
+    crate::shell::blank_cleanup::abort_for_session(s, &hit.session);
     let reads = s.reads.clone();
     let wake = s.wake.clone();
     let (signal, cancelled) = bounded(1);
