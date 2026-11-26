@@ -255,10 +255,18 @@ impl Editor {
                 if !still_ok() {
                     return Read::Unverified;
                 }
+                let failed = |content: Option<(usize, String)>| match content {
+                    Some((index, _)) => Read::Content(index, None),
+                    None => Read::List(None),
+                };
                 if backend.client.tracks_server_attestation()
                     && backend.attest_server().await.is_err()
                 {
-                    return Read::Unverified;
+                    return if still_ok() {
+                        failed(content)
+                    } else {
+                        Read::Unverified
+                    };
                 }
                 if !still_ok() {
                     return Read::Unverified;
@@ -267,6 +275,21 @@ impl Editor {
                     Some((index, id)) => Read::Content(index, api::read(&backend, &id).await.ok()),
                     None => Read::List(api::list(&backend).await.ok()),
                 };
+                if !still_ok() {
+                    return Read::Unverified;
+                }
+                if backend.client.tracks_server_attestation()
+                    && backend.attest_server().await.is_err()
+                {
+                    return if still_ok() {
+                        match result {
+                            Read::Content(index, _) => Read::Content(index, None),
+                            Read::List(_) | Read::Unverified => Read::List(None),
+                        }
+                    } else {
+                        Read::Unverified
+                    };
+                }
                 if !still_ok() {
                     Read::Unverified
                 } else {
@@ -554,6 +577,8 @@ mod tests {
             let saved_srv = saved_payload.clone();
             let server_id = Arc::new(Mutex::new("server-profile-a".to_owned()));
             let server_id_srv = server_id.clone();
+            let swap_after_read_meta = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let swap_after_read_meta_srv = swap_after_read_meta.clone();
             let hold_put = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let hold_put_srv = hold_put.clone();
             let put_arrived = Arc::new(tokio::sync::Notify::new());
@@ -566,6 +591,7 @@ mod tests {
                 while let Ok((mut stream, _)) = listener.accept().await {
                     let saved_srv = saved_srv.clone();
                     let server_id_srv = server_id_srv.clone();
+                    let swap_after_read_meta_srv = swap_after_read_meta_srv.clone();
                     let hold_put_srv = hold_put_srv.clone();
                     let put_arrived_srv = put_arrived_srv.clone();
                     let put_release_srv = put_release_srv.clone();
@@ -638,6 +664,9 @@ mod tests {
                                 .to_string(),
                             ),
                             ("GET", "/api/config-files/codenomad/content") => {
+                                if swap_after_read_meta_srv.swap(false, Ordering::SeqCst) {
+                                    *server_id_srv.lock().unwrap() = "server-profile-b".to_owned();
+                                }
                                 let contents =
                                     if *server_id_srv.lock().unwrap() == "server-profile-a" {
                                         "locale: en\n"
@@ -809,6 +838,38 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             assert!(backend_read_swap.client.attestation_revoked());
+            assert!(!editor.can_write(&prefs));
+            assert_ne!(editor.draft.text, "locale: foreign-b\n");
+            assert_eq!(editor.draft.text, "locale: es\n");
+
+            // Also test switching HTTP routing AFTER the pre-read /api/meta returns profile A
+            // and before content is served: post-read re-attestation must reject profile B's
+            // content before publication.
+            *server_id.lock().unwrap() = "server-profile-a".to_owned();
+            let backend_post_swap = Backend::connect(&base, "").await.unwrap();
+            backend_post_swap.attest_server().await.unwrap();
+            prefs.bind(Some(backend_post_swap.clone()));
+            for _ in 0..100 {
+                prefs.poll();
+                editor.poll(&prefs, &wake, true);
+                if !prefs.transport_lost() && editor.can_write(&prefs) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!prefs.transport_lost());
+            assert!(editor.can_write(&prefs));
+            swap_after_read_meta.store(true, Ordering::SeqCst);
+            editor.reload(0);
+            editor.poll(&prefs, &wake, true);
+            for _ in 0..100 {
+                editor.poll(&prefs, &wake, true);
+                if editor.read.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(backend_post_swap.client.attestation_revoked());
             assert!(!editor.can_write(&prefs));
             assert_ne!(editor.draft.text, "locale: foreign-b\n");
             assert_eq!(editor.draft.text, "locale: es\n");

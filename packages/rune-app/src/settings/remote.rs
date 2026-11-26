@@ -129,7 +129,7 @@ impl Mutation {
 
 enum Reply {
     Snapshot(Result<SnapshotRead, remote::Error>, Option<remote::Error>),
-    Started(Result<(Status, Pairing, Option<Vec<Device>>), remote::Error>),
+    Started(Result<(Status, Pairing, Option<Vec<Device>>, Option<remote::Error>), remote::Error>),
     Status(Result<Status, remote::Error>),
     Pairing(Result<(Pairing, bool), remote::Error>),
 }
@@ -312,11 +312,12 @@ impl Remote {
                     .filter(|err| matches!(err, ErrorText::Raw(_)))
                     .or_else(|| Some(ErrorText::from_remote(err, "remoteControl.state.error")));
             }
-            Reply::Started(Ok((status, pairing, devices))) => {
+            Reply::Started(Ok((status, pairing, devices, devices_error))) => {
                 self.unconfirmed = None;
                 self.mutation_error = None;
                 self.needs_read = false;
-                self.error = None;
+                self.error = devices_error
+                    .map(|err| ErrorText::from_remote(err, "remoteControl.state.error"));
                 let existing_devices = self.snapshot.as_ref().and_then(|(_, d)| d.clone());
                 self.snapshot = Some((status, devices.or(existing_devices)));
                 self.set_pairing(pairing, false);
@@ -505,8 +506,16 @@ impl Remote {
                 }
                 Action::Start => match remote::start(&backend).await {
                     Ok(started) => {
-                        let devices = remote::devices(&backend).await.ok().flatten();
-                        Reply::Started(Ok((started.status, started.pairing, devices)))
+                        let (devices, devices_error) = match remote::devices(&backend).await {
+                            Ok(devices) => (devices, None),
+                            Err(err) => (None, Some(err)),
+                        };
+                        Reply::Started(Ok((
+                            started.status,
+                            started.pairing,
+                            devices,
+                            devices_error,
+                        )))
                     }
                     Err(err) => Reply::Started(Err(err)),
                 },
@@ -533,7 +542,7 @@ impl Remote {
                 }
             };
             let expiry = match &result {
-                Reply::Pairing(Ok((value, _))) | Reply::Started(Ok((_, value, _))) => {
+                Reply::Pairing(Ok((value, _))) | Reply::Started(Ok((_, value, _, _))) => {
                     Some(value.remaining())
                 }
                 _ => None,

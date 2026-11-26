@@ -116,6 +116,18 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         let settings_req = request(&listener).await;
         assert_eq!(settings_req.first, "GET /api/memory/settings HTTP/1.1");
         settings_req.reply(200, json!({"enabled": true})).await;
+        let post_settings_meta = request(&listener).await;
+        assert_eq!(post_settings_meta.first, "GET /api/meta HTTP/1.1");
+        post_settings_meta
+            .reply(
+                200,
+                json!({
+                    "apiContract": 1,
+                    "serverId": "profile-a",
+                    "capabilities": ["settings-atomic-patches"]
+                }),
+            )
+            .await;
         wait_until(|| prefs.poll()).await;
 
         let pre_list_meta = request(&listener).await;
@@ -149,6 +161,18 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
             }]
         });
         list_req.reply(200, list_body.clone()).await;
+        let post_list_meta = request(&listener).await;
+        assert_eq!(post_list_meta.first, "GET /api/meta HTTP/1.1");
+        post_list_meta
+            .reply(
+                200,
+                json!({
+                    "apiContract": 1,
+                    "serverId": "profile-a",
+                    "capabilities": ["settings-atomic-patches"]
+                }),
+            )
+            .await;
         wait_until(|| prefs.poll()).await;
 
         let edit = prefs
@@ -189,40 +213,57 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         let mut saw_settings = false;
         let mut saw_config = false;
         let mut saw_state = false;
-        while !saw_list || !saw_settings || !saw_config || !saw_state {
-            let req = poll_next_request(&mut prefs, &listener).await;
-            match req.first.as_str() {
-                "GET /api/meta HTTP/1.1" => {
-                    req.reply(
-                        200,
-                        json!({
-                            "apiContract": 1,
-                            "serverId": "profile-a",
-                            "capabilities": ["settings-atomic-patches"]
-                        }),
-                    )
-                    .await;
+        while !saw_list
+            || !saw_settings
+            || !saw_config
+            || !saw_state
+            || !prefs.memory.review_writable(&edit)
+        {
+            prefs.poll();
+            if saw_list
+                && saw_settings
+                && saw_config
+                && saw_state
+                && prefs.memory.review_writable(&edit)
+            {
+                break;
+            }
+            if let Ok(Ok((stream, _))) = timeout(Duration::from_millis(20), listener.accept()).await
+            {
+                let req = read_request(stream, Duration::from_secs(2)).await;
+                match req.first.as_str() {
+                    "GET /api/meta HTTP/1.1" => {
+                        req.reply(
+                            200,
+                            json!({
+                                "apiContract": 1,
+                                "serverId": "profile-a",
+                                "capabilities": ["settings-atomic-patches"]
+                            }),
+                        )
+                        .await;
+                    }
+                    "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
+                        saw_config = true;
+                        req.reply(200, json!({"settings":{"locale":"en"}})).await;
+                    }
+                    "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" => {
+                        saw_state = true;
+                        req.reply(200, json!({})).await;
+                    }
+                    "GET /api/memory/settings HTTP/1.1" => {
+                        saw_settings = true;
+                        req.reply(200, json!({"enabled": true})).await;
+                    }
+                    "POST /api/memory HTTP/1.1" if req.body["operation"]["action"] == "list" => {
+                        saw_list = true;
+                        req.reply(200, list_body.clone()).await;
+                    }
+                    other => panic!("unexpected request after re-auth: {other}"),
                 }
-                "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
-                    saw_config = true;
-                    req.reply(200, json!({"settings":{"locale":"en"}})).await;
-                }
-                "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" => {
-                    saw_state = true;
-                    req.reply(200, json!({})).await;
-                }
-                "GET /api/memory/settings HTTP/1.1" => {
-                    saw_settings = true;
-                    req.reply(200, json!({"enabled": true})).await;
-                }
-                "POST /api/memory HTTP/1.1" if req.body["operation"]["action"] == "list" => {
-                    saw_list = true;
-                    req.reply(200, list_body.clone()).await;
-                }
-                other => panic!("unexpected request after re-auth: {other}"),
             }
         }
-        wait_until(|| prefs.poll() && prefs.memory.review_writable(&edit)).await;
+        assert!(prefs.memory.review_writable(&edit));
 
         let admitted = review_action(
             &mut prefs,
@@ -300,6 +341,18 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
             }]
         });
         post_save_list.reply(200, updated_list).await;
+        let post_save_list_meta = poll_next_request(&mut prefs, &listener).await;
+        assert_eq!(post_save_list_meta.first, "GET /api/meta HTTP/1.1");
+        post_save_list_meta
+            .reply(
+                200,
+                json!({
+                    "apiContract": 1,
+                    "serverId": "profile-a",
+                    "capabilities": ["settings-atomic-patches"]
+                }),
+            )
+            .await;
         wait_until(|| prefs.poll()).await;
         let updated_edit = prefs
             .memory

@@ -162,6 +162,7 @@ impl Setting {
     pub fn cleanup_current(&self, intent: &cleanup::Intent) -> bool {
         self.visible
             && self.current == Some(true)
+            && !self.busy()
             && !self.failed
             && self.review.cleanup_current(intent)
     }
@@ -172,6 +173,10 @@ impl Setting {
     }
 
     pub fn take_cleanup(&mut self) -> Option<cleanup::Intent> {
+        if self.busy() {
+            let _ = self.review.take_cleanup();
+            return None;
+        }
         self.review.take_cleanup()
     }
 
@@ -286,10 +291,12 @@ impl Setting {
             {
                 (None, true)
             } else {
-                let actual = memory::enabled(&backend)
-                    .await
-                    .ok()
-                    .filter(|_| still_ok(current_auth));
+                let actual = memory::enabled(&backend).await.ok();
+                let post_ok = still_ok(current_auth)
+                    && (!backend.client.tracks_server_attestation()
+                        || backend.attest_server().await.is_ok())
+                    && still_ok(current_auth);
+                let actual = actual.filter(|_| post_ok);
                 (actual, actual.is_none())
             };
             let _ = out.send(result).await;
@@ -357,9 +364,12 @@ pub(super) fn view<S: 'static>(
             )
             .children(
                 (setting.current == Some(true) && prefs.can_retry()).then(|| {
-                    setting
-                        .review
-                        .view(prefs.provider_target.as_ref(), open, review_action)
+                    setting.review.view(
+                        prefs.provider_target.as_ref(),
+                        setting.busy(),
+                        open,
+                        review_action,
+                    )
                 }),
             ),
     )
@@ -367,6 +377,13 @@ pub(super) fn view<S: 'static>(
 
 pub(super) fn review_action(prefs: &mut Preferences, action: review::Action) -> bool {
     if prefs.can_retry() && prefs.memory.visible && prefs.memory.current == Some(true) {
+        if matches!(
+            action,
+            review::Action::Tidy | review::Action::ConfirmTidy(..)
+        ) && prefs.memory.busy()
+        {
+            return false;
+        }
         let write = matches!(action, review::Action::Write(..));
         let was_writing = prefs.memory.review.writing();
         let authority = prefs.authority_handle();

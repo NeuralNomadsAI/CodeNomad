@@ -156,6 +156,7 @@ impl Review {
     }
 
     pub fn on_authentication_required(&mut self) {
+        self.unverified = true;
         self.epoch = self.epoch.wrapping_add(1);
         self.cleanup_token.fetch_add(1, Ordering::SeqCst);
         self.flight = None;
@@ -294,6 +295,7 @@ impl Review {
     }
     pub fn cleanup_current(&self, intent: &cleanup::Intent) -> bool {
         !self.unverified
+            && Arc::ptr_eq(&self.cleanup_token, &intent.cleanup_token)
             && self.tidy_state[scope_slot(intent.scope)]
                 == TidyState::Active(intent.cleanup_token_gen)
             && self.epoch == intent.epoch
@@ -308,23 +310,29 @@ impl Review {
     }
     pub fn cleanup_prompting(&mut self, intent: &cleanup::Intent) {
         let slot = scope_slot(intent.scope);
-        if self.tidy_state[slot] == TidyState::Active(intent.cleanup_token_gen) {
+        if Arc::ptr_eq(&self.cleanup_token, &intent.cleanup_token)
+            && self.tidy_state[slot] == TidyState::Active(intent.cleanup_token_gen)
+        {
             self.tidy_state[slot] = TidyState::Prompting(intent.cleanup_token_gen);
         }
     }
     pub fn cleanup_failed(&mut self, intent: &cleanup::Intent) {
         let slot = scope_slot(intent.scope);
-        if matches!(
-            self.tidy_state[slot],
-            TidyState::Active(token) | TidyState::Prompting(token)
-                if token == intent.cleanup_token_gen
-        ) {
+        if Arc::ptr_eq(&self.cleanup_token, &intent.cleanup_token)
+            && matches!(
+                self.tidy_state[slot],
+                TidyState::Active(token) | TidyState::Prompting(token)
+                    if token == intent.cleanup_token_gen
+            )
+        {
             self.tidy_state[slot] = TidyState::Failed;
         }
     }
     pub fn cleanup_succeeded(&mut self, intent: &cleanup::Intent) {
         let slot = scope_slot(intent.scope);
-        if self.tidy_state[slot] == TidyState::Prompting(intent.cleanup_token_gen) {
+        if Arc::ptr_eq(&self.cleanup_token, &intent.cleanup_token)
+            && self.tidy_state[slot] == TidyState::Prompting(intent.cleanup_token_gen)
+        {
             self.tidy_state[slot] = TidyState::Succeeded;
         }
     }
@@ -632,6 +640,14 @@ impl Review {
                 if !still_ok() {
                     return Err(UNAVAILABLE);
                 }
+                if backend.client.tracks_server_attestation()
+                    && backend.attest_server().await.is_err()
+                {
+                    return Err(UNAVAILABLE);
+                }
+                if !still_ok() {
+                    return Err(UNAVAILABLE);
+                }
                 result
             };
             let result = platform::reads::cancellable(&cancel, read).await;
@@ -739,6 +755,7 @@ impl Review {
     pub fn view<S: 'static>(
         &self,
         project: Option<&Target>,
+        setting_busy: bool,
         open: impl Fn(&mut S, Edit) + Clone + 'static,
         act: impl Fn(&mut S, Action) + Clone + 'static,
     ) -> El {
@@ -774,7 +791,7 @@ impl Review {
                     .children(project.map(|_| {
                         layout::button(
                             t("settings.memory.tidy"),
-                            !self.can_tidy(project),
+                            setting_busy || !self.can_tidy(project),
                             move |s| tidy(s, Action::Tidy),
                         )
                         .help(t("settings.memory.tidyInfo"))
