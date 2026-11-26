@@ -140,6 +140,7 @@ pub fn contract() {
             | Event::AnchorFailed(_)
             | Event::Reconnecting
             | Event::HistoryInvalidated
+            | Event::SessionDeleted
             | Event::RevertChanged
             | Event::ConnectionLost
             | Event::WorkspaceMissing

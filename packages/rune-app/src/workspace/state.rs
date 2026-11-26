@@ -11,7 +11,7 @@ mod strip;
 
 pub use drafts::{
     adopt_recovered_draft, attachment_draft_admissible, bound, capture, draft_changed,
-    recover_missing_session_draft, unconfirmed_drafts_full,
+    note_session_deleted, recover_missing_session_draft, unconfirmed_drafts_full,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
@@ -70,6 +70,7 @@ pub(super) struct Entry {
     missions: Option<crate::missions::Panel>,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
+    pending_deleted: std::collections::BTreeSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
 }
 pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
@@ -316,6 +317,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         missions: None,
         cleared,
         pending_drafts: HashSet::new(),
+        pending_deleted: std::collections::BTreeSet::new(),
         live_drafts: Default::default(),
     }
 }
@@ -345,20 +347,42 @@ pub fn unselect_session(s: &mut State, id: &str) -> bool {
         return false;
     }
     capture(s);
-    let Some(ui) = &mut s.workspace else {
-        return false;
-    };
-    if let Tab::Workspace(saved) = &mut ui.entries[ui.active].saved {
+    let was_pending_deleted = {
+        let Some(ui) = &mut s.workspace else {
+            return false;
+        };
+        let entry = &mut ui.entries[ui.active];
+        let Tab::Workspace(saved) = &mut entry.saved else {
+            return false;
+        };
         saved.active_session_id = None;
+        let pending = entry.pending_deleted.remove(id);
         ui.changed();
         ui.stage();
-        return true;
+        pending
+    };
+    if was_pending_deleted {
+        recover_missing_session_draft(s, id);
     }
-    false
+    true
 }
 pub fn unselect_missing(s: &mut State, id: &str) -> bool {
-    if !unselect_session(s, id) {
+    if active_session(s) != Some(id) {
         return false;
+    }
+    capture(s);
+    {
+        let Some(ui) = &mut s.workspace else {
+            return false;
+        };
+        let entry = &mut ui.entries[ui.active];
+        let Tab::Workspace(saved) = &mut entry.saved else {
+            return false;
+        };
+        saved.active_session_id = None;
+        entry.pending_deleted.remove(id);
+        ui.changed();
+        ui.stage();
     }
     recover_missing_session_draft(s, id);
     true

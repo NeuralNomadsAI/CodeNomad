@@ -39,6 +39,7 @@ fn stash(s: &mut State) {
             entry.creation_uncertain = l.creation_uncertain;
             entry.creation_uncertain_linked = l.creation_uncertain_linked.take();
             entry.rebind_after_send = l.rebind_after_send.take();
+            l.adopt_recovered_for = None;
             entry.next = l.next.take();
             entry.linked = std::mem::take(&mut l.linked);
             entry.consumed_cursors = std::mem::take(&mut l.consumed_cursors);
@@ -256,6 +257,25 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         stash(s);
     } else {
         capture(s);
+    }
+    let pending_deleted: Vec<String> = s
+        .workspace
+        .as_mut()
+        .and_then(|ui| ui.entries.get_mut(index))
+        .map(|entry| {
+            let mut ids = entry.visits.poll_checks().deleted;
+            ids.extend(std::mem::take(&mut entry.pending_deleted));
+            if let Tab::Workspace(saved) = &mut entry.saved
+                && let Some(active_id) = saved.active_session_id.as_deref()
+                && ids.iter().any(|id| id == active_id)
+            {
+                saved.active_session_id = None;
+            }
+            ids
+        })
+        .unwrap_or_default();
+    for deleted_id in pending_deleted {
+        super::drafts::recover_missing_session_draft_in(s, Some(index), &deleted_id);
     }
     let Some(ui) = &mut s.workspace else {
         return;

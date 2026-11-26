@@ -470,3 +470,167 @@ fn per_tab_draft_cap_preserves_long_active_and_priority_drafts_beyond_24() {
         Some(&no_session_text)
     );
 }
+
+#[test]
+fn draft_cap_sheds_mixed_bundles_atomically_without_stripping_attachment_markers() {
+    use crate::composer::draft_storage::SavedParts;
+
+    let parts = |label: &str| {
+        SavedParts::decode(&json!({
+            "complete": true,
+            "parts": [{"type":"agent","name":label}]
+        }))
+        .unwrap()
+    };
+
+    // 24 priority attachment-only drafts + 1 ordinary mixed draft: the ordinary bundle is shed
+    // completely (both text and attachments) so no text ever reopens without its attachment marker.
+    let mut mixed = workspace();
+    mixed.active_session_id = Some("ses_active_att".into());
+    mixed.attachment_drafts.insert("ses_active_att".into());
+    mixed
+        .attachment_parts
+        .insert("ses_active_att".into(), parts("active-agent"));
+    mixed.attachment_drafts.insert(NO_SESSION_DRAFT_ID.into());
+    mixed
+        .attachment_parts
+        .insert(NO_SESSION_DRAFT_ID.into(), parts("no-session-agent"));
+    for index in 0..(MAX_DRAFTS - 2) {
+        let id = format!("{RECOVERED_DRAFT_PREFIX}00000000-0000-4000-8000-{index:012x}");
+        mixed.attachment_drafts.insert(id.clone());
+        mixed
+            .attachment_parts
+            .insert(id, parts(&format!("rec-{index}")));
+    }
+    mixed
+        .drafts
+        .insert("ses_ordinary_mixed".into(), "has attachment".into());
+    mixed.attachment_drafts.insert("ses_ordinary_mixed".into());
+    mixed
+        .attachment_parts
+        .insert("ses_ordinary_mixed".into(), parts("ordinary-agent"));
+
+    let (bytes, partial) = encode_for_save(&snapshot(mixed)).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let [Tab::Workspace(saved)] = decoded.tabs.as_slice() else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(saved.attachment_drafts.len(), MAX_DRAFTS);
+    assert!(!saved.drafts.contains_key("ses_ordinary_mixed"));
+    assert!(!saved.attachment_drafts.contains("ses_ordinary_mixed"));
+    assert!(!saved.attachment_parts.contains_key("ses_ordinary_mixed"));
+    assert_eq!(
+        saved.attachment_parts.get("ses_active_att"),
+        Some(&parts("active-agent"))
+    );
+    assert_eq!(
+        saved.attachment_parts.get(NO_SESSION_DRAFT_ID),
+        Some(&parts("no-session-agent"))
+    );
+}
+
+#[test]
+fn global_text_and_byte_budgets_preserve_distinct_priority_ranks_in_active_tab() {
+    use crate::composer::draft_storage::SavedParts;
+
+    // Under global UTF-16 pressure (MAX_STRINGS), active_session_id and __no_session_draft__
+    // survive ahead of a larger __recovered_draft__ in the same active tab.
+    let mut text_tab = workspace();
+    let active_id = "ses_active_small".to_string();
+    let recovered_id = format!("{RECOVERED_DRAFT_PREFIX}12345678-1234-4234-8234-123456789abc");
+    text_tab.active_session_id = Some(active_id.clone());
+    text_tab.drafts.insert(active_id.clone(), "a".repeat(2_000));
+    text_tab
+        .drafts
+        .insert(NO_SESSION_DRAFT_ID.into(), "n".repeat(4_000));
+    text_tab
+        .drafts
+        .insert(recovered_id.clone(), "r".repeat(60_000));
+    let mut tabs = vec![Tab::Workspace(text_tab)];
+    // Fill remaining string budget in sibling tabs using active_session_id drafts so global
+    // UTF-16 budget must shed inside the active tab without touching active_id or __no_session_draft__.
+    for idx in 1..MAX_TABS {
+        let mut sibling = workspace();
+        sibling.occurrence = idx as u64;
+        for d in 0..4 {
+            let sid = format!("ses_sib_{idx}_{d}");
+            if d == 0 {
+                sibling.active_session_id = Some(sid.clone());
+            }
+            sibling.drafts.insert(sid, "s".repeat(16_000));
+        }
+        tabs.push(Tab::Workspace(sibling));
+    }
+    let snap = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs,
+        active: Some(0),
+    };
+    let (bytes, partial) = encode_for_save(&snap).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let Tab::Workspace(saved) = &decoded.tabs[0] else {
+        panic!("expected active workspace tab");
+    };
+    assert!(saved.drafts.contains_key(&active_id));
+    assert!(saved.drafts.contains_key(NO_SESSION_DRAFT_ID));
+    // Verify original snapshot was not mutated.
+    assert!(
+        matches!(&snap.tabs[0], Tab::Workspace(orig) if orig.drafts.contains_key(&recovered_id))
+    );
+
+    // Under global JSON byte pressure (MAX_BYTES), active_session_id and __no_session_draft__
+    // payloads survive while __recovered_draft__ payloads in the same active tab are shed first.
+    let pasted = |kb: usize| {
+        SavedParts::decode(&json!({
+            "complete": true,
+            "parts": [
+                {"type":"pasted","id":"1","text":"p".repeat(kb * 1024)},
+                {"type":"agent","name":"reviewer"}
+            ]
+        }))
+        .unwrap()
+    };
+    let recovered_2 = format!("{RECOVERED_DRAFT_PREFIX}22345678-1234-4234-8234-123456789abc");
+    let recovered_3 = format!("{RECOVERED_DRAFT_PREFIX}32345678-1234-4234-8234-123456789abc");
+    let mut byte_tab = workspace();
+    byte_tab.active_session_id = Some(active_id.clone());
+    for (id, kb) in [
+        (active_id.clone(), 255),
+        (NO_SESSION_DRAFT_ID.to_string(), 255),
+        (recovered_id.clone(), 255),
+        (recovered_2.clone(), 255),
+        (recovered_3.clone(), 128),
+    ] {
+        byte_tab.drafts.insert(id.clone(), "[pasted #1]".into());
+        byte_tab.attachment_drafts.insert(id.clone());
+        byte_tab.attachment_parts.insert(id, pasted(kb));
+    }
+    let byte_snap = snapshot(byte_tab);
+    assert_eq!(encode(&byte_snap), Err(Error::Limit));
+    let (bytes, partial) = encode_for_save(&byte_snap).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let [Tab::Workspace(saved)] = decoded.tabs.as_slice() else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(saved.attachment_parts.get(&active_id), Some(&pasted(255)));
+    assert_eq!(
+        saved.attachment_parts.get(NO_SESSION_DRAFT_ID),
+        Some(&pasted(255))
+    );
+    let recovered_shed = [&recovered_id, &recovered_2, &recovered_3]
+        .into_iter()
+        .any(|id| {
+            saved.attachment_parts.get(id)
+                != Some(&pasted(if id == &recovered_3 { 128 } else { 255 }))
+        });
+    assert!(recovered_shed);
+    assert!(saved.attachment_drafts.contains(&recovered_id));
+    assert!(saved.attachment_drafts.contains(&recovered_2));
+    assert!(saved.attachment_drafts.contains(&recovered_3));
+}

@@ -4,7 +4,8 @@ pub(super) fn choose(weights: &[(u8, usize)], excess: usize) -> Option<Vec<usize
     if excess == 0 {
         return Some(Vec::new());
     }
-    let priority = (0..=2).find(|priority| {
+    let max_tier = weights.iter().map(|(tier, _)| *tier).max().unwrap_or(0);
+    let priority = (0..=max_tier).find(|priority| {
         weights
             .iter()
             .filter(|(tier, _)| tier <= priority)

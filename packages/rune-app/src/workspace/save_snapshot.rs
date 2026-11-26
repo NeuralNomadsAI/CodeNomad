@@ -41,6 +41,7 @@ pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Er
                     (
                         Reverse(cap_priority(saved, id)),
                         text.encode_utf16().count(),
+                        id.as_str(),
                     )
                 })
                 .map(|(id, _)| id.clone())
@@ -56,14 +57,23 @@ pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Er
             .attachment_drafts
             .extend(saved.attachment_parts.keys().cloned());
         saved.attachment_drafts.retain(|id| draft_id(id));
+        saved
+            .attachment_parts
+            .retain(|id, parts| saved.attachment_drafts.contains(id) && parts.valid());
         while saved.attachment_drafts.len() > MAX_DRAFTS {
             let Some(id) = saved
                 .attachment_drafts
                 .iter()
                 .max_by_key(|id| {
+                    let part_len = saved
+                        .attachment_parts
+                        .get(id.as_str())
+                        .and_then(|parts| part_bytes(parts).ok())
+                        .unwrap_or(0);
                     (
                         Reverse(cap_priority(saved, id)),
                         !saved.drafts.contains_key(id.as_str()),
+                        part_len,
                         id.as_str(),
                     )
                 })
@@ -72,10 +82,10 @@ pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Er
                 break;
             };
             saved.attachment_drafts.remove(&id);
+            saved.attachment_parts.remove(&id);
+            // Never leave a retained text draft stripped of its attachment marker/parts.
+            saved.drafts.remove(&id);
         }
-        saved
-            .attachment_parts
-            .retain(|id, parts| saved.attachment_drafts.contains(id) && parts.valid());
     }
     fit_text(&mut valid)?;
     fit_parts(&mut valid).map(|bytes| (bytes, true))
@@ -94,10 +104,13 @@ fn cap_priority(saved: &Workspace, id: &str) -> u8 {
 }
 
 fn priority(active: bool, saved: &Workspace, id: &str) -> u8 {
-    if cap_priority(saved, id) > 0 {
-        if active { 2 } else { 1 }
-    } else {
+    let rank = cap_priority(saved, id);
+    if rank == 0 {
         0
+    } else if active {
+        rank + 3
+    } else {
+        rank
     }
 }
 
@@ -168,7 +181,8 @@ fn fit_parts(snapshot: &mut Snapshot) -> Result<Vec<u8>, Error> {
             ));
         }
     }
-    for tier in 0..=2 {
+    let max_tier = payloads.iter().map(|p| p.2).max().unwrap_or(0);
+    for tier in 0..=max_tier {
         for only_paste in [true, false] {
             let weights = payloads
                 .iter()

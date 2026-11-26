@@ -777,9 +777,15 @@ fn delivery_inactive_close_preserves_the_active_reader_and_focus() {
 #[test]
 fn missing_session_recovers_text_attachments_and_overflow_into_local_drafts() {
     use crate::composer::draft::Attachment;
-    use crate::workspace::{NO_SESSION_DRAFT_ID, is_recovered_draft_id};
+    use crate::shell::notifications::Category;
+    use crate::workspace::{
+        NO_SESSION_DRAFT_ID, is_recovered_draft_id, is_uuid_recovered_draft_id,
+    };
 
     let mut s = init();
+    let mut l = crate::launcher::Launcher::fixture();
+    l.connection = Some(backend(""));
+    s.screen = crate::Screen::Chat { launcher: Some(l) };
     let mut ui = Ui::new();
     ui.ready = true;
     let mut saved = workspace("ses_gone_1", "first draft");
@@ -805,6 +811,11 @@ fn missing_session_recovers_text_attachments_and_overflow_into_local_drafts() {
 
     // Confirm ses_gone_1 missing: captures latest text + attachments and moves them to __no_session_draft__.
     assert!(unselect_missing(&mut s, "ses_gone_1"));
+    let expected_toast = crate::strings::t("sessionState.cleanup.draftRecovered").to_owned();
+    assert_eq!(
+        s.notifications.queued_messages(),
+        vec![(Category::Projects, expected_toast.clone())]
+    );
     s.draft = TextEdit::new("");
     s.composer = Default::default();
     s.show_launcher();
@@ -829,9 +840,16 @@ fn missing_session_recovers_text_attachments_and_overflow_into_local_drafts() {
     );
     assert!(after_first.attachment_drafts.contains(NO_SESSION_DRAFT_ID));
 
-    // Confirm a second missing session: spills into __recovered_draft__<uuid> without overwriting __no_session_draft__.
+    // Confirm a second missing session: spills into strict UUID v4 __recovered_draft__<uuid>.
     assert!(recover_missing_session_draft(&mut s, "ses_gone_2"));
     assert!(!recover_missing_session_draft(&mut s, "ses_empty"));
+    assert_eq!(
+        s.notifications.queued_messages(),
+        vec![
+            (Category::Projects, expected_toast.clone()),
+            (Category::Projects, expected_toast),
+        ]
+    );
 
     let snap = s.workspace.as_ref().unwrap().snapshot();
     let Tab::Workspace(after_second) = &snap.tabs[0] else {
@@ -852,6 +870,8 @@ fn missing_session_recovers_text_attachments_and_overflow_into_local_drafts() {
         .cloned()
         .collect();
     assert_eq!(recovered_keys.len(), 1);
+    assert!(is_uuid_recovered_draft_id(&recovered_keys[0]));
+    assert!(!recovered_keys[0].contains("00000000-0000-4000-8000-"));
     assert_eq!(after_second.drafts[&recovered_keys[0]], "second draft");
 
     // Snapshot round-trip preserves both recovered slots cleanly with no dead session keys.
@@ -957,5 +977,228 @@ fn missing_session_recovers_undelivered_closed_draft_and_unselect_session_keeps_
             .get(NO_SESSION_DRAFT_ID)
             .map(String::as_str),
         Some("from closed tab")
+    );
+}
+
+#[test]
+fn cross_tab_recovery_preserves_closed_pending_and_independent_drafts_without_uuid_collision() {
+    use crate::shell::notifications::Category;
+    use crate::workspace::{
+        NO_SESSION_DRAFT_ID, is_recovered_draft_id, is_uuid_recovered_draft_id,
+    };
+
+    // Setup: closed tab holds a draft for `ses_closed_only`, and a later closed tab cleared `ses_closed_cleared`.
+    let mut s = draft_state();
+    s.screen.launcher_mut().unwrap().connection = Some(backend(""));
+    let mut c_old = closed("ses_closed_only", "closed draft preserved");
+    c_old
+        .drafts
+        .insert("ses_closed_cleared".into(), "stale closed".into());
+    let mut c_clear = closed("ses_other", "other");
+    c_clear
+        .drafts
+        .insert("ses_closed_cleared".into(), "".into());
+    s.workspace.as_mut().unwrap().closed = vec![c_old, c_clear];
+
+    // Tab 0 (A) has no pending_drafts for `ses_closed_only`; Tab 1 (B) reopens and gets pending_drafts
+    // plus an independent draft under `ses_sibling_indep`.
+    {
+        let Tab::Workspace(tab_a) = &mut s.workspace.as_mut().unwrap().entries[0].saved else {
+            panic!("expected tab A");
+        };
+        tab_a.active_session_id = None;
+        tab_a.drafts.insert("ses_alive".into(), "alive".into());
+        tab_a
+            .drafts
+            .insert("ses_a_overflow".into(), "from A".into());
+    }
+    let mut tx = rune::Tx::default();
+    new_tab(&mut s, &mut tx);
+    opened(
+        &mut s,
+        &Project {
+            id: "project-b".into(),
+            path: "/fixture".into(),
+        },
+    );
+    {
+        let ui = s.workspace.as_mut().unwrap();
+        let Tab::Workspace(tab_b) = &mut ui.entries[1].saved else {
+            panic!("expected tab B");
+        };
+        tab_b
+            .drafts
+            .insert("ses_sibling_indep".into(), "independent B".into());
+        tab_b
+            .drafts
+            .insert("ses_b_overflow".into(), "from B".into());
+        // Switch back to Tab 0 (A) as the active tab receiving proof.
+        ui.active = 0;
+    }
+
+    // 1. Tab A receives deletion for `ses_closed_cleared`: latest closed clear wins, 0 toasts.
+    assert!(!recover_missing_session_draft(&mut s, "ses_closed_cleared"));
+    assert!(s.notifications.queued_messages().is_empty());
+
+    // 2. Tab A receives deletion for `ses_closed_only` (only Tab B had pending_drafts):
+    // closed draft is recovered (NOT lost!), ui.closed is purged, Tab B's pending copy is cleaned.
+    assert!(recover_missing_session_draft(&mut s, "ses_closed_only"));
+    assert_eq!(s.notifications.queued_messages().len(), 1);
+    assert_eq!(s.notifications.queued_messages()[0].0, Category::Projects);
+    {
+        let ui = s.workspace.as_ref().unwrap();
+        assert!(
+            ui.closed
+                .iter()
+                .all(|w| !w.drafts.contains_key("ses_closed_only"))
+        );
+        let Tab::Workspace(a) = &ui.entries[0].saved else {
+            panic!("expected tab A");
+        };
+        let Tab::Workspace(b) = &ui.entries[1].saved else {
+            panic!("expected tab B");
+        };
+        assert_eq!(
+            a.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+            Some("closed draft preserved")
+        );
+        assert!(!b.drafts.contains_key("ses_closed_only"));
+        assert!(!ui.entries[1].pending_drafts.contains("ses_closed_only"));
+    }
+
+    // 3. Tab A receives deletion for `ses_sibling_indep` (independent edit in Tab B):
+    // Tab B's independent edit is preserved under a unique recovered UUID without dead ID leak.
+    assert!(recover_missing_session_draft(&mut s, "ses_sibling_indep"));
+    assert!(recover_missing_session_draft(&mut s, "ses_a_overflow"));
+    assert!(recover_missing_session_draft(&mut s, "ses_b_overflow"));
+
+    // 4. Close both Tab A and Tab B, then reopen the project: all 4 recovered drafts survive merge!
+    let keys_before: Vec<String> = s
+        .workspace
+        .as_ref()
+        .unwrap()
+        .entries
+        .iter()
+        .flat_map(|e| match &e.saved {
+            Tab::Workspace(w) => w.drafts.keys().cloned().collect::<Vec<_>>(),
+            Tab::Blank => Vec::new(),
+        })
+        .filter(|id| is_recovered_draft_id(id))
+        .collect();
+    assert_eq!(keys_before.len(), 3);
+    assert!(keys_before.iter().all(|id| is_uuid_recovered_draft_id(id)));
+    let unique: std::collections::HashSet<_> = keys_before.iter().collect();
+    assert_eq!(
+        unique.len(),
+        3,
+        "recovered UUIDs must never collide across tabs"
+    );
+
+    close(&mut s, "tab-0", &mut tx);
+    // Closing tab-0 activates tab-1; clear any background restore job before closing tab-1.
+    if let Some(l) = s.screen.launcher_mut() {
+        l.pending = false;
+    }
+    close(&mut s, "tab-1", &mut tx);
+    assert_eq!(s.workspace.as_ref().unwrap().entries.len(), 1);
+    assert!(matches!(
+        s.workspace.as_ref().unwrap().entries[0].saved,
+        Tab::Blank
+    ));
+    reopen(&mut s);
+
+    let snap = s.workspace.as_ref().unwrap().snapshot();
+    let Tab::Workspace(reopened) = &snap.tabs[0] else {
+        panic!("expected reopened tab");
+    };
+    let mut values: Vec<&str> = reopened.drafts.values().map(String::as_str).collect();
+    values.sort_unstable();
+    assert!(values.contains(&"closed draft preserved"));
+    assert!(values.contains(&"independent B"));
+    assert!(values.contains(&"from A"));
+    assert!(values.contains(&"from B"));
+    assert!(!reopened.drafts.contains_key("ses_closed_only"));
+    assert!(!reopened.drafts.contains_key("ses_sibling_indep"));
+    assert!(!reopened.drafts.contains_key("ses_a_overflow"));
+    assert!(!reopened.drafts.contains_key("ses_b_overflow"));
+}
+
+#[test]
+fn deferred_active_chat_deletion_recovers_on_leave_and_direct_recovered_adopt_promotes_next() {
+    use crate::workspace::{NO_SESSION_DRAFT_ID, RECOVERED_DRAFT_PREFIX, is_recovered_draft_id};
+
+    let mut s = init();
+    let mut l = crate::launcher::Launcher::fixture();
+    l.connection = Some(backend(""));
+    s.screen = crate::Screen::Chat { launcher: Some(l) };
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0] = entry(
+        "tab-0".into(),
+        Tab::Workspace(workspace("ses_live_del", "initial")),
+    );
+    ui.entries[0].binding = Some(backend("ses_live_del"));
+    s.workspace = Some(ui);
+    s.show_chat();
+    s.draft = TextEdit::new("typing when deleted");
+
+    // Native deletion arrives while user is actively in chat: deferred until leaving.
+    note_session_deleted(&mut s);
+    let Tab::Workspace(mid) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(mid.active_session_id.as_deref(), Some("ses_live_del"));
+    assert!(!mid.drafts.contains_key(NO_SESSION_DRAFT_ID));
+
+    // Leaving via unselect_session captures latest typing and immediately recovers it.
+    assert!(unselect_session(&mut s, "ses_live_del"));
+    let Tab::Workspace(after_leave) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(after_leave.active_session_id, None);
+    assert!(!after_leave.drafts.contains_key("ses_live_del"));
+    assert_eq!(
+        after_leave
+            .drafts
+            .get(NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("typing when deleted")
+    );
+
+    // Direct adoption when __no_session_draft__ is empty promotes the next queued recovered draft.
+    {
+        let Tab::Workspace(saved) = &mut s.workspace.as_mut().unwrap().entries[0].saved else {
+            panic!("expected workspace tab");
+        };
+        saved.drafts.remove(NO_SESSION_DRAFT_ID);
+        saved.drafts.insert(
+            format!("{RECOVERED_DRAFT_PREFIX}11111111-1111-4111-8111-111111111111"),
+            "first queued".into(),
+        );
+        saved.drafts.insert(
+            format!("{RECOVERED_DRAFT_PREFIX}22222222-2222-4222-8222-222222222222"),
+            "second queued".into(),
+        );
+    }
+    assert!(adopt_recovered_draft(&mut s, "ses_brand_new"));
+    let Tab::Workspace(after_adopt) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(
+        after_adopt.drafts.get("ses_brand_new").map(String::as_str),
+        Some("first queued")
+    );
+    assert_eq!(
+        after_adopt
+            .drafts
+            .get(NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("second queued")
+    );
+    assert!(
+        after_adopt
+            .drafts
+            .keys()
+            .all(|id| !is_recovered_draft_id(id))
     );
 }

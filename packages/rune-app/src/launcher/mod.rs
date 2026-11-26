@@ -31,7 +31,9 @@ use rune::{Tx, edit::TextEdit};
 use sessions::attach;
 #[cfg(feature = "test-support")]
 pub use sessions::back;
-use sessions::{bind, dismiss_origin_panel, retire_session, retry_mission_conversation};
+use sessions::{
+    bind, bind_created, dismiss_origin_panel, retire_session, retry_mission_conversation,
+};
 pub(crate) use sessions::{
     bind_search, can_rebind_session, choose_child_ticket, choose_destination,
     choose_mission_conversation,
@@ -80,6 +82,7 @@ pub struct Launcher {
     detached_reconcile_trailing: bool,
     failed_detached_workspaces: HashSet<String>,
     pub(crate) rebind_after_send: Option<String>,
+    pub(crate) adopt_recovered_for: Option<String>,
     resume_after_job: bool,
     connection_generation: u64,
     pending_connection_generation: u64,
@@ -104,7 +107,7 @@ enum Reply {
     CreatePrecheckFailed,
     CreateRejected,
     CreateUncertainLinked(String),
-    Selected(Vec<String>, Option<Selection>, Option<u64>, bool),
+    Selected(Vec<(String, bool)>, Option<Selection>, Option<u64>, bool),
     #[cfg(target_arch = "wasm32")]
     Reopened(crate::workspace::opening::Opening, Backend, String, String),
     Placed(Backend, String, String, bool, bool),
@@ -115,7 +118,7 @@ type Selection = (Backend, String, Option<usize>, Instant, String);
 enum Restored {
     Empty,
     Bound(Backend, String, String),
-    Missing(String),
+    Missing(String, bool),
 }
 impl Launcher {
     #[cfg(any(test, feature = "test-support"))]
@@ -214,6 +217,7 @@ impl Launcher {
             detached_reconcile_trailing: false,
             failed_detached_workspaces: HashSet::new(),
             rebind_after_send: None,
+            adopt_recovered_for: None,
             resume_after_job: false,
             connection_generation: 0,
             pending_connection_generation: 0,
@@ -596,23 +600,26 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         || s.screen
             .launcher()
             .is_some_and(|l| l.authentication_required);
-    let checked_missing = {
+    let checked = {
         let Some(l) = s.screen.launcher_mut() else {
             return relayed;
         };
         if !l.pending {
             l.visits.poll_checks()
         } else {
-            Vec::new()
+            visits::PollChecks {
+                changed: false,
+                deleted: Vec::new(),
+            }
         }
     };
-    for id in &checked_missing {
+    for id in &checked.deleted {
         crate::workspace::recover_missing_session_draft(s, id);
     }
     let Some(l) = s.screen.launcher_mut() else {
         return relayed;
     };
-    let mut changed = relayed | browser_changed | !checked_missing.is_empty();
+    let mut changed = relayed | browser_changed | checked.changed;
     changed |= connection::poll_boot(l);
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
         if changed {
@@ -702,8 +709,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     crate::workspace::restore_files_mode(s);
                 }
                 Restored::Bound(_, _, _) => {}
-                Restored::Missing(id) => {
-                    retire_session(s, &id);
+                Restored::Missing(id, is_deleted) => {
+                    retire_session(s, &id, is_deleted);
                     crate::git::project_opened(s);
                     crate::workspace::restore_files_mode(s);
                 }
@@ -786,13 +793,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     );
                 }
                 l.rebind_after_send = None;
+                l.adopt_recovered_for = Some(session_id.clone());
                 dismiss_origin_panel(s, dismiss, tx);
-                crate::workspace::adopt_recovered_draft(s, &session_id);
                 choose_destination(s, session_id, ticket, tx);
             } else {
                 dismiss_origin_panel(s, dismiss, tx);
-                crate::workspace::adopt_recovered_draft(s, &b.session);
-                bind(s, b, title, None, &slug, tx);
+                bind_created(s, b, title, &slug, tx);
             }
         }
         Ok(Reply::CreatedUnbound(session, submitted)) => {
@@ -855,34 +861,47 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             } else {
                 blocked
             };
-            l.sessions.retain(|row| !missing.contains(&row.id));
-            l.linked.rows.retain(|row| !missing.contains(&row.id));
+            let unavailable_ids: Vec<String> = missing.iter().map(|(id, _)| id.clone()).collect();
+            l.sessions.retain(|row| !unavailable_ids.contains(&row.id));
+            l.linked
+                .rows
+                .retain(|row| !unavailable_ids.contains(&row.id));
             if let Some(pages) = &mut l.linked.pages {
-                pages.rows.retain(|row| !missing.contains(&row.id));
+                pages.rows.retain(|row| !unavailable_ids.contains(&row.id));
             }
             l.search_results
                 .rows
-                .retain(|row| !missing.contains(&row.id));
-            l.listed_sessions.retain(|id| !missing.contains(id));
-            l.visits.forget(&missing);
+                .retain(|row| !unavailable_ids.contains(&row.id));
+            l.listed_sessions.retain(|id| !unavailable_ids.contains(id));
+            l.visits.forget(&unavailable_ids);
             if let Some((backend, _, _, verified, _)) = &selection {
                 l.visits.verified(&backend.session, *verified);
             }
+            if l.adopt_recovered_for
+                .as_ref()
+                .is_some_and(|id| unavailable_ids.contains(id))
+            {
+                l.adopt_recovered_for = None;
+            }
             if let Some(id) = selected
                 .as_deref()
-                .filter(|id| s.phase == Phase::Failed && missing.iter().any(|m| m == id))
+                .filter(|id| s.phase == Phase::Failed && unavailable_ids.iter().any(|m| m == id))
             {
-                retire_session(s, id);
-                for other in &missing {
-                    if other != id {
+                let is_deleted = missing.iter().any(|(m, deleted)| m == id && *deleted);
+                retire_session(s, id, is_deleted);
+                for (other, deleted) in &missing {
+                    if *deleted && other != id {
                         crate::workspace::recover_missing_session_draft(s, other);
                     }
                 }
                 tx.instant();
                 return true;
             }
-            for id in &missing {
-                crate::workspace::recover_missing_session_draft(s, id);
+            let mut recovered_any = false;
+            for (id, deleted) in &missing {
+                if *deleted {
+                    recovered_any |= crate::workspace::recover_missing_session_draft(s, id);
+                }
             }
             let auth_required = s
                 .screen
@@ -898,6 +917,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }) {
                 if let Some(l) = s.screen.launcher_mut() {
                     l.show_title = false;
+                    if l.adopt_recovered_for.as_deref() != Some(b.session.as_str()) {
+                        l.adopt_recovered_for = None;
+                    }
                 }
                 if stale_connection {
                     dismiss_origin_panel(s, dismiss, tx);
@@ -913,17 +935,24 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     }
                     bind(s, b, title, visit, &slug, tx);
                 }
-            } else if !selection_blocked {
+            } else {
                 if let Some(l) = s.screen.launcher_mut() {
-                    l.error = Some("sessionList.reload.error");
+                    l.adopt_recovered_for = None;
                 }
-                crate::shell::notifications::emit_outcome(
-                    s,
-                    crate::shell::notifications::Category::Sessions,
-                    None,
-                    crate::strings::t("sessionList.reload.error"),
-                    true,
-                );
+                if !selection_blocked {
+                    if let Some(l) = s.screen.launcher_mut() {
+                        l.error = Some("sessionList.reload.error");
+                    }
+                    if !recovered_any {
+                        crate::shell::notifications::emit_outcome(
+                            s,
+                            crate::shell::notifications::Category::Sessions,
+                            None,
+                            crate::strings::t("sessionList.reload.error"),
+                            true,
+                        );
+                    }
+                }
             }
         }
         #[cfg(target_arch = "wasm32")]
@@ -1022,6 +1051,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         Err(error) => {
+            l.adopt_recovered_for = None;
             if stale_connection && l.resume_after_job {
                 l.error = None;
             } else {
@@ -1076,7 +1106,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let post_missing = if let Some(l) = s.screen.launcher_mut()
         && !l.pending
     {
-        l.visits.poll_checks()
+        l.visits.poll_checks().deleted
     } else {
         Vec::new()
     };

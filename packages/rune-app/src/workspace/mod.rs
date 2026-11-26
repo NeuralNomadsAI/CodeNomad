@@ -27,11 +27,11 @@ pub(crate) use state::{
 pub(crate) use state::{
     Ui, active_session, adopt_recovered_draft, attachment_draft_admissible, bound, can_new,
     capture, capture_files_mode, close, connected, conversation_stream_clients, draft_changed,
-    file_draft_status, file_wrap, files_tab, has_conversation_stream, input_ready, new_tab, opened,
-    panel_width, poll, poll_file_drafts, prepare_open, recover_missing_session_draft,
-    renew_connection, restore_files_mode, resume, retry, schedule_catalogue,
-    schedule_catalogue_refresh, select, select_index, select_relative, status, strip,
-    toggle_file_wrap, unconfirmed_drafts_full, unselect_missing, unselect_session,
+    file_draft_status, file_wrap, files_tab, has_conversation_stream, input_ready, new_tab,
+    note_session_deleted, opened, panel_width, poll, poll_file_drafts, prepare_open,
+    recover_missing_session_draft, renew_connection, restore_files_mode, resume, retry,
+    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative, status,
+    strip, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing, unselect_session,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
@@ -540,6 +540,7 @@ fn id_character(byte: u8) -> bool {
 pub(crate) const NO_SESSION_DRAFT_ID: &str = "__no_session_draft__";
 pub(crate) const RECOVERED_DRAFT_PREFIX: &str = "__recovered_draft__";
 
+/// Read-compatibility predicate matching Solid's `isRecoveredDraftId` (`local-draft-ids.ts`).
 pub(crate) fn is_recovered_draft_id(value: &str) -> bool {
     value
         .strip_prefix(RECOVERED_DRAFT_PREFIX)
@@ -548,6 +549,22 @@ pub(crate) fn is_recovered_draft_id(value: &str) -> bool {
                 && tail
                     .bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-')
+        })
+}
+
+/// Strict lowercase `8-4-4-4-12` UUID check used when generating new recovered draft IDs.
+pub(crate) fn is_uuid_recovered_draft_id(value: &str) -> bool {
+    value
+        .strip_prefix(RECOVERED_DRAFT_PREFIX)
+        .is_some_and(|tail| {
+            tail.len() == 36
+                && tail.bytes().enumerate().all(|(idx, b)| {
+                    if matches!(idx, 8 | 13 | 18 | 23) {
+                        b == b'-'
+                    } else {
+                        b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
+                    }
+                })
         })
 }
 

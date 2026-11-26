@@ -113,8 +113,12 @@ fn terminal_omission_is_not_enough_to_retire_a_visit() {
             .visits
             .start_checks(&["a".into()], input);
         assert!(
-            out.try_send(("a".into(), codenomad_client::runtime::Instant::now()))
-                .is_ok()
+            out.try_send((
+                "a".into(),
+                codenomad_client::runtime::Instant::now(),
+                codenomad_client::catalog::SessionAbsence::NotFound,
+            ))
+            .is_ok()
         );
         assert!(poll(s, tx));
         assert!(!can_visit(s, true));

@@ -7,15 +7,27 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
-    drain_chat(s, limit, true, true, false)
+    let (changed, deleted) = drain_chat(s, limit, true, true, false);
+    if deleted {
+        workspace::note_session_deleted(s);
+    }
+    changed
 }
 
-pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize, active_has_stream: bool) -> bool {
+pub(crate) fn poll_hidden_chat(
+    s: &mut State,
+    limit: usize,
+    active_has_stream: bool,
+) -> (bool, bool) {
     drain_chat(s, limit, false, !active_has_stream, false)
 }
 
 pub(crate) fn poll_chat_for_window(s: &mut State, limit: usize, defer_reader_sync: bool) -> bool {
-    drain_chat(s, limit, true, true, defer_reader_sync)
+    let (changed, deleted) = drain_chat(s, limit, true, true, defer_reader_sync);
+    if deleted {
+        workspace::note_session_deleted(s);
+    }
+    changed
 }
 
 fn drain_chat(
@@ -24,8 +36,9 @@ fn drain_chat(
     visible: bool,
     affects_preferences: bool,
     defer_reader_sync: bool,
-) -> bool {
+) -> (bool, bool) {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
+    let mut session_deleted = false;
     if changed
         && s.reader
             .as_ref()
@@ -476,6 +489,9 @@ fn drain_chat(
                 s.paging = false;
                 s.phase = Phase::Reconnecting;
             }
+            Event::SessionDeleted => {
+                session_deleted = true;
+            }
             Event::WorkspaceMissing => {
                 s.conversation_stream_connected = false;
                 s.transcript_display.receipts.clear();
@@ -664,7 +680,10 @@ fn drain_chat(
         s.revision += 1;
         changed = true;
     }
-    changed | super::usage::family::Totals::poll(s)
+    (
+        changed | super::usage::family::Totals::poll(s),
+        session_deleted,
+    )
 }
 
 fn uses_workspace_attention(s: &State) -> bool {

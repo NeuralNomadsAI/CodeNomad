@@ -304,6 +304,7 @@ pub(crate) async fn run_with_reading(
                 if matches!(kind, "session.deleted" | "session.revert.committed") {
                     publish(&out, &wake, Event::HistoryInvalidated).await;
                     if kind == "session.deleted" {
+                        publish(&out, &wake, Event::SessionDeleted).await;
                         wire.cancelled.store(true, SeqCst);
                         return Err("session scope changed".into());
                     }

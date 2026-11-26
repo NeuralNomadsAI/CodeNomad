@@ -165,6 +165,7 @@ pub enum Event {
     WorkspaceMissing,
     Reconnecting,
     HistoryInvalidated,
+    SessionDeleted,
     RevertChanged,
     PagingFailed,
 }
