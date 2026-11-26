@@ -206,25 +206,47 @@ pub async fn list(
     .into_response())
 }
 
-pub async fn owns_event(app: &Shared, w: &Workspace, directory: &str) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventOwnership {
+    Owned,
+    NotOwned,
+    Unavailable,
+}
+
+/// Event routing ownership check distinguishing a proven non-owner (`NotOwned`) from a
+/// transiently unreadable root probe or worktree inventory (`Unavailable`), matching TS
+/// `instance-events.ts:298-315`.
+pub async fn event_ownership(
+    app: &Shared,
+    w: &Workspace,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    directory: &str,
+) -> EventOwnership {
     let scope = app.scope.clone();
     let dir = directory.to_owned();
-    let Some((path, _anchor)) =
-        tokio::task::spawn_blocking(move || ownership::resolve_media_path(&scope, &dir)).await.ok().flatten()
-    else {
-        return false;
+    let path = match tokio::task::spawn_blocking(move || ownership::resolve_media_path_checked(&scope, &dir)).await {
+        Ok(Ok(Some((path, _anchor)))) => path,
+        Ok(Ok(None)) => return EventOwnership::NotOwned,
+        Ok(Err(())) | Err(_) => return EventOwnership::Unavailable,
     };
     if path == w.path {
-        return true;
+        return EventOwnership::Owned;
     }
     let external = !path.starts_with(&w.path);
-    if !external && matches!(root_only(w).await, Ok(Some(true))) {
-        return true;
+    match root_only(w).await {
+        Ok(Some(true)) => return if external { EventOwnership::NotOwned } else { EventOwnership::Owned },
+        Ok(Some(false)) => return EventOwnership::NotOwned,
+        Err(_) => return EventOwnership::Unavailable,
+        Ok(None) => {}
     }
-    let Some(catalogue) = crate::worktrees::linked::event_catalogue(app, w).await else {
-        return false;
+    let Some(catalogue) = crate::worktrees::linked::event_catalogue_at(app, w, endpoint).await else {
+        return EventOwnership::Unavailable;
     };
-    ownership::catalogue_owns_event(catalogue, path, external).await
+    if ownership::catalogue_owns_event(catalogue, path, external).await {
+        EventOwnership::Owned
+    } else {
+        EventOwnership::NotOwned
+    }
 }
 
 #[derive(Clone)]

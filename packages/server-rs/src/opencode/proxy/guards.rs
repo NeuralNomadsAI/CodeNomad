@@ -63,6 +63,10 @@ pub(super) fn guarded(route: &str, method: &Method) -> bool {
                 .any(|suffix| route.ends_with(suffix)))
         || (matches!(*method, Method::PATCH | Method::DELETE)
             && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/')))
+        || (matches!(*method, Method::PATCH | Method::DELETE)
+            && route.strip_prefix("/api/session/").and_then(|r| r.split_once("/inbox/")).is_some_and(|(sid, item)| {
+                !sid.is_empty() && !sid.contains('/') && !item.is_empty() && !item.contains('/')
+            }))
         || (*method == Method::DELETE
             && route
                 .strip_prefix("/api/session/")
