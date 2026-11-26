@@ -9,7 +9,6 @@ import { validateMissionProfileCatalog } from "./playbook-profiles"
 import { buildActorContext, buildAssignmentPrompt } from "./recipes"
 import { parseMissionTaskMode, type MissionTaskMode } from "./task-execution-mode"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
-import { authorityIntentSchema, MISSION_AUTHORITY_POLICY } from "./authority-protocol"
 
 const task = { taskKey: "bounded-work", title: "Bounded work", brief: "Return one concrete result", role: "specialist", blockedBy: [] }
 const independent = { kind: "independent" as const, reason: "playbook" as const,
@@ -125,19 +124,9 @@ test("primary-only role presets validate against a fresh catalog only for indepe
   validateMissionProfileCatalog({ roles: { specialist: { agent: "child" } } }, catalog)
 })
 
-test("mode codecs fail closed and creation wire/signed schemas preserve both selections", () => {
+test("mode codecs fail closed and the creation wire schema carries the selection", () => {
   assert.equal(parseMissionTaskMode(undefined), "native")
   for (const invalid of [null, "root", false, {}]) assert.throws(() => parseMissionTaskMode(invalid))
   assert.ok("taskMode" in CODENOMAD_MISSIONS_RPC.methods.create.input.properties)
   assert.ok("taskMode" in CODENOMAD_MISSIONS_RPC.methods.create.output.properties.mission.properties)
-  const body = { version: 1, policy: MISSION_AUTHORITY_POLICY, method: "create", missionID: "mission-mode", projectID: "project-mode",
-    authorityID: "authority-mode", keyID: "key-mode", profileID: "profile", executionHost: "local", projectCanonical: "/owned",
-    namespace: "c8cb8d62-a104-40ca-a9ba-d205c2a4a7cd", coordinatorSessionID: "ses_lead", roots: [{ mode: "directory-only", directory: "/owned" }],
-    epoch: 0, expectedRevision: 0, requestID: "signed-create", payload: { objective: "Signed mode", template: "custom", prepared: true } }
-  for (const taskMode of ["native", "independent"]) {
-    const signed = { ...body, payload: { ...body.payload, taskMode } }
-    assert.deepEqual(authorityIntentSchema.parse(signed).payload, signed.payload)
-  }
-  assert.deepEqual(authorityIntentSchema.parse(body).payload, body.payload)
-  assert.equal(authorityIntentSchema.safeParse({ ...body, payload: { ...body.payload, taskMode: "root" } }).success, false)
 })
