@@ -116,11 +116,13 @@ pub(super) struct Refresh {
     due: Option<f64>,
     urgent: bool,
     reset_cursor: bool,
+    pre_create_only: bool,
     request: Option<(u64, Receiver<Option<(Sessions, bool, bool)>>)>,
 }
 
 impl Refresh {
     pub(super) fn schedule(&mut self, now: f64) {
+        self.pre_create_only = false;
         self.due.get_or_insert(now + 0.1);
     }
 
@@ -132,15 +134,13 @@ impl Refresh {
 
     pub(super) fn pause(&mut self, now: f64) {
         if self.request.take().is_some() {
-            self.schedule(now);
+            self.due.get_or_insert(now + 0.1);
         }
     }
 
-    pub(super) fn clear(&mut self) {
-        self.due = None;
-        self.urgent = false;
-        self.reset_cursor = false;
-        self.request = None;
+    pub(super) fn fence_for_create(&mut self, now: f64) {
+        self.pause(now);
+        self.pre_create_only = self.due.is_some();
     }
 }
 
@@ -183,8 +183,11 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         refresh.pause(now);
     }
+    let held_for_uncertain_create =
+        l.creation_uncertain && l.creation_uncertain_linked.is_none() && refresh.pre_create_only;
     if (!visible && !refresh.urgent)
         || l.pending
+        || held_for_uncertain_create
         || entry.project.as_ref().map(|p| &p.id) != l.project.as_ref().map(|p| &p.id)
     {
         refresh.pause(now);
@@ -246,6 +249,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             };
             let uncertain_linked = l.creation_uncertain_linked.clone();
             refresh.due = None;
+            refresh.pre_create_only = false;
             refresh.request = Some((l.catalogue_generation, input));
             crate::platform::spawn(async move {
                 let read = async {
@@ -407,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn cancel_catalogue_refresh_clears_pre_create_refresh_without_rearming() {
+    fn create_fence_holds_pre_create_demand_on_uncertain_and_preserves_it_on_no_write() {
         let mut state = crate::init();
         crate::gallery::shell::fixture(&mut state);
         state.workspace = Some(workspace::Ui::new());
@@ -423,26 +427,83 @@ mod tests {
                 id: "p1".into(),
                 path: "/repo".into(),
             };
-            s.screen.launcher_mut().unwrap().project = Some(project.clone());
+            let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:1").unwrap();
+            {
+                let launcher = s.screen.launcher_mut().unwrap();
+                launcher.connection = Some(backend);
+                launcher.project = Some(project.clone());
+            }
             workspace::opened(s, &project);
             let (_out, rx) = codenomad_client::bounded(1);
             let generation = s.screen.launcher().unwrap().catalogue_generation;
-            let ui = s.workspace.as_mut().unwrap();
-            let entry = &mut ui.entries[ui.active];
-            entry.catalogue.urgent = true;
-            entry.catalogue.reset_cursor = true;
-            entry.catalogue.due = Some(2.0);
-            entry.catalogue.request = Some((generation, rx));
-            workspace::cancel_catalogue_refresh(s);
-            let launcher = s.screen.launcher_mut().unwrap();
-            launcher.pending = true;
-            launcher.catalogue_generation = launcher.catalogue_generation.wrapping_add(1);
+            {
+                let ui = s.workspace.as_mut().unwrap();
+                let entry = &mut ui.entries[ui.active];
+                entry.catalogue.urgent = true;
+                entry.catalogue.reset_cursor = true;
+                entry.catalogue.due = Some(2.0);
+                entry.catalogue.request = Some((generation, rx));
+            }
+            // Fence at create start: old receiver is dropped, demand flags stay intact and marked pre_create_only.
+            workspace::fence_catalogue_for_create(s);
+            {
+                let entry = &s.workspace.as_ref().unwrap().entries[0];
+                assert!(entry.catalogue.request.is_none());
+                assert!(entry.catalogue.due.is_some());
+                assert!(entry.catalogue.urgent);
+                assert!(entry.catalogue.reset_cursor);
+                assert!(entry.catalogue.pre_create_only);
+            }
+            // Uncertain root create outcome: pre-create demand must stay held and not dispatch.
+            {
+                let launcher = s.screen.launcher_mut().unwrap();
+                launcher.pending = false;
+                launcher.creation_uncertain = true;
+                launcher.creation_uncertain_linked = None;
+            }
             let _ = super::poll(s, 3.0, tx);
-            let entry = &s.workspace.as_ref().unwrap().entries[0];
-            assert!(entry.catalogue.request.is_none());
-            assert!(entry.catalogue.due.is_none());
-            assert!(!entry.catalogue.urgent);
-            assert!(!entry.catalogue.reset_cursor);
+            {
+                let entry = &s.workspace.as_ref().unwrap().entries[0];
+                assert!(
+                    entry.catalogue.request.is_none(),
+                    "pre-create refresh must not dispatch during uncertain root create"
+                );
+                assert!(entry.catalogue.due.is_some());
+                assert!(entry.catalogue.urgent);
+                assert!(entry.catalogue.reset_cursor);
+                assert!(entry.catalogue.pre_create_only);
+            }
+            // Known no-write outcome (or manual reconciliation clearing creation_uncertain): preserved demand dispatches.
+            s.screen.launcher_mut().unwrap().creation_uncertain = false;
+            let _ = super::poll(s, 3.0, tx);
+            {
+                let entry = &s.workspace.as_ref().unwrap().entries[0];
+                assert!(
+                    entry.catalogue.request.is_some(),
+                    "preserved pre-create demand must dispatch once create is not uncertain"
+                );
+                assert!(!entry.catalogue.pre_create_only);
+                assert!(entry.catalogue.urgent);
+                assert!(entry.catalogue.reset_cursor);
+            }
+            // A fresh post-create schedule (e.g. SSE hint) clears pre_create_only so it can run even while uncertain.
+            workspace::fence_catalogue_for_create(s);
+            s.screen.launcher_mut().unwrap().creation_uncertain = true;
+            s.workspace.as_mut().unwrap().entries[0]
+                .catalogue
+                .schedule(4.0);
+            assert!(
+                !s.workspace.as_ref().unwrap().entries[0]
+                    .catalogue
+                    .pre_create_only
+            );
+            let _ = super::poll(s, 5.0, tx);
+            assert!(
+                s.workspace.as_ref().unwrap().entries[0]
+                    .catalogue
+                    .request
+                    .is_some()
+            );
         });
     }
 }

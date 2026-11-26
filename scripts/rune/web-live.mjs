@@ -183,10 +183,19 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           return requested.origin===url.origin&&Boolean((await req.allHeaders()).cookie)
         }
         const fetchOwnedStatus=async route=>{
-          const response=await route.fetch({maxRedirects:0})
-          assert.equal(new URL(response.url()).origin,url.origin,'Auth status response must stay on the owned origin')
-          assert.equal(response.status(),200,'Auth status response must return 200 without redirecting')
-          return response
+          assert(typeof attestedGet==='function','Attested status fetcher required')
+          const requested=new URL(route.request().url())
+          assert.equal(requested.origin,url.origin,'Auth status request must stay on the owned origin')
+          const response=await attestedGet(`${requested.pathname}${requested.search}`,context)
+          assert.equal(response.status,200,'Auth status response must return 200 without redirecting')
+          const text=await response.text()
+          const body=JSON.parse(text)
+          const headers={}
+          const contentType=response.headers.get('content-type')
+          if(contentType)headers['content-type']=contentType
+          const cacheControl=response.headers.get('cache-control')
+          if(cacheControl)headers['cache-control']=cacheControl
+          return {status:response.status,headers,text,body}
         }
         const holdEvents=async route=>{
           if(!blockEvents)return route.fallback()
@@ -202,13 +211,12 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
               heldFollowUp=true
               postStaleStatus++
               try {
-                const response=await fetchOwnedStatus(route)
-                const body=await response.json()
+                const {status,headers,text,body}=await fetchOwnedStatus(route)
                 assert.equal(body.authenticated,true)
                 assert(!body.pairingRequired)
                 followUpCaptured.resolve()
                 await releaseFollowUp.promise
-                await route.fulfill({response})
+                await route.fulfill({status,headers,body:text})
               } catch (err) {
                 followUpCaptured.reject(err)
                 await route.abort().catch(()=>{})
@@ -224,13 +232,12 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           blockEvents=true
           staleRequest=route.request()
           try {
-            const response=await fetchOwnedStatus(route)
-            const body=await response.json()
+            const {status,headers,text,body}=await fetchOwnedStatus(route)
             assert.equal(body.authenticated,false)
             assert.equal(body.pairingRequired,true)
             staleCaptured.resolve()
             await releaseStale.promise
-            await route.fulfill({response})
+            await route.fulfill({status,headers,body:text})
           } catch (err) {
             staleError=err
             staleCaptured.reject(err)

@@ -211,7 +211,7 @@ pub fn create_blank(s: &mut State) {
     s.notifications.supersede_navigation();
     let ticket = s.notifications.navigation_ticket();
     crate::timeline::search::cancel_destination(s);
-    crate::workspace::cancel_catalogue_refresh(s);
+    crate::workspace::fence_catalogue_for_create(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
@@ -266,7 +266,7 @@ pub fn create(s: &mut State, _: &mut Tx) {
     s.notifications.supersede_navigation();
     let ticket = s.notifications.navigation_ticket();
     crate::timeline::search::cancel_destination(s);
-    crate::workspace::cancel_catalogue_refresh(s);
+    crate::workspace::fence_catalogue_for_create(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };

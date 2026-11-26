@@ -564,9 +564,9 @@ pub fn schedule_catalogue_refresh(s: &mut State) {
     }
 }
 
-pub fn cancel_catalogue_refresh(s: &mut State) {
+pub fn fence_catalogue_for_create(s: &mut State) {
     if let Some(ui) = &mut s.workspace {
-        ui.entries[ui.active].catalogue.clear();
+        ui.entries[ui.active].catalogue.fence_for_create(ui.clock);
     }
 }
 pub fn has_conversation_stream(s: &State) -> bool {
