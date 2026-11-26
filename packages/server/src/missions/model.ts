@@ -194,6 +194,8 @@ export interface MissionMap {
   template: MissionTemplateId
   profiles?: import("./playbook-profiles").MissionProfiles
   taskMode?: import("./task-execution-mode").MissionTaskMode
+  /** Keep the coordinator active with OpenCode's `/goal` across turns and restarts. */
+  coordinatorGoal?: boolean
   status: MissionStatus
   runState?: MissionRunState
   control?: MissionLifecycleOperation
@@ -309,6 +311,7 @@ interface MissionEventBase {
 
 export interface MissionCreatedEvent extends MissionEventBase {
   startOnCreation?: boolean
+  coordinatorGoal?: boolean
   creationDefaults?: import("./creation-defaults").MissionCreationMetadata
   type: "mission.created"
   projectCanonical: string
@@ -776,7 +779,7 @@ function missionMapReducer({ objective: initialObjective, notes: initialNotes, .
       if (event.expectedRevision !== index || tasks.size || status !== "active"
         || lifecycleBefore().runState !== "prepared") { discarded.count++; return }
       created = { ...created, title: event.title, template: event.template, profiles: event.profiles,
-        taskMode: event.taskMode, coordinator: event.coordinator }
+        taskMode: event.taskMode, coordinatorGoal: event.coordinatorGoal, coordinator: event.coordinator }
       actors.clear()
       actors.set(event.coordinator.sessionID, { sessionId: event.coordinator.sessionID, kind: "coordinator", managed: false,
         title: event.coordinator.title, roles: ["coordinator"], location: event.coordinator.location, joinedAt: event.createdAt })
@@ -1123,6 +1126,7 @@ function missionMapReducer({ objective: initialObjective, notes: initialNotes, .
       ...(briefingResponses.length ? { briefingResponses } : {}),
       template: created.template,
       taskMode: created.taskMode ?? "native",
+      ...(created.coordinatorGoal ? { coordinatorGoal: true } : {}),
       ...(created.profiles === undefined ? {} : { profiles: structuredClone(created.profiles) }),
       ...(created.creationDefaults === undefined ? {} : { creationDefaults: structuredClone(created.creationDefaults) }),
       status: projectedStatus,

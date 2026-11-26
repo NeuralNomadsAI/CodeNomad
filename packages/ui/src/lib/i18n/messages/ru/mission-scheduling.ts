@@ -35,6 +35,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.searchSource": "Поиск источников",
   "missions.scheduling.error.files": "Введите допустимые относительные пути к файлам.",
   "missions.scheduling.startOnCreation": "Запускать автоматически",
+  "missions.scheduling.coordinatorGoal": "Удерживать координатора активным с /goal",
+  "missions.scheduling.coordinatorGoalHint": "Включает /goal для координатора после запуска и автоматически возобновляет его после перезапуска OpenCode. Ручные паузы, паузы при застое или лимите раундов остаются на паузе.",
   "missions.scheduling.source.now": "Один раз, сейчас",
   "missions.settings.effectiveOrigin": "Файл конфигурации OpenCode:",
   "missions.settings.noOrigin": "Путь к документу отсутствует",

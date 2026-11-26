@@ -965,7 +965,7 @@ export function createServerApi(ctx: BackendHttp) {
       const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
       return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current/${encodeURIComponent(passageID)}/content?${params}`, { signal })
     },
-    createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; watchedConversationIDs?: readonly string[]; directory?: string; requestId: string }): Promise<{ mission: MissionMap; acknowledgement?: "fresh" | "recovered" }> {
+    createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; coordinatorGoal?: boolean; watchedConversationIDs?: readonly string[]; directory?: string; requestId: string }): Promise<{ mission: MissionMap; acknowledgement?: "fresh" | "recovered" }> {
       const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions`
       return missionMutationRequest(ctx.url(path), "POST", input, ctx.fetch)
     },

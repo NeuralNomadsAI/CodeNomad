@@ -35,6 +35,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.searchSource": "स्रोत खोज्नुहोस्",
   "missions.scheduling.error.files": "मान्य सापेक्ष फाइल पथहरू प्रविष्ट गर्नुहोस्।",
   "missions.scheduling.startOnCreation": "स्वतः सुरु गर्नुहोस्",
+  "missions.scheduling.coordinatorGoal": "/goal मार्फत समन्वयक सक्रिय राख्नुहोस्",
+  "missions.scheduling.coordinatorGoalHint": "सुरु भएपछि समन्वयकमा /goal सक्रिय गर्छ र OpenCode पुन: सुरु हुँदा स्वतः निरन्तरता दिन्छ। म्यानुअल, रोकिएको वा राउन्ड सीमाको विराम विराममै रहन्छ।",
   "missions.scheduling.source.now": "एकपटक, अहिले",
   "missions.settings.effectiveOrigin": "OpenCode कन्फिगरेसन फाइल:",
   "missions.settings.noOrigin": "कागजातको बाटो छैन",

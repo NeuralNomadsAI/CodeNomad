@@ -64,6 +64,10 @@ La programación basada en calendario requiere agente y modelo explícitos para 
 
 **Iniciar automáticamente** está fuera de Programación y desactivado por defecto. Desactivado crea una Misión en pausa para iniciarla después desde ▶. Activado solicita el inicio tras confirmar la creación, con las comprobaciones habituales y la preparación automática de la programación.
 
+### Mantener activo al coordinador con /goal {#coordinator-goal}
+
+**Mantener activo al coordinador con /goal** está disponible para Misiones puntuales y desactivado por defecto. Activado, al iniciar la Misión se activa `/goal` de OpenCode en el coordinador; pausar y reanudar la Misión pausan y reanudan ese objetivo, y finalizar o detener lo elimina. Si OpenCode se reinicia durante la ejecución, Misiones reanuda automáticamente el objetivo pausado por el reinicio (incluso con CodeNomad cerrado si las automatizaciones de OpenCode están activas), manteniendo intactas las pausas manuales, por bloqueo o por límite de rondas. El estado en vivo y los controles aparecen en el resumen de la Misión.
+
 ## Programación {#daily-schedules}
 
 ### Criterios {#native-scheduling}

@@ -44,6 +44,7 @@ import { missionBodyPresent, missionOwnBody } from "../lib/mission-bodies"
 import type { MissionPanelMap, MissionReport } from "../../../server/src/api-types"
 import { MissionPanelPaging } from "./mission-panel-paging"
 import { createDocumentAttention } from "./session/session-idle-attention"
+import SessionGoalLine from "./session/session-goal-line"
 import { createMissionDisclosure } from "./mission-disclosure"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
@@ -494,6 +495,9 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
           <h3>{t("missions.control.objective")}</h3><p>{doc().configuration.objective}</p>
           <Show when={doc().configuration.notes}><h3>{t("missions.control.notes")}</h3><p>{doc().configuration.notes}</p></Show>
         </>}</Show>
+      </Show>
+      <Show when={target()?.kind === "overview" && mission()?.coordinatorGoal && !target()?.recurrence}>
+        <SessionGoalLine instanceId={props.instanceId} sessionId={mission()!.coordinatorSessionId} active />
       </Show>
       <Show when={target()?.kind === "overview" && missionBriefed(mission())}>
         <p class="mission-briefing-meta">{t("missions.briefing.authored")} · {new Date(mission()!.briefing!.createdAt).toLocaleString(locale())}</p>

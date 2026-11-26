@@ -92,6 +92,7 @@ const mission = {
     profiles: missionProfilesSchema,
     creationDefaults: missionCreationDefaultsWire,
     taskMode: missionTaskModeSchema,
+    coordinatorGoal: { type: "boolean" },
     status: { type: "string", enum: ["active", "completed", "failed", "stopped"] },
     runState: { type: "string", enum: ["prepared", "running", "paused", "stopped"] },
     control: lifecycleOperationSchema,
@@ -270,6 +271,7 @@ const creationInput = {
     coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
     watchedConversationIDs: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 240 } },
     expectedCoordinatorLocation: location, prepared: { type: "boolean" }, startOnCreation: { type: "boolean" },
+    coordinatorGoal: { type: "boolean" },
     permissions: { type: "array", items: { type: "object", properties: {
       action: { type: "string" }, resource: { type: "string" }, effect: { enum: ["allow", "ask", "deny"] },
     }, required: ["action", "resource", "effect"], additionalProperties: false } },

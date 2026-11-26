@@ -64,6 +64,10 @@ Takvim tabanlı zamanlama, koordinatör ve rehberin her rolü için açık bir a
 
 **Otomatik başlat**, Zamanlama dışındadır ve varsayılan olarak kapalıdır. Kapalıyken görev duraklatılmış oluşturulur ve daha sonra ▶ ile başlatılır. Açıkken oluşturma doğrulanınca olağan kontroller ve otomatik zamanlama hazırlığıyla başlatma istenir.
 
+### Koordinatörü /goal ile etkin tut {#coordinator-goal}
+
+**Koordinatörü /goal ile etkin tut** tek seferlik Görevler için kullanılabilir ve varsayılan olarak kapalıdır. Etkinleştirildiğinde Görev başlatılınca koordinatörde OpenCode `/goal` devreye girer; Görevi duraklatmak ve sürdürmek bu hedefi de duraklatır ve sürdürür, bitirmek veya durdurmak ise temizler. Görev çalışırken OpenCode yeniden başlatılırsa, Görevler yeniden başlatma nedeniyle duraklatılan hedefi otomatik olarak sürdürür (OpenCode otomasyonları etkinse CodeNomad kapalıyken bile); manuel, duraklama veya tur sınırı duraklatmalarına dokunulmaz. Canlı durum ve denetimler Görev özetinde görünür.
+
 ## Zamanlama {#daily-schedules}
 
 ### Ölçütler {#native-scheduling}

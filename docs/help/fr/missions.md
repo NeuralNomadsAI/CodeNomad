@@ -68,6 +68,10 @@ Une programmation gérée par calendrier nécessite un agent et un modèle expli
 
 **Démarrer automatiquement** se trouve hors de Programmation et reste décoché par défaut. Laissez-le décoché pour créer une Mission en pause, puis utilisez ▶ **Démarrer** dans l’en-tête. Cochez-le pour demander le démarrage après confirmation de la création, avec les contrôles habituels et la préparation automatique de la programmation.
 
+### Maintenir le coordinateur actif avec /goal {#coordinator-goal}
+
+**Maintenir le coordinateur actif avec /goal** est disponible pour les Missions ponctuelles et décoché par défaut. Une fois coché, le démarrage active `/goal` dans OpenCode sur le coordinateur, la mise en pause et la reprise de la Mission suspendent et reprennent cet objectif, et la fin ou l’arrêt l’efface. Si OpenCode redémarre pendant l’exécution, Missions reprend automatiquement l’objectif mis en pause par le redémarrage (y compris quand CodeNomad est fermé si les automatisations OpenCode sont actives), tout en conservant intactes les pauses manuelles, de blocage ou de limite de tours. L’état en direct et les contrôles s’affichent dans la vue d’ensemble de la Mission.
+
 ## Programmation {#daily-schedules}
 
 ### Critères {#native-scheduling}

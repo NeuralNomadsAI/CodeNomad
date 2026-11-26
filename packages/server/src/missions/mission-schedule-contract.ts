@@ -59,6 +59,7 @@ export const missionConfigurationWire = { type: "object", properties: {
   profileID: { type: ["string", "null"] }, executionHost: { type: ["string", "null"] },
   coordinatorSessionID: text,
   coordinatorSelectionAuthor: { type: "object", properties: { coordinatorSessionID: text }, required: ["coordinatorSessionID"], additionalProperties: false },
+  coordinatorGoal: { type: "boolean" },
   roots: { type: "array", minItems: 1, maxItems: 32, items: root },
   watchedConversationIDs: { type: "array", maxItems: 64, items: text }, launch: missionDocumentSummaryWire.properties.launch,
 }, required: ["title", "objective", "template", "taskMode", "profileID", "executionHost", "roots", "watchedConversationIDs", "launch"], additionalProperties: false } as const

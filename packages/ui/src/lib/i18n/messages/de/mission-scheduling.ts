@@ -35,6 +35,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.searchSource": "Quellen suchen",
   "missions.scheduling.error.files": "Gültige relative Dateipfade eingeben.",
   "missions.scheduling.startOnCreation": "Automatisch starten",
+  "missions.scheduling.coordinatorGoal": "Koordinator mit /goal aktiv halten",
+  "missions.scheduling.coordinatorGoalHint": "Aktiviert /goal für den Koordinator nach dem Start und setzt es nach einem OpenCode-Neustart automatisch fort. Manuelle Pausen, Stillstand oder Rundenlimits bleiben pausiert.",
   "missions.scheduling.source.now": "Einmal, jetzt",
   "missions.settings.effectiveOrigin": "OpenCode-Konfigurationsdatei:",
   "missions.settings.noOrigin": "Kein Dokumentpfad",

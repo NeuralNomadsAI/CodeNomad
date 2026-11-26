@@ -77,7 +77,8 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
       ...(input.creationDefaults === undefined ? {} : { creationDefaults: parseMissionCreationDefaults(input.template, input.creationDefaults) }),
       request: { requestId: input.requestID, objective: input.objective, template: input.template, directory: coordinator.location.directory,
         ...(input.title === undefined ? {} : { title: input.title }), ...(input.notes === undefined ? {} : { notes: input.notes }),
-        ...(input.profiles === undefined ? {} : { profiles: input.profiles }), ...(input.taskMode === undefined ? {} : { taskMode: input.taskMode }) } })
+        ...(input.profiles === undefined ? {} : { profiles: input.profiles }), ...(input.taskMode === undefined ? {} : { taskMode: input.taskMode }),
+        ...(options.coordinatorGoal ? { coordinatorGoal: true } : {}) } })
     const created = await creation.execute(async () => {
       const fresh = await connection.client.session.get({ sessionID: coordinatorID }, { signal })
       const freshSnapshot = await connection.client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, {

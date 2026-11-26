@@ -13,6 +13,7 @@ export const missionPreparationOptionsSchema = z.object({
   launch: missionCriteriaLaunchPolicySchema.optional(),
   watchedConversationIDs: z.array(nativeDocumentID).max(64).refine(ids => new Set(ids).size === ids.length).optional(),
   coordinatorSessionID: nativeDocumentID.optional(),
+  coordinatorGoal: z.boolean().optional(),
 })
 export type MissionPreparationOptions = z.infer<typeof missionPreparationOptionsSchema>
 export const preparationAuthorSchema = z.object({ coordinatorSessionID: nativeDocumentID, missionID: documentID.optional() }).strict()
@@ -35,7 +36,8 @@ export function normalizedPreparationOptions(input: MissionPreparationOptions) {
   return { kind: parsed.launch && requiresMissionCalendar(parsed.launch) ? "schedule" as const : "one-time" as const,
     ...(parsed.launch && requiresMissionCalendar(parsed.launch) ? { launch: parsed.launch } : {}),
     watchedConversationIDs: [...parsed.watchedConversationIDs ?? []].sort(),
-    ...(parsed.coordinatorSessionID === undefined ? {} : { coordinatorSessionID: parsed.coordinatorSessionID }) }
+    ...(parsed.coordinatorSessionID === undefined ? {} : { coordinatorSessionID: parsed.coordinatorSessionID }),
+    ...(parsed.coordinatorGoal ? { coordinatorGoal: true as const } : {}) }
 }
 export const samePreparationOptions = (left: MissionPreparationOptions, right: MissionPreparationOptions) =>
   canonicalAuthority(normalizedPreparationOptions(left)) === canonicalAuthority(normalizedPreparationOptions(right))
@@ -56,6 +58,7 @@ export const missionPreparationOptionsWire = {
   launch: criteriaLaunchPolicyWire,
   watchedConversationIDs: { type: "array", maxItems: 64, uniqueItems: true, items: text },
   coordinatorSessionID: text,
+  coordinatorGoal: { type: "boolean" },
 } as const
 export const missionPreparationCreationWire = { type: "object", properties: {
   requestID: text, digest: text,

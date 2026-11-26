@@ -35,6 +35,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.searchSource": "חיפוש מקור",
   "missions.scheduling.error.files": "הזינו נתיבי קבצים יחסיים תקינים.",
   "missions.scheduling.startOnCreation": "התחלה אוטומטית",
+  "missions.scheduling.coordinatorGoal": "שמור את המתאם פעיל עם /goal",
+  "missions.scheduling.coordinatorGoalHint": "מפעיל /goal במתאם לאחר התחלה ומחדש אותו אוטומטית לאחר הפעלה מחדש של OpenCode. השהיות ידניות, תקיעות או מגבלת סבבים נשארות מושהות.",
   "missions.scheduling.source.now": "פעם אחת, עכשיו",
   "missions.settings.effectiveOrigin": "קובץ התצורה של OpenCode:",
   "missions.settings.noOrigin": "ללא נתיב מסמך",

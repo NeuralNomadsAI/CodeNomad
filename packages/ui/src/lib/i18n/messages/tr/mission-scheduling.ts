@@ -35,6 +35,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.searchSource": "Kaynak ara",
   "missions.scheduling.error.files": "Geçerli göreli dosya yolları girin.",
   "missions.scheduling.startOnCreation": "Otomatik başlat",
+  "missions.scheduling.coordinatorGoal": "Koordinatörü /goal ile etkin tut",
+  "missions.scheduling.coordinatorGoalHint": "Başlatıldıktan sonra koordinatörde /goal etkinleştirir ve OpenCode yeniden başlatıldığında otomatik olarak sürdürür. Manuel, duraklama veya tur sınırı duraklatmaları duraklatılmış kalır.",
   "missions.scheduling.source.now": "Bir kez, şimdi",
   "missions.settings.effectiveOrigin": "OpenCode yapılandırma dosyası:",
   "missions.settings.noOrigin": "Belge yolu yok",
