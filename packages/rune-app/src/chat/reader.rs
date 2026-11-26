@@ -52,6 +52,7 @@ pub(crate) struct Reader {
     installed: bool,
     hidden: bool,
     resume_pending: bool,
+    offline_send: bool,
     pending_scroll: bool,
     gap: bool,
     parked: bool,
@@ -99,6 +100,7 @@ impl Reader {
                 installed: false,
                 hidden: false,
                 resume_pending: false,
+                offline_send: false,
                 pending_scroll: false,
                 gap: false,
                 parked: false,
@@ -252,7 +254,7 @@ impl Reader {
             || self.gap
             || self.parked
             || self.settling
-            || (self.resume_pending && (!self.installed || !stream_offline))
+            || (self.resume_pending && (!self.installed || !(stream_offline && self.offline_send)))
     }
 
     pub(crate) fn has_visible_window(&self) -> bool {
@@ -333,10 +335,16 @@ impl Reader {
         self.parked = false;
         self.pending_scroll |= self.resume_pending;
         self.resume_pending = false;
+        self.offline_send = false;
+    }
+
+    pub(crate) fn stream_reconnected(&mut self) {
+        self.offline_send = false;
     }
 
     pub(crate) fn failed(&mut self) {
         self.parked = true;
+        self.offline_send = false;
     }
 
     pub(crate) fn observed_running(&mut self, running: bool, version: u64, was_streaming: bool) {
@@ -359,7 +367,13 @@ impl Reader {
         self.settling = stale && !self.independent_status();
     }
 
-    fn reconnecting(&mut self, reading: &Reading, paging: bool, history_bounds: [f32; 4]) {
+    fn reconnecting(
+        &mut self,
+        reading: &Reading,
+        paging: bool,
+        history_bounds: [f32; 4],
+        stream_lost: bool,
+    ) {
         self.activity = None;
         self.settling = false;
         self.last_taken = None;
@@ -373,6 +387,9 @@ impl Reader {
             } else {
                 self.resume_watching(self.bookmark_at(reading, history_bounds), reading);
             }
+        }
+        if stream_lost {
+            self.offline_send = true;
         }
     }
 
@@ -482,7 +499,7 @@ pub(crate) fn renderer_ready(s: &mut State, tx: &mut Tx) -> bool {
     )
 }
 
-pub(crate) fn reconnecting(s: &mut State) {
+pub(crate) fn reconnecting(s: &mut State, stream_lost: bool) {
     let history_bounds = s.tool_diff_preferences.history_bounds.get();
     let preserve_historical_page =
         s.history_detached && s.transcript_display.timeline.paging.is_some();
@@ -491,6 +508,7 @@ pub(crate) fn reconnecting(s: &mut State) {
             s.transcript_display.reading_mut(),
             s.paging && !preserve_historical_page,
             history_bounds,
+            stream_lost,
         );
     }
 
@@ -503,6 +521,7 @@ pub(crate) fn invalidate(s: &mut State) {
         .reading_mut()
         .reset_to_latest(s.revision);
     if let Some(reader) = &mut s.reader {
+        reader.offline_send = false;
         reader.bookmark = Bookmark::Latest;
         if !reader.hidden {
             reader.resume(Bookmark::Latest);
@@ -1871,7 +1890,7 @@ mod resume_tests {
 
         // Trigger SSE reconnect before ReaderSync arrives; reconnect generation must still honor scrolled_top.
         rt.update(|s, _| {
-            reconnecting(s);
+            reconnecting(s, true);
         });
         let reconnect_gen = rt.state.reader.as_ref().unwrap().generation;
         lane.events

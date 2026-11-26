@@ -87,6 +87,9 @@ fn drain_chat(
                     if s.history_detached {
                         s.stream_offline = false;
                     }
+                    if let Some(reader) = &mut s.reader {
+                        reader.stream_reconnected();
+                    }
                     s.conversation_stream_connected = true;
                     s.transcript_display.messages.refresh();
                     s.status_permissions.online(true);
@@ -426,7 +429,7 @@ fn drain_chat(
                 if !stream_lost && !keep_stream_authority {
                     s.composer.picker.set_attachments_supported(false);
                 }
-                chat::reader::reconnecting(s);
+                chat::reader::reconnecting(s, stream_lost);
                 #[cfg(target_arch = "wasm32")]
                 if stream_lost && !platform::pairing::required(s) {
                     platform::pairing::observe(s);

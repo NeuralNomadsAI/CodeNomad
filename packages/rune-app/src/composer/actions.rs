@@ -317,7 +317,6 @@ pub fn can_send(s: &State) -> bool {
     }
     let stream_disconnected =
         s.stream_offline && matches!(s.phase, Phase::StreamDisconnected { .. });
-    let reader_offline = stream_disconnected && !s.conversation_stream_connected;
     (stream_disconnected || matches!(s.phase, Phase::Ready | Phase::Streaming))
         && !s
             .screen
@@ -328,7 +327,7 @@ pub fn can_send(s: &State) -> bool {
         && !crate::git::placement_unconfirmed(s)
         && s.reader
             .as_ref()
-            .is_none_or(|reader| !reader.blocks_send_while(reader_offline))
+            .is_none_or(|reader| !reader.blocks_send_while(stream_disconnected))
         && s.composer.sending.is_none()
         && !s.transcript_display.messages.pending()
         && !s.composer.picker.open()
@@ -947,6 +946,20 @@ mod tests {
             Phase::StreamDisconnected { running: false }
         ));
         assert!(rt.state.stream_offline);
+        assert!(can_send(&rt.state));
+
+        // A host SSE preferences invalidation while upstream is still down must not revoke
+        // the reader's offline send exception before AgentHint(true) announces recovery.
+        out.try_send(crate::transport::Event::Preferences(
+            codenomad_client::settings::Owner::Config,
+        ))
+        .unwrap();
+        assert!(crate::chat::events::poll_chat_for_window(
+            &mut rt.state,
+            64,
+            false
+        ));
+        assert!(rt.state.conversation_stream_connected);
         assert!(can_send(&rt.state));
 
         out.try_send(crate::transport::Event::AgentHint(true))
