@@ -157,9 +157,15 @@ export async function projectMissionActivity(input: {
     while (cursor && !actors.has(cursor) && !seen.has(cursor)) {
       seen.add(cursor)
       if (!parents.has(cursor)) {
-        if (budget.reads-- <= 0) return
-        const id = cursor, session = await settle(() => observe(() => input.client.session.get({ sessionID: id }, { signal })))
-        parents.set(id, session.ok ? session.value.parentID : undefined)
+        const kept = input.cache?.parent(input.client, cursor)
+        if (kept) parents.set(cursor, kept.parentID)
+        else {
+          if (budget.reads-- <= 0) return
+          const id = cursor, epoch = input.cache?.currentEpoch()
+          const session = await settle(() => observe(() => input.client.session.get({ sessionID: id }, { signal })))
+          parents.set(id, session.ok ? session.value.parentID : undefined)
+          if (session.ok && epoch !== undefined) input.cache?.keepParent(input.client, id, session.value.parentID, epoch)
+        }
       }
       cursor = parents.get(cursor)
     }

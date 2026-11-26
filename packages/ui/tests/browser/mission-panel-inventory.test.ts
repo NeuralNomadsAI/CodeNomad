@@ -204,7 +204,8 @@ test("an unselected task actor outside the observation window reuses the session
     await f.page.evaluate(() => (window as any).missionFixture.queuePermission("ses_actor_189", "catalog_permission"))
     await row.locator('[data-child-activity="permission"]').waitFor()
     assert.notEqual(await row.locator(".mission-row-flag").getAttribute("data-mark"), "permission")
-    assert.equal(f.native.filter(value => value === "get:ses_actor_189").length, 0, "known session signals do not require another actor window")
+    // The actor's own session is read only as the ancestry of its pending native request.
+    assert.equal(f.requests.filter(request => request.source === "activity").length, 0, "known session signals do not require another actor window")
     assert.equal(f.requests.filter(request => request.source === "mission" || request.source === "tasks").length, 0)
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.close() }
