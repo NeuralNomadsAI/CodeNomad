@@ -55,7 +55,8 @@ pub(super) fn bounded_prose_matches(
     let truncated = shown.len() < source.len();
     let local = local_images::prepare(s, key, &shown, truncated, conversation);
     let fallback = local.fallback_label();
-    markdown::prose_has_match_with_images(&shown, truncated, query, &fallback)
+    let image_search = local.image_search_text();
+    markdown::prose_has_match_with_images(&shown, truncated, query, &fallback, &image_search)
 }
 
 pub(super) fn skill_prose_matches(
@@ -226,7 +227,13 @@ fn prose_for(
             && let Some(q) = query
             && let Some(claimed) = q.claimed
             && let Some(pq) = prose_query
-            && markdown::prose_has_match_with_images(shown, truncated, pq, &local.fallback_label())
+            && markdown::prose_has_match_with_images(
+                shown,
+                truncated,
+                pq,
+                &local.fallback_label(),
+                &local.image_search_text(),
+            )
         {
             claimed.set(true);
         }
@@ -268,9 +275,10 @@ fn prose_for(
             let diff_group = group.clone();
             let diff_scope = scope.clone();
             let image_scope = scope.clone();
-            let (fallback_fn, image_lookup, image_frame, retain_failures) =
-                local.into_render(image_scope);
-            retain_failures(markdown::prose_with_images(
+            let image_search_terms = prose_query.map(|q| (q.terms.to_vec(), q.ranked));
+            let (fallback_fn, image_search_fn, image_lookup, image_frame) =
+                local.into_render(image_scope, image_search_terms);
+            markdown::prose_with_images(
                 shown,
                 streaming,
                 truncated,
@@ -392,9 +400,10 @@ fn prose_for(
                         .child(card)
                 },
                 fallback_fn,
+                image_search_fn,
                 image_lookup,
                 image_frame,
-            ))
+            )
         };
         if units > TOOL_LIMIT {
             markdown::hold_frame(memo_key, stamp, build)

@@ -4,7 +4,7 @@ use crate::{
     content::{Part, PictureSource, Tool},
     history::Row,
 };
-use rune::{El, Image, col, text};
+use rune::{El, Image, col};
 use rune_theme_codenomad::{layout::Layout, markdown};
 use std::{
     borrow::Cow,
@@ -76,19 +76,12 @@ struct Slot {
     lease: Rc<()>,
     fallback: String,
     image: Option<Image>,
-}
-
-struct RetainedFailure {
-    key: String,
-    source: PictureSource,
-    mime: String,
-    lease: Rc<()>,
+    failed: bool,
 }
 
 #[derive(Default)]
 pub(super) struct Plan {
     occurrences: HashMap<String, Vec<Option<Slot>>>,
-    retained_failures: Vec<RetainedFailure>,
     sentinel: Option<Image>,
     pub(super) stamp: Vec<(String, String, SlotStamp)>,
     pub(super) sentinel_ready: bool,
@@ -116,6 +109,26 @@ fn fallback_matcher(kept: HashMap<String, Vec<bool>>) -> impl Fn(&str, bool) -> 
     }
 }
 
+fn image_search_matcher(
+    kept_meta: HashMap<String, Vec<Option<(String, String)>>>,
+) -> impl Fn(&str, &str) -> Option<(String, String)> {
+    let cursors: RefCell<HashMap<String, usize>> = RefCell::new(HashMap::new());
+    move |src: &str, alt: &str| {
+        let entries = kept_meta.get(src)?;
+        let mut cursors = cursors.borrow_mut();
+        let index = cursors.entry(src.to_owned()).or_insert(0);
+        let slot = entries.get(*index)?.as_ref();
+        *index += 1;
+        let (slot_key, fallback) = slot?;
+        let label = if alt.trim().is_empty() {
+            fallback.clone()
+        } else {
+            alt.to_owned()
+        };
+        Some((slot_key.clone(), label))
+    }
+}
+
 impl Plan {
     pub(super) fn fallback_label(&self) -> impl Fn(&str, bool) -> Option<String> {
         let kept = self
@@ -131,31 +144,62 @@ impl Plan {
         fallback_matcher(kept)
     }
 
+    pub(super) fn image_search_text(&self) -> impl Fn(&str, &str) -> Option<(String, String)> {
+        let kept_meta = self
+            .occurrences
+            .iter()
+            .map(|(src, entries)| {
+                let meta = entries
+                    .iter()
+                    .filter_map(Option::as_ref)
+                    .map(|slot| {
+                        slot.image
+                            .is_none()
+                            .then(|| (slot.key.clone(), slot.fallback.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                (src.clone(), meta)
+            })
+            .collect();
+        image_search_matcher(kept_meta)
+    }
+
     #[allow(clippy::type_complexity)]
     pub(super) fn into_render(
         self,
         scope: Rc<()>,
+        search_terms: Option<(Vec<String>, bool)>,
     ) -> (
         impl Fn(&str, bool) -> Option<String>,
+        impl Fn(&str, &str) -> Option<(String, String)>,
         impl Fn(&str) -> Option<Image> + 'static,
-        impl Fn(El, &markdown::ImageFrame<'_>) -> El + 'static,
-        impl FnOnce(El) -> El,
+        impl Fn(El, &markdown::ImageFrame<'_>, Option<&str>) -> El + 'static,
     ) {
         let mut kept: HashMap<String, Vec<bool>> = HashMap::with_capacity(self.occurrences.len());
+        let mut kept_meta: HashMap<String, Vec<Option<(String, String)>>> =
+            HashMap::with_capacity(self.occurrences.len());
         let mut active_slots: HashMap<String, VecDeque<Slot>> = HashMap::new();
         for (src, entries) in self.occurrences {
             let mut flags = Vec::with_capacity(entries.len());
+            let mut meta = Vec::new();
             for entry in entries {
                 if let Some(slot) = entry {
                     flags.push(true);
+                    meta.push(
+                        slot.image
+                            .is_none()
+                            .then(|| (slot.key.clone(), slot.fallback.clone())),
+                    );
                     active_slots.entry(src.clone()).or_default().push_back(slot);
                 } else {
                     flags.push(false);
                 }
             }
-            kept.insert(src, flags);
+            kept.insert(src.clone(), flags);
+            kept_meta.insert(src, meta);
         }
         let fallback = fallback_matcher(kept);
+        let search_text = image_search_matcher(kept_meta);
         let slots = Rc::new(RefCell::new(active_slots));
         let lookup_slots = slots.clone();
         let sentinel = self.sentinel;
@@ -164,84 +208,62 @@ impl Plan {
             let slot = slots.get(src)?.front()?;
             slot.image.clone().or_else(|| sentinel.clone())
         };
-        let frame_scope = scope.clone();
-        let frame = move |el: El, frame: &markdown::ImageFrame<'_>| {
-            let slot = slots
-                .borrow_mut()
-                .get_mut(frame.src)
-                .and_then(VecDeque::pop_front);
-            let Some(slot) = slot else {
-                return markdown::prose_image(el);
-            };
-            let content = if slot.image.is_some() {
-                markdown::prose_image(el)
-            } else {
-                let label = if frame.alt.trim().is_empty() {
-                    slot.fallback
-                } else {
-                    frame.alt.to_owned()
+        let frame =
+            move |el: El, frame: &markdown::ImageFrame<'_>, active_slot_key: Option<&str>| {
+                let slot = slots
+                    .borrow_mut()
+                    .get_mut(frame.src)
+                    .and_then(VecDeque::pop_front);
+                let Some(slot) = slot else {
+                    return markdown::prose_image(el);
                 };
-                text(label)
-            };
-            let Slot {
-                key,
-                source,
-                mime,
-                lease,
-                ..
-            } = slot;
-            let scope = frame_scope.clone();
-            let target = key.clone();
-            // Rune Kit stamps a positional `bN` key on the root element returned by `image_frame`.
-            // Keep the source-scoped key and visibility handler on a child so replacing a failed
-            // source at the same path fires a fresh visibility event while staying on screen.
-            col().full_width().child(content.key(key).on_visible(
-                move |s: &mut State, visible, tx| {
-                    if s.current_scope(&scope) {
-                        s.transcript_display
-                            .pictures
-                            .local_visibility(&target, &source, &mime, &lease, visible);
-                        if visible {
-                            tx.wake_after(std::time::Duration::ZERO);
+                let content = if slot.image.is_some() {
+                    markdown::prose_image(el)
+                } else {
+                    let label = if frame.alt.trim().is_empty() {
+                        slot.fallback
+                    } else {
+                        frame.alt.to_owned()
+                    };
+                    let frame_query = search_terms.as_ref().map(|(terms, ranked)| {
+                        rune_theme_codenomad::timeline::search::Query {
+                            terms,
+                            ranked: *ranked,
+                            active: active_slot_key == Some(slot.key.as_str()),
+                            claimed: None,
                         }
-                    }
-                    tx.live_only();
-                },
-            ))
-        };
-        let retained_failures = self.retained_failures;
-        let retain = move |rendered: El| {
-            if retained_failures.is_empty() {
-                return rendered;
-            }
-            let mut out = rendered;
-            for RetainedFailure {
-                key,
-                source,
-                mime,
-                lease,
-            } in retained_failures
-            {
+                    });
+                    markdown::prose_fallback_text(&label, frame_query)
+                };
+                let Slot {
+                    key,
+                    source,
+                    mime,
+                    lease,
+                    failed,
+                    ..
+                } = slot;
                 let scope = scope.clone();
                 let target = key.clone();
-                out = col()
-                    .full_width()
-                    .key(format!("{key}-failed-lease"))
-                    .child(out)
-                    .on_visible(move |s: &mut State, visible, tx| {
+                // Rune Kit stamps a positional `bN` key on the root element returned by `image_frame`.
+                // Keep the source-scoped key and visibility handler on a child so each image owns its
+                // own flat visibility/lease (including settled failures on reconnect) and replacing a
+                // failed source at the same path fires a fresh visibility event while staying on screen.
+                col().full_width().child(content.key(key).on_visible(
+                    move |s: &mut State, visible, tx| {
                         if s.current_scope(&scope) {
                             s.transcript_display
                                 .pictures
                                 .local_visibility(&target, &source, &mime, &lease, visible);
+                            if visible && !failed {
+                                tx.wake_after(std::time::Duration::ZERO);
+                            }
                         }
                         tx.live_only();
-                    });
-            }
-            // Keep an outer wrapper so `document::window`'s `.key(content_key)` does not overwrite
-            // the failed-lease key on the inner visibility node.
-            col().full_width().child(out)
-        };
-        (fallback, images, frame, retain)
+                    },
+                ))
+            };
+        (fallback, search_text, images, frame)
     }
 }
 
@@ -249,7 +271,7 @@ impl Plan {
 /// The renderer cannot load such paths directly; it can reuse a completed tool image already held
 /// by the same session.
 pub(crate) fn local_image_path(src: &str) -> Option<String> {
-    let value = src.trim();
+    let value = trim_whatwg(src);
     if value.is_empty()
         || value.starts_with("//")
         || value.starts_with('#')
@@ -266,14 +288,27 @@ pub(crate) fn local_image_path(src: &str) -> Option<String> {
     Some(normalize_path(value))
 }
 
+fn trim_whatwg(value: &str) -> &str {
+    value.trim_matches(|c: char| c <= '\u{0020}' || c.is_whitespace())
+}
+
 fn parse_file_url(value: &str) -> Option<String> {
-    // Reject WHATWG double-dot segments per segment before URL parsing collapses them away
-    // (including when a later segment has a malformed percent sequence like `%ZZ`).
-    let raw_tail = value.get(5..)?.split(['?', '#']).next().unwrap_or_default();
+    // Apply WHATWG URL preprocessing (trim leading/trailing C0 controls and space, remove ASCII
+    // tab/CR/LF) before checking double-dot segments independently so trailing controls like
+    // `..&#1;` or later malformed percent escapes like `%ZZ` cannot hide `..` before URL parsing.
+    let cleaned: String = trim_whatwg(value)
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\r' | '\n'))
+        .collect();
+    let raw_tail = cleaned
+        .get(5..)?
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default();
     if has_file_url_parent_segment(raw_tail) {
         return None;
     }
-    let (host, raw_path) = codenomad_client::http::file_url_parts(value)?;
+    let (host, raw_path) = codenomad_client::http::file_url_parts(&cleaned)?;
     let path = decode_uri_component(&raw_path);
     if has_parent_segment(&path) {
         return None;
@@ -285,12 +320,8 @@ fn parse_file_url(value: &str) -> Option<String> {
 }
 
 fn has_file_url_parent_segment(raw_tail: &str) -> bool {
-    let cleaned: String = raw_tail
-        .chars()
-        .filter(|c| !matches!(c, '\t' | '\r' | '\n'))
-        .map(|c| if c == '\\' { '/' } else { c })
-        .collect();
-    cleaned.split('/').any(|segment| {
+    let normalized = raw_tail.replace('\\', "/");
+    normalized.split('/').any(|segment| {
         segment == ".."
             || segment.eq_ignore_ascii_case(".%2e")
             || segment.eq_ignore_ascii_case("%2e.")
@@ -301,7 +332,7 @@ fn has_file_url_parent_segment(raw_tail: &str) -> bool {
 
 /// Whether a Markdown image source is a `file:` URL, whose path is already percent-decoded.
 pub(crate) fn is_file_url(src: &str) -> bool {
-    let value = src.trim();
+    let value = trim_whatwg(src);
     value
         .get(..5)
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
@@ -636,11 +667,20 @@ pub(super) fn prepare(
                         lease,
                         fallback: filename_label(&local),
                         image: Some(image),
+                        failed: false,
                     }));
             }
-            LocalImageState::Pending => {
-                plan.stamp
-                    .push((raw_src.clone(), key.clone(), SlotStamp::Pending));
+            LocalImageState::Pending | LocalImageState::Failed => {
+                let failed = matches!(state, LocalImageState::Failed);
+                plan.stamp.push((
+                    raw_src.clone(),
+                    key.clone(),
+                    if failed {
+                        SlotStamp::Failed
+                    } else {
+                        SlotStamp::Pending
+                    },
+                ));
                 if plan.sentinel_ready {
                     plan.occurrences
                         .entry(raw_src)
@@ -652,24 +692,12 @@ pub(super) fn prepare(
                             lease,
                             fallback: filename_label(&local),
                             image: None,
+                            failed,
                         }));
                 } else {
                     // Wait for the web 1x1 sentinel microtask before lifting this slot into Block::Image.
                     plan.occurrences.entry(raw_src).or_default().push(None);
                 }
-            }
-            LocalImageState::Failed => {
-                // Rewrite settled failures back to searchable plain fallback text while retaining the
-                // lease so the entry stays settled (no retry loop) and reconnect can still retry it.
-                plan.stamp
-                    .push((raw_src.clone(), key.clone(), SlotStamp::Failed));
-                plan.occurrences.entry(raw_src).or_default().push(None);
-                plan.retained_failures.push(RetainedFailure {
-                    key,
-                    source: matched.source.clone(),
-                    mime: matched.mime.clone(),
-                    lease,
-                });
             }
         }
     }

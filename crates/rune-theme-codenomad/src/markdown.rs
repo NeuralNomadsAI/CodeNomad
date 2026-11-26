@@ -8,7 +8,8 @@ use std::borrow::Cow;
 
 pub fn prose_has_match(source: &str, query: crate::timeline::search::Query<'_>) -> bool {
     let source = literal_breaks(source);
-    !prose_ranges(&source, query, 1).is_empty()
+    let (ranges, active_image) = prose_ranges_with_images(&source, query, 1, &|_, _| None);
+    !ranges.is_empty() || active_image.is_some()
 }
 
 pub fn prose_has_match_with_images(
@@ -16,14 +17,16 @@ pub fn prose_has_match_with_images(
     truncated: bool,
     query: crate::timeline::search::Query<'_>,
     fallback_label: &dyn Fn(&str, bool) -> Option<String>,
+    image_search_text: &dyn Fn(&str, &str) -> Option<(String, String)>,
 ) -> bool {
     let source = literal_breaks_with_images(source, truncated, fallback_label);
-    !prose_ranges(&source, query, 1).is_empty()
+    let (ranges, active_image) = prose_ranges_with_images(&source, query, 1, image_search_text);
+    !ranges.is_empty() || active_image.is_some()
 }
 
 /// Returns the source string of every lifted `Block::Image` occurrence in document order.
-/// Images inside headings, table cells, links or emphasis are not lifted by Rune Kit and are
-/// omitted here so callers do not fetch them.
+/// Images inside headings, table cells, links, emphasis or another image's alt text are not
+/// liftable and are stripped before parsing so discovery matches rendered `Block::Image` order.
 pub fn prose_lifted_images(source: &str, truncated: bool) -> Vec<String> {
     fn collect(blocks: Vec<Block>, found: &mut Vec<String>) {
         for block in blocks {
@@ -42,7 +45,9 @@ pub fn prose_lifted_images(source: &str, truncated: bool) -> Vec<String> {
     if !source.contains("![") {
         return Vec::new();
     }
-    let normalized = literal_breaks_with_images(source, truncated, &|_, _| None);
+    let normalized = literal_breaks_with_images(source, truncated, &|_, liftable| {
+        (!liftable).then(String::new)
+    });
     let mut found = Vec::new();
     collect(parse(&normalized), &mut found);
     found
@@ -50,6 +55,10 @@ pub fn prose_lifted_images(source: &str, truncated: bool) -> Vec<String> {
 
 pub fn prose_image(image: El) -> El {
     image.radius(0.0).cursor(rune::Cursor::Default)
+}
+
+pub fn prose_fallback_text(label: &str, query: Option<crate::timeline::search::Query<'_>>) -> El {
+    crate::timeline::search::ink(rune::text(label.to_owned()).selectable(true), label, query)
 }
 
 pub fn blank_pixel(wake: rune::Waker) -> rune::Image {
@@ -83,8 +92,9 @@ pub fn prose<S: 'static>(
         frame,
         diff_frame,
         |_, _| None,
+        |_, _| None,
         |_| None,
-        |el, _| prose_image(el),
+        |el, _, _| prose_image(el),
     )
 }
 
@@ -102,8 +112,9 @@ pub fn prose_with_images<S: 'static>(
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
     diff_frame: impl Fn(El, &DiffFrame<'_>) -> El + 'static,
     fallback_label: impl Fn(&str, bool) -> Option<String>,
+    image_search_text: impl Fn(&str, &str) -> Option<(String, String)>,
     image: impl Fn(&str) -> Option<rune::Image> + 'static,
-    image_frame: impl Fn(El, &ImageFrame<'_>) -> El + 'static,
+    image_frame: impl Fn(El, &ImageFrame<'_>, Option<&str>) -> El + 'static,
 ) -> El {
     let dark = dark();
     let kit = kit(dark);
@@ -123,13 +134,29 @@ pub fn prose_with_images<S: 'static>(
         .syntax_highlight(highlight)
         .diagram_max_items(crate::document_reader::MERMAID_MAX_ITEMS);
     let source = literal_breaks_with_images(source, truncated, &fallback_label).into_owned();
-    let matches: Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)> = match query {
-        Some(q) => prose_ranges(&source, q, 512)
-            .into_iter()
-            .enumerate()
-            .map(|(i, spans)| {
-                let hl =
-                    if q.active && i == 0 && q.claimed.is_none_or(|claimed| !claimed.replace(true))
+    let (matches, active_image_key): (
+        Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)>,
+        Option<String>,
+    ) = match query {
+        Some(q) => {
+            let (ranges, first_image) =
+                prose_ranges_with_images(&source, q, 512, &image_search_text);
+            let active_image = if q.active
+                && first_image.is_some()
+                && q.claimed.is_none_or(|claimed| !claimed.replace(true))
+            {
+                first_image
+            } else {
+                None
+            };
+            let matches = ranges
+                .into_iter()
+                .enumerate()
+                .map(|(i, spans)| {
+                    let hl = if active_image.is_none()
+                        && q.active
+                        && i == 0
+                        && q.claimed.is_none_or(|claimed| !claimed.replace(true))
                     {
                         rune_kit::markdown::Highlight::current()
                             .bg(t.color("transcript-search-active"))
@@ -141,10 +168,12 @@ pub fn prose_with_images<S: 'static>(
                             .bg(t.color("transcript-search-mark"))
                             .radius(0.0)
                     };
-                (spans, hl)
-            })
-            .collect(),
-        None => Vec::new(),
+                    (spans, hl)
+                })
+                .collect();
+            (matches, active_image)
+        }
+        None => (Vec::new(), None),
     };
     Markdown::new(source)
         .style(style)
@@ -157,25 +186,36 @@ pub fn prose_with_images<S: 'static>(
         .on_link_secondary(move |s, href, press, tx| secondary(s, href, (press.x, press.y), tx))
         .link_help(help)
         .images(image)
-        .image_frame(image_frame)
+        .image_frame(move |el, frame| image_frame(el, frame, active_image_key.as_deref()))
         .code_wrap(wrapped)
         .code_frame(frame)
         .diff_frame(diff_frame)
         .build(kit)
 }
 
+#[cfg(test)]
 fn prose_ranges(
     source: &str,
     query: crate::timeline::search::Query<'_>,
     limit: usize,
 ) -> Vec<Vec<std::ops::Range<usize>>> {
+    prose_ranges_with_images(source, query, limit, &|_, _| None).0
+}
+
+fn prose_ranges_with_images(
+    source: &str,
+    query: crate::timeline::search::Query<'_>,
+    limit: usize,
+    image_search_text: &dyn Fn(&str, &str) -> Option<(String, String)>,
+) -> (Vec<Vec<std::ops::Range<usize>>>, Option<String>) {
     if limit == 0 || source.is_empty() {
-        return Vec::new();
+        return (Vec::new(), None);
     }
     let options =
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     const MAX_SPANS: usize = 2_048;
     let mut out = Vec::new();
+    let mut first_image_hit: Option<String> = None;
     let mut total_spans = 0usize;
     let mut blocks = 0usize;
     let mut rendered = String::new();
@@ -238,13 +278,32 @@ fn prose_ranges(
         map.clear();
     };
     let mut skipped_image_depth = 0usize;
+    let mut skipped_image_src = String::new();
+    let mut skipped_image_alt = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
         if skipped_image_depth > 0 {
             match event {
                 Event::Start(Tag::Image { .. }) => skipped_image_depth += 1,
                 Event::End(pulldown_cmark::TagEnd::Image) => {
                     skipped_image_depth = skipped_image_depth.saturating_sub(1);
+                    if skipped_image_depth == 0 {
+                        if let Some((slot_key, label)) =
+                            image_search_text(&skipped_image_src, &skipped_image_alt)
+                            && out.is_empty()
+                            && first_image_hit.is_none()
+                            && query.matches(&label)
+                        {
+                            first_image_hit = Some(slot_key);
+                            if limit == 1 {
+                                break;
+                            }
+                        }
+                        skipped_image_src.clear();
+                        skipped_image_alt.clear();
+                    }
                 }
+                Event::Text(text) | Event::Code(text) => skipped_image_alt.push_str(&text),
+                Event::SoftBreak | Event::HardBreak => skipped_image_alt.push(' '),
                 _ => {}
             }
             continue;
@@ -258,7 +317,13 @@ fn prose_ranges(
                     &mut total_spans,
                     &mut blocks,
                 );
+                if limit == 1 && !out.is_empty() {
+                    break;
+                }
                 skipped_image_depth = 1;
+                skipped_image_src.clear();
+                skipped_image_src.push_str(dest_url);
+                skipped_image_alt.clear();
             }
             Event::Text(ref text) | Event::Code(ref text) => {
                 if text.is_empty() {
@@ -340,7 +405,7 @@ fn prose_ranges(
     if limit > 1 {
         out.truncate((16_384 / blocks.max(1)).clamp(1, limit));
     }
-    out
+    (out, first_image_hit)
 }
 
 fn map_inline_code(
@@ -569,6 +634,14 @@ fn literal_breaks_with_images<'a>(
                     stripped_fallback = fallback;
                     continue;
                 }
+                // Any image nested inside a kept image's alt text is non-liftable so start-tag
+                // order matches Rune Kit's lifted Block::Image order.
+                non_liftable_depth += 1;
+                continue;
+            }
+            Event::End(pulldown_cmark::TagEnd::Image) => {
+                non_liftable_depth = non_liftable_depth.saturating_sub(1);
+                continue;
             }
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
                 let line_start = source[..range.start].rfind('\n').map_or(0, |i| i + 1);
@@ -975,12 +1048,12 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
     let ok_spans = prose_ranges(&rewritten, ok_query, 8);
     assert_eq!(ok_spans.len(), 1);
     assert_eq!(&rewritten[ok_spans[0][0].clone()], "Ok");
-    assert!(ok_spans[0][0].start > rewritten.find("## Head").unwrap());
+    assert!(ok_spans[0][0].start > rewritten.find("## ![Head]()").unwrap());
     assert_eq!(
         prose_lifted_images(
-            "![A](a.png)\n\n## ![B](b.png)\n\n*![C](c.png)*\n\n[![D](d.png)](https://example.test)\n\n> ![E](e.png)",
+            "![A](a.png)\n\n## ![B](b.png)\n\n*![C](c.png)*\n\n[![D](d.png)](https://example.test)\n\n> ![E](e.png)\n\n![outer ![inner](x.png)](outer.png)",
             false
         ),
-        vec!["a.png", "e.png"]
+        vec!["a.png", "e.png", "outer.png"]
     );
 }

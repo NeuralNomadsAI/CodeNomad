@@ -67,6 +67,14 @@ fn local_image_path_matches_solid_rules() {
     assert_eq!(local_image_path("file:///tmp/.%2E/out.png"), None);
     assert_eq!(local_image_path("file:///tmp/%2e\t%2e/out.png"), None);
     assert_eq!(local_image_path("file:///tmp/..\n/out.png"), None);
+    assert_eq!(
+        local_image_path("file:///tmp/chart.png/sub/..\u{0001}"),
+        None
+    );
+    assert_eq!(
+        local_image_path("\u{0001}file:///tmp/chart.png/sub/.."),
+        None
+    );
     for rejected in [
         "",
         "   ",
@@ -712,4 +720,140 @@ fn url_shaped_alt_text_on_fallback_renders_without_link_and_matches_search() {
             query,
         ));
     });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn offscreen_failed_image_is_not_requeued_on_reconnect_while_other_prose_stays_visible() {
+    let tool_msg = history::decode_message(&json!({
+        "id":"m1","type":"assistant","time":{"completed":1},
+        "content":[{
+            "type":"tool","id":"call-http","name":"read",
+            "state":{
+                "status":"completed",
+                "input":{"filePath":"/tmp/net.png"},
+                "content":[{"type":"file","filename":"/tmp/net.png","mime":"image/png","uri":"https://127.0.0.1:1/net.png"}]
+            }
+        }]
+    }))
+    .unwrap();
+    let short_prose = history::decode_message(&json!({
+        "id":"m2","type":"assistant","time":{"completed":2},
+        "content":[{"type":"text","text":"![Offscreen failed](/tmp/net.png)"}]
+    }))
+    .unwrap();
+    let source = PictureSource::Http("https://127.0.0.1:1/net.png".into());
+    let mut state = init();
+    state.phase = Phase::Ready;
+    state.messages = vec![tool_msg.into(), short_prose.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (800.0, 320.0),
+        Env::new(false, 1.0),
+    );
+    // Let the visible HTTP image fail and settle first.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        rt.update(|s, tx| {
+            if crate::chat::events::poll_chat(s, 4) {
+                tx.instant();
+            }
+        });
+        rt.frame(1.0 / 60.0);
+        let mut failed = false;
+        rt.update(|s, _| {
+            failed = matches!(
+                s.transcript_display
+                    .pictures
+                    .local_slot("fragment-m2:0-local-image-0", &source, "image/png")
+                    .2,
+                LocalImageState::Failed
+            );
+        });
+        if failed {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "http failure did not settle"
+        );
+        std::thread::yield_now();
+    }
+    // Grow the message tail so the failed image moves offscreen while the rest of the message
+    // remains visible in the stick-bottom viewport.
+    let spacer = "visible tail line\n\n".repeat(120);
+    let tall_prose = history::decode_message(&json!({
+        "id":"m2","type":"assistant","time":{"completed":2},
+        "content":[{"type":"text","text":format!("![Offscreen failed](/tmp/net.png)\n\n{spacer}")}]
+    }))
+    .unwrap();
+    rt.update(|s, tx| {
+        s.messages[1] = tall_prose.into();
+        tx.instant();
+    });
+    for _ in 0..4 {
+        rt.update(|s, tx| {
+            if crate::chat::events::poll_chat(s, 4) {
+                tx.instant();
+            }
+        });
+        rt.frame(1.0 / 60.0);
+    }
+    // Reconnect while the failed image is offscreen and the tail of m2 is visible:
+    // the offscreen failed image must NOT be re-queued.
+    rt.update(|s, _| {
+        s.transcript_display.pictures.retry_interrupted();
+        assert!(
+            !s.transcript_display.pictures.local_visible_or_queued(
+                "fragment-m2:0-local-image-0",
+                &source,
+                "image/png",
+            ),
+            "offscreen failed image must stay unqueued across reconnect while tail prose is visible"
+        );
+    });
+    // Also verify nested image syntax renders the outer image cleanly without order inversion.
+    let nested_tool = history::decode_message(&json!({
+        "id":"m3","type":"assistant","time":{"completed":3},
+        "content":[{
+            "type":"tool","id":"call-nested","name":"read",
+            "state":{
+                "status":"completed",
+                "input":{"filePath":"/tmp/nested.png"},
+                "content":[{"type":"file","filename":"/tmp/nested.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_A}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let nested_prose = history::decode_message(&json!({
+        "id":"m4","type":"assistant","time":{"completed":4},
+        "content":[{"type":"text","text":"![before ![inner](/tmp/nested.png) after](/tmp/nested.png)"}]
+    }))
+    .unwrap();
+    let mut nested_state = init();
+    nested_state.phase = Phase::Ready;
+    nested_state.messages = vec![nested_tool.into(), nested_prose.into()];
+    let mut nested_rt = Runtime::new(
+        nested_state,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (800.0, 400.0),
+        Env::new(false, 1.0),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        nested_rt.update(|s, tx| {
+            if crate::chat::events::poll_chat(s, 4) {
+                tx.instant();
+            }
+        });
+        nested_rt.frame(1.0 / 60.0);
+        let tree = nested_rt.accessibility_json().to_string();
+        if tree.matches("\"role\":\"image\"").count() == 1 {
+            assert!(tree.contains("before inner after"), "{tree}");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{tree}");
+        std::thread::yield_now();
+    }
 }

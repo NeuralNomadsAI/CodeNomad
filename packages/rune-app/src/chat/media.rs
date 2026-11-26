@@ -151,6 +151,21 @@ impl Pictures {
         self.visibility(key, media, mime, lease, visible);
     }
 
+    #[cfg(test)]
+    pub(super) fn local_visible_or_queued(
+        &self,
+        key: &str,
+        source: &PictureSource,
+        mime: &str,
+    ) -> bool {
+        let key = source_key(key, source, mime);
+        self.waiting.iter().any(|queued| queued == &key)
+            || self
+                .images
+                .get(&key)
+                .is_some_and(|entry| entry.visible || entry.request.is_some())
+    }
+
     fn visibility(
         &mut self,
         key: &str,
