@@ -100,6 +100,19 @@ pub(super) async fn dispatch(
         ))
         .await?;
     }
+    if value["type"] == "instance.event"
+        && let Some((id, session_id)) = crate::settings::integrations::session_stream_event(&value)
+        && id == b.workspace
+    {
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::IntegrationsChanged {
+                workspace_id: id.into(),
+                session_id: session_id.map(str::to_owned),
+            },
+        ))
+        .await?;
+    }
     if let Some(event) = workspace_event(b, &value) {
         out.send(Input::Workspace(epoch, event)).await?;
         return Ok(());

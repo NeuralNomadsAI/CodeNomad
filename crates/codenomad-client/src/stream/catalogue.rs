@@ -81,6 +81,8 @@ fn workspace_event_bytes(event: &WorkspaceEvent) -> usize {
 pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
+    integrations: Mutex<CatalogueChanges>,
+    integration_sessions: Mutex<CatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
@@ -103,7 +105,12 @@ struct StatsChanges {
 impl Signals {
     pub(super) fn invalidate_all(&self) {
         let workspace = !self.workspace_overflow.swap(true, SeqCst);
-        if self.mark(&self.pending, None) | self.mark(&self.providers, None) | workspace {
+        if self.mark(&self.pending, None)
+            | self.mark(&self.providers, None)
+            | self.mark(&self.integrations, None)
+            | self.mark(&self.integration_sessions, None)
+            | workspace
+        {
             (self.wake)();
         }
     }
@@ -111,6 +118,8 @@ impl Signals {
     pub(super) fn reconnected(&self) {
         self.mark(&self.pending, None);
         self.mark(&self.providers, None);
+        self.mark(&self.integrations, None);
+        self.mark(&self.integration_sessions, None);
         self.generation.fetch_add(1, SeqCst);
         let _ = self
             .workspace_generation
@@ -201,6 +210,14 @@ impl Signals {
             });
         let provider_changed = crate::settings::provider_change(frame)
             .is_some_and(|id| self.mark(&self.providers, Some(id)));
+        let integration_changed = match crate::settings::integrations::change_event(frame) {
+            Some((ws, None)) => {
+                self.mark(&self.integrations, Some(ws))
+                    | self.mark(&self.integration_sessions, Some(ws))
+            }
+            Some((ws, Some(_))) => self.mark(&self.integration_sessions, Some(ws)),
+            None => false,
+        };
         let kind = frame["type"].as_str();
         let workspace = match kind {
             Some("workspace.worktreesChanged" | "workspace.stopped" | "workspace.filesChanged") => {
@@ -209,7 +226,7 @@ impl Signals {
             _ => &frame["instanceId"],
         };
         let Some(id) = workspace.as_str().filter(|id| valid_id(id)) else {
-            if workspace_event || provider_changed {
+            if workspace_event || provider_changed || integration_changed {
                 (self.wake)();
             }
             return;
@@ -259,6 +276,7 @@ impl Signals {
         };
         if (invalidates && self.mark(&self.pending, Some(id)))
             | provider_changed
+            | integration_changed
             | workspace_event
             | stopped
             | attention
@@ -313,6 +331,8 @@ impl CatalogueWatch {
         let signals = Arc::new(Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -414,6 +434,13 @@ impl CatalogueWatch {
             std::mem::take(&mut *self.signals.providers.lock().unwrap()),
             std::mem::take(&mut *self.signals.stopped.lock().unwrap()),
             self.signals.generation.load(SeqCst),
+        )
+    }
+
+    pub fn take_integration_changes(&self) -> (CatalogueChanges, CatalogueChanges) {
+        (
+            std::mem::take(&mut *self.signals.integrations.lock().unwrap()),
+            std::mem::take(&mut *self.signals.integration_sessions.lock().unwrap()),
         )
     }
     pub fn take_stats_changes(
@@ -589,6 +616,8 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -664,6 +693,8 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -696,6 +727,8 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
@@ -735,6 +768,8 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
