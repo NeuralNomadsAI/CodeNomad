@@ -89,6 +89,44 @@ impl Pictures {
         }
     }
 
+    pub(super) fn local_slot(
+        &self,
+        key: &str,
+        source: &PictureSource,
+        mime: &str,
+    ) -> (String, Rc<()>, Option<Image>) {
+        let key = source_key(key, source, mime);
+        let entry = self.images.get(&key).filter(|entry| entry.media == *source);
+        let lease = entry
+            .and_then(|entry| entry.lease.upgrade())
+            .unwrap_or_default();
+        let image = entry
+            .and_then(|entry| entry.image.as_ref())
+            .filter(|image| {
+                image.is_ready()
+                    && image.error().is_none()
+                    && attachment::decoded_size(image).is_none_or(|[width, height]| {
+                        codenomad_client::files::images::transcript_dimensions(
+                            width as usize,
+                            height as usize,
+                        )
+                    })
+            })
+            .cloned();
+        (key, lease, image)
+    }
+
+    pub(super) fn local_visibility(
+        &mut self,
+        key: &str,
+        media: &PictureSource,
+        mime: &str,
+        lease: &Rc<()>,
+        visible: bool,
+    ) {
+        self.visibility(key, media, mime, lease, visible);
+    }
+
     fn visibility(
         &mut self,
         key: &str,

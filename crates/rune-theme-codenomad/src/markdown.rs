@@ -9,6 +9,24 @@ pub fn prose_has_match(source: &str, query: crate::timeline::search::Query<'_>) 
     !prose_ranges(&source, query, 1).is_empty()
 }
 
+pub fn prose_image_sources(source: &str) -> Vec<String> {
+    if !source.contains("![") {
+        return Vec::new();
+    }
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
+    let mut out = Vec::new();
+    for event in Parser::new_ext(source, options) {
+        if let Event::Start(Tag::Image { dest_url, .. }) = event {
+            let url = dest_url.into_string();
+            if !out.contains(&url) {
+                out.push(url);
+            }
+        }
+    }
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn prose<S: 'static>(
     source: &str,
@@ -22,6 +40,39 @@ pub fn prose<S: 'static>(
     wrapped: impl Fn(usize, &str) -> bool + 'static,
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
     diff_frame: impl Fn(El, &DiffFrame<'_>) -> El + 'static,
+) -> El {
+    prose_with_images(
+        source,
+        streaming,
+        truncated,
+        highlight,
+        query,
+        link,
+        secondary,
+        help,
+        wrapped,
+        frame,
+        diff_frame,
+        |_| false,
+        |_| None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn prose_with_images<S: 'static>(
+    source: &str,
+    streaming: bool,
+    truncated: bool,
+    highlight: bool,
+    query: Option<crate::timeline::search::Query<'_>>,
+    link: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
+    secondary: impl Fn(&mut S, &str, (f32, f32), &mut rune::Tx) + 'static,
+    help: impl Fn(&str) -> Option<String> + 'static,
+    wrapped: impl Fn(usize, &str) -> bool + 'static,
+    frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
+    diff_frame: impl Fn(El, &DiffFrame<'_>) -> El + 'static,
+    strip_image: impl Fn(&str) -> bool,
+    image: impl Fn(&str) -> Option<rune::Image> + 'static,
 ) -> El {
     let dark = dark();
     let kit = kit(dark);
@@ -40,7 +91,7 @@ pub fn prose<S: 'static>(
         .link_underline(rune::Color::TRANSPARENT)
         .syntax_highlight(highlight)
         .diagram_max_items(crate::document_reader::MERMAID_MAX_ITEMS);
-    let source = literal_breaks_with(source, truncated).into_owned();
+    let source = literal_breaks_with_images(source, truncated, &strip_image).into_owned();
     let matches: Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)> = match query {
         Some(q) => prose_ranges(&source, q, 512)
             .into_iter()
@@ -74,6 +125,8 @@ pub fn prose<S: 'static>(
         .on_link_tx(link)
         .on_link_secondary(move |s, href, press, tx| secondary(s, href, (press.x, press.y), tx))
         .link_help(help)
+        .images(image)
+        .image_frame(|el, _| el.radius(0.0).cursor(rune::Cursor::Default))
         .code_wrap(wrapped)
         .code_frame(frame)
         .diff_frame(diff_frame)
@@ -337,11 +390,29 @@ pub fn link_menu<S: 'static>(
 // Normalize only parsed events. Diagram fences stay on Kit's source path so the
 // transcript can gate preview on completion and keep source actions on one frame.
 pub(crate) fn literal_breaks(source: &str) -> Cow<'_, str> {
-    literal_breaks_with(source, false)
+    literal_breaks_with_images(source, false, &|_| false)
 }
 
-fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
-    if !source.contains(['<', '\n']) {
+fn push_escaped_markdown(out: &mut String, text: &str) {
+    for c in text.chars() {
+        match c {
+            '\n' => out.push_str("  \n"),
+            '\r' => {}
+            c if c.is_ascii_punctuation() => {
+                use std::fmt::Write;
+                let _ = write!(out, "&#{};", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+}
+
+fn literal_breaks_with_images<'a>(
+    source: &'a str,
+    truncated: bool,
+    strip_image: &dyn Fn(&str) -> bool,
+) -> Cow<'a, str> {
+    if !source.contains(['<', '\n']) && !source.contains("![") {
         return Cow::Borrowed(source);
     }
     let options =
@@ -349,8 +420,27 @@ fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
     let mut last = 0;
     let mut in_list_item = 0usize;
     let mut quote_depth = 0usize;
+    let mut stripped_image_depth = 0usize;
+    let mut stripped_alt = String::new();
     let mut result = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
+        if stripped_image_depth > 0 {
+            match event {
+                Event::Start(Tag::Image { .. }) => stripped_image_depth += 1,
+                Event::End(pulldown_cmark::TagEnd::Image) => {
+                    stripped_image_depth -= 1;
+                    if stripped_image_depth == 0 {
+                        push_escaped_markdown(&mut result, &stripped_alt);
+                        stripped_alt.clear();
+                        last = range.end;
+                    }
+                }
+                Event::Text(text) | Event::Code(text) => stripped_alt.push_str(&text),
+                Event::SoftBreak | Event::HardBreak => stripped_alt.push(' '),
+                _ => {}
+            }
+            continue;
+        }
         match &event {
             Event::Start(Tag::Item) => {
                 in_list_item += 1;
@@ -366,6 +456,12 @@ fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
             }
             Event::End(pulldown_cmark::TagEnd::BlockQuote(_)) => {
                 quote_depth = quote_depth.saturating_sub(1);
+                continue;
+            }
+            Event::Start(Tag::Image { dest_url, .. }) if strip_image(dest_url) => {
+                result.push_str(&source[last..range.start]);
+                stripped_image_depth = 1;
+                stripped_alt.clear();
                 continue;
             }
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
@@ -397,17 +493,7 @@ fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
             }
             Event::Html(raw) | Event::InlineHtml(raw) => {
                 result.push_str(&source[last..range.start]);
-                for c in raw.chars() {
-                    match c {
-                        '\n' => result.push_str("  \n"),
-                        '\r' => {}
-                        c if c.is_ascii_punctuation() => {
-                            use std::fmt::Write;
-                            let _ = write!(result, "&#{};", c as u32);
-                        }
-                        c => result.push(c),
-                    }
-                }
+                push_escaped_markdown(&mut result, &raw);
             }
             _ => continue,
         }
@@ -737,4 +823,20 @@ fn prose_search_bounds_matches_and_skips_link_destinations() {
         claimed: None,
     };
     assert!(!prose_has_match(hard_break, space_query));
+}
+
+#[cfg(test)]
+#[test]
+fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text() {
+    let source = "See ![*Chart* [1]](missing.png) and ![Ok](found.png) and ![](empty.png)";
+    let rewritten = literal_breaks_with_images(source, false, &|src| src != "found.png");
+    assert_eq!(rewritten, "See Chart &#91;1&#93; and ![Ok](found.png) and ");
+    let terms = vec!["Chart".into()];
+    let query = crate::timeline::search::Query {
+        terms: &terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert_eq!(prose_ranges(&rewritten, query, 8), vec![vec![4..9]]);
 }

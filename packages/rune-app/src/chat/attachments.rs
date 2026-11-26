@@ -1,7 +1,16 @@
-use crate::{State, backend::Backend, content::Reference, platform, strings::t};
+use crate::{
+    State,
+    backend::Backend,
+    content::{PictureSource, Reference},
+    platform,
+    strings::t,
+};
 use codenomad_client::{Receiver, Sender, bounded};
 use rune::Tx;
 use std::sync::Arc;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Default)]
 pub struct Reader {
@@ -11,11 +20,36 @@ pub struct Reader {
     pub write: Option<Receiver<bool>>,
     pub error: bool,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DownloadSource {
+    Reference(Reference),
+    Picture {
+        file_id: String,
+        source: PictureSource,
+        mime: String,
+    },
+}
+
+impl DownloadSource {
+    fn needs_backend(&self) -> bool {
+        match self {
+            Self::Reference(_) => true,
+            Self::Picture { source, .. } => {
+                matches!(
+                    source,
+                    PictureSource::Attachment(_) | PictureSource::Deferred(_)
+                )
+            }
+        }
+    }
+}
+
 struct Request {
     _cancel: Sender<()>,
     result: Receiver<crate::history::Result<Arc<Vec<u8>>>>,
     name: String,
-    reference: Reference,
+    source: DownloadSource,
 }
 
 impl Reader {
@@ -31,43 +65,57 @@ impl Reader {
         self.write = None;
         self.error = false;
     }
-    pub fn available(&self) -> bool {
+    fn available_for(&self, source: &DownloadSource) -> bool {
         platform::attachment_export_available()
-            && self.backend.is_some()
+            && (!source.needs_backend() || self.backend.is_some())
             && self.pending.is_none()
             && !self.saving
     }
-    pub fn request(s: &mut State, reference: &Reference, name: &str) {
-        if !contains(s, reference) {
+    fn request_source(s: &mut State, source: DownloadSource, name: &str) {
+        if !contains(s, &source) {
             return;
         }
         let reader = &mut s.attachments;
-        if !reader.available() {
+        if !reader.available_for(&source) {
             return;
         }
-        let Some(backend) = reader.backend.clone() else {
-            return;
+        let backend = if source.needs_backend() {
+            let Some(backend) = reader.backend.clone() else {
+                return;
+            };
+            Some(backend)
+        } else {
+            None
         };
         let (cancel, cancelled) = bounded(1);
         let (out, result) = bounded(1);
-        let reference = reference.clone();
         let wake = s.wake.clone();
         let reads = s.reads.clone();
+        let task_source = source.clone();
         reader.error = false;
         reader.pending = Some(Request {
             _cancel: cancel,
             result,
             name: name.into(),
-            reference: reference.clone(),
+            source,
         });
         platform::spawn(async move {
             let Some(_slot) = reads.preview(&cancelled).await else {
                 return;
             };
-            let Some(answer) =
-                platform::reads::cancellable(&cancelled, backend.attachment_bytes(&reference))
-                    .await
-            else {
+            let Some(answer) = (match &task_source {
+                DownloadSource::Reference(reference) => {
+                    let Some(backend) = backend.as_ref() else {
+                        return;
+                    };
+                    platform::reads::cancellable(&cancelled, backend.attachment_bytes(reference))
+                        .await
+                }
+                DownloadSource::Picture { source, mime, .. } => {
+                    platform::reads::cancellable(&cancelled, source.bytes(backend.as_ref(), mime))
+                        .await
+                }
+            }) else {
                 return;
             };
             if out.send(answer).await.is_ok() {
@@ -77,14 +125,43 @@ impl Reader {
     }
 }
 
-fn contains(s: &State, reference: &Reference) -> bool {
-    s.messages.iter().any(|row| {
-        row.id == reference.message
-            && row.parts.iter().any(|part| {
-                matches!(part, crate::content::Part::File(file)
-            if file.reference.as_ref() == Some(reference))
-            })
+fn download_source(file: &crate::content::File) -> Option<DownloadSource> {
+    if let Some(reference) = &file.reference {
+        return Some(DownloadSource::Reference(reference.clone()));
+    }
+    let source = file.picture.as_ref()?;
+    if matches!(source, PictureSource::Unavailable) {
+        return None;
+    }
+    Some(DownloadSource::Picture {
+        file_id: file.id.clone(),
+        source: source.clone(),
+        mime: file.mime.clone(),
     })
+}
+
+fn contains(s: &State, target: &DownloadSource) -> bool {
+    match target {
+        DownloadSource::Reference(reference) => s.messages.iter().any(|row| {
+            row.id == reference.message
+                && row.parts.iter().any(|part| {
+                    matches!(part, crate::content::Part::File(file)
+                        if file.reference.as_ref() == Some(reference))
+                })
+        }),
+        DownloadSource::Picture {
+            file_id,
+            source,
+            mime,
+        } => s.messages.iter().any(|row| {
+            row.parts.iter().any(|part| {
+                matches!(part, crate::content::Part::File(file)
+                    if file.id == *file_id
+                        && file.mime == *mime
+                        && file.picture.as_ref() == Some(source))
+            })
+        }),
+    }
 }
 
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
@@ -102,7 +179,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let Some(request) = s.attachments.pending.as_ref() else {
         return false;
     };
-    if !contains(s, &request.reference) {
+    if !contains(s, &request.source) {
         s.attachments.cancel();
         return true;
     }
@@ -153,19 +230,18 @@ pub fn file_chip(s: &State, file: &crate::content::File) -> rune::El {
         .name
         .as_deref()
         .unwrap_or_else(|| t("messageItem.attachment.defaultName"));
-    let button = file
-        .reference
-        .clone()
+    let button = download_source(file)
         .filter(|_| platform::attachment_export_available())
-        .map(|reference| {
+        .map(|source| {
             let label = download_label(name);
             let name = name.to_owned();
+            let disabled = !s.attachments.available_for(&source);
             crate::components::button(
                 &format!("download-{}", file.id),
                 &label,
-                !s.attachments.available(),
+                disabled,
                 crate::screen::action(&s.input_scope, move |s| {
-                    Reader::request(s, &reference, &name)
+                    Reader::request_source(s, source.clone(), &name)
                 }),
             )
         });

@@ -11,6 +11,7 @@ use rune_theme_codenomad::{
 };
 use std::borrow::Cow;
 
+mod local_images;
 mod mermaid;
 
 pub(super) const PROSE_LIMIT: usize = 50_000;
@@ -192,6 +193,7 @@ fn prose_for(
         let search_overrides = s
             .transcript_display
             .diagram_search_overrides(search_id, &group);
+        let local = local_images::prepare(s, &group, shown);
         let stamp = (
             version,
             steps,
@@ -203,8 +205,14 @@ fn prose_for(
             prose_query.map(|q| (q.terms, q.ranked, q.active)),
             &diagram_sources,
             &search_overrides,
+            &local.stamp,
             (!streaming).then_some(shown),
         );
+        let demands = local.demands;
+        let has_local = local.has_local;
+        let resolved_images = local.images;
+        let demand_scope = scope.clone();
+        let demand_group = group.clone();
         let build = || {
             let diagram_sources = diagram_sources.clone();
             let search_overrides = search_overrides.clone();
@@ -214,7 +222,8 @@ fn prose_for(
             let truncated = shown.len() < source.len();
             let diff_group = group.clone();
             let diff_scope = scope.clone();
-            markdown::prose(
+            let strip_images = resolved_images.clone();
+            markdown::prose_with_images(
                 shown,
                 streaming,
                 truncated,
@@ -335,13 +344,20 @@ fn prose_for(
                         )
                         .child(card)
                 },
+                move |src| {
+                    has_local
+                        && local_images::local_image_path(src).is_some()
+                        && !strip_images.contains_key(src)
+                },
+                move |src| resolved_images.get(src).cloned(),
             )
         };
-        if units > TOOL_LIMIT {
+        let rendered = if units > TOOL_LIMIT {
             markdown::hold_frame(memo_key, stamp, build)
         } else {
             build()
-        }
+        };
+        local_images::attach(rendered, &demand_group, demand_scope, demands)
     })
 }
 
