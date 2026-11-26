@@ -50,7 +50,7 @@ impl Launcher {
         includes_linked: bool,
         reset_cursor: bool,
     ) {
-        if includes_linked || (authoritative && self.creation_uncertain_linked.is_none()) {
+        if includes_linked && self.creation_uncertain_linked.is_some() {
             self.creation_uncertain = false;
             self.creation_uncertain_linked = None;
             if self.error == Some("rune.create_error") {
@@ -310,8 +310,34 @@ pub(crate) fn choose_child_ticket(s: &mut State, id: String, ticket: Option<u64>
             s.shell.floating_sessions(),
             ticket,
             true,
+            false,
         );
     }
+}
+
+pub(crate) fn choose_mission_conversation(s: &mut State, id: String, tx: &mut Tx) {
+    s.notifications.supersede_navigation();
+    if !s.screen.is_launcher()
+        && crate::workspace::active_session(s) == Some(id.as_str())
+        && s.phase != Phase::Failed
+    {
+        if s.shell.floating_panel().is_some() {
+            s.shell.close_floating(tx);
+        }
+    } else {
+        choose_from_inner(
+            s,
+            vec![(id, None)],
+            s.shell.floating_panel(),
+            None,
+            true,
+            true,
+        );
+    }
+}
+
+pub(super) fn retry_mission_conversation(s: &mut State, id: String) {
+    choose_from_inner(s, vec![(id, None)], None, None, true, true);
 }
 
 pub(crate) fn choose_destination(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
@@ -332,7 +358,7 @@ fn choose_from(
     dismiss: Option<u64>,
     ticket: Option<u64>,
 ) {
-    choose_from_inner(s, candidates, dismiss, ticket, false);
+    choose_from_inner(s, candidates, dismiss, ticket, false, false);
 }
 fn choose_from_inner(
     s: &mut State,
@@ -340,6 +366,7 @@ fn choose_from_inner(
     dismiss: Option<u64>,
     ticket: Option<u64>,
     allow_streaming: bool,
+    close_mission_reader: bool,
 ) {
     let recovery = candidates
         .first()
@@ -366,6 +393,7 @@ fn choose_from_inner(
         return;
     };
     l.selection_ticket = ticket;
+    l.close_mission_reader_on_bind = close_mission_reader;
     l.job("sessionList.reload.error", async move {
         let mut missing = Vec::new();
         for (id, step) in candidates {
@@ -405,6 +433,10 @@ pub fn can_open_child_session(s: &State) -> bool {
     s.screen.launcher().is_some() && session_switch_allowed(s)
 }
 
+pub(crate) fn can_rebind_session(s: &State, id: &str) -> bool {
+    can_rebind(s, id)
+}
+
 pub(super) fn can_rebind(s: &State, id: &str) -> bool {
     !s.screen.is_launcher()
         && s.phase == Phase::Failed
@@ -434,7 +466,7 @@ fn shown(s: &State) -> Option<&str> {
 }
 
 pub(super) fn dismiss_origin_panel(s: &mut State, origin: Option<u64>, tx: &mut Tx) {
-    if origin.is_some() && origin == s.shell.floating_sessions() {
+    if origin.is_some() && origin == s.shell.floating_panel() {
         s.shell.close_floating(tx);
     }
 }
@@ -453,6 +485,7 @@ fn clear_conversation_only(s: &mut State) {
     s.transcript_display.pictures.clear();
     s.transcript_display.usage_family = Default::default();
     s.status_permissions.attach(None);
+    s.status_services.attach(None);
     s.status_usage.invalidate();
     s.history_detached = false;
     s.messages.clear();
@@ -589,11 +622,21 @@ fn bind_at(
             crate::files::bind(s, &b);
         } else {
             // This is the same owned occurrence and session; the in-flight reply guard stays live.
-            agent.online = false;
-            agent.pending_known = false;
+            agent.mark_offline();
+            if s.phase == Phase::Failed {
+                crate::git::close_preview(s);
+                if let Some(files) = &mut s.files {
+                    files.close_reader();
+                }
+            }
         }
     } else if s.files.as_ref().is_none_or(|ui| !ui.uses_connection(&b)) {
         crate::files::bind(s, &b);
+    } else if s.phase == Phase::Failed {
+        crate::git::close_preview(s);
+        if let Some(files) = &mut s.files {
+            files.close_reader();
+        }
     }
     s.draft = TextEdit::new(draft);
     crate::composer::literal::restore(&mut s.draft, &s.composer.draft.literal_spans);

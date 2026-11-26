@@ -60,4 +60,5 @@ export const integrationMessages = {
   "integrations.install.title": "Install integration",
   "integrations.install.confirm": "Install {name} ({scope})? The code will run with your rights in OpenCode.",
   "integrations.install.error": "Not confirmed. Refresh to check.",
+  "settings.nav.integrations": "Integrations",
 }

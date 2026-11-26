@@ -78,8 +78,20 @@ fn read_bounded(path: &str) -> Result<(Vec<u8>, u32), ReadError> {
     if !meta.is_file() {
         return Err(ReadError::Doc(DocError::Filesystem("OpenCode configuration target is not a file")));
     }
-    let mut file = std::fs::File::open(path).map_err(|e| ReadError::Io(e.kind()))?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Avoid blocking forever if the path is swapped for a FIFO between `metadata` and `open`
+        // (including during the second `verify()` while workspace/connection guards are held).
+        opts.custom_flags(libc::O_NONBLOCK);
+    }
+    let mut file = opts.open(path).map_err(|e| ReadError::Io(e.kind()))?;
     let meta = file.metadata().map_err(|e| ReadError::Io(e.kind()))?;
+    if !meta.is_file() {
+        return Err(ReadError::Doc(DocError::Filesystem("OpenCode configuration target is not a file")));
+    }
     let too_large = ReadError::Doc(DocError::Invalid("OpenCode configuration file is too large"));
     if meta.len() > MAX {
         return Err(too_large);
@@ -143,12 +155,44 @@ struct Lock {
     nonce: String,
     released: bool,
 }
+/// Non-blocking, nofollow, bounded read of the 32-hex lock owner nonce so `Lock::verify`
+/// can never block under global workspace/connection guards if `owner` is swapped for a FIFO.
+fn read_lock_owner(path: &str) -> Option<String> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.file_type().is_file() {
+        return None;
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        opts.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+    }
+    let mut file = opts.open(path).ok()?;
+    let handle_meta = file.metadata().ok()?;
+    if !handle_meta.is_file() || handle_meta.len() > 64 {
+        return None;
+    }
+    let mut buf = Vec::with_capacity(64);
+    (&mut file).take(65).read_to_end(&mut buf).ok()?;
+    if buf.len() > 64 {
+        return None;
+    }
+    String::from_utf8(buf).ok()
+}
+
 impl Lock {
     fn owner(&self) -> String {
         format!("{}{}owner", self.path, std::path::MAIN_SEPARATOR)
     }
     fn verify(&self) -> bool {
-        std::fs::read_to_string(self.owner()).ok().as_deref() == Some(self.nonce.as_str())
+        read_lock_owner(&self.owner()).as_deref() == Some(self.nonce.as_str())
     }
     fn release(&mut self) {
         if std::mem::replace(&mut self.released, true) {
@@ -218,6 +262,7 @@ pub(crate) struct Prepared {
     source: Document,
     temporary: String,
     lock: Option<Lock>,
+    committed: bool,
 }
 
 impl Drop for Prepared {
@@ -232,7 +277,10 @@ impl Drop for Prepared {
 }
 
 impl Prepared {
-    fn verify(&self) -> R<()> {
+    pub(crate) fn verify(&self) -> R<()> {
+        if self.committed {
+            return Err(DocError::Conflict("OpenCode configuration preparation is closed"));
+        }
         assert_unchanged(&self.source)?;
         if !self.lock.as_ref().is_some_and(Lock::verify) {
             return Err(DocError::Conflict("OpenCode configuration is being updated by another process"));
@@ -240,11 +288,35 @@ impl Prepared {
         Ok(())
     }
 
-    pub(crate) fn commit(mut self) -> R<()> {
-        self.verify()?;
-        match std::fs::rename(&self.temporary, &self.source.write) {
+    pub(crate) fn commit(self) -> R<()> {
+        self.commit_checked(|e| e, || Ok(()))
+    }
+
+    pub(crate) fn commit_checked<E, G>(
+        mut self,
+        map: impl Fn(DocError) -> E,
+        before_rename: impl FnOnce() -> Result<G, E>,
+    ) -> Result<(), E> {
+        self.commit_in_place(map, before_rename, || Ok(()))
+    }
+
+    /// Commits the prepared replacement while keeping its replacement lock held until `self` drops.
+    /// Re-verifies the source bytes and lock nonce both before and after `before_commit` (matching
+    /// `plugin-control-document.ts:314-328`), then calls `admit_rename` right before `rename`.
+    pub(crate) fn commit_in_place<E, G>(
+        &mut self,
+        map: impl Fn(DocError) -> E,
+        before_commit: impl FnOnce() -> Result<G, E>,
+        admit_rename: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.verify().map_err(&map)?;
+        let guard = before_commit()?;
+        self.verify().map_err(&map)?;
+        admit_rename()?;
+        let result = match std::fs::rename(&self.temporary, &self.source.write) {
             Ok(()) => {
                 self.temporary.clear();
+                self.committed = true;
                 Ok(())
             }
             Err(e)
@@ -256,10 +328,31 @@ impl Prepared {
                         | ErrorKind::DirectoryNotEmpty
                 ) =>
             {
-                Err(DocError::Conflict("OpenCode configuration changed during the update"))
+                Err(map(DocError::Conflict("OpenCode configuration changed during the update")))
             }
-            Err(_) => Err(DocError::Filesystem("Unable to atomically replace OpenCode configuration")),
-        }
+            Err(_) => Err(map(DocError::Filesystem("Unable to atomically replace OpenCode configuration"))),
+        };
+        drop(guard);
+        result
+    }
+}
+
+fn access_writable(path: &str) -> bool {
+    #[cfg(unix)]
+    {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let Ok(cstr) = CString::new(std::path::Path::new(path).as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: `cstr` is NUL-terminated for the duration of the syscall.
+        unsafe { libc::access(cstr.as_ptr(), libc::W_OK) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        let Ok(meta) = std::fs::metadata(path) else {
+            return false;
+        };
+        meta.is_dir() || !meta.permissions().readonly()
     }
 }
 
@@ -269,18 +362,28 @@ pub(crate) fn prepare(d: &Document, updated: &[u16]) -> R<Prepared> {
     let style = Style::host();
     let failed = DocError::Filesystem("Unable to atomically replace OpenCode configuration");
     let temporary = format!("{}.{}.{}.tmp", d.write, std::process::id(), hex(8)?);
-    let mut prepared = Prepared { source: d.clone(), temporary: String::new(), lock: None };
-    std::fs::create_dir_all(style.dirname(&d.write)).map_err(|_| failed.clone())?;
+    let mut prepared = Prepared { source: d.clone(), temporary: String::new(), lock: None, committed: false };
+    let directory = style.dirname(&d.write);
+    std::fs::create_dir_all(&directory).map_err(|_| failed.clone())?;
     if d.exists {
         if d.mode & 0o222 == 0 {
             return Err(DocError::Filesystem("OpenCode configuration is read-only"));
         }
-        if std::fs::metadata(&d.write).map_err(|_| failed.clone())?.permissions().readonly() {
+        if !access_writable(&d.write) {
             return Err(failed.clone());
         }
     }
-    let mut file =
-        std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|_| failed.clone())?;
+    if !access_writable(&directory) {
+        return Err(failed.clone());
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(d.mode & 0o777);
+    }
+    let mut file = options.open(&temporary).map_err(|_| failed.clone())?;
     prepared.temporary = temporary.clone();
     use std::io::Write;
     file.write_all(crate::subagent_depth::jsonc::string(updated).as_bytes()).map_err(|_| failed.clone())?;

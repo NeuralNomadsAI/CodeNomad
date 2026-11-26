@@ -253,7 +253,7 @@ fn connect_panel<S: 'static>(
             .child(text(t("settings.providers.apiKey.label")))
             .child(
                 input
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .literal_direction()
                     .key("websearch-api-key"),
             )

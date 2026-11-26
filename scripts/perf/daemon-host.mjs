@@ -5,12 +5,15 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import path from "node:path"
 import { fixtureEnvironment } from "../native-product-fixture.mjs"
-import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "../native-fixture-guards.mjs"
+import { launchFixture } from "../../packages/rune-app/fixtures/fixture-host.mjs"
+import { assertNoSystemOpenCodeConfig, attestNative } from "../../packages/rune-app/fixtures/live-access.mjs"
+import {createAttestedRelay,fixtureFetch,redactSecrets,RELAY_PLACEHOLDER_PASSWORD,resolveLocalExecutable} from "../native-fixture-http.mjs"
 import { privatePath } from "./isolation.mjs"
 import { json, now, sleep } from "./lib.mjs"
 
 export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnabled = false} = {}) {
-  assert(path.isAbsolute(cli), "Pass the absolute path to the pinned OpenCode binary")
+  cli = resolveLocalExecutable(cli, "OpenCode binary")
+  await assertNoSystemOpenCodeConfig()
   root = privatePath(root)
   const project = privatePath(path.join(root, "project"))
   await mkdir(project, { recursive: true })
@@ -21,12 +24,18 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
   const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
   const env = await fixtureEnvironment(root, {
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
-    OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
-    OPENCODE_SERVER_PASSWORD: password,
+    OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+    OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
+    OPENCODE_DISABLE_AUTOUPDATE: "true",
   })
   await mkdir(env.OPENCODE_CONFIG_DIR)
-  const git = (...args) => execFileSync("git", args, { cwd: project, env, windowsHide: true })
-  git("init", "-q")
+  const gitEnv = {
+    ...env,
+    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(root, "empty.gitconfig"),
+    GIT_TEMPLATE_DIR: "", GIT_CEILING_DIRECTORIES: root,
+  }
+  const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=", ...args], { cwd: project, env: gitEnv, windowsHide: true, timeout: 30_000 })
+  git("init", "-q", "--template=")
   git("add", ".")
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@invalid", "commit", "-qm", "fixture")
 
@@ -93,27 +102,21 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
   } } })
   let pruning
   try {
-    if(pruningEnabled){const {preparePruning}=await import('./pruning.mjs');pruning=await preparePruning(root,env.OPENCODE_CONFIG_DIR)}
+    if(pruningEnabled){const {preparePruning}=await import('./pruning.mjs');pruning=await preparePruning(root,env.OPENCODE_CONFIG_DIR,gitEnv)}
   } catch(error){provider.closeAllConnections();await new Promise(resolve=>provider.close(resolve));throw error}
-  const child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: project, env, windowsHide: true })
-  const stopped = new Promise(resolve => child.once("close", resolve))
-  let output = "", spawnError
-  child.on("error", error => { spawnError = error })
-  for (const pipe of [child.stdout, child.stderr]) pipe.on("data", bytes => { output = (output + bytes).slice(-500_000) })
+  let daemon, attested, nativeRelay
   try {
-    const deadline = Date.now() + 60_000
-    let url
-    while (!(url = output.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0])) {
-      if (spawnError) throw spawnError
-      if (child.exitCode !== null || Date.now() >= deadline) throw Error(output.slice(-3000))
-      await sleep(50)
-    }
-    const call = (method, route, body) => json(`${url}${route}`, { method, body, headers: { authorization } })
-    const info = await call("GET", "/api/info")
-    const pid = await fixtureChildPid(child)
-    assert.equal(info.pid, pid, "Bench daemon did not prove its identity")
-    await pruning?.activate({project,url,authorization},()=>assert.equal(child.exitCode,null,'Owned pruning daemon exited'))
-    await run({ project, env, url, password, authorization, call, markers, pid, cli, pruning,
+    const childEnv = { ...env, ...gitEnv }
+    const daemonEnv = { ...childEnv, OPENCODE_SERVER_PASSWORD: password }
+    daemon = launchFixture(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {cwd: project, env: daemonEnv, redact: [password]})
+    const url = await daemon.ready(stdout => stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)?.[1], 60_000)
+    const pid = await daemon.pid()
+    attested = await attestNative(url, daemon.child, authorization, fixtureFetch, pid)
+    nativeRelay = await createAttestedRelay(url, pid, { requireClientAttestation: true, injectAuthorization: authorization })
+    const {send} = attested
+    const call = (method, route, body) => json(send, route, {method, body})
+    await pruning?.activate({project,url,authorization,send},()=>assert.equal(daemon.child.exitCode,null,'Owned pruning daemon exited'))
+    await run({ project, env: childEnv, url, relayUrl: nativeRelay.origin, relayPassword: RELAY_PLACEHOLDER_PASSWORD, allowRelayClient: nativeRelay.allowClientPid, password, authorization, call, send, markers, pid, cli, pruning,
       arm(pass, size) {
         const { promise: start, resolve: release } = Promise.withResolvers()
         batch = { pass, size, start, release, ready: new Set() }
@@ -121,11 +124,11 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
     })
     if (providerError) throw providerError
   } finally {
-    try {try{await pruning?.close()}finally{await stopFixtureChild(child, stopped)}} finally {
+    try {try{await nativeRelay?.close()}finally{try{await daemon?.stop()}finally{try{await attested?.close()}finally{await pruning?.close()}}}} finally {
       provider.closeAllConnections()
       batch?.release()
       await new Promise(resolve => provider.close(resolve))
-      await writeFile(path.join(root, "daemon.log"), output.replaceAll(password, "<fixture password>"))
+      await writeFile(path.join(root, "daemon.log"), redactSecrets(daemon?.output()??"", [password]))
     }
   }
 }

@@ -4,6 +4,8 @@ pub mod demand;
 mod reader;
 mod receipts;
 mod transport;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod wake_tests;
 
 pub use reader::ReadingLane;
 pub(crate) use transport::run_with_reading;

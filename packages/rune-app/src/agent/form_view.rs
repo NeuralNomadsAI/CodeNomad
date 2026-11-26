@@ -41,7 +41,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                         t(label)
                     );
                     buttons = buttons.child(button(
-                        &format!("field-{key}-{value}"),
+                        &format!("bool-{key}-{value}"),
                         &label,
                         a.busy,
                         crate::screen::action(&scope, move |s: &mut State| {
@@ -84,7 +84,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                         .label(key)
                         .disabled(a.busy)
                         .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Form(id)))
-                        .build(field_kit(layout::dark()))
+                        .build(&field_kit(layout::dark()))
                         .key(format!("field-{key}")),
                 );
             }
@@ -129,7 +129,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                                 &scope,
                                 crate::screen::Editor::Custom(id),
                             ))
-                            .build(field_kit(layout::dark()))
+                            .build(&field_kit(layout::dark()))
                             .key(format!("custom-{key}")),
                     );
                 }
@@ -151,7 +151,7 @@ pub fn actions(s: &State, form: &Form) -> El {
         .child(button(
             "answer-question",
             t("rune.answer"),
-            a.locked() || agent_forms::answer(form, &a.drafts).is_err(),
+            a.forms_locked() || agent_forms::answer(form, &a.drafts).is_err(),
             crate::screen::action(&scope, move |s: &mut State| {
                 if let Some(a) = s.agent.as_mut() {
                     a.answer_form(&id)
@@ -161,7 +161,7 @@ pub fn actions(s: &State, form: &Form) -> El {
         .child(button(
             "cancel-question",
             t("rune.cancel_question"),
-            a.locked(),
+            a.forms_locked(),
             crate::screen::action(&scope, move |s: &mut State| {
                 if let Some(a) = s.agent.as_mut() {
                     a.cancel_form(cancel.clone())

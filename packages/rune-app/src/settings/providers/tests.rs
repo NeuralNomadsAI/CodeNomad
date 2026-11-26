@@ -168,6 +168,8 @@ fn new_runtime(base: &str) -> Runtime<Harness> {
         online: true,
         stats: [0; 2],
         stats_status: None,
+        integrations: 0,
+        integrations_session: 0,
     };
     Runtime::new(
         Harness {

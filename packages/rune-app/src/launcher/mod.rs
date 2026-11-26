@@ -31,8 +31,11 @@ use rune::{Tx, edit::TextEdit};
 use sessions::attach;
 #[cfg(feature = "test-support")]
 pub use sessions::back;
-use sessions::{bind, dismiss_origin_panel, retire_session};
-pub(crate) use sessions::{bind_search, choose_child_ticket, choose_destination};
+use sessions::{bind, dismiss_origin_panel, retire_session, retry_mission_conversation};
+pub(crate) use sessions::{
+    bind_search, can_rebind_session, choose_child_ticket, choose_destination,
+    choose_mission_conversation,
+};
 pub use sessions::{
     can_change_session, can_open_child_session, can_visit, choose, close_session, create,
     create_blank, list, visit,
@@ -81,6 +84,7 @@ pub struct Launcher {
     connection_generation: u64,
     pending_connection_generation: u64,
     selection_ticket: Option<u64>,
+    close_mission_reader_on_bind: bool,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
     managed_renewal: Option<connection::ManagedRenewal>,
@@ -214,6 +218,7 @@ impl Launcher {
             connection_generation: 0,
             pending_connection_generation: 0,
             selection_ticket: None,
+            close_mission_reader_on_bind: false,
             boot,
             host: None,
             managed_renewal: None,
@@ -377,16 +382,21 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let mut relayed = false;
     if let Some((previous, generation, overflow, disconnected, events, expired)) = stream_update {
         let mut stopped = Vec::new();
+        let mut stopped_ids = HashSet::new();
         let mut other = Vec::new();
         for event in events {
-            if matches!(
-                event,
-                codenomad_client::transport::WorkspaceEvent::Stopped { .. }
-            ) {
+            if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } = &event {
+                stopped_ids.insert(workspace_id.clone());
                 stopped.push(event);
             } else {
                 other.push(event);
             }
+        }
+        if !stopped_ids.is_empty() {
+            other.retain(|event| {
+                crate::workspace::event_workspace_id(event)
+                    .is_none_or(|id| !stopped_ids.contains(id))
+            });
         }
         if overflow
             && let Some(l) = s.screen.launcher_mut()
@@ -416,7 +426,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             relayed |= crate::workspace::deliver_detached_events(s, &stopped);
         }
         #[cfg(target_arch = "wasm32")]
-        if disconnected {
+        if disconnected && !crate::platform::pairing::required(s) {
             crate::platform::pairing::observe(s);
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -432,6 +442,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 relayed |= crate::workspace::set_detached_online(s, false);
             } else if generation % 2 == 1 {
+                #[cfg(target_arch = "wasm32")]
+                crate::platform::pairing::observe_launcher_authenticated(s, generation);
                 relayed |= crate::workspace::set_detached_online(s, false);
                 if crate::workspace::has_detached_panels(s) {
                     start_reconcile = Some(generation);
@@ -607,6 +619,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let pending_stream_generation = l.pending_stream_generation;
     let stopped_during_pending = std::mem::take(&mut l.stopped_during_pending);
     let stopped_during_pending_overflow = std::mem::take(&mut l.stopped_during_pending_overflow);
+    let close_mission_reader = std::mem::take(&mut l.close_mission_reader_on_bind);
     if l.selection_ticket
         .take()
         .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
@@ -865,9 +878,16 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.show_title = false;
                 if stale_connection {
                     dismiss_origin_panel(s, dismiss, tx);
-                    choose_destination(s, b.session, None, tx);
+                    if close_mission_reader {
+                        retry_mission_conversation(s, b.session);
+                    } else {
+                        choose_destination(s, b.session, None, tx);
+                    }
                 } else {
                     dismiss_origin_panel(s, dismiss, tx);
+                    if close_mission_reader {
+                        crate::workspace::close_mission_reader(s);
+                    }
                     bind(s, b, title, visit, &slug, tx);
                 }
             } else if !selection_blocked {
@@ -910,6 +930,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     reopen::apply(s, opening, backend, title, &slug);
                 } else {
                     s.phase = Phase::RestoreFailed;
+                    if let Some(agent) = s.agent.as_mut() {
+                        agent.mark_scope_missing();
+                    }
                 }
                 if stopped_in_flight {
                     crate::workspace::deliver_detached_events(
@@ -1006,8 +1029,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 {
                     if key == "rune.restore_error" && !s.screen.is_launcher() {
                         s.phase = Phase::RestoreFailed;
+                        if let Some(agent) = s.agent.as_mut() {
+                            agent.mark_scope_missing();
+                        }
                     }
-                    crate::platform::pairing::observe(s);
+                    if !crate::platform::pairing::required(s) {
+                        crate::platform::pairing::observe(s);
+                    }
                 }
             }
         }

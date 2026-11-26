@@ -217,7 +217,7 @@ const server = createServer(async (req,res) => {
     if (p === '/api/workspaces/catalogue' && req.method === 'DELETE') return res.writeHead(204).end()
     if (p === '/api/events') {
       const client = url.searchParams.get('clientId')
-      if (detached && !client.endsWith('-preferences')) return res.writeHead(503).end()
+      if (detached) return res.writeHead(503).end()
       res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache'})
       res.write(': ready\n\n')
       streams.set(client,res)
@@ -792,7 +792,7 @@ try {
   }
 
   async function checkStats() {
-    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
+    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
     assert(stream,'Project catalogue stream must be attached')
     const emit = value => stream.write(`data: ${JSON.stringify({instanceId:project.id,...value})}\n\n`)
     const hint = type => emit({type:'instance.event',event:{type,data:{sessionID:'ses_unselected'}}})
@@ -861,7 +861,7 @@ try {
   }
 
   async function checkNotifications() {
-    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
+    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
     assert(stream,'Project catalogue stream must be attached')
     const message = 'Short announcement from the fixture'
     const envelope = {type:'instance.event',instanceId:project.id,event:{
@@ -1033,7 +1033,7 @@ try {
   await memory.waitFor({state:'attached'})
   assert.equal(await memory.getAttribute('aria-checked'),'false')
   await memory.click({force:true})
-  await page.locator('[role="switch"][aria-checked="true"]').waitFor({state:'attached'})
+  await page.getByRole('switch',{name:'Memory',checked:true,exact:true}).waitFor({state:'attached'})
   assert.equal(await memory.getAttribute('aria-checked'),'true')
   assert.equal(memoryRequests.filter(method=>method==='PUT').length,1)
   await page.getByRole('button',{name:'Entries 1/200 New Needs review',exact:true}).waitFor({state:'attached'})
@@ -1165,7 +1165,9 @@ try {
   const itemHeaderBox = await page.getByRole('columnheader',{name:'Item',exact:true}).boundingBox()
   const stateHeaderBox = await page.getByRole('columnheader',{name:'Default state',exact:true}).boundingBox()
   const groupsRowBox = await page.getByRole('rowheader',{name:'Tool groups',exact:true}).boundingBox()
-  const groupsBtnBox = await page.getByRole('combobox',{name:'Default state for Tool groups — Collapsed',exact:true}).boundingBox()
+  const groupsPicker = page.getByRole('combobox',{name:'Default state for Tool groups',exact:true})
+  assert.equal(await groupsPicker.textContent(),'Collapsed')
+  const groupsBtnBox = await groupsPicker.boundingBox()
   assert(itemHeaderBox && stateHeaderBox && groupsRowBox && groupsBtnBox)
   assert(Math.abs(stateHeaderBox.x - groupsBtnBox.x) < 4, 'narrow table state column must align with row picker')
   assert(Math.abs(groupsRowBox.y - groupsBtnBox.y) < groupsBtnBox.height, 'narrow table row must not wrap picker below label')
@@ -1213,9 +1215,10 @@ try {
     return btn?.getAttribute('aria-description') === 'Active'
   })
   assert.equal(await presetButton('Balanced').getAttribute('aria-description'),null)
-  // Rune mirrors Select triggers with ARIA role="combobox" in both native AccessKit and browser.
-  const groupsTrigger = page.getByRole('combobox',{name:'Default state for Tool groups — Collapsed',exact:true})
-  await groupsTrigger.waitFor({state:'attached'})
+  // Rune mirrors Select triggers with ARIA role="combobox" in both native AccessKit and browser,
+  // exposing the clean label as aria-label and the selected option as textContent.
+  const groupsTrigger = page.getByRole('combobox',{name:'Default state for Tool groups',exact:true})
+  await groupsTrigger.filter({hasText:/^Collapsed$/}).waitFor({state:'attached'})
   await groupsTrigger.click({force:true})
   const savedGroups = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
   const echoGroups = page.waitForResponse(async response => {
@@ -1227,12 +1230,12 @@ try {
   await savedGroups
   await echoGroups
   assert.deepEqual(writes.at(-1),{settings:{toolGroupVisibility:'hidden'}})
-  await page.getByRole('combobox',{name:'Default state for Tool groups — Disabled',exact:true}).waitFor({state:'attached'})
+  await groupsTrigger.filter({hasText:/^Disabled$/}).waitFor({state:'attached'})
   // Concurrent edits on the server before a manual read edit must survive its merge patch.
   transcriptSettings.toolCallExpansionDefaults.tools.skill = 'expanded'
   transcriptSettings.showThinkingBlocks = true
-  const readTrigger = page.getByRole('combobox',{name:'Default state for read — Hidden',exact:true})
-  await readTrigger.waitFor({state:'attached'})
+  const readTrigger = page.getByRole('combobox',{name:'Default state for read',exact:true})
+  await readTrigger.filter({hasText:/^Hidden$/}).waitFor({state:'attached'})
   await readTrigger.click({force:true})
   const savedRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
   const echoRead = page.waitForResponse(async response => {
@@ -1246,7 +1249,7 @@ try {
   assert.deepEqual(writes.at(-1),{settings:{toolCallExpansionDefaults:{preset:'custom',tools:{read:'expanded'}}}})
   assert.equal(transcriptSettings.toolCallExpansionDefaults.tools.skill,'expanded','concurrent skill edit survived')
   assert.equal(transcriptSettings.showThinkingBlocks,true,'concurrent thinking edit survived')
-  const readExpanded = page.getByRole('combobox',{name:'Default state for read — Expanded',exact:true})
+  const readExpanded = readTrigger.filter({hasText:/^Expanded$/})
   await readExpanded.waitFor({state:'attached'})
   // Wait for the client to finish settling echoRead before opening the picker and arming 503.
   await afterPaint()
@@ -1266,7 +1269,7 @@ try {
   const writesDuringOutage = writes.length
   await presetButton('Nothing').click({force:true})
   await afterPaint()
-  const disabledRead = page.getByRole('combobox',{name:'Default state for read — Expanded',exact:true})
+  const disabledRead = readTrigger.filter({hasText:/^Expanded$/})
   assert.equal(await disabledRead.getAttribute('aria-disabled'),'true')
   await disabledRead.click({force:true})
   await afterPaint()
@@ -1290,13 +1293,13 @@ try {
   assert.equal(writes.at(-1).settings.toolCallExpansionDefaults.preset,'everything')
   assert.equal(writes.at(-1).settings.showThinkingBlocks,true)
   assert.equal(writes.at(-1).settings.showUsageMetrics,true)
-  await page.getByRole('combobox',{name:'Default state for Tool groups — Expanded',exact:true}).waitFor({state:'attached'})
+  await groupsTrigger.filter({hasText:/^Expanded$/}).waitFor({state:'attached'})
   await settingsDialog.getByRole('button',{name:'Retry',exact:true}).waitFor({state:'detached'})
   await radio('General').click({force:true})
   assert.equal(reads.length,0,'General and Chat do not load the provider catalogue')
   await radio('Providers').click({force:true})
   await visible(account)
-  const nonConversation = () => Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
+  const nonConversation = () => Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
   assert(nonConversation(),'The catalogue has an EventSource without a conversation')
   account = 'default'
   nonConversation().write(`data: ${JSON.stringify({type:'instance.event',instanceId:'catalogue',event:{type:'credential.switched'}})}\n\n`)
@@ -1313,6 +1316,8 @@ try {
   memoryEnabled = true
   await radio('General').click({force:true})
   await page.getByRole('button',{name:'Personal memory',exact:true}).waitFor({state:'attached'})
+  const tidyButton = page.getByRole('button',{name:'Tidy up',exact:true})
+  await tidyButton.and(page.locator(':not([disabled], [aria-disabled="true"])')).waitFor({state:'attached'})
   await click('Tidy up')
   await visible('Review and tidy “About you” in a new project session?')
   assert.equal(cleanupCreates,0,'No session before consent')

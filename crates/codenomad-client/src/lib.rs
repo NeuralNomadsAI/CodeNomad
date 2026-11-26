@@ -17,6 +17,7 @@ pub mod interruption_receipts;
 pub mod message_actions;
 pub mod missions;
 pub mod permission_mode;
+pub mod plugins;
 pub mod prompt;
 pub mod prompt_catalogue;
 mod prompt_command;

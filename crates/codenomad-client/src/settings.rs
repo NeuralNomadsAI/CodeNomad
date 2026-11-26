@@ -2,6 +2,7 @@
 pub mod config_files;
 pub mod images;
 pub mod info;
+pub mod integrations;
 pub mod memory;
 mod opencode_actions;
 mod providers;
@@ -278,14 +279,30 @@ impl PreferencesWatch {
         backend.client_id.push_str("-preferences");
         let client_id = backend.client_id.clone();
         let run = async move {
-            futures_lite::future::race(
-                async {
-                    let mut disconnected = false;
-                    for epoch in 1u64.. {
-                        if (backend.client.tracks_server_attestation()
-                            || (epoch > 1 && backend.client.needs_capability_recheck()))
-                            && let Err(err) = backend.attest_server().await
-                        {
+            let mut disconnected = false;
+            for epoch in 1u64.. {
+                if cancel.is_closed() {
+                    break;
+                }
+                if backend.client.tracks_server_attestation()
+                    || (epoch > 1 && backend.client.needs_capability_recheck())
+                {
+                    enum Attest {
+                        Done(crate::history::Result<()>),
+                        Cancelled,
+                    }
+                    let outcome = futures_lite::future::or(
+                        async {
+                            let _ = cancel.recv().await;
+                            Attest::Cancelled
+                        },
+                        async { Attest::Done(backend.attest_server().await.map(|_| ())) },
+                    )
+                    .await;
+                    match outcome {
+                        Attest::Cancelled => break,
+                        Attest::Done(Ok(())) => {}
+                        Attest::Done(Err(err)) => {
                             if crate::http::authentication_expired(&err) {
                                 notices.fetch_or(4, SeqCst);
                                 break;
@@ -296,76 +313,117 @@ impl PreferencesWatch {
                                     wake();
                                 }
                             }
-                            runtime::sleep(Duration::from_millis(250 * (1 << epoch.min(5)))).await;
+                            futures_lite::future::or(
+                                async {
+                                    let _ = cancel.recv().await;
+                                },
+                                runtime::sleep(Duration::from_millis(250 * (1 << epoch.min(5)))),
+                            )
+                            .await;
                             continue;
                         }
-                        let (output, events) = crate::bounded(16);
-                        let state = stream::State::default();
-                        let mut opened = false;
-                        let (result, ()) = futures_lite::future::zip(
-                            async {
-                                let output = output;
-                                stream::read(&backend, epoch, &output, &state).await
-                            },
-                            async {
-                                while let Ok(event) = events.recv().await {
-                                    let flag = match event {
-                                        Input::Opened(e) => {
-                                            opened = true;
-                                            connected_state.store(true, SeqCst);
-                                            if e > 1 { 11 | 16 | 32 } else { 11 | 32 }
-                                        }
-                                        Input::Preferences(Owner::Config) => 1,
-                                        Input::Preferences(Owner::State) => 2,
-                                        Input::Preferences(Owner::Server) => 32,
-                                        Input::Workspace(
-                                            _,
-                                            crate::transport::WorkspaceEvent::MemoryChanged,
-                                        ) => 8,
-                                        Input::Workspace(_, event @ (crate::transport::WorkspaceEvent::MissionChanged { .. }
-                                            | crate::transport::WorkspaceEvent::MissionsReconnected { .. }
-                                            | crate::transport::WorkspaceEvent::MissionActivityChanged { .. })) => {
-                                            let mut batch = mission_notices.lock().unwrap();
-                                            let overflow = if batch.len() == 128 { batch.clear(); true } else { false };
-                                            batch.push(event);
-                                            drop(batch);
-                                            wake();
-                                            if overflow { 16 } else { 0 }
-                                        }
-                                        _ => 0,
-                                    };
-                                    if flag != 0 && notices.fetch_or(flag, SeqCst) & flag != flag {
-                                        wake();
-                                    }
-                                }
-                            },
-                        )
-                        .await;
-                        connected_state.store(false, SeqCst);
-                        if opened {
-                            disconnected = false;
-                        }
-                        if result
-                            .as_ref()
-                            .is_err_and(crate::http::authentication_expired)
-                        {
-                            notices.fetch_or(4, SeqCst);
-                            break;
-                        }
-                        if !disconnected {
-                            disconnected = true;
-                            if notices.fetch_or(64, SeqCst) & 64 == 0 {
-                                wake();
-                            }
-                        }
-                        runtime::sleep(Duration::from_millis(250 * (1 << epoch.min(5)))).await;
                     }
-                },
-                async {
-                    let _ = cancel.recv().await;
-                },
-            )
-            .await;
+                }
+                let (output, events) = crate::bounded(16);
+                let state = Arc::new(stream::State::default());
+                let cancel_state = state.clone();
+                let cancel_watch = cancel.clone();
+                let (done_watch_tx, done_watch_rx) = crate::bounded::<()>(1);
+                let mut opened = false;
+                let (result, ((), ())) = futures_lite::future::zip(
+                    async {
+                        let output = output;
+                        let res = stream::read(&backend, epoch, &output, &state).await;
+                        drop(done_watch_tx);
+                        res
+                    },
+                    futures_lite::future::zip(
+                        async {
+                            while let Ok(event) = events.recv().await {
+                                let flag = match event {
+                                    Input::Opened(e) => {
+                                        opened = true;
+                                        connected_state.store(true, SeqCst);
+                                        if e > 1 { 11 | 16 | 32 } else { 11 | 32 }
+                                    }
+                                    Input::Hint(_, _) => 11 | 16 | 32,
+                                    Input::Preferences(Owner::Config) => 1,
+                                    Input::Preferences(Owner::State) => 2,
+                                    Input::Preferences(Owner::Server) => 32,
+                                    Input::Workspace(
+                                        _,
+                                        crate::transport::WorkspaceEvent::MemoryChanged,
+                                    ) => 8,
+                                    Input::Workspace(
+                                        _,
+                                        event @ (crate::transport::WorkspaceEvent::MissionChanged { .. }
+                                        | crate::transport::WorkspaceEvent::MissionsReconnected { .. }
+                                        | crate::transport::WorkspaceEvent::MissionActivityChanged {
+                                            ..
+                                        }),
+                                    ) => {
+                                        let mut batch = mission_notices.lock().unwrap();
+                                        let overflow = if batch.len() == 128 {
+                                            batch.clear();
+                                            true
+                                        } else {
+                                            false
+                                        };
+                                        batch.push(event);
+                                        drop(batch);
+                                        wake();
+                                        if overflow { 16 } else { 0 }
+                                    }
+                                    _ => 0,
+                                };
+                                if flag != 0 && notices.fetch_or(flag, SeqCst) & flag != flag {
+                                    wake();
+                                }
+                            }
+                        },
+                        async {
+                            futures_lite::future::or(
+                                async {
+                                    let _ = cancel_watch.recv().await;
+                                    cancel_state.cancel();
+                                },
+                                async {
+                                    let _ = done_watch_rx.recv().await;
+                                },
+                            )
+                            .await;
+                        },
+                    ),
+                )
+                .await;
+                connected_state.store(false, SeqCst);
+                if cancel.is_closed() || state.is_cancelled() {
+                    break;
+                }
+                if opened {
+                    disconnected = false;
+                }
+                if result
+                    .as_ref()
+                    .is_err_and(crate::http::authentication_expired)
+                {
+                    notices.fetch_or(4, SeqCst);
+                    break;
+                }
+                if !disconnected {
+                    disconnected = true;
+                    if notices.fetch_or(64, SeqCst) & 64 == 0 {
+                        wake();
+                    }
+                }
+                futures_lite::future::or(
+                    async {
+                        let _ = cancel.recv().await;
+                    },
+                    runtime::sleep(Duration::from_millis(250 * (1 << epoch.min(5)))),
+                )
+                .await;
+            }
             // The EventSource/HTTP response has been dropped before releasing the next reader.
             connected_state.store(false, SeqCst);
             drop(close);

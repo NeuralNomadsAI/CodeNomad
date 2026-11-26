@@ -52,6 +52,31 @@ impl Pictures {
             self.generation += 1;
         }
     }
+    pub(crate) fn retained_bytes(&self) -> usize {
+        let encoded = MAX_FILE_BYTES.saturating_sub(self.budget);
+        let decoded = self.shown.values().fold(0usize, |total, image| {
+            let pixels = rune_theme_codenomad::attachment::decoded_size(image)
+                .map_or(0, |[w, h]| {
+                    (w as usize).saturating_mul(h as usize).saturating_mul(4)
+                });
+            total.saturating_add(pixels)
+        });
+        encoded.max(decoded)
+    }
+    pub(crate) fn evict(&mut self) -> usize {
+        let before = self.retained_bytes();
+        if before == 0 && self.shown.is_empty() && self.requested.is_empty() {
+            return 0;
+        }
+        self.suspend();
+        self.scope = None;
+        self.shown = Rc::default();
+        self.requested.clear();
+        self.budget = MAX_FILE_BYTES;
+        self.ready = 0;
+        self.cache = ImageCache::new(self.wake.clone());
+        before
+    }
     pub fn sync(
         &mut self,
         identity: Option<(u64, u64)>,
