@@ -30,6 +30,8 @@ pub use staleness::probe_stale;
 #[path = "stream_browser.rs"]
 mod browser;
 
+type SessionDeletedHook = Arc<(Arc<dyn Fn() + Send + Sync>, AtomicBool)>;
+
 pub struct State {
     pub cancelled: AtomicBool,
     pub version: AtomicU64,
@@ -45,7 +47,7 @@ pub struct State {
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
     closed: (Sender<()>, crate::Receiver<()>),
     provider_usage: Option<crate::provider_usage::Watch>,
-    on_session_deleted: Option<Arc<(Arc<dyn Fn() + Send + Sync>, AtomicBool)>>,
+    on_session_deleted: Option<SessionDeletedHook>,
 }
 
 impl Default for State {

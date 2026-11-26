@@ -46,8 +46,10 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.persistence.write_error,
         ui.persistence.partial,
     );
-    let snapshot = ui.snapshot();
-    ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
+    if ui.persistence.poll_save_ready(ui.revision, now, tx) {
+        let snapshot = ui.snapshot();
+        ui.persistence.start_save(&snapshot, s.wake.clone());
+    }
     let error = (
         ui.persistence.read_error,
         ui.persistence.write_error,

@@ -404,7 +404,13 @@ impl Ui {
         // Limit: if CSPRNG fails and more closed drafts exist than available v1 slots or global
         // v1 budget allows, extra copies cannot be stored without substituting weak UUIDs or
         // changing the v1 schema.
-        if !self.closed_pending_deleted.is_empty() && super::encode(&snap).is_ok() {
+        if !self.closed_pending_deleted.is_empty()
+            && let Ok(mut used_units) = super::snapshot_string_units(&snap)
+            && used_units <= super::MAX_STRINGS
+            && let Ok(encoded) = super::snapshot_bytes(&snap)
+            && encoded.len() <= super::MAX_BYTES
+        {
+            let mut used_bytes = encoded.len();
             let tab_has_room = |w: &Workspace, extra: &[&str]| -> bool {
                 let mut keys: HashSet<&str> = w
                     .drafts
@@ -418,14 +424,158 @@ impl Ui {
                 }
                 keys.len() <= super::MAX_DRAFTS
             };
-            let try_insert =
+            #[derive(Clone, Copy)]
+            struct TabContainers {
+                drafts_empty: bool,
+                att_empty: bool,
+                parts_empty: bool,
+            }
+            struct BundleCost {
+                has_text: bool,
+                has_att: bool,
+                has_parts: bool,
+                valid: bool,
+                text_u16: usize,
+                text_json: usize,
+                parts_json: usize,
+            }
+            impl BundleCost {
+                fn from_bundle(b: &drafts::ClosedBundle) -> Self {
+                    let text = b.text.as_deref().filter(|t| !t.is_empty());
+                    let has_text = text.is_some();
+                    let has_att = b.attachment_draft || b.attachment_parts.is_some();
+                    let has_parts = b.attachment_parts.is_some();
+                    let text_u16 = text.map_or(0, |t| t.encode_utf16().count());
+                    let parts_valid = b.attachment_parts.as_ref().is_none_or(|p| p.valid());
+                    let valid =
+                        (has_text || has_att) && text_u16 <= super::MAX_DRAFT && parts_valid;
+                    let text_json = text
+                        .and_then(|t| serde_json::to_vec(t).ok().map(|v| v.len()))
+                        .unwrap_or(0);
+                    let parts_json = b
+                        .attachment_parts
+                        .as_ref()
+                        .and_then(|p| serde_json::to_vec(&p.encode()).ok().map(|v| v.len()))
+                        .unwrap_or(0);
+                    Self {
+                        has_text,
+                        has_att,
+                        has_parts,
+                        valid,
+                        text_u16,
+                        text_json,
+                        parts_json,
+                    }
+                }
+                fn units(&self, key_u16: usize, key_valid: bool) -> Option<usize> {
+                    if !self.valid || !key_valid {
+                        return None;
+                    }
+                    let mut u = 0usize;
+                    if self.has_text {
+                        u = u.saturating_add(key_u16).saturating_add(self.text_u16);
+                    }
+                    if self.has_att {
+                        u = u.saturating_add(key_u16);
+                    }
+                    Some(u)
+                }
+                fn bytes(&self, key_json: usize, c: TabContainers) -> usize {
+                    let mut n = 0usize;
+                    if self.has_text {
+                        n = n
+                            .saturating_add(key_json)
+                            .saturating_add(1)
+                            .saturating_add(self.text_json)
+                            .saturating_add(usize::from(!c.drafts_empty));
+                    }
+                    if self.has_att {
+                        n = n.saturating_add(key_json).saturating_add(if c.att_empty {
+                            ",\"attachmentDrafts\":[]".len()
+                        } else {
+                            1
+                        });
+                    }
+                    if self.has_parts {
+                        n = n
+                            .saturating_add(key_json)
+                            .saturating_add(1)
+                            .saturating_add(self.parts_json)
+                            .saturating_add(if c.parts_empty {
+                                ",\"attachmentParts\":{}".len()
+                            } else {
+                                1
+                            });
+                    }
+                    n
+                }
+                fn apply_containers(&self, c: TabContainers) -> TabContainers {
+                    TabContainers {
+                        drafts_empty: c.drafts_empty && !self.has_text,
+                        att_empty: c.att_empty && !self.has_att,
+                        parts_empty: c.parts_empty && !self.has_parts,
+                    }
+                }
+            }
+            // Exact maximum-cardinality, lexicographically smallest (newest-first) subset under a
+            // single additive budget, given `(bundle_idx, weight)` sorted by ascending `bundle_idx`.
+            fn best_subset_1d(pool: &[(usize, usize)], cap: usize, budget: usize) -> Vec<usize> {
+                if cap == 0 || pool.is_empty() {
+                    return Vec::new();
+                }
+                let mut weights: Vec<usize> = pool.iter().map(|&(_, w)| w).collect();
+                weights.sort_unstable();
+                let mut k_max = 0usize;
+                let mut sum = 0usize;
+                for w in weights.into_iter().take(cap) {
+                    if sum.saturating_add(w) <= budget {
+                        sum += w;
+                        k_max += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if k_max == 0 {
+                    return Vec::new();
+                }
+                let mut chosen = Vec::with_capacity(k_max);
+                let mut rem = budget;
+                let mut need = k_max;
+                for (pos, &(idx, w)) in pool.iter().enumerate() {
+                    if need == 0 {
+                        break;
+                    }
+                    if w > rem {
+                        continue;
+                    }
+                    let after_need = need - 1;
+                    let suffix = &pool[pos + 1..];
+                    if suffix.len() < after_need {
+                        continue;
+                    }
+                    if after_need == 0 {
+                        chosen.push(idx);
+                        break;
+                    }
+                    let mut tail: Vec<usize> = suffix.iter().map(|&(_, sw)| sw).collect();
+                    tail.select_nth_unstable(after_need - 1);
+                    let min_tail: usize = tail[..after_need]
+                        .iter()
+                        .copied()
+                        .fold(0usize, usize::saturating_add);
+                    if min_tail <= rem - w {
+                        chosen.push(idx);
+                        rem -= w;
+                        need -= 1;
+                    }
+                }
+                chosen
+            }
+            let apply_bundle =
                 |snap: &mut Snapshot, dest: usize, key: &str, bundle: &drafts::ClosedBundle| {
                     let Tab::Workspace(w) = &mut snap.tabs[dest] else {
-                        return false;
+                        return;
                     };
-                    let prev_text = w.drafts.get(key).cloned();
-                    let prev_att = w.attachment_drafts.contains(key);
-                    let prev_parts = w.attachment_parts.get(key).cloned();
                     if let Some(text) = &bundle.text
                         && !text.is_empty()
                     {
@@ -437,34 +587,11 @@ impl Ui {
                     if let Some(parts) = &bundle.attachment_parts {
                         w.attachment_parts.insert(key.into(), parts.clone());
                     }
-                    if super::encode(snap).is_ok() {
-                        return true;
-                    }
-                    if let Tab::Workspace(w) = &mut snap.tabs[dest] {
-                        match prev_text {
-                            Some(t) => {
-                                w.drafts.insert(key.into(), t);
-                            }
-                            None => {
-                                w.drafts.remove(key);
-                            }
-                        }
-                        if prev_att {
-                            w.attachment_drafts.insert(key.into());
-                        } else {
-                            w.attachment_drafts.remove(key);
-                        }
-                        match prev_parts {
-                            Some(p) => {
-                                w.attachment_parts.insert(key.into(), p);
-                            }
-                            None => {
-                                w.attachment_parts.remove(key);
-                            }
-                        }
-                    }
-                    false
                 };
+            let local_u16 = super::NO_SESSION_DRAFT_ID.encode_utf16().count();
+            let local_json = serde_json::to_vec(super::NO_SESSION_DRAFT_ID)
+                .map(|v| v.len())
+                .unwrap_or(usize::MAX);
             for (scope, id) in &self.closed_pending_deleted {
                 let clear_authorities = drafts::collect_open_clear_authorities(self, scope, id);
                 let (closed_bundles, _) = drafts::collect_closed_bundles_for_recovery(
@@ -484,7 +611,7 @@ impl Ui {
                             && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
                     })
                     .count();
-                let mut no_session_free = !snap.tabs.iter().any(|tab| {
+                let no_session_free = !snap.tabs.iter().any(|tab| {
                     matches!(tab, Tab::Workspace(w) if scope.matches(w)
                         && (w.drafts.get(super::NO_SESSION_DRAFT_ID).is_some_and(|t| !t.is_empty())
                             || w.attachment_drafts.contains(super::NO_SESSION_DRAFT_ID)
@@ -495,37 +622,57 @@ impl Ui {
                 if unprojected.is_empty() {
                     continue;
                 }
-                let can_host_session = |tabs: &[Tab], i: usize| -> bool {
+                let rem_units = super::MAX_STRINGS.saturating_sub(used_units);
+                let rem_bytes = super::MAX_BYTES.saturating_sub(used_bytes);
+                let ses_u16 = id.encode_utf16().count();
+                let ses_valid = super::draft_id(id) && ses_u16 <= 256;
+                let ses_json = serde_json::to_vec(id)
+                    .map(|v| v.len())
+                    .unwrap_or(usize::MAX);
+                let costs: Vec<BundleCost> =
+                    unprojected.iter().map(BundleCost::from_bundle).collect();
+                let local_units: Vec<Option<usize>> =
+                    costs.iter().map(|c| c.units(local_u16, true)).collect();
+                let ses_units: Vec<Option<usize>> =
+                    costs.iter().map(|c| c.units(ses_u16, ses_valid)).collect();
+                let tab_containers: Vec<Option<TabContainers>> = snap
+                    .tabs
+                    .iter()
+                    .map(|tab| match tab {
+                        Tab::Workspace(w) => Some(TabContainers {
+                            drafts_empty: w.drafts.is_empty(),
+                            att_empty: w.attachment_drafts.is_empty(),
+                            parts_empty: w.attachment_parts.is_empty(),
+                        }),
+                        Tab::Blank => None,
+                    })
+                    .collect();
+                let can_host_session = |i: usize, extra_local: bool| -> bool {
                     matches!(
-                        &tabs[i],
+                        &snap.tabs[i],
                         Tab::Workspace(w)
                             if scope.matches(w)
                                 && !self.entries[i].cleared.contains(id)
                                 && !w.drafts.contains_key(id)
                                 && !w.attachment_drafts.contains(id)
                                 && !w.attachment_parts.contains_key(id)
-                                && tab_has_room(w, &[id.as_str()])
+                                && if extra_local {
+                                    tab_has_room(w, &[super::NO_SESSION_DRAFT_ID, id.as_str()])
+                                } else {
+                                    tab_has_room(w, &[id.as_str()])
+                                }
                     )
                 };
-                let find_empty_session = |tabs: &[Tab], prefer_surviving: bool| {
-                    tabs.iter().enumerate().find_map(|(i, _)| {
-                        if (prefer_surviving && self.entries[i].closing_deferred)
-                            || !can_host_session(tabs, i)
-                        {
-                            return None;
-                        }
-                        Some(i)
-                    })
-                };
-                // Simulate each candidate placement (pure session-key placement vs placing each
-                // bundle in __no_session_draft__ on each eligible tab) against full v1 encoding so
-                // we maximize genuinely encodable preserved drafts before tie-breaking by
-                // surviving tabs, local recovery slot preference, newest local draft, and tab
-                // order.
+                // Maximize genuinely encodable preserved drafts across all `(no_session_dest,
+                // local_bundle_idx)` placements using exact precomputed UTF-16/byte costs, then
+                // break ties by surviving tabs, priority of kept bundles, local recovery slot
+                // usage, newest local bundle, and tab order; validate the winner once with full
+                // v1 `encode`.
                 #[derive(PartialEq, Eq, PartialOrd, Ord)]
                 struct FallbackRank {
                     kept: usize,
                     surviving: usize,
+                    kept_priority: std::cmp::Reverse<Vec<usize>>,
                     used_no_session: bool,
                     newest_local: std::cmp::Reverse<usize>,
                     dest_surviving: bool,
@@ -540,64 +687,209 @@ impl Ui {
                             && tab_has_room(w, &[super::NO_SESSION_DRAFT_ID])
                         {
                             for bundle_idx in 0..unprojected.len() {
-                                candidates.push((Some(i), Some(bundle_idx)));
+                                if local_units[bundle_idx].is_some() {
+                                    candidates.push((Some(i), Some(bundle_idx)));
+                                }
                             }
                         }
                     }
                 }
-                let mut best: Option<(FallbackRank, Snapshot)> = None;
+                let mut best: Option<(
+                    FallbackRank,
+                    Option<(usize, usize)>,
+                    Vec<(usize, usize)>,
+                    usize,
+                )> = None;
                 for (no_session_dest, local_bundle_idx) in candidates {
-                    let mut cand = snap.clone();
-                    let mut kept = 0usize;
-                    let mut surviving_kept = 0usize;
-                    let mut used_no_session = false;
-                    if let (Some(dest), Some(bundle_idx)) = (no_session_dest, local_bundle_idx) {
-                        if !try_insert(
-                            &mut cand,
-                            dest,
-                            super::NO_SESSION_DRAFT_ID,
-                            &unprojected[bundle_idx],
-                        ) {
-                            continue;
-                        }
-                        used_no_session = true;
-                        kept += 1;
-                        if !self.entries[dest].closing_deferred {
-                            surviving_kept += 1;
-                        }
-                    }
-                    for (bundle_idx, bundle) in unprojected.iter().enumerate() {
-                        if local_bundle_idx == Some(bundle_idx) {
-                            continue;
-                        }
-                        if let Some(dest) = find_empty_session(&cand.tabs, true)
-                            .or_else(|| find_empty_session(&cand.tabs, false))
-                            && try_insert(&mut cand, dest, id, bundle)
-                        {
-                            kept += 1;
-                            if !self.entries[dest].closing_deferred {
-                                surviving_kept += 1;
+                    let (local_u, local_b) =
+                        if let (Some(dest), Some(lb)) = (no_session_dest, local_bundle_idx) {
+                            let Some(lu) = local_units[lb] else {
+                                continue;
+                            };
+                            let Some(c) = tab_containers[dest] else {
+                                continue;
+                            };
+                            let lb_bytes = costs[lb].bytes(local_json, c);
+                            if lu > rem_units || lb_bytes > rem_bytes {
+                                continue;
+                            }
+                            (lu, lb_bytes)
+                        } else {
+                            (0, 0)
+                        };
+                    let rem_u = rem_units - local_u;
+                    let rem_b = rem_bytes - local_b;
+                    let mut slots: Vec<(usize, TabContainers)> = Vec::new();
+                    let mut surviving_slots = 0usize;
+                    for prefer_surviving in [true, false] {
+                        for i in 0..snap.tabs.len() {
+                            if self.entries[i].closing_deferred == prefer_surviving {
+                                continue;
+                            }
+                            let is_local_dest = no_session_dest == Some(i);
+                            if !can_host_session(i, is_local_dest) {
+                                continue;
+                            }
+                            let Some(mut c) = tab_containers[i] else {
+                                continue;
+                            };
+                            if is_local_dest && let Some(lb) = local_bundle_idx {
+                                c = costs[lb].apply_containers(c);
+                            }
+                            slots.push((i, c));
+                            if prefer_surviving {
+                                surviving_slots += 1;
                             }
                         }
                     }
+                    let pool_u: Vec<(usize, usize)> = (0..unprojected.len())
+                        .filter(|&b| local_bundle_idx != Some(b))
+                        .filter_map(|b| Some((b, ses_units[b]?)))
+                        .collect();
+                    let exact_fit = |chosen: &[usize]| -> Option<(usize, usize)> {
+                        if chosen.len() > slots.len() {
+                            return None;
+                        }
+                        let mut u = 0usize;
+                        let mut b = 0usize;
+                        for (&bundle_idx, &(_, c)) in chosen.iter().zip(slots.iter()) {
+                            u = u.saturating_add(ses_units[bundle_idx]?);
+                            b = b.saturating_add(costs[bundle_idx].bytes(ses_json, c));
+                        }
+                        (u <= rem_u && b <= rem_b).then_some((u, b))
+                    };
+                    let chosen_ses = {
+                        let cand_u = best_subset_1d(&pool_u, slots.len(), rem_u);
+                        if exact_fit(&cand_u).is_some() {
+                            cand_u
+                        } else {
+                            let mut best_ses: Option<Vec<usize>> = None;
+                            let mut consider = |cand: Vec<usize>| {
+                                if exact_fit(&cand).is_none() {
+                                    return;
+                                }
+                                let better = best_ses.as_ref().is_none_or(|prev| {
+                                    (cand.len(), std::cmp::Reverse(&cand))
+                                        > (prev.len(), std::cmp::Reverse(prev))
+                                });
+                                if better {
+                                    best_ses = Some(cand);
+                                }
+                            };
+                            for empty_meta in [true, false] {
+                                let pool_b: Vec<(usize, usize)> = pool_u
+                                    .iter()
+                                    .map(|&(b, _)| {
+                                        let w = costs[b].bytes(
+                                            ses_json,
+                                            TabContainers {
+                                                drafts_empty: !empty_meta,
+                                                att_empty: empty_meta,
+                                                parts_empty: empty_meta,
+                                            },
+                                        );
+                                        (b, w)
+                                    })
+                                    .collect();
+                                consider(best_subset_1d(&pool_b, slots.len(), rem_b));
+                            }
+                            let mut order_by_priority: Vec<usize> =
+                                pool_u.iter().map(|&(b, _)| b).collect();
+                            let mut order_by_u = order_by_priority.clone();
+                            order_by_u.sort_by_key(|&b| (ses_units[b].unwrap_or(usize::MAX), b));
+                            let mut order_by_b = order_by_priority.clone();
+                            order_by_b.sort_by_key(|&b| {
+                                (
+                                    costs[b].bytes(
+                                        ses_json,
+                                        TabContainers {
+                                            drafts_empty: false,
+                                            att_empty: true,
+                                            parts_empty: true,
+                                        },
+                                    ),
+                                    b,
+                                )
+                            });
+                            for order in [&mut order_by_priority, &mut order_by_u, &mut order_by_b]
+                            {
+                                let mut picked = Vec::new();
+                                for &b in order.iter() {
+                                    if picked.len() >= slots.len() {
+                                        break;
+                                    }
+                                    picked.push(b);
+                                    picked.sort_unstable();
+                                    if exact_fit(&picked).is_none() {
+                                        picked.retain(|&x| x != b);
+                                    }
+                                }
+                                consider(picked);
+                            }
+                            best_ses.unwrap_or_default()
+                        }
+                    };
+                    let Some((ses_u, _)) = exact_fit(&chosen_ses) else {
+                        continue;
+                    };
+                    let kept = usize::from(local_bundle_idx.is_some()) + chosen_ses.len();
                     if kept == 0 {
                         continue;
                     }
+                    let mut kept_indices = chosen_ses.clone();
+                    if let Some(lb) = local_bundle_idx {
+                        kept_indices.push(lb);
+                        kept_indices.sort_unstable();
+                    }
+                    let surviving = chosen_ses.len().min(surviving_slots)
+                        + usize::from(
+                            no_session_dest.is_some_and(|i| !self.entries[i].closing_deferred),
+                        );
                     let rank = FallbackRank {
                         kept,
-                        surviving: surviving_kept,
-                        used_no_session,
+                        surviving,
+                        kept_priority: std::cmp::Reverse(kept_indices),
+                        used_no_session: local_bundle_idx.is_some(),
                         newest_local: std::cmp::Reverse(local_bundle_idx.unwrap_or(usize::MAX)),
                         dest_surviving: no_session_dest
                             .is_some_and(|i| !self.entries[i].closing_deferred),
                         dest_order: std::cmp::Reverse(no_session_dest.unwrap_or(usize::MAX)),
                     };
-                    if best.as_ref().is_none_or(|(best_rank, _)| rank > *best_rank) {
-                        best = Some((rank, cand));
+                    if best
+                        .as_ref()
+                        .is_none_or(|(best_rank, ..)| rank > *best_rank)
+                    {
+                        let ses_assigns: Vec<(usize, usize)> = chosen_ses
+                            .iter()
+                            .zip(slots.iter())
+                            .map(|(&b, &(tab_idx, _))| (tab_idx, b))
+                            .collect();
+                        best = Some((
+                            rank,
+                            no_session_dest.zip(local_bundle_idx),
+                            ses_assigns,
+                            local_u + ses_u,
+                        ));
                     }
                 }
-                if let Some((_, best_snap)) = best {
-                    snap = best_snap;
+                if let Some((_, local_assign, ses_assigns, delta_u)) = best {
+                    let mut cand = snap.clone();
+                    if let Some((dest, lb)) = local_assign {
+                        apply_bundle(
+                            &mut cand,
+                            dest,
+                            super::NO_SESSION_DRAFT_ID,
+                            &unprojected[lb],
+                        );
+                    }
+                    for (dest, b) in ses_assigns {
+                        apply_bundle(&mut cand, dest, id, &unprojected[b]);
+                    }
+                    if let Ok(encoded) = super::encode(&cand) {
+                        snap = cand;
+                        used_units += delta_u;
+                        used_bytes = encoded.len();
+                    }
                 }
             }
         }

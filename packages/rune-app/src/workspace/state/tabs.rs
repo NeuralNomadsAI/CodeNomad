@@ -386,11 +386,15 @@ pub(super) fn close_with_uuid(
                 .collect();
             ui.closed_restored.push(keys);
         }
-        ui.closed_restored.truncate(ui.closed.len());
+        while ui.closed_restored.len() > ui.closed.len() {
+            ui.closed_restored.pop();
+        }
         while ui.closed_derived_from.len() < ui.closed.len() {
             ui.closed_derived_from.push(Default::default());
         }
-        ui.closed_derived_from.truncate(ui.closed.len());
+        while ui.closed_derived_from.len() > ui.closed.len() {
+            ui.closed_derived_from.pop();
+        }
         let scope = super::ProjectScope::from_workspace(&saved);
         for id in removed.pending_deleted {
             if !ui

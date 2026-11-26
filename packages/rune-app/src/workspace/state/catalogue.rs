@@ -116,7 +116,7 @@ pub(super) struct Refresh {
     due: Option<f64>,
     pub(super) urgent: bool,
     reset_cursor: bool,
-    pub(super) request: Option<(u64, u64, Receiver<Option<(Sessions, bool, bool)>>)>,
+    pub(super) request: Option<(u64, u64, u64, Receiver<Option<(Sessions, bool, bool)>>)>,
 }
 
 impl Refresh {
@@ -172,7 +172,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if refresh
         .request
         .as_ref()
-        .is_some_and(|(generation, _, _)| *generation != l.catalogue_generation)
+        .is_some_and(|(generation, _, _, _)| *generation != l.catalogue_generation)
     {
         refresh.pause(now);
     }
@@ -184,11 +184,11 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         return false;
     }
     let mut changed = false;
-    let mut fresh_present: Option<(super::ProjectScope, Vec<String>)> = None;
-    if let Some((req_conn_gen, result)) = refresh
+    let mut fresh_present: Option<(super::ProjectScope, u64, Vec<String>)> = None;
+    if let Some((req_conn_gen, req_epoch, result)) = refresh
         .request
         .as_ref()
-        .and_then(|(_, conn_gen, rx)| rx.try_recv().ok().map(|res| (*conn_gen, res)))
+        .and_then(|(_, conn_gen, epoch, rx)| rx.try_recv().ok().map(|res| (*conn_gen, *epoch, res)))
     {
         refresh.request = None;
         if refresh.due.is_none() {
@@ -213,8 +213,11 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                     && let Some(scope) = scope
                     && !page.rows.is_empty()
                 {
-                    fresh_present =
-                        Some((scope, page.rows.iter().map(|row| row.id.clone()).collect()));
+                    fresh_present = Some((
+                        scope,
+                        req_epoch,
+                        page.rows.iter().map(|row| row.id.clone()).collect(),
+                    ));
                 }
                 let reset_cursor = refresh.reset_cursor;
                 if authoritative || !includes_linked {
@@ -250,8 +253,17 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                 _ => None,
             };
             let uncertain_linked = l.creation_uncertain_linked.clone();
+            let req_epoch = ui
+                .restored_draft_presence_epoch
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                .wrapping_add(1);
             refresh.due = None;
-            refresh.request = Some((l.catalogue_generation, l.connection_generation, input));
+            refresh.request = Some((
+                l.catalogue_generation,
+                l.connection_generation,
+                req_epoch,
+                input,
+            ));
             crate::platform::spawn(async move {
                 let read = async {
                     let can_replace = match inventory::load(
@@ -325,8 +337,8 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             });
         }
     }
-    if let Some((scope, ids)) = fresh_present {
-        super::drafts::note_sessions_present_in_scope(ui, &scope, &ids);
+    if let Some((scope, req_epoch, ids)) = fresh_present {
+        super::drafts::note_sessions_present_in_scope_at(ui, &scope, &ids, req_epoch);
     }
     changed
 }
@@ -402,7 +414,7 @@ mod tests {
             let ui = s.workspace.as_mut().unwrap();
             let entry = &mut ui.entries[ui.active];
             entry.catalogue.urgent = true;
-            entry.catalogue.request = Some((generation, conn_gen, rx));
+            entry.catalogue.request = Some((generation, conn_gen, 0, rx));
             entry.catalogue.due = Some(2.0);
             assert!(out.try_send(None).is_ok());
             let _ = super::poll(s, 1.0, tx);

@@ -1167,7 +1167,7 @@ pub(super) fn recover_missing_session_draft_closing_with_uuid(
     )
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 fn recover_missing_session_draft_with_uuid(
     s: &mut State,
     origin_tab: Option<usize>,
@@ -1596,13 +1596,17 @@ fn set_restored_probe_outcome(
     }
 }
 
-pub(super) fn note_sessions_present_in_scope<I, S>(ui: &mut Ui, scope: &super::ProjectScope, ids: I)
-where
+pub(super) fn note_sessions_present_in_scope_at<I, S>(
+    ui: &mut Ui,
+    scope: &super::ProjectScope,
+    ids: I,
+    epoch: u64,
+) where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
     for id in ids {
-        note_session_present_in_scope(ui, scope, id.as_ref());
+        note_session_present_in_scope_at(ui, scope, id.as_ref(), epoch);
     }
 }
 
@@ -1618,17 +1622,35 @@ fn note_session_present_in_scope(ui: &mut Ui, scope: &super::ProjectScope, id: &
         .restored_draft_presence_epoch
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         .wrapping_add(1);
+    note_session_present_in_scope_at(ui, scope, id, epoch);
+}
+
+fn note_session_present_in_scope_at(
+    ui: &mut Ui,
+    scope: &super::ProjectScope,
+    id: &str,
+    epoch: u64,
+) {
+    if is_local_draft_id(id) {
+        return;
+    }
+    let relevant = scope_has_restored_key(ui, scope, id) || scope_has_in_flight_key(ui, scope, id);
+    if !relevant {
+        return;
+    }
     if let Some((_, _, existing_epoch)) = ui
         .restored_draft_seen_present
         .iter_mut()
         .find(|(sc, existing_id, _)| sc.same_scope(scope) && existing_id == id)
     {
-        *existing_epoch = epoch;
+        *existing_epoch = (*existing_epoch).max(epoch);
     } else {
         ui.restored_draft_seen_present
             .push((scope.clone(), id.to_owned(), epoch));
     }
-    set_restored_probe_outcome(ui, scope, id, RestoredProbeOutcome::Resolved);
+    if !scope_has_in_flight_key(ui, scope, id) {
+        set_restored_probe_outcome(ui, scope, id, RestoredProbeOutcome::Resolved);
+    }
 }
 
 fn prune_restored_probe_state(ui: &mut Ui, current_conn_gen: Option<u64>) {
@@ -1797,7 +1819,9 @@ fn pump_restored_draft_probes(s: &mut State) {
         let backend_base = backend.base.clone();
         crate::platform::spawn(async move {
             for id in ids {
-                let started_epoch = presence_epoch.load(std::sync::atomic::Ordering::SeqCst);
+                let started_epoch = presence_epoch
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    .wrapping_add(1);
                 let absence = backend.probe_session_absence(&project, &id).await;
                 if out
                     .send(RestoredProbeResult {
