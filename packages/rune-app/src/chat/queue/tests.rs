@@ -731,3 +731,88 @@ fn non_editable_attachment_prompt_disables_edit_and_omits_download_and_committed
         assert!(rt.find("queued-badge-q-att").is_none());
     });
 }
+
+#[test]
+fn empty_inbox_before_resuming_history_page_preserves_committed_queued_bookmark() {
+    let (mut reader, _lane) = crate::chat::reader::Reader::fixture_open();
+    reader.install(false);
+    let mut s = crate::init();
+    s.phase = Phase::Streaming;
+    s.reader = Some(reader);
+    s.messages = (0..18)
+        .map(|i| {
+            user_row(
+                &format!("row-{i:02}"),
+                &format!("Message {i:02}\n\n{}", "Body ".repeat(14)),
+            )
+        })
+        .collect();
+    s.transcript_display.queue.fixture_set(
+        None,
+        vec![
+            queued("q-commit", Delivery::Queue, "Bookmarked queued prompt"),
+            queued(
+                "q-tail",
+                Delivery::Queue,
+                &format!("Tail prompt\n\n{}", "Long line\n\n".repeat(60)),
+            ),
+        ],
+    );
+    let mut rt = runtime(s);
+    rt.update(|_, tx| tx.scroll_key_to("q-commit", -20.0));
+    settle(&mut rt);
+
+    // Suspend while viewing q-commit, then resume (resume_pending == true).
+    let (ev_tx, ev_rx) = bounded(4);
+    rt.update(|s, tx| {
+        crate::chat::reader::suspend(s);
+        s.transcript_display.queue.suspend();
+        s.incoming = Some(ev_rx);
+        crate::chat::reader::resume(s, tx);
+    });
+    assert!(matches!(
+        rt.state.reader.as_ref().unwrap().bookmark(),
+        crate::chat::reading::Bookmark::Message { id, .. } if id == "q-commit"
+    ));
+
+    // Empty authoritative inbox arrives BEFORE the resuming history page (q-commit committed while
+    // suspended): must NOT erase the saved bookmark while resume_pending is still true.
+    ev_tx
+        .try_send(Event::Inbox {
+            items: Vec::new(),
+            authoritative: true,
+            fence: None,
+        })
+        .unwrap();
+    rt.update(|s, _| {
+        assert!(crate::chat::events::poll_chat(s, 4));
+    });
+    assert!(
+        matches!(
+            rt.state.reader.as_ref().unwrap().bookmark(),
+            crate::chat::reading::Bookmark::Message { id, .. } if id == "q-commit"
+        ),
+        "empty inbox arriving before resuming history must not erase bookmark"
+    );
+
+    // Resuming history page now arrives containing committed q-commit -> bookmark survives!
+    let mut committed_rows = rt.state.messages.clone();
+    committed_rows.push(user_row("q-commit", "Bookmarked queued prompt"));
+    let page = crate::history::Page {
+        rows: committed_rows,
+        older: None,
+        newer: None,
+        running: false,
+        user_file_references: false,
+    };
+    rt.update(|s, _| {
+        assert!(!crate::chat::reader::reconcile_bookmark(s, &page));
+    });
+    assert!(
+        matches!(
+            rt.state.reader.as_ref().unwrap().bookmark(),
+            crate::chat::reading::Bookmark::Message { id, .. } if id == "q-commit"
+        ),
+        "resuming history page containing committed q-commit must retain saved bookmark"
+    );
+}

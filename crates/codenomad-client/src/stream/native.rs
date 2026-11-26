@@ -229,6 +229,7 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
         let (pong_abort_tx, pong_abort_rx) = crate::bounded::<bool>(1);
         let mut chunks = std::pin::pin!(response.bytes_stream());
         let mut parser = Parser::default();
+        let mut chunk_guard = None;
         loop {
             if let Ok(expired) = pong_abort_rx.try_recv() {
                 auth_expired = expired;
@@ -276,7 +277,7 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                 continue;
             }
             watchdog.activity();
-            let chunk_guard = shared.begin_chunk();
+            chunk_guard.get_or_insert_with(|| shared.begin_chunk());
             let mut parse_failed = false;
             for byte in chunk.as_ref() {
                 match parser.byte(*byte) {
@@ -308,11 +309,16 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                 }
             }
             if parse_failed {
-                drop(chunk_guard);
+                drop(chunk_guard.take());
                 break;
             }
-            chunk_guard.finish();
+            if !parser.in_frame()
+                && let Some(guard) = chunk_guard.take()
+            {
+                guard.finish();
+            }
         }
+        drop(chunk_guard);
         drop(pong_cancel_tx);
         drop(read_probe);
     }
@@ -550,8 +556,10 @@ async fn receive_chunk(
     for byte in chunk {
         if let Some(frame) = parser.byte(*byte)? {
             let mark = match &frame {
-                Parsed::Data(kind, data) if kind.is_empty() || kind == "message" => {
-                    if let Some(quota) = quota {
+                Parsed::Data(kind, data) if kind != "codenomad.client.ping" => {
+                    if (kind.is_empty() || kind == "message")
+                        && let Some(quota) = quota
+                    {
                         quota.frame(data);
                     }
                     if state.catalogue.is_none() {

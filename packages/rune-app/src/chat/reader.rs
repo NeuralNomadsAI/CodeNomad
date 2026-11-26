@@ -89,6 +89,11 @@ impl Reader {
     }
 
     #[cfg(test)]
+    pub(crate) fn bookmark(&self) -> &Bookmark {
+        &self.bookmark
+    }
+
+    #[cfg(test)]
     pub(crate) fn open() -> (Self, ReadingLane) {
         Self::open_inner()
     }
@@ -879,7 +884,8 @@ pub(crate) fn reconcile_queued_bookmark(
     items: &[codenomad_client::inbox::QueuedPrompt],
 ) {
     if let Some(reader) = &mut s.reader
-        && (reader.resume_pending || reader.pending_scroll)
+        && !reader.resume_pending
+        && reader.pending_scroll
         && let Bookmark::Message { id, .. } = &reader.bookmark
         && !s.messages.iter().any(|row| row.id == *id)
         && !items.iter().any(|item| item.id == *id)

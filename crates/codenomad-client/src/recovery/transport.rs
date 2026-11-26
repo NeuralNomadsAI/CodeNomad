@@ -278,7 +278,8 @@ pub(crate) async fn run_with_reading(
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now();
-                wire.inbox.bump_applied();
+                reader.invalidate_inbox_flight();
+                wire.inbox.invalidate_published();
                 reader.inbox_published = false;
                 reader.schedule_inbox_sync(Duration::ZERO);
                 if connection_closed {

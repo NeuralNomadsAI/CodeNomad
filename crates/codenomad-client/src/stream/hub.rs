@@ -158,7 +158,7 @@ impl Subscriber {
     }
 
     fn note_inbox_frame(&self, kind: &str, data: &str) -> u64 {
-        if (kind.is_empty() || kind == "message")
+        if kind != "codenomad.client.ping"
             && let Some((workspace, session)) = &self.signals.conversation
             && let Some(inbox) = &self.signals.inbox
         {
@@ -190,15 +190,18 @@ impl Subscriber {
                 queue.items.clear();
                 queue.bytes = 0;
                 queue.items.push_back((HubItem::Opened, 0));
-                queue.items.push_back((HubItem::Skipped, 0));
+                let mark = self.note_inbox_skipped();
+                queue.items.push_back((HubItem::Skipped, mark));
                 skipped = true;
                 break;
             }
+            let mark = self.note_inbox_frame(&frame.0, &frame.1);
             queue.bytes = queue.bytes.saturating_add(size);
-            queue.items.push_back((HubItem::Frame(frame.clone()), 0));
+            queue.items.push_back((HubItem::Frame(frame.clone()), mark));
         }
         if !skipped && force_skipped {
-            queue.items.push_back((HubItem::Skipped, 0));
+            let mark = self.note_inbox_skipped();
+            queue.items.push_back((HubItem::Skipped, mark));
             skipped = true;
         }
         let _ = self.wake_tx.try_send(());

@@ -567,7 +567,7 @@ impl Reader {
         let generation = self.generation;
         let seq = self.inbox_version;
         let sync_epoch = self.inbox_sync_epoch;
-        let wire_inbox = wire.inbox.ingress();
+        let wire_inbox = wire.inbox.capture();
         let (cancel, cancelled) = crate::bounded(1);
         self.inbox_flight = Some((epoch, generation, seq, cancel));
         let backend = backend.clone();
@@ -830,7 +830,7 @@ pub(super) struct InboxReply {
     pub(super) generation: u64,
     pub(super) seq: u64,
     pub(super) sync_epoch: u64,
-    pub(super) wire_inbox: u64,
+    pub(super) wire_inbox: crate::inbox::InboxStamp,
     pub(super) result: Result<Option<Vec<crate::inbox::QueuedPrompt>>, InboxReadError>,
 }
 
@@ -1117,7 +1117,7 @@ mod diagnostic_tests {
             };
 
             // 1. Reader seq still matches, but SSE ingress already bumped wire.inbox -> rejected.
-            let captured = wire.inbox.ingress();
+            let captured = wire.inbox.capture();
             let mark1 = wire.inbox.record_ingress();
             let _ = reader
                 .finish_inbox_read(
@@ -1138,6 +1138,7 @@ mod diagnostic_tests {
             assert!(reader.inbox_dirty && !reader.inbox_published);
 
             // 1b. Capturing an unapplied ingress watermark must also be rejected before recovery catches up.
+            let captured_unapplied = wire.inbox.capture();
             let _ = reader
                 .finish_inbox_read(
                     &lane,
@@ -1147,7 +1148,7 @@ mod diagnostic_tests {
                         generation: reader.generation,
                         seq: reader.inbox_version,
                         sync_epoch: 0,
-                        wire_inbox: mark1,
+                        wire_inbox: captured_unapplied,
                         result: Ok(Some(vec![stale_item.clone()])),
                     },
                 )
@@ -1162,7 +1163,7 @@ mod diagnostic_tests {
             // 2. Reader channel is full while finish_inbox_read awaits send; SSE bumps wire.inbox
             // before the slot drains -> emitted Event::Inbox carries an invalidated fence and reader reschedules.
             reader_tx.send((0, 0, Event::Done)).await.unwrap();
-            let captured2 = wire.inbox.ingress();
+            let captured2 = wire.inbox.capture();
             let wire_for_bump = wire.clone();
             let rx_for_drain = reader_rx.clone();
             let unblocker = tokio::spawn(async move {
@@ -1235,7 +1236,7 @@ mod diagnostic_tests {
                     generation: 0,
                     seq: 0,
                     sync_epoch: 0,
-                    wire_inbox: 0,
+                    wire_inbox: crate::inbox::InboxStamp::default(),
                     result: Ok(Some(Vec::new())),
                 })
                 .await
@@ -1289,12 +1290,34 @@ mod diagnostic_tests {
             "parked dirty history reader must still allow scheduled inbox refresh"
         );
         // Unapplied inbox ingress blocks starting a new GET until recovery drains the watermark.
-        let mark = wire.inbox.record_ingress();
+        let before = wire.inbox.capture();
+        let pre_retry_fence = wire.inbox.fence(before, 0);
+        let mark1 = wire.inbox.record_ingress();
+        let mark2 = wire.inbox.record_ingress();
         assert!(
             reader.inbox_deadline(true, &wire, None).is_none(),
             "inbox_deadline must wait while applied watermark lags ingress"
         );
-        wire.inbox.advance_applied(mark);
+        // Retry invalidates already-published snapshots without jumping applied past buffered SSE frames.
+        wire.inbox.invalidate_published();
+        assert!(
+            !pre_retry_fence.is_valid(),
+            "Retry invalidation must revoke already-captured published fences"
+        );
+        assert!(
+            !wire.inbox.applied_caught_up(),
+            "Retry invalidation must not mark buffered SSE frames as applied"
+        );
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_none(),
+            "inbox_deadline must remain blocked until buffered SSE frames are applied"
+        );
+        wire.inbox.advance_applied(mark1);
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_none(),
+            "inbox_deadline must stay blocked until the latest buffered mark is applied"
+        );
+        wire.inbox.advance_applied(mark2);
         assert!(
             reader.inbox_deadline(true, &wire, None).is_some(),
             "inbox_deadline must resume once applied watermark catches up"

@@ -1266,7 +1266,7 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
     assert!(shared.mark_open());
 
     // Chunk 1: unrelated text frame followed by inbox cancellation in the same HTTP chunk.
-    let fence1 = state.inbox.fence(0, 0);
+    let fence1 = state.inbox.fence(state.inbox.capture(), 0);
     let chunk1 = shared.begin_chunk();
     shared.broadcast_frame(
         &hub,
@@ -1298,7 +1298,7 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
     // Chunk 2: unrelated frame only -> Deferred during chunk, then Valid after chunk finishes.
     let mark = state.inbox.ingress();
     state.inbox.advance_applied(mark);
-    let fence2 = state.inbox.fence(mark, 0);
+    let fence2 = state.inbox.fence(state.inbox.capture(), 0);
     let chunk2 = shared.begin_chunk();
     assert_eq!(fence2.check(), FenceState::Deferred);
     shared.broadcast_frame(
@@ -1310,6 +1310,111 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
     chunk2.finish();
     assert_eq!(wakes.load(SeqCst), 2);
     assert_eq!(fence2.check(), FenceState::Valid);
+
+    // Chunk 3 + 4: cancellation SSE frame split across chunks (data: line in chunk 3, blank line in
+    // chunk 4) must keep the guard active between chunks until the frame terminates.
+    let fence3 = state.inbox.fence(state.inbox.capture(), 0);
+    let mut parser = super::super::frames::Parser::default();
+    let mut open_guard: Option<ChunkGuard<'_>> = None;
+    let part1 = b"data: {\"type\":\"instance.event\",\"instanceId\":\"ws-1\",\"event\":{\"type\":\"session.inbox.cancelled\",\"data\":{\"sessionID\":\"ses-1\",\"inboxID\":\"q2\"}}}\n";
+    open_guard.get_or_insert_with(|| shared.begin_chunk());
+    for byte in part1 {
+        assert!(parser.byte(*byte).unwrap().is_none());
+    }
+    assert!(
+        parser.in_frame(),
+        "parser must report in_frame between data line and terminating blank line"
+    );
+    if !parser.in_frame()
+        && let Some(guard) = open_guard.take()
+    {
+        guard.finish();
+    }
+    assert!(
+        open_guard.is_some(),
+        "guard must remain held across chunks while SSE frame is incomplete"
+    );
+    assert_eq!(
+        fence3.check(),
+        FenceState::Deferred,
+        "stale GET must stay deferred between split cancellation chunks"
+    );
+    open_guard.get_or_insert_with(|| shared.begin_chunk());
+    let completed = parser
+        .byte(b'\n')
+        .unwrap()
+        .expect("blank line completes frame");
+    if let super::super::frames::Parsed::Data(kind, data) = completed {
+        shared.broadcast_frame(&hub, kind, data);
+    }
+    assert!(!parser.in_frame());
+    if !parser.in_frame()
+        && let Some(guard) = open_guard.take()
+    {
+        guard.finish();
+    }
+    assert_eq!(
+        fence3.check(),
+        FenceState::Invalid,
+        "completed cancellation frame in second chunk must invalidate the deferred fence"
+    );
+    assert_eq!(wakes.load(SeqCst), 3);
+}
+
+#[test]
+fn seed_opened_numbers_replayed_status_monotonically_before_live_inbox_frames() {
+    let hub = Arc::new(Hub::default());
+    let (stop_tx, _stop_rx) = bounded(1);
+    let (_done_tx, done_rx) = bounded(1);
+    let replay_status = Arc::new((
+        "message".to_owned(),
+        r#"{"type":"instance.eventStatus","instanceId":"ws-1","status":"connected"}"#.to_owned(),
+    ));
+    let state = State::default();
+    let sub = Subscriber::with_signals(
+        1,
+        None,
+        None,
+        SubscriberSignals {
+            conversation: Some(("ws-1".into(), "ses-1".into())),
+            inbox: Some(state.inbox.clone()),
+            ..SubscriberSignals::default()
+        },
+    );
+    let shared = Arc::new(SharedStream {
+        base: "http://127.0.0.1:4/".into(),
+        inner: Mutex::new(StreamInner {
+            phase: Phase::Open,
+            subscribers: vec![sub.clone()],
+            replays: HashMap::from([("ws-1".to_owned(), replay_status.clone())]),
+            replays_overflowed: false,
+            chunk_active: false,
+            stop: Some(stop_tx),
+        }),
+        done: done_rx,
+    });
+    assert!(!sub.seed_opened(&[replay_status], false));
+    shared.broadcast_frame(
+        &hub,
+        "message".into(),
+        r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.inbox.enqueued","data":{"sessionID":"ses-1","item":{"id":"q1","delivery":"queue","text":"hi"}}}}"#.into(),
+    );
+    let (first, mark_opened) = sub.pop_marked().unwrap();
+    assert!(matches!(first, HubItem::Opened));
+    assert_eq!(mark_opened, 0);
+    let (_, mark_replay) = sub.pop_marked().unwrap();
+    let (_, mark_live) = sub.pop_marked().unwrap();
+    assert!(
+        mark_replay > 0 && mark_live > mark_replay,
+        "replayed status ({mark_replay}) must be numbered strictly before subsequent live inbox frame ({mark_live})"
+    );
+    state.inbox.advance_applied(mark_replay);
+    assert!(
+        !state.inbox.applied_caught_up(),
+        "applying replayed status must not skip past later buffered live inbox frame"
+    );
+    state.inbox.advance_applied(mark_live);
+    assert!(state.inbox.applied_caught_up());
 }
 
 #[test]

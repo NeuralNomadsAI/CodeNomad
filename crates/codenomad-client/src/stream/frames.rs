@@ -16,6 +16,10 @@ pub(super) struct Parser {
     nonempty: bool,
 }
 impl Parser {
+    pub(super) fn in_frame(&self) -> bool {
+        !self.line.is_empty() || !self.data.is_empty() || !self.kind.is_empty() || self.skipping
+    }
+
     pub(super) fn byte(&mut self, byte: u8) -> Result<Option<Parsed>> {
         if self.skipping {
             if byte == b'\n' {

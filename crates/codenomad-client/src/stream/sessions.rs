@@ -10,13 +10,17 @@ pub(super) fn note_inbox_frame(
     inbox: &InboxWire,
     data: &str,
 ) -> u64 {
+    if data.len() > super::limits::FRAME_LIMIT {
+        return inbox.record_ingress();
+    }
     if data.is_empty()
         || !(data.contains("session.inbox.")
             || data.contains("instance.eventStatus")
             || data.contains("server.connected")
             || data.contains("session.moved")
             || data.contains("session.deleted")
-            || data.contains("session.revert."))
+            || data.contains("session.revert.")
+            || data.contains("\\u"))
     {
         return 0;
     }
