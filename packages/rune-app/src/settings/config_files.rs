@@ -379,14 +379,17 @@ impl Editor {
         self.write = Some(inbox);
         self.notice = None;
         platform::spawn(async move {
-            let still_authorized = || {
-                prefs_auth.load(Ordering::SeqCst) == prefs_gen
-                    && editor_auth.load(Ordering::SeqCst) == editor_gen
-                    && backend.client.drop_generation() == prepared_gen
+            let same_server = || {
+                backend.client.drop_generation() == prepared_gen
                     && ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
                         .is_none_or(|id| backend.client.server_identity() == Some(id))
+            };
+            let still_authorized = || {
+                prefs_auth.load(Ordering::SeqCst) == prefs_gen
+                    && editor_auth.load(Ordering::SeqCst) == editor_gen
+                    && same_server()
             };
             // Re-attest live HTTP routing right before sending the draft when attestation is
             // tracked; the server HTTP route has no server-id precondition header, so a fresh
@@ -403,7 +406,12 @@ impl Editor {
                 false
             } else {
                 match api::save(&backend, &id, &payload).await {
-                    Ok(()) => true,
+                    Ok(()) => {
+                        same_server()
+                            && (!backend.client.tracks_server_attestation()
+                                || backend.attest_server().await.is_ok())
+                            && same_server()
+                    }
                     Err(_) => {
                         let read_ok = still_authorized()
                             && (!backend.client.tracks_server_attestation()
@@ -585,6 +593,8 @@ mod tests {
             let swap_after_read_meta_srv = swap_after_read_meta.clone();
             let fail_put_once = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let fail_put_once_srv = fail_put_once.clone();
+            let swap_on_put_ok = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let swap_on_put_ok_srv = swap_on_put_ok.clone();
             let swap_readback_match = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let swap_readback_match_srv = swap_readback_match.clone();
             let hold_put = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -601,6 +611,7 @@ mod tests {
                     let server_id_srv = server_id_srv.clone();
                     let swap_after_read_meta_srv = swap_after_read_meta_srv.clone();
                     let fail_put_once_srv = fail_put_once_srv.clone();
+                    let swap_on_put_ok_srv = swap_on_put_ok_srv.clone();
                     let swap_readback_match_srv = swap_readback_match_srv.clone();
                     let hold_put_srv = hold_put_srv.clone();
                     let put_arrived_srv = put_arrived_srv.clone();
@@ -707,6 +718,10 @@ mod tests {
                                         json!({"error": "uncertain"}).to_string(),
                                     )
                                 } else {
+                                    if swap_on_put_ok_srv.swap(false, Ordering::SeqCst) {
+                                        *server_id_srv.lock().unwrap() =
+                                            "server-profile-b".to_owned();
+                                    }
                                     let parsed: Value = serde_json::from_str(&body).unwrap();
                                     *saved_srv.lock().unwrap() =
                                         parsed["contents"].as_str().map(str::to_owned);
@@ -972,6 +987,40 @@ mod tests {
             assert!(!editor.can_write(&prefs));
             assert!(editor.dirty());
             assert_eq!(editor.draft.text, "locale: uncertain\n");
+
+            // Swap to profile B AFTER pre-write /api/meta and BEFORE PUT completes with 204:
+            // post-write re-attestation must revoke attestation and keep the draft dirty so
+            // profile B's 204 cannot confirm the draft as saved on profile A.
+            *server_id.lock().unwrap() = "server-profile-a".to_owned();
+            let backend_put_swap = Backend::connect(&base, "").await.unwrap();
+            backend_put_swap.attest_server().await.unwrap();
+            prefs.bind(Some(backend_put_swap.clone()));
+            for _ in 0..100 {
+                prefs.poll();
+                editor.poll(&prefs, &wake, true);
+                if !prefs.transport_lost() && editor.can_write(&prefs) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!prefs.transport_lost());
+            assert!(editor.can_write(&prefs));
+            editor.draft = TextEdit::new("locale: post-put-swap\n");
+            assert!(editor.dirty());
+            swap_on_put_ok.store(true, Ordering::SeqCst);
+            editor.save(&prefs);
+            assert!(editor.busy());
+            for _ in 0..100 {
+                editor.poll(&prefs, &wake, true);
+                if !editor.busy() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(backend_put_swap.client.attestation_revoked());
+            assert!(!editor.can_write(&prefs));
+            assert!(editor.dirty());
+            assert_eq!(editor.draft.text, "locale: post-put-swap\n");
 
             // Connecting to a different server profile on the same address must reset the draft.
             let backend_c = Backend::connect(&base, "").await.unwrap();

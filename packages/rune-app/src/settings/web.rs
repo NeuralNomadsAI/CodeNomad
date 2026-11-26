@@ -686,6 +686,18 @@ pub(super) fn view(
         {
             col()
                 .full_width()
+                .children((!local && panel.scope.local_failed(prefs)).then(|| {
+                    layout::action_row()
+                        .child(text(t("rune.connect_error")).role("alert").wrap())
+                        .child(layout::button(
+                            t("sessionList.loadError.retry"),
+                            false,
+                            |s: &mut State| {
+                                s.settings.web.scope.retry();
+                                (s.wake)();
+                            },
+                        ))
+                }))
                 .child(opencode::view(
                     &panel.opencode,
                     prefs,
@@ -718,20 +730,35 @@ pub(super) fn view(
         Section::Remote
             if local || (prefs.backend.is_some() && !panel.scope.local_unsupported(prefs)) =>
         {
-            panel.remote.view_gated(
-                &s.settings.shared,
-                local,
-                |s: &mut State| {
-                    let paired = !crate::platform::pairing::required(s);
-                    let panel = &mut s.settings.web;
-                    (paired
-                        && panel.shown
-                        && panel.section == Section::Remote
-                        && panel.local(&s.settings.shared.borrow()))
-                    .then_some(&mut panel.remote)
-                },
-                |s: &mut State| &mut s.settings.web.remote,
-            )
+            col()
+                .full_width()
+                .separate(Space::Sm)
+                .children((!local && panel.scope.local_failed(prefs)).then(|| {
+                    layout::action_row()
+                        .child(text(t("rune.connect_error")).role("alert").wrap())
+                        .child(layout::button(
+                            t("sessionList.loadError.retry"),
+                            false,
+                            |s: &mut State| {
+                                s.settings.web.scope.retry();
+                                (s.wake)();
+                            },
+                        ))
+                }))
+                .child(panel.remote.view_gated(
+                    &s.settings.shared,
+                    local,
+                    |s: &mut State| {
+                        let paired = !crate::platform::pairing::required(s);
+                        let panel = &mut s.settings.web;
+                        (paired
+                            && panel.shown
+                            && panel.section == Section::Remote
+                            && panel.local(&s.settings.shared.borrow()))
+                        .then_some(&mut panel.remote)
+                    },
+                    |s: &mut State| &mut s.settings.web.remote,
+                ))
         }
         Section::ConfigFiles => {
             if panel.scope.config_files(prefs) {

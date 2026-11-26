@@ -309,6 +309,18 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         save_req
             .reply(200, json!({"id": "entry-1", "revision": next_rev}))
             .await;
+        let post_write_meta = poll_next_request(&mut prefs, &listener).await;
+        assert_eq!(post_write_meta.first, "GET /api/meta HTTP/1.1");
+        post_write_meta
+            .reply(
+                200,
+                json!({
+                    "apiContract": 1,
+                    "serverId": "profile-a",
+                    "capabilities": ["settings-atomic-patches"]
+                }),
+            )
+            .await;
         wait_until(|| {
             prefs.poll();
             prefs
@@ -428,19 +440,47 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         held_save_req
             .reply(200, json!({"id": "entry-1", "revision": "c".repeat(64)}))
             .await;
-        // Wait specifically for the wake emitted after replying to profile A's held POST so
-        // earlier wakes from review_action cannot satisfy the wait prematurely.
-        timeout(Duration::from_secs(2), async {
-            loop {
-                let notified = wake_notify.notified();
-                if wake_count.load(std::sync::atomic::Ordering::SeqCst) > before_reply {
-                    break;
+        // Wait specifically for the post-write /api/meta and wake emitted after replying to
+        // profile A's held POST while also serving any concurrent profile-B refresh reads.
+        let mut saw_post_meta = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !saw_post_meta || wake_count.load(std::sync::atomic::Ordering::SeqCst) <= before_reply
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "late profile-A write task did not finish and notify wake: saw_post_meta={saw_post_meta}"
+            );
+            if let Ok(Ok((stream, _))) = timeout(Duration::from_millis(20), listener.accept()).await
+            {
+                let req = read_request(stream, Duration::from_secs(2)).await;
+                match req.first.as_str() {
+                    "GET /api/meta HTTP/1.1" => {
+                        saw_post_meta = true;
+                        req.reply(
+                            200,
+                            json!({
+                                "apiContract": 1,
+                                "serverId": "profile-b",
+                                "capabilities": ["settings-atomic-patches"]
+                            }),
+                        )
+                        .await;
+                    }
+                    "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
+                        req.reply(200, json!({"settings":{"locale":"en"}})).await;
+                    }
+                    "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" => {
+                        req.reply(200, json!({})).await;
+                    }
+                    "GET /api/memory/settings HTTP/1.1" => {
+                        req.reply(200, json!({"enabled": false})).await;
+                    }
+                    other => {
+                        panic!("unexpected request while draining late profile-A write: {other}")
+                    }
                 }
-                notified.await;
             }
-        })
-        .await
-        .expect("late profile-A write task should finish and notify wake");
+        }
         prefs.poll();
         assert!(
             !prefs

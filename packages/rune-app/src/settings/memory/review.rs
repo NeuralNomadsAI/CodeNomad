@@ -704,14 +704,17 @@ impl Review {
         self.write = Some(reply);
         let (backend, main, window) = (backend.clone(), main.clone(), window.clone());
         platform::spawn(async move {
-            let still_authorized = || {
-                prefs_auth.load(Ordering::SeqCst) == prefs_gen
-                    && review_auth.load(Ordering::SeqCst) == review_gen
-                    && backend.client.drop_generation() == prepared_gen
+            let same_server = || {
+                backend.client.drop_generation() == prepared_gen
                     && ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
                         .is_none_or(|id| backend.client.server_identity() == Some(id))
+            };
+            let still_authorized = || {
+                prefs_auth.load(Ordering::SeqCst) == prefs_gen
+                    && review_auth.load(Ordering::SeqCst) == review_gen
+                    && same_server()
             };
             // Re-attest live HTTP routing right before sending the draft when attestation is
             // tracked; the server HTTP route has no server-id precondition header, so a fresh
@@ -730,7 +733,7 @@ impl Review {
                 let context = workspace
                     .as_deref()
                     .map(|workspace| (workspace, directory.as_deref()));
-                memory::operation(&backend, scope, context, input)
+                let ack_ok = memory::operation(&backend, scope, context, input)
                     .await
                     .map_err(error_key)
                     .and_then(|ack| {
@@ -743,7 +746,19 @@ impl Review {
                         } else {
                             Err(UNAVAILABLE)
                         }
-                    })
+                    });
+                match ack_ok {
+                    Ok(())
+                        if same_server()
+                            && (!backend.client.tracks_server_attestation()
+                                || backend.attest_server().await.is_ok())
+                            && same_server() =>
+                    {
+                        Ok(())
+                    }
+                    Ok(()) => Err(UNAVAILABLE),
+                    Err(err) => Err(err),
+                }
             };
             let _ = out.send(result).await;
             for wake in [main, window].into_iter().flatten() {

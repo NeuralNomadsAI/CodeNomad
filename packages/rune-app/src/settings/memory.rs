@@ -30,6 +30,7 @@ pub(super) struct Setting {
     flight: Option<(u64, bool, Receiver<(Option<bool>, bool)>)>,
     review: review::Review,
     owner_gen: u64,
+    prompt_token: Arc<AtomicU64>,
 }
 
 impl Setting {
@@ -40,8 +41,16 @@ impl Setting {
         }
         self.visible = visible;
         if !visible {
+            self.prompt_token.fetch_add(1, Ordering::SeqCst);
             self.review.suspend();
         }
+    }
+
+    pub fn prompt_token(&self) -> (Arc<AtomicU64>, u64) {
+        (
+            self.prompt_token.clone(),
+            self.prompt_token.load(Ordering::SeqCst),
+        )
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -272,13 +281,29 @@ impl Setting {
                     (None, true)
                 } else {
                     match memory::set_enabled(&backend, desired).await {
-                        Ok(actual) if actual == desired => (Some(actual), false),
+                        Ok(actual) if actual == desired => {
+                            let post_ok = still_ok(admitted_gen)
+                                && (!backend.client.tracks_server_attestation()
+                                    || backend.attest_server().await.is_ok())
+                                && still_ok(admitted_gen);
+                            if post_ok {
+                                (Some(actual), false)
+                            } else {
+                                (None, true)
+                            }
+                        }
                         _ => {
-                            let readback = if still_ok(admitted_gen) {
-                                memory::enabled(&backend)
-                                    .await
-                                    .ok()
-                                    .filter(|_| still_ok(admitted_gen))
+                            let readback = if still_ok(admitted_gen)
+                                && (!backend.client.tracks_server_attestation()
+                                    || backend.attest_server().await.is_ok())
+                                && still_ok(admitted_gen)
+                            {
+                                let actual = memory::enabled(&backend).await.ok();
+                                let post_ok = still_ok(admitted_gen)
+                                    && (!backend.client.tracks_server_attestation()
+                                        || backend.attest_server().await.is_ok())
+                                    && still_ok(admitted_gen);
+                                actual.filter(|_| post_ok)
                             } else {
                                 None
                             };

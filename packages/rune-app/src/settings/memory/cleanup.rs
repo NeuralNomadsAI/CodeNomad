@@ -11,7 +11,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -66,6 +66,7 @@ pub(in crate::settings) struct Run {
     intent: Intent,
     owner: Rc<()>,
     expected_server: Option<String>,
+    prompt_guard: Option<(String, Arc<AtomicBool>)>,
     receiver: Receiver<Reply>,
 }
 
@@ -124,12 +125,41 @@ fn owner(s: &State, intent: &Intent) -> Option<Backend> {
     .then(|| backend.clone())
 }
 
+fn prompt_owner_current(s: &State, intent: &Intent, created_session: &str) -> bool {
+    let Some(launcher) = s.screen.launcher() else {
+        return false;
+    };
+    let Some(backend) = launcher.connection.as_ref() else {
+        return false;
+    };
+    let Some(project) = launcher.project.as_ref() else {
+        return false;
+    };
+    let prefs = s.settings.shared.borrow();
+    let active = crate::workspace::active_session(s);
+    intent.authority_valid()
+        && prefs.memory.visible
+        && backend.client_id == intent.connection
+        && project.id == intent.workspace
+        && (active == Some(created_session) || active == intent.session.as_deref())
+        && !launcher.pending
+        && !launcher.authentication_required
+        && !prefs.transport_lost()
+        && ServerOwner::backend_verified(backend)
+}
+
 pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if let Some(run) = s.settings.memory_cleanup.take() {
         let reply = match run.receiver.try_recv() {
             Ok(reply) => reply,
             Err(_) if run.receiver.is_closed() => Reply::Failed,
             Err(_) => {
+                if let Some((created_session, guard)) = &run.prompt_guard
+                    && !(s.current_scope(&run.owner)
+                        && prompt_owner_current(s, &run.intent, created_session))
+                {
+                    guard.store(false, Ordering::SeqCst);
+                }
                 s.settings.memory_cleanup = Some(run);
                 return false;
             }
@@ -175,40 +205,46 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     .borrow_mut()
                     .memory
                     .cleanup_prompting(intent);
-                crate::launcher::choose(s, id, tx);
+                crate::launcher::choose(s, id.clone(), tx);
+                let (prompt_token, prompt_token_gen) =
+                    s.settings.shared.borrow().memory.prompt_token();
+                let prompt_valid = Arc::new(AtomicBool::new(true));
+                let prompt_valid_task = prompt_valid.clone();
                 let (check_intent, expected) = (run.intent.clone(), run.expected_server.clone());
-                s.settings.memory_cleanup = Some(advance(
-                    s,
-                    run.intent,
-                    run.owner,
-                    run.expected_server,
-                    async move {
-                        if !attest_and_authorize(
+                let mut next = advance(s, run.intent, run.owner, run.expected_server, async move {
+                    let prompt_ok = || {
+                        prompt_valid_task.load(Ordering::SeqCst)
+                            && prompt_token.load(Ordering::SeqCst) == prompt_token_gen
+                    };
+                    if !prompt_ok()
+                        || !attest_and_authorize(
                             &backend,
                             &check_intent,
                             expected.as_deref(),
                             false,
                         )
                         .await
-                        {
-                            return Reply::Failed;
-                        }
-                        let Ok(id) = message_id() else {
-                            return Reply::Failed;
-                        };
-                        match backend
-                            .prompt(&Prompt {
-                                id: Some(id),
-                                text: prompt(scope),
-                                ..Prompt::default()
-                            })
-                            .await
-                        {
-                            Ok(_) => Reply::Sent,
-                            Err(_) => Reply::Failed,
-                        }
-                    },
-                ));
+                        || !prompt_ok()
+                    {
+                        return Reply::Failed;
+                    }
+                    let Ok(id) = message_id() else {
+                        return Reply::Failed;
+                    };
+                    match backend
+                        .prompt(&Prompt {
+                            id: Some(id),
+                            text: prompt(scope),
+                            ..Prompt::default()
+                        })
+                        .await
+                    {
+                        Ok(_) => Reply::Sent,
+                        Err(_) => Reply::Failed,
+                    }
+                });
+                next.prompt_guard = Some((id, prompt_valid));
+                s.settings.memory_cleanup = Some(next);
             }
             Reply::Sent => s
                 .settings
@@ -295,6 +331,7 @@ fn advance(
         intent,
         owner,
         expected_server,
+        prompt_guard: None,
         receiver,
     }
 }

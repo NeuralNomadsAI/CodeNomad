@@ -52,6 +52,7 @@ pub(super) struct Remote {
     recheck: Option<(Sender<()>, Receiver<()>)>,
     error: Option<ErrorText>,
     mutation_error: Option<(MutationOutcome, ErrorText)>,
+    explicit_refresh: bool,
     needs_read: bool,
     unconfirmed: Option<Mutation>,
     disabled_info_open: bool,
@@ -75,7 +76,7 @@ pub(super) struct ActivePairing {
 
 #[derive(Clone)]
 enum Action {
-    Refresh,
+    Refresh { explicit: bool },
     Start,
     Stop,
     SetPreviews(bool),
@@ -168,7 +169,7 @@ impl Remote {
             self.close();
             self.owner = owner.map(str::to_owned);
             if let Some(backend) = backend {
-                self.start(backend, wake, Action::Refresh);
+                self.start(backend, wake, Action::Refresh { explicit: false });
                 self.direct.poll(prefs, Some(backend), wake);
             }
             return true;
@@ -194,7 +195,7 @@ impl Remote {
                     .as_ref()
                     .is_some_and(|(status, _)| status.state.is_connecting())
             {
-                self.start(backend, wake, Action::Refresh);
+                self.start(backend, wake, Action::Refresh { explicit: false });
                 changed = true;
             }
         }
@@ -274,8 +275,9 @@ impl Remote {
                         }
                     }
                     if let Some((outcome, err)) = &self.mutation_error
-                        && !(matches!(outcome, MutationOutcome::Start | MutationOutcome::Stop)
-                            && matches!(err, ErrorText::Raw(_)))
+                        && (self.explicit_refresh
+                            || !(matches!(outcome, MutationOutcome::Start | MutationOutcome::Stop)
+                                && matches!(err, ErrorText::Raw(_))))
                         && outcome.confirmed(
                             &status,
                             devices.as_deref(),
@@ -284,6 +286,7 @@ impl Remote {
                     {
                         self.mutation_error = None;
                     }
+                    self.explicit_refresh = false;
                     let explicit_mutation = self
                         .mutation_error
                         .as_ref()
@@ -327,7 +330,7 @@ impl Remote {
                 self.mutation_error = Some((MutationOutcome::Start, err_text.clone()));
                 self.error = Some(err_text);
                 if let Some(backend) = backend {
-                    self.start(backend, wake, Action::Refresh);
+                    self.start(backend, wake, Action::Refresh { explicit: false });
                 } else {
                     self.unconfirmed = None;
                     self.needs_read = true;
@@ -357,7 +360,7 @@ impl Remote {
                 }
                 self.error = Some(err_text);
                 if let Some(backend) = backend {
-                    self.start(backend, wake, Action::Refresh);
+                    self.start(backend, wake, Action::Refresh { explicit: false });
                 } else {
                     self.unconfirmed = None;
                     self.needs_read = true;
@@ -375,7 +378,7 @@ impl Remote {
                 self.mutation_error = Some((MutationOutcome::Pair, err_text.clone()));
                 self.error = Some(err_text);
                 if let Some(backend) = backend {
-                    self.start(backend, wake, Action::Refresh);
+                    self.start(backend, wake, Action::Refresh { explicit: false });
                 } else {
                     self.unconfirmed = None;
                     self.needs_read = true;
@@ -433,7 +436,7 @@ impl Remote {
             return;
         }
         let eligible = match &action {
-            Action::Refresh => true,
+            Action::Refresh { .. } => true,
             Action::Start => self.snapshot.as_ref().is_some_and(|(status, _)| {
                 status.manageable && !status.disabled_by_administrator && !status.enabled
             }),
@@ -465,21 +468,25 @@ impl Remote {
                         .is_some_and(|devices| devices.iter().any(|device| device.id == *id))
             }),
         };
-        if !eligible || (self.needs_read && !matches!(action, Action::Refresh)) {
+        if !eligible || (self.needs_read && !matches!(action, Action::Refresh { .. })) {
             return;
         }
         self.recheck = None;
-        if !matches!(action, Action::Refresh) {
+        if !matches!(action, Action::Refresh { .. }) {
             self.mutation_error = None;
             self.error = None;
         }
+        self.explicit_refresh = matches!(action, Action::Refresh { explicit: true });
         let tunnel_origin = self
             .snapshot
             .as_ref()
             .and_then(|(status, _)| status.remote_url.clone());
         let (cancel, cancelled) = bounded(1);
         let (out, input) = bounded(1);
-        self.flight = Some((matches!(action, Action::Refresh).then_some(cancel), input));
+        self.flight = Some((
+            matches!(action, Action::Refresh { .. }).then_some(cancel),
+            input,
+        ));
         let (backend, wake) = (backend.clone(), wake.clone());
         match &action {
             Action::Start => self.unconfirmed = Some(Mutation::Start),
@@ -492,11 +499,11 @@ impl Remote {
                 self.unconfirmed = Some(Mutation::Pair);
             }
             Action::Revoke(id) => self.unconfirmed = Some(Mutation::Revoke(id.clone(), None)),
-            Action::Refresh => {}
+            Action::Refresh { .. } => {}
         }
         platform::spawn(async move {
             let result = match action {
-                Action::Refresh => {
+                Action::Refresh { .. } => {
                     let Some(result) =
                         platform::reads::cancellable(&cancelled, snapshot(&backend)).await
                     else {
@@ -584,7 +591,7 @@ impl Remote {
             let disabled = !available
                 || busy
                 || extra_disabled
-                || (self.needs_read && !matches!(action, Action::Refresh));
+                || (self.needs_read && !matches!(action, Action::Refresh { .. }));
             let press = move |s: &mut S| {
                 let Some(state) = access(s) else {
                     return;
@@ -612,8 +619,13 @@ impl Remote {
                 layout::action_row()
                     .child(heading("remoteControl.title"))
                     .child(
-                        control(t("remoteControl.refresh"), false, false, Action::Refresh)
-                            .key("remote-control-refresh"),
+                        control(
+                            t("remoteControl.refresh"),
+                            false,
+                            false,
+                            Action::Refresh { explicit: true },
+                        )
+                        .key("remote-control-refresh"),
                     ),
             )
             .child(text(t("remoteControl.description")).wrap());
@@ -798,7 +810,7 @@ impl Remote {
             .full_width()
             .separate(Space::Md)
             .child(chrome::card(rc))
-            .children(self.pairing.as_ref().map(|active| {
+            .children(self.pairing.as_ref().filter(|_| available).map(|active| {
                 chrome::card(pairing_view::view(
                     &active.pairing,
                     &self.copy,

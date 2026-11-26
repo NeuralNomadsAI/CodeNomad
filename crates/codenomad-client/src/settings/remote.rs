@@ -584,7 +584,11 @@ fn parse_error_message(content_type: Option<&str>, text: &str) -> Option<String>
     }
     if content_type == Some("text/plain") {
         let trimmed = text.trim();
-        if trimmed.starts_with('<') || trimmed.starts_with('{') || trimmed.starts_with('[') {
+        let looks_html =
+            trimmed.starts_with("<!") || (trimmed.starts_with('<') && trimmed.contains('>'));
+        let looks_json = trimmed.starts_with('{')
+            || (trimmed.starts_with('[') && serde_json::from_str::<Value>(trimmed).is_ok());
+        if looks_html || looks_json {
             return None;
         }
         return clean_text(Some(trimmed), MAX_ERROR_CHARS);
@@ -773,6 +777,14 @@ mod tests {
         assert_eq!(
             parse_error_message(Some("text/plain"), r#"{"error":"truncated"#),
             None
+        );
+        assert_eq!(
+            parse_error_message(Some("text/plain"), r#"["json","array"]"#),
+            None
+        );
+        assert_eq!(
+            parse_error_message(Some("text/plain"), "[Policy] Listening is locked"),
+            Some("[Policy] Listening is locked".into())
         );
         assert_eq!(
             parse_error_message(Some("text/plain"), "Plain server error"),
