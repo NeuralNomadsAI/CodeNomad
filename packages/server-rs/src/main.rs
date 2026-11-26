@@ -27,6 +27,7 @@ mod shared;
 mod sidecars;
 mod storage;
 mod subagent_depth;
+mod temporary_workspaces;
 mod usage;
 mod workspaces;
 mod worktrees;
@@ -133,6 +134,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     let routes = Router::new()
         .merge(meta::routes())
         .merge(auth::routes())
+        .merge(temporary_workspaces::routes())
         .merge(workspaces::routes())
         .merge(files::routes())
         .merge(search::routes())

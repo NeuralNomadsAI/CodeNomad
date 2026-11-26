@@ -662,7 +662,7 @@ mod tests {
             .observe_idle("ses_child", Some(Some("ses_root")), 10.0);
         state.workspace = Some(ui);
         state.show_chat();
-        crate::settings::fixture_config(
+        crate::settings::fixture_config_doc(
             &mut state,
             json!({"settings": {"keepUnseenSubagentIdleStatus": true}}),
         );
@@ -706,7 +706,7 @@ mod tests {
             // Toggle off keepUnseenSubagentIdleStatus while unfocused: tab keeps Idle until 15.0s, arms wake_at(15.0).
             rt.update(|s, _tx| {
                 crate::shell::notifications::set_focus_for_test(s, false);
-                crate::settings::fixture_config(
+                crate::settings::fixture_config_doc(
                     s,
                     json!({"settings": {"keepUnseenSubagentIdleStatus": false}}),
                 );

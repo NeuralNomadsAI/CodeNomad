@@ -68,6 +68,7 @@ pub struct App {
     pub usage: crate::usage::Usage,
     pub provider_usage: Arc<crate::provider_usage::State>,
     pub previews: crate::previews::Previews,
+    pub temporary_workspaces: Option<crate::temporary_workspaces::TemporaryFolderRegistry>,
 }
 
 #[derive(Default)]
@@ -97,6 +98,8 @@ pub struct Workspace {
     pub created_at: String,
     pub updated_at: String,
     pub location: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporary: Option<bool>,
 }
 
 impl App {
@@ -116,19 +119,28 @@ impl App {
     ) -> Self {
         let mission_bridge = missions::run::new_token();
         let remote_control = crate::remote_control::Manager::new(&data);
+        let scope = if unrestricted { PathBuf::new() } else { root.clone() };
+        let temporary_workspaces = crate::temporary_workspaces::TemporaryFolderRegistry::open(
+            settings.location.base.join("temporary-workspaces"),
+            settings.location.base.join("temporary-workspaces.json"),
+            &scope,
+        )
+        .map_err(|err| eprintln!("Temporary workspaces are unavailable: {err}"))
+        .ok();
         Self {
             releases: crate::meta::releases::Monitor::new(&settings),
             sidecars: Lock::new(crate::sidecars::load(&settings.owner(crate::settings::Kind::Config, "server"))),
             usage: Default::default(),
             provider_usage: Default::default(),
             previews: Default::default(),
+            temporary_workspaces,
             bridge_token: mission_bridge.clone().or_else(crate::automation::new_token),
             human_answer: Default::default(),
             automation_pins: Default::default(),
             auth,
             port,
             data,
-            scope: if unrestricted { PathBuf::new() } else { root.clone() },
+            scope,
             root,
             unrestricted,
             settings,

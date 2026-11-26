@@ -44,6 +44,9 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET PUT",r"^/api/config-files/[^/]+/content$"),
     ("POST",r"^/api/storage/binaries/validate$"),
     ("POST",r"^/api/(?:client-connections/pong|workspaces(?:/creation/cancel|/[^/]+/creation/release)?)$"),
+    ("GET POST",r"^/api/workspaces/temporary$"),
+    ("POST",r"^/api/workspaces/temporary/abandon$"),
+    ("POST",r"^/api/workspaces/[^/]+/(?:keep|discard)$"),
     ("POST",r"^/api/workspaces/[^/]+/session-history/(?:outline|outlinePreview|window|query|ranked)$"),
     ("GET",r"^/api/workspaces/[^/]+/session-attachment/[^/]+/[^/]+/[0-9]+/[a-f0-9]{64}$"),
     ("GET",r"^/api/workspaces/[^/]+/session-media/[^/]+/[^/]+/[^/]+/[^/]+/[^/]+$"),
@@ -71,6 +74,14 @@ pub(crate) struct BrowserDevice(pub uuid::Uuid);
 // Browser-only workspace routes omitted from TS `SERVER_DEVICE_ROUTES`.
 static BROWSER_ONLY_SESSION_CLEANUP: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^/api/workspaces/[^/]+/session-cleanup/[^/]+$").unwrap());
+
+/// Per-device preview logout epoch captured at remote middleware admission time so a concurrent
+/// `POST /api/auth/logout` between admission and preview creation still fences publication.
+#[derive(Clone, Copy)]
+pub(crate) struct DeviceAdmission {
+    pub id: uuid::Uuid,
+    pub logout_epoch: u64,
+}
 
 fn reply(code: Status, text: &str) -> Response {
     (code, [(header::CONNECTION, "close")], Json(json!({"error":text}))).into_response()
@@ -243,6 +254,7 @@ pub async fn admit(
             !id.is_empty() && !id.contains('/') && crate::missions::human_answer::form_reply(route, &method).is_some()
         });
     let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
+    let remote_logout = !server && method == Method::POST && path == "/api/auth/logout";
     if entry && path == "/remote-pair" {
         if let Some(crate::host::ui::RemoteBundle::Rune(dir)) = &bundle
             && let Some(page) = crate::host::ui::rune_pair_page(dir, method).await
@@ -268,7 +280,7 @@ pub async fn admit(
         }
         return cors(next.run(req).await, supplied);
     }
-    if path.starts_with("/api/auth/") && path != "/api/auth/status"
+    if path.starts_with("/api/auth/") && path != "/api/auth/status" && !remote_logout
         || (path.starts_with("/api/backends/") && !backend_ui)
         // `REMOTE_MANAGEMENT_READS`: the status is the one management read open to devices.
         || path.starts_with("/api/remote-control/") && path != "/api/remote-control/status"
@@ -285,6 +297,7 @@ pub async fn admit(
         && !backend_ui
         && !form_reply
         && !browser_only_cleanup
+        && !remote_logout
         && ui.is_none()
         && !CATALOG.iter().any(|(methods, pat)| {
             methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
@@ -348,7 +361,7 @@ pub async fn admit(
         return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
     };
     let paired_server = app.devices.as_ref().is_some_and(|d| d.lock().unwrap().is_server_device(id));
-    if browser_only_cleanup && paired_server {
+    if (browser_only_cleanup || remote_logout) && paired_server {
         return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
     }
     {
@@ -372,7 +385,9 @@ pub async fn admit(
             req.headers_mut().remove(name);
         }
     }
+    let logout_epoch = app.previews.logout_epoch(id);
     req.extensions_mut().insert(Principal(principal.clone()));
+    req.extensions_mut().insert(DeviceAdmission { id, logout_epoch });
     if !server && !paired_server {
         req.extensions_mut().insert(BrowserDevice(id));
     }

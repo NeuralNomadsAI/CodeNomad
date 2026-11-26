@@ -98,17 +98,32 @@ pub(crate) async fn verify_mutation_at(
     directory: &str,
     record: &Value,
 ) -> Result<(), Error> {
+    verify_ordinary_session_at(app, endpoint, id, directory, None, record).await
+}
+
+pub(crate) async fn verify_ordinary_session_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    id: &str,
+    directory: &str,
+    workspace_id: Option<&str>,
+    record: &Value,
+) -> Result<(), Error> {
     if id.starts_with("ses_cn_schedule_") || marker(record) {
         return Err(carrier_denied());
     }
     let uncertain = || error(Status::SERVICE_UNAVAILABLE, "Mission schedule carrier ownership could not be verified");
     let route = endpoint.url.join("/api/rpc/codenomad.missions/scheduleCarrierRead").map_err(|_| uncertain())?;
-    let response = app
+    let mut req = app
         .native
         .client
         .post(route)
         .basic_auth("opencode", Some(&endpoint.password))
-        .query(&[("location[directory]", directory)])
+        .query(&[("location[directory]", directory)]);
+    if let Some(ws_id) = workspace_id {
+        req = req.query(&[("location[workspaceID]", ws_id)]);
+    }
+    let response = req
         .json(&json!({"input":{"sessionID":id}}))
         .timeout(Duration::from_secs(5))
         .send()
@@ -129,11 +144,12 @@ pub(crate) async fn verify_mutation_at(
         return Err(uncertain());
     }
     let fresh = crate::opencode::session_record_at(app, endpoint, id).await?;
-    if fresh["id"] != id
-        || fresh["location"]["directory"] != directory
-        || fresh["location"].get("workspaceID").is_some()
-        || marker(&fresh)
-    {
+    let fresh_ws_id = fresh["location"].get("workspaceID");
+    let ws_id_matches = match workspace_id {
+        None => fresh_ws_id.is_none(),
+        Some(expected) => fresh_ws_id.and_then(Value::as_str) == Some(expected),
+    };
+    if fresh["id"] != id || fresh["location"]["directory"] != directory || !ws_id_matches || marker(&fresh) {
         return Err(carrier_denied());
     }
     Ok(())

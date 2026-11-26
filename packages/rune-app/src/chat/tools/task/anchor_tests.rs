@@ -415,13 +415,17 @@ fn reveal_virtual_rows_focus_and_real_selection_protection() {
         lease = Some(
             s.transcript_display
                 .children
-                .install("child", child_steps_page(35, false, "selectable_step_zero")),
+                .install("child", child_steps_page(32, false, "selectable_step_zero")),
         );
         assert!(crate::chat::events::poll_chat(s, 6));
     });
     for _ in 0..8 {
         rt.frame(1.0 / 60.0);
     }
+    assert!(
+        rt.find(&format!("reveal-{step_key}")).is_none(),
+        "focused step_0 control must hold start at 0 past INITIAL_STEPS without inserting a reveal row"
+    );
     rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
     for _ in 0..8 {
         rt.frame(1.0 / 60.0);

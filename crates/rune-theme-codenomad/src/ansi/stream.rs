@@ -105,19 +105,19 @@ fn an_incremental_preview_keeps_sgr_across_chunks_and_resets_on_replacement() {
     use super::{rgb, styled};
 
     let mut stream = Stream::default();
-    let (text, spans, _) = styled(stream.update("before \\x"));
+    let (text, spans, _, _) = styled(stream.update("before \\x"));
     assert_eq!(text, "before ");
     assert!(spans.is_empty());
-    let (text, spans, _) = styled(stream.update("before \\x1b[31"));
+    let (text, spans, _, _) = styled(stream.update("before \\x1b[31"));
     assert_eq!(text, "before ");
     assert!(spans.is_empty());
-    let (text, spans, _) = styled(stream.update("before \\x1b[31mRED"));
+    let (text, spans, _, _) = styled(stream.update("before \\x1b[31mRED"));
     assert_eq!(text, "before RED");
     assert_eq!(spans[0].color, Some(rgb(187, 0, 0)));
-    let (text, spans, _) = styled(stream.update("before \\x1b[31mRED STILL\u{1b}[0m"));
+    let (text, spans, _, _) = styled(stream.update("before \\x1b[31mRED STILL\u{1b}[0m"));
     assert_eq!(text, "before RED STILL");
     assert_eq!(spans[0].end as usize, text.len());
-    let (text, spans, _) = styled(stream.update("replaced"));
+    let (text, spans, _, _) = styled(stream.update("replaced"));
     assert_eq!(text, "replaced");
     assert!(spans.is_empty());
 }

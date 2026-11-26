@@ -414,7 +414,7 @@ mod tests {
             crate::gallery::shell::fixture(&mut state);
             state.workspace = Some(workspace::Ui::new());
             workspace::connected(&mut state);
-            crate::settings::fixture_config(
+            crate::settings::fixture_config_doc(
                 &mut state,
                 json!({"settings": {"autoCleanupBlankSessions": true}}),
             );
@@ -531,7 +531,7 @@ mod tests {
         );
 
         // Confirmed false also skips cleanup.
-        crate::settings::fixture_config(
+        crate::settings::fixture_config_doc(
             &mut state,
             json!({"settings": {"autoCleanupBlankSessions": false}}),
         );
@@ -634,7 +634,7 @@ mod tests {
         crate::gallery::shell::fixture(&mut state);
         state.workspace = Some(workspace::Ui::new());
         workspace::connected(&mut state);
-        crate::settings::fixture_config(
+        crate::settings::fixture_config_doc(
             &mut state,
             json!({"settings": {"autoCleanupBlankSessions": true}}),
         );
@@ -664,7 +664,7 @@ mod tests {
                 .blank_cleanup
                 .active()
         );
-        crate::settings::fixture_config(
+        crate::settings::fixture_config_doc(
             &mut state,
             json!({"settings": {"autoCleanupBlankSessions": false}}),
         );
@@ -692,7 +692,7 @@ mod tests {
         crate::gallery::shell::fixture(&mut state);
         state.workspace = Some(workspace::Ui::new());
         workspace::connected(&mut state);
-        crate::settings::fixture_config(
+        crate::settings::fixture_config_doc(
             &mut state,
             json!({"settings": {"autoCleanupBlankSessions": true}}),
         );

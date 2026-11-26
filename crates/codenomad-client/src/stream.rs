@@ -19,6 +19,7 @@ mod native;
 mod notifications;
 mod routing;
 mod sessions;
+mod staleness;
 pub use catalogue::{
     AttentionHint, CatalogueChanges, CatalogueWatch, SessionActivityHint, SessionActivityKind,
 };
@@ -26,6 +27,7 @@ pub use children::ChildSettlement;
 pub(crate) use children::Children;
 use notifications::session_attention;
 use routing::dispatch;
+pub use staleness::probe_stale;
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]
 mod browser;

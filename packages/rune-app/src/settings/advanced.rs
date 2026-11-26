@@ -43,7 +43,7 @@ impl Toggle {
         matches!(
             self,
             Self::EmptySessions | Self::UnseenSubagents | Self::Whitespace
-        )
+        ) || (cfg!(target_os = "windows") && self == Self::SecondLaunch)
     }
 
     fn labels(self) -> (&'static str, &'static str) {

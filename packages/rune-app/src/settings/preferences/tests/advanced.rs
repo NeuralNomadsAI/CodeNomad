@@ -19,15 +19,28 @@ fn advanced_persists_only_supported_options_and_one_server_environment_variable(
         assert!(prefs.poll());
         let req = request(&listener).await;
         assert_eq!(req.first, "PATCH /api/storage/config/ui HTTP/1.1");
-        let expected = json!({"settings":{
-            "autoCleanupBlankSessions": false,
-            "keepUnseenSubagentIdleStatus": false,
-            "hideDiffWhitespaceChanges": false
-        }});
+        let expected = if cfg!(target_os = "windows") {
+            json!({"settings":{
+                "autoCleanupBlankSessions": false,
+                "keepUnseenSubagentIdleStatus": false,
+                "focusExistingWindowOnSecondLaunch": true,
+                "hideDiffWhitespaceChanges": false
+            }})
+        } else {
+            json!({"settings":{
+                "autoCleanupBlankSessions": false,
+                "keepUnseenSubagentIdleStatus": false,
+                "hideDiffWhitespaceChanges": false
+            }})
+        };
         assert_eq!(req.body, expected);
         req.reply(200, expected).await;
         wait_until(|| prefs.poll()).await;
         assert_eq!(prefs.advanced_toggle(Toggle::ProviderBalance), Some(false));
+        assert_eq!(
+            prefs.advanced_toggle(Toggle::SecondLaunch),
+            Some(cfg!(target_os = "windows"))
+        );
 
         prefs.show_environment(true);
         let backend = prefs.backend.clone().unwrap();

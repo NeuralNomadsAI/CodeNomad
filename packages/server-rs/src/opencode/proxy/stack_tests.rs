@@ -173,6 +173,7 @@ fn prompt_relay_with_http_read_fits_within_one_mib_current_thread_stack() {
                     created_at: String::new(),
                     updated_at: String::new(),
                     location: json!({"directory": root}),
+                    temporary: None,
                 };
                 app.inner.lock().unwrap().workspaces.push(ws.clone());
 
