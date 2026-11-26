@@ -168,9 +168,16 @@ pub fn publish_commands(prefix: &Prefix, names: &[String]) -> Result<(), String>
         if cfg!(windows) {
             let target = WINDOWS_TARGET;
             let forward = target.replace('\\', "/");
+            let expected = prefix.binary();
             replace(&commands.join(format!("{name}.cmd")), cmd(target).as_bytes())?;
-            replace(&commands.join(format!("{name}.ps1")), ps1(&forward).as_bytes())?;
-            replace(&commands.join(name), sh(&forward).as_bytes())?;
+            let ps1_path = commands.join(format!("{name}.ps1"));
+            if !ps1_path.exists() || super::legacy::is_npm_companion_shim(&ps1_path, &expected) {
+                replace(&ps1_path, ps1(&forward).as_bytes())?;
+            }
+            let sh_path = commands.join(name);
+            if !sh_path.exists() || super::legacy::is_npm_companion_shim(&sh_path, &expected) {
+                replace(&sh_path, sh(&forward).as_bytes())?;
+            }
         } else {
             #[cfg(unix)]
             {

@@ -22,7 +22,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::{admission, launch};
-use crate::{Shared, bench, settings::Kind, shared::fastify};
+use crate::{Shared, bench, shared::fastify};
 use layout::Prefix;
 use legacy::LegacyConsent;
 
@@ -402,19 +402,15 @@ fn parse_replace_legacy(body: &Value) -> Option<LegacyConsent> {
     Some(LegacyConsent { path: path.to_owned(), version: version.to_owned() })
 }
 
-/// `OpenCodeUpdateService.upgrade` for the default selection.
+/// `OpenCodeUpdateService.upgrade` for the currently selected binary.
 pub async fn upgrade(app: &Shared, replace_legacy: Option<LegacyConsent>) -> Result<String, Error> {
     let _serial = UPDATING.lock().await;
-    let configured =
-        app.settings.owner(Kind::Config, "server").get("opencodeBinary").and_then(Value::as_str).map(str::to_owned);
-    let default =
-        configured.as_deref().is_none_or(|c| c.is_empty() || c == "opencode" || c == "opencode2" || launch::retired(c));
-    let (selected, source) = plan::resolve_default().await;
-    let binary = launch::resolve(&selected);
+    let (binary, source, default) = super::update::selected_binary(app).await;
     let current_plan = plan::plan(false).await;
     // A foreign command or verified 1.x npm shim that cannot run is never repaired in place.
-    let replaceable_or_foreign = current_plan.foreign.as_ref().is_some_and(|f| f.command == binary)
-        || (current_plan.prefix.is_some() && current_plan.legacy.as_ref().is_some_and(|l| l.command == binary));
+    let replaceable_or_foreign = default
+        && (current_plan.foreign.as_ref().is_some_and(|f| f.command == binary)
+            || (current_plan.prefix.is_some() && current_plan.legacy.as_ref().is_some_and(|l| l.command == binary)));
     let current = match probe_version(&binary, Duration::from_secs(5)).await {
         Probed::Version(v) => Some(if v.is_empty() { "unknown".into() } else { v }),
         Probed::Missing => None,
@@ -475,19 +471,7 @@ pub async fn upgrade(app: &Shared, replace_legacy: Option<LegacyConsent>) -> Res
 }
 
 async fn update(State(app): State<Shared>, request: Request) -> axum::response::Response {
-    let (head, body) = request.into_parts();
-    let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            return fastify::error(
-                Status::PAYLOAD_TOO_LARGE,
-                "FST_ERR_CTP_BODY_TOO_LARGE",
-                "Request body is too large",
-            )
-            .into_response();
-        }
-    };
-    let body = match fastify::body(&head.headers, &bytes) {
+    let body = match super::read_fastify_body(request).await {
         Ok(Some(fastify::Body::Json(value))) => value,
         Ok(_) => Value::Null,
         Err(err) => return err.into_response(),

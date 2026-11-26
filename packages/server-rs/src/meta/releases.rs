@@ -76,12 +76,20 @@ fn read_feed(settings: &Settings) -> &'static str {
 }
 
 pub(crate) async fn run(app: Shared, shutdown: CancellationToken) {
-    let url = crate::bench::releases_fixture().unwrap_or_else(|| Url::parse("https://api.github.com/").unwrap());
+    let fixture = crate::bench::releases_fixture();
+    let allow_stable_only = fixture.is_none();
+    let url = fixture.unwrap_or_else(|| Url::parse("https://api.github.com/").unwrap());
     let repo = std::env::var("CODENOMAD_GITHUB_REPO").unwrap_or_else(|_| REPO.into());
-    run_with_base(app, shutdown, url, repo).await;
+    run_with_base(app, shutdown, url, repo, allow_stable_only).await;
 }
 
-pub(crate) async fn run_with_base(app: Shared, shutdown: CancellationToken, url: Url, repo: String) {
+pub(crate) async fn run_with_base(
+    app: Shared,
+    shutdown: CancellationToken,
+    url: Url,
+    repo: String,
+    allow_stable_only: bool,
+) {
     let monitor = &app.releases;
     let repo = repo.trim();
     let parts: Vec<_> = repo.split('/').collect();
@@ -96,7 +104,7 @@ pub(crate) async fn run_with_base(app: Shared, shutdown: CancellationToken, url:
     loop {
         let (feed, generation, need_stable) = {
             let state = monitor.state.lock().unwrap();
-            (state.feed, state.generation, !state.stable_checked)
+            (state.feed, state.generation, allow_stable_only && !state.stable_checked)
         };
         if feed == "preview" {
             tokio::select! {

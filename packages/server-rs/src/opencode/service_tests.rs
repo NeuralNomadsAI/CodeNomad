@@ -388,6 +388,7 @@ async fn meta_exposes_latest_stable_server_version_on_stable_feed() {
         shutdown.clone(),
         reqwest::Url::parse(&origin).unwrap(),
         "NeuralNomadsAI/CodeNomad".into(),
+        true,
     ));
     let router = meta::routes().with_state(app.clone());
     let (base, api_server) = start_server(router).await;
@@ -604,10 +605,21 @@ async fn service_and_update_enforce_fastify_1mib_limit_reject_3xx_reload_and_hon
     app.native.pin_binary();
     let (base, server) = start_server(router).await;
 
-    // 1. Over-1-MiB JSON body returns Fastify's 413 FST_ERR_CTP_BODY_TOO_LARGE on both POST routes.
+    // 1. Unsupported media type rejects with 415 BEFORE 413 even above 1 MiB, matching Fastify order.
     let huge = format!("{{{}}}", " ".repeat(1024 * 1024 + 16));
     let client = Client::builder().no_proxy().build().unwrap();
     for route in ["/api/opencode/service", "/api/opencode/update"] {
+        let resp_415 = client
+            .post(format!("{base}{route}"))
+            .header("content-type", "application/octet-stream")
+            .body(huge.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp_415.status().as_u16(), 415, "{route} octet-stream >1 MiB");
+        let body_415: Value = resp_415.json().await.unwrap();
+        assert_eq!(body_415["code"], "FST_ERR_CTP_INVALID_MEDIA_TYPE", "{route}");
+
         let resp = client
             .post(format!("{base}{route}"))
             .header("content-type", "application/json")

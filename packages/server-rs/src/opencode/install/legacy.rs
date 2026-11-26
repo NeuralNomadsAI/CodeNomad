@@ -178,7 +178,7 @@ fn is_busy_or_permission(err: &std::io::Error) -> bool {
     err.kind() == ErrorKind::PermissionDenied || matches!(err.raw_os_error(), Some(5 | 16 | 32 | 33))
 }
 
-fn companion_legacy_shim(path: &Path, expected_binary: &Path) -> bool {
+pub(crate) fn is_npm_companion_shim(path: &Path, expected_binary: &Path) -> bool {
     let Some(parent) = path.parent() else { return false };
     let Ok(bytes) = fs::read(path) else { return false };
     if bytes.len() > 64 * 1024 {
@@ -186,7 +186,7 @@ fn companion_legacy_shim(path: &Path, expected_binary: &Path) -> bool {
     }
     let Ok(script) = String::from_utf8(bytes) else { return false };
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if name.eq_ignore_ascii_case("opencode.ps1") {
+    if name.to_ascii_lowercase().ends_with(".ps1") {
         if !script.starts_with("#!/usr/bin/env pwsh") || !script.contains("$basedir=Split-Path") {
             return false;
         }
@@ -203,7 +203,7 @@ fn companion_legacy_shim(path: &Path, expected_binary: &Path) -> bool {
         }
         return matched;
     }
-    if name.eq_ignore_ascii_case("opencode") {
+    if !name.contains('.') {
         if !script.starts_with("#!/bin/sh\n") && !script.starts_with("#!/bin/sh\r\n") {
             return false;
         }
@@ -256,7 +256,7 @@ pub fn remove_legacy(prefix: &Prefix, legacy: &Legacy) -> Result<(), Error> {
     if cfg!(windows) {
         for companion in ["opencode.ps1", "opencode"] {
             let candidate = prefix.commands().join(companion);
-            if candidate.is_file() && companion_legacy_shim(&candidate, &legacy.binary) {
+            if candidate.is_file() && is_npm_companion_shim(&candidate, &legacy.binary) {
                 shims.push(candidate);
             }
         }

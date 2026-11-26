@@ -198,7 +198,8 @@ fn legacy_npm_verification_preflight_and_removal_match_reference() {
         assert!(pkg.exists() && std::path::Path::new(&command).exists());
     }
 
-    // With no lock, removal deletes the legacy package root and verified shims while preserving custom scripts.
+    // With no lock, removal deletes the legacy package root and verified shims while preserving custom scripts,
+    // and publishing V2 commands must continue preserving custom companion scripts.
     legacy::remove_legacy(&prefix, &detected).unwrap();
     assert!(!pkg.exists());
     assert!(!std::path::Path::new(&command).exists());
@@ -206,6 +207,11 @@ fn legacy_npm_verification_preflight_and_removal_match_reference() {
     {
         assert!(!prefix.commands().join("opencode.ps1").exists());
         assert!(prefix.commands().join("opencode").exists(), "custom script must not be deleted by comment mention");
+        layout::publish_commands(&prefix, &["opencode".into()]).unwrap();
+        assert!(prefix.commands().join("opencode.cmd").is_file());
+        assert!(prefix.commands().join("opencode.ps1").is_file());
+        let preserved = std::fs::read_to_string(prefix.commands().join("opencode")).unwrap();
+        assert!(preserved.contains("/usr/local/bin/custom"), "publish_commands must preserve custom companion script");
     }
     let _ = std::fs::remove_dir_all(root);
 }

@@ -10,9 +10,8 @@ use std::{
 
 use axum::{
     Json,
-    body::Bytes,
     extract::{Request, State},
-    http::{HeaderMap, StatusCode as Status},
+    http::StatusCode as Status,
     response::{IntoResponse, Response},
 };
 use futures_util::FutureExt;
@@ -23,7 +22,6 @@ use super::{admission, daemon, launch, update};
 use crate::{Shared, shared::fastify};
 
 const RELOAD_TIMEOUT: Duration = Duration::from_secs(30);
-const MAX_BODY: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
@@ -57,13 +55,12 @@ impl Activation {
     }
 }
 
-fn parse_action(headers: &HeaderMap, bytes: &Bytes) -> Result<Action, Response> {
+fn parse_action(body: Option<fastify::Body>) -> Result<Action, Response> {
     let invalid = || (Status::BAD_REQUEST, Json(json!({"error": "invalid_service_action"}))).into_response();
-    let body = match fastify::body(headers, bytes) {
-        Ok(None | Some(fastify::Body::Json(Value::Null))) => return Ok(Action::Start),
-        Ok(Some(fastify::Body::Json(Value::Object(map)))) => map,
-        Ok(Some(_)) => return Err(invalid()),
-        Err(err) => return Err(err.into_response()),
+    let body = match body {
+        None | Some(fastify::Body::Json(Value::Null)) => return Ok(Action::Start),
+        Some(fastify::Body::Json(Value::Object(map))) => map,
+        Some(_) => return Err(invalid()),
     };
     let mut restart = false;
     let mut reload = false;
@@ -142,8 +139,8 @@ async fn activate(app: &Shared, binary: &str, action: Action) -> Result<Value, S
     let installed_version = update::read_current_version(binary).await?;
     let lifecycle =
         app.native.lifecycle_for(binary).ok_or_else(|| "OpenCode service lifecycle unavailable".to_owned())?;
-    // Match TS `setupServiceOptions`: validate profile startup environment before any mutation.
-    let _ = launch::daemon_environment_from_config(lifecycle.config_path.as_deref())?;
+    // Match TS `setupServiceOptions`: validate and freeze profile startup environment once for the whole action.
+    let startup_env = launch::daemon_environment_from_config(lifecycle.config_path.as_deref())?;
     let previous = lifecycle.discover(Instant::now() + daemon::TIMEOUT).await?;
     if (previous.is_none() || restart) && admission::below_minimum(&installed_version) {
         return Err(
@@ -207,11 +204,11 @@ async fn activate(app: &Shared, binary: &str, action: Action) -> Result<Value, S
     }
 
     let endpoint = if restart && previous.is_some() {
-        lifecycle.restart(Instant::now() + daemon::TIMEOUT).await?
+        lifecycle.restart_with_env(&startup_env, Instant::now() + daemon::TIMEOUT).await?
     } else if let Some(prev) = previous {
         prev
     } else {
-        lifecycle.ensure(Instant::now() + daemon::TIMEOUT).await?
+        lifecycle.ensure_with_env(&startup_env, Instant::now() + daemon::TIMEOUT).await?
     };
     if endpoint.version.trim().is_empty() {
         return Err("OpenCode did not report an authenticated runtime version".into());
@@ -224,19 +221,11 @@ async fn activate(app: &Shared, binary: &str, action: Action) -> Result<Value, S
 
 /// `POST /api/opencode/service` `{ restart?: boolean, reload?: boolean }`.
 pub async fn handle(State(app): State<Shared>, request: Request) -> Response {
-    let (head, body) = request.into_parts();
-    let bytes = match axum::body::to_bytes(body, MAX_BODY).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            return fastify::error(
-                Status::PAYLOAD_TOO_LARGE,
-                "FST_ERR_CTP_BODY_TOO_LARGE",
-                "Request body is too large",
-            )
-            .into_response();
-        }
+    let body = match super::read_fastify_body(request).await {
+        Ok(body) => body,
+        Err(err) => return err.into_response(),
     };
-    let action = match parse_action(&head.headers, &bytes) {
+    let action = match parse_action(body) {
         Ok(action) => action,
         Err(response) => return response,
     };

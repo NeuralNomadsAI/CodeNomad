@@ -198,27 +198,34 @@ impl Native {
         if self.inner.lifecycle.read().unwrap().is_none() {
             return self.endpoint().ok_or_else(|| Refusal::Failed("OpenCode fixture endpoint is missing".into()));
         }
-        if !self.is_pinned()
-            && let Some(lifecycle) = self.inner.lifecycle.write().unwrap().as_mut()
         {
-            lifecycle.binary = binary.to_owned();
-        }
-        {
-            let mut endpoint = self.inner.endpoint.write().unwrap();
-            let mut validated = self.inner.validated.lock().unwrap();
-            self.inner.generation.fetch_add(1, Ordering::SeqCst);
-            *endpoint = None;
-            *validated = None;
-            *self.inner.inflight.lock().unwrap() = None;
-        }
-        self.inner.retired.notify_waiters();
-        {
-            let binary_path = PathBuf::from(binary);
-            let label = binary_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-            let mut store = app.inner.lock().unwrap();
-            for workspace in &mut store.workspaces {
-                workspace.binary_id = binary_path.clone();
-                workspace.binary_label = label.clone();
+            let _adopt = self.inner.binary_adopt.lock().await;
+            let (selected, _, _) = update::selected_binary(app).await;
+            if selected != binary {
+                return Err(Refusal::Failed("OpenCode selection changed during activation".into()));
+            }
+            if !self.is_pinned()
+                && let Some(lifecycle) = self.inner.lifecycle.write().unwrap().as_mut()
+            {
+                lifecycle.binary = binary.to_owned();
+            }
+            {
+                let mut endpoint = self.inner.endpoint.write().unwrap();
+                let mut validated = self.inner.validated.lock().unwrap();
+                self.inner.generation.fetch_add(1, Ordering::SeqCst);
+                *endpoint = None;
+                *validated = None;
+                *self.inner.inflight.lock().unwrap() = None;
+            }
+            self.inner.retired.notify_waiters();
+            {
+                let binary_path = PathBuf::from(binary);
+                let label = binary_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                let mut store = app.inner.lock().unwrap();
+                for workspace in &mut store.workspaces {
+                    workspace.binary_id = binary_path.clone();
+                    workspace.binary_label = label.clone();
+                }
             }
         }
         self.acquire(deadline).await
@@ -372,7 +379,7 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
                     if inner.generation.load(Ordering::SeqCst) != generation {
                         continue;
                     }
-                    lifecycle.ensure(deadline).await?
+                    lifecycle.start_daemon(deadline).await?
                 }
             },
         };
@@ -382,12 +389,15 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
         if current.as_ref().is_some_and(|old| **old != found) {
             // Retire the replaced daemon immediately upon discovering a different endpoint
             // (TS `opencode-service.ts:196-200, 333-343`), even if admitting the replacement fails.
-            let mut endpoint = inner.endpoint.write().unwrap();
-            let mut validated = inner.validated.lock().unwrap();
-            *endpoint = None;
-            *validated = None;
-            drop(validated);
-            drop(endpoint);
+            {
+                let mut endpoint = inner.endpoint.write().unwrap();
+                let mut validated = inner.validated.lock().unwrap();
+                if inner.generation.load(Ordering::SeqCst) != generation {
+                    continue;
+                }
+                *endpoint = None;
+                *validated = None;
+            }
             inner.retired.notify_waiters();
         }
         admission::admit(&inner.client, &found).await?;
@@ -405,6 +415,59 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
         return Ok(found);
     }
     Err(Refusal::Failed("OpenCode connection was invalidated during discovery".into()))
+}
+
+/// Fastify 5 request body reading: rejects unsupported media types (`415`) before checking the
+/// 1 MiB body limit (`413 FST_ERR_CTP_BODY_TOO_LARGE`). Briefly drains rejected bodies without
+/// retaining them so HTTP/1.1 peers receive the 415/413 cleanly instead of a socket reset.
+pub(crate) async fn read_fastify_body(
+    request: axum::extract::Request,
+) -> Result<Option<crate::shared::fastify::Body>, Error> {
+    use crate::shared::fastify;
+    use futures_util::StreamExt;
+    const LIMIT: usize = 1024 * 1024;
+    const DRAIN_LIMIT: usize = LIMIT + 64 * 1024;
+    const DRAIN_TIME: Duration = Duration::from_secs(2);
+
+    let media =
+        || fastify::error(Status::UNSUPPORTED_MEDIA_TYPE, "FST_ERR_CTP_INVALID_MEDIA_TYPE", "Unsupported Media Type");
+    let drain = |mut stream: axum::body::BodyDataStream, mut seen: usize| async move {
+        let end = Instant::now() + DRAIN_TIME;
+        while seen <= DRAIN_LIMIT {
+            match tokio::time::timeout_at(end, stream.next()).await {
+                Ok(Some(Ok(chunk))) => seen = seen.saturating_add(chunk.len()),
+                _ => break,
+            }
+        }
+    };
+    let (head, body) = request.into_parts();
+    let declared = head
+        .headers
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<usize>().ok());
+    match head.headers.get(axum::http::header::CONTENT_TYPE) {
+        Some(kind) => {
+            let essence = kind.to_str().unwrap_or("").split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+            if !matches!(essence.as_str(), "application/json" | "text/plain") {
+                drain(body.into_data_stream(), 0).await;
+                return Err(media());
+            }
+            let bytes = proxy_body::read(body, LIMIT, declared).await?;
+            fastify::body(&head.headers, &bytes)
+        }
+        None => {
+            let mut stream = body.into_data_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|_| media())?;
+                if !chunk.is_empty() {
+                    drain(stream, chunk.len()).await;
+                    return Err(media());
+                }
+            }
+            Ok(None)
+        }
+    }
 }
 
 /// Resolves the currently configured OpenCode executable and hot-adopts it on `app.native`
