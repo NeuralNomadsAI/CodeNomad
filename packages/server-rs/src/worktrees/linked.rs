@@ -76,6 +76,22 @@ pub(super) async fn send_with_timeout(
 async fn native_get(app: &App, path: &str, max: usize) -> Result<Value, Error> {
     native(app, Method::GET, path, &[], None, max).await
 }
+enum DeleteError {
+    /// Failed before dispatching `DELETE /api/worktree` or OpenCode returned a confirmed 4xx refusal.
+    ConfirmedNoDelete(Error),
+    /// Dispatched `DELETE /api/worktree` and timed out, lost transport, or received 5xx: deletion
+    /// may still be running in OpenCode, so evacuated sessions must remain at the main checkout.
+    Uncertain(Error),
+}
+
+impl DeleteError {
+    fn into_error(self) -> Error {
+        match self {
+            Self::ConfirmedNoDelete(err) | Self::Uncertain(err) => err,
+        }
+    }
+}
+
 /// `DELETE /api/worktree` without force, pinned to an acquired endpoint and shared deadline.
 async fn delete_worktree_at(
     app: &App,
@@ -83,18 +99,37 @@ async fn delete_worktree_at(
     project: &str,
     directory: &str,
     deadline: tokio::time::Instant,
-) -> Result<(), Error> {
+) -> Result<(), DeleteError> {
     if !app.native.current(endpoint) {
-        return Err(native_error());
+        return Err(DeleteError::ConfirmedNoDelete(native_error()));
     }
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
     if remaining.is_zero() {
-        return Err(native_error());
+        return Err(DeleteError::ConfirmedNoDelete(native_error()));
     }
     let body = json!({"projectID": project, "directory": directory, "force": false});
-    let url = endpoint.url.join("/api/worktree").map_err(|_| native_error())?;
-    let request = app.native.client.request(Method::DELETE, url).basic_auth("opencode", Some(&endpoint.password));
-    send_with_timeout(request, &[], Some(body), 16384, remaining).await.map(drop)
+    let url = endpoint.url.join("/api/worktree").map_err(|_| DeleteError::ConfirmedNoDelete(native_error()))?;
+    let response = app
+        .native
+        .client
+        .request(Method::DELETE, url)
+        .basic_auth("opencode", Some(&endpoint.password))
+        .json(&body)
+        .timeout(remaining)
+        .send()
+        .await
+        .map_err(|_| DeleteError::Uncertain(native_error()))?;
+    let status = response.status();
+    if status.is_success() {
+        if status == Status::NO_CONTENT {
+            return Ok(());
+        }
+        crate::opencode::read_json(response, 16384).await.map(drop).map_err(|_| DeleteError::Uncertain(native_error()))
+    } else if status.is_client_error() {
+        Err(DeleteError::ConfirmedNoDelete(native_error()))
+    } else {
+        Err(DeleteError::Uncertain(native_error()))
+    }
 }
 
 async fn native_at(
@@ -454,7 +489,9 @@ pub async fn create(
     let args = if existing { vec!["switch", "--", branch] } else { vec!["switch", "-c", branch] };
     if git(checkout.registered(), &args).await.is_err() {
         let rollback_deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-        delete_worktree_at(&app, &endpoint, &catalogue.project, service, rollback_deadline).await?;
+        delete_worktree_at(&app, &endpoint, &catalogue.project, service, rollback_deadline)
+            .await
+            .map_err(DeleteError::into_error)?;
         return Err(conflict("Unable to attach the branch"));
     }
     // Retry the final inventory read once ONLY on `WorktreeConfigChangedError` so a newly created
@@ -917,6 +954,7 @@ async fn remove_owned(
     no_blockers(&app, target, &cat, true).await?;
     let mut moved = Vec::new();
     let mut final_endpoint = None;
+    let mut delete_uncertain = false;
     let removal = async {
         for members in &families {
             principal.live()?;
@@ -930,20 +968,36 @@ async fn remove_owned(
         if remaining.is_zero() {
             return Err(native_error());
         }
-        let now = super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), remaining).await?;
+        let now = tokio::time::timeout_at(
+            final_deadline,
+            super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), remaining),
+        )
+        .await
+        .map_err(|_| native_error())??;
         if now.get(&slug).ok() != Some(target) {
             return Err(conflict("Worktree changed before deletion"));
         }
         tokio::time::timeout_at(final_deadline, clean(target)).await.map_err(|_| native_error())??;
         principal.live()?;
         trace("issue native deletion");
-        delete_worktree_at(&app, &endpoint, &cat.project, &target.service_root, final_deadline).await?;
-        final_endpoint = Some(endpoint);
-        Ok(())
+        match delete_worktree_at(&app, &endpoint, &cat.project, &target.service_root, final_deadline).await {
+            Ok(()) => {
+                final_endpoint = Some(endpoint);
+                Ok(())
+            }
+            Err(DeleteError::ConfirmedNoDelete(err)) => Err(err),
+            Err(DeleteError::Uncertain(err)) => {
+                delete_uncertain = true;
+                Err(err)
+            }
+        }
     }
     .await;
     if let Err(err) = removal {
         if !moved.is_empty() {
+            if delete_uncertain {
+                return Err(conflict("Deletion unconfirmed; sessions remain at the main checkout"));
+            }
             let verified = catalogue(&app, &w, false)
                 .await
                 .map_err(|_| conflict("Deletion unconfirmed; sessions remain at the main checkout"))?;

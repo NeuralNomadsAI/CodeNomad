@@ -174,6 +174,35 @@ pub async fn run(dir: &Path, args: &[&str], max: usize) -> Result<Output, Error>
     .map_err(|_| bad("Git output unavailable or too large"))?;
     Ok(Output { code: status.code().unwrap_or(-1), bytes, err })
 }
+pub async fn run_with_stdin(dir: &Path, args: &[&str], stdin_bytes: &[u8], max: usize) -> Result<Output, Error> {
+    let _slot = SLOTS.acquire().await.unwrap();
+    let mut cmd = command(dir, args);
+    cmd.stdin(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| if e.kind() == io::ErrorKind::NotFound { missing_git() } else { bad("Git could not start") })?;
+    let mut stdin = child.stdin.take().unwrap();
+    let out = child.stdout.take().unwrap();
+    let err = child.stderr.take().unwrap();
+    let write_stdin = async {
+        use tokio::io::AsyncWriteExt;
+        match stdin.write_all(stdin_bytes).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {}
+            Err(e) => return Err(e),
+        }
+        let _ = stdin.shutdown().await;
+        drop(stdin);
+        Ok(())
+    };
+    let (_, bytes, err, status) = tokio::time::timeout(Duration::from_secs(15), async {
+        tokio::try_join!(write_stdin, read_capped(out, max), read_capped(err, 32 * 1024), child.wait())
+    })
+    .await
+    .map_err(|_| bad("Git operation timed out"))?
+    .map_err(|_| bad("Git output unavailable or too large"))?;
+    Ok(Output { code: status.code().unwrap_or(-1), bytes, err })
+}
 pub async fn repo(app: &crate::App, id: &str, slug: &str) -> Result<Workspace, Error> {
     Ok(repo_target(app, id, slug).await?.0)
 }
@@ -881,15 +910,22 @@ mod tests {
         raw_git(&clone_dir, &["config", "user.name", "test"]);
         raw_git(&clone_dir, &["config", "user.email", "test@example.com"]);
 
-        // Create a local commit in `clone_dir` and reset HEAD back so `clone_rebased_oid` lives only in HEAD reflog.
-        std::fs::write(clone_dir.join("rebased.txt"), "temp\n").unwrap();
+        // Create two local commits in `clone_dir` and reset HEAD back 2 commits so `clone_mid_oid` is an
+        // ancestor of the `clone_rebased_oid` HEAD reflog entry (not directly in refs or reflog itself).
+        std::fs::write(clone_dir.join("rebased.txt"), "mid\n").unwrap();
         raw_git(&clone_dir, &["add", "rebased.txt"]);
         assert!(marker.exists(), "positive control: plain git add must execute includeIf filter");
         std::fs::remove_file(&marker).unwrap();
-        raw_git(&clone_dir, &["commit", "-q", "-m", "before-reset"]);
+        raw_git(&clone_dir, &["commit", "-q", "-m", "before-reset-mid"]);
+        let clone_mid_oid = String::from_utf8(raw_git(&clone_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
+        std::fs::write(clone_dir.join("rebased.txt"), "tip\n").unwrap();
+        raw_git(&clone_dir, &["add", "rebased.txt"]);
+        std::fs::remove_file(&marker).unwrap();
+        raw_git(&clone_dir, &["commit", "-q", "-m", "before-reset-tip"]);
         let clone_rebased_oid =
             String::from_utf8(raw_git(&clone_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
-        raw_git(&clone_dir, &["reset", "--hard", "-q", "HEAD~1"]);
+        raw_git(&clone_dir, &["reset", "--hard", "-q", "HEAD~2"]);
+        let _ = std::fs::remove_file(&marker);
 
         std::fs::write(clone_dir.join("file.txt"), "hello updated\n").unwrap();
 
@@ -935,7 +971,7 @@ mod tests {
         .0;
         assert_eq!(details["id"], signed_oid);
 
-        // Pinned pagination anchor from this clone's own pre-reset HEAD reflog stays readable.
+        // Pinned pagination anchor AND intermediate ancestor commits from this clone's HEAD reflog stay readable.
         let rebased_hist = history::history(
             State(app.clone()),
             Route((id_str.clone(), "root".into())),
@@ -945,6 +981,15 @@ mod tests {
         .unwrap()
         .0;
         assert_eq!(rebased_hist["head"], clone_rebased_oid);
+        let mid_details = history::commit_details(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into(), clone_mid_oid.clone())),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(mid_details["id"], clone_mid_oid);
 
         // Unreachable commit present only in alternate object store must be rejected on both history routes.
         let alt_hist = history::history(

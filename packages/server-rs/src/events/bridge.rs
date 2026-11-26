@@ -930,27 +930,32 @@ async fn deliver(
                 break;
             }
             let send = {
-                let mut held = routes.held.lock().unwrap();
-                if owns_destination {
-                    held.remember(sid, workspace.id);
-                }
-                if held.has(sid, workspace.id) || source || owns_destination {
-                    if !owns_destination {
-                        held.forget(sid, workspace.id);
-                    }
-                    true
-                } else {
-                    false
-                }
-            };
-            if send {
-                if app.inner.lock().unwrap().generation != app_generation {
+                let store = app.inner.lock().unwrap();
+                if store.generation != app_generation || !store.workspaces.iter().any(|w| w.id == workspace.id) {
                     break;
                 }
-                let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":&*event});
-                app.emit(envelope);
-                delivered = true;
-            } else if lookup_failed {
+                let send = {
+                    let mut held = routes.held.lock().unwrap();
+                    if owns_destination {
+                        held.remember(sid, workspace.id);
+                    }
+                    if held.has(sid, workspace.id) || source || owns_destination {
+                        if !owns_destination {
+                            held.forget(sid, workspace.id);
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if send {
+                    let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":&*event});
+                    app.emit(envelope);
+                    delivered = true;
+                }
+                send
+            };
+            if !send && lookup_failed {
                 routes.request_routing_resync(app, workspace.id, app_generation);
             }
             break;
@@ -1071,20 +1076,23 @@ async fn deliver(
             } else if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
                 break;
             }
-            if app.inner.lock().unwrap().generation != app_generation {
-                break;
-            }
-            if let Some(sid) = session_id.as_deref() {
-                let mut held = routes.held.lock().unwrap();
-                if kind == "session.deleted" || kind == "session.moved" {
-                    held.forget(sid, workspace.id);
-                } else {
-                    held.remember(sid, workspace.id);
+            {
+                let store = app.inner.lock().unwrap();
+                if store.generation != app_generation || !store.workspaces.iter().any(|w| w.id == workspace.id) {
+                    break;
                 }
+                if let Some(sid) = session_id.as_deref() {
+                    let mut held = routes.held.lock().unwrap();
+                    if kind == "session.deleted" || kind == "session.moved" {
+                        held.forget(sid, workspace.id);
+                    } else {
+                        held.remember(sid, workspace.id);
+                    }
+                }
+                let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":&*event});
+                app.emit(envelope);
+                delivered = true;
             }
-            let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":&*event});
-            app.emit(envelope);
-            delivered = true;
             break;
         }
     } else if (foreign_workspace || event["location"].get("workspaceID").is_some())
@@ -1687,7 +1695,8 @@ mod tests {
         assert_eq!(fifo_frames[2]["status"], "connected");
 
         // 6. After SSE reconnect on the SAME endpoint (bumping app_generation), a stale worker
-        // carrying the old `app_generation` must never emit a resync pulse on the new connection.
+        // carrying the old `app_generation` must never emit resync pulses, emit native events,
+        // or mutate `routes.held` on the new connection (including for `session.moved`).
         let _ = status(&app, "connecting", None);
         let live_gen = status(&app, "connected", None);
         assert_ne!(live_gen, app_gen);
@@ -1707,6 +1716,42 @@ mod tests {
         )
         .await;
         assert!(drain_hub(&app, &sub).is_empty(), "stale app_generation worker must not pulse resync");
+        deliver(
+            &app,
+            &routes,
+            ws.clone(),
+            Arc::new(json!({"type": "session.text.delta", "data": {"sessionID": "ses_stale_local", "delta": "old"}})),
+            Arc::clone(&endpoint),
+            (Instant::now(), 8),
+            Some(Arc::from(root_dir.to_string_lossy().into_owned())),
+            false,
+            Some(Arc::from("ses_stale_local")),
+            app_gen, // stale SSE generation!
+        )
+        .await;
+        assert!(drain_hub(&app, &sub).is_empty(), "stale app_generation worker must not emit normal event");
+        assert!(!routes.held.lock().unwrap().has("ses_stale_local", ws.id), "stale worker must not mutate held");
+        deliver(
+            &app,
+            &routes,
+            ws.clone(),
+            Arc::new(json!({
+                "type": "session.moved",
+                "data": {"sessionID": "ses_stale_moved", "location": {"directory": root_dir.to_string_lossy()}}
+            })),
+            Arc::clone(&endpoint),
+            (Instant::now(), 9),
+            Some(Arc::from(foreign_dir.to_string_lossy().into_owned())),
+            false,
+            Some(Arc::from("ses_stale_moved")),
+            app_gen, // stale SSE generation!
+        )
+        .await;
+        assert!(drain_hub(&app, &sub).is_empty(), "stale app_generation worker must not emit session.moved");
+        assert!(
+            !routes.held.lock().unwrap().has("ses_stale_moved", ws.id),
+            "stale session.moved worker must not mutate held"
+        );
 
         // 7. A pending trailing resync timer must NEVER publish `connected` after workspace stop.
         routes.request_routing_resync(&app, ws.id, live_gen); // leading pulse

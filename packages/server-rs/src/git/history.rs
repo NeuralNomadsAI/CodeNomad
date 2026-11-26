@@ -1,6 +1,6 @@
 //! Commit history and one commit's changed files with their contents.
 use super::{
-    TWO_MIB, bad, repo, run, sha,
+    TWO_MIB, bad, repo, run, run_with_stdin, sha,
     status_read::{changes, mime},
 };
 use crate::{Error, Shared, files};
@@ -18,9 +18,15 @@ async fn git(dir: &Path, args: &[&str]) -> Result<String, Error> {
 async fn has_alternates(dir: &Path) -> Result<bool, Error> {
     let common = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).await?;
     let alternates = Path::new(common.trim()).join("objects").join("info").join("alternates");
-    Ok(std::fs::symlink_metadata(alternates).is_ok())
+    match std::fs::symlink_metadata(alternates) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        // Fail closed on permission or I/O errors: require reachability proof unless absence is confirmed.
+        Err(_) => Ok(true),
+    }
 }
 async fn ensure_commit_reachable(dir: &Path, commit: &str, err_msg: &str) -> Result<String, Error> {
+    let alt_before = has_alternates(dir).await?;
     let verify = run(dir, &["rev-parse", "--verify", "--quiet", &format!("{commit}^{{commit}}")], 1024).await?;
     if verify.code != 0 {
         return Err(bad(err_msg));
@@ -29,7 +35,7 @@ async fn ensure_commit_reachable(dir: &Path, commit: &str, err_msg: &str) -> Res
     if !sha(&resolved) {
         return Err(bad(err_msg));
     }
-    if !has_alternates(dir).await? {
+    if !alt_before && !has_alternates(dir).await? {
         return Ok(resolved);
     }
     let on_head = run(dir, &["merge-base", "--is-ancestor", &resolved, "HEAD"], 1024).await?;
@@ -42,11 +48,35 @@ async fn ensure_commit_reachable(dir: &Path, commit: &str, err_msg: &str) -> Res
     if on_ref.code == 0 && !on_ref.bytes.is_empty() {
         return Ok(resolved);
     }
-    // Preserve pinned history pagination anchors after a local rebase/reset in shared clones
-    // by admitting commits recorded in this worktree's own HEAD reflog.
+    // Preserve pinned history pagination anchors AND every ancestor commit shown on those pages
+    // after a local rebase/reset in shared clones by checking ancestry against this worktree's
+    // HEAD reflog tips.
     let reflog = run(dir, &["log", "--no-show-signature", "-g", "--format=%H", "HEAD"], TWO_MIB).await?;
-    if reflog.code == 0 && reflog.text().lines().any(|line| line.trim() == resolved) {
-        return Ok(resolved);
+    if reflog.code == 0 {
+        let mut tips = std::collections::HashSet::new();
+        let mut stdin = String::with_capacity(resolved.len() + 128);
+        stdin.push_str(&resolved);
+        stdin.push('\n');
+        for line in reflog.text().lines() {
+            let tip = line.trim();
+            if sha(tip) && tips.insert(tip.to_owned()) {
+                stdin.push('^');
+                stdin.push_str(tip);
+                stdin.push('\n');
+            }
+        }
+        if !tips.is_empty() {
+            let check = run_with_stdin(
+                dir,
+                &["rev-list", "--max-count=1", "--ignore-missing", "--stdin"],
+                stdin.as_bytes(),
+                1024,
+            )
+            .await?;
+            if check.code == 0 && check.bytes.is_empty() {
+                return Ok(resolved);
+            }
+        }
     }
     Err(bad(err_msg))
 }
