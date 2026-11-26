@@ -85,7 +85,7 @@ Tam geçmiş araması, halihazırda yüklü olan konuşma dökümü satırlarıy
 ## Günlükler ve güvenli tanılama {#diagnostics}
 
 1. **Ayarlar → OpenCode → OpenCode loglarını görüntüle** yolunu açın. Seçilen yürütme sunucusunun genel `opencode.log` dosyası `opencode debug paths log` ile bulunur. En fazla son 128 KiB gösterilir; **Yenile** dosyayı tekrar okur.
-2. **Preferences → OpenCode** bölümünde amaçlanan **Varsayılan log seviyesi** öğesini yalnızca daha fazla ayrıntıya ihtiyaç duyulduğunda seçin. Bağımsız CodeNomad günlük kaydı için [sunucu CLI günlük kaydı seçenekleri](server.md)'yi kullanın.
+2. **Preferences → OpenCode** bölümünde amaçlanan **Varsayılan log seviyesi** öğesini yalnızca daha fazla ayrıntıya ihtiyaç duyulduğunda seçin. Bağımsız CodeNomad günlük kaydı için [sunucu CLI günlük kaydı seçenekleri](server.md)'yi kullanın. CodeNomad sunucusu ayrıca yapılandırma dosyasının yanında (varsayılan olarak `~/.config/codenomad`) `logs/server.log` içinde kendi günlüğünü tutar; dolan önceki dosya `server.previous.log` olur.
 3. **Ayarlar → Bilgi → Tanılama** öğesini açın ve **Hata bildir**, **Panoya kopyala** veya **.txt indir** öğesini kullanın.
 
 Günlüğe kaydetme ayrıntıları yolları, çıktıları ve uygulama verilerini ortaya çıkarabilir. Günlükleri/yakalamaları paylaşmadan önce kimlik bilgilerini, eşleştirme bağlantılarını, ağ adreslerini, özel yolları ve konuşma içeriğini çıkarın. Tam teşhis raporu yolları/adresleri içerir; önceden doldurulmuş hata formu bunları kasıtlı olarak hariç tutar. Bkz. [Hata bildirin](support.md#report-a-bug).

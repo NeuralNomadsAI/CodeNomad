@@ -80,7 +80,7 @@ HTTPS 首选端口 **9898**，HTTP 首选 **9899**。没有端口覆盖时，首
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`；允许浏览整个文件系统。不是智能体沙箱设置。 |
 | `--config <path>` | `CLI_CONFIG` | 解析后的活动默认值：`~/.config/codenomad/config.yaml`。接受目录或 YAML 文件以显式指定位置。 |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`；文档级别：`trace`、`debug`、`info`、`warn`、`error`。 |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`；否则写入指定文件。 |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`，另加配置文件旁的 `logs/server.log`；指定文件后取代两者。 |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`；运行时认证用户名。没有运行时密码覆盖时，已存储认证文件保留其用户名。 |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | 未设置；仅运行时密码，优先于受管理认证文件。 |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`；字母、数字、`_` 和 `-` 之外的字符变为 `_`。 |

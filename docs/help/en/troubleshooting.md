@@ -85,7 +85,7 @@ For cancelled or partial cleanup, read its progress/receipts before starting ano
 ## Logs and safe diagnostics {#diagnostics}
 
 1. Open **Settings → OpenCode → View OpenCode logs**. This reads the selected execution host’s global `opencode.log`, located with `opencode debug paths log`. It shows at most the last 128 KiB; **Refresh** rereads the file.
-2. In **Preferences → OpenCode**, choose the intended **Default log level** only when more detail is needed. For standalone CodeNomad logging, use the [server CLI logging options](server.md).
+2. In **Preferences → OpenCode**, choose the intended **Default log level** only when more detail is needed. For standalone CodeNomad logging, use the [server CLI logging options](server.md). The CodeNomad server also keeps its own log in `logs/server.log` beside its configuration file (`~/.config/codenomad` by default); the previous full file is `server.previous.log`.
 3. Open **Settings → Info → Diagnostics** and use **Report a bug**, **Copy to clipboard** or **Download .txt**.
 
 Logging detail can expose paths, output and application data. Redact credentials, pairing links, network addresses, private paths and conversation content before sharing logs/captures. The full diagnostic report includes paths/addresses; the prefilled bug form deliberately excludes them. See [Report a bug](support.md#report-a-bug).

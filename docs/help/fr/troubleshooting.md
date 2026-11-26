@@ -85,7 +85,7 @@ Pour un nettoyage annulé ou partiel, lisez sa progression/ses reçus avant une 
 ## Journaux et diagnostics sûrs {#diagnostics}
 
 1. Ouvrez **Paramètres → OpenCode → Afficher les journaux OpenCode**. Le fichier global `opencode.log` de l’hôte d’exécution sélectionné est localisé par `opencode debug paths log`. Elle affiche au maximum les derniers 128 Kio ; **Actualiser** relit le fichier.
-2. Dans **Préférences → OpenCode**, choisissez la **Verbosite des logs** voulue seulement si davantage de détail est nécessaire. Pour les journaux CodeNomad autonome, utilisez les [options CLI serveur de journalisation](server.md).
+2. Dans **Préférences → OpenCode**, choisissez la **Verbosite des logs** voulue seulement si davantage de détail est nécessaire. Pour les journaux CodeNomad autonome, utilisez les [options CLI serveur de journalisation](server.md). Le serveur CodeNomad tient aussi son propre journal dans `logs/server.log`, à côté de son fichier de configuration (`~/.config/codenomad` par défaut) ; le fichier plein précédent est `server.previous.log`.
 3. Ouvrez **Paramètres → Info → Diagnostics** et utilisez **Signaler un bug**, **Copier dans le presse-papiers** ou **Télécharger .txt**.
 
 Les détails de journalisation peuvent exposer chemins, sorties et données applicatives. Masquez identifiants, liens d’appairage, adresses réseau, chemins privés et contenu des conversations avant de partager journaux/captures. Le rapport complet inclut chemins/adresses ; le formulaire de bug prérempli les exclut volontairement. Voir [Signaler un bug](support.md#report-a-bug).

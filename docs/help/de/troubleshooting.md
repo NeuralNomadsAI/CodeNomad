@@ -85,7 +85,7 @@ Lesen Sie bei abgebrochener/teilweiser Bereinigung Fortschritt/Belege vor weiter
 ## Logs und sichere Diagnosen {#diagnostics}
 
 1. Öffnen Sie **Einstellungen → OpenCode → OpenCode-Protokolle anzeigen**. Die globale Datei `opencode.log` des ausgewählten Ausführungshosts wird mit `opencode debug paths log` ermittelt. Es zeigt höchstens die letzten 128 KiB; **Aktualisieren** liest die Datei erneut.
-2. Wählen Sie unter **Einstellungen → OpenCode** nur bei Bedarf an mehr Details den vorgesehenen **Standard-Log-Level**. Für eigenständiges CodeNomad-Logging verwenden Sie die [Logging-Optionen der Server-CLI](server.md).
+2. Wählen Sie unter **Einstellungen → OpenCode** nur bei Bedarf an mehr Details den vorgesehenen **Standard-Log-Level**. Für eigenständiges CodeNomad-Logging verwenden Sie die [Logging-Optionen der Server-CLI](server.md). Der CodeNomad-Server führt außerdem ein eigenes Log in `logs/server.log` neben seiner Konfigurationsdatei (standardmäßig `~/.config/codenomad`); die vorherige volle Datei heißt `server.previous.log`.
 3. Öffnen Sie **Einstellungen → Info → Diagnose** und verwenden Sie **Fehler melden**, **In Zwischenablage kopieren** oder **.txt herunterladen**.
 
 Ausführliche Logs können Pfade, Ausgaben und Anwendungsdaten offenlegen. Schwärzen Sie Zugangsdaten, Kopplungslinks, Netzwerkadressen, private Pfade und Unterhaltungsinhalte vor Teilen von Logs/Aufnahmen. Der vollständige Diagnosebericht enthält Pfade/Adressen; das vorausgefüllte Fehlerformular schließt sie bewusst aus. Siehe [Fehler melden](support.md#report-a-bug).

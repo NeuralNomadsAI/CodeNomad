@@ -91,7 +91,7 @@ You can configure the server using flags or environment variables:
 | `--config <path>` | `CLI_CONFIG` | Config file location |
 | `--launch` | `CLI_LAUNCH` | Open the UI in a Chromium-based browser (strict boolean, default off) |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | Logging level (trace, debug, info, warn, error) |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | Log destination file (defaults to stdout) |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | Log destination file. Defaults to stdout plus `logs/server.log` beside the configuration file; a chosen file replaces both |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | Username for CodeNomad's internal auth (default `codenomad`) |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Password for CodeNomad's internal auth |
 | `--generate-token` | `CODENOMAD_GENERATE_TOKEN` | Emit a one-time local bootstrap token for desktop flows (strict boolean, default off) |

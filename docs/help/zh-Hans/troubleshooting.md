@@ -85,7 +85,7 @@ Electron 使用 Chromium，可作为同一主机上的替代方案。如果 AppI
 ## 日志与安全诊断 {#diagnostics}
 
 1. 打开**设置 → OpenCode → 查看 OpenCode 日志**。通过 `opencode debug paths log` 定位并读取所选执行主机的全局 `opencode.log`。最多显示最后 128 KiB；**刷新**会重新读取文件。
-2. 在**偏好设置 → OpenCode**中，仅在需要更多细节时选择目标**日志详细程度**。独立 CodeNomad 日志请使用[服务器 CLI 日志选项](server.md)。
+2. 在**偏好设置 → OpenCode**中，仅在需要更多细节时选择目标**日志详细程度**。独立 CodeNomad 日志请使用[服务器 CLI 日志选项](server.md)。CodeNomad 服务器还会在其配置文件旁（默认 `~/.config/codenomad`）的 `logs/server.log` 中保存自己的日志；上一个写满的文件是 `server.previous.log`。
 3. 打开**设置 → 信息 → 诊断**，使用**报告错误**、**复制到剪贴板**或**下载 .txt**。
 
 详细日志可能暴露路径、输出和应用数据。共享日志/截图前请脱敏凭据、配对链接、网络地址、私有路径和对话内容。完整诊断报告包含路径/地址；预填错误表单有意排除它们。参阅[报告错误](support.md#report-a-bug)。
