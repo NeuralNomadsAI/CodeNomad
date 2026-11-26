@@ -21,7 +21,7 @@ use crate::{Shared, opencode_settings::Scope, subagent_depth::Fail};
 use super::{
     catalog::{IntegrationCatalog, integrations_for_spec},
     doc::{append_plugin_control_rule, remove_plugin_source_entry, replace_plugin_control_rules},
-    engine::{self, COMMIT_ABORTED, COMMIT_PENDING},
+    engine::{self, COMMIT_ABORTED, COMMIT_ADMITTED, COMMIT_PENDING},
     order::defined_before,
     snapshot::{ControlLocation, Snapshot},
     spec::{plugin_package_identities, validate_plugin_source_spec},
@@ -99,19 +99,21 @@ pub(super) async fn add_with_timeouts(
         return Err(SourceError::with_code(Status::UNPROCESSABLE_ENTITY, code.as_str()));
     }
     let _turn = ADD_QUEUE.lock().await;
+    let deadline = tokio::time::Instant::now() + add_timeout;
+    let hard_deadline = deadline + abort_grace;
     let cancel = CancellationToken::new();
     let commit_state = Arc::new(AtomicU8::new(COMMIT_PENDING));
     let cancel_timer = cancel.clone();
     let timer = tokio::spawn(async move {
-        tokio::time::sleep(add_timeout).await;
+        tokio::time::sleep_until(deadline).await;
         cancel_timer.cancel();
     });
     let op = add_serialized(app, workspace_id, &req, principal, cancel.clone(), commit_state.clone());
     tokio::pin!(op);
-    let outcome = match tokio::time::timeout(add_timeout + abort_grace, &mut op).await {
+    let outcome = match tokio::time::timeout_at(hard_deadline, &mut op).await {
         Ok(Ok(res)) => Ok(res),
         Ok(Err(err)) => {
-            if cancel.is_cancelled() {
+            if cancel.is_cancelled() && commit_state.load(Ordering::SeqCst) != COMMIT_ADMITTED {
                 Err(SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout"))
             } else {
                 Err(err)
@@ -124,17 +126,8 @@ pub(super) async fn add_with_timeouts(
                 // Proven: `rename` has not been admitted and will abort under `guard_current`.
                 Err(SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout"))
             } else {
-                // `rename` was already admitted: await its actual outcome rather than publishing a false timeout.
-                match op.await {
-                    Ok(res) => Ok(res),
-                    Err(err) => {
-                        if cancel.is_cancelled() {
-                            Err(SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout"))
-                        } else {
-                            Err(err)
-                        }
-                    }
-                }
+                // `rename` was already admitted (`COMMIT_ADMITTED`): return its real outcome without reclassifying.
+                op.await
             }
         }
     };
@@ -151,23 +144,29 @@ async fn add_serialized(
     commit_state: Arc<AtomicU8>,
 ) -> Result<SourceMutationResponse, SourceError> {
     let timeout_err = || SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout");
-    let catalog_fut = async {
-        tokio::select! {
-            _ = cancel.cancelled() => None,
-            catalog = app.integration_catalog.read() => Some(catalog),
-        }
-    };
-    let (snap_res, raw_res, catalog_opt) = tokio::join!(
-        engine::read(app, workspace_id, &req.location, principal.as_ref(), Some(&cancel)),
-        engine::read_config_documents(app, workspace_id, &req.location, principal.as_ref(), Some(&cancel)),
-        catalog_fut,
-    );
+    // Fail fast on workspace/daemon errors (matching JS `Promise.all`) so a slow catalog cannot
+    // mask an immediate 404/403 refusal as a 503 timeout.
+    let (snapshot, raw_docs, catalog) = tokio::try_join!(
+        async {
+            engine::read(app, workspace_id, &req.location, principal.as_ref(), Some(&cancel))
+                .await
+                .map_err(SourceError::from_fail)
+        },
+        async {
+            engine::read_config_documents(app, workspace_id, &req.location, principal.as_ref(), Some(&cancel))
+                .await
+                .map_err(SourceError::from_fail)
+        },
+        async {
+            Ok::<IntegrationCatalog, SourceError>(tokio::select! {
+                _ = cancel.cancelled() => IntegrationCatalog::default(),
+                catalog = app.integration_catalog.read() => catalog,
+            })
+        },
+    )?;
     if cancel.is_cancelled() {
         return Err(timeout_err());
     }
-    let snapshot = snap_res.map_err(SourceError::from_fail)?;
-    let raw_docs = raw_res.map_err(SourceError::from_fail)?;
-    let catalog = catalog_opt.unwrap_or_default();
 
     // Integration catalog rules (`plugin-sources.ts:89-101`):
     // 1. Native integrations install in Global configuration only (`422 global-only`).

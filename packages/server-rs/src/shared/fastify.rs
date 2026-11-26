@@ -33,14 +33,7 @@ pub fn body(headers: &HeaderMap, bytes: &[u8]) -> Result<Option<Body>, Error> {
         )),
         "application/json" => {
             let json_bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
-            let parsed = serde_json::from_slice::<Value>(json_bytes).or_else(|err| {
-                // JS `JSON.parse` / Fastify accepts unpaired UTF-16 surrogate escapes (`\uD800`..`\uDFFF`),
-                // letting route schemas and business validators handle them (e.g. `422 invalid-spec`).
-                replace_lone_surrogates(json_bytes)
-                    .ok_or(err)
-                    .and_then(|rewritten| serde_json::from_slice::<Value>(&rewritten))
-            });
-            match parsed {
+            match serde_json::from_slice::<Value>(json_bytes) {
                 Ok(v) if !poisoned(&v) => Ok(Some(Body::Json(v))),
                 _ => Err(error(
                     Status::BAD_REQUEST,
@@ -63,90 +56,4 @@ fn poisoned(v: &Value) -> bool {
         Value::Array(a) => a.iter().any(poisoned),
         _ => false,
     }
-}
-
-fn parse_hex4(bytes: &[u8]) -> Option<u16> {
-    if bytes.len() != 4 {
-        return None;
-    }
-    let mut val = 0u16;
-    for &b in bytes {
-        let d = match b {
-            b'0'..=b'9' => (b - b'0') as u16,
-            b'a'..=b'f' => (b - b'a' + 10) as u16,
-            b'A'..=b'F' => (b - b'A' + 10) as u16,
-            _ => return None,
-        };
-        val = (val << 4) | d;
-    }
-    Some(val)
-}
-
-/// Rewrites unpaired `\uD800`..`\uDFFF` escapes inside JSON strings to `\uFFFD` so valid JS JSON
-/// containing lone surrogates parses through `serde_json` and reaches route/business validation.
-fn replace_lone_surrogates(bytes: &[u8]) -> Option<Vec<u8>> {
-    if std::str::from_utf8(bytes).is_err() {
-        return None;
-    }
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut in_string = false;
-    let mut changed = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if !in_string {
-            if b == b'"' {
-                in_string = true;
-            }
-            out.push(b);
-            i += 1;
-            continue;
-        }
-        if b == b'"' {
-            in_string = false;
-            out.push(b);
-            i += 1;
-            continue;
-        }
-        if b == b'\\' {
-            if i + 5 < bytes.len()
-                && bytes[i + 1] == b'u'
-                && let Some(u1) = parse_hex4(&bytes[i + 2..i + 6])
-            {
-                if (0xD800..=0xDBFF).contains(&u1) {
-                    if i + 11 < bytes.len()
-                        && bytes[i + 6] == b'\\'
-                        && bytes[i + 7] == b'u'
-                        && let Some(u2) = parse_hex4(&bytes[i + 8..i + 12])
-                        && (0xDC00..=0xDFFF).contains(&u2)
-                    {
-                        out.extend_from_slice(&bytes[i..i + 12]);
-                        i += 12;
-                        continue;
-                    }
-                    out.extend_from_slice(b"\\uFFFD");
-                    changed = true;
-                    i += 6;
-                    continue;
-                }
-                if (0xDC00..=0xDFFF).contains(&u1) {
-                    out.extend_from_slice(b"\\uFFFD");
-                    changed = true;
-                    i += 6;
-                    continue;
-                }
-                out.extend_from_slice(&bytes[i..i + 6]);
-                i += 6;
-                continue;
-            }
-            if i + 1 < bytes.len() {
-                out.extend_from_slice(&bytes[i..i + 2]);
-                i += 2;
-                continue;
-            }
-        }
-        out.push(b);
-        i += 1;
-    }
-    changed.then_some(out)
 }

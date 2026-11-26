@@ -203,27 +203,57 @@ pub(super) fn discovery_loaders(
     Some(loaders)
 }
 
+/// Strictly validates and decodes percent-escapes as Node `decodeURIComponent` / `fileURLToPath` does
+/// (rejecting malformed `%` sequences such as `%zz` or truncated `%2`, as well as invalid UTF-8).
+fn strict_percent_decode(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return None;
+            }
+            let hex = |b: u8| match b {
+                b'0'..=b'9' => Some(b - b'0'),
+                b'a'..=b'f' => Some(b - b'a' + 10),
+                b'A'..=b'F' => Some(b - b'A' + 10),
+                _ => None,
+            };
+            let hi = hex(bytes[i + 1])?;
+            let lo = hex(bytes[i + 2])?;
+            out.push((hi << 4) | lo);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 /// Converts a `file://` URL to a local path using Node `fileURLToPath` semantics.
 pub(super) fn file_url_to_path(raw: &str, style: Style) -> Option<String> {
     let url = reqwest::Url::parse(raw).ok()?;
     if url.scheme() != "file" || url.query().is_some() || url.fragment().is_some() {
         return None;
     }
-    // Node `fileURLToPath` rejects percent-encoded path separators (`%2f`/`%2F`, and `%5c`/`%5C` on Windows).
+    // Node `fileURLToPath` rejects percent-encoded path separators (`%2f`/`%2F`, and `%5c`/`%5C` on Windows)
+    // and malformed `%` escapes (e.g. `%zz`).
     let raw_path = url.path();
     let lower_path = raw_path.to_ascii_lowercase();
     if lower_path.contains("%2f") || (style == Style::Win32 && lower_path.contains("%5c")) {
+        return None;
+    }
+    let decoded = strict_percent_decode(raw_path)?;
+    if decoded.contains('\0') {
         return None;
     }
     if style == Style::Posix {
         if url.host_str().is_some_and(|h| !h.is_empty() && !h.eq_ignore_ascii_case("localhost")) {
             return None;
         }
-        let decoded = percent_encoding::percent_decode_str(raw_path).decode_utf8().ok()?;
-        if decoded.contains('\0') {
-            return None;
-        }
-        return Some(decoded.into_owned());
+        return Some(decoded);
     }
     let path = url.to_file_path().ok()?;
     Some(path.to_string_lossy().into_owned())

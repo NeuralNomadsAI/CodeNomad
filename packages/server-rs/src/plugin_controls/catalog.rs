@@ -27,10 +27,8 @@ const INTEGRATION_CATALOG_MAX_PAGES: usize = 5;
 const RELEASE_LIST_MAX_BYTES: usize = 1024 * 1024;
 const RATE_LIMIT_MAX_WAIT_MS: u64 = 60 * 60 * 1000;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct IntegrationCatalog {
-    pub(crate) schema_version: u64,
     pub(crate) integrations: Vec<IntegrationCatalogEntry>,
 }
 
@@ -55,6 +53,8 @@ pub(crate) struct IntegrationCatalogSources {
 #[derive(Clone)]
 struct KnownCatalog {
     catalog: IntegrationCatalog,
+    /// Full validated `catalog.json` document persisted verbatim so both Rust and TS reload it identically.
+    raw_document: Value,
     fetched_at: String,
     revision: String,
 }
@@ -115,6 +115,7 @@ impl CatalogSource {
         st.loaded = true;
         st.known = Some(KnownCatalog {
             catalog,
+            raw_document: json!({ "schemaVersion": 1, "integrations": [] }),
             fetched_at: chrono::Utc::now().to_rfc3339(),
             revision: "catalog-v1#1@2026-01-01T00:00:00Z".to_owned(),
         });
@@ -184,6 +185,8 @@ impl CatalogSource {
         }
     }
 
+    /// Single 10 s deadline covering the whole refresh (release list pagination + asset download),
+    /// matching `AbortSignal.timeout(INTEGRATION_CATALOG_TIMEOUT_MS)` in `integrations/catalog.ts:97`.
     async fn refresh(
         &self,
         releases_url: &str,
@@ -191,7 +194,8 @@ impl CatalogSource {
         cached_etag: Option<&str>,
         cached_release: Option<Release>,
     ) {
-        let client = match Client::builder().timeout(Duration::from_millis(INTEGRATION_CATALOG_TIMEOUT_MS)).build() {
+        let total_budget = Duration::from_millis(INTEGRATION_CATALOG_TIMEOUT_MS);
+        let client = match Client::builder().build() {
             Ok(c) => c,
             Err(_) => {
                 let mut st = self.state.lock().await;
@@ -199,49 +203,45 @@ impl CatalogSource {
                 return;
             }
         };
-        let result = fetch_newest_release(&client, releases_url, cached_etag, cached_release).await;
-        match result {
-            Ok((release_opt, new_tag)) => {
-                let Some(release) = release_opt else {
-                    let mut st = self.state.lock().await;
-                    st.list_tag = new_tag;
-                    st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
-                    return;
-                };
-                if known_revision == Some(release.revision.as_str()) {
-                    let mut st = self.state.lock().await;
-                    st.list_tag = new_tag;
-                    st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
-                    return;
-                }
-                match download_catalog(&client, &release.asset_url).await {
-                    Ok(catalog) => {
-                        let known = KnownCatalog {
-                            catalog,
-                            fetched_at: chrono::Utc::now().to_rfc3339(),
-                            revision: release.revision,
-                        };
-                        if let Some(path) = self.state_file.clone() {
-                            let persist_known = known.clone();
-                            let _ = tokio::task::spawn_blocking(move || persist_catalog(&path, &persist_known)).await;
-                        }
-                        let mut st = self.state.lock().await;
-                        st.list_tag = new_tag;
-                        st.known = Some(known);
-                        st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
-                    }
-                    Err(retry_at) => {
-                        let now = now_ms();
-                        let mut st = self.state.lock().await;
-                        st.list_tag = new_tag;
-                        st.attempt = Some(Attempt {
-                            at_ms: now,
-                            until_ms: retry_at.map(|r| r.min(now.saturating_add(RATE_LIMIT_MAX_WAIT_MS))),
-                        });
-                    }
-                }
+        let outcome = tokio::time::timeout(total_budget, async {
+            let (release_opt, new_tag) =
+                fetch_newest_release(&client, releases_url, cached_etag, cached_release).await?;
+            let Some(release) = release_opt else {
+                return Ok::<_, Option<u64>>((None, new_tag));
+            };
+            if known_revision == Some(release.revision.as_str()) {
+                return Ok((Some(RefreshMatch::Unchanged), new_tag));
             }
-            Err(retry_at) => {
+            let (catalog, raw_document) = download_catalog(&client, &release.asset_url).await?;
+            Ok((
+                Some(RefreshMatch::Updated(KnownCatalog {
+                    catalog,
+                    raw_document,
+                    fetched_at: chrono::Utc::now().to_rfc3339(),
+                    revision: release.revision,
+                })),
+                new_tag,
+            ))
+        })
+        .await;
+
+        match outcome {
+            Ok(Ok((Some(RefreshMatch::Updated(known)), new_tag))) => {
+                if let Some(path) = self.state_file.clone() {
+                    let persist_known = known.clone();
+                    let _ = tokio::task::spawn_blocking(move || persist_catalog(&path, &persist_known)).await;
+                }
+                let mut st = self.state.lock().await;
+                st.list_tag = new_tag;
+                st.known = Some(known);
+                st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
+            }
+            Ok(Ok((Some(RefreshMatch::Unchanged), new_tag))) | Ok(Ok((None, new_tag))) => {
+                let mut st = self.state.lock().await;
+                st.list_tag = new_tag;
+                st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
+            }
+            Ok(Err(retry_at)) => {
                 let now = now_ms();
                 let mut st = self.state.lock().await;
                 st.attempt = Some(Attempt {
@@ -249,8 +249,17 @@ impl CatalogSource {
                     until_ms: retry_at.map(|r| r.min(now.saturating_add(RATE_LIMIT_MAX_WAIT_MS))),
                 });
             }
+            Err(_) => {
+                let mut st = self.state.lock().await;
+                st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
+            }
         }
     }
+}
+
+enum RefreshMatch {
+    Unchanged,
+    Updated(KnownCatalog),
 }
 
 /// Catalog integrations a source spec designates by registry package name (way 1) or Git prefix (way 3)
@@ -308,7 +317,52 @@ fn valid_neuralnomads_id(s: &str) -> bool {
     s.strip_prefix("neuralnomads.").is_some_and(valid_integration_id)
 }
 
-/// Validates a catalog JSON value matching `integrationCatalogSchema` (`opencode/integrations/contract.ts`).
+fn valid_package_name(s: &str) -> bool {
+    s.strip_prefix("@neuralnomads/opencode-").is_some_and(valid_integration_id)
+}
+
+fn valid_range(s: &str) -> bool {
+    let len = s.chars().count();
+    (1..=64).contains(&len)
+        && s.bytes().all(|b| {
+            b.is_ascii_digit()
+                || matches!(b, b'x' | b'X' | b'*' | b'^' | b'~' | b'<' | b'>' | b'=' | b'|' | b'.' | b' ' | b'-')
+        })
+}
+
+fn valid_display_name(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix("OpenCode for ") else { return false };
+    let mut chars = rest.chars();
+    let Some(first) = chars.next() else { return false };
+    !first.is_whitespace() && !rest.contains('\n') && !rest.contains('\r') && s.chars().count() <= 60
+}
+
+fn valid_locale_key(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() < 2 || !bytes[0].is_ascii_lowercase() || !bytes[1].is_ascii_lowercase() {
+        return false;
+    }
+    if bytes.len() == 2 {
+        return true;
+    }
+    if bytes[2] != b'-' {
+        return false;
+    }
+    let region = &bytes[3..];
+    (2..=4).contains(&region.len()) && region[0].is_ascii_uppercase() && region[1..].iter().all(u8::is_ascii_alphabetic)
+}
+
+fn valid_min_app_version(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('.').collect();
+    (1..=3).contains(&parts.len()) && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
+fn valid_positive_safe_int(value: &Value) -> bool {
+    let Some(n) = value.as_f64() else { return false };
+    n.is_finite() && n.fract() == 0.0 && (1.0..=9_007_199_254_740_991.0).contains(&n)
+}
+
+/// Validates the complete `integrationCatalogSchema` (`opencode/integrations/contract.ts:95-131`).
 pub(crate) fn parse_catalog_value(value: &Value) -> Option<IntegrationCatalog> {
     let obj = value.as_object()?;
     if obj.len() != 2 || obj.get("schemaVersion").and_then(Value::as_u64) != Some(1) {
@@ -318,6 +372,11 @@ pub(crate) fn parse_catalog_value(value: &Value) -> Option<IntegrationCatalog> {
     if list.len() > INTEGRATION_CATALOG_MAX_ENTRIES {
         return None;
     }
+    let serialized = serde_json::to_vec(value).ok()?;
+    if serialized.len() > INTEGRATION_CATALOG_MAX_BYTES {
+        return None;
+    }
+
     let mut ids = HashSet::new();
     let mut packages = HashSet::new();
     let mut plugins = HashSet::new();
@@ -326,26 +385,115 @@ pub(crate) fn parse_catalog_value(value: &Value) -> Option<IntegrationCatalog> {
 
     for item in list {
         let entry = item.as_object()?;
+        if entry.keys().any(|k| {
+            !matches!(
+                k.as_str(),
+                "id" | "package"
+                    | "range"
+                    | "displayName"
+                    | "family"
+                    | "plugin"
+                    | "rpc"
+                    | "summary"
+                    | "app"
+                    | "host"
+                    | "vendor"
+                    | "docs"
+                    | "status"
+                    | "sources"
+            )
+        }) {
+            return None;
+        }
         let id = entry.get("id")?.as_str()?;
-        let family = entry.get("family")?.as_str()?;
         let package = entry.get("package")?.as_str()?;
+        let range = entry.get("range")?.as_str()?;
+        let display_name = entry.get("displayName")?.as_str()?;
+        let family = entry.get("family")?.as_str()?;
         let plugin = entry.get("plugin")?.as_str()?;
         let rpc = entry.get("rpc")?.as_str()?;
+        let docs = entry.get("docs")?.as_str()?;
+        let status = entry.get("status")?.as_str()?;
+
         if !valid_integration_id(id)
+            || !valid_package_name(package)
+            || !valid_range(range)
+            || !valid_display_name(display_name)
             || !matches!(family, "native" | "vendor-mcp" | "api")
             || !valid_neuralnomads_id(plugin)
             || !valid_neuralnomads_id(rpc)
-            || package.is_empty()
-            || package.len() > 214
-            || package != package.to_ascii_lowercase()
+            || !docs.starts_with("https://github.com/NeuralNomadsAI/opencode-integrations/")
+            || docs.chars().count() > 300
+            || !matches!(status, "preview" | "stable" | "deprecated")
         {
             return None;
         }
-        let has_host = entry.contains_key("host");
-        let has_vendor = entry.contains_key("vendor");
-        if (family == "native") != has_host || (family != "vendor-mcp" && has_vendor) {
+
+        // `summary`: record of locale -> 1..=300 code points, must include `"en"`, max 16 keys.
+        let summary = entry.get("summary")?.as_object()?;
+        if summary.is_empty() || summary.len() > 16 || !summary.contains_key("en") {
             return None;
         }
+        for (locale, text) in summary {
+            let text_str = text.as_str()?;
+            let cp = text_str.chars().count();
+            if !valid_locale_key(locale) || !(1..=300).contains(&cp) {
+                return None;
+            }
+        }
+
+        // `app`: strict `{ name: 1..=60, versions?: range }`.
+        let app = entry.get("app")?.as_object()?;
+        if app.keys().any(|k| !matches!(k.as_str(), "name" | "versions")) {
+            return None;
+        }
+        let app_name = app.get("name")?.as_str()?;
+        if !(1..=60).contains(&app_name.chars().count()) {
+            return None;
+        }
+        if let Some(versions) = app.get("versions")
+            && !versions.as_str().is_some_and(valid_range)
+        {
+            return None;
+        }
+
+        // `host`: required iff `family == "native"`; strict `{ protocol: int >= 1, range: range }`.
+        let host = entry.get("host");
+        if (family == "native") != host.is_some() {
+            return None;
+        }
+        if let Some(host_val) = host {
+            let hobj = host_val.as_object()?;
+            if hobj.len() != 2
+                || !hobj.get("protocol").is_some_and(valid_positive_safe_int)
+                || !hobj.get("range").and_then(Value::as_str).is_some_and(valid_range)
+            {
+                return None;
+            }
+        }
+
+        // `vendor`: only allowed for `vendor-mcp`; strict `{ server: 1..=80, minAppVersion?: ... }`.
+        let vendor = entry.get("vendor");
+        if family != "vendor-mcp" && vendor.is_some() {
+            return None;
+        }
+        if let Some(vendor_val) = vendor {
+            let vobj = vendor_val.as_object()?;
+            if vobj.keys().any(|k| !matches!(k.as_str(), "server" | "minAppVersion")) {
+                return None;
+            }
+            let server = vobj.get("server")?.as_str()?;
+            if !(1..=80).contains(&server.chars().count()) {
+                return None;
+            }
+            if let Some(min_v) = vobj.get("minAppVersion")
+                && !min_v.as_str().is_some_and(valid_min_app_version)
+            {
+                return None;
+            }
+        }
+
+        // `sources`: optional strict `{ git?: string[] <= 8 }`.
         let sources = match entry.get("sources") {
             None => None,
             Some(v) => {
@@ -376,6 +524,7 @@ pub(crate) fn parse_catalog_value(value: &Value) -> Option<IntegrationCatalog> {
                 Some(IntegrationCatalogSources { git })
             }
         };
+
         if !ids.insert(id.to_owned())
             || !packages.insert(package.to_owned())
             || !plugins.insert(plugin.to_owned())
@@ -392,7 +541,7 @@ pub(crate) fn parse_catalog_value(value: &Value) -> Option<IntegrationCatalog> {
             sources,
         });
     }
-    Some(IntegrationCatalog { schema_version: 1, integrations: out })
+    Some(IntegrationCatalog { integrations: out })
 }
 
 fn load_persisted(path: &Path) -> Option<KnownCatalog> {
@@ -407,12 +556,13 @@ fn load_persisted(path: &Path) -> Option<KnownCatalog> {
         return None;
     }
     let catalog_val = val.get("catalog")?;
-    let catalog_bytes = serde_json::to_vec(catalog_val).ok()?;
-    if catalog_bytes.len() > INTEGRATION_CATALOG_MAX_BYTES {
-        return None;
-    }
     let catalog = parse_catalog_value(catalog_val)?;
-    Some(KnownCatalog { catalog, fetched_at: fetched_at.to_owned(), revision: revision.to_owned() })
+    Some(KnownCatalog {
+        catalog,
+        raw_document: catalog_val.clone(),
+        fetched_at: fetched_at.to_owned(),
+        revision: revision.to_owned(),
+    })
 }
 
 fn persist_catalog(path: &Path, known: &KnownCatalog) {
@@ -426,7 +576,7 @@ fn persist_catalog(path: &Path, known: &KnownCatalog) {
             "version": 1,
             "revision": known.revision,
             "fetchedAt": known.fetched_at,
-            "catalog": known.catalog,
+            "catalog": known.raw_document,
         })
     );
     let tmp = path.with_extension(format!("{}.{}.tmp", std::process::id(), uuid::Uuid::new_v4()));
@@ -596,7 +746,7 @@ async fn fetch_newest_release(
     Ok((release, list_tag))
 }
 
-async fn download_catalog(client: &Client, asset_url: &str) -> Result<IntegrationCatalog, Option<u64>> {
+async fn download_catalog(client: &Client, asset_url: &str) -> Result<(IntegrationCatalog, Value), Option<u64>> {
     let resp = client
         .get(asset_url)
         .header(header::ACCEPT, "application/octet-stream")
@@ -610,5 +760,6 @@ async fn download_catalog(client: &Client, asset_url: &str) -> Result<Integratio
     }
     let bytes = read_bounded(resp, INTEGRATION_CATALOG_MAX_BYTES).await?;
     let val: Value = serde_json::from_slice(&bytes).map_err(|_| None)?;
-    parse_catalog_value(&val).ok_or(None)
+    let catalog = parse_catalog_value(&val).ok_or(None)?;
+    Ok((catalog, val))
 }

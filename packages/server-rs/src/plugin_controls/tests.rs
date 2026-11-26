@@ -57,6 +57,9 @@ fn spec_validation_and_identities_match_typescript() {
         "git+ssh://git@example.com/x.git",
         "foo@>=1 <2",
         "foo@^1 || ^2",
+        "pkg@>=1.0.0 ||",
+        "pkg@1.2.3+build.1",
+        "gist:alice/123456",
     ] {
         assert!(validate_plugin_source_spec(ok).is_ok(), "should accept {ok}");
     }
@@ -75,6 +78,7 @@ fn spec_validation_and_identities_match_typescript() {
         ("foo@plugin.tar.gz", SpecErrorCode::LocalPath),
         ("foo@a/b/c", SpecErrorCode::LocalPath),
         ("plugin@tag%", SpecErrorCode::InvalidSpec),
+        ("pkg@1.2.3+%", SpecErrorCode::InvalidSpec),
         ("github:org/repo#main::other", SpecErrorCode::InvalidSpec),
         ("github:org/repo#main::semver:^1.0.0", SpecErrorCode::InvalidSpec),
         ("github:org/repo#path:/a::path:/b", SpecErrorCode::InvalidSpec),
@@ -113,8 +117,11 @@ fn spec_validation_and_identities_match_typescript() {
     assert!(same("bar@npm:foo@1", "bar@3"));
     assert!(same("plugin@NPM:other@1", "other@2"));
     assert!(same("plugin@NPM:other@1", "plugin"));
+    assert!(same("gist:alice/123456", "gist:123456"));
+    assert!(same("gist:alice/123456", "https://gist.github.com/alice/123456"));
     assert_eq!(registry_package_name("plugin@NPM:other@1").as_deref(), Some("other"));
     assert_eq!(plugin_package_identities("plugin.tgz"), Vec::<String>::new());
+    assert_eq!(plugin_package_identities("pkg@1.2.3+%"), Vec::<String>::new());
     assert_eq!(plugin_package_identities("github:org/repo#main::other"), Vec::<String>::new());
     assert!(same("github:user/repo", "git+https://github.com/user/repo.git#v2"));
     assert!(same("user/repo#main", "git+ssh://git@github.com/user/repo.git"));
@@ -235,11 +242,29 @@ fn utf8_prefix_file_url_and_prepared_lock_reverify_guards() {
     // Non-ASCII 5-byte boundary (`abcdé` has byte 5 inside `é`) must never panic.
     assert!(managed_desktop_plugin_for_source(&[], "abcdé", Style::Posix).is_none());
 
-    // Node `fileURLToPath` refuses encoded path separators (`%2F`, and `%5C` on Win32).
+    // Node `fileURLToPath` refuses encoded path separators (`%2F`, and `%5C` on Win32) and malformed `%`.
     assert!(file_url_to_path("file:///tmp/a%2Fb", Style::Posix).is_none());
     assert!(file_url_to_path("file:///tmp/a%2fb", Style::Posix).is_none());
+    assert!(file_url_to_path("file:///tmp/a%zzb", Style::Posix).is_none());
+    assert!(file_url_to_path("file:///tmp/a%2", Style::Posix).is_none());
     assert_eq!(file_url_to_path("file:///tmp/a%20b", Style::Posix).as_deref(), Some("/tmp/a b"));
     assert!(file_url_to_path("file:///C:/a%5Cb", Style::Win32).is_none());
+
+    // Partial catalog entries (e.g. incomplete `host`) are refused by full `integrationCatalogSchema`.
+    assert!(
+        super::catalog::parse_catalog_value(&json!({
+            "schemaVersion": 1,
+            "integrations": [{
+                "id": "blender",
+                "family": "native",
+                "package": "@neuralnomads/opencode-blender",
+                "plugin": "neuralnomads.blender",
+                "rpc": "neuralnomads.blender",
+                "host": { "app": "blender" }
+            }]
+        }))
+        .is_none()
+    );
 
     // `Prepared::commit_in_place` re-verifies after `before_commit` and keeps its lock until Drop.
     let dir = std::env::temp_dir().join(format!("cn-prep-{}", uuid::Uuid::new_v4()));

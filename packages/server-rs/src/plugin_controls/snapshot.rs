@@ -488,6 +488,7 @@ fn runtime_id_for_configured_target(
     ctx: &EvalContext<'_>,
     document: &ConfigDocumentView,
     target: &str,
+    runtime: &[RuntimeEntry],
     runtime_by_id: &HashMap<String, RuntimeEntry>,
     direct: &HashMap<String, String>,
 ) -> Option<String> {
@@ -496,13 +497,20 @@ fn runtime_id_for_configured_target(
         return direct.get(target).cloned();
     };
     if let Some(installation) = managed_desktop_plugin_for_source(ctx.managed_plugins, &local_target, ctx.style) {
-        for entry in runtime_by_id.values() {
+        // Walk the runtime inventory in native order, honoring only the first entry per plugin ID
+        // (matching TS `runtimeById` insertion-ordered `Map`).
+        let mut seen = HashSet::new();
+        for entry in runtime {
+            let Some(ref id) = entry.id else { continue };
+            if !seen.insert(id.as_str()) {
+                continue;
+            }
             if entry.managed_by == Some("codenomad")
                 && let RuntimeSource::Local { ref path } = entry.source
                 && managed_desktop_plugin_for_source(ctx.managed_plugins, path, ctx.style)
                     .is_some_and(|m| m.entry == installation.entry)
             {
-                return entry.id.clone();
+                return Some(id.clone());
             }
         }
         if installation.ids.len() == 1 && !runtime_by_id.contains_key(&installation.ids[0]) {
@@ -616,6 +624,7 @@ pub(super) fn evaluate_documents(
                         ctx,
                         document,
                         package,
+                        &base.runtime,
                         &base.runtime_by_id,
                         &base.runtime_source_ids,
                     );
@@ -692,6 +701,7 @@ pub(super) fn evaluate_documents(
                         ctx,
                         document,
                         selector,
+                        &base.runtime,
                         &base.runtime_by_id,
                         &base.runtime_source_ids,
                     );

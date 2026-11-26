@@ -78,8 +78,20 @@ fn read_bounded(path: &str) -> Result<(Vec<u8>, u32), ReadError> {
     if !meta.is_file() {
         return Err(ReadError::Doc(DocError::Filesystem("OpenCode configuration target is not a file")));
     }
-    let mut file = std::fs::File::open(path).map_err(|e| ReadError::Io(e.kind()))?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Avoid blocking forever if the path is swapped for a FIFO between `metadata` and `open`
+        // (including during the second `verify()` while workspace/connection guards are held).
+        opts.custom_flags(libc::O_NONBLOCK);
+    }
+    let mut file = opts.open(path).map_err(|e| ReadError::Io(e.kind()))?;
     let meta = file.metadata().map_err(|e| ReadError::Io(e.kind()))?;
+    if !meta.is_file() {
+        return Err(ReadError::Doc(DocError::Filesystem("OpenCode configuration target is not a file")));
+    }
     let too_large = ReadError::Doc(DocError::Invalid("OpenCode configuration file is too large"));
     if meta.len() > MAX {
         return Err(too_large);

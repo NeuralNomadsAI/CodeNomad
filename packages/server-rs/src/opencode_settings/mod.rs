@@ -130,7 +130,7 @@ pub(super) fn parse_location_object(value: &Value) -> Option<String> {
     location_directory(map.get("directory")?.as_str()?)
 }
 
-fn close_response(mut response: Response) -> Response {
+pub(crate) fn close_response(mut response: Response) -> Response {
     response.headers_mut().insert(header::CONNECTION, HeaderValue::from_static("close"));
     response
 }
@@ -142,12 +142,12 @@ fn body_too_large() -> Response {
     )
 }
 
-/// Reads and parses a Fastify 5 JSON body within the 1 MiB default body limit.
-pub(crate) async fn read_json_body(
+/// Reads the raw request body bytes enforcing Fastify 5 content-type framing and 1 MiB limit.
+pub(crate) async fn read_body_bytes(
     headers: &HeaderMap,
     body: Body,
     invalid_message: &'static str,
-) -> Result<Value, Box<Response>> {
+) -> Result<Vec<u8>, Box<Response>> {
     let media_error = || {
         Box::new(
             fastify::error(Status::UNSUPPORTED_MEDIA_TYPE, "FST_ERR_CTP_INVALID_MEDIA_TYPE", "Unsupported Media Type")
@@ -198,7 +198,16 @@ pub(crate) async fn read_json_body(
         }
         bytes.extend_from_slice(&chunk);
     }
+    Ok(bytes)
+}
 
+/// Reads and parses a Fastify 5 JSON body within the 1 MiB default body limit.
+pub(crate) async fn read_json_body(
+    headers: &HeaderMap,
+    body: Body,
+    invalid_message: &'static str,
+) -> Result<Value, Box<Response>> {
+    let bytes = read_body_bytes(headers, body, invalid_message).await?;
     match fastify::body(headers, &bytes) {
         Ok(Some(fastify::Body::Json(value))) => Ok(value),
         Ok(_) => Err(Box::new(bad_request(invalid_message))),

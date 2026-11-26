@@ -7,6 +7,7 @@ pub(crate) mod catalog;
 mod discovery;
 mod doc;
 mod engine;
+mod json_utf16;
 mod order;
 mod snapshot;
 mod sources;
@@ -16,7 +17,7 @@ use axum::{
     Extension, Json, Router,
     body::Body,
     extract::{Path, RawQuery, State},
-    http::{HeaderMap, StatusCode as Status},
+    http::{HeaderMap, StatusCode as Status, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -25,16 +26,20 @@ use serde_json::{Value, json};
 use crate::{
     Shared,
     auth::Principal,
-    opencode_settings::{Scope, bad_request, decode_query, location_directory, principal_token, read_json_body},
+    opencode_settings::{
+        Scope, bad_request, close_response, decode_query, location_directory, principal_token, read_body_bytes,
+    },
+    shared::fastify,
     subagent_depth::Fail,
 };
 
 use self::{
     engine::ActivationMutationRequest,
+    json_utf16::{JsVal, eq_ascii, js_trim_u16, parse_strict_json},
     order::valid_plugin_id,
     snapshot::ControlLocation,
     sources::{SourceAddRequest, SourceError, SourceRemoveRequest, SourceRemoveTarget, is_expected_revision},
-    spec::PLUGIN_SOURCE_MAX_SPEC_LENGTH,
+    spec::{PLUGIN_SOURCE_MAX_SPEC_LENGTH, validate_plugin_source_spec},
 };
 
 const INVALID_ACTIVATION: &str = "Invalid plugin activation request";
@@ -210,6 +215,89 @@ async fn get_controls(
     }
 }
 
+enum JsonBody {
+    Utf8(Value),
+    Utf16(JsVal),
+}
+
+async fn read_plugin_json_body(
+    headers: &HeaderMap,
+    body: Body,
+    invalid_message: &'static str,
+) -> Result<JsonBody, Box<Response>> {
+    let bytes = read_body_bytes(headers, body, invalid_message).await?;
+    match fastify::body(headers, &bytes) {
+        Ok(Some(fastify::Body::Json(value))) => Ok(JsonBody::Utf8(value)),
+        Ok(_) => Err(Box::new(bad_request(invalid_message))),
+        Err(err) => {
+            let is_json = headers
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.split(';').next().unwrap_or("").trim().eq_ignore_ascii_case("application/json"))
+                .unwrap_or(false);
+            if err.0 == Status::BAD_REQUEST
+                && is_json
+                && !bytes.is_empty()
+                && let Some(js) = parse_strict_json(&bytes)
+            {
+                return Ok(JsonBody::Utf16(js));
+            }
+            let close = err.0 == Status::BAD_REQUEST;
+            let response = err.into_response();
+            Err(Box::new(if close { close_response(response) } else { response }))
+        }
+    }
+}
+
+fn parse_location_u16(val: &JsVal) -> Option<(Result<String, ()>, Option<Result<String, ()>>)> {
+    let entries = val.as_object()?;
+    for (k, _) in entries {
+        if !eq_ascii(k, "directory") && !eq_ascii(k, "workspaceID") {
+            return None;
+        }
+    }
+    let dir_u16 = js_trim_u16(val.get_ascii("directory")?.as_u16_str()?);
+    if !(1..=32_768).contains(&dir_u16.len()) {
+        return None;
+    }
+    let dir = String::from_utf16(dir_u16).map_err(|_| ());
+    let ws = match val.get_ascii("workspaceID") {
+        None => None,
+        Some(v) => {
+            let w = js_trim_u16(v.as_u16_str()?);
+            if !(1..=1_024).contains(&w.len()) {
+                return None;
+            }
+            Some(String::from_utf16(w).map_err(|_| ()))
+        }
+    };
+    Some((dir, ws))
+}
+
+fn parse_scope_u16(val: Option<&JsVal>) -> Option<Scope> {
+    let s = val?.as_u16_str()?;
+    if eq_ascii(s, "global") {
+        Some(Scope::Global)
+    } else if eq_ascii(s, "project") {
+        Some(Scope::Project)
+    } else {
+        None
+    }
+}
+
+fn valid_plugin_id_u16(raw: &[u16]) -> bool {
+    let trimmed = js_trim_u16(raw);
+    if !(1..=256).contains(&trimmed.len()) || trimmed[0] == u16::from(b'-') {
+        return false;
+    }
+    !trimmed.iter().any(|&u| u <= 0x1f || u == 0x7f || u == u16::from(b'*') || u == u16::from(b' '))
+}
+
+fn workspace_exists(app: &Shared, workspace_id: &str) -> bool {
+    let Ok(uuid) = uuid::Uuid::parse_str(workspace_id) else { return false };
+    app.inner.lock().unwrap().workspaces.iter().any(|w| w.id == uuid)
+}
+
 async fn patch_controls(
     State(app): State<Shared>,
     Path(workspace_id): Path<String>,
@@ -217,16 +305,69 @@ async fn patch_controls(
     principal: Option<Extension<Principal>>,
     body: Body,
 ) -> Response {
-    let value = match read_json_body(&headers, body, INVALID_ACTIVATION).await {
+    let parsed = match read_plugin_json_body(&headers, body, INVALID_ACTIVATION).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
-    let Some(req) = parse_activation_mutation(&value) else {
-        return bad_request(INVALID_ACTIVATION);
-    };
-    match engine::mutate(&app, &workspace_id, req, principal_token(principal)).await {
-        Ok(result) => (Status::OK, Json(result)).into_response(),
-        Err(err) => controls_error(err),
+    match parsed {
+        JsonBody::Utf8(value) => {
+            let Some(req) = parse_activation_mutation(&value) else {
+                return bad_request(INVALID_ACTIVATION);
+            };
+            match engine::mutate(&app, &workspace_id, req, principal_token(principal)).await {
+                Ok(result) => (Status::OK, Json(result)).into_response(),
+                Err(err) => controls_error(err),
+            }
+        }
+        JsonBody::Utf16(js) => {
+            let Some(entries) = js.as_object() else { return bad_request(INVALID_ACTIVATION) };
+            for (k, _) in entries {
+                if !eq_ascii(k, "location")
+                    && !eq_ascii(k, "pluginId")
+                    && !eq_ascii(k, "scope")
+                    && !eq_ascii(k, "enabled")
+                    && !eq_ascii(k, "managedBy")
+                {
+                    return bad_request(INVALID_ACTIVATION);
+                }
+            }
+            let Some((dir, ws)) = js.get_ascii("location").and_then(parse_location_u16) else {
+                return bad_request(INVALID_ACTIVATION);
+            };
+            let Some(pid_u16) = js.get_ascii("pluginId").and_then(JsVal::as_u16_str) else {
+                return bad_request(INVALID_ACTIVATION);
+            };
+            if !valid_plugin_id_u16(pid_u16)
+                || parse_scope_u16(js.get_ascii("scope")).is_none()
+                || js.get_ascii("enabled").and_then(JsVal::as_bool).is_none()
+            {
+                return bad_request(INVALID_ACTIVATION);
+            }
+            if let Some(mb) = js.get_ascii("managedBy")
+                && !mb.as_u16_str().is_some_and(|u| eq_ascii(u, "codenomad"))
+            {
+                return bad_request(INVALID_ACTIVATION);
+            }
+            if !workspace_exists(&app, &workspace_id) {
+                return (Status::NOT_FOUND, Json(json!({ "error": "Workspace not found" }))).into_response();
+            }
+            let (Ok(directory), None) = (dir, ws) else {
+                return (Status::FORBIDDEN, Json(json!({ "error": "Location is not owned by this workspace" })))
+                    .into_response();
+            };
+            // `pluginId` contains an unpaired UTF-16 surrogate: never substitute it for `\u{FFFD}`
+            // (which could target another plugin). Verify location/daemon readiness, then refuse as unavailable.
+            let location = ControlLocation { directory, workspace_id: None };
+            let token = principal_token(principal);
+            match engine::read(&app, &workspace_id, &location, token.as_ref(), None).await {
+                Ok(_) => (
+                    Status::FORBIDDEN,
+                    Json(json!({ "error": "Plugin activation control is unavailable for this plugin" })),
+                )
+                    .into_response(),
+                Err(err) => controls_error(err),
+            }
+        }
     }
 }
 
@@ -237,16 +378,52 @@ async fn post_source(
     principal: Option<Extension<Principal>>,
     body: Body,
 ) -> Response {
-    let value = match read_json_body(&headers, body, INVALID_SOURCE).await {
+    let parsed = match read_plugin_json_body(&headers, body, INVALID_SOURCE).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
-    let Some(req) = parse_source_add(&value) else {
-        return bad_request(INVALID_SOURCE);
-    };
-    match sources::add(&app, &workspace_id, req, principal_token(principal)).await {
-        Ok(result) => (Status::OK, Json(result)).into_response(),
-        Err(err) => sources_error(err),
+    match parsed {
+        JsonBody::Utf8(value) => {
+            let Some(req) = parse_source_add(&value) else {
+                return bad_request(INVALID_SOURCE);
+            };
+            match sources::add(&app, &workspace_id, req, principal_token(principal)).await {
+                Ok(result) => (Status::OK, Json(result)).into_response(),
+                Err(err) => sources_error(err),
+            }
+        }
+        JsonBody::Utf16(js) => {
+            let Some(entries) = js.as_object() else { return bad_request(INVALID_SOURCE) };
+            for (k, _) in entries {
+                if !eq_ascii(k, "location") && !eq_ascii(k, "scope") && !eq_ascii(k, "spec") {
+                    return bad_request(INVALID_SOURCE);
+                }
+            }
+            let Some((dir, ws)) = js.get_ascii("location").and_then(parse_location_u16) else {
+                return bad_request(INVALID_SOURCE);
+            };
+            let Some(_scope) = parse_scope_u16(js.get_ascii("scope")) else {
+                return bad_request(INVALID_SOURCE);
+            };
+            let Some(spec_u16) = js.get_ascii("spec").and_then(JsVal::as_u16_str) else {
+                return bad_request(INVALID_SOURCE);
+            };
+            if !(1..=PLUGIN_SOURCE_MAX_SPEC_LENGTH).contains(&spec_u16.len()) {
+                return bad_request(INVALID_SOURCE);
+            }
+            // Spec validation runs before any workspace or location lookup (`plugin-sources.ts:49-53`).
+            let Ok(spec_str) = String::from_utf16(spec_u16) else {
+                return sources_error(SourceError::with_code(Status::UNPROCESSABLE_ENTITY, "invalid-spec"));
+            };
+            if let Err((code, _)) = validate_plugin_source_spec(&spec_str) {
+                return sources_error(SourceError::with_code(Status::UNPROCESSABLE_ENTITY, code.as_str()));
+            }
+            if !workspace_exists(&app, &workspace_id) {
+                return sources_error(SourceError::Refused { status: Status::NOT_FOUND, code: None });
+            }
+            let _ = (dir, ws);
+            sources_error(SourceError::Refused { status: Status::FORBIDDEN, code: None })
+        }
     }
 }
 
@@ -257,16 +434,80 @@ async fn delete_source(
     principal: Option<Extension<Principal>>,
     body: Body,
 ) -> Response {
-    let value = match read_json_body(&headers, body, INVALID_SOURCE).await {
+    let parsed = match read_plugin_json_body(&headers, body, INVALID_SOURCE).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
-    let Some(req) = parse_source_remove(&value) else {
-        return bad_request(INVALID_SOURCE);
-    };
-    match sources::remove(&app, &workspace_id, req, principal_token(principal)).await {
-        Ok(result) => (Status::OK, Json(result)).into_response(),
-        Err(err) => sources_error(err),
+    match parsed {
+        JsonBody::Utf8(value) => {
+            let Some(req) = parse_source_remove(&value) else {
+                return bad_request(INVALID_SOURCE);
+            };
+            match sources::remove(&app, &workspace_id, req, principal_token(principal)).await {
+                Ok(result) => (Status::OK, Json(result)).into_response(),
+                Err(err) => sources_error(err),
+            }
+        }
+        JsonBody::Utf16(js) => {
+            let Some(entries) = js.as_object() else { return bad_request(INVALID_SOURCE) };
+            let Some((dir, ws)) = js.get_ascii("location").and_then(parse_location_u16) else {
+                return bad_request(INVALID_SOURCE);
+            };
+            let Some(_scope) = parse_scope_u16(js.get_ascii("scope")) else {
+                return bad_request(INVALID_SOURCE);
+            };
+            let Some(rev_u16) = js.get_ascii("expectedRevision").and_then(JsVal::as_u16_str) else {
+                return bad_request(INVALID_SOURCE);
+            };
+            let Ok(rev) = String::from_utf16(rev_u16) else {
+                return bad_request(INVALID_SOURCE);
+            };
+            if !is_expected_revision(&rev) {
+                return bad_request(INVALID_SOURCE);
+            }
+            if let Some(target_u16) = js.get_ascii("target").and_then(JsVal::as_u16_str) {
+                for (k, _) in entries {
+                    if !eq_ascii(k, "location")
+                        && !eq_ascii(k, "scope")
+                        && !eq_ascii(k, "expectedRevision")
+                        && !eq_ascii(k, "target")
+                        && !eq_ascii(k, "entryIndex")
+                    {
+                        return bad_request(INVALID_SOURCE);
+                    }
+                }
+                let Some(idx) = js.get_ascii("entryIndex").and_then(JsVal::as_f64) else {
+                    return bad_request(INVALID_SOURCE);
+                };
+                if !(1..=32_768).contains(&target_u16.len()) || idx.fract() != 0.0 || !(0.0..=100_000.0).contains(&idx)
+                {
+                    return bad_request(INVALID_SOURCE);
+                }
+            } else if let Some(pid_u16) = js.get_ascii("pluginId").and_then(JsVal::as_u16_str) {
+                for (k, _) in entries {
+                    if !eq_ascii(k, "location")
+                        && !eq_ascii(k, "scope")
+                        && !eq_ascii(k, "expectedRevision")
+                        && !eq_ascii(k, "pluginId")
+                    {
+                        return bad_request(INVALID_SOURCE);
+                    }
+                }
+                if !(1..=256).contains(&pid_u16.len()) {
+                    return bad_request(INVALID_SOURCE);
+                }
+            } else {
+                return bad_request(INVALID_SOURCE);
+            }
+            if !workspace_exists(&app, &workspace_id) {
+                return sources_error(SourceError::Refused { status: Status::NOT_FOUND, code: None });
+            }
+            let (Ok(_), None) = (dir, ws) else {
+                return sources_error(SourceError::Refused { status: Status::FORBIDDEN, code: None });
+            };
+            // Unpaired UTF-16 surrogate in `target` or `pluginId` can never match a UTF-8 config entry.
+            sources_error(SourceError::with_code(Status::CONFLICT, "stale"))
+        }
     }
 }
 

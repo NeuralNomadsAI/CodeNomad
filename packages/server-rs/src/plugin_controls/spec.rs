@@ -378,9 +378,22 @@ fn from_registry(name: Option<String>, raw_spec: &str) -> Option<ParsedSpec> {
     }
 }
 
+fn is_valid_build_meta(build: &str) -> bool {
+    !build.is_empty()
+        && build.split('.').all(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+}
+
 fn is_valid_semver_version(spec: &str) -> bool {
     let s = spec.strip_prefix('v').or_else(|| spec.strip_prefix('=')).unwrap_or(spec);
-    let (core, _) = s.split_once('+').unwrap_or((s, ""));
+    let core = match s.split_once('+') {
+        Some((c, build)) => {
+            if !is_valid_build_meta(build) {
+                return false;
+            }
+            c
+        }
+        None => s,
+    };
     let (nums, pre) = core.split_once('-').unwrap_or((core, ""));
     let parts: Vec<&str> = nums.split('.').collect();
     if parts.len() != 3 || !parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) {
@@ -407,7 +420,8 @@ fn is_valid_semver_range(spec: &str) -> bool {
     for branch in spec.split("||") {
         let branch = crate::shared::js_trim(branch);
         if branch.is_empty() {
-            return false;
+            // `node-semver` treats an empty comparator set (e.g. `>=1.0.0 ||`) as `*`.
+            continue;
         }
         let tokens: Vec<&str> = branch.split_whitespace().collect();
         let mut i = 0;
@@ -455,7 +469,15 @@ fn is_comparator(tok: &str) -> bool {
 
 fn is_partial_version(s: &str) -> bool {
     let s = s.strip_prefix('v').or_else(|| s.strip_prefix('V')).unwrap_or(s);
-    let (core, _) = s.split_once('+').unwrap_or((s, ""));
+    let core = match s.split_once('+') {
+        Some((c, build)) => {
+            if !is_valid_build_meta(build) {
+                return false;
+            }
+            c
+        }
+        None => s,
+    };
     let (nums, pre) = core.split_once('-').unwrap_or((core, ""));
     let parts: Vec<&str> = nums.split('.').collect();
     if !(1..=3).contains(&parts.len()) {
@@ -518,9 +540,14 @@ fn hosted_git_from_url(spec: &str) -> Option<(String, String)> {
             return None;
         }
         let committish = decode_uri_component_strict(raw_hash)?;
-        let shortcut = match user {
-            Some(u) => format!("{proto_lower}:{u}/{project}"),
-            None => format!("{proto_lower}:{project}"),
+        let shortcut = if proto_lower == "gist" {
+            // `hosted-git-info` `hosts.gist.shortcuttemplate` omits owner: `gist:<project>`.
+            format!("gist:{project}")
+        } else {
+            match user {
+                Some(u) => format!("{proto_lower}:{u}/{project}"),
+                None => format!("{proto_lower}:{project}"),
+            }
         };
         return Some((shortcut, committish));
     }
@@ -626,9 +653,13 @@ fn hosted_git_from_url(spec: &str) -> Option<(String, String)> {
         return None;
     }
     let committish = decode_uri_component_strict(&committish_raw)?;
-    let shortcut = match user {
-        Some(u) => format!("{host_key}:{u}/{project}"),
-        None => format!("{host_key}:{project}"),
+    let shortcut = if host_key == "gist" {
+        format!("gist:{project}")
+    } else {
+        match user {
+            Some(u) => format!("{host_key}:{u}/{project}"),
+            None => format!("{host_key}:{project}"),
+        }
     };
     Some((shortcut, committish))
 }

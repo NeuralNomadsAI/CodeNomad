@@ -850,12 +850,32 @@ async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fa
     assert_eq!(bad_json.status(), Status::BAD_REQUEST);
     assert_eq!(bad_json.headers().get(header::CONNECTION).and_then(|v| v.to_str().ok()), Some("close"));
 
+    // Lone surrogate in PATCH `pluginId` (`id\uD800`) must NEVER substitute to `id\u{FFFD}` and touch another plugin.
+    h.mock.lock().unwrap().runtime = vec![json!({
+        "id": "id\u{FFFD}",
+        "source": { "type": "package", "target": "replacement-pkg@1.0.0" },
+        "state": { "status": "active" }
+    })];
+    let surrogate_patch = h
+        .client
+        .patch(h.url("/plugin-controls"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(format!(
+            r#"{{"location":{{"directory":{}}},"pluginId":"id\uD800","scope":"global","enabled":false}}"#,
+            serde_json::to_string(&project).unwrap()
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(surrogate_patch.status(), Status::FORBIDDEN);
+    assert_eq!(fs::read_to_string(&h.global_file).unwrap(), "{}\n");
+    h.mock.lock().unwrap().runtime.clear();
+
     // 2. Seed reviewed integration catalog (native `fixture` with Git prefix + api `mail`).
     let git_prefix = "github:NeuralNomadsAI/opencode-integrations#";
     h.app
         .integration_catalog
         .seed_for_test(super::catalog::IntegrationCatalog {
-            schema_version: 1,
             integrations: vec![
                 super::catalog::IntegrationCatalogEntry {
                     id: "fixture".into(),
@@ -960,7 +980,7 @@ async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fa
     assert_eq!(malformed.status(), Status::INTERNAL_SERVER_ERROR);
     assert_eq!(malformed.json::<Value>().await.unwrap(), json!({ "error": "Plugin source update failed" }));
 
-    // 4. Live catalog refresh over loopback HTTP + persistence to `integrations-catalog.json`.
+    // 4. Live catalog refresh over loopback HTTP + full-document persistence & reload.
     let cat_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let cat_base = format!("http://{}", cat_listener.local_addr().unwrap());
     let cat_asset_url = format!("{cat_base}/assets/catalog.json");
@@ -974,7 +994,7 @@ async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fa
                         "tag_name": "catalog-v2",
                         "draft": false,
                         "prerelease": false,
-                        "assets": [{ "name": "catalog.json", "url": asset, "size": 512, "id": 42, "updated_at": "2026-01-01T00:00:00Z" }]
+                        "assets": [{ "name": "catalog.json", "url": asset, "size": 1024, "id": 42, "updated_at": "2026-01-01T00:00:00Z" }]
                     }]))
                 }
             }),
@@ -986,11 +1006,17 @@ async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fa
                     "schemaVersion": 1,
                     "integrations": [{
                         "id": "blender",
-                        "family": "native",
                         "package": "@neuralnomads/opencode-blender",
+                        "range": "^0.1.0",
+                        "displayName": "OpenCode for Blender",
+                        "family": "native",
                         "plugin": "neuralnomads.blender",
                         "rpc": "neuralnomads.blender",
-                        "host": { "app": "blender" }
+                        "summary": { "en": "Control Blender from OpenCode" },
+                        "app": { "name": "Blender", "versions": ">=4.0.0" },
+                        "host": { "protocol": 1, "range": "^0.1.0" },
+                        "docs": "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender",
+                        "status": "preview"
                     }]
                 }))
             }),
@@ -1001,4 +1027,39 @@ async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fa
     assert_eq!(refreshed.integrations.len(), 1);
     assert_eq!(refreshed.integrations[0].id, "blender");
     cat_task.abort();
+
+    // Reloading persisted `integrations-catalog.json` offline must still retain the native entry (including `host`).
+    let persisted_file = h.app.data.join("integrations-catalog.json");
+    let offline_reloaded = super::catalog::CatalogSource::new(Some(persisted_file)).read().await;
+    assert_eq!(offline_reloaded.integrations.len(), 1);
+    assert_eq!(offline_reloaded.integrations[0].id, "blender");
+    assert_eq!(offline_reloaded.integrations[0].family, "native");
+
+    // 5. Slow catalog must not delay or mask an immediate `404` on an unknown workspace.
+    let slow_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let slow_base = format!("http://{}", slow_listener.local_addr().unwrap());
+    let slow_router = Router::new().route(
+        "/releases",
+        get(|| async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Json(json!([]))
+        }),
+    );
+    let slow_task = tokio::spawn(async move { axum::serve(slow_listener, slow_router).await.unwrap() });
+    h.app.integration_catalog.set_releases_url(Some(format!("{slow_base}/releases"))).await;
+    let fast_404 = super::sources::add_with_timeouts(
+        &h.app,
+        &Uuid::new_v4().to_string(),
+        super::sources::SourceAddRequest {
+            location: super::snapshot::ControlLocation { directory: project.clone(), workspace_id: None },
+            scope: crate::opencode_settings::Scope::Global,
+            spec: "fresh-pkg@1.0.0".into(),
+        },
+        None,
+        Duration::from_millis(200),
+        Duration::from_millis(50),
+    )
+    .await;
+    assert!(matches!(fast_404, Err(super::sources::SourceError::Refused { status: Status::NOT_FOUND, code: None })));
+    slow_task.abort();
 }
