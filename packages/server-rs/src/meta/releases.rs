@@ -22,6 +22,8 @@ const INTERVAL: Duration = Duration::from_secs(15 * 60);
 struct State {
     feed: &'static str,
     update: Option<Value>,
+    latest_stable: Option<(String, String)>,
+    stable_checked: bool,
     generation: u64,
 }
 
@@ -34,14 +36,20 @@ impl Monitor {
     pub(crate) fn new(settings: &Settings) -> Self {
         let feed = read_feed(settings);
         Self {
-            state: Mutex::new(State { feed, update: (feed == "stable").then_some(Value::Null), generation: 0 }),
+            state: Mutex::new(State {
+                feed,
+                update: (feed == "stable").then_some(Value::Null),
+                latest_stable: None,
+                stable_checked: false,
+                generation: 0,
+            }),
             changed: Notify::new(),
         }
     }
 
-    pub(crate) fn snapshot(&self) -> (&'static str, Option<Value>) {
+    pub(crate) fn snapshot(&self) -> (&'static str, Option<Value>, Option<(String, String)>) {
         let state = self.state.lock().unwrap();
-        (state.feed, state.update.clone())
+        (state.feed, state.update.clone(), state.latest_stable.clone())
     }
 
     pub(crate) fn update_feed(&self, settings: &Settings) {
@@ -68,9 +76,13 @@ fn read_feed(settings: &Settings) -> &'static str {
 }
 
 pub(crate) async fn run(app: Shared, shutdown: CancellationToken) {
-    let monitor = &app.releases;
     let url = crate::bench::releases_fixture().unwrap_or_else(|| Url::parse("https://api.github.com/").unwrap());
     let repo = std::env::var("CODENOMAD_GITHUB_REPO").unwrap_or_else(|_| REPO.into());
+    run_with_base(app, shutdown, url, repo).await;
+}
+
+pub(crate) async fn run_with_base(app: Shared, shutdown: CancellationToken, url: Url, repo: String) {
+    let monitor = &app.releases;
     let repo = repo.trim();
     let parts: Vec<_> = repo.split('/').collect();
     if parts.len() != 2 || parts.iter().any(|p| p.is_empty() || p.chars().any(char::is_whitespace)) {
@@ -82,9 +94,9 @@ pub(crate) async fn run(app: Shared, shutdown: CancellationToken) {
     }
     let Ok(client) = client.build() else { return };
     loop {
-        let (feed, generation) = {
+        let (feed, generation, need_stable) = {
             let state = monitor.state.lock().unwrap();
-            (state.feed, state.generation)
+            (state.feed, state.generation, !state.stable_checked)
         };
         if feed == "preview" {
             tokio::select! {
@@ -92,10 +104,31 @@ pub(crate) async fn run(app: Shared, shutdown: CancellationToken) {
                 _ = shutdown.cancelled() => return,
                 _ = monitor.changed.notified() => continue,
                 result = latest(&client, url.clone(), repo, VERSION) => {
-                    if let Ok(update) = result {
+                    if let Ok((update, stable)) = result {
                         let mut state = monitor.state.lock().unwrap();
                         if state.generation == generation && state.feed == "preview" {
                             state.update = Some(update.unwrap_or(Value::Null));
+                            if stable.is_some() {
+                                state.latest_stable = stable;
+                            }
+                            state.stable_checked = true;
+                        }
+                    }
+                }
+            }
+        } else if need_stable {
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => return,
+                _ = monitor.changed.notified() => continue,
+                result = latest_stable_only(&client, url.clone(), repo) => {
+                    if let Ok(stable) = result {
+                        let mut state = monitor.state.lock().unwrap();
+                        if state.generation == generation && state.feed == "stable" {
+                            if stable.is_some() {
+                                state.latest_stable = stable;
+                            }
+                            state.stable_checked = true;
                         }
                     }
                 }
@@ -104,7 +137,9 @@ pub(crate) async fn run(app: Shared, shutdown: CancellationToken) {
         tokio::select! {
             _ = shutdown.cancelled() => return,
             _ = monitor.changed.notified() => (),
-            _ = tokio::time::sleep(INTERVAL) => (),
+            _ = tokio::time::sleep(INTERVAL) => {
+                monitor.state.lock().unwrap().stable_checked = false;
+            }
         }
     }
 }
@@ -174,12 +209,49 @@ async fn get(client: &Client, url: Url, bytes: usize) -> Result<Value, ()> {
     crate::opencode::read_json(response, bytes).await
 }
 
-async fn latest(client: &Client, mut base: Url, repo: &str, installed: &str) -> Result<Option<Value>, ()> {
+fn release_url(repo: &str, release: &Value, release_tag: &str) -> String {
+    if let Some(url) = release.get("html_url").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        return url.to_owned();
+    }
+    let mut url = Url::parse("https://github.com/").unwrap();
+    url.path_segments_mut().unwrap().clear().extend(repo.split('/')).extend(["releases", "tag", release_tag]);
+    url.to_string()
+}
+
+fn stable_from_list(list: &[Value], repo: &str) -> Option<(String, String)> {
+    let best = list.iter().filter(|r| listed(r) && r["prerelease"] != true).reduce(|best, r| {
+        let ordering =
+            timestamp(r).cmp(&timestamp(best)).then_with(|| compare_versions(version(tag(r)), version(tag(best))));
+        if ordering.is_gt() { r } else { best }
+    })?;
+    let release_tag = tag(best);
+    let ver = version(release_tag);
+    if ver.is_empty() {
+        return None;
+    }
+    Some((ver.to_owned(), release_url(repo, best, release_tag)))
+}
+
+async fn latest_stable_only(client: &Client, mut base: Url, repo: &str) -> Result<Option<(String, String)>, ()> {
+    base.path_segments_mut().map_err(|_| ())?.clear().push("repos").extend(repo.split('/')).push("releases");
+    base.query_pairs_mut().append_pair("per_page", "30");
+    let page = get(client, base, 16 << 20).await?;
+    let list = page.as_array().map(Vec::as_slice).unwrap_or_default();
+    Ok(stable_from_list(list, repo))
+}
+
+async fn latest(
+    client: &Client,
+    mut base: Url,
+    repo: &str,
+    installed: &str,
+) -> Result<(Option<Value>, Option<(String, String)>), ()> {
     base.path_segments_mut().map_err(|_| ())?.clear().push("repos").extend(repo.split('/')).push("releases");
     let mut list_url = base.clone();
     list_url.query_pairs_mut().append_pair("per_page", "30");
     let page = get(client, list_url, 16 << 20).await?;
     let list = page.as_array().map(Vec::as_slice).unwrap_or_default();
+    let stable = stable_from_list(list, repo);
     let Some(latest) = list
         .iter()
         .filter(|r| {
@@ -190,13 +262,13 @@ async fn latest(client: &Client, mut base: Url, repo: &str, installed: &str) -> 
         })
         .reduce(|best, r| if timestamp(r) > timestamp(best) { r } else { best })
     else {
-        return Ok(None);
+        return Ok((None, stable));
     };
     let current = version(installed);
     let newest_tag = tag(latest);
     let newest = version(newest_tag);
     if current.is_empty() || newest == current {
-        return Ok(None);
+        return Ok((None, stable));
     }
     let known = if let Some(known) = list.iter().find(|r| listed(r) && version(tag(r)) == current) {
         Some(timestamp(known))
@@ -209,15 +281,10 @@ async fn latest(client: &Client, mut base: Url, repo: &str, installed: &str) -> 
             .map(|r| timestamp(&r))
     };
     if !known.map_or_else(|| compare_versions(newest, installed).is_gt(), |known| timestamp(latest) > known) {
-        return Ok(None);
+        return Ok((None, stable));
     }
-    let fallback = || {
-        let mut url = Url::parse("https://github.com/").unwrap();
-        url.path_segments_mut().unwrap().clear().extend(repo.split('/')).extend(["releases", "tag", newest_tag]);
-        url.to_string()
-    };
     let mut offer = json!({"version": newest, "tag": newest_tag,
-        "url": latest.get("html_url").filter(|v| !v.is_null()).cloned().unwrap_or_else(|| json!(fallback())),
+        "url": latest.get("html_url").filter(|v| !v.is_null()).cloned().unwrap_or_else(|| json!(release_url(repo, latest, newest_tag))),
         "channel": if latest["prerelease"] == true { "preview" } else { "stable" }});
     if let Some(date) = latest.get("published_at").filter(|v| !v.is_null()).or_else(|| latest.get("created_at")) {
         offer["publishedAt"] = date.clone();
@@ -225,7 +292,7 @@ async fn latest(client: &Client, mut base: Url, repo: &str, installed: &str) -> 
     if let Some(notes) = latest.get("body") {
         offer["notes"] = notes.clone();
     }
-    Ok(Some(offer))
+    Ok((Some(offer), stable))
 }
 
 #[cfg(test)]

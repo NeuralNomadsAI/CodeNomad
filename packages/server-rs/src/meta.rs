@@ -18,10 +18,17 @@ pub fn routes() -> Router<Shared> {
 async fn read(State(app): State<Shared>, channel: Option<Extension<tls::Channel>>) -> Json<Value> {
     let mut meta = app.meta.clone();
     app.releases.update_feed(&app.settings);
-    let (feed, update) = app.releases.snapshot();
+    let (feed, update, latest_stable) = app.releases.snapshot();
     meta["updateFeed"] = json!(feed);
     if let Some(update) = update {
         meta["update"] = update;
+    }
+    if let Some((version, url)) = latest_stable {
+        meta["support"] = json!({
+            "supported": true,
+            "latestServerVersion": version,
+            "latestServerUrl": url,
+        });
     }
     if app.temporary_workspaces.is_some()
         && let Some(caps) = meta.get_mut("capabilities").and_then(Value::as_array_mut)

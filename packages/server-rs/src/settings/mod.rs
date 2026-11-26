@@ -407,7 +407,7 @@ async fn patch_config(
         (Some(mode), None) => Some(mode),
         (Some(_), Some(_)) => return Err(Failure::Invalid("Unknown conditional patch mode".into()).response()),
     };
-    let mut refresh_login = false;
+    let mut binary_changed = false;
     let saved = match conditional.as_deref() {
         Some("missions-v1") => conditional::apply_committed(&app.settings, &name, &patch, |saved| {
             publish(&app, Kind::Config, &name, saved.clone());
@@ -435,8 +435,8 @@ async fn patch_config(
                         }
                         if name == "server" {
                             let before_bin = before.get("server").and_then(|s| s.get("opencodeBinary"));
-                            refresh_login =
-                                patch.get("opencodeBinary").is_some_and(|binary| Some(binary) != before_bin);
+                            let after_bin = after.get("server").and_then(|s| s.get("opencodeBinary"));
+                            binary_changed = before_bin != after_bin;
                         }
                         Ok(())
                     },
@@ -446,7 +446,8 @@ async fn patch_config(
         }
     };
     let saved = saved.map_err(Failure::response)?;
-    if refresh_login {
+    if binary_changed {
+        crate::opencode::adopt_configured_binary(&app).await;
         crate::opencode::login_start::refresh(&app);
     }
     Ok(Json(sanitized(&name, saved)).into_response())

@@ -68,6 +68,7 @@ pub struct App {
     pub provider_usage: Arc<crate::provider_usage::State>,
     pub previews: crate::previews::Previews,
     pub temporary_workspaces: Option<crate::temporary_workspaces::TemporaryFolderRegistry>,
+    pub service_activation: crate::opencode::service_action::Activation,
 }
 
 #[derive(Default)]
@@ -119,6 +120,7 @@ impl App {
         let mission_bridge = missions::run::new_token();
         let remote_control = crate::remote_control::Manager::new(&data);
         let scope = if unrestricted { PathBuf::new() } else { root.clone() };
+        native.attach_settings(settings.location.config.clone());
         let temporary_workspaces = crate::temporary_workspaces::TemporaryFolderRegistry::open(
             settings.location.base.join("temporary-workspaces"),
             settings.location.base.join("temporary-workspaces.json"),
@@ -133,6 +135,7 @@ impl App {
             provider_usage: Default::default(),
             previews: Default::default(),
             temporary_workspaces,
+            service_activation: Default::default(),
             bridge_token: mission_bridge.clone().or_else(crate::automation::new_token),
             human_answer: Default::default(),
             automation_pins: Default::default(),
@@ -172,6 +175,9 @@ impl App {
     }
     pub fn workspace(&self, id: &str) -> Result<Workspace, Error> {
         self.inner.lock().unwrap().workspaces.iter().find(|w| w.id.to_string() == id).cloned().ok_or_else(not_found)
+    }
+    pub fn current_binary(&self) -> PathBuf {
+        self.native.binary().map(PathBuf::from).unwrap_or_else(|| self.binary.clone())
     }
 }
 

@@ -54,8 +54,12 @@ async fn a_tarball_is_kept_only_when_it_matches_its_integrity_and_credentials_re
 #[test]
 fn errors_carry_the_reference_status() {
     assert_eq!(Error::busy("x").status(), Status::CONFLICT);
+    assert_eq!(Error::new("installation_in_use", "x").status(), Status::CONFLICT);
+    assert_eq!(Error::new("legacy_replacement_required", "x").status(), Status::CONFLICT);
     assert_eq!(Error::new("binary_unavailable", "x").status(), Status::UNPROCESSABLE_ENTITY);
     assert_eq!(Error::failed("x").status(), Status::BAD_GATEWAY);
+    assert_eq!(Error::new("legacy_partially_removed", "x").status(), Status::BAD_GATEWAY);
+    assert_eq!(Error::new("legacy_removed_install_failed", "x").status(), Status::BAD_GATEWAY);
     assert!(newer("2.10.0", "2.9.9") && !newer("2.3.2", "2.3.2"));
     assert!(layout::cmd_shim_matches(layout::cmd("node_modules\\@opencode\\cli\\bin\\opencode.exe").as_bytes()));
     assert!(!layout::cmd_shim_matches(b"@echo off\r\nother.exe %*\r\n"));
@@ -70,13 +74,131 @@ fn the_foreign_notice_has_the_reference_shape() {
         package_id: Some("SST.opencode".into()),
         blocked: Some(("occupied", "C:\\p\\opencode.cmd".into())),
     };
-    let notice = plan::notice(&plan::Plan { prefix: None, foreign: Some(foreign) });
+    let notice = plan::notice(&plan::Plan { prefix: None, legacy: None, foreign: Some(foreign) });
     assert_eq!(
         notice,
         json!({"foreignInstallation": {"path": "C:\\f\\opencode.exe", "version": "1.5.0", "source": "winget",
             "packageId": "SST.opencode", "blocked": {"reason": "occupied", "path": "C:\\p\\opencode.cmd"}}})
     );
+    let legacy = legacy::Legacy {
+        command: "C:\\p\\opencode.cmd".into(),
+        prefix: std::path::PathBuf::from("C:\\p"),
+        binary: std::path::PathBuf::from("C:\\p\\node_modules\\opencode-ai\\bin\\opencode.exe"),
+        version: "1.15.1".into(),
+    };
+    let with_prefix = plan::notice(&plan::Plan {
+        prefix: Some(layout::Prefix { root: std::path::PathBuf::from("C:\\p") }),
+        legacy: Some(legacy.clone()),
+        foreign: None,
+    });
+    assert_eq!(with_prefix, json!({"legacyReplacement": {"path": "C:\\p\\opencode.cmd", "version": "1.15.1"}}));
+    let without_prefix = plan::notice(&plan::Plan { prefix: None, legacy: Some(legacy), foreign: None });
+    assert_eq!(without_prefix, json!({}));
     assert_eq!(plan::notice(&plan::Plan::default()), json!({}));
+}
+
+#[test]
+fn replace_legacy_consent_parser_is_strict() {
+    assert_eq!(
+        parse_replace_legacy(&json!({"replaceLegacy": {"path": "/tmp/bin/opencode", "version": "1.15.1"}})),
+        Some(LegacyConsent { path: "/tmp/bin/opencode".into(), version: "1.15.1".into() })
+    );
+    for invalid in [
+        json!({}),
+        json!({"replaceLegacy": null}),
+        json!({"replaceLegacy": {"path": "", "version": "1.15.1"}}),
+        json!({"replaceLegacy": {"path": "a".repeat(4097), "version": "1.15.1"}}),
+        json!({"replaceLegacy": {"path": "/bin/opencode", "version": "v1.15.1"}}),
+        json!({"replaceLegacy": {"path": "/bin/opencode", "version": "1.15.1", "extra": true}}),
+    ] {
+        assert_eq!(parse_replace_legacy(&invalid), None, "{invalid}");
+    }
+}
+
+#[test]
+fn legacy_npm_verification_preflight_and_removal_match_reference() {
+    let root = crate::shared::test_dir("install-legacy");
+    let prefix = layout::Prefix { root: root.clone() };
+    let pkg = legacy::legacy_package_root(&prefix);
+    std::fs::create_dir_all(pkg.join("bin")).unwrap();
+    std::fs::create_dir_all(pkg.join("node_modules").join("opencode-windows-x64").join("bin")).unwrap();
+    std::fs::create_dir_all(pkg.join("node_modules").join("unrelated").join("bin")).unwrap();
+    std::fs::create_dir_all(prefix.commands()).unwrap();
+    let bin = pkg.join("bin").join("opencode.exe");
+    let nested = pkg.join("node_modules").join("opencode-windows-x64").join("bin").join("opencode.exe");
+    let unrelated = pkg.join("node_modules").join("unrelated").join("bin").join("tool.exe");
+    std::fs::write(&bin, b"legacy-bin").unwrap();
+    std::fs::write(&nested, b"nested-bin").unwrap();
+    std::fs::write(&unrelated, b"unrelated").unwrap();
+    std::fs::write(
+        pkg.join("package.json"),
+        r#"{"name":"opencode-ai","version":"1.15.1","bin":{"opencode":"./bin/opencode.exe"}}"#,
+    )
+    .unwrap();
+
+    #[cfg(windows)]
+    let command = {
+        let cmd = prefix.commands().join("opencode.cmd");
+        std::fs::write(&cmd, "@ECHO off\r\n\"%dp0%\\node_modules\\opencode-ai\\bin\\opencode.exe\" %*\r\n").unwrap();
+        std::fs::write(
+            prefix.commands().join("opencode.ps1"),
+            "& \"$basedir/node_modules/opencode-ai/bin/opencode.exe\" $args\n",
+        )
+        .unwrap();
+        cmd.to_string_lossy().into_owned()
+    };
+    #[cfg(not(windows))]
+    let command = {
+        let link = prefix.commands().join("opencode");
+        std::os::unix::fs::symlink("../lib/node_modules/opencode-ai/bin/opencode.exe", &link).unwrap();
+        link.to_string_lossy().into_owned()
+    };
+
+    let detected = legacy::legacy_npm_installation(&command, &prefix).expect("verified 1.x npm shim");
+    assert_eq!(detected.version, "1.15.1");
+    assert!(legacy::matches_consent(
+        &detected,
+        Some(&LegacyConsent { path: command.clone(), version: "1.15.1".into() })
+    ));
+    assert!(!legacy::matches_consent(
+        &detected,
+        Some(&LegacyConsent { path: command.clone(), version: "1.15.0".into() })
+    ));
+    let images = legacy::legacy_native_images(&pkg, 64);
+    assert!(images.contains(&bin));
+    assert!(images.contains(&nested));
+    assert!(!images.contains(&unrelated));
+
+    // A 2.x manifest version is never classified as legacy 1.x.
+    std::fs::write(
+        pkg.join("package.json"),
+        r#"{"name":"opencode-ai","version":"2.4.0","bin":{"opencode":"./bin/opencode.exe"}}"#,
+    )
+    .unwrap();
+    assert!(legacy::legacy_npm_installation(&command, &prefix).is_none());
+
+    // Restore 1.15.1 and verify locked native-image preflight on Windows keeps installation intact.
+    std::fs::write(
+        pkg.join("package.json"),
+        r#"{"name":"opencode-ai","version":"1.15.1","bin":{"opencode":"./bin/opencode.exe"}}"#,
+    )
+    .unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let _locked = std::fs::OpenOptions::new().read(true).share_mode(0).open(&nested).unwrap();
+        let err = legacy::remove_legacy(&prefix, &detected).unwrap_err();
+        assert_eq!(err.code, "installation_in_use");
+        assert!(pkg.exists() && std::path::Path::new(&command).exists());
+    }
+
+    // With no lock, removal deletes the legacy package root and shims cleanly.
+    legacy::remove_legacy(&prefix, &detected).unwrap();
+    assert!(!pkg.exists());
+    assert!(!std::path::Path::new(&command).exists());
+    #[cfg(windows)]
+    assert!(!prefix.commands().join("opencode.ps1").exists());
+    let _ = std::fs::remove_dir_all(root);
 }
 
 /// A command that starts a grandchild, then waits: once the probe expires, neither remains.

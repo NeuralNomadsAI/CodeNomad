@@ -1,7 +1,10 @@
 //! The shared daemon's official lifecycle through its CLI (`opencode-cli-service.ts`,
 //! `native-service-registration.ts`, `native-service-start.ts`): `service status`, `start` and
 //! `get password`, the registration fallback and the authenticated health read.
-use std::{path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
@@ -22,9 +25,11 @@ pub struct Endpoint {
     pub pid: u64,
 }
 
+#[derive(Clone)]
 pub struct Lifecycle {
     pub binary: String,
     client: Client,
+    pub config_path: Option<PathBuf>,
 }
 
 enum Health {
@@ -205,7 +210,11 @@ fn refused(error: &reqwest::Error) -> bool {
 
 impl Lifecycle {
     pub fn new(binary: String, client: Client) -> Self {
-        Self { binary, client }
+        Self { binary, client, config_path: None }
+    }
+
+    pub fn with_config(binary: String, client: Client, config_path: Option<PathBuf>) -> Self {
+        Self { binary, client, config_path }
     }
 
     pub async fn discover(&self, deadline: Instant) -> Result<Option<Endpoint>, String> {
@@ -222,6 +231,13 @@ impl Lifecycle {
         }
         let url = single_line(&self.run(&["service", "start"], true, deadline).await?, "start")?;
         self.endpoint(&url, deadline).await
+    }
+
+    /// Explicit user restart only (`opencode-cli-service.ts:74-79`): stop the shared service,
+    /// then start it through the same containment/environment path as normal startup.
+    pub async fn restart(&self, deadline: Instant) -> Result<Endpoint, String> {
+        let _ = self.run(&["service", "stop"], false, deadline).await?;
+        self.ensure(deadline).await
     }
 
     async fn password(&self, deadline: Instant) -> Result<String, String> {
@@ -278,7 +294,8 @@ impl Lifecycle {
         let label = args.join(" ");
         let timeout = remaining(deadline, &label)?;
         let spec = launch::spec(&self.binary, args)?;
-        let environment = start.then(launch::daemon_environment);
+        let environment =
+            if start { Some(launch::daemon_environment_from_config(self.config_path.as_deref())?) } else { None };
         let result = if start && native_parent::available() {
             self.delegate(&spec, environment.as_deref().unwrap_or_default(), timeout).await
         } else {

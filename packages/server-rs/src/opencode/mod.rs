@@ -12,11 +12,16 @@ pub mod proxy;
 mod proxy_body;
 mod proxy_write;
 pub mod scope;
+pub mod service_action;
 mod session_environment;
 pub mod update;
 
 use std::{
-    sync::{Arc, Mutex, RwLock},
+    path::PathBuf,
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -45,7 +50,11 @@ struct NativeInner {
     client: Client,
     endpoint: RwLock<Option<Arc<Endpoint>>>,
     /// `None`: the bench's fixture daemon, never rediscovered.
-    lifecycle: Option<daemon::Lifecycle>,
+    lifecycle: RwLock<Option<daemon::Lifecycle>>,
+    config_path: RwLock<Option<PathBuf>>,
+    pinned_binary: AtomicBool,
+    /// Incremented on invalidation, retirement or binary hot-adoption so stale acquires retry.
+    generation: AtomicU64,
     /// When the current endpoint was last confirmed; `None` once invalidated.
     validated: Mutex<Option<Instant>>,
     inflight: Mutex<Option<AcquireFlight>>,
@@ -74,7 +83,10 @@ impl Native {
                 version: String::new(),
                 pid: 0,
             }))),
-            lifecycle: None,
+            lifecycle: RwLock::new(None),
+            config_path: RwLock::new(None),
+            pinned_binary: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
             validated: Mutex::new(Some(Instant::now())),
             inflight: Mutex::new(None),
             retired: tokio::sync::Notify::new(),
@@ -111,13 +123,100 @@ impl Native {
         let inner = Arc::new(NativeInner {
             client: client.clone(),
             endpoint: RwLock::new(endpoint),
-            lifecycle,
+            lifecycle: RwLock::new(lifecycle),
+            config_path: RwLock::new(None),
+            pinned_binary: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
             validated,
             inflight: Mutex::new(None),
             retired: tokio::sync::Notify::new(),
         });
         Ok(Self { client, inner })
     }
+
+    pub fn attach_settings(&self, config_path: PathBuf) {
+        *self.inner.config_path.write().unwrap() = Some(config_path.clone());
+        if let Some(lifecycle) = self.inner.lifecycle.write().unwrap().as_mut() {
+            lifecycle.config_path = Some(config_path);
+        }
+    }
+
+    pub fn pin_binary(&self) {
+        self.inner.pinned_binary.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_pinned(&self) -> bool {
+        self.inner.pinned_binary.load(Ordering::Relaxed)
+    }
+
+    pub fn binary(&self) -> Option<String> {
+        self.inner.lifecycle.read().unwrap().as_ref().map(|lifecycle| lifecycle.binary.clone())
+    }
+
+    pub fn can_restart(&self) -> bool {
+        self.inner.lifecycle.read().unwrap().is_some()
+    }
+
+    pub fn can_reload(&self) -> bool {
+        self.inner.lifecycle.read().unwrap().is_some()
+    }
+
+    pub fn lifecycle_for(&self, binary: &str) -> Option<daemon::Lifecycle> {
+        let existing = self.inner.lifecycle.read().unwrap();
+        let existing = existing.as_ref()?;
+        let config_path = existing.config_path.clone().or_else(|| self.inner.config_path.read().unwrap().clone());
+        Some(daemon::Lifecycle::with_config(binary.to_owned(), self.client.clone(), config_path))
+    }
+
+    /// Hot-adopts a newly configured OpenCode executable for future discovery/startup without
+    /// stopping or restarting any running daemon.
+    pub fn adopt_binary(&self, binary: &str) {
+        if self.is_pinned() {
+            return;
+        }
+        let mut guard = self.inner.lifecycle.write().unwrap();
+        let Some(lifecycle) = guard.as_mut() else {
+            return;
+        };
+        if lifecycle.binary == binary {
+            return;
+        }
+        lifecycle.binary = binary.to_owned();
+        self.inner.generation.fetch_add(1, Ordering::SeqCst);
+        *self.inner.validated.lock().unwrap() = None;
+    }
+
+    /// Retires client authority for the current shared connection without stopping the daemon,
+    /// updates workspace binary labels, and acquires a fresh admitted connection for `binary`.
+    pub async fn reconnect(&self, app: &App, binary: &str, deadline: Instant) -> Result<Arc<Endpoint>, Refusal> {
+        if self.inner.lifecycle.read().unwrap().is_none() {
+            return self.endpoint().ok_or_else(|| Refusal::Failed("OpenCode fixture endpoint is missing".into()));
+        }
+        if !self.is_pinned()
+            && let Some(lifecycle) = self.inner.lifecycle.write().unwrap().as_mut()
+        {
+            lifecycle.binary = binary.to_owned();
+        }
+        self.inner.generation.fetch_add(1, Ordering::SeqCst);
+        {
+            let mut endpoint = self.inner.endpoint.write().unwrap();
+            *endpoint = None;
+            *self.inner.validated.lock().unwrap() = None;
+            *self.inner.inflight.lock().unwrap() = None;
+        }
+        self.inner.retired.notify_waiters();
+        {
+            let binary_path = PathBuf::from(binary);
+            let label = binary_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let mut store = app.inner.lock().unwrap();
+            for workspace in &mut store.workspaces {
+                workspace.binary_id = binary_path.clone();
+                workspace.binary_label = label.clone();
+            }
+        }
+        self.acquire(deadline).await
+    }
+
     pub fn endpoint(&self) -> Option<Arc<Endpoint>> {
         self.inner.endpoint.read().unwrap().clone()
     }
@@ -147,7 +246,7 @@ impl Native {
     /// fails or finds nothing keeps a working connection; an invalidated one is replaced.
     /// Runs in a detached shared flight so cancelling one waiter never aborts another's acquisition.
     pub async fn acquire(&self, deadline: Instant) -> Result<Arc<Endpoint>, Refusal> {
-        if self.inner.lifecycle.is_none() {
+        if self.inner.lifecycle.read().unwrap().is_none() {
             return self.endpoint().ok_or_else(|| Refusal::Failed("OpenCode fixture endpoint is missing".into()));
         }
         {
@@ -188,12 +287,8 @@ impl Native {
     /// `lifecycle.discover()`: the running daemon, never started. The bench's fixture endpoint
     /// reports the version its `/api/info` declares, as the reference remembers it.
     pub async fn discover(&self, binary: &str, deadline: Instant) -> Result<Option<Endpoint>, String> {
-        if let Some(lifecycle) = &self.inner.lifecycle {
-            return if lifecycle.binary == binary {
-                lifecycle.discover(deadline).await
-            } else {
-                daemon::Lifecycle::new(binary.to_owned(), self.client.clone()).discover(deadline).await
-            };
+        if let Some(lifecycle) = self.lifecycle_for(binary) {
+            return lifecycle.discover(deadline).await;
         }
         let Some(mut endpoint) = self.endpoint().map(|e| (*e).clone()) else { return Ok(None) };
         let info = self.get("/api/info").timeout(Duration::from_secs(5)).send().await.map_err(|e| e.to_string())?;
@@ -208,7 +303,8 @@ impl Native {
     /// (and starts the daemon when it is gone). Requests keep it until then.
     pub fn invalidate(&self, endpoint: &Arc<Endpoint>) {
         let live = self.inner.endpoint.read().unwrap();
-        if self.inner.lifecycle.is_some() && live.as_ref().is_some_and(|e| Arc::ptr_eq(e, endpoint)) {
+        if self.inner.lifecycle.read().unwrap().is_some() && live.as_ref().is_some_and(|e| Arc::ptr_eq(e, endpoint)) {
+            self.inner.generation.fetch_add(1, Ordering::SeqCst);
             *self.inner.validated.lock().unwrap() = None;
             drop(live);
             self.inner.retired.notify_waiters();
@@ -230,15 +326,16 @@ impl Native {
 }
 
 async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpoint>, Refusal> {
-    let Some(lifecycle) = &inner.lifecycle else {
-        return inner
-            .endpoint
-            .read()
-            .unwrap()
-            .clone()
-            .ok_or_else(|| Refusal::Failed("OpenCode fixture endpoint is missing".into()));
-    };
-    for _attempt in 0..3 {
+    for _attempt in 0..6 {
+        let generation = inner.generation.load(Ordering::SeqCst);
+        let Some(lifecycle) = inner.lifecycle.read().unwrap().clone() else {
+            return inner
+                .endpoint
+                .read()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| Refusal::Failed("OpenCode fixture endpoint is missing".into()));
+        };
         let validated = *inner.validated.lock().unwrap();
         let current = inner.endpoint.read().unwrap().clone();
         let found = match (&current, validated) {
@@ -247,8 +344,8 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
                 Ok(Some(found)) if found != **current => found,
                 _ => {
                     let mut validated = inner.validated.lock().unwrap();
-                    if validated.is_none() {
-                        // Connection was invalidated while discovery ran (e.g. SSE disconnect);
+                    if validated.is_none() || inner.generation.load(Ordering::SeqCst) != generation {
+                        // Connection was invalidated or binary changed while discovery ran;
                         // retry acquisition within the same request deadline (TS `opencode-service.ts:196-204`).
                         continue;
                     }
@@ -261,6 +358,9 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
                 None => lifecycle.ensure(deadline).await?,
             },
         };
+        if inner.generation.load(Ordering::SeqCst) != generation {
+            continue;
+        }
         if current.as_ref().is_some_and(|old| **old != found) {
             // Retire the replaced daemon immediately upon discovering a different endpoint
             // (TS `opencode-service.ts:196-200, 333-343`), even if admitting the replacement fails.
@@ -271,6 +371,9 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
         admission::admit(&inner.client, &found).await?;
         let found = Arc::new(found);
         let mut endpoint = inner.endpoint.write().unwrap();
+        if inner.generation.load(Ordering::SeqCst) != generation {
+            continue;
+        }
         *endpoint = Some(found.clone());
         *inner.validated.lock().unwrap() = Some(Instant::now());
         drop(endpoint);
@@ -280,10 +383,21 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
     Err(Refusal::Failed("OpenCode connection was invalidated during discovery".into()))
 }
 
+/// Resolves the currently configured OpenCode executable and hot-adopts it on `app.native`
+/// without restarting any running daemon.
+pub async fn adopt_configured_binary(app: &App) {
+    if app.native.is_pinned() {
+        return;
+    }
+    let (binary, _, _) = update::selected_binary(app).await;
+    app.native.adopt_binary(&binary);
+}
+
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/workspaces/{id}/instance", any(proxy::relay))
         .route("/workspaces/{id}/instance/{*route}", any(proxy::relay))
+        .route("/api/opencode/service", post(service_action::handle))
         .route("/api/opencode/update", get(update::status))
         .route("/api/opencode/login-start", get(login_start::read).post(login_start::set))
         .route("/api/storage/binaries/validate", post(update::validate))
@@ -510,3 +624,6 @@ pub async fn session_location(app: &App, id: &str) -> Result<Option<String>, Err
 pub async fn session_directory(app: &App, id: &str) -> Result<String, Error> {
     session_location(app, id).await?.ok_or_else(upstream_error)
 }
+
+#[cfg(test)]
+mod service_tests;
