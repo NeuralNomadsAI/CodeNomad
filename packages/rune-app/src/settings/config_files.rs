@@ -333,9 +333,9 @@ impl Editor {
                     Ok(()) => true,
                     Err(_) => {
                         still_authorized()
-                            && api::read(&backend, &id)
-                                .await
-                                .is_ok_and(|content| content.exists && content.contents == payload)
+                            && api::read(&backend, &id).await.is_ok_and(|content| {
+                                still_authorized() && content.exists && content.contents == payload
+                            })
                     }
                 }
             };

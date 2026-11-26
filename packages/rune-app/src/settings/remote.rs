@@ -51,6 +51,7 @@ pub(super) struct Remote {
     flight: Option<(Option<Sender<()>>, Receiver<Reply>)>,
     recheck: Option<(Sender<()>, Receiver<()>)>,
     error: Option<ErrorText>,
+    sticky_revoke_error: Option<(String, ErrorText)>,
     needs_read: bool,
     unconfirmed: Option<Mutation>,
     disabled_info_open: bool,
@@ -217,12 +218,20 @@ impl Remote {
                         .or(Some(ErrorText::Key("remoteControl.state.error")));
                 } else {
                     let (failed, stored_revoke_err) = match self.unconfirmed.take() {
-                        Some(Mutation::Revoke(id, err)) => (
-                            devices.as_ref().is_some_and(|devices| {
+                        Some(Mutation::Revoke(id, err)) => {
+                            let present = devices.as_ref().is_some_and(|devices| {
                                 devices.iter().any(|device| device.id == id)
-                            }),
-                            err,
-                        ),
+                            });
+                            (
+                                present,
+                                present.then(|| {
+                                    (
+                                        id,
+                                        err.unwrap_or(ErrorText::Key("remoteControl.state.error")),
+                                    )
+                                }),
+                            )
+                        }
                         Some(
                             Mutation::Start
                             | Mutation::Stop
@@ -232,13 +241,30 @@ impl Remote {
                         None => (false, None),
                     };
                     if let Some(err) = read.devices_error {
-                        if !failed || self.error.is_none() {
+                        if let Some((_, sticky)) = &self.sticky_revoke_error
+                            && matches!(sticky, ErrorText::Raw(_))
+                        {
+                            self.error = Some(sticky.clone());
+                        } else if !failed || self.error.is_none() {
                             self.error =
                                 Some(ErrorText::from_remote(err, "remoteControl.state.error"));
                         }
                     } else if !failed {
-                        self.error = None;
-                    } else if let Some(err) = stored_revoke_err {
+                        if let Some((sticky_id, sticky_err)) = &self.sticky_revoke_error {
+                            let still_present = devices
+                                .as_ref()
+                                .is_some_and(|list| list.iter().any(|d| d.id == *sticky_id));
+                            if still_present {
+                                self.error = Some(sticky_err.clone());
+                            } else {
+                                self.sticky_revoke_error = None;
+                                self.error = None;
+                            }
+                        } else {
+                            self.error = None;
+                        }
+                    } else if let Some((id, err)) = stored_revoke_err {
+                        self.sticky_revoke_error = Some((id, err.clone()));
                         self.error = Some(err);
                     } else if self.error.is_none() {
                         self.error = Some(ErrorText::Key("remoteControl.state.error"));
@@ -255,7 +281,7 @@ impl Remote {
                 }
                 let stored = match &self.unconfirmed {
                     Some(Mutation::Revoke(_, err)) => err.clone(),
-                    _ => None,
+                    _ => self.sticky_revoke_error.as_ref().map(|(_, e)| e.clone()),
                 };
                 self.error = stored
                     .filter(|err| matches!(err, ErrorText::Raw(_)))
@@ -407,6 +433,7 @@ impl Remote {
         }
         self.recheck = None;
         if !matches!(action, Action::Refresh) {
+            self.sticky_revoke_error = None;
             self.error = None;
         }
         let tunnel_origin = self

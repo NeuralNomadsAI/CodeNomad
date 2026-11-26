@@ -15,7 +15,7 @@ use std::{
     },
 };
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub(in crate::settings) struct Intent {
     pub epoch: u64,
     pub connection: String,
@@ -23,13 +23,43 @@ pub(in crate::settings) struct Intent {
     pub session: Option<String>,
     pub directory: String,
     pub scope: Scope,
+    pub authority: Arc<AtomicU64>,
+    pub authority_gen: u64,
+    pub cleanup_token: Arc<AtomicU64>,
+    pub cleanup_token_gen: u64,
+}
+
+impl PartialEq for Intent {
+    fn eq(&self, other: &Self) -> bool {
+        self.epoch == other.epoch
+            && self.connection == other.connection
+            && self.workspace == other.workspace
+            && self.session == other.session
+            && self.directory == other.directory
+            && self.scope == other.scope
+            && Arc::ptr_eq(&self.authority, &other.authority)
+            && self.authority_gen == other.authority_gen
+            && Arc::ptr_eq(&self.cleanup_token, &other.cleanup_token)
+            && self.cleanup_token_gen == other.cleanup_token_gen
+    }
+}
+
+impl Eq for Intent {}
+
+impl Intent {
+    pub fn authority_valid(&self) -> bool {
+        self.authority.load(Ordering::SeqCst) == self.authority_gen
+    }
+
+    pub fn token_valid(&self) -> bool {
+        self.authority_valid()
+            && self.cleanup_token.load(Ordering::SeqCst) == self.cleanup_token_gen
+    }
 }
 
 pub(in crate::settings) struct Run {
     intent: Intent,
     owner: Rc<()>,
-    authority: Arc<AtomicU64>,
-    authority_gen: u64,
     expected_server: Option<String>,
     receiver: Receiver<Reply>,
 }
@@ -43,11 +73,16 @@ enum Reply {
 
 fn authorized(
     backend: &Backend,
-    authority: &Arc<AtomicU64>,
-    authority_gen: u64,
+    intent: &Intent,
     expected_server: Option<&str>,
+    require_token: bool,
 ) -> bool {
-    authority.load(Ordering::SeqCst) == authority_gen
+    let valid = if require_token {
+        intent.token_valid()
+    } else {
+        intent.authority_valid()
+    };
+    valid
         && ServerOwner::backend_verified(backend)
         && expected_server.is_none_or(|id| backend.client.server_identity() == Some(id))
 }
@@ -57,7 +92,8 @@ fn owner(s: &State, intent: &Intent) -> Option<Backend> {
     let backend = launcher.connection.as_ref()?;
     let project = launcher.project.as_ref()?;
     let prefs = s.settings.shared.borrow();
-    (backend.client_id == intent.connection
+    (intent.token_valid()
+        && backend.client_id == intent.connection
         && project.id == intent.workspace
         && crate::workspace::active_session(s) == intent.session.as_deref()
         && !launcher.pending
@@ -79,29 +115,21 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         };
         let intent = &run.intent;
-        let current = s.current_scope(&run.owner)
-            && owner(s, intent).is_some()
-            && run.authority.load(Ordering::SeqCst) == run.authority_gen;
+        let current = s.current_scope(&run.owner) && owner(s, intent).is_some();
         match reply {
             Reply::Checked(backend)
                 if current && s.settings.shared.borrow().memory.cleanup_current(intent) =>
             {
                 let (workspace, directory) = (intent.workspace.clone(), intent.directory.clone());
                 let title = strings::t("settings.memory.tidy");
-                let (auth, auth_gen, expected) = (
-                    run.authority.clone(),
-                    run.authority_gen,
-                    run.expected_server.clone(),
-                );
+                let (check_intent, expected) = (run.intent.clone(), run.expected_server.clone());
                 s.settings.memory_cleanup = Some(advance(
                     s,
                     run.intent,
                     run.owner,
-                    run.authority,
-                    run.authority_gen,
                     run.expected_server,
                     async move {
-                        if !authorized(&backend, &auth, auth_gen, expected.as_deref()) {
+                        if !authorized(&backend, &check_intent, expected.as_deref(), true) {
                             return Reply::Failed;
                         }
                         match memory::create_cleanup_session(
@@ -120,21 +148,20 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             {
                 let scope = intent.scope;
                 let id = backend.session.clone();
+                s.settings
+                    .shared
+                    .borrow_mut()
+                    .memory
+                    .cleanup_prompting(intent);
                 crate::launcher::choose(s, id, tx);
-                let (auth, auth_gen, expected) = (
-                    run.authority.clone(),
-                    run.authority_gen,
-                    run.expected_server.clone(),
-                );
+                let (check_intent, expected) = (run.intent.clone(), run.expected_server.clone());
                 s.settings.memory_cleanup = Some(advance(
                     s,
                     run.intent,
                     run.owner,
-                    run.authority,
-                    run.authority_gen,
                     run.expected_server,
                     async move {
-                        if !authorized(&backend, &auth, auth_gen, expected.as_deref()) {
+                        if !authorized(&backend, &check_intent, expected.as_deref(), false) {
                             return Reply::Failed;
                         }
                         let Ok(id) = message_id() else {
@@ -154,7 +181,12 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     },
                 ));
             }
-            Reply::Sent => {}
+            Reply::Sent => s
+                .settings
+                .shared
+                .borrow_mut()
+                .memory
+                .cleanup_succeeded(intent),
             _ => s.settings.shared.borrow_mut().memory.cleanup_failed(intent),
         }
         if let Some(wake) = &s.settings.shared.borrow().window_wake {
@@ -176,26 +208,22 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         return true;
     };
-    let authority = s.settings.shared.borrow().authority_handle();
-    let authority_gen = authority.load(Ordering::SeqCst);
     let expected_server = backend.client.server_identity().map(str::to_owned);
-    let (auth, expected) = (authority.clone(), expected_server.clone());
+    let expected = expected_server.clone();
     let request = intent.clone();
     s.settings.memory_cleanup = Some(advance(
         s,
         intent,
         s.input_scope.clone(),
-        authority,
-        authority_gen,
         expected_server,
         async move {
-            if !authorized(&backend, &auth, authority_gen, expected.as_deref()) {
+            if !authorized(&backend, &request, expected.as_deref(), true) {
                 return Reply::Failed;
             }
             if !matches!(memory::enabled(&backend).await, Ok(true)) {
                 return Reply::Failed;
             }
-            if !authorized(&backend, &auth, authority_gen, expected.as_deref()) {
+            if !authorized(&backend, &request, expected.as_deref(), true) {
                 return Reply::Failed;
             }
             let list = memory::list_at(
@@ -204,6 +232,9 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 Some((&request.workspace, Some(&request.directory))),
             )
             .await;
+            if !authorized(&backend, &request, expected.as_deref(), true) {
+                return Reply::Failed;
+            }
             if list.is_ok_and(|list| {
                 list.cleanup_writable
                     && list.cleanup_directory.as_deref() == Some(&request.directory)
@@ -222,8 +253,6 @@ fn advance(
     s: &State,
     intent: Intent,
     owner: Rc<()>,
-    authority: Arc<AtomicU64>,
-    authority_gen: u64,
     expected_server: Option<String>,
     task: impl std::future::Future<Output = Reply> + platform::TaskBound + 'static,
 ) -> Run {
@@ -236,8 +265,6 @@ fn advance(
     Run {
         intent,
         owner,
-        authority,
-        authority_gen,
         expected_server,
         receiver,
     }

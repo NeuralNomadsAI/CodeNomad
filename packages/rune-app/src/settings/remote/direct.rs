@@ -21,7 +21,8 @@ pub(super) struct DirectAccess {
     meta: Option<DirectAccessMeta>,
     auth: Option<AuthStatus>,
     auth_error: Option<ErrorText>,
-    meta_flight: Option<(Sender<()>, Receiver<MetaReply>)>,
+    auth_gen: u64,
+    meta_flight: Option<(u64, Sender<()>, Receiver<MetaReply>)>,
     mode_flight: Option<Receiver<Result<(), remote::Error>>>,
     password_flight: Option<Receiver<Result<PasswordSaved, remote::Error>>>,
     meta_error: Option<ErrorText>,
@@ -61,14 +62,15 @@ impl DirectAccess {
     }
 
     pub fn refresh(&mut self, backend: &Backend, wake: &Waker) {
-        if self.meta_flight.is_some() {
+        if self.meta_flight.is_some() || self.password_flight.is_some() {
             return;
         }
         self.owner = Some(backend.client_id.clone());
         self.meta_error = None;
+        let auth_gen = self.auth_gen;
         let (cancel, cancelled) = bounded(1);
         let (out, input) = bounded(1);
-        self.meta_flight = Some((cancel, input));
+        self.meta_flight = Some((auth_gen, cancel, input));
         let (backend, wake) = (backend.clone(), wake.clone());
         platform::spawn(async move {
             let Some((meta, auth)) =
@@ -94,7 +96,8 @@ impl DirectAccess {
             return true;
         }
         let mut changed = self.address_copy.poll();
-        if let Some((_, flight)) = &self.meta_flight {
+        if let Some((flight_auth_gen, _, flight)) = &self.meta_flight {
+            let flight_auth_gen = *flight_auth_gen;
             match flight.try_recv() {
                 Ok(reply) => {
                     self.meta_flight = None;
@@ -109,17 +112,19 @@ impl DirectAccess {
                                 Some(ErrorText::from_remote(err, "rune.connect_error"))
                         }
                     }
-                    match reply.auth {
-                        Ok(auth) => {
-                            self.auth = Some(auth);
-                            self.auth_error = None;
-                        }
-                        Err(err) => {
-                            self.auth = None;
-                            self.auth_error = Some(ErrorText::from_remote(
-                                err,
-                                "remoteAccess.authStatus.unavailable",
-                            ));
+                    if flight_auth_gen == self.auth_gen {
+                        match reply.auth {
+                            Ok(auth) => {
+                                self.auth = Some(auth);
+                                self.auth_error = None;
+                            }
+                            Err(err) => {
+                                self.auth = None;
+                                self.auth_error = Some(ErrorText::from_remote(
+                                    err,
+                                    "remoteAccess.authStatus.unavailable",
+                                ));
+                            }
                         }
                     }
                     changed = true;
@@ -166,6 +171,7 @@ impl DirectAccess {
                     self.password_flight = None;
                     match result {
                         Ok(saved) => {
+                            self.auth_gen = self.auth_gen.wrapping_add(1);
                             self.wipe_password_fields();
                             self.password_form_open = false;
                             self.password_error = None;
@@ -258,6 +264,7 @@ impl DirectAccess {
         }
         // Cancel any pre-save meta/auth read so an older authenticated snapshot cannot overwrite
         // the post-save auth status after session revocation.
+        self.auth_gen = self.auth_gen.wrapping_add(1);
         self.meta_flight = None;
         let (out, input) = bounded(1);
         self.password_flight = Some(input);
@@ -316,7 +323,7 @@ impl DirectAccess {
         let refresh_shared = shared.clone();
         let refresh = layout::button(
             t("remoteAccess.refresh"),
-            !available || loading,
+            !available || loading || self.password_flight.is_some(),
             move |s: &mut S| {
                 let Some(state) = access(s) else { return };
                 state.direct.password_error = None;

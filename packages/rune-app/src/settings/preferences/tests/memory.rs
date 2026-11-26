@@ -251,6 +251,9 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
 
         // Switching to a different server profile while a real HTTP save POST is in flight must
         // invalidate the review, close the stale editor, and ignore the late reply from profile A.
+        let wake_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let wake_signal = wake_notify.clone();
+        prefs.window_wake = Some(std::sync::Arc::new(move || wake_signal.notify_one()));
         let mut inflight_editor = Editor::default();
         inflight_editor.open(updated_edit.clone());
         inflight_editor.edit_text("In-flight profile A edit");
@@ -285,11 +288,15 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
                 .poll_editor(prefs.backend.as_ref(), &mut inflight_editor)
         );
         assert!(!inflight_editor.shown());
+        let woken = wake_notify.notified();
         held_save_req
             .reply(200, json!({"id": "entry-1", "revision": "c".repeat(64)}))
             .await;
-        // Pump polling after the late profile-A reply settles so we prove it is ignored on profile B.
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        // Wait for the spawned profile-A task to finish and fire wake() before verifying that
+        // polling ignores its late reply on profile B.
+        timeout(Duration::from_secs(2), woken)
+            .await
+            .expect("late profile-A write task should finish and notify wake");
         prefs.poll();
         assert!(
             !prefs

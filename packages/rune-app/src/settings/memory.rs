@@ -14,6 +14,11 @@ pub(super) mod editor;
 pub(super) mod review;
 mod seen;
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
 #[derive(Default)]
 pub(super) struct Setting {
     pub visible: bool,
@@ -21,7 +26,7 @@ pub(super) struct Setting {
     current: Option<bool>,
     refresh: bool,
     failed: bool,
-    pending: Option<bool>,
+    pending: Option<(bool, u64)>,
     flight: Option<Receiver<(Option<bool>, bool)>>,
     review: review::Review,
     owner_gen: u64,
@@ -46,6 +51,9 @@ impl Setting {
 
     pub fn bind(&mut self, same: bool) {
         if same {
+            if self.pending.take().is_some() {
+                self.failed = true;
+            }
             self.invalidate();
         } else {
             self.review.revoke_authority();
@@ -65,10 +73,32 @@ impl Setting {
     }
 
     pub fn poll_pending_writes(&mut self) -> bool {
-        self.review.poll_write()
+        let mut changed = self.review.poll_write();
+        if let Some(flight) = &self.flight {
+            match flight.try_recv() {
+                Ok((current, failed)) => {
+                    self.flight = None;
+                    self.failed = failed;
+                    if let Some(current) = current {
+                        self.current = Some(current);
+                    }
+                    changed = true;
+                }
+                Err(_) if flight.is_closed() => {
+                    self.flight = None;
+                    self.failed = true;
+                    changed = true;
+                }
+                Err(_) => {}
+            }
+        }
+        changed
     }
 
     pub fn on_authentication_required(&mut self) {
+        if self.pending.take().is_some() {
+            self.failed = true;
+        }
         self.review.on_authentication_required();
     }
 
@@ -133,8 +163,16 @@ impl Setting {
         self.review.take_cleanup()
     }
 
+    pub fn cleanup_prompting(&mut self, intent: &cleanup::Intent) {
+        self.review.cleanup_prompting(intent);
+    }
+
     pub fn cleanup_failed(&mut self, intent: &cleanup::Intent) {
         self.review.cleanup_failed(intent);
+    }
+
+    pub fn cleanup_succeeded(&mut self, intent: &cleanup::Intent) {
+        self.review.cleanup_succeeded(intent);
     }
 
     pub fn editor_view<S: 'static>(
@@ -148,9 +186,9 @@ impl Setting {
             .or_else(|| self.review.cleanup_confirmation(action))
     }
 
-    fn set(&mut self, next: bool) {
+    fn set(&mut self, next: bool, auth_gen: u64) {
         if self.visible && !self.busy() && self.current.is_some_and(|current| current != next) {
-            self.pending = Some(next);
+            self.pending = Some((next, auth_gen));
             self.failed = false;
         }
     }
@@ -162,6 +200,7 @@ impl Setting {
     pub fn poll(
         &mut self,
         backend: &Backend,
+        prefs_authority: &Arc<AtomicU64>,
         main: &Option<rune::Waker>,
         window: &Option<rune::Waker>,
     ) -> bool {
@@ -179,6 +218,14 @@ impl Setting {
             }
             changed = true;
         }
+        let current_auth = prefs_authority.load(Ordering::SeqCst);
+        if let Some((_, admitted_gen)) = self.pending
+            && admitted_gen != current_auth
+        {
+            self.pending = None;
+            self.failed = true;
+            changed = true;
+        }
         if self.pending.is_none() && (!self.visible || !self.refresh) {
             return changed;
         }
@@ -187,11 +234,18 @@ impl Setting {
         let (out, input) = bounded(1);
         self.flight = Some(input);
         let (backend, main, window) = (backend.clone(), main.clone(), window.clone());
+        let auth = prefs_authority.clone();
         platform::spawn(async move {
-            let result = if let Some(desired) = desired {
-                match memory::set_enabled(&backend, desired).await {
-                    Ok(actual) if actual == desired => (Some(actual), false),
-                    _ => (memory::enabled(&backend).await.ok(), true),
+            let result = if let Some((desired, admitted_gen)) = desired {
+                if auth.load(Ordering::SeqCst) != admitted_gen
+                    || !super::ServerOwner::backend_verified(&backend)
+                {
+                    (None, true)
+                } else {
+                    match memory::set_enabled(&backend, desired).await {
+                        Ok(actual) if actual == desired => (Some(actual), false),
+                        _ => (memory::enabled(&backend).await.ok(), true),
+                    }
                 }
             } else {
                 let actual = memory::enabled(&backend).await.ok();
@@ -268,10 +322,11 @@ pub(super) fn review_action(prefs: &mut Preferences, action: review::Action) -> 
     if prefs.can_retry() && prefs.memory.visible && prefs.memory.current == Some(true) {
         let write = matches!(action, review::Action::Write(..));
         let was_writing = prefs.memory.review.writing();
+        let authority = prefs.authority_handle();
         prefs
             .memory
             .review
-            .action(action, prefs.provider_target.as_ref());
+            .action(action, prefs.provider_target.as_ref(), &authority);
         for wake in [&prefs.main_wake, &prefs.window_wake].into_iter().flatten() {
             wake();
         }
@@ -282,8 +337,9 @@ pub(super) fn review_action(prefs: &mut Preferences, action: review::Action) -> 
 
 pub(super) fn action(prefs: &mut Preferences, desired: Option<bool>) {
     if prefs.can_retry() && prefs.memory.visible {
+        let auth_gen = prefs.authority_handle().load(Ordering::SeqCst);
         match desired {
-            Some(desired) => prefs.memory.set(desired),
+            Some(desired) => prefs.memory.set(desired, auth_gen),
             None => prefs.memory.invalidate(),
         }
         for wake in [&prefs.main_wake, &prefs.window_wake].into_iter().flatten() {

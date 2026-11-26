@@ -68,6 +68,21 @@ pub(in crate::settings) struct Fields {
     pub kind: memory::Kind,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TidyState {
+    Idle,
+    Active(u64),
+    Prompting(u64),
+    Succeeded,
+    Failed,
+}
+
+impl Default for TidyState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Review {
     scope: Option<Scope>,
@@ -77,16 +92,16 @@ pub(super) struct Review {
     flight: Option<(Sender<()>, Receiver<Result<List, &'static str>>)>,
     refresh: bool,
     failed: Option<&'static str>,
-    pending: Option<(Edit, Option<Fields>)>,
+    pending: Option<(Edit, Option<Fields>, u64)>,
     write: Option<Receiver<Result<(), &'static str>>>,
     write_result: Option<(Edit, Result<(), &'static str>)>,
     writing: Option<Edit>,
     tidy: Option<cleanup::Intent>,
     cleanup: Option<cleanup::Intent>,
-    tidy_attempted: [bool; 2],
-    tidy_failed: [bool; 2],
+    tidy_state: [TidyState; 2],
     unverified: bool,
     authority: Arc<AtomicU64>,
+    cleanup_token: Arc<AtomicU64>,
     epoch: u64,
     seen: super::seen::Seen,
 }
@@ -113,27 +128,33 @@ impl Key {
 impl Review {
     pub fn revoke_authority(&self) {
         self.authority.fetch_add(1, Ordering::SeqCst);
+        self.cleanup_token.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn mark_active_tidy_interrupted(&mut self) {
+        for slot in 0..2 {
+            if matches!(self.tidy_state[slot], TidyState::Active(_)) {
+                self.tidy_state[slot] = TidyState::Failed;
+            }
+        }
     }
 
     pub fn begin_visit(&mut self) {
         self.seen.begin_visit();
-        self.tidy_attempted = [false; 2];
-        self.tidy_failed = [false; 2];
+        self.cleanup_token.fetch_add(1, Ordering::SeqCst);
+        self.tidy_state = [TidyState::Idle; 2];
     }
 
     pub fn on_authentication_required(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
+        self.cleanup_token.fetch_add(1, Ordering::SeqCst);
         self.flight = None;
-        if let Some((edit, _)) = self.pending.take() {
+        if let Some((edit, _, _)) = self.pending.take() {
             self.write_result = Some((edit, Err(UNAVAILABLE)));
         }
         self.tidy = None;
         self.cleanup = None;
-        for slot in 0..2 {
-            if self.tidy_attempted[slot] {
-                self.tidy_failed[slot] = true;
-            }
-        }
+        self.mark_active_tidy_interrupted();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -150,27 +171,29 @@ impl Review {
 
     pub fn suspend(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
+        self.cleanup_token.fetch_add(1, Ordering::SeqCst);
         self.key = None;
         self.snapshot = None;
         self.flight = None;
         self.failed = None;
-        if let Some((edit, _)) = self.pending.take() {
+        if let Some((edit, _, _)) = self.pending.take() {
             self.write_result = Some((edit, Err("settings.memory.error.conflict")));
         }
         self.tidy = None;
         self.cleanup = None;
-        for slot in 0..2 {
-            if self.tidy_attempted[slot] {
-                self.tidy_failed[slot] = true;
-            }
-        }
+        self.mark_active_tidy_interrupted();
     }
 
     pub fn invalidate(&mut self) {
         self.refresh = true;
     }
 
-    pub fn action(&mut self, action: Action, project: Option<&Target>) {
+    pub fn action(
+        &mut self,
+        action: Action,
+        project: Option<&Target>,
+        prefs_authority: &Arc<AtomicU64>,
+    ) {
         match action {
             Action::Fold => {
                 self.expanded = !self.expanded;
@@ -187,15 +210,17 @@ impl Review {
             }
             Action::Retry => self.invalidate(),
             Action::Write(edit, fields) if !self.writing() && self.writable(&edit) => {
-                self.pending = Some((edit, fields))
+                let admitted_gen = prefs_authority.load(Ordering::SeqCst);
+                self.pending = Some((edit, fields, admitted_gen));
             }
-            Action::Tidy => self.tidy = self.cleanup_intent(project),
+            Action::Tidy => self.tidy = self.cleanup_intent(project, prefs_authority),
             Action::ConfirmTidy(expected, accept) if self.tidy.as_ref() == Some(&expected) => {
                 let intent = self.tidy.take();
                 // Consume consent before publishing; a second activation cannot start this run.
-                if accept && intent == self.cleanup_intent(project) {
+                if accept && intent == self.cleanup_intent(project, prefs_authority) {
                     if let Some(ref confirmed) = intent {
-                        self.tidy_attempted[scope_slot(confirmed.scope)] = true;
+                        self.tidy_state[scope_slot(confirmed.scope)] =
+                            TidyState::Active(confirmed.cleanup_token_gen);
                     }
                     self.cleanup = intent;
                 }
@@ -204,21 +229,38 @@ impl Review {
         }
     }
 
-    fn cleanup_intent(&self, project: Option<&Target>) -> Option<cleanup::Intent> {
+    fn can_tidy(&self, project: Option<&Target>) -> bool {
+        let Some(list) = self.snapshot.as_ref() else {
+            return false;
+        };
+        let Some(key) = self.key.as_ref() else {
+            return false;
+        };
+        if project.filter(|p| p.online()).is_none() {
+            return false;
+        }
+        !self.unverified
+            && !self.refresh
+            && self.tidy_state[scope_slot(key.scope)] == TidyState::Idle
+            && !self.writing()
+            && self.flight.is_none()
+            && self.failed.is_none()
+            && list.cleanup_writable
+            && list.cleanup_directory.is_some()
+            && list.entries.iter().any(|entry| !entry.flagged)
+    }
+
+    fn cleanup_intent(
+        &self,
+        project: Option<&Target>,
+        prefs_authority: &Arc<AtomicU64>,
+    ) -> Option<cleanup::Intent> {
+        if !self.can_tidy(project) {
+            return None;
+        }
         let list = self.snapshot.as_ref()?;
         let key = self.key.as_ref()?;
         let (workspace, session) = project.filter(|p| p.online())?.location();
-        if self.unverified
-            || self.refresh
-            || self.tidy_attempted[scope_slot(key.scope)]
-            || self.writing()
-            || self.flight.is_some()
-            || self.failed.is_some()
-            || !list.cleanup_writable
-            || !list.entries.iter().any(|entry| !entry.flagged)
-        {
-            return None;
-        }
         let directory = list.cleanup_directory.clone()?;
         Some(cleanup::Intent {
             epoch: self.epoch,
@@ -227,6 +269,10 @@ impl Review {
             session: session.map(str::to_owned),
             directory,
             scope: key.scope,
+            authority: prefs_authority.clone(),
+            authority_gen: prefs_authority.load(Ordering::SeqCst),
+            cleanup_token: self.cleanup_token.clone(),
+            cleanup_token_gen: self.cleanup_token.load(Ordering::SeqCst),
         })
     }
 
@@ -235,8 +281,10 @@ impl Review {
     }
     pub fn cleanup_current(&self, intent: &cleanup::Intent) -> bool {
         !self.unverified
-            && self.tidy_attempted[scope_slot(intent.scope)]
+            && self.tidy_state[scope_slot(intent.scope)]
+                == TidyState::Active(intent.cleanup_token_gen)
             && self.epoch == intent.epoch
+            && intent.token_valid()
             && self.key.as_ref().is_some_and(|key| {
                 key.owner.client_id() == intent.connection
                     && key.scope == intent.scope
@@ -245,13 +293,26 @@ impl Review {
                     })
             })
     }
+    pub fn cleanup_prompting(&mut self, intent: &cleanup::Intent) {
+        let slot = scope_slot(intent.scope);
+        if self.tidy_state[slot] == TidyState::Active(intent.cleanup_token_gen) {
+            self.tidy_state[slot] = TidyState::Prompting(intent.cleanup_token_gen);
+        }
+    }
     pub fn cleanup_failed(&mut self, intent: &cleanup::Intent) {
-        if self.epoch == intent.epoch
-            && self.key.as_ref().is_some_and(|key| {
-                key.owner.client_id() == intent.connection && key.scope == intent.scope
-            })
-        {
-            self.tidy_failed[scope_slot(intent.scope)] = true;
+        let slot = scope_slot(intent.scope);
+        if matches!(
+            self.tidy_state[slot],
+            TidyState::Active(token) | TidyState::Prompting(token)
+                if token == intent.cleanup_token_gen
+        ) {
+            self.tidy_state[slot] = TidyState::Failed;
+        }
+    }
+    pub fn cleanup_succeeded(&mut self, intent: &cleanup::Intent) {
+        let slot = scope_slot(intent.scope);
+        if self.tidy_state[slot] == TidyState::Prompting(intent.cleanup_token_gen) {
+            self.tidy_state[slot] = TidyState::Succeeded;
         }
     }
 
@@ -390,15 +451,15 @@ impl Review {
                     // Re-authenticated to the same server and scope: keep the loaded snapshot
                     // so open entry drafts stay current while a fresh read confirms revisions.
                     self.epoch = self.epoch.wrapping_add(1);
+                    self.cleanup_token.fetch_add(1, Ordering::SeqCst);
                     self.flight = None;
                     self.failed = None;
+                    if let Some((edit, _, _)) = self.pending.take() {
+                        self.write_result = Some((edit, Err(UNAVAILABLE)));
+                    }
                     self.tidy = None;
                     self.cleanup = None;
-                    for slot in 0..2 {
-                        if self.tidy_attempted[slot] {
-                            self.tidy_failed[slot] = true;
-                        }
-                    }
+                    self.mark_active_tidy_interrupted();
                     self.invalidate();
                     changed = true;
                 }
@@ -412,6 +473,7 @@ impl Review {
                     .is_some_and(|(old, new)| !old.owner.same_server(&new.owner));
                 if switching_owner {
                     self.revoke_authority();
+                    self.tidy_state = [TidyState::Idle; 2];
                 }
                 self.suspend();
                 self.key = next;
@@ -422,6 +484,15 @@ impl Review {
         if self.poll_write() {
             changed = true;
         }
+        let current_auth = prefs_authority.load(Ordering::SeqCst);
+        if let Some((_, _, admitted_gen)) = &self.pending
+            && *admitted_gen != current_auth
+        {
+            if let Some((edit, _, _)) = self.pending.take() {
+                self.write_result = Some((edit, Err(UNAVAILABLE)));
+                changed = true;
+            }
+        }
         if self.write.is_some() {
             return changed;
         }
@@ -431,13 +502,22 @@ impl Review {
         // Never publish or start list reads or cleanup while transport, target, or attestation is
         // unverified: keep the last attested snapshot so open drafts stay visible read-only.
         if self.unverified {
+            if let Some((edit, _, _)) = self.pending.take() {
+                self.write_result = Some((edit, Err(UNAVAILABLE)));
+                changed = true;
+            }
             if self.flight.take().is_some() {
                 self.invalidate();
                 changed = true;
             }
             if self.tidy.take().is_some() || self.cleanup.take().is_some() {
                 self.epoch = self.epoch.wrapping_add(1);
+                self.cleanup_token.fetch_add(1, Ordering::SeqCst);
+                self.mark_active_tidy_interrupted();
                 changed = true;
+            } else if !was_unverified {
+                self.cleanup_token.fetch_add(1, Ordering::SeqCst);
+                self.mark_active_tidy_interrupted();
             }
             if !was_unverified {
                 self.invalidate();
@@ -461,10 +541,21 @@ impl Review {
         }
         if !self.refresh
             && self.flight.is_none()
-            && let Some((edit, fields)) = self.pending.take()
+            && let Some((edit, fields, admitted_gen)) = self.pending.take()
         {
-            if self.writable(&edit) && key.owner.verified_for_write(backend) {
-                self.start_write(backend, prefs_authority, edit, fields, main, window);
+            if admitted_gen == prefs_authority.load(Ordering::SeqCst)
+                && self.writable(&edit)
+                && key.owner.verified_for_write(backend)
+            {
+                self.start_write(
+                    backend,
+                    prefs_authority,
+                    admitted_gen,
+                    edit,
+                    fields,
+                    main,
+                    window,
+                );
             } else {
                 self.write_result = Some((edit, Err("settings.memory.error.conflict")));
             }
@@ -500,6 +591,7 @@ impl Review {
         &mut self,
         backend: &Backend,
         prefs_authority: &Arc<AtomicU64>,
+        admitted_gen: u64,
         edit: Edit,
         fields: Option<Fields>,
         main: &Option<rune::Waker>,
@@ -529,7 +621,7 @@ impl Review {
         let expected_server = edit.key.owner.server().map(str::to_owned);
         let prepared_gen = backend.client.drop_generation();
         let prefs_auth = prefs_authority.clone();
-        let prefs_gen = prefs_auth.load(Ordering::SeqCst);
+        let prefs_gen = admitted_gen;
         let review_auth = self.authority.clone();
         let review_gen = review_auth.load(Ordering::SeqCst);
         let (out, reply) = bounded(1);
@@ -624,14 +716,14 @@ impl Review {
                     .children(project.map(|_| {
                         layout::button(
                             t("settings.memory.tidy"),
-                            self.cleanup_intent(project).is_none(),
+                            !self.can_tidy(project),
                             move |s| tidy(s, Action::Tidy),
                         )
                         .help(t("settings.memory.tidyInfo"))
                     })),
             )
             .children(
-                self.tidy_failed[scope_slot(scope)]
+                (self.tidy_state[scope_slot(scope)] == TidyState::Failed)
                     .then(|| text(t("settings.memory.tidyFailed")).role("alert").wrap()),
             );
         if scope == Scope::Project {

@@ -304,7 +304,12 @@ impl Preferences {
         }
     }
 
+    fn revoke_send_authority(&self) {
+        self.authority.fetch_add(1, Ordering::SeqCst);
+    }
+
     pub(super) fn mark_transport_lost(&mut self) {
+        self.revoke_send_authority();
         if let Some(backend) = self.backend.clone() {
             self.seen_drop_generation = backend.client.drop_generation();
             let mut ids = self.active_client_ids(&backend);
@@ -390,7 +395,7 @@ impl Preferences {
         if !dropped {
             return false;
         }
-        self.authority.fetch_add(1, Ordering::SeqCst);
+        self.revoke_send_authority();
         self.config.mark_transport_lost();
         self.state.mark_transport_lost();
         self.server.mark_transport_lost();
@@ -617,7 +622,7 @@ impl Preferences {
                     && old.client.server_identity() == new.client.server_identity()
             });
         self.unwatch();
-        self.authority.fetch_add(1, Ordering::SeqCst);
+        self.revoke_send_authority();
         if !same_address {
             self.seen_drops.clear();
             self.closing_stream_client_id = None;
@@ -816,7 +821,7 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
-        self.authority.fetch_add(1, Ordering::SeqCst);
+        self.revoke_send_authority();
         self.memory.on_authentication_required();
         self.state.settle_palette_mutation_on_auth_expired();
         self.opencode_install.cancel_check();
@@ -935,6 +940,7 @@ impl Preferences {
         let mut disconnected = false;
         if let Some(stream) = &self.stream {
             if stream.take_disconnected() {
+                self.revoke_send_authority();
                 self.config.mark_transport_lost();
                 self.state.mark_transport_lost();
                 self.server.mark_transport_lost();
@@ -1056,7 +1062,7 @@ impl Preferences {
             | state_changed
             | server_changed
             | memory_writes
-            | self.memory.poll(&backend, &main, &window)
+            | self.memory.poll(&backend, &self.authority, &main, &window)
             | self.memory.poll_review(
                 &backend,
                 self.provider_target.as_ref(),
