@@ -84,8 +84,14 @@ impl Entry {
     pub(in crate::workspace) fn last_touched(&self) -> u64 {
         self.history_touched
     }
-    pub(in crate::workspace) fn project_id(&self) -> Option<&str> {
-        self.project.as_ref().map(|project| project.id.as_str())
+    pub(in crate::workspace) fn project_root(&self) -> Option<&str> {
+        self.project
+            .as_ref()
+            .map(|project| project.path.as_str())
+            .or_else(|| match &self.saved {
+                Tab::Workspace(saved) if !saved.folder.is_empty() => Some(saved.folder.as_str()),
+                _ => None,
+            })
     }
     pub(in crate::workspace) fn binding_ref(&self) -> Option<&Backend> {
         self.binding.as_ref()
@@ -93,9 +99,12 @@ impl Entry {
     pub(in crate::workspace) fn missions_ref(&self) -> Option<&crate::missions::Panel> {
         self.missions.as_ref()
     }
-    pub(in crate::workspace) fn live_drafts_bytes(&self) -> usize {
+    pub(in crate::workspace) fn live_drafts_bytes(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> usize {
         self.live_drafts.values().fold(0usize, |total, draft| {
-            total.saturating_add(draft.retained_bytes())
+            total.saturating_add(draft.retained_bytes(seen))
         })
     }
     pub(in crate::workspace) fn inactive_secondary_bytes(&self) -> usize {
@@ -106,7 +115,7 @@ impl Entry {
         let missions = self
             .missions
             .as_ref()
-            .map_or(0, crate::missions::Panel::retained_bytes);
+            .map_or(0, crate::missions::Panel::evictable_inactive_bytes);
         cache_secondary.saturating_add(missions)
     }
 }

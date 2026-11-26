@@ -254,6 +254,7 @@ pub(crate) fn plan_evictions(
 
 pub(crate) fn measure(s: &State) -> PoolUsage {
     let mut usage = PoolUsage::default();
+    let mut seen_draft_arcs = std::collections::HashSet::new();
     // Active tab live state.
     usage.add(
         Pool::Transcript,
@@ -265,7 +266,16 @@ pub(crate) fn measure(s: &State) -> PoolUsage {
     }
     usage.add(Pool::FilesAndGit, s.git.retained_bytes());
     usage.add(Pool::ProtectedDrafts, s.draft.text.len());
-    usage.add(Pool::ProtectedDrafts, s.composer.draft.inline_usage().1);
+    usage.add(
+        Pool::ProtectedDrafts,
+        s.composer.draft.retained_bytes(&mut seen_draft_arcs),
+    );
+    if let Some(recall) = &s.composer.recall {
+        usage.add(
+            Pool::ProtectedDrafts,
+            recall.retained_bytes(&mut seen_draft_arcs),
+        );
+    }
     usage.add(Pool::ProtectedDrafts, s.git.draft_bytes());
 
     // Window-global caches and protected file drafts.
@@ -280,7 +290,10 @@ pub(crate) fn measure(s: &State) -> PoolUsage {
             if let Some(missions) = entry.missions_ref() {
                 usage.add(Pool::Missions, missions.retained_bytes());
             }
-            usage.add(Pool::ProtectedDrafts, entry.live_drafts_bytes());
+            usage.add(
+                Pool::ProtectedDrafts,
+                entry.live_drafts_bytes(&mut seen_draft_arcs),
+            );
             if index == ui.active_tab_index() {
                 continue;
             }
@@ -289,7 +302,10 @@ pub(crate) fn measure(s: &State) -> PoolUsage {
                 usage.add(Pool::Transcript, transcript_bytes);
                 usage.add(Pool::Rendered, cache.rendered_bytes());
                 usage.add(Pool::FilesAndGit, cache.files_and_git_bytes());
-                usage.add(Pool::ProtectedDrafts, cache.draft_bytes());
+                usage.add(
+                    Pool::ProtectedDrafts,
+                    cache.draft_bytes(&mut seen_draft_arcs),
+                );
             }
         }
     }
@@ -318,14 +334,14 @@ pub(crate) fn enforce_with(s: &mut State, limits: Limits) -> PoolUsage {
     let active_excerpt_target = s
         .transcript_display
         .timeline
-        .excerpt_target()
+        .excerpt_target_message()
         .map(str::to_owned);
     let active_recall_id = s
         .composer
         .recall
         .as_ref()
         .map(crate::composer::recall::Recall::id);
-    let (active_tab_key, active_session_id, active_backend, active_project_id) =
+    let (active_tab_key, active_session_id, active_backend, active_project_root) =
         active_tab_identity(s);
 
     // Tier 0: inactive window-global secondary caches (hover excerpts of inactive scopes,
@@ -339,7 +355,7 @@ pub(crate) fn enforce_with(s: &mut State, limits: Limits) -> PoolUsage {
         let freed = s.saved_outlines.evict_under_pressure(
             remaining.saturating_sub(limits.global_bytes),
             active_backend.as_ref(),
-            active_project_id.as_deref(),
+            active_project_root.as_deref(),
         );
         remaining = remaining.saturating_sub(freed);
     }
@@ -503,13 +519,18 @@ fn active_tab_identity(
         Tab::Workspace(saved) => saved.active_session_id.clone(),
         Tab::Blank => None,
     };
-    let project = entry.project_id().map(str::to_owned);
+    let project_root = entry.project_root().map(str::to_owned);
     let backend = entry.binding_ref().cloned().or_else(|| {
         s.screen
             .launcher()
             .and_then(|launcher| launcher.connection.clone())
     });
-    (Some(entry.key_str().to_owned()), session, backend, project)
+    (
+        Some(entry.key_str().to_owned()),
+        session,
+        backend,
+        project_root,
+    )
 }
 
 pub(super) fn evict_cache_secondary(cache: &mut Cache) -> usize {

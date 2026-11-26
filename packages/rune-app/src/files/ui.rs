@@ -58,6 +58,8 @@ impl Ui {
     pub(crate) fn retained_bytes(&self) -> usize {
         self.reader
             .retained_bytes()
+            .saturating_add(self.presentation.retained_bytes())
+            .saturating_add(self.document.clean_retained_bytes())
             .saturating_add(self.pictures.retained_bytes())
             .saturating_add(self.tree.retained_bytes())
             .saturating_add(self.rows.len().saturating_mul(size_of::<Row>()))
@@ -67,9 +69,12 @@ impl Ui {
         let reader = if self.document.has_unsaved_edits() {
             0
         } else {
-            self.reader.retained_bytes()
+            self.reader
+                .retained_bytes()
+                .saturating_add(self.document.clean_retained_bytes())
         };
         reader
+            .saturating_add(self.presentation.retained_bytes())
             .saturating_add(self.pictures.retained_bytes())
             .saturating_add(self.tree.retained_bytes())
             .saturating_add(self.rows.len().saturating_mul(size_of::<Row>()))
@@ -81,10 +86,12 @@ impl Ui {
 
     pub(crate) fn evict_inactive_caches(&mut self) -> usize {
         let mut freed = self.pictures.evict();
+        freed = freed.saturating_add(self.presentation.evict_image(self.wake.clone()));
         freed = freed.saturating_add(self.tree.evict_listings());
         freed = freed.saturating_add(self.rows.len().saturating_mul(size_of::<Row>()));
         self.rows.clear();
         if !self.document.has_unsaved_edits() {
+            freed = freed.saturating_add(self.document.evict_clean_buffers());
             freed = freed.saturating_add(self.reader.evict_preview());
         }
         freed

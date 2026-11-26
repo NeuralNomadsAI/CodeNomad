@@ -9,6 +9,7 @@ mod persistence;
 mod save_snapshot;
 mod snapshot_budget;
 mod state;
+pub(crate) use memory_budget::enforce as enforce_memory_budget;
 pub(crate) use persistence::finish;
 pub(crate) use state::active_workspace;
 pub(crate) use state::contains_project;

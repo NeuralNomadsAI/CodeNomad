@@ -27,64 +27,81 @@ fn message_with_size(id: &str, bytes: usize) -> crate::history::Row {
     .into()
 }
 
-fn build_inactive_tab(
-    workspace_id: &str,
-    phase: Phase,
+#[derive(Default)]
+struct TabFixture<'a> {
+    workspace_id: &'a str,
+    phase: Option<Phase>,
     message_bytes: usize,
     file_preview_bytes: usize,
+    clean_editor_bytes: usize,
     git_diff_bytes: usize,
     mission_body_bytes: usize,
-    composer_draft: &str,
-    commit_draft: &str,
+    mission_summaries: usize,
+    composer_draft: &'a str,
+    commit_draft: &'a str,
     dirty_file_edit: bool,
-) -> (Cache, Option<crate::missions::Panel>) {
+}
+
+fn build_inactive_tab(spec: TabFixture<'_>) -> (Cache, Option<crate::missions::Panel>) {
     let mut s = crate::init();
-    s.phase = phase;
-    s.draft = rune::edit::TextEdit::new(composer_draft);
-    if message_bytes > 0 {
+    s.phase = spec.phase.unwrap_or(Phase::Ready);
+    s.draft = rune::edit::TextEdit::new(spec.composer_draft);
+    if spec.message_bytes > 0 {
         s.messages
-            .push(message_with_size(workspace_id, message_bytes));
+            .push(message_with_size(spec.workspace_id, spec.message_bytes));
     }
-    let backend = test_backend(workspace_id);
-    if file_preview_bytes > 0 || dirty_file_edit {
+    let backend = test_backend(spec.workspace_id);
+    if spec.file_preview_bytes > 0 || spec.clean_editor_bytes > 0 || spec.dirty_file_edit {
         let mut files = crate::files::Ui::new(
             backend.clone(),
             "/project".into(),
             Default::default(),
             Arc::new(|| {}),
         );
-        if file_preview_bytes > 0 {
-            files
-                .reader
-                .fixture_set_preview("/project", "big.txt", vec![b'a'; file_preview_bytes]);
+        if spec.file_preview_bytes > 0 {
+            files.reader.fixture_set_preview(
+                "/project",
+                "big.txt",
+                vec![b'a'; spec.file_preview_bytes],
+            );
         }
-        if dirty_file_edit {
+        if spec.clean_editor_bytes > 0 {
+            files
+                .document
+                .fixture_load_clean(&"c".repeat(spec.clean_editor_bytes));
+        }
+        if spec.dirty_file_edit {
             files
                 .document
                 .fixture_mark_dirty("original", "unsaved local edit");
         }
         s.files = Some(files);
     }
-    if git_diff_bytes > 0 || !commit_draft.is_empty() {
+    if spec.git_diff_bytes > 0 || !spec.commit_draft.is_empty() {
         crate::git::connected(&mut s, &backend);
         if let Some(git) = s.git.owner.as_mut() {
-            if git_diff_bytes > 0 {
-                let half = git_diff_bytes / 2;
+            if spec.git_diff_bytes > 0 {
+                let half = spec.git_diff_bytes / 2;
                 git.fixture_load_diff("diff.rs", "a".repeat(half), "b".repeat(half));
             }
-            if !commit_draft.is_empty() {
-                let _ = crate::git::fixture_commit_draft(&mut s, Some(commit_draft));
+            if !spec.commit_draft.is_empty() {
+                let _ = crate::git::fixture_commit_draft(&mut s, Some(spec.commit_draft));
             }
         }
     }
-    let missions = (mission_body_bytes > 0).then(|| {
+    let missions = (spec.mission_body_bytes > 0 || spec.mission_summaries > 0).then(|| {
         let mut panel = crate::missions::Panel::new(
             backend,
-            Some(workspace_id.into()),
+            Some(spec.workspace_id.into()),
             Default::default(),
             Arc::new(|| {}),
         );
-        panel.fixture_cache_body(workspace_id, "m".repeat(mission_body_bytes));
+        if spec.mission_body_bytes > 0 {
+            panel.fixture_cache_body(spec.workspace_id, "m".repeat(spec.mission_body_bytes));
+        }
+        if spec.mission_summaries > 0 {
+            panel.fixture_add_summaries(spec.mission_summaries);
+        }
         panel
     });
     (Cache::take(&mut s), missions)
@@ -198,9 +215,10 @@ fn global_ceiling_evicts_inactive_tabs_in_deterministic_lru_order() {
     let mut s = crate::init();
     s.draft = rune::edit::TextEdit::new("active unsaved draft");
     s.messages.push(message_with_size("active", 8_000));
-    s.transcript_display
-        .timeline
-        .fixture_set_excerpt_scope(10, Some("active-hit".into()));
+    s.transcript_display.timeline.fixture_set_excerpt_scope(
+        10,
+        Some(("active-hit:Assistant:0:false".into(), "active-hit".into())),
+    );
     s.rail_excerpts
         .fixture_remember(10, "active-hit".into(), "a".repeat(512), 1.0);
     s.rail_excerpts
@@ -209,17 +227,15 @@ fn global_ceiling_evicts_inactive_tabs_in_deterministic_lru_order() {
     let mut ui = Ui::new();
     // Add three inactive tabs with non-monotonic timestamps: oldest is `tab-oldest` (touched=1).
     for (key, touched) in [("tab-mid", 2), ("tab-recent", 3), ("tab-oldest", 1)] {
-        let (cache, missions) = build_inactive_tab(
-            key,
-            Phase::Ready,
-            10_000,
-            4_000,
-            4_000,
-            4_000,
-            key,
-            "",
-            false,
-        );
+        let (cache, missions) = build_inactive_tab(TabFixture {
+            workspace_id: key,
+            message_bytes: 10_000,
+            file_preview_bytes: 4_000,
+            git_diff_bytes: 4_000,
+            mission_body_bytes: 4_000,
+            composer_draft: key,
+            ..Default::default()
+        });
         ui.push_fixture_entry(key, touched, cache, missions);
     }
     s.workspace = Some(ui);
@@ -276,19 +292,72 @@ fn global_ceiling_evicts_inactive_tabs_in_deterministic_lru_order() {
 }
 
 #[test]
-fn extreme_pressure_protects_active_tab_streaming_tab_and_all_unsaved_drafts() {
+fn non_evictable_mission_summaries_do_not_mask_evictable_file_caches_on_newer_tabs() {
+    let mut s = crate::init();
+    s.messages.push(message_with_size("active", 4_000));
+
+    let mut ui = Ui::new();
+    // Older tab has only non-evictable Mission summaries (200 * 256 = 51_200 B).
+    let (old_cache, old_missions) = build_inactive_tab(TabFixture {
+        workspace_id: "tab-summaries-only",
+        mission_summaries: 200,
+        ..Default::default()
+    });
+    ui.push_fixture_entry("tab-summaries-only", 1, old_cache, old_missions);
+
+    // Newer tab has clean file preview + clean editor buffers (evictable!).
+    let (new_cache, new_missions) = build_inactive_tab(TabFixture {
+        workspace_id: "tab-clean-files",
+        file_preview_bytes: 16_000,
+        clean_editor_bytes: 8_000,
+        ..Default::default()
+    });
+    ui.push_fixture_entry("tab-clean-files", 2, new_cache, new_missions);
+    s.workspace = Some(ui);
+
+    // Set ceiling below total (active ~4 KiB + summaries 51.2 KiB + files ~40 KiB) so evicting
+    // `tab-clean-files` is required; `tab-summaries-only` has 0 evictable bytes and must not stop
+    // the Tier-1 planner early.
+    let after = enforce_with(
+        &mut s,
+        Limits {
+            global_bytes: 60_000,
+            inactive_history_bytes: usize::MAX,
+            inactive_history_rows: usize::MAX,
+        },
+    );
+    assert!(
+        after.total() <= 60_000,
+        "expected total {} <= 60000 after shedding newer tab's evictable files cache",
+        after.total()
+    );
+
+    let mut newer = s.workspace.as_mut().unwrap().take_entry_cache(2).unwrap();
+    let files = newer.files_mut().as_ref().unwrap();
+    // Both reader preview and clean editor buffers were evicted and armed for reload on return.
+    assert!(files.reader.preview().is_none());
+    assert!(files.reader.target().is_some());
+    assert_eq!(files.document.clean_retained_bytes(), 0);
+    assert_eq!(files.document.fixture_receipt(), 0);
+    assert_eq!(files.retained_bytes(), 0);
+}
+
+#[test]
+fn extreme_pressure_protects_active_tab_streaming_tab_hovered_message_and_all_unsaved_drafts() {
     let mut s = crate::init();
     s.draft = rune::edit::TextEdit::new("active composer draft");
     s.messages.push(message_with_size("active-msg", 12_000));
     s.documents
         .insert_test_file_draft("notes.md", "unsaved file store draft");
-    s.transcript_display
-        .timeline
-        .fixture_set_excerpt_scope(7, Some("keep-me".into()));
+    // Distinct marker ID ("msg-keep:Assistant:0:false") vs ExcerptCache message key ("msg-keep").
+    s.transcript_display.timeline.fixture_set_excerpt_scope(
+        7,
+        Some(("msg-keep:Assistant:0:false".into(), "msg-keep".into())),
+    );
     s.rail_excerpts
-        .fixture_remember(7, "keep-me".into(), "k".repeat(1_024), 1.0);
+        .fixture_remember(7, "msg-keep".into(), "k".repeat(1_024), 1.0);
     s.rail_excerpts
-        .fixture_remember(7, "drop-me".into(), "d".repeat(4_096), 2.0);
+        .fixture_remember(7, "msg-drop".into(), "d".repeat(4_096), 2.0);
     s.prompt_history
         .fixture_push("other-tab", "ses-old", "r".repeat(4_096));
     s.prompt_history
@@ -296,31 +365,31 @@ fn extreme_pressure_protects_active_tab_streaming_tab_and_all_unsaved_drafts() {
 
     let mut ui = Ui::new();
     // Protected streaming tab: transcript & draft must survive even under extreme pressure.
-    let (live_cache, live_missions) = build_inactive_tab(
-        "tab-live",
-        Phase::Streaming,
-        8_000,
-        4_000,
-        4_000,
-        4_000,
-        "live draft",
-        "live commit msg",
-        false,
-    );
+    let (live_cache, live_missions) = build_inactive_tab(TabFixture {
+        workspace_id: "tab-live",
+        phase: Some(Phase::Streaming),
+        message_bytes: 8_000,
+        file_preview_bytes: 4_000,
+        git_diff_bytes: 4_000,
+        mission_body_bytes: 4_000,
+        composer_draft: "live draft",
+        commit_draft: "live commit msg",
+        ..Default::default()
+    });
     ui.push_fixture_entry("tab-live", 1, live_cache, live_missions);
 
     // Unprotected inactive tab with composer draft, git commit draft, and dirty file editor edit.
-    let (dirty_cache, dirty_missions) = build_inactive_tab(
-        "tab-dirty",
-        Phase::Ready,
-        8_000,
-        4_000,
-        4_000,
-        4_000,
-        "dirty tab composer draft",
-        "unsaved commit message",
-        true,
-    );
+    let (dirty_cache, dirty_missions) = build_inactive_tab(TabFixture {
+        workspace_id: "tab-dirty",
+        message_bytes: 8_000,
+        file_preview_bytes: 4_000,
+        git_diff_bytes: 4_000,
+        mission_body_bytes: 4_000,
+        composer_draft: "dirty tab composer draft",
+        commit_draft: "unsaved commit message",
+        dirty_file_edit: true,
+        ..Default::default()
+    });
     ui.push_fixture_entry("tab-dirty", 2, dirty_cache, dirty_missions);
     s.workspace = Some(ui);
 
@@ -339,7 +408,8 @@ fn extreme_pressure_protects_active_tab_streaming_tab_and_all_unsaved_drafts() {
     assert_eq!(s.draft.text, "active composer draft");
     assert!(s.documents.has_tab_edits("tab-0"));
 
-    // Window-global recall & non-hovered rail excerpts were shed; hovered target kept.
+    // Window-global recall & non-hovered rail excerpts were shed; hovered message excerpt kept
+    // even though the marker ID differs from the ExcerptCache message key.
     assert_eq!(s.prompt_history.retained_bytes(), 0);
     assert!(s.rail_excerpts.retained_bytes() >= 1_024);
     assert!(s.rail_excerpts.retained_bytes() < 2_048);
@@ -388,10 +458,67 @@ fn extreme_pressure_protects_active_tab_streaming_tab_and_all_unsaved_drafts() {
 }
 
 #[test]
+fn draft_arc_attachments_are_deduplicated_and_pasted_payloads_are_counted() {
+    use crate::composer::draft::Attachment;
+
+    let mut s = crate::init();
+    let shared_bytes: Arc<[u8]> = Arc::from(vec![7u8; 4_096]);
+    let pasted: Arc<str> = Arc::from("p".repeat(2_048));
+    s.composer.draft.attachments.push(Attachment::Device {
+        name: "a.bin".into(),
+        mime: "application/octet-stream".into(),
+        bytes: Arc::clone(&shared_bytes),
+        token: None,
+    });
+    s.composer.draft.attachments.push(Attachment::Pasted {
+        id: 1,
+        text: Arc::clone(&pasted),
+    });
+
+    // Put a second clone of the exact same Arc payloads into an inactive tab's cached composer.
+    let mut inactive_state = crate::init();
+    inactive_state
+        .composer
+        .draft
+        .attachments
+        .push(Attachment::Device {
+            name: "a.bin".into(),
+            mime: "application/octet-stream".into(),
+            bytes: shared_bytes,
+            token: None,
+        });
+    inactive_state
+        .composer
+        .draft
+        .attachments
+        .push(Attachment::Pasted {
+            id: 1,
+            text: pasted,
+        });
+    let mut ui = Ui::new();
+    ui.push_fixture_entry("tab-clone", 1, Cache::take(&mut inactive_state), None);
+    s.workspace = Some(ui);
+
+    let usage = measure(&s);
+    let drafts = usage.get(Pool::ProtectedDrafts);
+    // Counted once (4096 + 2048 + small metadata), never doubled to > 12 KiB.
+    assert!(
+        drafts >= 6_144,
+        "expected pasted + device bytes >= 6144, got {drafts}"
+    );
+    assert!(
+        drafts < 7_000,
+        "shared Arc attachments must not be double counted, got {drafts}"
+    );
+}
+
+#[test]
 fn wasm_and_native_limits_are_consistent_and_ui_drop_releases_ledger() {
-    assert_eq!(Limits::WASM.global_bytes, 96 * 1024 * 1024);
-    assert!(Limits::WASM.inactive_history_bytes <= Limits::WASM.global_bytes);
-    assert!(Limits::WASM.global_bytes < Limits::NATIVE.global_bytes);
+    const {
+        assert!(Limits::WASM.global_bytes == 96 * 1024 * 1024);
+        assert!(Limits::WASM.inactive_history_bytes <= Limits::WASM.global_bytes);
+        assert!(Limits::WASM.global_bytes < Limits::NATIVE.global_bytes);
+    }
 
     let mut s = crate::init();
     s.messages.push(message_with_size("m", 4_096));

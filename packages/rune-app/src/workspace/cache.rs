@@ -233,11 +233,17 @@ impl Cache {
             .map_or(0, crate::files::Ui::retained_bytes)
             .saturating_add(self.git.retained_bytes())
     }
-    pub(super) fn draft_bytes(&self) -> usize {
+    pub(super) fn draft_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
         self.draft
             .text
             .len()
-            .saturating_add(self.composer.draft.inline_usage().1)
+            .saturating_add(self.composer.draft.retained_bytes(seen))
+            .saturating_add(
+                self.composer
+                    .recall
+                    .as_ref()
+                    .map_or(0, |recall| recall.retained_bytes(seen)),
+            )
             .saturating_add(self.git.draft_bytes())
     }
     pub(super) fn evictable_secondary_bytes(&self) -> usize {

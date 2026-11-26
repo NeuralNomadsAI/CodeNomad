@@ -115,13 +115,34 @@ impl Timeline {
         self.previews.cache_scope()
     }
 
-    pub(crate) fn excerpt_target(&self) -> Option<&str> {
-        self.previews.active_target()
+    /// Resolves the hovered/focused marker ID to the message ID key used by `ExcerptCache`.
+    pub(crate) fn excerpt_target_message(&self) -> Option<&str> {
+        let marker_id = self.previews.active_target()?;
+        self.markers
+            .iter()
+            .find(|marker| marker.id == marker_id)
+            .map(|marker| marker.message.as_str())
     }
 
     #[cfg(test)]
-    pub(crate) fn fixture_set_excerpt_scope(&mut self, scope: u64, target: Option<String>) {
-        self.previews.fixture_set_scope(scope, target);
+    pub(crate) fn fixture_set_excerpt_scope(
+        &mut self,
+        scope: u64,
+        target: Option<(String, String)>,
+    ) {
+        let marker_id = target.map(|(marker_id, message_id)| {
+            self.markers.push(Marker {
+                id: marker_id.clone(),
+                message: message_id,
+                kind: MarkerKind::Assistant,
+                ordinal: 0,
+                continued: false,
+                omitted_before: false,
+                tool: None,
+            });
+            marker_id
+        });
+        self.previews.fixture_set_scope(scope, marker_id);
     }
 }
 

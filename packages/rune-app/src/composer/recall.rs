@@ -199,6 +199,13 @@ impl Recall {
     pub(crate) fn id(&self) -> i64 {
         self.id
     }
+
+    pub(crate) fn retained_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
+        self.edit
+            .text
+            .len()
+            .saturating_add(self.draft.retained_bytes(seen))
+    }
 }
 
 pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
@@ -268,6 +275,7 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
         bytes,
         id: history.next,
     });
+    crate::workspace::enforce_memory_budget(s);
     true
 }
 

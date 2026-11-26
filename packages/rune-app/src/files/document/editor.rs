@@ -104,6 +104,67 @@ impl Editor {
             draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some()
         })
     }
+    pub(crate) fn clean_retained_bytes(&self) -> usize {
+        if self.has_unsaved_edits() {
+            return 0;
+        }
+        let draft_bytes = self.draft.as_ref().map_or(0, |shared| {
+            let draft = lock(shared);
+            draft.text.len().saturating_add(
+                draft
+                    .original
+                    .as_ref()
+                    .map_or(0, |snap| snap.text.len().saturating_add(snap.wire.len())),
+            )
+        });
+        self.edit.text.len().saturating_add(draft_bytes)
+    }
+    pub(crate) fn evict_clean_buffers(&mut self) -> usize {
+        if self.has_unsaved_edits() {
+            return 0;
+        }
+        let freed = self.clean_retained_bytes();
+        if freed == 0 {
+            return 0;
+        }
+        self.edit = TextEdit::new("");
+        if let Some(shared) = &self.draft {
+            let mut draft = lock(shared);
+            draft.original = None;
+            draft.text.clear();
+            draft.version = None;
+            draft.revision += 1;
+            self.revision = draft.revision;
+        }
+        self.receipt = 0;
+        freed
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_load_clean(&mut self, text: &str) {
+        let key = Key {
+            server: "transport".into(),
+            instance: self.instance.clone(),
+            native_project: None,
+            directory: "/project".into(),
+            path: "clean.rs".into(),
+        };
+        let shared = self.store.open(&key);
+        {
+            let mut draft = lock(&shared);
+            draft.original = Some(Snapshot::loaded(text));
+            draft.text = text.into();
+            draft.revision += 1;
+            self.revision = draft.revision;
+        }
+        self.edit = TextEdit::new(text);
+        self.receipt = 1;
+        self.key = Some(key);
+        self.draft = Some(shared);
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_receipt(&self) -> u64 {
+        self.receipt
+    }
     #[cfg(test)]
     pub(crate) fn fixture_mark_dirty(&mut self, original: &str, edited: &str) {
         let key = Key {

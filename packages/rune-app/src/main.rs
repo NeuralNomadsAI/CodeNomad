@@ -338,6 +338,9 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     platform::launch::sync(s);
     workspace::capture_files_mode(s);
+    if changed {
+        workspace::enforce_memory_budget(s);
+    }
     timeline::poll_reveal(s, tx, changed);
     if changed {
         tx.instant();

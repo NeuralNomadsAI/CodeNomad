@@ -74,6 +74,45 @@ pub struct Draft {
     pub(crate) literal_spans: Vec<Range<usize>>,
 }
 impl Draft {
+    pub(crate) fn retained_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
+        self.attachments.iter().fold(0usize, |total, attachment| {
+            let weight = match attachment {
+                Attachment::Pasted { text, .. } => {
+                    if seen.insert(Arc::as_ptr(text) as *const u8 as usize) {
+                        text.len()
+                    } else {
+                        0
+                    }
+                }
+                Attachment::Device {
+                    name,
+                    mime,
+                    bytes,
+                    token,
+                } => {
+                    let payload = if seen.insert(Arc::as_ptr(bytes) as *const u8 as usize) {
+                        bytes.len()
+                    } else {
+                        0
+                    };
+                    payload
+                        .saturating_add(name.len())
+                        .saturating_add(mime.len())
+                        .saturating_add(token.as_ref().map_or(0, String::len))
+                }
+                Attachment::Project {
+                    name, path, uri, ..
+                } => name
+                    .len()
+                    .saturating_add(path.len())
+                    .saturating_add(uri.len()),
+                Attachment::Path(path) | Attachment::Agent(path) => path.len(),
+                Attachment::Skill { id, name } => id.len().saturating_add(name.len()),
+            };
+            total.saturating_add(weight)
+        })
+    }
+
     pub fn remove(&mut self, edit: &mut TextEdit, index: usize) {
         if let Attachment::Pasted { id, .. } = &self.attachments[index] {
             let ranges: Vec<_> = super::long_paste::active_tokens(edit)
