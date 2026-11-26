@@ -199,26 +199,28 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             if schedule_input(&data) {
                 return Err(carrier_denied());
             }
+            let is_credential = route.starts_with("/api/credential/");
             let opened = workspace.location["directory"].as_str().ok_or_else(upstream_error)?;
             let resolved =
                 resolve_account_locations(app, workspace, &data, opened, requested_dirs, location_context_dir).await?;
             validate_account_body(route, &head.method, &data, body_empty)?;
-            account_query_resolved = resolved.queries.first().map(|loc| loc.owned.directory.clone());
-            account_body_resolved = resolved.body.as_ref().map(|loc| loc.owned.directory.clone());
-            if let Some(ctx_loc) = &resolved.context {
-                account_context_dir = Some(ctx_loc.owned.directory.clone());
-            }
-            has_body_location = resolved.body.is_some();
-            if has_body_location && !route.starts_with("/api/credential/") {
+            if !is_credential {
+                account_query_resolved = resolved.queries.first().map(|loc| loc.owned.directory.clone());
+                account_body_resolved = resolved.body.as_ref().map(|loc| loc.owned.directory.clone());
+                if let Some(ctx_loc) = &resolved.context {
+                    account_context_dir = Some(ctx_loc.owned.directory.clone());
+                }
+                has_body_location = resolved.body.is_some();
                 // Native OpenCode integration connect endpoints take `location` in query
-                // (`location[directory]`) or `x-opencode-directory`, never in the JSON body.
+                // (`location[directory]`) or `x-opencode-directory`, never in the JSON body
+                // (including `location: null`).
                 data.remove("location");
             }
             account_verified_locs.extend(resolved.queries);
             for item in [resolved.context, resolved.body].into_iter().flatten() {
                 account_verified_locs.push(item);
             }
-            if account_verified_locs.is_empty() && !route.starts_with("/api/credential/") {
+            if account_verified_locs.is_empty() && !is_credential {
                 account_verified_locs.push(capture_account_location(app, workspace, opened.to_owned()).await?);
             }
             if head.method != Method::DELETE && !body_empty {
@@ -301,6 +303,13 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         }
         if let Some(ctx_loc) = &resolved.context {
             account_context_dir = Some(ctx_loc.owned.directory.clone());
+        }
+        account_verified_locs.extend(resolved.queries);
+        if let Some(ctx_loc) = resolved.context {
+            account_verified_locs.push(ctx_loc);
+        }
+        if account_verified_locs.is_empty() {
+            account_verified_locs.push(capture_account_location(app, workspace, opened.to_owned()).await?);
         }
     }
     let rules_lock = if permissions_patch {
@@ -452,7 +461,18 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         #[cfg(test)]
         crate::worktrees::fence_test_trace::record("permission rules", "send refresh finished");
     }
-    if let Some(ref translated) = account_query_resolved {
+    if account_mutation && route.starts_with("/api/credential/") {
+        let pairs: Vec<(String, String)> = target
+            .query_pairs()
+            .into_owned()
+            .filter(|(k, _)| !matches!(k.as_str(), "directory" | "location[directory]"))
+            .collect();
+        if pairs.is_empty() {
+            target.set_query(None);
+        } else {
+            target.query_pairs_mut().clear().extend_pairs(pairs);
+        }
+    } else if let Some(ref translated) = account_query_resolved {
         let mut emitted_location = false;
         let mut pairs: Vec<(String, String)> = Vec::new();
         for (k, v) in target.query_pairs().into_owned() {

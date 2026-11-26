@@ -126,6 +126,13 @@ async fn fake_opencode(State(state): State<Arc<Mutex<MockUpstream>>>, req: Reque
         }
         (Method::GET, "/api/credential") => Json(json!({"data": s.entries})).into_response(),
         (Method::POST, p) if p.starts_with("/api/credential/") && p.ends_with("/activate") => {
+            if query.as_deref().is_some_and(|q| q.contains("directory"))
+                || s.calls.last().and_then(|c| c.dir_header.as_ref()).is_some()
+                || body.is_some()
+            {
+                return (Status::BAD_REQUEST, Json(json!({"error": "unexpected location on global credential"})))
+                    .into_response();
+            }
             s.events.push("activate".into());
             if s.fail_activate {
                 return (Status::INTERNAL_SERVER_ERROR, Json(json!({"error": "secret-upstream-token"})))
@@ -139,8 +146,26 @@ async fn fake_opencode(State(state): State<Arc<Mutex<MockUpstream>>>, req: Reque
             }
             Status::NO_CONTENT.into_response()
         }
-        (Method::PATCH, p) if p.starts_with("/api/credential/") => Status::NO_CONTENT.into_response(),
-        (Method::DELETE, p) if p.starts_with("/api/credential/") => Status::NO_CONTENT.into_response(),
+        (Method::PATCH, p) if p.starts_with("/api/credential/") => {
+            if query.as_deref().is_some_and(|q| q.contains("directory"))
+                || s.calls.last().and_then(|c| c.dir_header.as_ref()).is_some()
+                || body.as_ref().and_then(Value::as_object).is_some_and(|m| m.contains_key("location"))
+            {
+                return (Status::BAD_REQUEST, Json(json!({"error": "unexpected location on global credential"})))
+                    .into_response();
+            }
+            Status::NO_CONTENT.into_response()
+        }
+        (Method::DELETE, p) if p.starts_with("/api/credential/") => {
+            if query.as_deref().is_some_and(|q| q.contains("directory"))
+                || s.calls.last().and_then(|c| c.dir_header.as_ref()).is_some()
+                || body.is_some()
+            {
+                return (Status::BAD_REQUEST, Json(json!({"error": "unexpected location on global credential"})))
+                    .into_response();
+            }
+            Status::NO_CONTENT.into_response()
+        }
         (Method::POST, p) if p.starts_with("/api/integration/") && p.contains("/connect/") => {
             match s.connect_error {
                 UpstreamErrorMode::NonJsonServerError => {
@@ -192,9 +217,35 @@ async fn fake_opencode(State(state): State<Arc<Mutex<MockUpstream>>>, req: Reque
             }
         }
         (Method::GET, p) if p.starts_with("/api/integration/") && p.contains("/connect/") => {
+            let parsed_query: Vec<(String, String)> = query
+                .as_deref()
+                .and_then(|q| reqwest::Url::parse(&format!("http://localhost/?{q}")).ok())
+                .map(|u| u.query_pairs().into_owned().collect())
+                .unwrap_or_default();
+            let has_raw_dir = parsed_query.iter().any(|(k, _)| k == "directory");
+            let loc_dirs: Vec<&str> =
+                parsed_query.iter().filter(|(k, _)| k == "location[directory]").map(|(_, v)| v.as_str()).collect();
+            let has_header_dir = s.calls.last().and_then(|c| c.dir_header.as_ref()).is_some();
+            if has_raw_dir || loc_dirs.len() > 1 || (loc_dirs.is_empty() && !has_header_dir) {
+                return (Status::BAD_REQUEST, Json(json!({"error": "invalid native location carrier"})))
+                    .into_response();
+            }
             Json(json!({"data": {"attemptID": "att_1", "status": "pending"}})).into_response()
         }
         (Method::DELETE, p) if p.starts_with("/api/integration/") && p.contains("/connect/") => {
+            let parsed_query: Vec<(String, String)> = query
+                .as_deref()
+                .and_then(|q| reqwest::Url::parse(&format!("http://localhost/?{q}")).ok())
+                .map(|u| u.query_pairs().into_owned().collect())
+                .unwrap_or_default();
+            let has_raw_dir = parsed_query.iter().any(|(k, _)| k == "directory");
+            let loc_dirs: Vec<&str> =
+                parsed_query.iter().filter(|(k, _)| k == "location[directory]").map(|(_, v)| v.as_str()).collect();
+            let has_header_dir = s.calls.last().and_then(|c| c.dir_header.as_ref()).is_some();
+            if has_raw_dir || body.is_some() || loc_dirs.len() > 1 || (loc_dirs.is_empty() && !has_header_dir) {
+                return (Status::BAD_REQUEST, Json(json!({"error": "invalid native location carrier"})))
+                    .into_response();
+            }
             Status::NO_CONTENT.into_response()
         }
         _ => Status::NOT_FOUND.into_response(),
@@ -481,6 +532,54 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
         let loc_dir = parsed.query_pairs().find(|(k, _)| k == "location[directory]").map(|(_, v)| v.into_owned());
         assert_eq!(loc_dir.as_deref(), Some(linked_str.as_str()));
     }
+
+    // POST integration connect with `location: null` strips `location` and uses default location[directory].
+    let (status, cc, _) = call_relay(
+        &app,
+        Method::POST,
+        &format!("{base}/integration/azure/connect/external"),
+        Some("application/json"),
+        Some(&json!({"methodID": "azure-cli", "location": null}).to_string()),
+        &[],
+    )
+    .await;
+    assert_eq!(status, Status::NO_CONTENT);
+    assert_eq!(cc, "no-store");
+    {
+        let calls = &mock.lock().unwrap().calls;
+        let last = calls.last().unwrap();
+        assert_eq!(last.body, Some(json!({"methodID": "azure-cli"})));
+    }
+
+    // Credential mutations consume x-codenomad-location and query location for authority/fence only,
+    // never forwarding x-opencode-directory or query directory to the global native endpoint.
+    let (status, cc, _) = call_relay(
+        &app,
+        Method::POST,
+        &format!(
+            "{base}/credential/cre_1/activate?location[directory]={}",
+            percent_encoding::utf8_percent_encode(&linked_str, percent_encoding::NON_ALPHANUMERIC)
+        ),
+        None,
+        None,
+        &[("x-codenomad-location", &linked_ctx)],
+    )
+    .await;
+    assert_eq!(status, Status::NO_CONTENT);
+    assert_eq!(cc, "no-store");
+    {
+        let calls = &mock.lock().unwrap().calls;
+        let last = calls.last().unwrap();
+        assert_eq!(last.path, "/api/credential/cre_1/activate");
+        assert!(last.query.is_none(), "credential activate must not forward query location");
+        assert!(last.dir_header.is_none(), "credential activate must not forward x-opencode-directory");
+    }
+
+    // GET integration connect status polling validates and forwards canonical location[directory].
+    let (status, cc, _) =
+        call_relay(&app, Method::GET, &format!("{base}/integration/openai/connect/oauth/att_1"), None, None, &[]).await;
+    assert_eq!(status, Status::OK);
+    assert_eq!(cc, "no-store");
 
     // Equivalent canonical query selectors (directory + location[directory] pointing to same path)
     // and standalone ?directory= are normalized to a single native location[directory] query param.

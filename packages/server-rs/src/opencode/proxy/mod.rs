@@ -147,16 +147,23 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         acquired = app.native.acquire(deadline) => match acquired {
             Ok(endpoint) => endpoint,
             Err(ref refusal @ super::admission::Refusal::Unsupported { ref actual, reason }) => {
-                return Err((
-                    Status::UPGRADE_REQUIRED,
-                    Json(json!({
+                let body = if account_route {
+                    json!({
+                        "error": "opencode_update_required",
+                        "message": "OpenCode update required",
+                        "minimumVersion": super::admission::MINIMUM_VERSION,
+                        "reason": reason,
+                    })
+                } else {
+                    json!({
                         "error": "opencode_update_required",
                         "message": refusal.to_string(),
                         "actualVersion": actual,
                         "minimumVersion": super::admission::MINIMUM_VERSION,
                         "reason": reason,
-                    })),
-                ));
+                    })
+                };
+                return Err((Status::UPGRADE_REQUIRED, Json(body)));
             }
             Err(_) => return Err(upstream_error()),
         },
