@@ -237,7 +237,7 @@ pub fn view<S: 'static>(
         return (rune::el(), None);
     }
     let t = tokens(layout::dark());
-    let k = kit(layout::dark());
+    let k = &*kit(layout::dark());
     let trigger_key = format!("{}:trigger", menu.key);
     let items = unique_items(&menu);
     let key_action = menu.clone();

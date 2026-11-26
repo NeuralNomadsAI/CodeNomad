@@ -96,7 +96,7 @@ pub(super) fn view<S: 'static>(
                         .on_submit(move |s: &mut S, _| {
                             access(s).manager.request_submit_auth();
                         })
-                        .build(field_kit(layout::dark()))
+                        .build(&field_kit(layout::dark()))
                         .literal_direction()
                         .key("provider-auth-apikey");
                 body = body
@@ -162,7 +162,7 @@ pub(super) fn view<S: 'static>(
         .on_submit(move |s: &mut S, _| {
             access(s).manager.request_submit_oauth_code();
         })
-        .build(field_kit(layout::dark()))
+        .build(&field_kit(layout::dark()))
         .literal_direction()
         .autofocus()
         .key("provider-auth-oauth-code");

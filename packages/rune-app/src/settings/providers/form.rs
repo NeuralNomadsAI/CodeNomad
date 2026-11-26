@@ -132,7 +132,7 @@ pub(super) fn view<S: 'static>(
                     .label(&field.title)
                     .disabled(disabled)
                     .on_edit(move |s: &mut S| access(s).manager.form_text_edit_mut(&fk))
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .literal_direction()
                     .key(format!("provider-form-text-{}", field.key));
                 let mut block = col()
@@ -152,7 +152,7 @@ pub(super) fn view<S: 'static>(
                     .label(&field.title)
                     .disabled(disabled)
                     .on_edit(move |s: &mut S| access(s).manager.form_text_edit_mut(&fk))
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .literal_direction()
                     .key(format!("provider-form-num-{}", field.key));
                 let mut block = col()
@@ -213,7 +213,7 @@ pub(super) fn view<S: 'static>(
                     .label(&field.title)
                     .disabled(disabled)
                     .on_edit(move |s: &mut S| access(s).manager.form_text_edit_mut(&fk))
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .literal_direction()
                     .key(format!("provider-form-custom-{}", field.key));
                     block = block.child(input);

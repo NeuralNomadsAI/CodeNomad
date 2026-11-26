@@ -494,7 +494,7 @@ impl DirectAccess {
                     .secure()
                     .disabled(saving)
                     .on_edit(move |s: &mut S| &mut edit(s).direct.password)
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .literal_direction()
                     .key("remote-password-new");
             let confirm_input = layout::literal_field(&self.confirm)
@@ -511,7 +511,7 @@ impl DirectAccess {
                         state.direct.submit_password(backend, wake);
                     }
                 })
-                .build(field_kit(layout::dark()))
+                .build(&field_kit(layout::dark()))
                 .key("remote-password-confirm");
 
             card = card

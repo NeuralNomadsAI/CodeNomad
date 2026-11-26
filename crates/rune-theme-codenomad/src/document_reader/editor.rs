@@ -78,19 +78,40 @@ pub fn editor_view(
     )
 }
 
-pub fn code_kit(dark: bool) -> &'static rune_kit::Kit {
+pub(crate) fn build_code_kit(
+    dark: bool,
+    base: &rune_kit::Kit,
+    inset_bg: rune::Color,
+) -> rune_kit::Kit {
+    let mut kit = base.clone();
+    let style = source_font(dark);
+    kit.ty.ui = style;
+    kit.c.bg_base = inset_bg;
+    kit.metrics.text_area = Some(rune_kit::TextAreaMetrics {
+        style,
+        padding: tokens(dark).space(Space::Sm).px(),
+    });
+    kit
+}
+
+pub fn code_kit(dark: bool) -> crate::KitRef {
+    if let Some(palette) = crate::palettes::active(dark) {
+        return match palette {
+            crate::palettes::ResolvedPalette::BuiltIn(palette) => {
+                crate::KitRef::static_kit(palette.code.get_or_init(|| {
+                    build_code_kit(dark, &kit(dark), tokens(dark).color("surface-inset"))
+                }))
+            }
+            crate::palettes::ResolvedPalette::Custom(palette) => {
+                crate::KitRef::dynamic(palette, crate::kit::DynamicKit::Code)
+            }
+        };
+    }
     static KITS: [OnceLock<rune_kit::Kit>; 4] = [const { OnceLock::new() }; 4];
-    KITS[crate::palette_index(dark)].get_or_init(|| {
-        let mut kit = kit(dark).clone();
-        let style = source_font(dark);
-        kit.ty.ui = style;
-        kit.c.bg_base = tokens(dark).color("surface-inset");
-        kit.metrics.text_area = Some(rune_kit::TextAreaMetrics {
-            style,
-            padding: tokens(dark).space(Space::Sm).px(),
-        });
-        kit
-    })
+    crate::KitRef::static_kit(
+        KITS[crate::palette_index(dark)]
+            .get_or_init(|| build_code_kit(dark, &kit(dark), tokens(dark).color("surface-inset"))),
+    )
 }
 
 const SAVE: rune::Icon = rune::Icon {
@@ -117,7 +138,7 @@ pub fn save<S: 'static>(
     } else {
         button.shortcut(shortcut)
     };
-    button.build(kit(dark))
+    button.build(&kit(dark))
 }
 
 pub fn confirmation<S: 'static>(
@@ -134,7 +155,7 @@ pub fn confirmation<S: 'static>(
             let decide = decide.clone();
             move |s, tx| decide(s, false, tx)
         })
-        .build(kit(dark))
+        .build(&kit(dark))
         .key("file-decision-cancel")
         .autofocus();
     let confirm = rune_kit::Button::new(confirm)
@@ -143,7 +164,7 @@ pub fn confirmation<S: 'static>(
             let decide = decide.clone();
             move |s, tx| decide(s, true, tx)
         })
-        .build(kit(dark))
+        .build(&kit(dark))
         .key("file-decision-confirm");
     let enter = decide.clone();
     let card = rune::col()
@@ -178,4 +199,65 @@ pub fn confirmation<S: 'static>(
         .center()
         .fill(t.color("overlay-scrim"))
         .child(card)
+}
+
+#[cfg(test)]
+mod code_kit_tests {
+    use super::*;
+    use crate::palettes::{
+        ColorField, built_in, custom, increased_contrast, with_palette, with_resolved,
+    };
+
+    #[test]
+    fn code_kit_tracks_active_built_in_contrast_and_custom_palettes() {
+        let dark_palettes: Vec<_> = built_in().iter().filter(|p| p.dark).collect();
+        let first = dark_palettes[0];
+        let second = dark_palettes
+            .iter()
+            .copied()
+            .find(|p| p.id != first.id)
+            .expect("multiple dark built-in palettes");
+        let contrast = increased_contrast(Some(first), true).expect("high-contrast variant");
+
+        let (first_bg, first_fg) = with_palette(Some(first), || {
+            let k = code_kit(true);
+            assert!(k.metrics.text_area.is_some());
+            (k.c.bg_base, k.c.text_base)
+        });
+        let (second_bg, second_fg) = with_palette(Some(second), || {
+            let k = code_kit(true);
+            (k.c.bg_base, k.c.text_base)
+        });
+        let (contrast_bg, contrast_fg) = with_palette(Some(contrast), || {
+            let k = code_kit(true);
+            (k.c.bg_base, k.c.text_base)
+        });
+        assert!(
+            first_bg != second_bg || first_fg != second_fg,
+            "switching built-in dark palettes must update code_kit colors"
+        );
+        assert!(
+            first_bg != contrast_bg || first_fg != contrast_fg,
+            "high contrast must update code_kit colors"
+        );
+
+        let base_colors = first.colors();
+        let edited_colors = base_colors
+            .with(ColorField::SurfaceBase, "#102820")
+            .and_then(|c| c.with(ColorField::TextPrimary, "#F5E6C8"))
+            .expect("valid custom colors");
+        let custom_a = custom(Some("custom-a"), true, false, base_colors);
+        let custom_b = custom(Some("custom-a"), true, false, edited_colors);
+        let (a_bg, a_fg) = with_resolved(Some(custom_a), || {
+            let k = code_kit(true);
+            assert!(k.metrics.text_area.is_some());
+            (k.c.bg_base, k.c.text_base)
+        });
+        let (b_bg, b_fg) = with_resolved(Some(custom_b), || {
+            let k = code_kit(true);
+            (k.c.bg_base, k.c.text_base)
+        });
+        assert_ne!(a_bg, b_bg, "custom palette background must update code_kit");
+        assert_ne!(a_fg, b_fg, "custom palette foreground must update code_kit");
+    }
 }

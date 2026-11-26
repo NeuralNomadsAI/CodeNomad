@@ -170,7 +170,7 @@ impl Editor {
                     .invalid(!title_valid)
                     .disabled(disabled)
                     .on_edit(move |s| &mut access(s).title)
-                    .build(field_kit(dark))
+                    .build(&field_kit(dark))
                     .key("memory-title"),
             )
             .child(count(&self.title.text, 60))
@@ -189,7 +189,7 @@ impl Editor {
                     .label(body)
                     .disabled(disabled)
                     .on_edit(move |s| &mut access(s).text)
-                    .build(field_kit(dark))
+                    .build(&field_kit(dark))
                     .key("memory-text"),
             )
             .child(count(&self.text.text, 2000))

@@ -1796,7 +1796,7 @@ fn connect_bar<S: 'static>(
         .label(t("settings.providers.selectProvider"))
         .disabled(mgr.modal_open())
         .on_edit(move |s: &mut S| &mut access(s).manager.search)
-        .build(field_kit(layout::dark()))
+        .build(&field_kit(layout::dark()))
         .key("providers-search");
 
     let mut row_el = layout::action_row();

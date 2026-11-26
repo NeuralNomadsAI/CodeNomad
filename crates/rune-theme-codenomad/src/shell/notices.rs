@@ -30,7 +30,7 @@ pub fn bell<S: 'static>(
             .help(label)
             .expanded(open)
             .on_press_tx(move |s, tx| press(s, tx))
-            .build(kit(layout::dark()))
+            .build(&kit(layout::dark()))
     }
     .on_key(layout::enter_action(invoke))
     .tab_index(if skip_tab { -1 } else { 0 })

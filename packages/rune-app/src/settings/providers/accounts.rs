@@ -223,7 +223,7 @@ fn accounts_controls<S: 'static>(
             .on_submit(move |s: &mut S, _| {
                 access(s).manager.submit_rename(&prov_submit, &cred_submit);
             })
-            .build(field_kit(layout::dark()))
+            .build(&field_kit(layout::dark()))
             .key(format!("provider-account-rename-input-{}", provider.id));
         section = section.child(
             col().full_width().separate(Space::Xs).child(input).child(
