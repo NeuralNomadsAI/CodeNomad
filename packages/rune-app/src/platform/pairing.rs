@@ -92,6 +92,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.password = rune::edit::TextEdit::new("");
         }
         s.renew_scope();
+        s.blank_cleanup.cancel();
         s.pairing.focus = FocusCheck::new(s.wake.clone());
     } else {
         s.pairing.focus = None;

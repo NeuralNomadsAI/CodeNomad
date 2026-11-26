@@ -250,6 +250,7 @@ pub fn draft_changed(s: &mut State, _: &mut Tx) {
 }
 
 pub fn bound(s: &mut State, backend: &Backend) -> String {
+    crate::shell::blank_cleanup::abort_for_session(s, &backend.session);
     crate::composer::recall::restore(s);
     capture(s);
     let same_session =

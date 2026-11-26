@@ -389,6 +389,9 @@ fn choose_from_inner(
     if l.pending {
         return;
     }
+    for (id, _) in &candidates {
+        crate::shell::blank_cleanup::abort_for_session(s, id);
+    }
     crate::timeline::search::cancel_destination(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;

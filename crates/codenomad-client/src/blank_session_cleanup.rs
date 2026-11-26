@@ -71,6 +71,13 @@ fn map_preflight_status(status: reqwest::StatusCode) -> Result<(), BlankCleanupE
         Err(BlankCleanupError::Unauthorized)
     } else if status.is_success() {
         Ok(())
+    } else if matches!(
+        status,
+        reqwest::StatusCode::NOT_FOUND
+            | reqwest::StatusCode::METHOD_NOT_ALLOWED
+            | reqwest::StatusCode::NOT_IMPLEMENTED
+    ) {
+        Err(BlankCleanupError::RouteUnavailable)
     } else if status.is_server_error() {
         Err(BlankCleanupError::Unavailable(format!(
             "HTTP {}",
@@ -88,9 +95,13 @@ async fn read_bounded(
     response: reqwest::Response,
     limit: usize,
 ) -> Result<Value, BlankCleanupError> {
-    read_json_limited(response, limit)
-        .await
-        .map_err(|err| BlankCleanupError::Other(err.to_string()))
+    read_json_limited(response, limit).await.map_err(|err| {
+        if err.is::<reqwest::Error>() {
+            BlankCleanupError::Unavailable(err.to_string())
+        } else {
+            BlankCleanupError::Other(err.to_string())
+        }
+    })
 }
 
 impl Backend {
@@ -236,12 +247,20 @@ impl Backend {
             active_req,
         )
         .await;
-        // Propagate 401 before returning Ok(false) so auth recovery is never masked.
+        // Propagate 401 and server/transport unavailability before returning Ok(false)
+        // so auth recovery and outages are never masked by a sibling non-empty response.
         for result in [&inbox_empty, &children_empty, &not_active] {
             if let Err(err) = result
                 && err.is_unauthorized()
             {
                 return Err(BlankCleanupError::Unauthorized);
+            }
+        }
+        for result in [&inbox_empty, &children_empty, &not_active] {
+            if let Err(err) = result
+                && err.is_unavailable()
+            {
+                return Err(err.clone());
             }
         }
         if !inbox_empty? || !children_empty? || !not_active? {
@@ -418,7 +437,7 @@ mod tests {
                 );
                 socket.write_all(resp.as_bytes()).await.unwrap();
             }
-            assert_eq!(client.await.unwrap().unwrap(), false);
+            assert!(!client.await.unwrap().unwrap());
             assert_eq!(msg_reads, 2);
         });
     }
@@ -471,7 +490,7 @@ mod tests {
                 );
                 socket.write_all(resp.as_bytes()).await.unwrap();
             }
-            assert_eq!(client.await.unwrap().unwrap(), true);
+            assert!(client.await.unwrap().unwrap());
             assert!(saw_directory_query);
         });
     }
@@ -489,19 +508,17 @@ mod tests {
             let project = test_project();
 
             // Schedule session short-circuits without any HTTP call.
-            assert_eq!(
-                backend
+            assert!(
+                !backend
                     .delete_blank_session(&project, "ses_cn_schedule_1")
                     .await
-                    .unwrap(),
-                false
+                    .unwrap()
             );
-            assert_eq!(
-                backend
+            assert!(
+                !backend
                     .verify_blank_session(&project, "ses_cn_schedule_1")
                     .await
-                    .unwrap(),
-                false
+                    .unwrap()
             );
 
             // 200 deleted: true
@@ -515,7 +532,7 @@ mod tests {
                 first,
                 "POST /api/workspaces/ws1/session-cleanup/ses_old HTTP/1.1"
             );
-            assert_eq!(task.await.unwrap().unwrap(), true);
+            assert!(task.await.unwrap().unwrap());
 
             // 200 deleted: false
             let task = tokio::spawn({
@@ -524,7 +541,7 @@ mod tests {
                 async move { backend.delete_blank_session(&project, "ses_old").await }
             });
             let _ = serve_once(&listener, 200, json!({"deleted": false})).await;
-            assert_eq!(task.await.unwrap().unwrap(), false);
+            assert!(!task.await.unwrap().unwrap());
 
             // 401 -> Unauthorized
             let task = tokio::spawn({
@@ -555,6 +572,100 @@ mod tests {
             let _ = serve_once(&listener, 503, json!({})).await;
             let err = task.await.unwrap().unwrap_err();
             assert!(!err.is_unauthorized() && !err.is_route_unavailable() && err.is_unavailable());
+        });
+    }
+
+    #[test]
+    fn preflight_404_405_and_truncated_body_classify_as_unavailable() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+            let project = test_project();
+
+            for status in [404u16, 405, 501] {
+                let task = tokio::spawn({
+                    let backend = backend.clone();
+                    let project = project.clone();
+                    async move { backend.verify_blank_session(&project, "ses_old").await }
+                });
+                let _ = serve_once(&listener, status, json!({})).await;
+                let err = task.await.unwrap().unwrap_err();
+                assert!(err.is_route_unavailable() && err.is_unavailable());
+            }
+
+            // Mid-body network drop classifies as Unavailable (not Other).
+            let task = tokio::spawn({
+                let backend = backend.clone();
+                let project = project.clone();
+                async move { backend.verify_blank_session(&project, "ses_old").await }
+            });
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"da",
+                )
+                .await
+                .unwrap();
+            drop(socket);
+            let err = task.await.unwrap().unwrap_err();
+            assert!(!err.is_unauthorized() && !err.is_route_unavailable() && err.is_unavailable());
+        });
+    }
+
+    #[test]
+    fn parallel_preflight_propagates_unavailable_even_when_sibling_is_non_empty() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+            let project = test_project();
+            let client = tokio::spawn({
+                let backend = backend.clone();
+                let project = project.clone();
+                async move { backend.verify_blank_session(&project, "ses_old").await }
+            });
+            for _ in 0..5 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 4096];
+                let n = socket.read(&mut buf).await.unwrap();
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let first = req.lines().next().unwrap_or("");
+                let (status, body) = if first.contains("/api/session/ses_old/message?") {
+                    (200, json!({"data": [], "cursor": {}}))
+                } else if first.starts_with("GET /workspaces/ws1/instance/api/session/ses_old HTTP/")
+                {
+                    (
+                        200,
+                        json!({"data": {"id": "ses_old", "projectID": "proj1", "location": {"directory": "/repo"}, "time": {"updated": 1}}}),
+                    )
+                } else if first.contains("/inbox") {
+                    // Sibling returns non-empty (Ok(false)), which must NOT mask active's 503.
+                    (200, json!({"data": [{"id": "queued-1"}]}))
+                } else if first.contains("parentID=") {
+                    (200, json!({"data": [], "cursor": {}}))
+                } else {
+                    (503, json!({"error": "Unavailable"}))
+                };
+                let payload = body.to_string();
+                let resp = format!(
+                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                    payload.len()
+                );
+                socket.write_all(resp.as_bytes()).await.unwrap();
+            }
+            let err = client.await.unwrap().unwrap_err();
+            assert!(!err.is_unauthorized() && err.is_unavailable());
         });
     }
 }

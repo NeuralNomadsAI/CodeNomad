@@ -358,6 +358,7 @@ pub(crate) fn finish_discarded(
         ui.changed();
     }
     if release_on_server {
+        crate::shell::blank_cleanup::abort_for_project(s, &stashed.project.id);
         let backend = stashed.backend.clone();
         let project_id = stashed.project.id.clone();
         platform::spawn(async move {

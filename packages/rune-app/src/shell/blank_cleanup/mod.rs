@@ -45,6 +45,7 @@ enum StepOutcome {
 
 struct InFlight {
     session_id: String,
+    aborted: bool,
     _cancel: Sender<()>,
     rx: Receiver<StepOutcome>,
 }
@@ -92,14 +93,37 @@ pub(crate) fn abort_for_session(s: &mut State, session_id: &str) {
         return;
     };
     sweep.candidates.retain(|id| id != session_id);
-    if sweep
-        .in_flight
-        .as_ref()
-        .is_some_and(|active| active.session_id == session_id)
+    if let Some(active) = sweep.in_flight.as_mut()
+        && active.session_id == session_id
     {
-        // Dropping `InFlight` closes `_cancel`, aborting the in-flight HTTP future immediately.
-        sweep.in_flight = None;
+        if active.rx.is_empty() {
+            // Dropping `InFlight` closes `_cancel`, aborting the in-flight HTTP future immediately.
+            sweep.in_flight = None;
+        } else {
+            // A completed outcome is already queued (for example a 401): keep it for `poll`
+            // while marking this target aborted so a completed preflight never triggers POST.
+            active.aborted = true;
+        }
         (s.wake)();
+    }
+}
+
+/// Synchronously aborts any dialog or sweep bound to `project_id` (for example right
+/// before a project tab is closed and released on the server).
+pub(crate) fn abort_for_project(s: &mut State, project_id: &str) {
+    if s.blank_cleanup
+        .dialog
+        .as_ref()
+        .is_some_and(|dialog| dialog.project.id == project_id)
+    {
+        s.blank_cleanup.dialog = None;
+    }
+    if s.blank_cleanup
+        .sweep
+        .as_ref()
+        .is_some_and(|sweep| sweep.project.id == project_id)
+    {
+        s.blank_cleanup.cancel();
     }
 }
 
@@ -287,7 +311,7 @@ fn confirm(s: &mut State, tx: &mut Tx) {
 }
 
 fn sweep_current(s: &State, sweep: &Sweep) -> bool {
-    if s.blank_cleanup.generation != sweep.generation {
+    if s.blank_cleanup.generation != sweep.generation || blocked_by_higher_modal(s) {
         return false;
     }
     let Some(l) = s.screen.launcher() else {
@@ -340,6 +364,7 @@ fn spawn_verify(s: &State, backend: Backend, project: Project, session_id: Strin
     });
     InFlight {
         session_id,
+        aborted: false,
         _cancel: cancel,
         rx,
     }
@@ -367,6 +392,7 @@ fn spawn_delete(s: &State, backend: Backend, project: Project, session_id: Strin
     });
     InFlight {
         session_id,
+        aborted: false,
         _cancel: cancel,
         rx,
     }
@@ -437,14 +463,14 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         s.blank_cleanup.sweep = Some(sweep);
         return advance(s, tx);
     };
-    // Abort the in-flight HTTP future immediately if local activity/drafts appear.
-    if workspace::session_cleanup_protected(s, &sweep.project.id, &active.session_id) {
-        drop(active);
-        s.blank_cleanup.sweep = Some(sweep);
-        return advance(s, tx);
-    }
     match active.rx.try_recv() {
         Err(TryRecvError::Empty) => {
+            // Abort the in-flight HTTP future immediately if local activity/drafts appear.
+            if workspace::session_cleanup_protected(s, &sweep.project.id, &active.session_id) {
+                drop(active);
+                s.blank_cleanup.sweep = Some(sweep);
+                return advance(s, tx);
+            }
             sweep.in_flight = Some(active);
             s.blank_cleanup.sweep = Some(sweep);
             false
@@ -461,7 +487,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 true
             }
             Ok(true) => {
-                if !workspace::session_cleanup_protected(s, &sweep.project.id, &session_id) {
+                if !active.aborted
+                    && !workspace::session_cleanup_protected(s, &sweep.project.id, &session_id)
+                {
                     let next =
                         spawn_delete(s, sweep.backend.clone(), sweep.project.clone(), session_id);
                     sweep.in_flight = Some(next);

@@ -657,6 +657,7 @@ fn server_503_outage_stops_sweep_immediately_without_touching_remaining_candidat
 #[test]
 fn activating_session_during_inflight_delete_aborts_http_request() {
     let (post_seen_tx, post_seen_rx) = std::sync::mpsc::channel::<()>();
+    let (client_closed_tx, client_closed_rx) = std::sync::mpsc::channel::<bool>();
     let release = Arc::new(AtomicBool::new(false));
     let release_flag = release.clone();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -683,16 +684,30 @@ fn activating_session_during_inflight_delete_aborts_http_request() {
             let first = req.lines().next().unwrap_or("");
             if first.starts_with("POST /api/workspaces/ws-clean/session-cleanup/ses_abort") {
                 let _ = post_seen_tx.send(());
+                // Observe the client dropping/closing the HTTP socket BEFORE any response is sent.
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
+                let mut probe = [0u8; 16];
+                let mut closed = false;
                 let deadline = Instant::now() + Duration::from_secs(3);
                 while !release_flag.load(Ordering::SeqCst) && Instant::now() < deadline {
-                    thread::sleep(Duration::from_millis(10));
+                    match stream.read(&mut probe) {
+                        Ok(0) => {
+                            closed = true;
+                            break;
+                        }
+                        Ok(_) => {}
+                        Err(err)
+                            if matches!(
+                                err.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(_) => {
+                            closed = true;
+                            break;
+                        }
+                    }
                 }
-                let payload = r#"{"deleted":true}"#;
-                let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
-                    payload.len()
-                );
-                let _ = stream.write_all(resp.as_bytes());
+                let _ = client_closed_tx.send(closed);
                 continue;
             }
             let body = if first.contains("/message?") {
@@ -735,21 +750,38 @@ fn activating_session_during_inflight_delete_aborts_http_request() {
     });
 
     // Advance preflight until the POST reaches the server and blocks.
+    let mut saw_post = false;
     let deadline = Instant::now() + Duration::from_secs(5);
-    while post_seen_rx.try_recv().is_err() && Instant::now() < deadline {
+    while Instant::now() < deadline {
+        if post_seen_rx.try_recv().is_ok() {
+            saw_post = true;
+            break;
+        }
         rt.update(|s, tx| {
             let _ = strings::with_locale("en", || poll(s, tx));
         });
         thread::sleep(Duration::from_millis(10));
     }
+    assert!(
+        saw_post,
+        "expected POST /session-cleanup/ses_abort to arrive"
+    );
 
-    // Activate ses_abort while POST is still in-flight; poll must abort the task immediately.
+    // Bind ses_abort synchronously WITHOUT calling blank_cleanup::poll:
+    // workspace::bound must cancel the in-flight HTTP request and close the TCP socket immediately.
     let bound = Backend {
         workspace: "ws-clean".into(),
         session: "ses_abort".into(),
         ..backend
     };
     workspace::bound(&mut rt.state, &bound);
+    assert_eq!(
+        client_closed_rx.recv_timeout(Duration::from_secs(3)),
+        Ok(true),
+        "expected in-flight POST socket to close immediately on workspace::bound"
+    );
+
+    // Subsequent poll finishes the empty sweep cleanly without touching ses_abort.
     rt.update(|s, tx| {
         let _ = strings::with_locale("en", || poll(s, tx));
     });
@@ -765,4 +797,68 @@ fn activating_session_during_inflight_delete_aborts_http_request() {
     stop.store(true, Ordering::SeqCst);
     let _ = TcpStream::connect(addr);
     let _ = handle.join();
+}
+
+#[test]
+fn poll_preserves_received_401_even_if_session_becomes_protected() {
+    let server = MockCleanupServer::start(|_| (401, json!({"error": "Unauthorized"})));
+    let backend = server.backend.clone();
+    let mut rt = cleanup_runtime(
+        backend.clone(),
+        vec![
+            Session {
+                id: "ses_auth_race".into(),
+                title: "Auth Race".into(),
+            },
+            Session {
+                id: "ses_never_called".into(),
+                title: "Never".into(),
+            },
+        ],
+        None,
+    );
+
+    rt.update(|s, tx| {
+        assert!(open_confirm(s, None, tx));
+        confirm(s, tx);
+    });
+
+    // Wait until the 401 response has been delivered into InFlight::rx before calling poll.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let ready = rt
+            .state
+            .blank_cleanup
+            .sweep
+            .as_ref()
+            .and_then(|sweep| sweep.in_flight.as_ref())
+            .is_some_and(|active| !active.rx.is_empty());
+        if ready {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    // Protect ses_auth_race AFTER 401 arrived: abort_for_session + poll must still surface 401
+    // and never advance to ses_never_called.
+    let bound = Backend {
+        workspace: "ws-clean".into(),
+        session: "ses_auth_race".into(),
+        ..backend
+    };
+    workspace::bound(&mut rt.state, &bound);
+    rt.update(|s, tx| {
+        let _ = strings::with_locale("en", || poll(s, tx));
+    });
+    assert!(!rt.state.blank_cleanup.is_sweeping());
+    assert!(rt.state.screen.launcher().unwrap().authentication_required);
+    assert!(
+        !server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|req| req.contains("ses_never_called")),
+        "sweep must stop on 401 instead of advancing to ses_never_called"
+    );
 }
