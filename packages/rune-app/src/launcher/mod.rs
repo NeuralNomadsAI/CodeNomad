@@ -438,7 +438,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 relayed |= crate::workspace::set_detached_online(s, false);
             } else if generation % 2 == 1 {
                 #[cfg(target_arch = "wasm32")]
-                crate::platform::pairing::observe_authenticated(s);
+                crate::platform::pairing::observe_launcher_authenticated(s, generation);
                 relayed |= crate::workspace::set_detached_online(s, false);
                 if crate::workspace::has_detached_panels(s) {
                     start_reconcile = Some(generation);

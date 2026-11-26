@@ -1,4 +1,4 @@
-use super::pairing_state::{Action, PairingState, Settled};
+use super::pairing_state::{Action, AuthSignal, PairingState, Settled};
 use crate::{State, strings::t};
 use codenomad_client::{Receiver, bounded};
 use rune::{El, Tx, col, text};
@@ -12,6 +12,7 @@ pub struct Recovery {
     result: Option<Receiver<Option<bool>>>,
     retry_timer: Option<Receiver<()>>,
     focus: Option<FocusCheck>,
+    conversation_generation: u64,
 }
 
 struct FocusCheck {
@@ -137,11 +138,32 @@ pub fn recheck(s: &mut State) {
     }
 }
 
-pub fn observe_authenticated(s: &mut State) {
+pub fn observe_launcher_authenticated(s: &mut State, generation: u64) {
     if !available() {
         return;
     }
-    if s.pairing.state.on_authenticated_signal() == Action::StartCheck {
+    if s.pairing
+        .state
+        .on_authenticated_signal(AuthSignal::Launcher(generation))
+        == Action::StartCheck
+    {
+        start_check(s);
+    }
+}
+
+pub fn observe_conversation_authenticated(s: &mut State, newly_connected: bool) {
+    if !available() {
+        return;
+    }
+    if newly_connected || s.pairing.conversation_generation == 0 {
+        s.pairing.conversation_generation = s.pairing.conversation_generation.wrapping_add(1);
+    }
+    let generation = s.pairing.conversation_generation;
+    if s.pairing
+        .state
+        .on_authenticated_signal(AuthSignal::Conversation(generation))
+        == Action::StartCheck
+    {
         start_check(s);
     }
 }

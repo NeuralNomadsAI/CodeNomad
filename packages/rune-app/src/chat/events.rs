@@ -66,9 +66,12 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             }
             Event::AgentHint(catalog) => {
                 if catalog {
-                    #[cfg(target_arch = "wasm32")]
-                    platform::pairing::observe_authenticated(s);
+                    let newly_connected = !s.conversation_stream_connected;
                     s.conversation_stream_connected = true;
+                    #[cfg(target_arch = "wasm32")]
+                    platform::pairing::observe_conversation_authenticated(s, newly_connected);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let _ = newly_connected;
                     s.transcript_display.messages.refresh();
                     s.status_permissions.online(true);
                     workspace::mission_event(s, None);
@@ -243,13 +246,23 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 }
             }
             Event::Preferences(owner) => {
+                let newly_connected = !s.conversation_stream_connected;
                 s.conversation_stream_connected = true;
+                #[cfg(target_arch = "wasm32")]
+                if newly_connected {
+                    platform::pairing::observe_conversation_authenticated(s, true);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = newly_connected;
                 settings::invalidate(s, owner);
             }
             Event::Sync(page) | Event::ReaderSync { page, .. } => {
-                #[cfg(target_arch = "wasm32")]
-                platform::pairing::observe_authenticated(s);
+                let newly_connected = !s.conversation_stream_connected;
                 s.conversation_stream_connected = true;
+                #[cfg(target_arch = "wasm32")]
+                platform::pairing::observe_conversation_authenticated(s, newly_connected);
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = newly_connected;
                 if s.reader.is_none() {
                     // Direct startup also uses Reconnecting to stage a fresh transcript read.
                     s.status_permissions.synchronized();

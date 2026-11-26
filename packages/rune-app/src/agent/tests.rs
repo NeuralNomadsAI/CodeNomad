@@ -533,7 +533,7 @@ fn lane_errors_are_isolated_across_model_pending_catalog_and_stop() {
 
     // Unrelated successful model, form, and stop actions must NOT clear permissions error.
     assert!(
-        out.try_send(super::Result::Act(true, ok_session(), 0))
+        out.try_send(super::Result::Act(true, ok_session(), None, 0))
             .is_ok()
     );
     assert!(
@@ -558,7 +558,7 @@ fn lane_errors_are_isolated_across_model_pending_catalog_and_stop() {
 
     // Reverse: failed model action must NOT be cleared by succeeding permission/form actions.
     assert!(
-        out.try_send(super::Result::Act(false, ok_session(), 0))
+        out.try_send(super::Result::Act(false, ok_session(), None, 0))
             .is_ok()
     );
     assert!(ui.poll());
@@ -581,9 +581,15 @@ fn lane_errors_are_isolated_across_model_pending_catalog_and_stop() {
 
     // Catalog failure stays visible until catalog succeeds or refresh_controls resets all lanes.
     assert!(
-        out.try_send(super::Result::Act(true, ok_session(), 0))
-            .is_ok()
+        out.try_send(super::Result::Act(
+            true,
+            ok_session(),
+            Some("/repo".into()),
+            0
+        ))
+        .is_ok()
     );
+    assert!(ui.poll());
     ui.refresh_catalog("/repo".into());
     let catalog_gen = ui.catalog_generation;
     assert!(
@@ -1477,4 +1483,251 @@ fn stale_catalog_response_for_previous_directory_or_generation_is_discarded() {
     assert_eq!(ui.models.len(), 1);
     assert_eq!(ui.models[0].label, "fresh-model");
     assert!(!ui.error);
+}
+
+#[test]
+fn directory_change_via_session_or_action_clears_old_models_and_fetches_new_catalog() {
+    let (jobs, jobs_rx) = super::bounded(4);
+    let (permissions, _perm_rx) = super::bounded(4);
+    let (forms, _form_rx) = super::bounded(4);
+    let (catalog, catalog_rx) = super::bounded(4);
+    let (stop, _) = super::bounded(1);
+    let (out, results) = super::bounded(8);
+    let mut ui = super::Ui::new(super::Handle {
+        connection: None,
+        jobs,
+        permissions,
+        forms,
+        catalog,
+        stop,
+        results,
+    });
+    ui.online = true;
+    let _ = jobs_rx.try_recv();
+    let model = |id: &str| super::Model {
+        reference: json!({"id": id, "providerID": "p"}),
+        label: id.into(),
+        included: false,
+    };
+    let snap = |dir: &str| agent_api::Snapshot {
+        models: None,
+        current: None,
+        directory: Some(dir.into()),
+        root_directory: Some(dir.into()),
+        usage: None,
+        session_known: true,
+        running: false,
+        permissions: None,
+        forms: None,
+    };
+
+    // Initial session + catalog for /repo-a.
+    out.try_send(super::Result::Session(
+        snap("/repo-a"),
+        Some("/repo-a".into()),
+        true,
+        0,
+    ))
+    .unwrap();
+    assert!(ui.poll());
+    let (dir_a, gen_a) = catalog_rx.try_recv().unwrap();
+    assert_eq!(dir_a, "/repo-a");
+    assert!(ui.model_locked());
+    out.try_send(super::Result::Catalog(
+        Some(vec![model("model-a")]),
+        "/repo-a".into(),
+        gen_a,
+    ))
+    .unwrap();
+    assert!(ui.poll());
+    assert!(!ui.model_locked());
+    assert_eq!(ui.models.len(), 1);
+
+    // Ordinary non-catalog Session response discovers directory changed to /repo-b:
+    // old models clear immediately, model picker locks, and /repo-b catalog is fetched automatically.
+    out.try_send(super::Result::Session(
+        snap("/repo-b"),
+        Some("/repo-b".into()),
+        false,
+        0,
+    ))
+    .unwrap();
+    assert!(ui.poll());
+    assert!(ui.models.is_empty());
+    assert!(ui.model_locked());
+    let (dir_b, gen_b) = catalog_rx.try_recv().unwrap();
+    assert_eq!(dir_b, "/repo-b");
+    // Stale /repo-a catalog cannot overwrite /repo-b.
+    out.try_send(super::Result::Catalog(
+        Some(vec![model("stale-a")]),
+        "/repo-a".into(),
+        gen_a,
+    ))
+    .unwrap();
+    assert!(ui.poll());
+    assert!(ui.models.is_empty());
+    assert!(ui.model_locked());
+    // Choosing old model-a is rejected before dispatch.
+    ui.choose_model(json!({"id": "model-a", "providerID": "p"}));
+    assert!(jobs_rx.try_recv().is_err());
+
+    // /repo-b catalog arrives and unlocks.
+    out.try_send(super::Result::Catalog(
+        Some(vec![model("model-b")]),
+        "/repo-b".into(),
+        gen_b,
+    ))
+    .unwrap();
+    assert!(ui.poll());
+    assert!(!ui.model_locked());
+    assert_eq!(ui.models[0].label, "model-b");
+
+    // Action result discovers directory changed to /repo-c: clears /repo-b and dispatches /repo-c catalog.
+    out.try_send(super::Result::Act(
+        true,
+        snap("/repo-c"),
+        Some("/repo-c".into()),
+        0,
+    ))
+    .unwrap();
+    assert!(ui.poll());
+    assert!(ui.models.is_empty());
+    assert!(ui.model_locked());
+    let (dir_c, gen_c) = catalog_rx.try_recv().unwrap();
+    assert_eq!(dir_c, "/repo-c");
+    out.try_send(super::Result::Catalog(
+        Some(vec![model("model-c")]),
+        "/repo-c".into(),
+        gen_c,
+    ))
+    .unwrap();
+    assert!(ui.poll());
+    assert!(!ui.model_locked());
+    assert_eq!(ui.models[0].label, "model-c");
+
+    // Rebinding clears previously published models immediately so old binding's rows cannot be picked.
+    let (jobs2, _) = super::bounded(4);
+    let (stop2, _) = super::bounded(1);
+    let (_, results2) = super::bounded(4);
+    ui.rebind(super::Handle::test(jobs2, stop2, results2));
+    assert!(ui.models.is_empty());
+    assert!(ui.model_locked());
+}
+
+#[test]
+fn composer_stays_blocked_until_reconciliation_read_after_superseded_pending_reply() {
+    use crate::agent_api::Permission;
+    let (jobs, _jobs_rx) = super::bounded(4);
+    let (permissions, perm_rx) = super::bounded(4);
+    let (forms, form_rx) = super::bounded(4);
+    let (catalog, _catalog_rx) = super::bounded(4);
+    let (stop, _) = super::bounded(1);
+    let (out, results) = super::bounded(8);
+    let mut ui = super::Ui::new(super::Handle {
+        connection: None,
+        jobs,
+        permissions,
+        forms,
+        catalog,
+        stop,
+        results,
+    });
+    ui.online = true;
+    ui.known = true;
+    ui.reading = false;
+    let _ = perm_rx.try_recv();
+    let _ = form_rx.try_recv();
+    let initial_perm_gen = ui.permissions_lane.generation;
+    out.try_send(super::Result::Permissions(
+        Some(vec![Permission {
+            id: "perm_1".into(),
+            action: "bash".into(),
+            resources: vec![],
+            message: String::new(),
+            supported: true,
+            tool: None,
+        }]),
+        initial_perm_gen,
+    ))
+    .unwrap();
+    assert!(ui.poll());
+    assert!(!ui.blocked());
+
+    // Passive refresh_permissions does NOT block the composer.
+    ui.refresh_permissions();
+    assert!(!ui.blocked());
+    let passive_gen = match perm_rx.try_recv().unwrap() {
+        super::PendingJob::Read(generation) => generation,
+        _ => panic!("expected passive permission read"),
+    };
+    out.try_send(super::Result::Permissions(
+        Some(vec![Permission {
+            id: "perm_1".into(),
+            action: "bash".into(),
+            resources: vec![],
+            message: String::new(),
+            supported: true,
+            tool: None,
+        }]),
+        passive_gen,
+    ))
+    .unwrap();
+    assert!(ui.poll());
+    assert!(!ui.blocked());
+
+    // 1. User replies to perm_1 -> POST starts, composer is blocked.
+    ui.reply_permission("perm_1".into(), "once");
+    assert!(ui.blocked());
+    let act_gen = match perm_rx.try_recv().unwrap() {
+        super::PendingJob::Act(_, generation) => generation,
+        _ => panic!("expected permission act"),
+    };
+
+    // 2. SSE resolution arrives BEFORE the worker's post-POST HTTP response finishes.
+    ui.resolve_request(false, "perm_1");
+    let reconcile_gen = ui.permissions_lane.generation;
+    assert_ne!(reconcile_gen, act_gen);
+    assert!(ui.blocked());
+
+    // 3. Worker's post-POST HTTP result returns with superseded act_gen: dock still shows perm_1
+    // while the trailing reconciliation read is dispatched -> composer MUST stay blocked!
+    out.try_send(super::Result::ActPermission(true, Some(vec![]), act_gen))
+        .unwrap();
+    assert!(ui.poll());
+    assert_eq!(ui.permissions.len(), 1);
+    assert!(
+        ui.blocked(),
+        "composer must stay blocked while awaiting reconciliation read after superseded reply"
+    );
+    assert!(ui.navigation_blocked());
+    assert!(matches!(
+        perm_rx.try_recv(),
+        Ok(super::PendingJob::Read(generation)) if generation == reconcile_gen
+    ));
+
+    // 4. If the reconciliation read fails, composer & navigation stay blocked and the reply
+    // button stays locked; user retries via refresh_controls (read only, never replaying POST).
+    out.try_send(super::Result::Permissions(None, reconcile_gen))
+        .unwrap();
+    assert!(ui.poll());
+    assert_eq!(ui.permissions.len(), 1);
+    assert!(ui.error);
+    assert!(
+        ui.blocked(),
+        "failed reconciliation read must keep composer blocked until a valid read settles the dock"
+    );
+    assert!(ui.navigation_blocked());
+    assert!(ui.permissions_locked());
+
+    ui.refresh_controls();
+    let retry_gen = match perm_rx.try_recv().unwrap() {
+        super::PendingJob::Read(generation) => generation,
+        _ => panic!("refresh_controls must retry with a read, never replaying the reply"),
+    };
+    out.try_send(super::Result::Permissions(Some(vec![]), retry_gen))
+        .unwrap();
+    assert!(ui.poll());
+    assert!(ui.permissions.is_empty());
+    assert!(!ui.blocked());
+    assert!(!ui.navigation_blocked());
 }

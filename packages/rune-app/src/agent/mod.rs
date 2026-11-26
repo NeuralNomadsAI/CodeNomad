@@ -29,7 +29,7 @@ enum Result {
     Permissions(Option<Vec<Permission>>, u64),
     Forms(Option<Vec<Form>>, u64),
     Catalog(Option<Vec<Model>>, String, u64),
-    Act(bool, Snapshot, u64),
+    Act(bool, Snapshot, Option<String>, u64),
     ActPermission(bool, Option<Vec<Permission>>, u64),
     ActForm(bool, Option<Vec<Form>>, u64),
     Stop(bool),
@@ -40,6 +40,7 @@ struct RequestLane {
     known: bool,
     reading: bool,
     busy: bool,
+    reconciling: bool,
     trailing: bool,
     error: bool,
     generation: u64,
@@ -49,8 +50,11 @@ impl RequestLane {
     fn locked(&self, online: bool) -> bool {
         self.busy || self.reading || !self.known || !online
     }
+    fn mutation_pending(&self) -> bool {
+        self.busy || self.reconciling
+    }
     fn idle(&self) -> bool {
-        !self.reading && !self.busy && !self.trailing
+        !self.reading && !self.busy && !self.reconciling && !self.trailing
     }
     fn bump(&mut self) -> u64 {
         self.generation = self.generation.wrapping_add(1);
@@ -128,6 +132,7 @@ pub struct Ui {
     catalog_reading: bool,
     catalog_generation: u64,
     catalog_directory: Option<String>,
+    models_directory: Option<String>,
     permissions_lane: RequestLane,
     forms_lane: RequestLane,
     activity_during_job: bool,
@@ -219,16 +224,18 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
                 }
                 Job::Act(action, generation) => match action {
                     Action::Model(reference) => match backend.apply_model(&reference).await {
-                        Ok(snapshot) => Result::Act(true, snapshot, generation),
+                        Ok((snapshot, catalog_dir)) => {
+                            Result::Act(true, snapshot, catalog_dir, generation)
+                        }
                         Err(_) => {
-                            let (snapshot, _) = backend.session_snapshot().await;
-                            Result::Act(false, snapshot, generation)
+                            let (snapshot, catalog_dir) = backend.session_snapshot().await;
+                            Result::Act(false, snapshot, catalog_dir, generation)
                         }
                     },
                     other => {
                         let ok = backend.agent_action(&other).await.is_ok();
-                        let (snapshot, _) = backend.session_snapshot().await;
-                        Result::Act(ok, snapshot, generation)
+                        let (snapshot, catalog_dir) = backend.session_snapshot().await;
+                        Result::Act(ok, snapshot, catalog_dir, generation)
                     }
                 },
                 Job::VerifyIdle(id, directory) => {
@@ -288,6 +295,10 @@ impl Ui {
 
     pub fn rebind(&mut self, handle: Handle) {
         self.handle = handle;
+        self.models.clear();
+        self.models_directory = None;
+        self.current = None;
+        self.directory = None;
         self.reading = false;
         self.catalog_reading = false;
         self.catalog_generation = self.catalog_generation.wrapping_add(1);
@@ -327,8 +338,8 @@ impl Ui {
 
     pub fn navigation_blocked(&self) -> bool {
         self.busy
-            || self.permissions_lane.busy
-            || self.forms_lane.busy
+            || self.permissions_lane.mutation_pending()
+            || self.forms_lane.mutation_pending()
             || self.stopping
             || self.drafts.values().any(|d| d.dirty)
             || self.reasons.values().any(|d| !d.text.is_empty())
@@ -424,6 +435,7 @@ impl Ui {
             catalog_reading: false,
             catalog_generation: 0,
             catalog_directory: None,
+            models_directory: None,
             permissions_lane: RequestLane::default(),
             forms_lane: RequestLane::default(),
             activity_during_job: false,
@@ -511,6 +523,36 @@ impl Ui {
             return;
         }
         self.dispatch_catalog_read(directory, self.catalog_generation);
+    }
+    fn sync_catalog_scope(
+        &mut self,
+        session_known: bool,
+        catalog_dir: Option<String>,
+        force_refresh: bool,
+    ) {
+        if !session_known {
+            if force_refresh {
+                self.catalog_error = true;
+                self.sync_error();
+            }
+            return;
+        }
+        let dir_changed = self.catalog_directory != catalog_dir;
+        if dir_changed {
+            self.models.clear();
+            self.models_directory = None;
+            self.catalog_generation = self.catalog_generation.wrapping_add(1);
+            self.catalog_trailing = None;
+            self.catalog_directory = catalog_dir.clone();
+        }
+        if let Some(dir) = catalog_dir {
+            if force_refresh || dir_changed {
+                self.refresh_catalog(dir);
+            }
+        } else if force_refresh {
+            self.catalog_error = true;
+            self.sync_error();
+        }
     }
 
     pub(crate) fn refresh_usage_model(&mut self, generation: u64) {
@@ -602,14 +644,18 @@ impl Ui {
     }
     pub fn blocked(&self) -> bool {
         self.busy
-            || self.permissions_lane.busy
-            || self.forms_lane.busy
+            || self.permissions_lane.mutation_pending()
+            || self.forms_lane.mutation_pending()
             || !self.known
             || !self.online
             || self.stopping
     }
     pub fn model_locked(&self) -> bool {
-        self.busy || self.reading || !self.online
+        self.busy
+            || self.reading
+            || self.catalog_reading
+            || !self.online
+            || self.models_directory != self.catalog_directory
     }
     pub fn permissions_locked(&self) -> bool {
         self.permissions_lane.locked(self.online)
@@ -673,6 +719,7 @@ impl Ui {
         }
         if let Some(models) = s.models {
             self.models = models;
+            self.models_directory = self.catalog_directory.clone();
         }
     }
 
@@ -754,25 +801,16 @@ impl Ui {
                     self.reading = false;
                     let session_known = s.session_known;
                     self.session_error |= !session_known;
-                    if catalog && catalog_dir.is_none() {
-                        self.catalog_error = true;
-                    }
                     self.sync_error();
                     self.apply_session(s, generation);
-                    if catalog && let Some(dir) = catalog_dir {
-                        self.refresh_catalog(dir);
-                    } else if session_known
-                        && self.catalog_directory.is_some()
-                        && self.catalog_directory != catalog_dir
-                    {
-                        self.catalog_generation = self.catalog_generation.wrapping_add(1);
-                        self.catalog_directory = catalog_dir;
-                        self.catalog_trailing = None;
-                    }
+                    self.sync_catalog_scope(session_known, catalog_dir, catalog);
                 }
                 Result::Permissions(permissions, generation) => {
                     self.permissions_lane.reading = false;
                     if generation == self.permissions_lane.generation {
+                        if permissions.is_some() {
+                            self.permissions_lane.reconciling = false;
+                        }
                         self.permissions_lane.error |= permissions.is_none();
                         self.sync_error();
                         self.apply_permissions(permissions);
@@ -781,6 +819,9 @@ impl Ui {
                 Result::Forms(forms, generation) => {
                     self.forms_lane.reading = false;
                     if generation == self.forms_lane.generation {
+                        if forms.is_some() {
+                            self.forms_lane.reconciling = false;
+                        }
                         self.forms_lane.error |= forms.is_none();
                         self.sync_error();
                         self.apply_forms(forms);
@@ -795,14 +836,17 @@ impl Ui {
                         self.sync_error();
                         if let Some(models) = models {
                             self.models = models;
+                            self.models_directory = Some(directory);
                         }
                     }
                 }
-                Result::Act(ok, s, generation) => {
+                Result::Act(ok, s, catalog_dir, generation) => {
                     self.busy = false;
-                    self.session_error = !ok || !s.session_known;
+                    let session_known = s.session_known;
+                    self.session_error = !ok || !session_known;
                     self.sync_error();
                     self.apply_session(s, generation);
+                    self.sync_catalog_scope(session_known, catalog_dir, false);
                 }
                 Result::ActPermission(ok, permissions, generation) => {
                     self.permissions_lane.busy = false;
@@ -810,7 +854,15 @@ impl Ui {
                     self.permissions_lane.error = !ok || (fresh && permissions.is_none());
                     self.sync_error();
                     if fresh {
+                        if permissions.is_some() {
+                            self.permissions_lane.reconciling = false;
+                        } else if ok {
+                            self.permissions_lane.reconciling = true;
+                        }
                         self.apply_permissions(permissions);
+                    } else {
+                        self.permissions_lane.reconciling = true;
+                        self.permissions_lane.trailing = true;
                     }
                 }
                 Result::ActForm(ok, forms, generation) => {
@@ -819,7 +871,15 @@ impl Ui {
                     self.forms_lane.error = !ok || (fresh && forms.is_none());
                     self.sync_error();
                     if fresh {
+                        if forms.is_some() {
+                            self.forms_lane.reconciling = false;
+                        } else if ok {
+                            self.forms_lane.reconciling = true;
+                        }
                         self.apply_forms(forms);
+                    } else {
+                        self.forms_lane.reconciling = true;
+                        self.forms_lane.trailing = true;
                     }
                 }
                 Result::Stop(ok) => {

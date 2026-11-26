@@ -50,7 +50,7 @@ export async function openSessionSearch(page, sidebar, messages, tap) {
   }
 }
 
-export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
+export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,policy,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
   const text=value=>page.getByText(value,{exact:true})
   const connecting=text(messages['instanceShell.connection.connecting'])
   const before=eventSources()
@@ -172,18 +172,32 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         void staleReceivedByBrowser.promise.catch(()=>{})
         page.on('requestfailed',onAuthFailed)
         page.on('response',onAuthResponse)
-        const holdEvents=route=>blockEvents
-          ?route.fulfill({status:503,contentType:'application/json',body:'{}'})
-          :route.fallback()
+        const admitRoute=async req=>{
+          if(policy)return await policy.request(req,{allowApi:true})
+          const requested=new URL(req.url())
+          return requested.origin===url.origin&&Boolean((await req.allHeaders()).cookie)
+        }
+        const fetchOwnedStatus=async route=>{
+          const response=await route.fetch({maxRedirects:0})
+          assert.equal(new URL(response.url()).origin,url.origin,'Auth status response must stay on the owned origin')
+          assert.equal(response.status(),200,'Auth status response must return 200 without redirecting')
+          return response
+        }
+        const holdEvents=async route=>{
+          if(!blockEvents)return route.fallback()
+          if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
+          return route.fulfill({status:503,contentType:'application/json',body:'{}'})
+        }
         const holdStaleStatus=async route=>{
           if(route.request().method()!=='GET')return route.fallback()
+          if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
           authStatusRequests++
           if(heldStale){
             if(staleReleased&&!heldFollowUp){
               heldFollowUp=true
               postStaleStatus++
               try {
-                const response=await route.fetch()
+                const response=await fetchOwnedStatus(route)
                 const body=await response.json()
                 assert.equal(body.authenticated,true)
                 assert(!body.pairingRequired)
@@ -205,7 +219,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           blockEvents=true
           staleRequest=route.request()
           try {
-            const response=await route.fetch()
+            const response=await fetchOwnedStatus(route)
             const body=await response.json()
             assert.equal(body.authenticated,false)
             assert.equal(body.pairingRequired,true)

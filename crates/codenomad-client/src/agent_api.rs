@@ -321,7 +321,11 @@ impl Backend {
             .and_then(|v| forms(&v, &self.session))
             .ok()
     }
-    async fn action_model_within(&self, reference: &Value, budget: Duration) -> Result<Snapshot> {
+    async fn action_model_within(
+        &self,
+        reference: &Value,
+        budget: Duration,
+    ) -> Result<(Snapshot, Option<String>)> {
         let path = format!("session/{}", self.session);
         let deadline = crate::runtime::Instant::now() + budget;
         let session = self
@@ -345,10 +349,9 @@ impl Backend {
         if fresh["data"]["model"] != *reference {
             return Err("model change is unconfirmed".into());
         }
-        let (snapshot, _) = self.decode_session_snapshot(&Ok(fresh), None, None, None);
-        Ok(snapshot)
+        Ok(self.decode_session_snapshot(&Ok(fresh), None, None, None))
     }
-    pub async fn apply_model(&self, reference: &Value) -> Result<Snapshot> {
+    pub async fn apply_model(&self, reference: &Value) -> Result<(Snapshot, Option<String>)> {
         self.action_model_within(reference, CONTROL_READ_BUDGET)
             .await
     }
@@ -779,7 +782,7 @@ mod tests {
         // sufficient 2000 ms shared budget: proves POST + confirmation succeed when budget suffices.
         model_requested.store(false, Ordering::SeqCst);
         session_reads.store(0, Ordering::SeqCst);
-        let confirmed = rt
+        let (confirmed, _) = rt
             .block_on(backend.action_model_within(
                 &json!({"id":"m1","providerID":"p1"}),
                 Duration::from_millis(2000),
