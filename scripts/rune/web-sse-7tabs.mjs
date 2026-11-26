@@ -1,6 +1,7 @@
 // 7-tab HTTPS HTTP/1.1 SSE multiplexing bench for the real Rune WASM bundle (B1 proof).
 import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
+import {renameSync, unlinkSync} from 'node:fs'
 import {mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
@@ -117,8 +118,11 @@ export function allowBenchOwnedRoute({method, path: subPath, body, native}) {
 }
 
 function ipc(action) {
-  assert(typeof process.send === 'function', 'Run web-sse-7tabs.mjs through launcher-fixture.mjs --web-sse-7tabs')
   return new Promise((resolve, reject) => {
+    if (typeof process.send !== 'function' || !process.connected) {
+      reject(Error('Run web-sse-7tabs.mjs through launcher-fixture.mjs --web-sse-7tabs'))
+      return
+    }
     const timer = setTimeout(() => {
       cleanup()
       reject(Error(`No fixture IPC reply for ${action?.type ?? String(action)}`))
@@ -141,11 +145,22 @@ function ipc(action) {
     }
     process.on('message', onMessage)
     process.once('disconnect', onDisconnect)
-    process.send(action)
+    try {
+      process.send(action, err => {
+        if (err) {
+          cleanup()
+          reject(err)
+        }
+      })
+    } catch (err) {
+      cleanup()
+      reject(err)
+    }
   })
 }
 
 async function runBench() {
+  assert(typeof process.send === 'function' && process.connected, 'Run web-sse-7tabs.mjs through launcher-fixture.mjs --web-sse-7tabs')
   const root = fileURLToPath(new URL('../../', import.meta.url))
   const {values} = parseArgs({
     options: {
@@ -214,26 +229,36 @@ async function runBench() {
         if (browser) await withTimeout(browser.close(), 1000)
         if (browserProc) {
           if (process.platform === 'win32') {
-            if (!isProcExited()) await withTimeout(browserExited, 1500)
-            // Closes the dedicated Windows Job Object, guaranteeing zero surviving Chromium descendants.
-            await stopFixtureChild(browserProc, browserExited, 1000, 1500).catch(() => {})
-            return isProcExited()
+            if (!isProcExited()) await withTimeout(browserExited, 2500)
+            const cleanExit = browserProc.exitCode === 0 && browserProc.signalCode === null
+            if (!cleanExit) {
+              // Forced Job Object termination is cleanup only, never proof of clean pass.
+              await stopFixtureChild(browserProc, browserExited, 1000, 1500).catch(() => {})
+            }
+            return cleanExit
           }
           if (!isProcExited() || !isPosixGroupEmpty()) {
-            signalBrowserGroup('SIGTERM')
             const deadline = Date.now() + 2000
             while ((!isProcExited() || !isPosixGroupEmpty()) && Date.now() < deadline) {
               await new Promise(resolve => setTimeout(resolve, 25))
             }
           }
-          if (!isProcExited() || !isPosixGroupEmpty()) {
-            signalBrowserGroup('SIGKILL')
+          const cleanExit = browserProc.exitCode === 0 && browserProc.signalCode === null && isPosixGroupEmpty()
+          if (!cleanExit) {
+            signalBrowserGroup('SIGTERM')
             const deadline = Date.now() + 1500
             while ((!isProcExited() || !isPosixGroupEmpty()) && Date.now() < deadline) {
               await new Promise(resolve => setTimeout(resolve, 25))
             }
+            if (!isProcExited() || !isPosixGroupEmpty()) {
+              signalBrowserGroup('SIGKILL')
+              const killDeadline = Date.now() + 1500
+              while ((!isProcExited() || !isPosixGroupEmpty()) && Date.now() < killDeadline) {
+                await new Promise(resolve => setTimeout(resolve, 25))
+              }
+            }
           }
-          return isProcExited() && isPosixGroupEmpty()
+          return cleanExit
         }
         return true
       })()
@@ -798,17 +823,18 @@ async function runBench() {
         historyAppended?.messageID && historyAppended.messageID !== suspendedSseMessageId,
         `Resumed history messageID (${historyAppended?.messageID}) must differ from suspended SSE ID (${suspendedSseMessageId})`,
       )
-      const resumeResponse = page.waitForResponse(res => {
-        if (res.request().method() !== 'POST' || res.status() !== 200) return false
-        if (new URL(res.url()).pathname !== `/api/workspaces/${workspaceId}/session-history/window`) return false
-        try {
-          return JSON.parse(res.request().postData() ?? '{}')?.sessionID === sessionID
-        } catch {
-          return false
-        }
-      })
-      await press(tabsLocator.nth(tabIndex))
-      await resumeResponse
+      await Promise.all([
+        page.waitForResponse(res => {
+          if (res.request().method() !== 'POST' || res.status() !== 200) return false
+          if (new URL(res.url()).pathname !== `/api/workspaces/${workspaceId}/session-history/window`) return false
+          try {
+            return JSON.parse(res.request().postData() ?? '{}')?.sessionID === sessionID
+          } catch {
+            return false
+          }
+        }),
+        press(tabsLocator.nth(tabIndex)),
+      ])
       await mirror().getByRole('heading', {name: heading, exact: true}).waitFor({state: 'attached'})
       await page.waitForFunction(
         expected => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes(expected),
@@ -974,15 +1000,25 @@ async function runBench() {
     throw error
   } finally {
     try {
-      const confirmedExited = await stopBrowserBounded()
-      if (confirmedExited && process.platform !== 'win32' && Number.isInteger(browserPid) && browserPid > 0 && process.connected) {
+      const cleanChromiumExit = await stopBrowserBounded()
+      const groupCleared = process.platform === 'win32'
+        ? isProcExited()
+        : (isProcExited() && isPosixGroupEmpty())
+      if (groupCleared && process.platform !== 'win32' && Number.isInteger(browserPid) && browserPid > 0 && process.connected) {
         await ipc({type: 'browser-closed', pid: browserPid}).catch(() => {})
       }
       if (pendingProof && !stoppingSignal) {
-        assert(confirmedExited, `Chromium process/group ${browserPid} did not exit cleanly before pass`)
+        assert(cleanChromiumExit, `Chromium wrapper/process ${browserPid} did not exit cleanly with code 0`)
         pendingProof.teardown.chromiumExited = true
-        await writeFile(path.join(out, 'sse-7tabs-proof.json'), JSON.stringify(pendingProof, null, 2))
-        console.log(JSON.stringify(pendingProof))
+        const tmpProof = path.join(out, 'sse-7tabs-proof.json.tmp')
+        const finalProof = path.join(out, 'sse-7tabs-proof.json')
+        await writeFile(tmpProof, JSON.stringify(pendingProof, null, 2))
+        if (stoppingSignal) {
+          try { unlinkSync(tmpProof) } catch {}
+        } else {
+          renameSync(tmpProof, finalProof)
+          console.log(JSON.stringify(pendingProof))
+        }
       }
     } finally {
       process.off('SIGTERM', onStopSignal)

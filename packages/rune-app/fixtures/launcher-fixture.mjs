@@ -518,7 +518,7 @@ const stopClientOnce=child=>{
     clientStopPromise=(async()=>{
       try{
         if(webState.clientUseIpc&&process.platform==='win32'){
-          if(child.exitCode===null&&child.signalCode===null&&child.connected){
+          if(webSse7Tabs&&child.exitCode===null&&child.signalCode===null&&child.connected){
             try{child.send({type:'shutdown'})}catch{}
             let timer
             try{
