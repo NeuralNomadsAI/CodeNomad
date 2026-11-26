@@ -14,6 +14,8 @@ use std::borrow::Cow;
 mod local_images;
 mod mermaid;
 
+pub(super) use local_images::Conversation;
+
 pub(super) const PROSE_LIMIT: usize = 50_000;
 pub(super) const TOOL_LIMIT: usize = 10_000;
 pub(super) const HIGHLIGHT_LIMIT: usize = 100_000;
@@ -45,11 +47,15 @@ pub(super) fn bounded_prose_matches(
     key: &str,
     source: &str,
     limit: usize,
+    conversation: Conversation<'_>,
     query: rune_theme_codenomad::timeline::search::Query<'_>,
 ) -> bool {
     let budget = limit.saturating_add(STEP.saturating_mul(s.transcript_display.steps(key)));
     let (shown, _, _, _) = prefix_measured(&[source], budget, units(source));
-    markdown::prose_has_match(&shown, query)
+    let truncated = shown.len() < source.len();
+    let local = local_images::prepare(s, key, &shown, truncated, conversation);
+    let fallback = local.fallback_label();
+    markdown::prose_has_match_with_images(&shown, truncated, query, &fallback)
 }
 
 pub(super) fn skill_prose_matches(
@@ -57,11 +63,12 @@ pub(super) fn skill_prose_matches(
     card_key: &str,
     key: &str,
     source: &str,
+    conversation: Conversation<'_>,
     query: rune_theme_codenomad::timeline::search::Query<'_>,
 ) -> bool {
     let revealed = query.active || s.transcript_display.search_revealed(card_key);
     let limit = PROSE_LIMIT + if revealed { STEP } else { 0 };
-    bounded_prose_matches(s, key, source, limit, query)
+    bounded_prose_matches(s, key, source, limit, conversation, query)
 }
 
 pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
@@ -90,7 +97,16 @@ pub(super) fn prose_claimed(
         || s.transcript_display.search_revealed(&key)
         || s.transcript_display.search_revealed(message);
     let limit = PROSE_LIMIT + if revealed { STEP } else { 0 };
-    prose_for(s, message, key, source, streaming, limit, query)
+    prose_for(
+        s,
+        message,
+        key,
+        source,
+        streaming,
+        limit,
+        Conversation::Root,
+        query,
+    )
 }
 
 pub(super) fn prose_search(
@@ -99,9 +115,20 @@ pub(super) fn prose_search(
     card_key: &str,
     key: String,
     source: &str,
+    conversation: Conversation<'_>,
     query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
 ) -> El {
-    prose_pane_search(s, message, card_key, key, source, false, PROSE_LIMIT, query)
+    prose_pane_search(
+        s,
+        message,
+        card_key,
+        key,
+        source,
+        false,
+        PROSE_LIMIT,
+        conversation,
+        query,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -113,12 +140,22 @@ pub(super) fn prose_pane_search(
     source: &str,
     streaming: bool,
     base_limit: usize,
+    conversation: Conversation<'_>,
     query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
 ) -> El {
     let revealed =
         query.is_some_and(|q| q.active) || s.transcript_display.search_revealed(card_key);
     let limit = base_limit + if revealed { STEP } else { 0 };
-    prose_for(s, message, key, source, streaming, limit, query)
+    prose_for(
+        s,
+        message,
+        key,
+        source,
+        streaming,
+        limit,
+        conversation,
+        query,
+    )
 }
 
 pub(super) fn bounded_prose_matches_for(
@@ -127,18 +164,29 @@ pub(super) fn bounded_prose_matches_for(
     key: &str,
     source: &str,
     base_limit: usize,
+    conversation: Conversation<'_>,
     query: rune_theme_codenomad::timeline::search::Query<'_>,
 ) -> bool {
     let revealed = query.active || s.transcript_display.search_revealed(card_key);
     let limit = base_limit + if revealed { STEP } else { 0 };
-    bounded_prose_matches(s, key, source, limit, query)
+    bounded_prose_matches(s, key, source, limit, conversation, query)
 }
 
 #[cfg(test)]
 pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, limit: usize) -> El {
-    prose_for(s, "", key, source, streaming, limit, None)
+    prose_for(
+        s,
+        "",
+        key,
+        source,
+        streaming,
+        limit,
+        Conversation::Root,
+        None,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prose_for(
     s: &State,
     message: &str,
@@ -146,6 +194,7 @@ fn prose_for(
     source: &str,
     streaming: bool,
     limit: usize,
+    conversation: Conversation<'_>,
     query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
 ) -> El {
     let group = key.clone();
@@ -165,7 +214,7 @@ fn prose_for(
     });
     window(s, key, &[source], limit, |shown, units| {
         let truncated = shown.len() < source.len();
-        let mut local = local_images::prepare(s, &group, shown, truncated);
+        let mut local = local_images::prepare(s, &group, shown, truncated, conversation);
         let claim_active =
             query.is_some_and(|q| q.active && q.claimed.is_none_or(|claimed| !claimed.get()));
         let prose_query = query.map(|q| rune_theme_codenomad::timeline::search::Query {
@@ -177,9 +226,7 @@ fn prose_for(
             && let Some(q) = query
             && let Some(claimed) = q.claimed
             && let Some(pq) = prose_query
-            && markdown::prose_has_match_with_images(shown, truncated, pq, &|src, liftable| {
-                local.fallback_label(src, liftable)
-            })
+            && markdown::prose_has_match_with_images(shown, truncated, pq, &local.fallback_label())
         {
             claimed.set(true);
         }
@@ -221,8 +268,9 @@ fn prose_for(
             let diff_group = group.clone();
             let diff_scope = scope.clone();
             let image_scope = scope.clone();
-            let (fallback_fn, image_lookup, image_frame) = local.into_render(image_scope);
-            markdown::prose_with_images(
+            let (fallback_fn, image_lookup, image_frame, retain_failures) =
+                local.into_render(image_scope);
+            retain_failures(markdown::prose_with_images(
                 shown,
                 streaming,
                 truncated,
@@ -346,7 +394,7 @@ fn prose_for(
                 fallback_fn,
                 image_lookup,
                 image_frame,
-            )
+            ))
         };
         if units > TOOL_LIMIT {
             markdown::hold_frame(memo_key, stamp, build)

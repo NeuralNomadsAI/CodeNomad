@@ -363,6 +363,21 @@ impl Children {
             .map_or(&[], |entry| entry.snapshot.steps.as_slice())
     }
 
+    pub(in crate::chat) fn verified_tools(
+        &self,
+        parent: Option<&str>,
+        id: &str,
+    ) -> &[(String, Arc<Tool>)] {
+        let key = child_key(parent, id);
+        if self.unavailable.contains(&key) {
+            return &[];
+        }
+        self.entries
+            .get(&key)
+            .filter(|entry| !entry.load_error)
+            .map_or(&[], |entry| entry.snapshot.steps.as_slice())
+    }
+
     pub(super) fn steps_truncated(&self, parent: Option<&str>, id: &str) -> bool {
         self.entries
             .get(&child_key(parent, id))
@@ -407,7 +422,7 @@ impl Children {
 
 #[cfg(test)]
 impl Children {
-    pub(super) fn install(&mut self, child: &str, page: crate::history::Page) -> Rc<()> {
+    pub(in crate::chat) fn install(&mut self, child: &str, page: crate::history::Page) -> Rc<()> {
         self.install_under(None, child, page)
     }
 

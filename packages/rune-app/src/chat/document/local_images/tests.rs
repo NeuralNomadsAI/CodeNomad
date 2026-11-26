@@ -9,7 +9,7 @@ const PNG_B: &str =
 
 fn candidate(paths: &[&str], tag: &str) -> Candidate {
     Candidate {
-        paths: paths.iter().map(|s| (*s).to_owned()).collect(),
+        paths: paths.iter().filter_map(|s| KnownPath::new(s)).collect(),
         source: PictureSource::Inline(tag.into()),
         mime: "image/png".into(),
     }
@@ -63,6 +63,10 @@ fn local_image_path_matches_solid_rules() {
     );
     assert_eq!(local_image_path("file://server:123/share/out.png"), None);
     assert_eq!(local_image_path("file:///tmp/a/../out.png"), None);
+    assert_eq!(local_image_path("file:///tmp/%2e%2e/out%ZZ.png"), None);
+    assert_eq!(local_image_path("file:///tmp/.%2E/out.png"), None);
+    assert_eq!(local_image_path("file:///tmp/%2e\t%2e/out.png"), None);
+    assert_eq!(local_image_path("file:///tmp/..\n/out.png"), None);
     for rejected in [
         "",
         "   ",
@@ -429,16 +433,283 @@ fn empty_alt_loads_per_image_while_heading_and_offscreen_images_do_not_queue() {
     assert_eq!(tree.matches("\"role\":\"image\"").count(), 0, "{tree}");
     rt.update(|s, _| {
         assert!(
-            s.transcript_display
-                .pictures
-                .local_slot(
-                    "fragment-m3:0-local-image-0",
-                    &PictureSource::Inline(PNG_B.into()),
-                    "image/png",
-                )
-                .2
-                .is_none(),
+            !matches!(
+                s.transcript_display
+                    .pictures
+                    .local_slot(
+                        "fragment-m3:0-local-image-0",
+                        &PictureSource::Inline(PNG_B.into()),
+                        "image/png",
+                    )
+                    .2,
+                LocalImageState::Ready(_)
+            ),
             "offscreen or non-liftable image should not be decoded"
         );
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn replacing_failed_local_image_while_visible_recovers_in_short_and_memoized_prose() {
+    // Valid PNG magic + 1x1 IHDR so `PictureSource::inline` admits it, followed by truncated IDAT
+    // so decoding settles to `LocalImageState::Failed`.
+    const CORRUPT_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8";
+    for long_prose in [false, true] {
+        let padding = if long_prose {
+            format!("{}\n\n", "padding text ".repeat(900))
+        } else {
+            String::new()
+        };
+        let prose_text = format!("{padding}![Corrupt chart](/tmp/out.png)");
+        let bad_tool = history::decode_message(&json!({
+            "id":"m1","type":"assistant","time":{"completed":1},
+            "content":[{
+                "type":"tool","id":"call-bad","name":"read",
+                "state":{
+                    "status":"completed",
+                    "input":{"filePath":"/tmp/out.png"},
+                    "content":[{"type":"file","filename":"/tmp/out.png","mime":"image/png","uri":format!("data:image/png;base64,{CORRUPT_PNG}")}]
+                }
+            }]
+        }))
+        .unwrap();
+        let prose_msg = history::decode_message(&json!({
+            "id":"m2","type":"assistant","time":{"completed":2},
+            "content":[{"type":"text","text":prose_text}]
+        }))
+        .unwrap();
+        let mut state = init();
+        state.phase = Phase::Ready;
+        state.messages = vec![bad_tool.into(), prose_msg.into()];
+        let mut rt = Runtime::new(
+            state,
+            |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+            (800.0, 500.0),
+            Env::new(false, 1.0),
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            rt.update(|s, tx| {
+                if crate::chat::events::poll_chat(s, 4) {
+                    tx.instant();
+                }
+            });
+            rt.frame(1.0 / 60.0);
+            let mut failed = false;
+            rt.update(|s, _| {
+                failed = matches!(
+                    s.transcript_display
+                        .pictures
+                        .local_slot(
+                            "fragment-m2:0-local-image-0",
+                            &PictureSource::Inline(CORRUPT_PNG.into()),
+                            "image/png",
+                        )
+                        .2,
+                    LocalImageState::Failed
+                );
+            });
+            if failed {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "failed image did not settle (long={long_prose})"
+            );
+            std::thread::yield_now();
+        }
+        // Extra frames must keep the failed lease settled without re-queuing.
+        for _ in 0..4 {
+            rt.update(|s, tx| {
+                if crate::chat::events::poll_chat(s, 4) {
+                    tx.instant();
+                }
+            });
+            rt.frame(1.0 / 60.0);
+        }
+        rt.update(|s, _| {
+            assert!(
+                matches!(
+                    s.transcript_display
+                        .pictures
+                        .local_slot(
+                            "fragment-m2:0-local-image-0",
+                            &PictureSource::Inline(CORRUPT_PNG.into()),
+                            "image/png",
+                        )
+                        .2,
+                    LocalImageState::Failed
+                ),
+                "retained failure lease must keep entry settled (long={long_prose})"
+            );
+        });
+        // Failed matched image must fall back to searchable plain text, not an image block.
+        let tree = rt.accessibility_json().to_string();
+        assert!(tree.contains("Corrupt chart"), "{tree}");
+        assert_eq!(tree.matches("\"role\":\"image\"").count(), 0, "{tree}");
+        rt.update(|s, _| {
+            let terms = vec!["Corrupt".into()];
+            let query = rune_theme_codenomad::timeline::search::Query {
+                terms: &terms,
+                ranked: false,
+                active: true,
+                claimed: None,
+            };
+            assert!(
+                super::super::bounded_prose_matches(
+                    s,
+                    "fragment-m2:0",
+                    &prose_text,
+                    super::super::PROSE_LIMIT,
+                    Conversation::Root,
+                    query,
+                ),
+                "settled failed fallback text must match prose search (long={long_prose})"
+            );
+        });
+
+        // Replace the failed image with a valid later completed tool at the same path while visible.
+        let good_tool = history::decode_message(&json!({
+            "id":"m3","type":"assistant","time":{"completed":3},
+            "content":[{
+                "type":"tool","id":"call-good","name":"read",
+                "state":{
+                    "status":"completed",
+                    "input":{"filePath":"/tmp/out.png"},
+                    "content":[{"type":"file","filename":"/tmp/out.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_A}")}]
+                }
+            }]
+        }))
+        .unwrap();
+        rt.update(|s, tx| {
+            s.messages.push(good_tool.into());
+            tx.instant();
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            rt.update(|s, tx| {
+                if crate::chat::events::poll_chat(s, 4) {
+                    tx.instant();
+                }
+            });
+            rt.frame(1.0 / 60.0);
+            let tree = rt.accessibility_json().to_string();
+            if tree.matches("\"role\":\"image\"").count() == 1 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "replacement image stayed stuck on alt text (long={long_prose}): {tree}"
+            );
+            std::thread::yield_now();
+        }
+    }
+}
+
+#[test]
+fn nested_child_prose_isolates_from_parent_and_uses_verified_child_tools() {
+    let parent_tool = history::decode_message(&json!({
+        "id":"m1","type":"assistant","time":{"completed":1},
+        "content":[{
+            "type":"tool","id":"call-p","name":"read",
+            "state":{
+                "status":"completed",
+                "input":{"filePath":"/tmp/parent.png"},
+                "content":[{"type":"file","filename":"/tmp/parent.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_A}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let child_page = history::decode(json!({
+        "status":"window","latest":true,
+        "messages": [{
+            "id":"cm1","type":"assistant","time":{"completed":2},
+            "content":[{
+                "type":"tool","id":"call-c","name":"read",
+                "state":{
+                    "status":"completed",
+                    "input":{"filePath":"/tmp/child.png"},
+                    "content":[{"type":"file","filename":"/tmp/child.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_B}")}]
+                }
+            }]
+        }]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    state.messages = vec![parent_tool.into()];
+    let _lease = state.transcript_display.children.install("c1", child_page);
+    assert!(state.transcript_display.children.poll());
+
+    let source = "![Parent](/tmp/parent.png)\n\n![Child](/tmp/child.png)";
+    let child_plan = prepare(
+        &state,
+        "child-doc",
+        source,
+        false,
+        Conversation::Child {
+            parent: None,
+            id: "c1",
+        },
+    );
+    let child_fb = child_plan.fallback_label();
+    assert_eq!(
+        child_fb("/tmp/parent.png", true).as_deref(),
+        Some("parent.png")
+    );
+    assert_eq!(child_fb("/tmp/child.png", true), None);
+
+    let none_plan = prepare(&state, "none-doc", source, false, Conversation::None);
+    let none_fb = none_plan.fallback_label();
+    assert_eq!(
+        none_fb("/tmp/parent.png", true).as_deref(),
+        Some("parent.png")
+    );
+    assert_eq!(
+        none_fb("/tmp/child.png", true).as_deref(),
+        Some("child.png")
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn url_shaped_alt_text_on_fallback_renders_without_link_and_matches_search() {
+    let prose_msg = history::decode_message(&json!({
+        "id":"m1","type":"assistant","time":{"completed":1},
+        "content":[{"type":"text","text":"See ![https://example.test/secret.png](missing.png) and ![](empty-name.png)"}]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    state.messages = vec![prose_msg.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (800.0, 400.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(1.0 / 60.0);
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("https://example.test/secret.png"), "{tree}");
+    assert!(tree.contains("empty-name.png"), "{tree}");
+    assert_eq!(tree.matches("\"role\":\"link\"").count(), 0, "{tree}");
+    assert_eq!(tree.matches("\"role\":\"image\"").count(), 0, "{tree}");
+    rt.update(|s, _| {
+        let terms = vec!["empty-name.png".into()];
+        let query = rune_theme_codenomad::timeline::search::Query {
+            terms: &terms,
+            ranked: false,
+            active: true,
+            claimed: None,
+        };
+        assert!(super::super::bounded_prose_matches(
+            s,
+            "fragment-m1:0",
+            "See ![https://example.test/secret.png](missing.png) and ![](empty-name.png)",
+            super::super::PROSE_LIMIT,
+            Conversation::Root,
+            query,
+        ));
     });
 }

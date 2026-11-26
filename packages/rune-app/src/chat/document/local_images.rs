@@ -1,24 +1,56 @@
 use crate::{
     State,
-    content::{Part, PictureSource},
+    chat::media::LocalImageState,
+    content::{Part, PictureSource, Tool},
     history::Row,
 };
-use rune::{El, Image, text};
-use rune_theme_codenomad::markdown;
+use rune::{El, Image, col, text};
+use rune_theme_codenomad::{layout::Layout, markdown};
 use std::{
     borrow::Cow,
     cell::RefCell,
     collections::{HashMap, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
     rc::Rc,
+    sync::Arc,
 };
 
 #[cfg(test)]
 mod tests;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::chat) enum Conversation<'a> {
+    Root,
+    Child {
+        parent: Option<&'a str>,
+        id: &'a str,
+    },
+    None,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct KnownPath {
+    comparable: String,
+    windows: bool,
+}
+
+impl KnownPath {
+    fn new(raw: &str) -> Option<Self> {
+        let comparable = comparable(raw);
+        if comparable.is_empty() || has_parent_segment(&comparable) {
+            return None;
+        }
+        let windows = windows_path(&comparable);
+        Some(Self {
+            comparable,
+            windows,
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Candidate {
-    pub(super) paths: Vec<String>,
+    pub(super) paths: Vec<KnownPath>,
     pub(super) source: PictureSource,
     pub(super) mime: String,
 }
@@ -30,7 +62,14 @@ enum Match<'a> {
     Miss,
 }
 
-pub(super) struct Slot {
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub(super) enum SlotStamp {
+    Ready(u64),
+    Pending,
+    Failed,
+}
+
+struct Slot {
     key: String,
     source: PictureSource,
     mime: String,
@@ -39,23 +78,60 @@ pub(super) struct Slot {
     image: Option<Image>,
 }
 
+struct RetainedFailure {
+    key: String,
+    source: PictureSource,
+    mime: String,
+    lease: Rc<()>,
+}
+
 #[derive(Default)]
 pub(super) struct Plan {
-    slots: HashMap<String, VecDeque<Slot>>,
+    occurrences: HashMap<String, Vec<Option<Slot>>>,
+    retained_failures: Vec<RetainedFailure>,
     sentinel: Option<Image>,
-    pub(super) stamp: Vec<(String, Option<u64>)>,
+    pub(super) stamp: Vec<(String, String, SlotStamp)>,
     pub(super) sentinel_ready: bool,
 }
 
-impl Plan {
-    pub(super) fn fallback_label(&self, src: &str, liftable: bool) -> Option<String> {
+fn fallback_matcher(kept: HashMap<String, Vec<bool>>) -> impl Fn(&str, bool) -> Option<String> {
+    let cursors: RefCell<HashMap<String, usize>> = RefCell::new(HashMap::new());
+    move |src: &str, liftable: bool| {
         let local = local_image_path(src)?;
-        if !liftable || !self.slots.contains_key(src) {
+        if !liftable {
             return Some(filename_label(&local));
         }
-        None
+        let Some(entries) = kept.get(src) else {
+            return Some(filename_label(&local));
+        };
+        let mut cursors = cursors.borrow_mut();
+        let index = cursors.entry(src.to_owned()).or_insert(0);
+        let kept_occurrence = entries.get(*index).copied().unwrap_or(false);
+        *index += 1;
+        if kept_occurrence {
+            None
+        } else {
+            Some(filename_label(&local))
+        }
+    }
+}
+
+impl Plan {
+    pub(super) fn fallback_label(&self) -> impl Fn(&str, bool) -> Option<String> {
+        let kept = self
+            .occurrences
+            .iter()
+            .map(|(src, entries)| {
+                (
+                    src.clone(),
+                    entries.iter().map(Option::is_some).collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        fallback_matcher(kept)
     }
 
+    #[allow(clippy::type_complexity)]
     pub(super) fn into_render(
         self,
         scope: Rc<()>,
@@ -63,16 +139,24 @@ impl Plan {
         impl Fn(&str, bool) -> Option<String>,
         impl Fn(&str) -> Option<Image> + 'static,
         impl Fn(El, &markdown::ImageFrame<'_>) -> El + 'static,
+        impl FnOnce(El) -> El,
     ) {
-        let kept: std::collections::HashSet<String> = self.slots.keys().cloned().collect();
-        let fallback = move |src: &str, liftable: bool| {
-            let local = local_image_path(src)?;
-            if !liftable || !kept.contains(src) {
-                return Some(filename_label(&local));
+        let mut kept: HashMap<String, Vec<bool>> = HashMap::with_capacity(self.occurrences.len());
+        let mut active_slots: HashMap<String, VecDeque<Slot>> = HashMap::new();
+        for (src, entries) in self.occurrences {
+            let mut flags = Vec::with_capacity(entries.len());
+            for entry in entries {
+                if let Some(slot) = entry {
+                    flags.push(true);
+                    active_slots.entry(src.clone()).or_default().push_back(slot);
+                } else {
+                    flags.push(false);
+                }
             }
-            None
-        };
-        let slots = Rc::new(RefCell::new(self.slots));
+            kept.insert(src, flags);
+        }
+        let fallback = fallback_matcher(kept);
+        let slots = Rc::new(RefCell::new(active_slots));
         let lookup_slots = slots.clone();
         let sentinel = self.sentinel;
         let images = move |src: &str| {
@@ -80,6 +164,7 @@ impl Plan {
             let slot = slots.get(src)?.front()?;
             slot.image.clone().or_else(|| sentinel.clone())
         };
+        let frame_scope = scope.clone();
         let frame = move |el: El, frame: &markdown::ImageFrame<'_>| {
             let slot = slots
                 .borrow_mut()
@@ -105,11 +190,13 @@ impl Plan {
                 lease,
                 ..
             } = slot;
-            let scope = scope.clone();
+            let scope = frame_scope.clone();
             let target = key.clone();
-            content
-                .key(key)
-                .on_visible(move |s: &mut State, visible, tx| {
+            // Rune Kit stamps a positional `bN` key on the root element returned by `image_frame`.
+            // Keep the source-scoped key and visibility handler on a child so replacing a failed
+            // source at the same path fires a fresh visibility event while staying on screen.
+            col().full_width().child(content.key(key).on_visible(
+                move |s: &mut State, visible, tx| {
                     if s.current_scope(&scope) {
                         s.transcript_display
                             .pictures
@@ -119,9 +206,42 @@ impl Plan {
                         }
                     }
                     tx.live_only();
-                })
+                },
+            ))
         };
-        (fallback, images, frame)
+        let retained_failures = self.retained_failures;
+        let retain = move |rendered: El| {
+            if retained_failures.is_empty() {
+                return rendered;
+            }
+            let mut out = rendered;
+            for RetainedFailure {
+                key,
+                source,
+                mime,
+                lease,
+            } in retained_failures
+            {
+                let scope = scope.clone();
+                let target = key.clone();
+                out = col()
+                    .full_width()
+                    .key(format!("{key}-failed-lease"))
+                    .child(out)
+                    .on_visible(move |s: &mut State, visible, tx| {
+                        if s.current_scope(&scope) {
+                            s.transcript_display
+                                .pictures
+                                .local_visibility(&target, &source, &mime, &lease, visible);
+                        }
+                        tx.live_only();
+                    });
+            }
+            // Keep an outer wrapper so `document::window`'s `.key(content_key)` does not overwrite
+            // the failed-lease key on the inner visibility node.
+            col().full_width().child(out)
+        };
+        (fallback, images, frame, retain)
     }
 }
 
@@ -147,14 +267,10 @@ pub(crate) fn local_image_path(src: &str) -> Option<String> {
 }
 
 fn parse_file_url(value: &str) -> Option<String> {
-    // Reject traversal segments before the WHATWG parser normalizes dot segments away.
-    let raw_tail = value
-        .get(5..)?
-        .split(['?', '#'])
-        .next()
-        .unwrap_or_default()
-        .replace('\\', "/");
-    if has_parent_segment(&raw_tail) || has_parent_segment(&decode_uri_component(&raw_tail)) {
+    // Reject WHATWG double-dot segments per segment before URL parsing collapses them away
+    // (including when a later segment has a malformed percent sequence like `%ZZ`).
+    let raw_tail = value.get(5..)?.split(['?', '#']).next().unwrap_or_default();
+    if has_file_url_parent_segment(raw_tail) {
         return None;
     }
     let (host, raw_path) = codenomad_client::http::file_url_parts(value)?;
@@ -166,6 +282,21 @@ fn parse_file_url(value: &str) -> Option<String> {
         return Some(format!("//{host}{path}"));
     }
     Some(strip_leading_drive_slash(&path).into_owned())
+}
+
+fn has_file_url_parent_segment(raw_tail: &str) -> bool {
+    let cleaned: String = raw_tail
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\r' | '\n'))
+        .map(|c| if c == '\\' { '/' } else { c })
+        .collect();
+    cleaned.split('/').any(|segment| {
+        segment == ".."
+            || segment.eq_ignore_ascii_case(".%2e")
+            || segment.eq_ignore_ascii_case("%2e.")
+            || segment.eq_ignore_ascii_case("%2e%2e")
+            || decode_uri_component(segment) == ".."
+    })
 }
 
 /// Whether a Markdown image source is a `file:` URL, whose path is already percent-decoded.
@@ -335,26 +466,24 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
         })
         .flatten();
     let relative_lower = relative.as_deref().map(str::to_lowercase);
-    let mut suffixes: HashMap<String, &'a Candidate> = HashMap::new();
+    let mut suffixes: HashMap<&str, &'a Candidate> = HashMap::new();
     for candidate in candidates {
-        for raw_known in &candidate.paths {
-            let known = comparable(raw_known);
-            if known.is_empty() || has_parent_segment(&known) {
-                continue;
-            }
-            if known == target {
+        for known in &candidate.paths {
+            if known.comparable == target {
                 return Match::Found(candidate);
             }
             if let Some(rel) = relative.as_deref()
-                && !suffixes.contains_key(&known)
+                && !suffixes.contains_key(known.comparable.as_str())
             {
-                let matched = if windows_path(&known) {
-                    known.ends_with(relative_lower.as_deref().unwrap_or(rel))
+                let matched = if known.windows {
+                    known
+                        .comparable
+                        .ends_with(relative_lower.as_deref().unwrap_or(rel))
                 } else {
-                    known.ends_with(rel)
+                    known.comparable.ends_with(rel)
                 };
                 if matched {
-                    suffixes.insert(known, candidate);
+                    suffixes.insert(known.comparable.as_str(), candidate);
                 }
             }
         }
@@ -369,43 +498,63 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
     }
 }
 
+fn collect_tool_candidates(tool: &Tool, out: &mut Vec<Candidate>) {
+    if tool.status != "completed" || tool.pictures.is_empty() {
+        return;
+    }
+    let input_path = tool
+        .input
+        .get("filePath")
+        .or_else(|| tool.input.get("path"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .and_then(KnownPath::new);
+    let single = tool.pictures.len() == 1;
+    for picture in &tool.pictures {
+        if matches!(picture.source, PictureSource::Unavailable) {
+            continue;
+        }
+        let mut paths = Vec::new();
+        if let Some(known) = picture
+            .name
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .and_then(KnownPath::new)
+        {
+            paths.push(known);
+        }
+        if single
+            && let Some(path) = input_path.as_ref()
+            && !paths.contains(path)
+        {
+            paths.push(path.clone());
+        }
+        if !paths.is_empty() {
+            out.push(Candidate {
+                paths,
+                source: picture.source.clone(),
+                mime: picture.mime.clone(),
+            });
+        }
+    }
+}
+
 pub(super) fn session_candidates(messages: &[Row]) -> Vec<Candidate> {
     let mut out = Vec::new();
     for row in messages.iter().rev() {
         for part in row.parts.iter().rev() {
-            let Part::Tool(tool) = part else {
-                continue;
-            };
-            if tool.status != "completed" || tool.pictures.is_empty() {
-                continue;
-            }
-            let input_path = tool
-                .input
-                .get("filePath")
-                .or_else(|| tool.input.get("path"))
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| !value.is_empty());
-            let single = tool.pictures.len() == 1;
-            for picture in &tool.pictures {
-                if matches!(picture.source, PictureSource::Unavailable) {
-                    continue;
-                }
-                let mut paths = Vec::new();
-                if let Some(name) = picture.name.as_deref().filter(|value| !value.is_empty()) {
-                    paths.push(name.to_owned());
-                }
-                if single && let Some(path) = input_path {
-                    paths.push(path.to_owned());
-                }
-                if !paths.is_empty() {
-                    out.push(Candidate {
-                        paths,
-                        source: picture.source.clone(),
-                        mime: picture.mime.clone(),
-                    });
-                }
+            if let Part::Tool(tool) = part {
+                collect_tool_candidates(tool, &mut out);
             }
         }
+    }
+    out
+}
+
+fn child_candidates(steps: &[(String, Arc<Tool>)]) -> Vec<Candidate> {
+    let mut out = Vec::new();
+    for (_, tool) in steps.iter().rev() {
+        collect_tool_candidates(tool, &mut out);
     }
     out
 }
@@ -416,7 +565,16 @@ fn image_stamp(image: &Image) -> u64 {
     hasher.finish()
 }
 
-pub(super) fn prepare(s: &State, group: &str, shown: &str, truncated: bool) -> Plan {
+pub(super) fn prepare(
+    s: &State,
+    group: &str,
+    shown: &str,
+    truncated: bool,
+    conversation: Conversation<'_>,
+) -> Plan {
+    if matches!(conversation, Conversation::None) {
+        return Plan::default();
+    }
     let lifted = markdown::prose_lifted_images(shown, truncated);
     if lifted.is_empty() {
         return Plan::default();
@@ -431,7 +589,13 @@ pub(super) fn prepare(s: &State, group: &str, shown: &str, truncated: bool) -> P
     if local_occurrences.is_empty() {
         return Plan::default();
     }
-    let candidates = session_candidates(&s.messages);
+    let candidates = match conversation {
+        Conversation::Root => session_candidates(&s.messages),
+        Conversation::Child { parent, id } => {
+            child_candidates(s.transcript_display.children.verified_tools(parent, id))
+        }
+        Conversation::None => Vec::new(),
+    };
     if candidates.is_empty() {
         return Plan::default();
     }
@@ -441,29 +605,73 @@ pub(super) fn prepare(s: &State, group: &str, shown: &str, truncated: bool) -> P
         sentinel,
         ..Plan::default()
     };
+    let mut resolved: HashMap<String, Option<&Candidate>> = HashMap::new();
     for (index, (raw_src, local)) in local_occurrences.into_iter().enumerate() {
-        let Some(matched) = match_local_image(&candidates, &local, !is_file_url(&raw_src)) else {
+        let matched = *resolved
+            .entry(raw_src.clone())
+            .or_insert_with(|| match_local_image(&candidates, &local, !is_file_url(&raw_src)));
+        let Some(matched) = matched else {
+            plan.occurrences.entry(raw_src).or_default().push(None);
             continue;
         };
-        let (key, lease, ready) = s.transcript_display.pictures.local_slot(
+        let (key, lease, state) = s.transcript_display.pictures.local_slot(
             &format!("{group}-local-image-{index}"),
             &matched.source,
             &matched.mime,
         );
-        if ready.is_none() && !plan.sentinel_ready {
-            // Wait for the web 1x1 sentinel microtask before lifting this slot into Block::Image.
-            continue;
+        match state {
+            LocalImageState::Ready(image) => {
+                plan.stamp.push((
+                    raw_src.clone(),
+                    key.clone(),
+                    SlotStamp::Ready(image_stamp(&image)),
+                ));
+                plan.occurrences
+                    .entry(raw_src)
+                    .or_default()
+                    .push(Some(Slot {
+                        key,
+                        source: matched.source.clone(),
+                        mime: matched.mime.clone(),
+                        lease,
+                        fallback: filename_label(&local),
+                        image: Some(image),
+                    }));
+            }
+            LocalImageState::Pending => {
+                plan.stamp
+                    .push((raw_src.clone(), key.clone(), SlotStamp::Pending));
+                if plan.sentinel_ready {
+                    plan.occurrences
+                        .entry(raw_src)
+                        .or_default()
+                        .push(Some(Slot {
+                            key,
+                            source: matched.source.clone(),
+                            mime: matched.mime.clone(),
+                            lease,
+                            fallback: filename_label(&local),
+                            image: None,
+                        }));
+                } else {
+                    // Wait for the web 1x1 sentinel microtask before lifting this slot into Block::Image.
+                    plan.occurrences.entry(raw_src).or_default().push(None);
+                }
+            }
+            LocalImageState::Failed => {
+                // Rewrite settled failures back to searchable plain fallback text while retaining the
+                // lease so the entry stays settled (no retry loop) and reconnect can still retry it.
+                plan.stamp
+                    .push((raw_src.clone(), key.clone(), SlotStamp::Failed));
+                plan.occurrences.entry(raw_src).or_default().push(None);
+                plan.retained_failures.push(RetainedFailure {
+                    key,
+                    source: matched.source.clone(),
+                    mime: matched.mime.clone(),
+                    lease,
+                });
+            }
         }
-        plan.stamp
-            .push((raw_src.clone(), ready.as_ref().map(image_stamp)));
-        plan.slots.entry(raw_src).or_default().push_back(Slot {
-            key,
-            source: matched.source.clone(),
-            mime: matched.mime.clone(),
-            lease,
-            fallback: filename_label(&local),
-            image: ready,
-        });
     }
     plan
 }

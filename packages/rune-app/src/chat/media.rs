@@ -21,6 +21,12 @@ const CONCURRENT: usize = 2;
 #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
 pub(crate) mod browser_fixture;
 
+pub(super) enum LocalImageState {
+    Ready(Image),
+    Pending,
+    Failed,
+}
+
 #[derive(Default)]
 pub(crate) struct Pictures {
     backend: Option<Backend>,
@@ -103,13 +109,13 @@ impl Pictures {
         key: &str,
         source: &PictureSource,
         mime: &str,
-    ) -> (String, Rc<()>, Option<Image>) {
+    ) -> (String, Rc<()>, LocalImageState) {
         let key = source_key(key, source, mime);
         let entry = self.images.get(&key).filter(|entry| entry.media == *source);
         let lease = entry
             .and_then(|entry| entry.lease.upgrade())
             .unwrap_or_default();
-        let image = entry
+        let ready = entry
             .and_then(|entry| entry.image.as_ref())
             .filter(|image| {
                 image.is_ready()
@@ -122,7 +128,16 @@ impl Pictures {
                     })
             })
             .cloned();
-        (key, lease, image)
+        let state = if let Some(image) = ready {
+            LocalImageState::Ready(image)
+        } else if entry
+            .is_some_and(|entry| entry.settled || entry.image.as_ref().is_some_and(Image::is_ready))
+        {
+            LocalImageState::Failed
+        } else {
+            LocalImageState::Pending
+        };
+        (key, lease, state)
     }
 
     pub(super) fn local_visibility(

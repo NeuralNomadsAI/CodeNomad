@@ -237,20 +237,20 @@ fn prose_ranges(
         rendered.clear();
         map.clear();
     };
-    let mut image_depth = 0usize;
+    let mut skipped_image_depth = 0usize;
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
-        if image_depth > 0 {
+        if skipped_image_depth > 0 {
             match event {
-                Event::Start(Tag::Image { .. }) => image_depth += 1,
+                Event::Start(Tag::Image { .. }) => skipped_image_depth += 1,
                 Event::End(pulldown_cmark::TagEnd::Image) => {
-                    image_depth = image_depth.saturating_sub(1);
+                    skipped_image_depth = skipped_image_depth.saturating_sub(1);
                 }
                 _ => {}
             }
             continue;
         }
         match event {
-            Event::Start(Tag::Image { .. }) => {
+            Event::Start(Tag::Image { ref dest_url, .. }) if !dest_url.is_empty() => {
                 flush(
                     &mut rendered,
                     &mut map,
@@ -258,7 +258,7 @@ fn prose_ranges(
                     &mut total_spans,
                     &mut blocks,
                 );
-                image_depth = 1;
+                skipped_image_depth = 1;
             }
             Event::Text(ref text) | Event::Code(ref text) => {
                 if text.is_empty() {
@@ -459,6 +459,27 @@ fn push_escaped_markdown(out: &mut String, text: &str) {
     }
 }
 
+fn push_escaped_image_fallback(out: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    // Empty-destination Markdown images stay inline plain text in Rune Kit and are skipped by its
+    // URL autolinker, while keeping searchable text spans aligned for prose_ranges.
+    out.push_str("![");
+    for c in text.chars() {
+        match c {
+            '\n' => out.push(' '),
+            '\r' => {}
+            c if c.is_ascii_punctuation() => {
+                use std::fmt::Write;
+                let _ = write!(out, "&#{};", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push_str("]()");
+}
+
 fn literal_breaks_with_images<'a>(
     source: &'a str,
     truncated: bool,
@@ -489,7 +510,7 @@ fn literal_breaks_with_images<'a>(
                         } else {
                             stripped_alt.as_str()
                         };
-                        push_escaped_markdown(&mut result, shown);
+                        push_escaped_image_fallback(&mut result, shown);
                         stripped_alt.clear();
                         stripped_fallback.clear();
                         last = range.end;
@@ -923,7 +944,7 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
     });
     assert_eq!(
         rewritten,
-        "See Chart &#91;1&#93; and ![Ok](found.png) and empty&#46;png\n\n## Head\n\nOk again"
+        "See ![Chart &#91;1&#93;]() and ![Ok](found.png) and ![empty&#46;png]()\n\n## ![Head]()\n\nOk again"
     );
     let terms = vec!["Chart".into()];
     let query = crate::timeline::search::Query {
@@ -932,7 +953,18 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
         active: true,
         claimed: None,
     };
-    assert_eq!(prose_ranges(&rewritten, query, 8), vec![vec![4..9]]);
+    let chart_spans = prose_ranges(&rewritten, query, 8);
+    assert_eq!(chart_spans.len(), 1);
+    assert_eq!(&rewritten[chart_spans[0][0].clone()], "Chart");
+    let url_alt = literal_breaks_with_images(
+        "![https://example.test/a.png](missing.png)",
+        false,
+        &|src, _| Some(src.to_owned()),
+    );
+    assert!(matches!(
+        parse(&url_alt).as_slice(),
+        [Block::Para(inline)] if inline.links.is_empty() && inline.text == "https://example.test/a.png"
+    ));
     let ok_terms = vec!["Ok".into()];
     let ok_query = crate::timeline::search::Query {
         terms: &ok_terms,
