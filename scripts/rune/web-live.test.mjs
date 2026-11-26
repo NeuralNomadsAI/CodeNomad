@@ -29,13 +29,22 @@ test('admitLiveRoute records policy refusals in forbiddenRequests', async () => 
   ])
 })
 
-test('admitLiveRoute enforces origin and cookie without a policy and records refusals', async () => {
+test('admitLiveRoute enforces GET, origin, and cookie without a policy and reports refusals', async () => {
   const forbiddenRequests = []
-  assert.equal(await admitLiveRoute(req(`${origin}/api/auth/status`), {origin, forbiddenRequests}), true)
-  assert.equal(await admitLiveRoute(req(`${origin}/api/events`, {cookie: ''}), {origin, forbiddenRequests}), false)
-  assert.equal(await admitLiveRoute(req('https://evil.test/api/events'), {origin, forbiddenRequests}), false)
+  const reported = []
+  const onForbidden = err => reported.push(err.message)
+  assert.equal(await admitLiveRoute(req(`${origin}/api/auth/status`), {origin, forbiddenRequests, onForbidden}), true)
+  assert.equal(await admitLiveRoute(req(`${origin}/api/events`, {cookie: ''}), {origin, forbiddenRequests, onForbidden}), false)
+  assert.equal(await admitLiveRoute(req('https://evil.test/api/events'), {origin, forbiddenRequests, onForbidden}), false)
+  assert.equal(await admitLiveRoute(req(`${origin}/api/auth/status`, {method: 'POST'}), {origin, forbiddenRequests, onForbidden}), false)
   assert.deepEqual(forbiddenRequests, [
     {origin, path: '/api/events'},
     {origin: 'https://evil.test', path: '/api/events'},
+    {origin, path: '/api/auth/status'},
+  ])
+  assert.deepEqual(reported, [
+    `Forbidden live route request: GET ${origin}/api/events`,
+    'Forbidden live route request: GET https://evil.test/api/events',
+    `Forbidden live route request: POST ${origin}/api/auth/status`,
   ])
 })

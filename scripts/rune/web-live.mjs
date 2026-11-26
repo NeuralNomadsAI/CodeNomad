@@ -50,12 +50,16 @@ export async function openSessionSearch(page, sidebar, messages, tap) {
   }
 }
 
-export async function admitLiveRoute(req, {policy, origin, forbiddenRequests}){
+export async function admitLiveRoute(req, {policy, origin, forbiddenRequests, onForbidden}){
   const requested=new URL(req.url())
   const allowed=policy
     ? await policy.request(req,{allowApi:true})
-    : requested.origin===origin&&Boolean((await req.allHeaders()).cookie)
-  if(!allowed)forbiddenRequests?.push({origin:requested.origin,path:requested.pathname})
+    : req.method()==='GET'&&requested.origin===origin&&Boolean((await req.allHeaders()).cookie)
+  if(!allowed){
+    const entry={origin:requested.origin,path:requested.pathname}
+    forbiddenRequests?.push(entry)
+    onForbidden?.(new Error(`Forbidden live route request: ${req.method()} ${entry.origin}${entry.path}`))
+  }
   return allowed
 }
 
@@ -75,39 +79,69 @@ async function verifySseAuthenticated503Recovery({
   again.searchParams.set('locale','he')
   const dialog=page.getByRole('dialog',{name:messages['authRecovery.pairingTitle']})
   const authStatusUrl=`${url.origin}/api/auth/status`
-  const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests})
+  const eventsUrl=`${url.origin}/api/events*`
   let transient503s=0
   let recoveredStatuses=0
-  let maxRetryGapMs=0
+  let retryDelay1Ms=0
+  let retryDelay2Ms=0
+  let forbiddenError=null
   const tab=await context.newPage()
   try {
     const pairFlow=await preparePair(tab, again, {fromLink, waitUntil:'commit'})
     try {
       await page.bringToFront()
       let injectTransient503=false
+      let sseGate='pass'
       let routeError=null
+      let sseBeforeFirstProbe=0
       const statusTimes=[]
       const first503Served=Promise.withResolvers()
+      const releaseRecovered=Promise.withResolvers()
+      const releaseHeldSse=Promise.withResolvers()
       const recoveredCaptured=Promise.withResolvers()
       void first503Served.promise.catch(()=>{})
       void recoveredCaptured.promise.catch(()=>{})
+      const failForbidden=err=>{
+        forbiddenError??=err
+        first503Served.reject(err)
+        recoveredCaptured.reject(err)
+      }
+      const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failForbidden})
+      const routeEvents=async route=>{
+        if(sseGate==='pass')return route.fallback()
+        if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
+        if(sseGate==='admit-one'){
+          sseGate='hold'
+          return route.fallback()
+        }
+        if(sseGate==='hold'){
+          await releaseHeldSse.promise
+          return route.fallback().catch(()=>{})
+        }
+        return route.fulfill({status:503,contentType:'application/json',body:'{}'})
+      }
       const routeStatus=async route=>{
         if(route.request().method()!=='GET')return route.fallback()
         if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
         if(!injectTransient503)return route.fallback()
         statusTimes.push(performance.now())
-        if(transient503s<2){
+        const attempt=statusTimes.length
+        if(attempt===1)sseBeforeFirstProbe=eventSources()
+        if(attempt<=2){
           transient503s++
           await route.fulfill({status:503,contentType:'application/json',body:'{}'})
-          if(transient503s===1)first503Served.resolve()
+          if(attempt===1)first503Served.resolve()
           return
         }
         try {
+          await releaseRecovered.promise
           const response=await fetchOwnedStatus(route,url.origin)
           const body=await response.json()
           assert.equal(body.authenticated,true)
           assert(!body.pairingRequired)
           recoveredStatuses++
+          sseGate='pass'
+          releaseHeldSse.resolve()
           await route.fulfill({response})
           recoveredCaptured.resolve()
         } catch (err) {
@@ -116,6 +150,7 @@ async function verifySseAuthenticated503Recovery({
           await route.abort().catch(()=>{})
         }
       }
+      await page.route(eventsUrl,routeEvents)
       await page.route(authStatusUrl,routeStatus)
       try {
         await command('revoke')
@@ -137,24 +172,42 @@ async function verifySseAuthenticated503Recovery({
           }
         })
         const beforeSseAuth=eventSources()
+        sseGate='block'
         injectTransient503=true
-        // Re-pair in the prepared tab without returning focus or clicking Check so authenticated SSE drives recovery.
+        // Re-pair in the prepared tab without returning focus or clicking Check, then admit exactly
+        // one authenticated EventSource so a single SSE episode drives both bounded retries (1 s, 2 s).
         await pairFlow.complete()
-        await withBudget(now()+20_000,'first transient 503 on SSE-driven /api/auth/status',()=>first503Served.promise)
-        assert.equal(await dialog.count(),1,'Pairing overlay must stay visible after a transient 503 status failure')
+        sseGate='admit-one'
+        try {
+          await withBudget(now()+20_000,'first transient 503 on SSE-driven /api/auth/status',()=>first503Served.promise)
+          assert.equal(await dialog.count(),1,'Pairing overlay must stay visible after the first transient 503 status failure')
+        } finally {
+          releaseRecovered.resolve()
+        }
         await withBudget(now()+20_000,'bounded retry /api/auth/status 200 after transient 503s',()=>recoveredCaptured.promise)
+        if(forbiddenError)throw forbiddenError
         if(routeError)throw routeError
         await dialog.waitFor({state:'detached',timeout:10_000})
         const accidentalSignals=await page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()??[])
         assert.deepEqual(accidentalSignals,[],'Authenticated SSE + 503 recovery must not rely on focus or visibility events')
-        assert(eventSources()>beforeSseAuth,'Authenticated SSE must reconnect before /api/auth/status recovers')
+        assert(sseBeforeFirstProbe>beforeSseAuth,'Authenticated SSE 200 on the original page must precede the first /api/auth/status probe')
+        assert.equal(statusTimes.length,3,'Expected exactly three /api/auth/status probes for one SSE-authenticated episode')
         assert.equal(transient503s,2,'Two transient 503 /api/auth/status responses must be exercised')
-        assert(recoveredStatuses>=1,'Bounded retry must settle with 200 /api/auth/status')
-        assert(statusTimes.length>=3,'Expected two 503 attempts and a bounded retry 200 attempt')
-        maxRetryGapMs=Math.max(statusTimes[1]-statusTimes[0],statusTimes[2]-statusTimes[1])
-        assert(maxRetryGapMs>=750,`Expected bounded retry backoff (>=750 ms) between 503 attempts, observed ${Math.round(maxRetryGapMs)} ms`)
+        assert.equal(recoveredStatuses,1,'Bounded retry must settle once with 200 /api/auth/status')
+        retryDelay1Ms=statusTimes[1]-statusTimes[0]
+        retryDelay2Ms=statusTimes[2]-statusTimes[1]
+        assert(retryDelay1Ms>=750,`Expected first bounded retry delay (~1 s, >=750 ms), observed ${Math.round(retryDelay1Ms)} ms`)
+        assert(retryDelay2Ms>=1600,`Expected second bounded retry delay (~2 s, >=1600 ms), observed ${Math.round(retryDelay2Ms)} ms`)
+        assert(retryDelay2Ms>retryDelay1Ms,`Expected second retry delay (${Math.round(retryDelay2Ms)} ms) to exceed first (${Math.round(retryDelay1Ms)} ms)`)
+      } catch (err) {
+        if(forbiddenError)throw forbiddenError
+        throw err
       } finally {
+        sseGate='pass'
+        releaseRecovered.resolve()
+        releaseHeldSse.resolve()
         await page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{})
+        await page.unroute(eventsUrl,routeEvents).catch(()=>{})
         await page.unroute(authStatusUrl,routeStatus).catch(()=>{})
       }
     } finally { await pairFlow.dispose() }
@@ -162,7 +215,7 @@ async function verifySseAuthenticated503Recovery({
   await connecting.waitFor({state:'hidden',timeout:15_000})
   assert.equal(await (await focus()).inputValue(),draft)
   assert.equal(page.url(),url.href,'Original document stays on its conversation after SSE 503 recovery')
-  return {transient503s,recoveredStatuses,maxRetryGapMs:Math.round(maxRetryGapMs)}
+  return {transient503s,recoveredStatuses,retryDelay1Ms:Math.round(retryDelay1Ms),retryDelay2Ms:Math.round(retryDelay2Ms)}
 }
 
 export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,policy,forbiddenRequests=[],fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
@@ -274,6 +327,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         let blockEvents=false
         let postStaleStatus=0
         let staleError=null
+        let focusForbiddenError=null
         const onAuthFailed=req=>{
           if(staleRequest&&req===staleRequest){
             staleAborted=req.failure()?.errorText||'aborted'
@@ -290,7 +344,12 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         void staleReceivedByBrowser.promise.catch(()=>{})
         page.on('requestfailed',onAuthFailed)
         page.on('response',onAuthResponse)
-        const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests})
+        const failFocusForbidden=err=>{
+          focusForbiddenError??=err
+          staleCaptured.reject(err)
+          followUpCaptured.reject(err)
+        }
+        const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failFocusForbidden})
         const holdEvents=async route=>{
           if(!blockEvents)return route.fallback()
           if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
@@ -408,8 +467,12 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
             if(heldFollowUp)await followUpSettled.promise
           }
           await dialog.waitFor({state:'detached',timeout:10_000})
+          if(focusForbiddenError)throw focusForbiddenError
           assert.equal(eventSources(),beforeRevoke,'SSE stayed blocked until the pairing overlay dismissed')
           assert(postStaleStatus>=1,'Focus return during the first status probe must trigger a follow-up /api/auth/status check')
+        } catch (err) {
+          if(focusForbiddenError)throw focusForbiddenError
+          throw err
         } finally {
           blockEvents=false
           releaseFollowUp.resolve()
