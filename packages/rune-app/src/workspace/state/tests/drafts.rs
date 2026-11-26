@@ -2145,6 +2145,13 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         Some("independent text from A")
     );
     assert!(!after_r8.attachment_drafts.contains(NO_SESSION_DRAFT_ID));
+    assert!(
+        after_r8
+            .attachment_drafts
+            .iter()
+            .any(|k| crate::workspace::is_recovered_draft_id(k)),
+        "R9 Bloquant 1a: B's distinct restored attachment-only draft must also be recovered separately"
+    );
 
     // 14. R8 Moyen 1: A valid v1 snapshot where Tab B has drafts[id] = "" alongside an attachment
     // marker and Tab A has text for the same session must NOT treat Tab B as a clear tombstone or
@@ -2186,5 +2193,131 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
             _ => None,
         },
         Some("text from A")
+    );
+
+    // 15. R9 Bloquant 1b: Same distinct A (independent text) + B (restored attachment-only)
+    // closed scenario, but user reopens and binds the session first -> A is delivered while B
+    // remains intact in ui.closed; a subsequent 404 recovers BOTH A and B into separate slots.
+    let mut r9_b1 = draft_state();
+    let mut a9_1 = closed("ses_r9_keep_b", "");
+    a9_1.drafts.clear();
+    a9_1.active_session_id = Some("ses_r9_keep_b".into());
+    let mut b9_1 = closed("ses_r9_keep_b", "");
+    b9_1.drafts.clear();
+    b9_1.occurrence = 1;
+    b9_1.active_session_id = None;
+    b9_1.attachment_drafts.insert("ses_r9_keep_b".into());
+    b9_1.attachment_parts.insert(
+        "ses_r9_keep_b".into(),
+        crate::composer::draft_storage::SavedParts::missing(),
+    );
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a9_1), Tab::Workspace(b9_1)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_r9_keep_b"));
+    r9_b1.workspace = Some(ui);
+    r9_b1.show_chat();
+    r9_b1.draft = TextEdit::new("independent A on bind");
+    capture(&mut r9_b1);
+    close(&mut r9_b1, "tab-0", &mut tx);
+    if let Some(l) = r9_b1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    close(&mut r9_b1, "tab-1", &mut tx);
+    if let Some(l) = r9_b1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r9_b1,
+        &Project {
+            id: "proj-r9b1".into(),
+            path: "/fixture".into(),
+        },
+    );
+    let delivered = bound(&mut r9_b1, &backend("ses_r9_keep_b"));
+    assert_eq!(delivered, "independent A on bind");
+    r9_b1.show_launcher();
+    assert!(recover_missing_session_draft(&mut r9_b1, "ses_r9_keep_b"));
+    let Tab::Workspace(after_r9_1) = &r9_b1.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected reopened tab");
+    };
+    let has_a = after_r9_1
+        .drafts
+        .values()
+        .any(|v| v == "independent A on bind");
+    let has_b = after_r9_1.attachment_drafts.iter().any(|k| {
+        (k == NO_SESSION_DRAFT_ID || crate::workspace::is_recovered_draft_id(k))
+            && !after_r9_1.drafts.contains_key(k)
+    });
+    assert!(has_a && has_b, "both A and B must survive 404 after bind");
+
+    // 16. R9 Bloquant 2: Restore X in A, B, D. In A, edit X -> Y -> X (becomes independent while
+    // retaining derived_from = X). Close A, close B, leave D open. Reopen in C & bind -> C gets A
+    // WITH derived_from = X; clearing C yields Copy(X) so a 404 suppresses D's copy X.
+    let mut r9_b2 = draft_state();
+    let mut a9_2 = closed("ses_r9_deriv", "draft X");
+    a9_2.active_session_id = Some("ses_r9_deriv".into());
+    let mut b9_2 = closed("ses_r9_deriv", "draft X");
+    b9_2.occurrence = 1;
+    b9_2.active_session_id = None;
+    let mut d9_2 = closed("ses_r9_deriv", "draft X");
+    d9_2.occurrence = 2;
+    d9_2.active_session_id = None;
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![
+            Tab::Workspace(a9_2),
+            Tab::Workspace(b9_2),
+            Tab::Workspace(d9_2),
+        ],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_r9_deriv"));
+    r9_b2.workspace = Some(ui);
+    r9_b2.show_chat();
+    r9_b2.draft = TextEdit::new("draft Y");
+    capture(&mut r9_b2);
+    r9_b2.draft = TextEdit::new("draft X");
+    capture(&mut r9_b2);
+    close(&mut r9_b2, "tab-0", &mut tx);
+    if let Some(l) = r9_b2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    close(&mut r9_b2, "tab-1", &mut tx);
+    if let Some(l) = r9_b2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    new_tab(&mut r9_b2, &mut tx);
+    if let Some(l) = r9_b2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r9_b2,
+        &Project {
+            id: "proj-r9b2".into(),
+            path: "/fixture".into(),
+        },
+    );
+    let delivered = bound(&mut r9_b2, &backend("ses_r9_deriv"));
+    assert_eq!(delivered, "draft X");
+    r9_b2.show_chat();
+    r9_b2.draft = TextEdit::new("");
+    capture(&mut r9_b2);
+    r9_b2.show_launcher();
+    assert!(
+        !recover_missing_session_draft(&mut r9_b2, "ses_r9_deriv"),
+        "clearing C must carry derived_from = X and suppress D's untouched copy on 404"
     );
 }

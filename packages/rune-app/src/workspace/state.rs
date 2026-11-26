@@ -164,6 +164,7 @@ pub struct Ui {
     staged_revision: Option<u64>,
     closed: Vec<Workspace>,
     closed_restored: Vec<HashSet<String>>,
+    closed_derived_from: Vec<std::collections::BTreeMap<String, drafts::DraftCopy>>,
     closed_pending_deleted: Vec<(ProjectScope, String)>,
     deleted_sessions: (
         codenomad_client::Sender<(ProjectScope, String)>,
@@ -225,6 +226,7 @@ impl Ui {
             staged_revision: None,
             closed: Vec::new(),
             closed_restored: Vec::new(),
+            closed_derived_from: Vec::new(),
             closed_pending_deleted: Vec::new(),
             deleted_sessions: codenomad_client::bounded(256),
         }
@@ -699,6 +701,7 @@ pub fn opened(s: &mut State, project: &Project) {
         let mut attachment_drafts = std::collections::BTreeSet::new();
         let mut attachment_parts = std::collections::BTreeMap::new();
         let mut restored_keys = std::collections::HashSet::new();
+        let mut derived_origins = std::collections::BTreeMap::new();
         let mut reopened_cleared = HashSet::new();
         for id in closed_keys {
             let clear_authorities = drafts::collect_open_clear_authorities(ui, &reopen_scope, &id);
@@ -715,6 +718,9 @@ pub fn opened(s: &mut State, project: &Project) {
                 }
                 if let Some(parts) = bundle.attachment_parts {
                     attachment_parts.insert(id.clone(), parts);
+                }
+                if let Some(origin) = bundle.derived_from {
+                    derived_origins.insert(id.clone(), origin);
                 }
                 if bundle.from_restored {
                     restored_keys.insert(id);
@@ -748,13 +754,13 @@ pub fn opened(s: &mut State, project: &Project) {
         item.cleared = reopened_cleared;
         item.pending_drafts = pending_keys;
         item.restored_drafts.clear();
-        item.derived_from.clear();
+        item.derived_from = derived_origins;
         item.clear_authority.clear();
         item.superseded_on_delete.clear();
         for id in restored_keys {
             if let Some(copy) = drafts::DraftCopy::from_workspace(&reopened_workspace, &id) {
                 item.restored_drafts.insert(id.clone(), copy.clone());
-                item.derived_from.insert(id, copy);
+                item.derived_from.entry(id).or_insert(copy);
             }
         }
         for id in &item.cleared {

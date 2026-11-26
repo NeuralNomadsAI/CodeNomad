@@ -453,6 +453,9 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
     let project_scope = super::ProjectScope::from_workspace(&scope);
     let clear_authorities = collect_open_clear_authorities(ui, &project_scope, id);
     let closed = peek_closed_state_for_scope(ui, &project_scope, id, &clear_authorities);
+    let mut delivered_copy = None;
+    let mut delivered_origin = None;
+    let mut delivered_closed_idx = None;
     for (index, item) in ui.entries.iter_mut().enumerate() {
         if !matches!(&item.saved, Tab::Workspace(w) if same_project(&scope, w))
             || !item.pending_drafts.remove(id)
@@ -484,11 +487,19 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
                 if let Some(parts) = bundle.attachment_parts.as_ref() {
                     saved.attachment_parts.insert(id.into(), parts.clone());
                 }
+                delivered_copy = DraftCopy::from_workspace(saved, id);
+                delivered_origin = bundle.derived_from.clone();
+                delivered_closed_idx = Some(bundle.closed_idx);
+                if let Some(origin) = bundle.derived_from.as_ref() {
+                    item.derived_from.insert(id.into(), origin.clone());
+                }
                 if bundle.from_restored
-                    && let Some(copy) = DraftCopy::from_workspace(saved, id)
+                    && let Some(copy) = delivered_copy.as_ref()
                 {
                     item.restored_drafts.insert(id.into(), copy.clone());
-                    item.derived_from.insert(id.into(), copy);
+                    item.derived_from
+                        .entry(id.into())
+                        .or_insert_with(|| copy.clone());
                 }
             } else if closed.explicitly_cleared {
                 item.cleared.insert(id.into());
@@ -501,11 +512,38 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         if !same_project(&scope, w) {
             continue;
         }
-        w.drafts.remove(id);
-        w.attachment_drafts.remove(id);
-        w.attachment_parts.remove(id);
-        if let Some(restored) = ui.closed_restored.get_mut(idx) {
-            restored.remove(id);
+        let is_restored = ui
+            .closed_restored
+            .get(idx)
+            .is_none_or(|set| set.contains(id));
+        let is_empty_tombstone = w.drafts.get(id).is_some_and(String::is_empty)
+            && !w.attachment_drafts.contains(id)
+            && !w.attachment_parts.contains_key(id);
+        let should_remove = if closed.explicitly_cleared {
+            true
+        } else if delivered_closed_idx == Some(idx) || is_empty_tombstone {
+            true
+        } else if is_restored {
+            let copy = DraftCopy::from_workspace(w, id);
+            copy.is_some()
+                && (copy == delivered_copy
+                    || (delivered_origin.is_some() && copy == delivered_origin)
+                    || clear_authorities
+                        .iter()
+                        .any(|auth| auth.matches_restored(copy.as_ref())))
+        } else {
+            false
+        };
+        if should_remove {
+            w.drafts.remove(id);
+            w.attachment_drafts.remove(id);
+            w.attachment_parts.remove(id);
+            if let Some(restored) = ui.closed_restored.get_mut(idx) {
+                restored.remove(id);
+            }
+            if let Some(derived) = ui.closed_derived_from.get_mut(idx) {
+                derived.remove(id);
+            }
         }
     }
 }
@@ -647,10 +685,12 @@ fn move_draft_between_keys(
 }
 
 pub(super) struct ClosedBundle {
+    pub(super) closed_idx: usize,
     pub(super) text: Option<String>,
     pub(super) attachment_draft: bool,
     pub(super) attachment_parts: Option<SavedParts>,
     pub(super) from_restored: bool,
+    pub(super) derived_from: Option<DraftCopy>,
 }
 
 impl ClosedBundle {
@@ -658,6 +698,14 @@ impl ClosedBundle {
         self.text.as_deref().is_some_and(|t| !t.is_empty())
             || self.attachment_draft
             || self.attachment_parts.is_some()
+    }
+
+    fn as_copy(&self) -> Option<DraftCopy> {
+        self.has_content().then(|| DraftCopy {
+            text: self.text.clone().filter(|t| !t.is_empty()),
+            attachment_draft: self.attachment_draft,
+            attachment_parts: self.attachment_parts.clone(),
+        })
     }
 }
 
@@ -694,10 +742,12 @@ pub(super) fn peek_closed_state_for_scope(
     session_id: &str,
     open_clear_authorities: &[ClearAuthority],
 ) -> ClosedState {
+    let mut closed_idx = 0usize;
     let mut text: Option<String> = None;
     let mut attachment_draft = false;
     let mut attachment_parts: Option<SavedParts> = None;
     let mut from_restored = false;
+    let mut derived_from: Option<DraftCopy> = None;
     let mut explicitly_cleared = false;
     for (idx, w) in ui.closed.iter().enumerate() {
         if !scope.matches(w) {
@@ -728,17 +778,30 @@ pub(super) fn peek_closed_state_for_scope(
         if entry_text.is_none() && !has_att {
             continue;
         }
+        closed_idx = idx;
         text = entry_text.filter(|t| !t.is_empty()).cloned();
         attachment_draft = has_att;
         attachment_parts = w.attachment_parts.get(session_id).cloned();
         from_restored = is_restored;
+        derived_from = ui
+            .closed_derived_from
+            .get(idx)
+            .and_then(|map| map.get(session_id))
+            .cloned()
+            .or_else(|| {
+                is_restored
+                    .then(|| DraftCopy::from_workspace(w, session_id))
+                    .flatten()
+            });
         explicitly_cleared = entry_text.is_some_and(String::is_empty) && !has_att;
     }
     let bundle = ClosedBundle {
+        closed_idx,
         text,
         attachment_draft,
         attachment_parts,
         from_restored,
+        derived_from,
     };
     let bundle = bundle.has_content().then_some(bundle);
     ClosedState {
@@ -747,16 +810,121 @@ pub(super) fn peek_closed_state_for_scope(
     }
 }
 
+fn collect_closed_bundles_for_recovery(
+    ui: &Ui,
+    scope: &super::ProjectScope,
+    session_id: &str,
+    open_clear_authorities: &[ClearAuthority],
+) -> (Vec<ClosedBundle>, bool) {
+    let mut raw: Vec<ClosedBundle> = Vec::new();
+    let mut explicitly_cleared = false;
+    for (idx, w) in ui.closed.iter().enumerate() {
+        if !scope.matches(w) {
+            continue;
+        }
+        let entry_text = w.drafts.get(session_id);
+        let has_att =
+            w.attachment_drafts.contains(session_id) || w.attachment_parts.contains_key(session_id);
+        if entry_text.is_none() && !has_att {
+            continue;
+        }
+        if entry_text.is_some_and(String::is_empty) && !has_att {
+            raw.clear();
+            explicitly_cleared = true;
+            continue;
+        }
+        let is_restored = ui
+            .closed_restored
+            .get(idx)
+            .is_none_or(|set| set.contains(session_id));
+        if is_restored {
+            let copy = DraftCopy::from_workspace(w, session_id);
+            if copy.is_some()
+                && open_clear_authorities
+                    .iter()
+                    .any(|auth| auth.matches_restored(copy.as_ref()))
+            {
+                continue;
+            }
+        }
+        let derived_from = ui
+            .closed_derived_from
+            .get(idx)
+            .and_then(|map| map.get(session_id))
+            .cloned()
+            .or_else(|| {
+                is_restored
+                    .then(|| DraftCopy::from_workspace(w, session_id))
+                    .flatten()
+            });
+        let bundle = ClosedBundle {
+            closed_idx: idx,
+            text: entry_text.filter(|t| !t.is_empty()).cloned(),
+            attachment_draft: has_att,
+            attachment_parts: w.attachment_parts.get(session_id).cloned(),
+            from_restored: is_restored,
+            derived_from,
+        };
+        if bundle.has_content() {
+            explicitly_cleared = false;
+            raw.push(bundle);
+        }
+    }
+    let mut superseded_origins: Vec<DraftCopy> = Vec::new();
+    for bundle in &raw {
+        if !bundle.from_restored {
+            if let Some(origin) = bundle.derived_from.as_ref() {
+                superseded_origins.push(origin.clone());
+            }
+            if let Some(copy) = bundle.as_copy() {
+                superseded_origins.push(copy);
+            }
+        }
+    }
+    let mut independent = Vec::new();
+    let mut restored = Vec::new();
+    let mut seen_restored: Vec<DraftCopy> = Vec::new();
+    for bundle in raw {
+        if bundle.from_restored {
+            let Some(copy) = bundle.as_copy() else {
+                continue;
+            };
+            if superseded_origins.contains(&copy) || seen_restored.contains(&copy) {
+                continue;
+            }
+            seen_restored.push(copy);
+            restored.push(bundle);
+        } else {
+            independent.push(bundle);
+        }
+    }
+    // Prefer the latest independent draft first (for __no_session_draft__), followed by any
+    // other distinct independent or unrelated restored drafts.
+    independent.reverse();
+    independent.extend(restored);
+    let cleared = explicitly_cleared && independent.is_empty();
+    (independent, cleared)
+}
+
 fn purge_closed_session(
     ui: &mut Ui,
     scope: &crate::workspace::Workspace,
     session_id: &str,
 ) -> bool {
     let mut cleaned = false;
-    for w in ui.closed.iter_mut().filter(|w| same_project(scope, w)) {
+    for (idx, w) in ui.closed.iter_mut().enumerate() {
+        if !same_project(scope, w) {
+            continue;
+        }
         cleaned |= w.drafts.remove(session_id).is_some();
         cleaned |= w.attachment_drafts.remove(session_id);
         cleaned |= w.attachment_parts.remove(session_id).is_some();
+        if let Some(restored) = ui.closed_restored.get_mut(idx) {
+            restored.remove(session_id);
+        }
+        if let Some(derived) = ui.closed_derived_from.get_mut(idx) {
+            derived.remove(session_id);
+        }
     }
     cleaned
 }
@@ -852,46 +1020,55 @@ pub(super) fn recover_missing_session_draft_in(
 
         let project_scope = super::ProjectScope::from_workspace(&scope);
         let mut clear_authorities = collect_open_clear_authorities(ui, &project_scope, session_id);
-        let closed_state =
-            peek_closed_state_for_scope(ui, &project_scope, session_id, &clear_authorities);
-        if closed_state.explicitly_cleared {
+        let (closed_bundles, closed_explicitly_cleared) =
+            collect_closed_bundles_for_recovery(ui, &project_scope, session_id, &clear_authorities);
+        if closed_explicitly_cleared {
             clear_authorities.push(ClearAuthority::Persisted);
         }
 
-        // Recover any authoritative closed-tab draft into the originating tab before purging.
-        let closed_handled = if let Some(bundle) = closed_state.bundle {
-            if let Some(target) = recover_target_key(ui, &scope) {
-                if let Some(entry) = ui.entries.get_mut(origin)
-                    && let Tab::Workspace(saved) = &mut entry.saved
-                {
-                    if let Some(text) = bundle.text
-                        && !text.is_empty()
-                    {
-                        saved.drafts.insert(target.clone(), text);
-                    }
-                    if bundle.attachment_draft || bundle.attachment_parts.is_some() {
-                        saved.attachment_drafts.insert(target.clone());
-                    }
-                    if let Some(parts) = bundle.attachment_parts {
-                        saved.attachment_parts.insert(target.clone(), parts);
-                    }
-                    entry.cleared.remove(&target);
-                    entry.clear_authority.remove(&target);
-                    entry.pending_drafts.remove(&target);
-                    entry.restored_drafts.remove(&target);
-                    entry.derived_from.remove(&target);
-                    entry.superseded_on_delete.remove(&target);
-                    recovered = true;
-                    mutated = true;
-                }
-                true
-            } else {
+        // Recover every distinct surviving closed-tab draft into the originating tab before purging.
+        let mut closed_handled = true;
+        for bundle in closed_bundles {
+            let Some(target) = recover_target_key(ui, &scope) else {
                 ui.entries[origin].pending_deleted.insert(session_id.into());
-                false
+                closed_handled = false;
+                break;
+            };
+            if let Some(entry) = ui.entries.get_mut(origin)
+                && let Tab::Workspace(saved) = &mut entry.saved
+            {
+                if let Some(text) = bundle.text
+                    && !text.is_empty()
+                {
+                    saved.drafts.insert(target.clone(), text);
+                }
+                if bundle.attachment_draft || bundle.attachment_parts.is_some() {
+                    saved.attachment_drafts.insert(target.clone());
+                }
+                if let Some(parts) = bundle.attachment_parts {
+                    saved.attachment_parts.insert(target.clone(), parts);
+                }
+                entry.cleared.remove(&target);
+                entry.clear_authority.remove(&target);
+                entry.pending_drafts.remove(&target);
+                entry.restored_drafts.remove(&target);
+                entry.derived_from.remove(&target);
+                entry.superseded_on_delete.remove(&target);
+                recovered = true;
+                mutated = true;
             }
-        } else {
-            true
-        };
+            if let Some(w) = ui.closed.get_mut(bundle.closed_idx) {
+                w.drafts.remove(session_id);
+                w.attachment_drafts.remove(session_id);
+                w.attachment_parts.remove(session_id);
+            }
+            if let Some(restored) = ui.closed_restored.get_mut(bundle.closed_idx) {
+                restored.remove(session_id);
+            }
+            if let Some(derived) = ui.closed_derived_from.get_mut(bundle.closed_idx) {
+                derived.remove(session_id);
+            }
+        }
 
         if closed_handled {
             mutated |= purge_closed_session(ui, &scope, session_id);

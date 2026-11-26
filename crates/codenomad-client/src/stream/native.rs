@@ -249,6 +249,9 @@ async fn receive_chunk(
             }
             Ok(None) => {}
             Err(err) => {
+                if let Some(quota) = quota {
+                    quota.skipped();
+                }
                 parse_err = Some(err);
                 break;
             }

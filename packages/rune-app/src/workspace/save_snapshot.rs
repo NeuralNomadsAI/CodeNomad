@@ -245,7 +245,7 @@ fn select_mixed_tier(
             };
         }
     }
-    let text_rows: Vec<(u8, usize, usize)> = eligible
+    let mut text_rows: Vec<(u8, usize, usize)> = eligible
         .iter()
         .enumerate()
         .filter_map(|(row, &item_idx)| {
@@ -258,26 +258,17 @@ fn select_mixed_tier(
             } else {
                 item.whole_units
             };
-            (extra_cost > 0).then_some((item.priority, row, extra_cost))
+            (extra_cost > 0 && extra_cost <= remaining).then_some((item.priority, row, extra_cost))
         })
         .collect();
-    const MAX_LEFTOVER_DP_CELLS: usize = 262_144;
-    for prio in (0..=6u8).rev() {
-        if remaining == 0 {
-            break;
-        }
-        let mut tier_rows: Vec<(usize, usize)> = text_rows
-            .iter()
-            .filter_map(|&(p, row, cost)| (p == prio && cost <= remaining).then_some((row, cost)))
-            .collect();
-        if tier_rows.is_empty() {
-            continue;
-        }
-        if tier_rows.len().saturating_mul(remaining + 1) <= MAX_LEFTOVER_DP_CELLS {
+    if remaining > 0 && !text_rows.is_empty() {
+        const MAX_LEFTOVER_DP_CELLS: usize = 262_144;
+        if text_rows.len().saturating_mul(remaining + 1) <= MAX_LEFTOVER_DP_CELLS {
+            text_rows.sort_by_key(|&(prio, _, cost)| (Reverse(prio), Reverse(cost)));
             let mut parent: Vec<Option<usize>> = vec![None; remaining + 1];
             let mut reachable = vec![false; remaining + 1];
             reachable[0] = true;
-            for (idx, &(_, cost)) in tier_rows.iter().enumerate() {
+            for (idx, &(_, _, cost)) in text_rows.iter().enumerate() {
                 for w in (cost..=remaining).rev() {
                     if !reachable[w] && reachable[w - cost] {
                         reachable[w] = true;
@@ -289,18 +280,17 @@ fn select_mixed_tier(
                 .rev()
                 .find(|&weight| reachable[weight])
                 .unwrap_or(0);
-            remaining -= w;
             while w > 0 {
                 let Some(idx) = parent[w] else {
                     break;
                 };
-                let (row, cost) = tier_rows[idx];
+                let (_, row, cost) = text_rows[idx];
                 actions[row] = MixedAction::Keep;
                 w -= cost;
             }
         } else {
-            tier_rows.sort_by_key(|&(_, cost)| Reverse(cost));
-            for (row, cost) in tier_rows {
+            text_rows.sort_by_key(|&(prio, _, cost)| (Reverse(cost), Reverse(prio)));
+            for (_, row, cost) in text_rows {
                 if cost <= remaining {
                     remaining -= cost;
                     actions[row] = MixedAction::Keep;
@@ -573,5 +563,52 @@ mod tests {
             .sum();
         assert_eq!(kept_markers, 100);
         assert_eq!(retained_units, 10_070);
+
+        // R9 Moyen: 300 markers of 100 units, keep_budget = 10_099, three rank-1 texts weighing
+        // 60, 80, and 12_000, and one rank-0 text weighing 39 -> single-pass leftover DP keeps
+        // 100 markers plus BOTH 60 + 39 = 99 (10_099 exact retained units, not 10_080).
+        let cross_items: Vec<TextItem> = (0..300)
+            .map(|i| {
+                let (priority, text_cost) = match i {
+                    0 => (1, 60),
+                    1 => (1, 80),
+                    2 => (1, 12_000),
+                    3 => (0, 39),
+                    _ => (0, 200),
+                };
+                TextItem {
+                    tab: i / 24,
+                    id: format!("ses_cross_{i:03}"),
+                    priority,
+                    text_only_units: text_cost,
+                    whole_units: 100 + text_cost,
+                    has_text: true,
+                    has_attachment: true,
+                }
+            })
+            .collect();
+        let sum_whole: usize = cross_items.iter().map(|it| it.whole_units).sum();
+        let eligible: Vec<usize> = (0..cross_items.len()).collect();
+        let actions =
+            select_mixed_tier(&cross_items, &eligible, sum_whole - 10_099, 0).expect("must fit");
+        let kept_markers = actions
+            .iter()
+            .filter(|&&a| matches!(a, MixedAction::TextOnly | MixedAction::Keep))
+            .count();
+        let retained_units: usize = actions
+            .iter()
+            .enumerate()
+            .map(|(i, a)| match a {
+                MixedAction::Keep => cross_items[i].whole_units,
+                MixedAction::TextOnly => {
+                    cross_items[i].whole_units - cross_items[i].text_only_units
+                }
+                MixedAction::DropWhole => 0,
+            })
+            .sum();
+        assert_eq!(kept_markers, 100);
+        assert_eq!(retained_units, 10_099);
+        assert_eq!(actions[0], MixedAction::Keep);
+        assert_eq!(actions[3], MixedAction::Keep);
     }
 }

@@ -326,6 +326,10 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
             ui.closed_restored.push(keys);
         }
         ui.closed_restored.truncate(ui.closed.len());
+        while ui.closed_derived_from.len() < ui.closed.len() {
+            ui.closed_derived_from.push(Default::default());
+        }
+        ui.closed_derived_from.truncate(ui.closed.len());
         let scope = super::ProjectScope::from_workspace(&saved);
         for id in removed.pending_deleted {
             if !ui
@@ -355,6 +359,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
                     closed_w.attachment_drafts.remove(id);
                     closed_w.attachment_parts.remove(id);
                     ui.closed_restored[idx].remove(id);
+                    ui.closed_derived_from[idx].remove(id);
                 }
             }
             for other in &mut ui.entries {
@@ -372,11 +377,18 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
             .filter(|id| !removed.pending_drafts.contains(*id))
             .cloned()
             .collect();
+        let derived_from: std::collections::BTreeMap<String, super::drafts::DraftCopy> = removed
+            .derived_from
+            .into_iter()
+            .filter(|(id, _)| !removed.pending_drafts.contains(id))
+            .collect();
         ui.closed.push(saved);
         ui.closed_restored.push(restored_keys);
+        ui.closed_derived_from.push(derived_from);
         if ui.closed.len() > 16 {
             ui.closed.remove(0);
             ui.closed_restored.remove(0);
+            ui.closed_derived_from.remove(0);
         }
         let entries = &ui.entries;
         let closed = &ui.closed;
