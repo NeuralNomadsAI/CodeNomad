@@ -141,13 +141,15 @@ pub(crate) fn session_worktree(s: &State, overlays: &mut Vec<El>) -> El {
             if !s.current_scope(&choose_scope) || !git::can_place(s) {
                 return;
             }
-            if let Some(choices) = s
-                .git
-                .owner
-                .as_mut()
-                .and_then(|ui| ui.placement_picker.take())
-                && let Some((_, slug)) = choices.into_iter().find(|(name, _)| name == label)
-            {
+            let chosen = s.git.owner.as_mut().and_then(|ui| {
+                let current = ui.session_slug.clone();
+                let list = ui.placement_picker.take().unwrap_or_else(|| choices(ui));
+                list.into_iter()
+                    .find(|(name, _)| name == label)
+                    .map(|(_, slug)| slug)
+                    .filter(|slug| *slug != current)
+            });
+            if let Some(slug) = chosen {
                 launcher::place(s, slug);
             }
             tx.instant();

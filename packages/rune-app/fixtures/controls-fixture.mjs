@@ -14,11 +14,27 @@ export function controlsFixture({records,stores,streams,project,stats}) {
   const models=[{id:'fixture-model',providerID:'fixture',name:'Synthetic model',enabled:true,variants:[{id:'fast'}],headers:{Authorization:'fixture-never-render-this'}},
     {id:'disabled',providerID:'fixture',name:'Disabled',enabled:false}]
   let failed=false,slow=false,timer,liveText
+  const heldModels=new Set()
+  const releaseHeldModels=()=>{for(const release of [...heldModels])release()}
   const emit=(type,data)=>{for(const stream of streams)stream.write(`data: ${JSON.stringify({id:randomUUID(),type,created:Date.now(),location:{directory:project},data})}\n\n`)}
   return {
     async route(req,url,raw,json,res){
       if(url.pathname==='/api/config'){json([{type:'directory',path:project}]);return true}
-      if(url.pathname==='/api/model') {stats.modelReads=(stats.modelReads??0)+1;if(slow)await new Promise(r=>setTimeout(r,1500));json({location:{directory:project},data:models});return true}
+      if(url.pathname==='/api/model') {
+        stats.modelReads=(stats.modelReads??0)+1
+        if(slow){
+          let release
+          const held=new Promise(resolve=>{
+            release=()=>{if(heldModels.delete(release))resolve()}
+            heldModels.add(release)
+          })
+          res.once('close',release)
+          liveText?.append('holding-catalogue ')
+          await held
+        }
+        if(res.destroyed||res.writableEnded)return true
+        json({location:{directory:project},data:models});return true
+      }
       const match=url.pathname.match(/^\/api\/session\/([^/]+)\/(.*)$/);if(!match)return false
       const [,id,action]=match
       if(action==='prompt') {
@@ -62,11 +78,14 @@ export function controlsFixture({records,stores,streams,project,stats}) {
         forms.splice(index,1);emit(req.method==='DELETE'?'form.cancelled':'form.replied',{sessionID:id,id:request});json({data:{}});return true
       }
       if(action==='interrupt'){assert.deepEqual(JSON.parse(raw),{resume:false});records.get(id).time.idle=Date.now()+1;stats.interrupt=(stats.interrupt??0)+1;
-        clearInterval(timer);liveText.close();slow=false;emit('session.execution.interrupted',{sessionID:id});json({data:{interrupted:true}});return true}
+        if(heldModels.size>0)stats.interruptWhileModelHeld=(stats.interruptWhileModelHeld??0)+1
+        clearInterval(timer);liveText.close();slow=false;emit('session.execution.interrupted',{sessionID:id});
+        json({data:{interrupted:true}});return true}
       if(action==='fixture-slow'){slow=true;json({data:{}});return true}
       return false
     },
-    close(){clearInterval(timer)},
-    done(){assert.deepEqual(stats.decisions,['once','always','reject']);assert.equal(stats.permissionFailures,1);assert.equal(stats.cancelled,'form_cancel');assert.equal(stats.interrupt,1);assert.equal(stats.model.variant,'fast');assert(stats.modelReads<=6,'event refreshes must coalesce')}
+    onStopped(){if(heldModels.size>0)stats.stoppedWhileModelHeld=(stats.stoppedWhileModelHeld??0)+1;releaseHeldModels()},
+    close(){clearInterval(timer);releaseHeldModels()},
+    done(){assert.deepEqual(stats.decisions,['once','always','reject']);assert.equal(stats.permissionFailures,1);assert.equal(stats.cancelled,'form_cancel');assert.equal(stats.interrupt,1);assert.equal(stats.interruptWhileModelHeld,1,'stop request must bypass held model catalogue read');assert.equal(stats.stoppedWhileModelHeld,1,'stop response must reach Rune before held model catalogue is released');assert.equal(stats.model.variant,'fast');assert(stats.modelReads<=6,'event refreshes must coalesce')}
   }
 }

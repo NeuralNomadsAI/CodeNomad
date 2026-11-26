@@ -471,53 +471,62 @@ pub(crate) async fn media_directory_with_slot(
         return Err(native_error());
     }
     // Match TS `worktree-inventory.ts:30-42`, `manager.ts:467-469`, & `native-worktrees.ts:86-96`:
-    // reuse a valid, non-invalidated 10-second inventory snapshot before hitting the daemon; on a
-    // cold/invalidated miss, run `refresh = true` before `worktree.list` so worktrees that require
-    // refresh to become visible succeed on the first read.
-    let timeout = std::time::Duration::from_secs(12);
-    let mut tried_cache = false;
+    // route through the shared 10-second HTTP inventory cache pinned to `endpoint` so media paths
+    // share one publication order, coalescing and invalidation epoch with all other HTTP readers.
     for _ in 0..4 {
         let revision = inventory::revision(app);
-        if !tried_cache {
-            tried_cache = true;
-            let cached = app.linked_events.lock().unwrap().cached_refreshed(workspace.id, endpoint);
-            if let Some(catalogue) = cached {
-                let proof =
-                    catalogue_proof_live_async(catalogue, path.to_path_buf(), external, None, slot.clone()).await;
-                if !current() {
-                    return Err(native_error());
-                }
-                if inventory::revision(app) != revision {
-                    tried_cache = false;
-                    continue;
-                }
-                if proof.is_some() {
-                    return Ok(proof);
-                }
-            }
-        }
-        let catalogue =
-            std::sync::Arc::new(inventory::catalogue_at(app, workspace, true, Some(endpoint), timeout).await?);
+        let hit = inventory::media_http_read(app, workspace, endpoint, inventory::ReadMode::Validated).await?;
         if !current() {
             return Err(native_error());
         }
-        let proof = catalogue_proof_live_async(
-            std::sync::Arc::clone(&catalogue),
-            path.to_path_buf(),
-            external,
-            None,
-            slot.clone(),
-        )
-        .await;
+        let Some(catalogue) = hit.snapshot.catalogue() else {
+            return Ok(None);
+        };
+        let root_live = if hit.from_cache {
+            let cat = std::sync::Arc::clone(&catalogue);
+            let opened = workspace.path.clone();
+            tokio::task::spawn_blocking(move || cat.root_live_for(&opened)).await.unwrap_or(false)
+        } else {
+            true
+        };
+        if !current() {
+            return Err(native_error());
+        }
+        if root_live {
+            let proof = catalogue_proof_live_async(
+                std::sync::Arc::clone(&catalogue),
+                path.to_path_buf(),
+                external,
+                None,
+                slot.clone(),
+            )
+            .await;
+            if !current() {
+                return Err(native_error());
+            }
+            if inventory::revision(app) != revision {
+                continue;
+            }
+            if proof.is_some() || !hit.from_cache || hit.refreshed_on_miss {
+                return Ok(proof);
+            }
+        }
+        let retry_mode =
+            if root_live { inventory::ReadMode::RefreshOnMiss(hit.generation) } else { inventory::ReadMode::Fresh };
+        let refreshed = inventory::media_http_read(app, workspace, endpoint, retry_mode).await?;
+        if !current() {
+            return Err(native_error());
+        }
+        let Some(catalogue) = refreshed.snapshot.catalogue() else {
+            return Ok(None);
+        };
+        let proof = catalogue_proof_live_async(catalogue, path.to_path_buf(), external, None, slot.clone()).await;
         if !current() {
             return Err(native_error());
         }
         if inventory::revision(app) != revision {
             continue;
         }
-        // Keep refreshed HTTP inventories strictly separate from the non-refresh SSE routing cache
-        // (`(workspace.id, false)`), matching TS `manager.ts:467-503`.
-        crate::worktrees::inventory::store_if_current(app, workspace.id, true, endpoint, revision, catalogue);
         return Ok(proof);
     }
     Err(native_error())

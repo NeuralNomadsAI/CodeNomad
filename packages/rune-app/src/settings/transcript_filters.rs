@@ -1,6 +1,6 @@
 use super::{
     TranscriptRow,
-    conversation::{picker_name, preset_label, row_label},
+    conversation::{preset_label, row_label},
     transcript_preset::PRESETS,
 };
 use crate::{
@@ -62,29 +62,29 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>, touch: bool) -> El {
         let labels = PRESETS.map(preset_label);
         let preset_open = filters.preset_open.get();
         let current = preset_label(prefs.transcript_preset_display());
-        let name = picker_name(
+        let preset = chrome::transcript_preset_picker(
+            "filters-preset",
             t("settings.behavior.expansionPresets.ariaLabel"),
-            Some(current),
-        );
-        let preset = chrome::transcript_preset_picker("filters-preset", &name, &labels)
-            .current(Some(current))
-            .disabled(disabled)
-            .open(preset_open)
-            .on_toggle(screen::action(&s.input_scope, move |s| {
-                s.settings.transcript_filters.preset_open.set(!preset_open);
-            }))
-            .on_close(screen::action(&s.input_scope, |s| {
-                s.settings.transcript_filters.preset_open.set(false);
-            }))
-            .on_choose(move |s: &mut State, label, _| {
-                s.settings.transcript_filters.preset_open.set(false);
-                if let Some(i) = labels.iter().position(|option| *option == label) {
-                    s.settings
-                        .shared
-                        .borrow_mut()
-                        .set_transcript(None, PRESETS[i]);
-                }
-            });
+            &labels,
+        )
+        .current(Some(current))
+        .disabled(disabled)
+        .open(preset_open)
+        .on_toggle(screen::action(&s.input_scope, move |s| {
+            s.settings.transcript_filters.preset_open.set(!preset_open);
+        }))
+        .on_close(screen::action(&s.input_scope, |s| {
+            s.settings.transcript_filters.preset_open.set(false);
+        }))
+        .on_choose(move |s: &mut State, label, _| {
+            s.settings.transcript_filters.preset_open.set(false);
+            if let Some(i) = labels.iter().position(|option| *option == label) {
+                s.settings
+                    .shared
+                    .borrow_mut()
+                    .set_transcript(None, PRESETS[i]);
+            }
+        });
         let key_scope = scope.clone();
         let body = col()
             .full_width()
@@ -114,13 +114,7 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>, touch: bool) -> El {
                         |s: &mut State| s.settings.shared.borrow_mut().retry_transcript(),
                     ))
             }))
-            .child(chrome::build_picker_accessible(
-                preset,
-                &name,
-                disabled,
-                t("commands.common.disabled"),
-                &mut selects,
-            ))
+            .child(chrome::build_picker(preset, &mut selects))
             .children(TranscriptRow::all().map(|row| {
                 let title = row_label(row);
                 let mode = filters
@@ -229,13 +223,22 @@ fn the_popup_uses_the_active_occurrence_and_dismisses_on_escape() {
         rt.frame(0.02);
         assert!(rt.find("transcript-filters").is_some());
         assert!(rt.find("filters-preset-trigger").is_some());
-        let preset = rt
-            .elements()
-            .into_iter()
-            .find(|node| node.key.as_deref() == Some("filters-preset-trigger"))
-            .unwrap();
+        let tree = rt.accessibility_json();
+        fn find<'a>(node: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+            if node["key"] == key {
+                return Some(node);
+            }
+            node["children"]
+                .as_array()?
+                .iter()
+                .find_map(|child| find(child, key))
+        }
+        let preset = find(&tree, "filters-preset-trigger").unwrap();
+        let expected_name =
+            crate::strings::with_locale("en", || t("settings.behavior.expansionPresets.ariaLabel"));
         let expected = crate::strings::with_locale("en", || preset_label("balanced"));
-        assert!(preset.label.unwrap_or_default().contains(expected));
+        assert_eq!(preset["name"], expected_name);
+        assert_eq!(preset["value"], expected);
     }
     open(&mut rt);
     let escape = KeyEvent {
@@ -296,4 +299,179 @@ fn the_popup_uses_the_active_occurrence_and_dismisses_on_escape() {
     rt.update(|s, _| crate::chat::suspend(s));
     rt.frame(0.02);
     assert!(rt.find("transcript-filters").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn preset_exposes_accessible_value_and_escape_closes_list_before_popup() {
+    use rune::{Env, Key, KeyEvent, Runtime};
+
+    fn a11y_node<'a>(node: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+        if node["key"] == key {
+            return Some(node);
+        }
+        node["children"]
+            .as_array()?
+            .iter()
+            .find_map(|child| a11y_node(child, key))
+    }
+
+    let mut s = crate::init();
+    s.phase = crate::Phase::Ready;
+    {
+        let mut prefs = s.settings.shared.borrow_mut();
+        prefs.fixture();
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:1").unwrap());
+    }
+    let mut rt = Runtime::new(
+        s,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (960.0, 760.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.02);
+
+    let (x, y) = rt.find(TRIGGER).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.find("transcript-filters").is_some());
+
+    let expected_label =
+        crate::strings::with_locale("en", || t("settings.behavior.expansionPresets.ariaLabel"));
+    let balanced = crate::strings::with_locale("en", || preset_label("balanced"));
+    let everything = crate::strings::with_locale("en", || preset_label("everything"));
+    let custom = crate::strings::with_locale("en", || preset_label("custom"));
+
+    // #1676: AccessKit and web mirror expose the clean label and current value separately.
+    let assert_preset_a11y = |rt: &Runtime<State>, value: &str, open: bool| {
+        let tree = rt.accessibility_json();
+        let node = a11y_node(&tree, "filters-preset-trigger").expect("missing preset trigger");
+        assert_eq!(node["role"], "combo-box");
+        assert_eq!(node["name"], expected_label);
+        assert_eq!(node["value"], value);
+        let states = node["states"].to_string();
+        assert!(
+            states.contains(if open { "expanded" } else { "collapsed" }),
+            "{states}"
+        );
+
+        let mirror: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+        let combo = mirror
+            .iter()
+            .find(|item| item["t"] == expected_label && item["o"] == "combobox")
+            .unwrap_or_else(|| panic!("missing combobox in web mirror: {mirror:?}"));
+        assert_eq!(combo["v"], value);
+        assert_eq!(combo["x"], open);
+    };
+
+    assert_preset_a11y(&rt, balanced, false);
+
+    // Open the preset dropdown list, then verify Escape closes only the list before the popup.
+    let (px, py) = rt.find("filters-preset-trigger").unwrap();
+    rt.pointer_down(px, py);
+    rt.pointer_up(px, py);
+    rt.frame(0.02);
+    assert!(rt.state.settings.transcript_filters.preset_open.get());
+    assert!(rt.find("filters-preset-content").is_some());
+    assert_preset_a11y(&rt, balanced, true);
+
+    let press_escape = |rt: &mut Runtime<State>| {
+        let esc = KeyEvent {
+            key: Key::Escape,
+            mods: Default::default(),
+        };
+        rt.key(esc.clone());
+        rt.key_up(esc);
+        rt.frame(0.02);
+    };
+
+    // First Escape closes only the preset listbox and returns focus to the preset trigger.
+    press_escape(&mut rt);
+    assert!(!rt.state.settings.transcript_filters.preset_open.get());
+    assert!(rt.find("filters-preset-content").is_none());
+    assert!(
+        rt.find("transcript-filters").is_some(),
+        "first Escape must keep Message content popup open"
+    );
+    assert_preset_a11y(&rt, balanced, false);
+    let after_list_esc = rt.accessibility_json();
+    assert!(
+        a11y_node(&after_list_esc, "filters-preset-trigger").unwrap()["states"]
+            .to_string()
+            .contains("focused"),
+        "closing preset list with Escape must return focus to filters-preset-trigger"
+    );
+
+    // Selecting a preset updates the accessible value while keeping the popup open.
+    let (px, py) = rt.find("filters-preset-trigger").unwrap();
+    rt.pointer_down(px, py);
+    rt.pointer_up(px, py);
+    rt.frame(0.02);
+    let everything_option = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.role == "option" && el.label.as_deref() == Some(everything))
+        .expect("missing Everything preset option");
+    let [ox, oy, ow, oh] = everything_option.rect;
+    rt.pointer_down(ox + ow / 2.0, oy + oh / 2.0);
+    rt.pointer_up(ox + ow / 2.0, oy + oh / 2.0);
+    rt.frame(0.02);
+    assert!(!rt.state.settings.transcript_filters.preset_open.get());
+    assert!(rt.find("transcript-filters").is_some());
+    assert_preset_a11y(&rt, everything, false);
+
+    // A manual row change switches the accessible value to Custom without polluting the name.
+    rt.update(|s, _| {
+        s.settings
+            .shared
+            .borrow_mut()
+            .set_transcript(Some(TranscriptRow::Diagnostics), "hidden");
+    });
+    rt.frame(0.02);
+    assert_preset_a11y(&rt, custom, false);
+
+    // Second Escape closes the Message content popup and returns focus to its trigger.
+    press_escape(&mut rt);
+    assert!(rt.find("transcript-filters").is_none());
+    let after_popup_esc = rt.accessibility_json();
+    assert!(
+        a11y_node(&after_popup_esc, TRIGGER).unwrap()["states"]
+            .to_string()
+            .contains("focused"),
+        "closing Message content popup with Escape must return focus to trigger"
+    );
+
+    // Consecutive Escapes right after keyboard-opening the preset list close the list first,
+    // then the popup, returning focus at each step.
+    let (x, y) = rt.find(TRIGGER).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    rt.update(|_, tx| tx.focus("filters-preset-trigger", true));
+    rt.frame(0.02);
+    let enter = KeyEvent {
+        key: Key::Enter,
+        mods: Default::default(),
+    };
+    rt.key(enter.clone());
+    rt.key_up(enter);
+    rt.frame(0.02);
+    assert!(rt.find("filters-preset-content").is_some());
+    press_escape(&mut rt);
+    assert!(rt.find("filters-preset-content").is_none());
+    assert!(rt.find("transcript-filters").is_some());
+    assert!(
+        a11y_node(&rt.accessibility_json(), "filters-preset-trigger").unwrap()["states"]
+            .to_string()
+            .contains("focused")
+    );
+    press_escape(&mut rt);
+    assert!(rt.find("transcript-filters").is_none());
+    assert!(
+        a11y_node(&rt.accessibility_json(), TRIGGER).unwrap()["states"]
+            .to_string()
+            .contains("focused")
+    );
 }

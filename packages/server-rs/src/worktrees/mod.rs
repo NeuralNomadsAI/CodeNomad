@@ -11,6 +11,10 @@ pub(crate) fn inventory_revision(app: &App) -> u64 {
     inventory::revision(app)
 }
 
+pub(crate) fn event_inventory_revision(app: &App, workspace_id: uuid::Uuid) -> (u64, u64) {
+    inventory::event_revision(app, workspace_id)
+}
+
 pub fn routes() -> axum::Router<Shared> {
     use axum::routing::{delete, get, post};
     axum::Router::new()
@@ -27,7 +31,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::{io::ErrorKind, time::Duration};
+use std::io::ErrorKind;
 
 use crate::{App, Error, Shared, Workspace, error};
 
@@ -37,13 +41,8 @@ pub struct Input {
     fresh: Option<String>,
 }
 
-fn probe_error() -> Error {
+pub(super) fn probe_error() -> Error {
     error(Status::SERVICE_UNAVAILABLE, "Git ownership could not be verified")
-}
-async fn git(workspace: &Workspace, args: &[&str]) -> Result<std::process::Output, std::io::Error> {
-    let _slot = crate::git::slot().await;
-    let mut git = crate::git::command(&workspace.path, args);
-    tokio::time::timeout(Duration::from_secs(3), git.output()).await?
 }
 
 pub async fn root_only(workspace: &Workspace) -> Result<Option<bool>, Error> {
@@ -65,16 +64,16 @@ pub(crate) async fn root_only_with_slot(
         crate::bench::route_trace(format_args!("root-proof canonical path changed"));
         return Err(probe_error());
     }
-    match git(workspace, &["rev-parse", "--show-toplevel"]).await {
-        Ok(output) if output.status.success() => Ok(None),
-        Ok(output) if String::from_utf8_lossy(&output.stderr).contains("not a git repository") => Ok(Some(true)),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(Some(false)),
+    match crate::git::run(&workspace.path, &["rev-parse", "--show-toplevel"], 16 * 1024).await {
+        Ok(output) if output.code == 0 => Ok(None),
+        Ok(output) if output.code == 128 && output.stderr_contains("not a git repository") => Ok(Some(true)),
+        Err(err) if crate::git::is_missing_git(&err) => Ok(Some(false)),
         Ok(output) => {
-            crate::bench::route_trace(format_args!("root-proof git exited {:?}", output.status.code()));
+            crate::bench::route_trace(format_args!("root-proof git exited {}", output.code));
             Err(probe_error())
         }
-        Err(err) => {
-            crate::bench::route_trace(format_args!("root-proof git failed: {:?}", err.kind()));
+        Err(_) => {
+            crate::bench::route_trace(format_args!("root-proof git failed"));
             Err(probe_error())
         }
     }
@@ -137,14 +136,45 @@ pub(super) async fn strict_non_git_workspace(workspace: &Workspace) -> Result<bo
 }
 
 pub async fn exact_root_supported(app: &App, workspace: &Workspace) -> Result<bool, Error> {
-    Ok(root_only(workspace).await?.is_some() || inventory::root_supported(app, workspace).await)
+    match inventory::probe_root_checkout(workspace).await? {
+        inventory::RootCheckout::NonGit | inventory::RootCheckout::MissingGit => Ok(true),
+        inventory::RootCheckout::Git(Err(_)) => Ok(false),
+        inventory::RootCheckout::Git(Ok(local)) => Ok(inventory::root_supported_with(app, workspace, *local).await),
+    }
 }
 
 pub async fn native_project(app: &App, workspace: &Workspace, project: &str) -> Result<bool, Error> {
     if !crate::opencode::valid_id(project) || project == "global" {
         return Ok(false);
     }
-    Ok(crate::worktrees::linked::catalogue(app, workspace, false).await.is_ok_and(|c| c.project == project))
+    let hit = match inventory::http_read(app, workspace, inventory::ReadMode::Validated).await {
+        Ok(hit) => hit,
+        Err(_) => return Ok(false),
+    };
+    let check_live = |cat: &std::sync::Arc<linked::Catalogue>, path: &std::path::Path| {
+        let cat = std::sync::Arc::clone(cat);
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || cat.root_live_for(&path))
+    };
+    if let inventory::HttpSnapshot::Git(cat) = hit.snapshot {
+        let live = !hit.from_cache || check_live(&cat, &workspace.path).await.unwrap_or(false);
+        if live {
+            if cat.project == project {
+                return Ok(true);
+            }
+            if !hit.from_cache || hit.refreshed_on_miss {
+                return Ok(false);
+            }
+        }
+        let retry_mode =
+            if live { inventory::ReadMode::RefreshOnMiss(hit.generation) } else { inventory::ReadMode::Fresh };
+        let refreshed = match inventory::http_read(app, workspace, retry_mode).await {
+            Ok(res) => res,
+            Err(_) => return Ok(false),
+        };
+        return Ok(refreshed.snapshot.catalogue().is_some_and(|c| c.project == project));
+    }
+    Ok(false)
 }
 
 pub async fn list(
@@ -157,36 +187,12 @@ pub async fn list(
         return Err(error(Status::BAD_REQUEST, "Invalid worktree query"));
     }
     let workspace = app.workspace(&id)?;
-    let Some(git) = root_only(&workspace).await? else {
-        let fresh = input.fresh.as_deref() != Some("false");
-        let endpoint = app
-            .native
-            .acquire(tokio::time::Instant::now() + Duration::from_secs(12))
-            .await
-            .map_err(|_| crate::opencode::upstream_error())?;
-        // Match TS `worktree-inventory.ts:61-85`: discard any scan invalidated by a concurrent
-        // `worktree.updated` event and retry until a current inventory settles.
-        for _ in 0..4 {
-            let revision = inventory::revision(&app);
-            let catalogue = std::sync::Arc::new(
-                inventory::catalogue_at(&app, &workspace, fresh, Some(&endpoint), Duration::from_secs(12)).await?,
-            );
-            if inventory::revision(&app) != revision {
-                continue;
-            }
-            // Store under `(workspace.id, fresh)` only so `fresh = true` scans never populate
-            // the separate non-refresh SSE routing cache `(workspace.id, false)` (TS `manager.ts:467-503`).
-            inventory::store_if_current(
-                &app,
-                workspace.id,
-                fresh,
-                &endpoint,
-                revision,
-                std::sync::Arc::clone(&catalogue),
-            );
-            return Ok(Json(catalogue.response()).into_response());
-        }
-        return Err(crate::opencode::upstream_error());
+    let mode =
+        if input.fresh.as_deref() == Some("true") { inventory::ReadMode::Fresh } else { inventory::ReadMode::Cached };
+    let git = match inventory::http_list(&app, &workspace, mode).await? {
+        inventory::HttpSnapshot::Git(catalogue) => return Ok(Json(catalogue.response()).into_response()),
+        inventory::HttpSnapshot::NonGit => true,
+        inventory::HttpSnapshot::MissingGit => false,
     };
     app.workspace(&id)?;
     let mut root = json!({"slug":"root","kind":"root","directory":workspace.path,"serviceDirectory":workspace.location["directory"]});
@@ -220,10 +226,37 @@ pub async fn owns_event(app: &Shared, w: &Workspace, directory: &str) -> bool {
     ownership::catalogue_owns_event(catalogue, path, external).await
 }
 
+#[derive(Clone)]
+pub struct VerifiedPlacement {
+    pub slug: String,
+    tree: Option<linked::Tree>,
+}
+
+impl VerifiedPlacement {
+    /// Re-verifies live ownership of `directory` against the already-validated checkout
+    /// (`owns()` parity without repeating `catalogue()`).
+    pub fn owns_now(&self, scope: &std::path::Path, w: &Workspace, directory: &str) -> bool {
+        if w.location["directory"] == directory && dunce::canonicalize(directory).ok().as_ref() == Some(&w.path) {
+            return true;
+        }
+        let Some(tree) = &self.tree else { return false };
+        let Some(path) = crate::files::paths::canonical(scope, directory) else { return false };
+        path.starts_with(scope) && tree.owns_path(&path)
+    }
+}
+
 /// Owned session location with its list slug (TS `resolveLocationPlacement`).
 /// `Err(true)` only when a fresh read proves another owner; an unreadable
 /// path or inventory is `Err(false)`, which denies without claiming departure.
 pub async fn placement(app: &App, w: &Workspace, location: &serde_json::Value) -> Result<String, bool> {
+    placement_verified(app, w, location).await.map(|p| p.slug)
+}
+
+pub async fn placement_verified(
+    app: &App,
+    w: &Workspace,
+    location: &serde_json::Value,
+) -> Result<VerifiedPlacement, bool> {
     let Some(directory) = location["directory"].as_str() else { return Err(false) };
     if location.get("workspaceID").is_some() {
         return Err(true);
@@ -239,29 +272,58 @@ pub async fn placement(app: &App, w: &Workspace, location: &serde_json::Value) -
         return Err(false);
     };
     if w.location["directory"] == directory && path == w.path {
-        return Ok("root".into());
+        return Ok(VerifiedPlacement { slug: "root".into(), tree: None });
     }
     let owned = if path.starts_with(&app.scope) {
-        match crate::worktrees::linked::catalogue(app, w, false).await {
-            Ok(c) => {
-                let dir_owned = directory.to_owned();
-                tokio::task::spawn_blocking(move || c.by_directory(&dir_owned).map(|t| t.slug.clone()))
-                    .await
-                    .unwrap_or(None)
-            }
+        match lookup_owned_tree(app, w, directory).await {
+            Ok(tree) => tree,
             // Without a Git catalogue only the opened folder is authority, and
             // the reference's strict read reaches no verdict elsewhere.
-            Err(_) => return Err(false),
+            Err(()) => return Err(false),
         }
     } else {
         None
     };
-    if let Some(slug) = owned {
-        return Ok(slug);
+    if let Some(tree) = owned {
+        return Ok(VerifiedPlacement { slug: tree.slug.clone(), tree: Some(tree) });
     }
     // The reference owns subfolders of the opened checkout (closed here), and
     // its strict read fails rather than refuses for a non-Git folder.
     Err(!path.starts_with(&w.path) && crate::worktrees::linked::readable_checkout(&path).await)
+}
+
+async fn lookup_owned_tree(app: &App, w: &Workspace, directory: &str) -> Result<Option<linked::Tree>, ()> {
+    let hit = inventory::http_read(app, w, inventory::ReadMode::Validated).await.map_err(|_| ())?;
+    let Some(cat) = hit.snapshot.catalogue() else {
+        return Err(());
+    };
+    let (found, root_live) = {
+        let cat = std::sync::Arc::clone(&cat);
+        let dir = directory.to_owned();
+        let opened = w.path.clone();
+        let check_root = hit.from_cache;
+        tokio::task::spawn_blocking(move || {
+            let live = !check_root || cat.root_live_for(&opened);
+            let tree = if live { cat.by_directory(&dir).cloned() } else { None };
+            (tree, live)
+        })
+        .await
+        .unwrap_or((None, false))
+    };
+    if found.is_some() {
+        return Ok(found);
+    }
+    if hit.from_cache && (!root_live || !hit.refreshed_on_miss) {
+        let retry_mode =
+            if root_live { inventory::ReadMode::RefreshOnMiss(hit.generation) } else { inventory::ReadMode::Fresh };
+        let fresh = inventory::http_read(app, w, retry_mode).await.map_err(|_| ())?;
+        let Some(cat) = fresh.snapshot.catalogue() else {
+            return Err(());
+        };
+        let dir = directory.to_owned();
+        return Ok(tokio::task::spawn_blocking(move || cat.by_directory(&dir).cloned()).await.unwrap_or(None));
+    }
+    Ok(None)
 }
 
 pub async fn owns(app: &App, w: &Workspace, directory: &str) -> bool {
@@ -271,5 +333,8 @@ pub async fn owns(app: &App, w: &Workspace, directory: &str) -> bool {
     if !crate::files::paths::canonical(&app.scope, directory).is_some_and(|path| path.starts_with(&app.scope)) {
         return false;
     }
-    crate::worktrees::linked::catalogue(app, w, false).await.ok().is_some_and(|c| c.by_directory(directory).is_some())
+    lookup_owned_tree(app, w, directory).await.ok().flatten().is_some()
 }
+
+#[cfg(test)]
+mod root_probe_tests;

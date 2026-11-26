@@ -190,6 +190,7 @@ function clientOutput(chunk) {
     if(filesState&&ack.type==='files-state-proof'){filesProof=ack;continue}
     if(restoreState&&ack.type==='window-restore-stage'){restoreStages.push(ack);continue}
     if(restoreState&&ack.type==='window-restore-stream-visible'){visibleProof.push(ack);continue}
+    if(controls&&ack.type==='controls-stopped'){control.onStopped();continue}
     if(ack.type!=='launcher-stream-visible')continue
     const gate=gates.get(ack.turn)
     if(!gate||ack.assistantMessageID!==gate.replyID||ack.phase!=='Streaming'||ack.afterTool!==withTools){for(const item of gates.values())item.reject();continue}

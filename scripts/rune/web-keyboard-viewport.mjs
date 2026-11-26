@@ -83,7 +83,7 @@ export async function keyboardViewport(page, m, {kind, prefix, heading, headerHe
   const stackPoint = async () => {
     const {top} = await paneGeometry()
     const {height} = page.viewportSize()
-    for (const candidate of [button('rune.model'), primary, send]) {
+    for (const candidate of [button('rune.model'), primary, send, controls]) {
       if (await candidate.count() === 0) continue
       const box = await candidate.boundingBox().catch(() => null)
       if (!box) continue
@@ -263,13 +263,37 @@ export async function keyboardViewport(page, m, {kind, prefix, heading, headerHe
   }
   const assertComposerVisibleInViewport = async before => {
     const {width} = page.viewportSize()
-    const after = await composerGeometry()
+    // Post-resize/scroll accessibility mirror updates defer off rAF for SCROLL_SETTLE + IDLE_TIMEOUT (#1670).
+    const deadline = Date.now() + 1500
+    let after = null
+    let editorHeight = 0
+    let visibleTop = 0
+    let visibleBottom = 0
+    let visibleHeight = -Infinity
+    while (true) {
+      after = await composerGeometry()
+      const boxesReady = Boolean(after.fieldBox && after.sendBox && after.firstFooterTop !== null && after.firstFooterTop > after.fieldBox.y)
+      if (boxesReady) {
+        editorHeight = after.editorBottom - after.editorTop
+        visibleTop = Math.max(after.paneTop, after.editorTop)
+        visibleBottom = Math.min(after.height, after.editorBottom)
+        visibleHeight = visibleBottom - visibleTop
+        const visibleOk = editorHeight > 0 && visibleHeight >= Math.min(20, editorHeight - 1)
+        const caretOk = Boolean(after.caretBox && after.caretBox.height > 0
+          && after.caretBox.x >= Math.max(0, after.fieldBox.x) - 1
+          && after.caretBox.x + after.caretBox.width <= Math.min(width, after.fieldBox.x + after.fieldBox.width) + 1
+          && after.caretBox.y >= after.paneTop - 1
+          && after.caretBox.y + after.caretBox.height <= after.height + 1
+          && after.caretBox.y >= after.editorTop - 1
+          && after.caretBox.y + after.caretBox.height <= after.editorBottom + 1)
+        if (visibleOk && caretOk) break
+      }
+      if (Date.now() >= deadline) break
+      await page.waitForTimeout(50)
+      await paint()
+    }
     assert(after.fieldBox && after.sendBox && after.firstFooterTop !== null && after.firstFooterTop > after.fieldBox.y,
       `${kind}: composer box unavailable after resize: ${JSON.stringify({before, after})}`)
-    const editorHeight = after.editorBottom - after.editorTop
-    const visibleTop = Math.max(after.paneTop, after.editorTop)
-    const visibleBottom = Math.min(after.height, after.editorBottom)
-    const visibleHeight = visibleBottom - visibleTop
     assert(editorHeight > 0 && visibleHeight >= Math.min(20, editorHeight - 1),
       `${kind}: focused composer must remain visible after resize without manual scrolling: ${JSON.stringify({before, after, visibleHeight})}`)
     assert(after.caretBox && after.caretBox.height > 0

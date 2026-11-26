@@ -16,7 +16,9 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let worktree = git::session_worktree(s, &mut overlays);
     overlays.extend(super::media::preview(s));
     super::message_actions::overlays(s, &mut overlays);
-    let has_controls = !git::has_preview(s) && !crate::files::has_preview(s);
+    let has_controls = !git::has_preview(s)
+        && !crate::files::has_preview(s)
+        && !crate::workspace::mission_has_reader(s);
     let controls = has_controls.then(|| {
         layout::action_row().key("transcript-controls").child(
             crate::settings::transcript_filters::trigger(s, &mut overlays, cx.touch_controls()),

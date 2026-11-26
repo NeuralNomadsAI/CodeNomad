@@ -177,9 +177,9 @@ impl Setting {
 
 pub(super) fn view<S: 'static>(
     prefs: &Preferences,
-    help_failed: bool,
+    help: &super::ExternalLink,
     apply: impl Fn(&mut S, Option<bool>) + Clone + 'static,
-    help_error: impl Fn(&mut S, bool) + 'static,
+    help_link: fn(&mut S) -> Option<&mut super::ExternalLink>,
     open: impl Fn(&mut S, review::Edit) + Clone + 'static,
     review_action: impl Fn(&mut S, review::Action) + Clone + 'static,
 ) -> El {
@@ -190,7 +190,11 @@ pub(super) fn view<S: 'static>(
         "https://neuralnomadsai.github.io/CodeNomad/{}/settings.html#agent-memory",
         locale()
     );
-    let info = chrome::info_link(hint, move |s, tx| help_error(s, tx.open_url(&url).is_err()));
+    let info = chrome::info_link(hint, move |s, tx| {
+        if let Some(link) = help_link(s) {
+            link.open(&url, tx, help_link);
+        }
+    });
     let next = !setting.current.unwrap_or(false);
     let set = apply.clone();
     let enabled = prefs.can_retry() && !setting.busy() && setting.current.is_some();
@@ -215,7 +219,10 @@ pub(super) fn view<S: 'static>(
                         move |s| apply(s, None),
                     ))
             }))
-            .children(help_failed.then(|| text(t("commands.openHelp.failed")).role("alert").wrap()))
+            .children(
+                help.failed()
+                    .then(|| text(t("commands.openHelp.failed")).role("alert").wrap()),
+            )
             .children(
                 (setting.current == Some(true) && prefs.can_retry()).then(|| {
                     setting

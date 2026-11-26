@@ -34,6 +34,8 @@ fn paste(rt: &mut Runtime<State>) {
         },
         pressed: true,
         repeat: false,
+        text: None,
+        consumed_mods: Mods::default(),
     });
     rt.frame(0.0);
 }

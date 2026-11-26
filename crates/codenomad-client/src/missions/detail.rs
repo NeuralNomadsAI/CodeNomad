@@ -1,5 +1,5 @@
 use super::{
-    Attention, ControlReceipt, RunState, Status,
+    Attention, BodyDescriptor, ControlReceipt, RunState, Status,
     codec::{RevisionChanged, decode_row},
     directory::{DirectoryChanged, PageRead, Source, Verified, digest_id, panel_id},
 };
@@ -43,32 +43,55 @@ pub struct Task {
     late_report_count: Option<u64>,
     report: Option<Report>,
     #[serde(default)]
-    bodies: HashMap<String, Body>,
+    bodies: HashMap<String, BodyDescriptor>,
     #[serde(flatten)]
     extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct Report {
-    id: String,
-    task_key: String,
-    session_id: String,
-    outcome: Outcome,
-    created_at: u64,
+pub struct Report {
+    pub id: String,
+    pub task_key: String,
+    pub session_id: String,
+    pub outcome: ReportOutcome,
+    pub created_at: u64,
     #[serde(flatten)]
     extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
-enum Outcome {
+pub enum ReportOutcome {
     Completed,
     Blocked,
     Failed,
 }
 
 impl Report {
+    pub fn body(&self, field: &str) -> Option<BodyDescriptor> {
+        let value = self.extra.get("bodies")?.get(field)?;
+        serde_json::from_value(value.clone()).ok()
+    }
+
+    pub fn excerpt(&self) -> Option<&str> {
+        self.extra.get("excerpt").and_then(Value::as_str)
+    }
+
+    pub fn is_late(&self) -> bool {
+        self.extra
+            .get("late")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
+    pub fn native_call_generation(&self) -> Option<u64> {
+        self.extra
+            .get("nativeCall")
+            .and_then(|value| value.get("generation"))
+            .and_then(Value::as_u64)
+    }
+
     fn valid(&self) -> bool {
         panel_id(&self.id)
             && panel_id(&self.session_id)
@@ -79,7 +102,7 @@ impl Report {
                 .get("excerpt")
                 .is_none_or(|value| value.as_str().is_some_and(|text| units(text) <= 482))
             && self.extra.get("bodies").is_none_or(|value| {
-                serde_json::from_value::<HashMap<String, Body>>(value.clone())
+                serde_json::from_value::<HashMap<String, BodyDescriptor>>(value.clone())
                     .is_ok_and(|bodies| valid_bodies(&bodies))
             })
             && !["summary", "evidence", "next", "artifact"]
@@ -87,7 +110,7 @@ impl Report {
                 .any(|key| self.extra.contains_key(*key))
     }
 
-    fn same_compact_report(&self, other: &Self) -> bool {
+    pub fn same_compact_report(&self, other: &Self) -> bool {
         self.task_key == other.task_key
             && self.session_id == other.session_id
             && self.outcome == other.outcome
@@ -142,7 +165,7 @@ impl TaskPage {
 pub struct TaskWindow {
     pub task_page: TaskPage,
     pub tasks: Vec<Task>,
-    reports: Vec<Report>,
+    pub reports: Vec<Report>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,9 +188,19 @@ pub struct Header {
     updated_at: f64,
     #[serde(rename = "historyTruncated")]
     _history_truncated: bool,
-    bodies: HashMap<String, Body>,
+    bodies: HashMap<String, BodyDescriptor>,
     #[serde(flatten)]
     extra: HashMap<String, Value>,
+}
+
+impl Header {
+    pub fn project_id(&self) -> &str {
+        &self.project
+    }
+
+    pub fn body(&self, field: &str) -> Option<&BodyDescriptor> {
+        self.bodies.get(field)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,13 +211,6 @@ enum Template {
     Wayfinder,
     Delivery,
     Compare,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Body {
-    characters: u64,
-    digest: String,
 }
 
 #[derive(Deserialize)]
@@ -258,7 +284,7 @@ impl Backend {
         if offset > SAFE {
             return invalid();
         }
-        task_read(self, project, header, offset, None, false)
+        task_read(self, project, header, TaskQuery::Window(offset))
     }
 
     pub fn mission_task_pins(
@@ -270,10 +296,31 @@ impl Backend {
             self,
             project,
             header,
-            0,
-            Some((&header.tasks.pins, &header.tasks.report_pins)),
-            false,
+            TaskQuery::Pins {
+                ids: header.tasks.pins.clone(),
+                reports: header.tasks.report_pins.clone(),
+            },
         )
+    }
+
+    pub fn mission_task_lookup(
+        &self,
+        project: &str,
+        header: &MapHeader,
+        task_id: Option<&str>,
+        task_key: Option<&str>,
+    ) -> Result<DetailRead<TaskWindow>> {
+        let query = match (
+            task_id.filter(|s| !s.is_empty()),
+            task_key.filter(|s| !s.is_empty()),
+        ) {
+            (Some(id), _) if panel_id(id) => TaskQuery::LookupId(id.to_owned()),
+            (None, Some(key)) if panel_id(key) && units(key) <= 64 => {
+                TaskQuery::LookupKey(key.to_owned())
+            }
+            _ => return invalid(),
+        };
+        task_read(self, project, header, query)
     }
 
     pub fn mission_task_attention(
@@ -292,17 +339,26 @@ impl Backend {
         {
             return invalid();
         }
-        task_read(self, project, header, offset, None, true)
+        task_read(self, project, header, TaskQuery::Attention(offset))
     }
+}
+
+enum TaskQuery {
+    Window(u64),
+    Attention(u64),
+    Pins {
+        ids: Vec<String>,
+        reports: Vec<String>,
+    },
+    LookupId(String),
+    LookupKey(String),
 }
 
 fn task_read(
     backend: &Backend,
     project: &str,
     header: &MapHeader,
-    offset: u64,
-    pins: Option<(&[String], &[String])>,
-    attention: bool,
+    query: TaskQuery,
 ) -> Result<DetailRead<TaskWindow>> {
     let mission = &header.root.id;
     let order = header.tasks.page.order.clone();
@@ -310,12 +366,16 @@ fn task_read(
     let total = header.tasks.page.total;
     let reports = header.tasks.page.reports;
     let counts = header.tasks.page.counts.clone();
-    let task = match pins {
-        Some((ids, reports)) => {
+    let task = match &query {
+        TaskQuery::Pins { ids, reports } => {
             json!({"missionID":mission,"order":order,"ids":ids,"reportIds":reports})
         }
-        None if attention => json!({"missionID":mission,"order":order,"attention":offset}),
-        None => json!({"missionID":mission,"order":order,"offset":offset}),
+        TaskQuery::LookupId(id) => json!({"missionID":mission,"order":order,"ids":[id]}),
+        TaskQuery::LookupKey(key) => json!({"missionID":mission,"order":order,"keys":[key]}),
+        TaskQuery::Attention(offset) => {
+            json!({"missionID":mission,"order":order,"attention":offset})
+        }
+        TaskQuery::Window(offset) => json!({"missionID":mission,"order":order,"offset":offset}),
     };
     let read = PageRead::selected(
         backend,
@@ -324,7 +384,6 @@ fn task_read(
         mission,
         json!({"source":"tasks","task":task}),
     )?;
-    let pins = pins.map(|(ids, reports)| (ids.to_vec(), reports.to_vec()));
     let base = header.tasks.page.attention.clone();
     let excluded = header.tasks.pins.clone();
     Ok(DetailRead {
@@ -337,10 +396,11 @@ fn task_read(
             if row.task_page.order != order {
                 return Err(DirectoryChanged.into());
             }
+            let attention = matches!(query, TaskQuery::Attention(_));
             if row.task_page.total != total
                 || row.task_page.reports != reports
                 || row.task_page.counts != counts
-                || !valid_tasks(&row, offset, pins.as_ref(), attention.then_some(offset))
+                || !valid_tasks(&row, &query)
                 || attention && !super::attention::matches_page(base.as_ref(), &row, &excluded)
             {
                 return invalid();
@@ -433,24 +493,24 @@ fn valid_attention(page: &TaskPage, offset: Option<u64>) -> bool {
     })
 }
 
-fn valid_tasks(
-    row: &TaskWindow,
-    offset: u64,
-    pins: Option<&(Vec<String>, Vec<String>)>,
-    attention: Option<u64>,
-) -> bool {
+fn valid_tasks(row: &TaskWindow, query: &TaskQuery) -> bool {
     let page = &row.task_page;
-    if !page.valid(
-        if attention.is_some() { 0 } else { offset },
-        pins.is_some() || attention.is_some(),
-    ) || !valid_attention(page, attention)
+    let (offset, named, attention) = match query {
+        TaskQuery::Window(offset) => (*offset, false, None),
+        TaskQuery::Attention(offset) => (0, true, Some(*offset)),
+        TaskQuery::Pins { .. } | TaskQuery::LookupId(_) | TaskQuery::LookupKey(_) => {
+            (0, true, None)
+        }
+    };
+    if !page.valid(offset, named)
+        || !valid_attention(page, attention)
         || row.tasks.len() > 50
         || row.reports.len() > 200
         || row.reports.len() as u64 > page.reports
     {
         return false;
     }
-    if pins.is_none() && attention.is_none() && row.tasks.len() as u64 != page.end - page.offset {
+    if matches!(query, TaskQuery::Window(_)) && row.tasks.len() as u64 != page.end - page.offset {
         return false;
     }
     let mut ids = HashSet::new();
@@ -462,7 +522,10 @@ fn valid_tasks(
         .iter()
         .map(|report| (&report.id, report))
         .collect();
-    let named_reports = |id: &String| pins.is_some_and(|(_, reports)| reports.contains(id));
+    let named_reports = |id: &String| match query {
+        TaskQuery::Pins { reports, .. } => reports.contains(id),
+        _ => false,
+    };
     if reports.len() != row.reports.len() || row.reports.iter().any(|report| !report.valid()) {
         return false;
     }
@@ -507,11 +570,13 @@ fn valid_tasks(
                         .is_none_or(|top| !top.same_compact_report(nested))
             })
             || *count > page.counts.get(&task.status).copied().unwrap_or(0)
-            || match pins {
-                Some((ids, _)) => {
+            || match query {
+                TaskQuery::Pins { ids, .. } => {
                     !ids.contains(&task.id) && !own.clone().any(|report| named_reports(&report.id))
                 }
-                None if attention.is_some() => {
+                TaskQuery::LookupId(id) => &task.id != id,
+                TaskQuery::LookupKey(key) => &task.key != key,
+                TaskQuery::Attention(_) => {
                     task.order < 50
                         || !(matches!(task.status, TaskStatus::NeedsInput | TaskStatus::Failed)
                             || own.clone().any(|report| {
@@ -522,7 +587,7 @@ fn valid_tasks(
                             })
                             || task.missing_report())
                 }
-                None => !(page.offset..page.end).contains(&task.order),
+                TaskQuery::Window(_) => !(page.offset..page.end).contains(&task.order),
             }
         {
             return false;
@@ -533,7 +598,112 @@ fn valid_tasks(
         .all(|report| keys.contains(&report.task_key) || named_reports(&report.id))
 }
 
+impl Header {
+    pub fn project_canonical(&self) -> &str {
+        &self.project_canonical
+    }
+
+    pub fn coordinator_session_id(&self) -> &str {
+        &self.coordinator_session_id
+    }
+
+    /// Exact match against an accepted briefing carrying this request ID.
+    /// Automatic briefings (`auto:<revision>`) or unrelated request IDs never match.
+    pub fn briefing_response_id(&self, request_id: &str) -> Option<&str> {
+        if let Some(latest) = self.extra.get("briefing").and_then(Value::as_object)
+            && latest.get("requestID").and_then(Value::as_str) == Some(request_id)
+            && let Some(id) = latest
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+        {
+            return Some(id);
+        }
+        self.extra
+            .get("briefingResponses")
+            .and_then(Value::as_array)?
+            .iter()
+            .find_map(|item| {
+                let obj = item.as_object()?;
+                (obj.get("requestID").and_then(Value::as_str) == Some(request_id))
+                    .then(|| {
+                        obj.get("briefingID")
+                            .and_then(Value::as_str)
+                            .filter(|id| !id.is_empty())
+                    })
+                    .flatten()
+            })
+    }
+}
+
+impl MapHeader {
+    pub fn accepts_coordinator_message(&self) -> bool {
+        self.root.status == Status::Active
+            && matches!(self.root.run_state, None | Some(RunState::Running))
+            && self
+                .control
+                .as_ref()
+                .is_none_or(|control| control.pending == 0)
+            && self.root.extra.get("controlUnavailable") != Some(&Value::Bool(true))
+    }
+
+    pub fn briefing_target(&self) -> super::BriefingTarget {
+        super::BriefingTarget {
+            mission: self.root.id.clone(),
+            project: self.root.project.clone(),
+            canonical: self.root.project_canonical.clone(),
+            coordinator: self.root.coordinator_session_id.clone(),
+        }
+    }
+}
+
 impl Task {
+    pub fn actor_session_id(&self) -> Option<&str> {
+        self.extra
+            .get("actorSessionId")
+            .and_then(Value::as_str)
+            .filter(|id| panel_id(id))
+    }
+
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+
+    pub fn body(&self, field: &str) -> Option<&BodyDescriptor> {
+        self.bodies.get(field)
+    }
+
+    pub fn report(&self) -> Option<&Report> {
+        self.report.as_ref()
+    }
+
+    pub fn late_reports(&self) -> &[Report] {
+        &self.late_reports
+    }
+
+    pub fn late_report_count(&self) -> u64 {
+        self.late_report_count.unwrap_or(0)
+    }
+
+    pub fn dependents(&self) -> u64 {
+        self.dependents
+    }
+
+    pub fn outstanding_execution(&self) -> bool {
+        self.outstanding_execution
+    }
+
+    pub fn replaced_by_task_key(&self) -> Option<&str> {
+        self.extra
+            .get("replacedByTaskKey")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+    }
+
+    pub fn contract_generation(&self) -> Option<u64> {
+        self.extra.get("contractGeneration").and_then(Value::as_u64)
+    }
+
     fn missing_report(&self) -> bool {
         let identity = |value: Option<&Value>| {
             value
@@ -561,7 +731,7 @@ fn units(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-fn valid_bodies(bodies: &HashMap<String, Body>) -> bool {
+fn valid_bodies(bodies: &HashMap<String, BodyDescriptor>) -> bool {
     bodies.len() <= 64
         && bodies.iter().all(|(key, body)| {
             (1..=64).contains(&units(key)) && body.characters <= SAFE && digest_id(&body.digest)

@@ -31,6 +31,7 @@ pub(super) struct Scroll {
     pub last_rail_wheel_taken: bool,
     pub at: timeline::ScrollPosition,
     pub(super) viewport: timeline::ScrollPosition,
+    in_edge_return: bool,
     edge: Option<HistoryEdge>,
     direction: Option<HistoryEdge>,
 }
@@ -83,12 +84,8 @@ fn directed_delta(
     previous: timeline::ScrollPosition,
     now: timeline::ScrollPosition,
 ) -> Option<f32> {
-    let old = previous.offset[1];
-    let delta = now.offset[1] - old;
-    // Rune #1674 counts the elastic return as by-hand motion. Ignore inward movement
-    // from outside the scroll extent, including the final step back to the edge.
-    (delta != 0.0 && !(old < 0.0 && delta > 0.0 || old > previous.max[1] && delta < 0.0))
-        .then_some(delta)
+    let delta = now.offset[1] - previous.offset[1];
+    (delta != 0.0).then_some(delta)
 }
 
 #[cfg(test)]
@@ -148,8 +145,16 @@ pub(crate) fn observe_history_scroll(s: &State) -> impl Fn(timeline::ScrollPosit
         let previous = gesture.viewport;
         gesture.transcript_wheel_target = None;
         gesture.viewport = at;
+        // A virtual_rows commit during EdgeReturn clamps offset to 0.0 in Rune without
+        // clearing rebound velocity, leaking Programmatic/Momentum until the next Direct input.
+        match at.source {
+            timeline::ScrollSource::EdgeReturn => gesture.in_edge_return = true,
+            timeline::ScrollSource::Momentum | timeline::ScrollSource::Programmatic
+                if gesture.in_edge_return => {}
+            _ => gesture.in_edge_return = false,
+        }
         let forwarded_momentum = std::mem::take(&mut gesture.transcript_wheel_momentum);
-        if timeline::user_scrolled() {
+        if !gesture.in_edge_return && timeline::user_scrolled(at) {
             gesture.last_hand_rail = false;
             gesture.transcript = gesture.transcript.wrapping_add(1);
             if let Some(delta) = directed_delta(previous, at) {
@@ -312,7 +317,7 @@ fn rail_scroll(s: &State, el: El) -> El {
                     gesture.rail_glide_stalled = 0;
                 }
             }
-            let user_moved = timeline::rail_scrolled() && !programmatic;
+            let user_moved = timeline::rail_scrolled(at) && !programmatic;
             if user_moved {
                 if gesture.rail_glide.take().is_some() {
                     gesture.rail_glide_stalled = 0;

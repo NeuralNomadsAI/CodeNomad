@@ -18,6 +18,11 @@ pub fn remote_control() -> String {
     env::var("CODENOMAD_REMOTE_CONTROL").unwrap_or_default()
 }
 
+/// Optional self-hosted OpenTunnel API URL; defaults to the hosted relay when unset.
+pub fn remote_control_api() -> Option<String> {
+    env::var("CODENOMAD_REMOTE_CONTROL_API").ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
+}
+
 /// Launched as `serve`: bundled plugins follow the reference (always its set, payloads beside the
 /// binary, any discovery root), never the positional launch's `CNRS_*` switches.
 static SERVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

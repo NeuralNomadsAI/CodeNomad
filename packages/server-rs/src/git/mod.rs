@@ -35,8 +35,10 @@ use tokio::{process::Command, sync::Semaphore};
 
 const TWO_MIB: usize = 2 * 1024 * 1024;
 static SLOTS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
-pub(crate) async fn slot() -> tokio::sync::SemaphorePermit<'static> {
-    SLOTS.acquire().await.unwrap()
+#[cfg(test)]
+pub(crate) async fn test_git_serial() -> tokio::sync::MutexGuard<'static, ()> {
+    static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+    SERIAL.lock().await
 }
 pub fn bad(s: &str) -> Error {
     error(Status::BAD_REQUEST, s)
@@ -54,6 +56,9 @@ fn missing_git() -> Error {
         "git_required",
     )
 }
+pub(crate) fn is_missing_git(err: &Error) -> bool {
+    err.0 == Status::SERVICE_UNAVAILABLE && err.1.0.get("code").and_then(Value::as_str) == Some("git_required")
+}
 pub struct Output {
     pub code: i32,
     pub bytes: Vec<u8>,
@@ -62,6 +67,9 @@ pub struct Output {
 impl Output {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
+    }
+    pub fn stderr_contains(&self, needle: &str) -> bool {
+        String::from_utf8_lossy(&self.err).contains(needle)
     }
     pub fn ok(self) -> Result<Self, Error> {
         if self.code == 0 { Ok(self) } else { Err(bad("Git read failed")) }
@@ -94,6 +102,8 @@ pub(crate) fn hooks() -> &'static str {
     HOOKS.get().map_or("core.hooksPath=/dev/null", String::as_str)
 }
 pub fn command(dir: &Path, args: &[&str]) -> Command {
+    #[cfg(test)]
+    crate::worktrees::fence_test_trace::record("git command", args.first().copied().unwrap_or(""));
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(dir)
@@ -162,28 +172,97 @@ pub async fn run(dir: &Path, args: &[&str], max: usize) -> Result<Output, Error>
     Ok(Output { code: status.code().unwrap_or(-1), bytes, err })
 }
 pub async fn repo(app: &crate::App, id: &str, slug: &str) -> Result<Workspace, Error> {
-    Ok(repo_target(app, id, slug).await?.0)
+    Ok(repo_target(app, id, slug, true).await?.0)
 }
 
 async fn repo_target(
     app: &crate::App,
     id: &str,
     slug: &str,
+    guard: bool,
 ) -> Result<(Workspace, crate::worktrees::linked::Tree), Error> {
     let w = app.workspace(id)?;
-    match worktrees::root_only(&w).await? {
-        Some(false) => return Err(missing_git()),
-        Some(true) => return Err(bad("Workspace is not a Git repository")),
-        None => {}
+    let hit = crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Validated).await?;
+    let hit = if hit.from_cache && matches!(hit.snapshot, crate::worktrees::linked::HttpSnapshot::NonGit) {
+        let dot_git = w.path.join(".git");
+        let appeared =
+            tokio::task::spawn_blocking(move || std::fs::symlink_metadata(&dot_git).is_ok()).await.unwrap_or(false);
+        if appeared {
+            crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Fresh).await?
+        } else {
+            hit
+        }
+    } else {
+        hit
+    };
+    let mut cat = match hit.snapshot {
+        crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(missing_git()),
+        crate::worktrees::linked::HttpSnapshot::NonGit => return Err(bad("Workspace is not a Git repository")),
+        crate::worktrees::linked::HttpSnapshot::Git(cat) => cat,
+    };
+    if hit.from_cache {
+        let (root_live, tree_ok) = {
+            let cat_clone = std::sync::Arc::clone(&cat);
+            let opened = w.path.clone();
+            let slug_owned = slug.to_owned();
+            tokio::task::spawn_blocking(move || {
+                let root_live = cat_clone.root_live_for(&opened);
+                let tree_ok = root_live
+                    && cat_clone.get(&slug_owned).ok().is_some_and(|t| t.direct_folder() && t.contains_live(&t.path));
+                (root_live, tree_ok)
+            })
+            .await
+            .unwrap_or((false, false))
+        };
+        if !tree_ok {
+            let missing_slug = root_live && cat.get(slug).is_err();
+            if !missing_slug || !hit.refreshed_on_miss {
+                let retry_mode = if missing_slug {
+                    crate::worktrees::linked::ReadMode::RefreshOnMiss(hit.generation)
+                } else {
+                    crate::worktrees::linked::ReadMode::Fresh
+                };
+                let fresh = crate::worktrees::linked::http_read(app, &w, retry_mode).await?;
+                cat = match fresh.snapshot {
+                    crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(missing_git()),
+                    crate::worktrees::linked::HttpSnapshot::NonGit => {
+                        return Err(bad("Workspace is not a Git repository"));
+                    }
+                    crate::worktrees::linked::HttpSnapshot::Git(cat) => cat,
+                };
+                if fresh.from_cache {
+                    let cat_clone = std::sync::Arc::clone(&cat);
+                    let slug_owned = slug.to_owned();
+                    let still_live = tokio::task::spawn_blocking(move || {
+                        cat_clone.get(&slug_owned).ok().is_none_or(|t| t.direct_folder() && t.contains_live(&t.path))
+                    })
+                    .await
+                    .unwrap_or(false);
+                    if !still_live {
+                        let forced =
+                            crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Fresh)
+                                .await?;
+                        cat = match forced.snapshot {
+                            crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(missing_git()),
+                            crate::worktrees::linked::HttpSnapshot::NonGit => {
+                                return Err(bad("Workspace is not a Git repository"));
+                            }
+                            crate::worktrees::linked::HttpSnapshot::Git(cat) => cat,
+                        };
+                    }
+                }
+            }
+        }
     }
-    let cat = crate::worktrees::linked::catalogue(app, &w, false).await?;
-    guard_config(&cat.main).await?;
+    if guard {
+        guard_config(&cat.main).await?;
+    }
     let tree = cat.get(slug)?;
     if !tree.direct_folder() {
         return Err(error(Status::NOT_FOUND, "Worktree folder is missing"));
     }
     // The directory Git runs in may read its own `config.worktree`.
-    if tree.path != cat.main {
+    if guard && tree.path != cat.main {
         config_guard::effective(&tree.path).await?;
     }
     Ok((crate::worktrees::linked::scope(w, tree), tree.clone()))
@@ -195,7 +274,7 @@ pub async fn guard_config(main: &Path) -> Result<(), Error> {
         }
     }
     // Config capable of executing external filters (or importing more
-    // config) is out of scope. Never start a Git display/mutation with it.
+    // config) is out of scope for passive Git reads and linked worktree lifecycle commands.
     config_guard::effective(main).await?;
     config_guard::submodules(main).await
 }
@@ -252,7 +331,7 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
     if items.is_empty() || items.len() > 256 {
         return Err(bad("Invalid path count"));
     }
-    let (w, tree) = repo_target(&app, &id, &slug).await?;
+    let (w, tree) = repo_target(&app, &id, &slug, false).await?;
     let admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(tree.registered())])?;
     app.workspace(&id)?;
     files::root(&w)?;
@@ -314,7 +393,7 @@ pub async fn commit(
     if message.is_empty() || message.len() > 16384 || message.contains('\0') {
         return Err(bad("Invalid commit message"));
     }
-    let (w, tree) = repo_target(&app, &id, &slug).await?;
+    let (w, tree) = repo_target(&app, &id, &slug, false).await?;
     let admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(tree.registered())])?;
     app.workspace(&id)?;
     if !tree.contains_live(&w.path) {
@@ -385,6 +464,7 @@ pub async fn init(
     if files::host_identity(&w.path).ok().as_ref() != Some(&identity) {
         return Err(mismatch());
     }
+    let _invalidate = worktrees::linked::blocking_invalidation(&app);
     let response = app
         .native
         .request(reqwest::Method::POST, app.native.url().join("/api/vcs/init").unwrap())
@@ -395,8 +475,9 @@ pub async fn init(
         .map_err(|_| fail())?;
     match response.status().as_u16() {
         200..=299 => {
+            worktrees::linked::invalidate_blocking(&app);
             notify(&app, &w);
-            app.emit(json!({"type":"workspace.worktreesChanged","workspaceId":w.id}));
+            worktrees::linked::emit_worktrees_changed(&app, w.id);
             Ok(Json(json!({"ok":true})))
         }
         409 => Err(exists()),
@@ -419,5 +500,202 @@ fn sides(out: &mut Value, image: Option<&str>, before: Option<Vec<u8>>, after: O
     } else {
         out["before"] = json!(String::from_utf8_lossy(&before));
         out["after"] = json!(String::from_utf8_lossy(&after));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{App, auth, opencode, settings};
+    use axum::{Router, extract::Request, http::Method, response::IntoResponse, routing::any};
+    use std::{path::PathBuf, process::Command as StdCommand, sync::Arc};
+    use uuid::Uuid;
+
+    struct FixtureGuard {
+        dir: PathBuf,
+        http: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for FixtureGuard {
+        fn drop(&mut self) {
+            self.http.abort();
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    async fn fake_native(State(root): State<PathBuf>, request: Request) -> impl IntoResponse {
+        match (request.method().clone(), request.uri().path()) {
+            (Method::GET, "/api/location") => {
+                let requested = reqwest::Url::parse(&format!("http://localhost{}", request.uri()))
+                    .ok()
+                    .and_then(|url| {
+                        url.query_pairs().find(|(k, _)| k == "location[directory]").map(|(_, v)| v.into_owned())
+                    })
+                    .unwrap_or_else(|| root.to_string_lossy().into_owned());
+                Json(json!({
+                    "directory": requested,
+                    "project": { "id": "project_fixture", "directory": root, "canonical": root },
+                }))
+                .into_response()
+            }
+            (Method::POST, "/api/worktree/refresh") => Status::NO_CONTENT.into_response(),
+            (Method::GET, "/api/worktree") => Json(json!([{"directory": root}])).into_response(),
+            _ => Status::NOT_IMPLEMENTED.into_response(),
+        }
+    }
+
+    fn raw_git(dir: &Path, args: &[&str]) -> Vec<u8> {
+        let mut cmd = StdCommand::new("git");
+        cmd.arg("-C").arg(dir).args(args);
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().to_ascii_uppercase().starts_with("GIT_") {
+                cmd.env_remove(key);
+            }
+        }
+        let out = cmd
+            .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        out.stdout
+    }
+
+    #[tokio::test]
+    async fn local_lfs_filter_allows_stage_unstage_and_commit_while_reads_stay_guarded() {
+        let dir = crate::shared::test_dir("git-local-lfs-config");
+        let repo_dir = dir.join("repo");
+        let empty_hooks = dir.join("empty-hooks");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        std::fs::create_dir_all(&empty_hooks).unwrap();
+        raw_git(&repo_dir, &["init", "-q"]);
+        raw_git(&repo_dir, &["config", "user.name", "tester"]);
+        raw_git(&repo_dir, &["config", "user.email", "tester@example.com"]);
+        raw_git(&repo_dir, &["config", "commit.gpgSign", "false"]);
+        raw_git(&repo_dir, &["config", "core.hooksPath", empty_hooks.to_str().unwrap()]);
+        let pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:1111\nsize 18\n";
+        raw_git(
+            &repo_dir,
+            &[
+                "config",
+                "filter.testlfs.clean",
+                "printf 'version https://git-lfs.github.com/spec/v1\\noid sha256:1111\\nsize 18\\n'",
+            ],
+        );
+        raw_git(&repo_dir, &["config", "filter.testlfs.required", "true"]);
+        std::fs::write(repo_dir.join(".gitattributes"), "*.bin filter=testlfs -text\n").unwrap();
+        std::fs::write(repo_dir.join("asset.bin"), b"\x00\x01LOCAL-LFS-PAYLOAD\xff").unwrap();
+
+        let root = dunce::canonicalize(&repo_dir).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native = opencode::Native::test_connection(listener.local_addr().unwrap());
+        let stub_root = root.clone();
+        let http = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(any(fake_native)).with_state(stub_root)).await.unwrap()
+        });
+        let _guard = FixtureGuard { dir: dir.clone(), http };
+
+        let auth = auth::Auth::new(auth::Settings {
+            username: "fixture".into(),
+            password: None,
+            file: None,
+            cookie: "fixture".into(),
+            token: false,
+            managed_local: false,
+            skip: true,
+            idle: Duration::from_secs(60),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let settings =
+            settings::Settings::new(settings::document::Location::resolve(dir.join("config.yaml").to_str().unwrap()));
+        let app = Arc::new(App::new(
+            auth,
+            0,
+            dir.clone(),
+            root.clone(),
+            false,
+            settings,
+            Value::Null,
+            native,
+            PathBuf::new(),
+            None,
+            files::watch::Watches::new(tx),
+            None,
+        ));
+        let id = Uuid::new_v4();
+        app.inner.lock().unwrap().workspaces.push(Workspace {
+            id,
+            request_id: None,
+            path: root.clone(),
+            name: None,
+            status: "running",
+            proxy_path: format!("/workspaces/{id}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({"directory": root}),
+        });
+        let id_str = id.to_string();
+
+        // Passive reads stay protected by `config_guard` against unqualified local filters.
+        let Err(read_err) = repo(&app, &id_str, "root").await else {
+            panic!("expected passive read to be refused for unqualified local filter");
+        };
+        assert_eq!(read_err.0, Status::FORBIDDEN);
+
+        // Explicit stage honors the local LFS filter and indexes the pointer, not raw binary bytes.
+        assert_eq!(
+            stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: vec!["asset.bin".into()] }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        assert_eq!(raw_git(&repo_dir, &["cat-file", "-p", ":asset.bin"]), pointer.as_bytes());
+
+        // Explicit unstage succeeds on the same locally configured repository.
+        assert_eq!(
+            unstage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: vec!["asset.bin".into()] }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        assert!(raw_git(&repo_dir, &["ls-files", "--cached"]).is_empty());
+
+        // Re-stage and commit through the explicit mutation routes.
+        assert_eq!(
+            stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: vec!["asset.bin".into()] }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        let committed = commit(
+            State(app.clone()),
+            Route((id_str, "root".into())),
+            Json(Commit { message: "add lfs asset".into() }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(committed["ok"], true);
+        assert!(committed["commitSha"].as_str().is_some_and(sha), "{committed}");
+        assert_eq!(raw_git(&repo_dir, &["show", "HEAD:asset.bin"]), pointer.as_bytes());
     }
 }

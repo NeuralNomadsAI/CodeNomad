@@ -690,8 +690,10 @@ pub(crate) fn suspend(s: &mut State) {
 }
 
 pub(crate) fn resume(s: &mut State, tx: &mut Tx) {
-    let reading_visible =
-        !s.screen.is_launcher() && !crate::git::has_preview(s) && !crate::files::has_preview(s);
+    let reading_visible = !s.screen.is_launcher()
+        && !crate::git::has_preview(s)
+        && !crate::files::has_preview(s)
+        && !crate::workspace::mission_has_reader(s);
     if let Some(reader) = &mut s.reader {
         if reader.hidden {
             reader.resume_watching(reader.bookmark.clone(), s.transcript_display.reading());
@@ -722,7 +724,9 @@ pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
         .reset_to_latest(s.revision);
     cancel_page(s);
     crate::timeline::cancel_jump(s);
-    let covered = crate::files::has_preview(s) || crate::git::has_preview(s);
+    let covered = crate::files::has_preview(s)
+        || crate::git::has_preview(s)
+        || crate::workspace::mission_has_reader(s);
     if let Some(reader) = &mut s.reader
         && (reader.needs_latest() || s.history_error)
     {

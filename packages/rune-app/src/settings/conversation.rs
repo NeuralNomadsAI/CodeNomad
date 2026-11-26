@@ -85,8 +85,7 @@ pub(super) fn content<S: 'static>(
             let key = row_key(row);
             let is_open = open == Some(row) && !disabled;
             let current = current.map(|i| labels[i]);
-            let name = picker_name(&aria, current);
-            let control = chrome::table_picker(&key, &name, &labels, compact)
+            let control = chrome::table_picker(&key, &aria, &labels, compact)
                 .current(current)
                 .disabled(disabled)
                 .open(is_open)
@@ -98,13 +97,7 @@ pub(super) fn content<S: 'static>(
                         choose(s, Some(row), MODES[i]);
                     }
                 });
-            let control = chrome::build_picker_accessible(
-                control,
-                &name,
-                disabled,
-                t("commands.common.disabled"),
-                layers,
-            );
+            let control = chrome::build_picker(control, layers);
             chrome::setting_table_row(title, control, compact)
         }));
     let controls = col()
@@ -129,15 +122,6 @@ pub(super) fn content<S: 'static>(
     chrome::card(controls)
 }
 
-pub(super) fn picker_name<'a>(label: &'a str, value: Option<&str>) -> std::borrow::Cow<'a, str> {
-    #[cfg(any(target_arch = "wasm32", test))]
-    if let Some(value) = value {
-        return format!("{label} — {value}").into();
-    }
-    let _ = value;
-    label.into()
-}
-
 pub(super) fn preset_label(preset: &str) -> &'static str {
     t(&format!("settings.behavior.expansionPreset.{preset}.title"))
 }
@@ -155,4 +139,68 @@ pub(super) fn row_label(row: Row) -> &'static str {
         Row::Tool("task") => "subagent",
         Row::Tool(id) => id,
     }
+}
+
+#[cfg(test)]
+#[test]
+fn conversation_pickers_expose_accessible_value_without_encoding_name() {
+    use rune::{Env, Runtime};
+
+    fn a11y_node<'a>(node: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+        if node["key"] == key {
+            return Some(node);
+        }
+        node["children"]
+            .as_array()?
+            .iter()
+            .find_map(|child| a11y_node(child, key))
+    }
+
+    struct Harness {
+        prefs: Preferences,
+        open: Option<Row>,
+    }
+
+    let mut prefs = Preferences::default();
+    prefs.fixture();
+    let mut rt = Runtime::new(
+        Harness { prefs, open: None },
+        |s, _| {
+            crate::strings::with_locale("en", || {
+                let mut layers = Vec::new();
+                let body = content(
+                    &s.prefs,
+                    s.open,
+                    4,
+                    &mut layers,
+                    |s: &mut Harness, open| s.open = open,
+                    |_, _, _| {},
+                );
+                rune_theme_codenomad::layout::with_overlays(body, layers)
+            })
+        },
+        (900.0, 760.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.02);
+
+    let tree = rt.accessibility_json();
+    let groups = a11y_node(&tree, "transcript-toolGroupVisibility-trigger").unwrap();
+    let expected_name = crate::strings::with_locale("en", || {
+        catalogue::format(
+            locale(),
+            "settings.behavior.expansionDefaults.rowAriaLabel",
+            &[("item", row_label(Row::Groups))],
+        )
+    });
+    assert_eq!(groups["role"], "combo-box");
+    assert_eq!(groups["name"], expected_name);
+    assert_eq!(groups["value"], "Collapsed");
+
+    let mirror: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+    let combo = mirror
+        .iter()
+        .find(|item| item["t"] == expected_name && item["o"] == "combobox")
+        .unwrap_or_else(|| panic!("missing Tool groups combobox in web mirror: {mirror:?}"));
+    assert_eq!(combo["v"], "Collapsed");
 }

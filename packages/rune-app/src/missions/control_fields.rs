@@ -239,21 +239,27 @@ pub(super) fn view<S: 'static>(
                 if let Some(receipt) = &row.receipt {
                     let id = &receipt.id;
                     let open = fields.receipt.as_ref().filter(|open| &open.id == id);
-                    let detail = |label: &str, disabled: bool, page, key: String| {
-                        let (source, id, revision) = (source.clone(), id.clone(), fields.revision);
-                        layout::button_tx(label, disabled, move |state: &mut S, tx| {
-                            act(
-                                state,
-                                &source,
-                                Gesture::ReceiptDetails(id.clone(), revision, page),
-                            );
-                            tx.instant();
-                        })
-                        .key(key)
-                    };
+                    let detail =
+                        |label: &str, disabled: bool, keep_focus: bool, page, key: String| {
+                            let (source, id, revision) =
+                                (source.clone(), id.clone(), fields.revision);
+                            if disabled && keep_focus {
+                                layout::focusable_disabled_button(label).key(key)
+                            } else {
+                                layout::button_tx(label, disabled, move |state: &mut S, tx| {
+                                    act(
+                                        state,
+                                        &source,
+                                        Gesture::ReceiptDetails(id.clone(), revision, page),
+                                    );
+                                    tx.instant();
+                                })
+                                .key(key)
+                            }
+                        };
                     let busy = !ready || fields.flight.is_some();
                     out = out.child(
-                        detail(&label, busy, None, format!("receipt-{id}"))
+                        detail(&label, busy, false, None, format!("receipt-{id}"))
                             .expanded(open.is_some()),
                     );
                     if let Some(open) = open {
@@ -274,24 +280,20 @@ pub(super) fn view<S: 'static>(
                                 .child(text(status).text_role(TextRole::Small).role("status"))
                                 .child(
                                     layout::action_row()
-                                        .child(
-                                            detail(
-                                                t("missionsPanel.pages.previous"),
-                                                busy || open.page == 0,
-                                                Some(open.page.saturating_sub(1)),
-                                                format!("receipt-prev-{id}"),
-                                            )
-                                            .focusable(true),
-                                        )
-                                        .child(
-                                            detail(
-                                                t("missionsPanel.pages.next"),
-                                                busy || open.page + 1 >= open.starts.len(),
-                                                Some(open.page + 1),
-                                                format!("receipt-next-{id}"),
-                                            )
-                                            .focusable(true),
-                                        ),
+                                        .child(detail(
+                                            t("missionsPanel.pages.previous"),
+                                            busy || open.page == 0,
+                                            true,
+                                            Some(open.page.saturating_sub(1)),
+                                            format!("receipt-prev-{id}"),
+                                        ))
+                                        .child(detail(
+                                            t("missionsPanel.pages.next"),
+                                            busy || open.page + 1 >= open.starts.len(),
+                                            true,
+                                            Some(open.page + 1),
+                                            format!("receipt-next-{id}"),
+                                        )),
                                 );
                         }
                     }

@@ -972,6 +972,13 @@ fn rotation_clamps_shortened_long_message_and_attachment_error_keeps_send_reacha
 
 #[test]
 fn ultra_short_touch_drag_reaches_permission_and_shallow_height_only_resize_never_drifts() {
+    ultra_short_touch_drag_cases_1_to_5();
+    ultra_short_touch_drag_cases_6_to_9();
+    ultra_short_touch_drag_cases_10_to_13();
+    ultra_short_touch_drag_cases_14_to_17();
+}
+
+fn ultra_short_touch_drag_cases_1_to_5() {
     // 1. Touch drag at 720x160 CSS px (stack <= 64px) reaches permission actions via exposed chrome strip.
     let mut s = state();
     seed_passages(&mut s, 36);
@@ -1162,7 +1169,9 @@ fn ultra_short_touch_drag_reaches_permission_and_shallow_height_only_resize_neve
         wide[1] < history[1] && ((wide[1] + wide[3]) - (history[1] + 24.0)).abs() <= 4.0,
         "rotation rescue must clamp shortened huge-anchor near 24px visible (not offset 0): wide={wide:?}, history={history:?}"
     );
+}
 
+fn ultra_short_touch_drag_cases_6_to_9() {
     // 6. First scroll gesture after a height-only resize (390x844 -> 390x514) must not snap back.
     let mut s = state();
     seed_passages(&mut s, 36);
@@ -1361,7 +1370,9 @@ fn ultra_short_touch_drag_reaches_permission_and_shallow_height_only_resize_neve
         wide_r[1] < history_r[1] && ((wide_r[1] + wide_r[3]) - (history_r[1] + 24.0)).abs() <= 4.0,
         "rotation during Event::Connected scope renewal must clamp reconnect-long near 24px visible: wide={wide_r:?}, history={history_r:?}"
     );
+}
 
+fn ultra_short_touch_drag_cases_10_to_13() {
     // 10. A wheel gesture arriving AFTER a single frame of a height-only shrink (while
     // Action::Layout is still queued) must NOT be cancelled back to passage-12.
     let mut s = state();
@@ -1537,7 +1548,9 @@ fn ultra_short_touch_drag_reaches_permission_and_shallow_height_only_resize_neve
         wide_c[1] < history_c[1] && ((wide_c[1] + wide_c[3]) - (history_c[1] + 24.0)).abs() <= 4.0,
         "real Event::Connected during rotation must clamp connected-long near 24px visible: wide={wide_c:?}, history={history_c:?}"
     );
+}
 
+fn ultra_short_touch_drag_cases_14_to_17() {
     // 14. Active permission dock with agent control error reserves space for agent-error so
     // allow_once / allow_always / reject stay unclipped on short viewports.
     let mut s = state();

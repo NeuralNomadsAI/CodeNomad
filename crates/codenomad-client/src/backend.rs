@@ -33,6 +33,24 @@ impl Backend {
         Ok(backend)
     }
 
+    /// Establish a loopback connection seeded with a renewed managed-session cookie.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn connect_with_session_cookie(
+        address: &str,
+        cookie_name: &str,
+        session_id: &str,
+    ) -> Result<Self> {
+        Ok(Self {
+            client: Http::with_session_cookie(address, cookie_name, session_id)?,
+            base: endpoint(address)?,
+            workspace: String::new(),
+            session: String::new(),
+            session_directory: None,
+            client_id: client_id()?,
+            fresh_mode: false,
+        })
+    }
+
     pub fn unauthenticated(address: &str) -> Result<Self> {
         Ok(Self {
             client: Http::new()?,
@@ -198,6 +216,14 @@ impl Backend {
         &self,
         input: &crate::prompt::Prompt,
     ) -> Result<crate::prompt::Acknowledgement> {
+        self.prompt_with_401(input, false).await
+    }
+
+    pub(crate) async fn prompt_with_401(
+        &self,
+        input: &crate::prompt::Prompt,
+        report_wasm_401: bool,
+    ) -> Result<crate::prompt::Acknowledgement> {
         let body = crate::prompt::encode(input)?;
         let response = self
             .client
@@ -210,7 +236,7 @@ impl Backend {
             .send()
             .await
             .map_err(|_| crate::prompt::PromptError::Unconfirmed)?;
-        if cfg!(not(target_arch = "wasm32"))
+        if (cfg!(not(target_arch = "wasm32")) || report_wasm_401)
             && response.status() == reqwest::StatusCode::UNAUTHORIZED
         {
             return Err(crate::prompt::PromptError::AuthenticationRequired.into());

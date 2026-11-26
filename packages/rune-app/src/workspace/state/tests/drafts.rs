@@ -24,6 +24,8 @@ fn a_late_clipboard_read_cannot_attach_to_another_conversation_in_the_same_tab()
             },
             pressed: true,
             repeat: false,
+            text: None,
+            consumed_mods: Mods::default(),
         });
         rt.frame(0.0);
     };

@@ -23,6 +23,17 @@ pub(super) enum Lane {
     InitSessions,
 }
 
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(super) const LANES: [(&str, Lane); 7] = [
+    ("Worktrees", Lane::Worktrees),
+    ("Changes", Lane::Changes),
+    ("History", Lane::History),
+    ("Details", Lane::Details),
+    ("Preview", Lane::Preview),
+    ("Preferences", Lane::Preferences),
+    ("InitSessions", Lane::InitSessions),
+];
+
 pub(super) enum Read {
     Preferences,
     InitSessions(Worktree),
@@ -107,7 +118,7 @@ pub(super) enum Mutation {
     Init(String),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum MutationKind {
     Paths,
     Commit,

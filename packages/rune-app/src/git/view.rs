@@ -192,8 +192,11 @@ pub(super) fn preview_button(
             if opened || was_open != crate::git::has_preview(s) {
                 s.notifications.supersede_navigation();
             }
-            if opened && let Some(files) = &mut s.files {
-                files.close_reader();
+            if opened {
+                if let Some(files) = &mut s.files {
+                    files.close_reader();
+                }
+                crate::workspace::close_mission_reader(s);
             } else {
                 crate::git::restore_reading_if_closed(s, was_open, tx);
             }

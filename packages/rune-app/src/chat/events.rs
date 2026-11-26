@@ -319,8 +319,8 @@ fn drain_chat(
                     }
                 }
                 s.messages = page.rows;
-                crate::timeline::restore_search(s);
                 s.history_detached = s.reader.is_some() && page.newer.is_some();
+                crate::timeline::restore_search(s);
                 if s.history_detached {
                     s.transcript_display.tool_clock.pause();
                 } else {
@@ -363,6 +363,7 @@ fn drain_chat(
                 if matches!(event, Event::ConnectionLost) {
                     s.conversation_stream_connected = false;
                 }
+                workspace::suspend_mission_briefing(s);
                 s.transcript_display.messages.offline();
                 s.transcript_display.tool_clock.pause();
                 s.status_permissions.online(false);

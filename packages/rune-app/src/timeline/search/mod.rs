@@ -114,6 +114,7 @@ fn visible(s: &State) -> bool {
     !s.screen.is_launcher()
         && !crate::files::has_preview(s)
         && !crate::git::has_preview(s)
+        && !crate::workspace::mission_has_reader(s)
         && s.transcript_display.timeline.backend.is_some()
 }
 
@@ -352,7 +353,7 @@ pub(crate) fn settle_destination(s: &mut State, tx: &mut Tx) -> bool {
             && crate::launcher::can_change_session(s)
             && !s.screen.launcher().is_some_and(|l| l.pending)
         {
-            match hit.landing(s, &row, 0) {
+            match hit.landing(s, &[], &row, 0) {
                 Landing::Visible(..) => {
                     close(s);
                     crate::launcher::bind_search(s, backend, title, &slug, hit.message.clone(), tx);

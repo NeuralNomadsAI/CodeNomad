@@ -70,7 +70,7 @@ fn the_bell_opens_history_from_the_keyboard_without_sending_a_system_notice() {
     runtime.key(enter.clone());
     runtime.key_up(enter);
     runtime.frame(0.04);
-    assert!(runtime.state.notifications.in_app.opened.is_some());
+    assert!(runtime.state.notifications.in_app.opened);
     let tree = runtime.accessibility_json().to_string();
     assert!(
         tree.contains("notification-history") && tree.contains("Recorded failure"),
@@ -147,8 +147,8 @@ fn confirmed_destinations_control_history_and_bubbles_per_window() {
 #[test]
 fn opening_history_pauses_screen_only_bubbles() {
     let mut inbox = Inbox::default();
-    let start = Instant::now();
-    inbox.opened = Some(start);
+    let start = 10.0;
+    inbox.pause_bubbles(start);
     inbox.push(
         "Private",
         "Only on screen",
@@ -160,17 +160,20 @@ fn opening_history_pauses_screen_only_bubbles() {
         },
         BubbleOptions::Default,
     );
-    let later = start + Duration::from_secs(30);
+    let later = start + 30.0;
     inbox.resume_bubbles(later);
-    assert_eq!(inbox.bubbles[0].1, later + LIFETIME);
+    assert_eq!(
+        inbox.bubbles[0].1,
+        BubbleDeadline::At(later + LIFETIME.as_secs_f64())
+    );
     assert_eq!(inbox.unread(), 0);
 }
 
 #[test]
 fn screen_toasts_use_their_own_deadline_and_announce_once_in_order() {
     let mut inbox = Inbox::default();
-    let start = Instant::now();
-    inbox.opened = Some(start);
+    let start = 10.0;
+    inbox.pause_bubbles(start);
     let route = Route {
         screen: true,
         history: true,
@@ -190,10 +193,7 @@ fn screen_toasts_use_their_own_deadline_and_announce_once_in_order() {
     );
     assert_eq!(inbox.announcement(), None);
     inbox.resume_bubbles(start);
-    assert_eq!(
-        inbox.next_expiration(),
-        Some(start + Duration::from_millis(1_800))
-    );
+    assert_eq!(inbox.next_expiration(), Some(start + 1.8));
     assert_eq!(
         inbox.announcement().as_deref(),
         Some("Info\nFirst\nInfo\nSecond")
@@ -205,8 +205,8 @@ fn screen_toasts_use_their_own_deadline_and_announce_once_in_order() {
 #[test]
 fn a_zero_toast_duration_uses_the_toaster_default() {
     let mut inbox = Inbox::default();
-    let start = Instant::now();
-    inbox.opened = Some(start);
+    let start = 10.0;
+    inbox.pause_bubbles(start);
     inbox.push(
         "Info",
         "Zero duration",
@@ -218,10 +218,8 @@ fn a_zero_toast_duration_uses_the_toaster_default() {
         },
         BubbleOptions::Toast(0),
     );
-    assert_eq!(
-        inbox.next_expiration(),
-        Some(start + Duration::from_secs(8))
-    );
+    inbox.resume_bubbles(start);
+    assert_eq!(inbox.next_expiration(), Some(start + 8.0));
 }
 
 #[test]
@@ -369,4 +367,50 @@ fn the_first_in_app_copy_does_not_claim_a_system_notice_while_focused() {
         false,
     );
     assert!(!duplicate.history && duplicate.system);
+}
+
+#[test]
+fn active_bubble_keeps_a_single_logical_wake_deadline_across_idle_frames() {
+    let mut s = crate::init();
+    crate::settings::notification_fixture(&s);
+    s.notifications.in_app.push(
+        "Project",
+        "Saved",
+        None,
+        &Route {
+            screen: true,
+            history: true,
+            system: false,
+        },
+        BubbleOptions::Default,
+    );
+    let mut rt = rune::Runtime::new(s, crate::view, (900.0, 650.0), rune::Env::new(false, 1.0));
+    rt.poll = Some(crate::poll);
+    rt.frame(0.0);
+    let first_wake = rt
+        .wake_deadline()
+        .expect("active bubble must schedule its expiration wake");
+    for _ in 0..180 {
+        rt.frame(1.0 / 60.0);
+        let wake = rt
+            .wake_deadline()
+            .expect("bubble remains active before LIFETIME elapses");
+        assert!(
+            (wake - first_wake).abs() < 1e-6,
+            "bubble wake deadline must stay pinned on the logical clock instead of drifting: first={first_wake}, now={wake}"
+        );
+    }
+    // Advancing past LIFETIME on the logical clock must expire the bubble with zero residual wakes.
+    let remaining = (first_wake - rt.clock).max(0.0) + 0.05;
+    rt.frame(remaining);
+    assert!(
+        rt.state.notifications.in_app.bubbles.is_empty(),
+        "bubble must expire once logical clock passes LIFETIME"
+    );
+    rt.frame(1.0 / 60.0);
+    assert!(
+        rt.wake_deadline().is_none(),
+        "expired bubble must leave no residual wake deadlines: {:?}",
+        rt.wake_deadline()
+    );
 }

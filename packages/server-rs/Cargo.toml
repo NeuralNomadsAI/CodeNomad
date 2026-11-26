@@ -52,6 +52,8 @@ uuid = { version = "1", features = ["serde", "v4"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 zip = { version = "9.7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 chrono-tz = { version = "0.10", features = ["case-insensitive"] }
+# Remote Control blind TLS tunnel (`Tunnel::ready()` in v0.7.0, #82).
+opentunnel = "0.7.0"
 
 [profile.release]
 # File and line in release panic backtraces (MSVC: in the PDB staged beside the binary).

@@ -1,9 +1,13 @@
 //! /workspaces/:id/instance/*: the allowlisted relay to the daemon, confined to the workspace's
 //! locations and sessions.
+#[cfg(test)]
+mod background_tests;
 mod defer_media;
 mod dispatch;
 mod guards;
 mod mutation;
+#[cfg(test)]
+mod stack_tests;
 
 pub use guards::verify_mutation;
 
@@ -25,6 +29,10 @@ use guards::{
 };
 
 pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Response, Error> {
+    Box::pin(relay_inner(app, request)).await
+}
+
+async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     let (head, body) = request.into_parts();
     let principal = head.extensions.get::<crate::auth::Principal>().cloned().ok_or_else(crate::auth::unauthorized)?;
     let invalid = || error(Status::BAD_REQUEST, "Invalid workspace instance path");
@@ -128,7 +136,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let mut translated_directories = std::collections::BTreeMap::new();
     let mut prompt_locations = Vec::new();
     for directory in prompt_directories {
-        let (translated, live, observed) = super::prompt::observe_directory(&app, &workspace, &directory).await?;
+        let (translated, live, observed) =
+            Box::pin(super::prompt::observe_directory(&app, &workspace, &directory)).await?;
         translated_directories.insert(directory.clone(), translated.directory.clone());
         prompt_locations.push((directory, translated, (live, observed)));
     }
@@ -177,7 +186,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         if let Some(translated) = translated_directories.get(raw) {
             Some(translated.clone())
         } else {
-            let (location, live, observed) = super::prompt::observe_directory(&app, &workspace, raw).await?;
+            let (location, live, observed) = Box::pin(super::prompt::observe_directory(&app, &workspace, raw)).await?;
             let translated = location.directory.clone();
             prompt_locations.push((raw.clone(), location, (live, observed)));
             Some(translated)
@@ -404,7 +413,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     // departure, so the UI can drop a conversation moved out of the project.
     // For `message_list`, reuse the already-verified `input_checkout` instead of
     // running a second worktree inventory (`list_slug` is only used on session GET).
-    let list_slug = match &actual {
+    let verified_placement = match &actual {
         Some(record) if message_list && input_checkout.is_some() && record["location"].get("workspaceID").is_none() => {
             None
         }
@@ -417,14 +426,14 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     _ = workspace_closed() => return Err(not_found()),
                     res = tokio::time::timeout_at(
                         list_deadline,
-                        crate::worktrees::placement(&app, &workspace, &record["location"]),
+                        crate::worktrees::placement_verified(&app, &workspace, &record["location"]),
                     ) => res.map_err(|_| upstream_error())?,
                 }
             } else {
-                crate::worktrees::placement(&app, &workspace, &record["location"]).await
+                crate::worktrees::placement_verified(&app, &workspace, &record["location"]).await
             };
             match placement {
-                Ok(slug) => Some(slug),
+                Ok(verified) => Some(verified),
                 Err(elsewhere) => {
                     if input_checkout.is_some() && record["location"].get("workspaceID").is_none() {
                         None
@@ -440,10 +449,25 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         None => None,
     };
-    if (allow_subfolder && input_checkout.is_none())
-        || (!allow_subfolder && !crate::worktrees::owns(&app, &workspace, directory).await)
-    {
-        return Err(foreign());
+    let list_slug = verified_placement.as_ref().map(|p| p.slug.clone());
+    if allow_subfolder {
+        if input_checkout.is_none() {
+            return Err(foreign());
+        }
+    } else {
+        let reused_ok =
+            if let Some(verified) = verified_placement.as_ref().filter(|_| native_directory == Some(directory)) {
+                let verified = verified.clone();
+                let scope = app.scope.clone();
+                let ws = workspace.clone();
+                let dir = directory.to_owned();
+                tokio::task::spawn_blocking(move || verified.owns_now(&scope, &ws, &dir)).await.unwrap_or(false)
+            } else {
+                false
+            };
+        if !reused_ok && !crate::worktrees::owns(&app, &workspace, directory).await {
+            return Err(foreign());
+        }
     }
     drop(list_admission_slot);
     target.path_segments_mut().map_err(|_| invalid())?.clear().extend(route.trim_start_matches('/').split('/'));
@@ -481,7 +505,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
                 }
             } else {
-                let (context, live, observed) = super::prompt::observe_directory(&app, &workspace, raw).await?;
+                let (context, live, observed) =
+                    Box::pin(super::prompt::observe_directory(&app, &workspace, raw)).await?;
                 if prompt_locations.iter().any(|(_, location, _)| location != &context) {
                     return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
                 }
@@ -492,7 +517,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             // `x-codenomad-location` only needs to belong to this workspace and agree with any
             // explicit query selector, NOT with the target session's own linked worktree.
             let ctx_dir = context["directory"].as_str().ok_or_else(invalid)?;
-            if !crate::worktrees::owns(&app, &workspace, ctx_dir).await {
+            let ctx_verified =
+                if let Some(verified) = verified_placement.as_ref().filter(|_| native_directory == Some(ctx_dir)) {
+                    let verified = verified.clone();
+                    let scope = app.scope.clone();
+                    let ws = workspace.clone();
+                    let dir = ctx_dir.to_owned();
+                    tokio::task::spawn_blocking(move || verified.owns_now(&scope, &ws, &dir)).await.unwrap_or(false)
+                } else {
+                    false
+                };
+            if !ctx_verified && !crate::worktrees::owns(&app, &workspace, ctx_dir).await {
                 return Err(foreign());
             }
             if let Some(req) = requested.as_deref()
@@ -604,7 +639,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         input_checkout: &input_checkout,
     };
     let mutation::PreparedMutation { fork, root_permissions, input, rules_lock, mutation, receipt } =
-        match mutation::prepare_mutation(mutation::MutationContext {
+        match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
             recheck: &recheck,
             head: &head,
             route,
@@ -620,7 +655,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             explicit,
             session_list,
             target: &mut target,
-        })
+        }))
         .await?
         {
             mutation::MutationOutcome::Ready(prepared) => prepared,
@@ -672,15 +707,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     principal.live()?;
     if send_input {
         if command && let Some(Value::Object(input)) = &input {
-            super::prompt::validate(&app, &workspace, input).await?;
+            Box::pin(super::prompt::validate(&app, &workspace, input)).await?;
         }
-        recheck.verify().await?;
+        Box::pin(recheck.verify()).await?;
     }
     if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
         return Err(upstream_error());
     }
     if let Some(session) = defer_media {
-        return defer_media::stream_deferred_message_list(defer_media::DeferContext {
+        return Box::pin(defer_media::stream_deferred_message_list(defer_media::DeferContext {
             app: &app,
             workspace: &workspace,
             endpoint: &endpoint,
@@ -692,14 +727,14 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             initial_identity: &initial_identity,
             input_checkout: &input_checkout,
             upstream,
-        })
+        }))
         .await;
     }
     let opened = opened.to_owned();
     let directory = directory.to_owned();
     let route = route.to_owned();
     let id = id.to_owned();
-    dispatch::dispatch_upstream(dispatch::DispatchContext {
+    Box::pin(dispatch::dispatch_upstream(dispatch::DispatchContext {
         app,
         workspace,
         endpoint,
@@ -717,6 +752,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         receipt,
         mutation,
         rules_lock,
-    })
+    }))
     .await
 }

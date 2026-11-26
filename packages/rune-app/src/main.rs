@@ -63,6 +63,9 @@ struct State {
     screen: Screen,
     settings: settings::Host,
     notifications: shell::notifications::Host,
+    wake_lock: platform::wake_lock::Controller,
+    #[cfg(not(target_arch = "wasm32"))]
+    launch: platform::launch::Host,
     #[cfg(not(target_arch = "wasm32"))]
     direct_authentication: chat::authentication::Recovery,
     input_scope: std::rc::Rc<()>,
@@ -127,6 +130,9 @@ fn init() -> State {
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
         notifications: Default::default(),
+        wake_lock: Default::default(),
+        #[cfg(not(target_arch = "wasm32"))]
+        launch: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
         direct_authentication: Default::default(),
         input_scope: std::rc::Rc::new(()),
@@ -247,10 +253,11 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     chat::reader::expire_sync_undo(s);
     let gesture = timeline::poll_edge(s, tx);
-    let defer_reader_sync = !s.screen.is_launcher()
+    let conversation_visible = !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)
-        && !s.messages.is_empty();
+        && !workspace::mission_has_reader(s);
+    let defer_reader_sync = conversation_visible && !s.messages.is_empty();
     let chat = !timeline::input_precedes_admission(s, tx)
         && chat::events::poll_chat_for_window(s, 64, defer_reader_sync);
     shell::notifications::collect(s, workspace::notification_target);
@@ -260,9 +267,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         tx.wake_after(std::time::Duration::ZERO);
     }
-    let wait_manual_probe = !s.screen.is_launcher()
-        && !git::has_preview(s)
-        && !files::has_preview(s)
+    let wait_manual_probe = conversation_visible
         && s.reader
             .as_mut()
             .is_some_and(chat::reader::Reader::take_manual_probe_wait);
@@ -271,9 +276,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     let history_width = s.tool_diff_preferences.history_width();
     let wait_rail_layout = !wait_manual_probe
-        && !s.screen.is_launcher()
-        && !git::has_preview(s)
-        && !files::has_preview(s)
+        && conversation_visible
         && s.reader
             .as_ref()
             .is_some_and(chat::reader::Reader::has_pending_scroll)
@@ -283,9 +286,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     let restored = !wait_manual_probe
         && !wait_rail_layout
-        && !s.screen.is_launcher()
-        && !git::has_preview(s)
-        && !files::has_preview(s)
+        && conversation_visible
         && (!s
             .reader
             .as_ref()
@@ -333,6 +334,9 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= workspace::poll_file_drafts(s, now, tx);
     changed |= shell::notifications::poll(s, tx);
     changed |= shell::notifications::poll_app_notices(s, now, tx);
+    platform::wake_lock::sync(s);
+    #[cfg(not(target_arch = "wasm32"))]
+    platform::launch::sync(s);
     workspace::capture_files_mode(s);
     timeline::poll_reveal(s, tx, changed);
     if changed {
@@ -382,6 +386,9 @@ fn main() {
         settings::gallery();
         return;
     }
+    if !platform::launch::enter() {
+        return;
+    }
     run_app();
 }
 #[cfg(target_arch = "wasm32")]
@@ -414,6 +421,9 @@ fn run_app() {
             ..layout::app_spec(strings::t("window.title.main"), init, view)
         },
         |s, tx| {
+            #[cfg(not(target_arch = "wasm32"))]
+            platform::launch::release(s);
+            platform::wake_lock::release(s);
             settings::close(s);
             workspace::finish(s, tx);
         },

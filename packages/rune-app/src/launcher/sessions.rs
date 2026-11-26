@@ -172,6 +172,9 @@ pub fn list(s: &mut State, more: bool) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
+    if !more && l.projects_stale {
+        super::connection::start_projects_refresh(l);
+    }
     if !more && l.show_search && !l.search.text.trim().is_empty() {
         l.search_results = Default::default();
     }
@@ -307,8 +310,34 @@ pub(crate) fn choose_child_ticket(s: &mut State, id: String, ticket: Option<u64>
             s.shell.floating_sessions(),
             ticket,
             true,
+            false,
         );
     }
+}
+
+pub(crate) fn choose_mission_conversation(s: &mut State, id: String, tx: &mut Tx) {
+    s.notifications.supersede_navigation();
+    if !s.screen.is_launcher()
+        && crate::workspace::active_session(s) == Some(id.as_str())
+        && s.phase != Phase::Failed
+    {
+        if s.shell.floating_panel().is_some() {
+            s.shell.close_floating(tx);
+        }
+    } else {
+        choose_from_inner(
+            s,
+            vec![(id, None)],
+            s.shell.floating_panel(),
+            None,
+            true,
+            true,
+        );
+    }
+}
+
+pub(super) fn retry_mission_conversation(s: &mut State, id: String) {
+    choose_from_inner(s, vec![(id, None)], None, None, true, true);
 }
 
 pub(crate) fn choose_destination(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
@@ -329,7 +358,7 @@ fn choose_from(
     dismiss: Option<u64>,
     ticket: Option<u64>,
 ) {
-    choose_from_inner(s, candidates, dismiss, ticket, false);
+    choose_from_inner(s, candidates, dismiss, ticket, false, false);
 }
 fn choose_from_inner(
     s: &mut State,
@@ -337,6 +366,7 @@ fn choose_from_inner(
     dismiss: Option<u64>,
     ticket: Option<u64>,
     allow_streaming: bool,
+    close_mission_reader: bool,
 ) {
     let recovery = candidates
         .first()
@@ -363,6 +393,7 @@ fn choose_from_inner(
         return;
     };
     l.selection_ticket = ticket;
+    l.close_mission_reader_on_bind = close_mission_reader;
     l.job("sessionList.reload.error", async move {
         let mut missing = Vec::new();
         for (id, step) in candidates {
@@ -402,6 +433,10 @@ pub fn can_open_child_session(s: &State) -> bool {
     s.screen.launcher().is_some() && session_switch_allowed(s)
 }
 
+pub(crate) fn can_rebind_session(s: &State, id: &str) -> bool {
+    can_rebind(s, id)
+}
+
 pub(super) fn can_rebind(s: &State, id: &str) -> bool {
     !s.screen.is_launcher()
         && s.phase == Phase::Failed
@@ -431,7 +466,7 @@ fn shown(s: &State) -> Option<&str> {
 }
 
 pub(super) fn dismiss_origin_panel(s: &mut State, origin: Option<u64>, tx: &mut Tx) {
-    if origin.is_some() && origin == s.shell.floating_sessions() {
+    if origin.is_some() && origin == s.shell.floating_panel() {
         s.shell.close_floating(tx);
     }
 }
@@ -588,9 +623,20 @@ fn bind_at(
             // This is the same owned occurrence and session; the in-flight reply guard stays live.
             agent.online = false;
             agent.pending_known = false;
+            if s.phase == Phase::Failed {
+                crate::git::close_preview(s);
+                if let Some(files) = &mut s.files {
+                    files.close_reader();
+                }
+            }
         }
     } else if s.files.as_ref().is_none_or(|ui| !ui.uses_connection(&b)) {
         crate::files::bind(s, &b);
+    } else if s.phase == Phase::Failed {
+        crate::git::close_preview(s);
+        if let Some(files) = &mut s.files {
+            files.close_reader();
+        }
     }
     s.draft = TextEdit::new(draft);
     crate::composer::literal::restore(&mut s.draft, &s.composer.draft.literal_spans);

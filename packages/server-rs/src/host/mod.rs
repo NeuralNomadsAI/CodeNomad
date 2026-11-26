@@ -34,6 +34,15 @@ pub struct Launch {
     pub serve: bool,
 }
 
+#[cfg(test)]
+pub(crate) fn ci_enabled() -> bool {
+    std::env::var_os("CI").is_some_and(|v| {
+        let s = v.to_string_lossy();
+        let trimmed = s.trim();
+        !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("false") && trimmed != "0"
+    })
+}
+
 pub struct Bind {
     pub ip: IpAddr,
     pub port: u16,
@@ -48,6 +57,12 @@ impl Bind {
     /// Binds this address; on an IPv6 wildcard (`::`), enables dual-stack (`IPV6_V6ONLY = 0`)
     /// matching `http-server.ts` (`ipv6Only: false`) and returns whether dual-stack is active.
     pub async fn listen_with_dual_stack(&self) -> io::Result<(TcpListener, bool)> {
+        #[cfg(test)]
+        assert!(
+            self.ip.is_loopback() || ci_enabled(),
+            "local unit tests must bind loopback only (set CI for wildcard listener tests), got {}",
+            self.ip
+        );
         let attempt = |port: u16| async move {
             if self.ip.is_ipv6() && self.ip.is_unspecified() {
                 let socket = tokio::net::TcpSocket::new_v6()?;
@@ -125,8 +140,8 @@ pub fn announce(local: &str, remote: Option<&str>) {
 }
 
 /// `installShutdownStdinHandler`: whole lines only; `codenomad:shutdown` stops once, other lines
-/// may be native responses. End of input changes nothing.
-pub fn read_stdin(stop: CancellationToken) {
+/// may be native responses or managed-session renewals. End of input changes nothing.
+pub fn read_stdin(stop: CancellationToken, app: crate::Shared) {
     std::thread::spawn(move || {
         let mut input = io::stdin().lock();
         let mut buffer = Vec::new();
@@ -140,8 +155,8 @@ pub fn read_stdin(stop: CancellationToken) {
             let text = text.trim_end_matches('\n').trim_end_matches('\r');
             if text.trim() == SHUTDOWN_COMMAND {
                 stop.cancel();
-            } else {
-                native_parent::handle_line(text);
+            } else if !native_parent::handle_line(text) && !stop.is_cancelled() && native_parent::available() {
+                crate::auth::managed::handle_control_if(text, &app.auth, || !stop.is_cancelled(), line);
             }
         }
     });
@@ -170,6 +185,10 @@ mod tests {
 
     #[tokio::test]
     async fn ipv6_wildcard_dual_stack_accepts_both_ipv6_and_ipv4() {
+        // Binding `::` triggers the Windows Firewall prompt for each new test binary; run in CI only.
+        if !ci_enabled() {
+            return;
+        }
         let bind = Bind { ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED), port: 0, fallback: false };
         let (listener, dual_stack) = match bind.listen_with_dual_stack().await {
             Ok(bound) => bound,
@@ -190,5 +209,21 @@ mod tests {
         .await
         .expect("IPv4-mapped loopback accept timed out")
         .expect("IPv4 loopback connect/accept failed on dual-stack ::");
+    }
+
+    #[tokio::test]
+    async fn local_wildcard_bind_is_refused_without_ci() {
+        if ci_enabled() {
+            return;
+        }
+        for ip in [IpAddr::V4(Ipv4Addr::UNSPECIFIED), IpAddr::V6(Ipv6Addr::UNSPECIFIED)] {
+            let panicked = tokio::spawn(async move {
+                let bind = Bind { ip, port: 0, fallback: false };
+                let _ = bind.listen_with_dual_stack().await;
+            })
+            .await
+            .is_err_and(|err| err.is_panic());
+            assert!(panicked, "expected non-loopback bind {ip} to be refused locally when CI is unset");
+        }
     }
 }

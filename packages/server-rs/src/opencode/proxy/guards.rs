@@ -48,10 +48,19 @@ pub(super) fn guarded(route: &str, method: &Method) -> bool {
     if *method == Method::GET {
         return !route.starts_with("/api/fs/") && !route.starts_with("/api/pty") && !route.starts_with("/api/shell");
     }
+    let session_segment = route
+        .strip_prefix("/api/session/")
+        .or_else(|| route.strip_prefix("/api/experimental/session/"))
+        .and_then(|rest| rest.split('/').next());
+    if session_segment.is_some_and(|seg| matches!(seg, "" | "active" | "global")) {
+        return false;
+    }
     (*method == Method::POST && route == "/api/session")
         || (*method == Method::POST
             && route.starts_with("/api/session/")
-            && ["/prompt", "/command", "/agent", "/model", "/fork"].iter().any(|suffix| route.ends_with(suffix)))
+            && ["/prompt", "/command", "/agent", "/model", "/fork", "/background"]
+                .iter()
+                .any(|suffix| route.ends_with(suffix)))
         || (*method == Method::PATCH && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/')))
         || (matches!(*method, Method::PUT | Method::DELETE)
             && route.starts_with("/api/experimental/session/")
