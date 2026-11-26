@@ -27,7 +27,7 @@ pub(super) struct Setting {
     refresh: bool,
     failed: bool,
     pending: Option<(bool, u64)>,
-    flight: Option<Receiver<(Option<bool>, bool)>>,
+    flight: Option<(u64, bool, Receiver<(Option<bool>, bool)>)>,
     review: review::Review,
     owner_gen: u64,
 }
@@ -72,21 +72,33 @@ impl Setting {
         self.review.invalidate();
     }
 
-    pub fn poll_pending_writes(&mut self) -> bool {
+    pub fn poll_pending_writes(&mut self, current_auth: u64, verified: bool) -> bool {
         let mut changed = self.review.poll_write();
-        if let Some(flight) = &self.flight {
+        if let Some((flight_gen, is_write, flight)) = &self.flight {
+            let (flight_gen, is_write) = (*flight_gen, *is_write);
             match flight.try_recv() {
                 Ok((current, failed)) => {
                     self.flight = None;
-                    self.failed = failed;
-                    if let Some(current) = current {
-                        self.current = Some(current);
+                    if flight_gen == current_auth && verified {
+                        self.failed = failed;
+                        if let Some(current) = current {
+                            self.current = Some(current);
+                            if !current {
+                                self.review.revoke_cleanup_disable();
+                            }
+                        }
+                    } else {
+                        if is_write {
+                            self.failed = true;
+                        }
+                        self.refresh = true;
                     }
                     changed = true;
                 }
                 Err(_) if flight.is_closed() => {
                     self.flight = None;
                     self.failed = true;
+                    self.refresh = true;
                     changed = true;
                 }
                 Err(_) => {}
@@ -188,6 +200,9 @@ impl Setting {
 
     fn set(&mut self, next: bool, auth_gen: u64) {
         if self.visible && !self.busy() && self.current.is_some_and(|current| current != next) {
+            if !next {
+                self.review.revoke_cleanup_disable();
+            }
             self.pending = Some((next, auth_gen));
             self.failed = false;
         }
@@ -200,55 +215,77 @@ impl Setting {
     pub fn poll(
         &mut self,
         backend: &Backend,
+        transport_lost: bool,
         prefs_authority: &Arc<AtomicU64>,
         main: &Option<rune::Waker>,
         window: &Option<rune::Waker>,
     ) -> bool {
-        let mut changed = false;
-        if let Some(flight) = &self.flight {
-            let (current, failed) = match flight.try_recv() {
-                Ok(reply) => reply,
-                Err(_) if flight.is_closed() => (None, true),
-                Err(_) => return false,
-            };
-            self.flight = None;
-            self.failed = failed;
-            if let Some(current) = current {
-                self.current = Some(current);
-            }
-            changed = true;
-        }
         let current_auth = prefs_authority.load(Ordering::SeqCst);
+        let verified = !transport_lost && super::ServerOwner::backend_verified(backend);
+        let mut changed = self.poll_pending_writes(current_auth, verified);
+        if self.flight.is_some() {
+            return changed;
+        }
         if let Some((_, admitted_gen)) = self.pending
-            && admitted_gen != current_auth
+            && (admitted_gen != current_auth || !verified)
         {
             self.pending = None;
             self.failed = true;
             changed = true;
         }
+        if !verified {
+            if self.visible {
+                self.refresh = true;
+            }
+            return changed;
+        }
         if self.pending.is_none() && (!self.visible || !self.refresh) {
             return changed;
         }
         let desired = self.pending.take();
+        let is_write = desired.is_some();
         self.refresh = false;
         let (out, input) = bounded(1);
-        self.flight = Some(input);
+        self.flight = Some((current_auth, is_write, input));
         let (backend, main, window) = (backend.clone(), main.clone(), window.clone());
         let auth = prefs_authority.clone();
+        let prepared_gen = backend.client.drop_generation();
         platform::spawn(async move {
+            let still_ok = |expected_auth: u64| {
+                auth.load(Ordering::SeqCst) == expected_auth
+                    && backend.client.drop_generation() == prepared_gen
+                    && super::ServerOwner::backend_verified(&backend)
+            };
             let result = if let Some((desired, admitted_gen)) = desired {
-                if auth.load(Ordering::SeqCst) != admitted_gen
-                    || !super::ServerOwner::backend_verified(&backend)
-                {
+                let attested = still_ok(admitted_gen)
+                    && (!backend.client.tracks_server_attestation()
+                        || backend.attest_server().await.is_ok())
+                    && still_ok(admitted_gen);
+                if !attested {
                     (None, true)
                 } else {
                     match memory::set_enabled(&backend, desired).await {
                         Ok(actual) if actual == desired => (Some(actual), false),
-                        _ => (memory::enabled(&backend).await.ok(), true),
+                        _ => {
+                            let readback = if still_ok(admitted_gen) {
+                                memory::enabled(&backend)
+                                    .await
+                                    .ok()
+                                    .filter(|_| still_ok(admitted_gen))
+                            } else {
+                                None
+                            };
+                            (readback, true)
+                        }
                     }
                 }
+            } else if !still_ok(current_auth) {
+                (None, true)
             } else {
-                let actual = memory::enabled(&backend).await.ok();
+                let actual = memory::enabled(&backend)
+                    .await
+                    .ok()
+                    .filter(|_| still_ok(current_auth));
                 (actual, actual.is_none())
             };
             let _ = out.send(result).await;
@@ -282,7 +319,13 @@ pub(super) fn view<S: 'static>(
     });
     let next = !setting.current.unwrap_or(false);
     let set = apply.clone();
-    let enabled = prefs.can_retry() && !setting.busy() && setting.current.is_some();
+    let verified = prefs.can_retry()
+        && !prefs.transport_lost()
+        && prefs
+            .backend
+            .as_ref()
+            .is_some_and(super::ServerOwner::backend_verified);
+    let enabled = verified && !setting.busy() && setting.current.is_some();
     chrome::card(
         col()
             .full_width()
@@ -300,7 +343,7 @@ pub(super) fn view<S: 'static>(
                     )
                     .child(layout::button(
                         t("settings.memory.retry"),
-                        !prefs.can_retry() || setting.busy(),
+                        !verified || setting.busy(),
                         move |s| apply(s, None),
                     ))
             }))
@@ -336,7 +379,13 @@ pub(super) fn review_action(prefs: &mut Preferences, action: review::Action) -> 
 }
 
 pub(super) fn action(prefs: &mut Preferences, desired: Option<bool>) {
-    if prefs.can_retry() && prefs.memory.visible {
+    let verified = prefs.can_retry()
+        && !prefs.transport_lost()
+        && prefs
+            .backend
+            .as_ref()
+            .is_some_and(super::ServerOwner::backend_verified);
+    if verified && prefs.memory.visible {
         let auth_gen = prefs.authority_handle().load(Ordering::SeqCst);
         match desired {
             Some(desired) => prefs.memory.set(desired, auth_gen),

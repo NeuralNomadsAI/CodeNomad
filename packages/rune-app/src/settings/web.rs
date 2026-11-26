@@ -721,6 +721,35 @@ pub(super) fn view(
                     .view(&mut layers, &s.settings.shared, |s: &mut State| {
                         &mut s.settings.web.config_files
                     })
+            } else if prefs.transport_lost()
+                || !prefs.can_retry()
+                || prefs
+                    .backend
+                    .as_ref()
+                    .is_some_and(|b| !super::ServerOwner::backend_verified(b))
+            {
+                col()
+                    .full_width()
+                    .child(
+                        layout::action_row()
+                            .child(text(t("rune.connect_error")).role("alert").wrap())
+                            .child(layout::button(
+                                t("sessionList.loadError.retry"),
+                                !prefs.can_retry(),
+                                |s: &mut State| {
+                                    s.settings.shared.borrow_mut().retry_general();
+                                    s.settings.web.scope.retry();
+                                    (s.wake)();
+                                },
+                            )),
+                    )
+                    .children(panel.config_files.has_editor().then(|| {
+                        panel
+                            .config_files
+                            .view(&mut layers, &s.settings.shared, |s: &mut State| {
+                                &mut s.settings.web.config_files
+                            })
+                    }))
             } else if panel.scope.config_files_failed(prefs) {
                 layout::action_row()
                     .child(text(t("rune.connect_error")).role("alert").wrap())

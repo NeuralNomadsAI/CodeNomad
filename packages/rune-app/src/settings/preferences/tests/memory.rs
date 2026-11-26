@@ -202,6 +202,18 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         );
         assert!(admitted);
         editor.mark_submitted();
+        let pre_save_meta = poll_next_request(&mut prefs, &listener).await;
+        assert_eq!(pre_save_meta.first, "GET /api/meta HTTP/1.1");
+        pre_save_meta
+            .reply(
+                200,
+                json!({
+                    "apiContract": 1,
+                    "serverId": "profile-a",
+                    "capabilities": ["settings-atomic-patches"]
+                }),
+            )
+            .await;
         let save_req = poll_next_request(&mut prefs, &listener).await;
         assert_eq!(save_req.first, "POST /api/memory HTTP/1.1");
         assert_eq!(save_req.body["operation"]["action"], "save");
@@ -251,9 +263,14 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
 
         // Switching to a different server profile while a real HTTP save POST is in flight must
         // invalidate the review, close the stale editor, and ignore the late reply from profile A.
+        let wake_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let wake_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let count_signal = wake_count.clone();
         let wake_signal = wake_notify.clone();
-        prefs.window_wake = Some(std::sync::Arc::new(move || wake_signal.notify_one()));
+        prefs.window_wake = Some(std::sync::Arc::new(move || {
+            count_signal.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            wake_signal.notify_waiters();
+        }));
         let mut inflight_editor = Editor::default();
         inflight_editor.open(updated_edit.clone());
         inflight_editor.edit_text("In-flight profile A edit");
@@ -274,6 +291,18 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
             ),
         ));
         inflight_editor.mark_submitted();
+        let held_meta = poll_next_request(&mut prefs, &listener).await;
+        assert_eq!(held_meta.first, "GET /api/meta HTTP/1.1");
+        held_meta
+            .reply(
+                200,
+                json!({
+                    "apiContract": 1,
+                    "serverId": "profile-a",
+                    "capabilities": ["settings-atomic-patches"]
+                }),
+            )
+            .await;
         let held_save_req = poll_next_request(&mut prefs, &listener).await;
         assert_eq!(held_save_req.first, "POST /api/memory HTTP/1.1");
         assert_eq!(held_save_req.body["operation"]["action"], "save");
@@ -288,15 +317,23 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
                 .poll_editor(prefs.backend.as_ref(), &mut inflight_editor)
         );
         assert!(!inflight_editor.shown());
-        let woken = wake_notify.notified();
+        let before_reply = wake_count.load(std::sync::atomic::Ordering::SeqCst);
         held_save_req
             .reply(200, json!({"id": "entry-1", "revision": "c".repeat(64)}))
             .await;
-        // Wait for the spawned profile-A task to finish and fire wake() before verifying that
-        // polling ignores its late reply on profile B.
-        timeout(Duration::from_secs(2), woken)
-            .await
-            .expect("late profile-A write task should finish and notify wake");
+        // Wait specifically for the wake emitted after replying to profile A's held POST so
+        // earlier wakes from review_action cannot satisfy the wait prematurely.
+        timeout(Duration::from_secs(2), async {
+            loop {
+                let notified = wake_notify.notified();
+                if wake_count.load(std::sync::atomic::Ordering::SeqCst) > before_reply {
+                    break;
+                }
+                notified.await;
+            }
+        })
+        .await
+        .expect("late profile-A write task should finish and notify wake");
         prefs.poll();
         assert!(
             !prefs

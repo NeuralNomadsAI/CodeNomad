@@ -981,7 +981,15 @@ impl Preferences {
 
     fn poll_documents_inner(&mut self, revalidate_idle: bool) -> (bool, bool, bool) {
         let install = self.opencode_install.poll();
-        let memory_writes = self.memory.poll_pending_writes();
+        let memory_verified = !self.authentication_required
+            && !self.transport_lost
+            && self
+                .backend
+                .as_ref()
+                .is_some_and(super::ServerOwner::backend_verified);
+        let memory_writes = self
+            .memory
+            .poll_pending_writes(self.authority.load(Ordering::SeqCst), memory_verified);
         if self.authentication_required {
             if memory_writes {
                 self.revision += 1;
@@ -1062,7 +1070,13 @@ impl Preferences {
             | state_changed
             | server_changed
             | memory_writes
-            | self.memory.poll(&backend, &self.authority, &main, &window)
+            | self.memory.poll(
+                &backend,
+                self.transport_lost,
+                &self.authority,
+                &main,
+                &window,
+            )
             | self.memory.poll_review(
                 &backend,
                 self.provider_target.as_ref(),

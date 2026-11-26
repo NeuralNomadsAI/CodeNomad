@@ -22,6 +22,7 @@ pub(super) struct DirectAccess {
     auth: Option<AuthStatus>,
     auth_error: Option<ErrorText>,
     auth_gen: u64,
+    pending_refresh: bool,
     meta_flight: Option<(u64, Sender<()>, Receiver<MetaReply>)>,
     mode_flight: Option<Receiver<Result<(), remote::Error>>>,
     password_flight: Option<Receiver<Result<PasswordSaved, remote::Error>>>,
@@ -63,8 +64,10 @@ impl DirectAccess {
 
     pub fn refresh(&mut self, backend: &Backend, wake: &Waker) {
         if self.meta_flight.is_some() || self.password_flight.is_some() {
+            self.pending_refresh = true;
             return;
         }
+        self.pending_refresh = false;
         self.owner = Some(backend.client_id.clone());
         self.meta_error = None;
         let auth_gen = self.auth_gen;
@@ -209,6 +212,15 @@ impl DirectAccess {
                 }
                 Err(_) => {}
             }
+        }
+        if self.pending_refresh
+            && self.meta_flight.is_none()
+            && self.password_flight.is_none()
+            && self.mode_flight.is_none()
+            && let Some(backend) = backend
+        {
+            self.refresh(backend, wake);
+            changed = true;
         }
         changed
     }

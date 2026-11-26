@@ -54,6 +54,10 @@ impl Editor {
         self.confirm = None;
     }
 
+    pub fn has_editor(&self) -> bool {
+        self.active.is_some() || self.dirty()
+    }
+
     pub fn can_write(&self, prefs: &Preferences) -> bool {
         prefs.can_retry()
             && !prefs.transport_lost()
@@ -309,22 +313,22 @@ impl Editor {
             let still_authorized = || {
                 prefs_auth.load(Ordering::SeqCst) == prefs_gen
                     && editor_auth.load(Ordering::SeqCst) == editor_gen
+                    && backend.client.drop_generation() == prepared_gen
                     && ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
                         .is_none_or(|id| backend.client.server_identity() == Some(id))
             };
-            let verified = if prefs_auth.load(Ordering::SeqCst) != prefs_gen
-                || editor_auth.load(Ordering::SeqCst) != editor_gen
-            {
+            // Re-attest live HTTP routing right before sending the draft when attestation is
+            // tracked; the server HTTP route has no server-id precondition header, so a fresh
+            // /api/meta check on the same client prevents sending to a foreign profile even if
+            // SSE remained attached to the old host.
+            let verified = if !still_authorized() {
                 false
-            } else if backend.client.tracks_server_attestation()
-                && (!ServerOwner::backend_verified(&backend)
-                    || backend.client.drop_generation() != prepared_gen)
-            {
+            } else if backend.client.tracks_server_attestation() {
                 backend.attest_server().await.is_ok() && still_authorized()
             } else {
-                still_authorized()
+                true
             };
             let saved = if !verified || !still_authorized() {
                 false
@@ -333,6 +337,9 @@ impl Editor {
                     Ok(()) => true,
                     Err(_) => {
                         still_authorized()
+                            && (!backend.client.tracks_server_attestation()
+                                || backend.attest_server().await.is_ok())
+                            && still_authorized()
                             && api::read(&backend, &id).await.is_ok_and(|content| {
                                 still_authorized() && content.exists && content.contents == payload
                             })
@@ -686,9 +693,9 @@ mod tests {
                 Some("locale: es\n")
             );
 
-            // Re-bind on the same server, then revoke attestation on the SAME client_id when
-            // another profile takes over the address: draft stays read-only and save must NOT
-            // send PUT to the foreign server.
+            // Re-bind on the same server, then swap the HTTP target to profile B without
+            // dropping SSE or calling attest_server() beforehand: save() must re-attest live
+            // HTTP routing, revoke attestation, and never send the PUT to profile B.
             let backend_reauth = Backend::connect(&base, "").await.unwrap();
             backend_reauth.attest_server().await.unwrap();
             prefs.bind(Some(backend_reauth.clone()));
@@ -698,14 +705,24 @@ mod tests {
             assert!(editor.dirty());
             *saved_payload.lock().unwrap() = None;
             *server_id.lock().unwrap() = "server-profile-b".to_owned();
-            assert!(backend_reauth.attest_server().await.is_err());
+            editor.save(&prefs);
+            assert!(editor.busy());
+            for _ in 0..100 {
+                editor.poll(&prefs, &wake, true);
+                if !editor.busy() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
             assert!(backend_reauth.client.attestation_revoked());
             assert!(!editor.can_write(&prefs));
-            editor.save(&prefs);
-            assert!(!editor.busy());
             assert_eq!(saved_payload.lock().unwrap().as_deref(), None);
             assert!(editor.dirty());
             assert_eq!(editor.draft.text, "locale: it\n");
+            // Subsequent save attempts while revoked are refused synchronously.
+            editor.save(&prefs);
+            assert!(!editor.busy());
+            assert_eq!(saved_payload.lock().unwrap().as_deref(), None);
 
             // Connecting to a different server profile on the same address must reset the draft.
             let backend_c = Backend::connect(&base, "").await.unwrap();

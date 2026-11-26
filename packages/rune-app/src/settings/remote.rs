@@ -51,7 +51,7 @@ pub(super) struct Remote {
     flight: Option<(Option<Sender<()>>, Receiver<Reply>)>,
     recheck: Option<(Sender<()>, Receiver<()>)>,
     error: Option<ErrorText>,
-    sticky_revoke_error: Option<(String, ErrorText)>,
+    mutation_error: Option<(MutationOutcome, ErrorText)>,
     needs_read: bool,
     unconfirmed: Option<Mutation>,
     disabled_info_open: bool,
@@ -84,12 +84,47 @@ enum Action {
     Revoke(String),
 }
 
+#[derive(Clone)]
+enum MutationOutcome {
+    Start,
+    Stop,
+    SetPreviews(bool),
+    Pair,
+    Revoke(String),
+}
+
+impl MutationOutcome {
+    fn confirmed(&self, status: &Status, devices: Option<&[Device]>, devices_error: bool) -> bool {
+        match self {
+            Self::Start => status.enabled,
+            Self::Stop => !status.enabled && !status.starts_on_launch,
+            Self::SetPreviews(desired) => status.previews == *desired,
+            Self::Pair => false,
+            Self::Revoke(id) => {
+                !devices_error && devices.is_some_and(|list| !list.iter().any(|d| d.id == *id))
+            }
+        }
+    }
+}
+
 enum Mutation {
     Start,
     Stop,
-    SetPreviews,
+    SetPreviews(bool),
     Pair,
     Revoke(String, Option<ErrorText>),
+}
+
+impl Mutation {
+    fn outcome(&self) -> MutationOutcome {
+        match self {
+            Self::Start => MutationOutcome::Start,
+            Self::Stop => MutationOutcome::Stop,
+            Self::SetPreviews(desired) => MutationOutcome::SetPreviews(*desired),
+            Self::Pair => MutationOutcome::Pair,
+            Self::Revoke(id, _) => MutationOutcome::Revoke(id.clone()),
+        }
+    }
 }
 
 enum Reply {
@@ -180,10 +215,12 @@ impl Remote {
         self.flight = None;
         match result {
             Reply::Snapshot(Ok(read), revoke_err) => {
-                if let Some(Mutation::Revoke(_, stored)) = self.unconfirmed.as_mut()
+                if let Some(Mutation::Revoke(id, stored)) = self.unconfirmed.as_mut()
                     && let Some(err) = revoke_err
                 {
-                    *stored = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
+                    let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
+                    *stored = Some(err_text.clone());
+                    self.mutation_error = Some((MutationOutcome::Revoke(id.clone()), err_text));
                 }
                 let status = read.status;
                 let keep_direct = self.pairing.as_ref().is_some_and(|p| p.direct);
@@ -203,10 +240,14 @@ impl Remote {
                 self.needs_read = matches!(self.unconfirmed, Some(Mutation::Revoke(_, _)))
                     && (read.devices_error.is_some() || devices.is_none());
                 if self.needs_read {
-                    let stored = match &self.unconfirmed {
-                        Some(Mutation::Revoke(_, err)) => err.clone(),
-                        _ => None,
-                    };
+                    let stored = self
+                        .mutation_error
+                        .as_ref()
+                        .map(|(_, e)| e.clone())
+                        .or_else(|| match &self.unconfirmed {
+                            Some(Mutation::Revoke(_, err)) => err.clone(),
+                            _ => None,
+                        });
                     self.error = stored
                         .clone()
                         .filter(|err| matches!(err, ErrorText::Raw(_)))
@@ -217,78 +258,61 @@ impl Remote {
                         .or(stored)
                         .or(Some(ErrorText::Key("remoteControl.state.error")));
                 } else {
-                    let (failed, stored_revoke_err) = match self.unconfirmed.take() {
-                        Some(Mutation::Revoke(id, err)) => {
-                            let present = devices.as_ref().is_some_and(|devices| {
-                                devices.iter().any(|device| device.id == id)
-                            });
-                            (
-                                present,
-                                present.then(|| {
-                                    (
-                                        id,
-                                        err.unwrap_or(ErrorText::Key("remoteControl.state.error")),
-                                    )
-                                }),
-                            )
-                        }
-                        Some(
-                            Mutation::Start
-                            | Mutation::Stop
-                            | Mutation::SetPreviews
-                            | Mutation::Pair,
-                        ) => (true, None),
-                        None => (false, None),
-                    };
-                    if let Some(err) = read.devices_error {
-                        if let Some((_, sticky)) = &self.sticky_revoke_error
-                            && matches!(sticky, ErrorText::Raw(_))
+                    if let Some(mutation) = self.unconfirmed.take() {
+                        let outcome = mutation.outcome();
+                        if !outcome.confirmed(
+                            &status,
+                            devices.as_deref(),
+                            read.devices_error.is_some(),
+                        ) && self.mutation_error.is_none()
                         {
-                            self.error = Some(sticky.clone());
-                        } else if !failed || self.error.is_none() {
-                            self.error =
-                                Some(ErrorText::from_remote(err, "remoteControl.state.error"));
+                            let err_text = match mutation {
+                                Mutation::Revoke(_, Some(err)) => err,
+                                _ => ErrorText::Key("remoteControl.state.error"),
+                            };
+                            self.mutation_error = Some((outcome, err_text));
                         }
-                    } else if !failed {
-                        if let Some((sticky_id, sticky_err)) = &self.sticky_revoke_error {
-                            let still_present = devices
-                                .as_ref()
-                                .is_some_and(|list| list.iter().any(|d| d.id == *sticky_id));
-                            if still_present {
-                                self.error = Some(sticky_err.clone());
-                            } else {
-                                self.sticky_revoke_error = None;
-                                self.error = None;
-                            }
-                        } else {
-                            self.error = None;
-                        }
-                    } else if let Some((id, err)) = stored_revoke_err {
-                        self.sticky_revoke_error = Some((id, err.clone()));
-                        self.error = Some(err);
-                    } else if self.error.is_none() {
-                        self.error = Some(ErrorText::Key("remoteControl.state.error"));
                     }
+                    if let Some((outcome, _)) = &self.mutation_error
+                        && outcome.confirmed(
+                            &status,
+                            devices.as_deref(),
+                            read.devices_error.is_some(),
+                        )
+                    {
+                        self.mutation_error = None;
+                    }
+                    let explicit_mutation = self
+                        .mutation_error
+                        .as_ref()
+                        .map(|(_, err)| err.clone())
+                        .filter(|err| matches!(err, ErrorText::Raw(_)));
+                    self.error = explicit_mutation
+                        .or_else(|| {
+                            read.devices_error
+                                .map(|err| ErrorText::from_remote(err, "remoteControl.state.error"))
+                        })
+                        .or_else(|| self.mutation_error.as_ref().map(|(_, err)| err.clone()));
                 }
                 self.snapshot = Some((status, devices));
             }
             Reply::Snapshot(Err(err), revoke_err) => {
                 self.needs_read = true;
-                if let Some(Mutation::Revoke(_, stored)) = self.unconfirmed.as_mut()
+                if let Some(Mutation::Revoke(id, stored)) = self.unconfirmed.as_mut()
                     && let Some(err) = revoke_err
                 {
-                    *stored = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
+                    let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
+                    *stored = Some(err_text.clone());
+                    self.mutation_error = Some((MutationOutcome::Revoke(id.clone()), err_text));
                 }
-                let stored = match &self.unconfirmed {
-                    Some(Mutation::Revoke(_, err)) => err.clone(),
-                    _ => self.sticky_revoke_error.as_ref().map(|(_, e)| e.clone()),
-                };
+                let stored = self.mutation_error.as_ref().map(|(_, err)| err.clone());
                 self.error = stored
                     .filter(|err| matches!(err, ErrorText::Raw(_)))
                     .or_else(|| Some(ErrorText::from_remote(err, "remoteControl.state.error")));
             }
             Reply::Started(Ok((status, pairing, devices))) => {
                 self.unconfirmed = None;
+                self.mutation_error = None;
                 self.needs_read = false;
                 self.error = None;
                 let existing_devices = self.snapshot.as_ref().and_then(|(_, d)| d.clone());
@@ -296,7 +320,9 @@ impl Remote {
                 self.set_pairing(pairing, false);
             }
             Reply::Started(Err(err)) => {
-                self.error = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
+                let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
+                self.mutation_error = Some((MutationOutcome::Start, err_text.clone()));
+                self.error = Some(err_text);
                 if let Some(backend) = backend {
                     self.start(backend, wake, Action::Refresh);
                 } else {
@@ -306,6 +332,7 @@ impl Remote {
             }
             Reply::Status(Ok(status)) => {
                 let mutation = self.unconfirmed.take();
+                self.mutation_error = None;
                 self.needs_read = false;
                 self.error = None;
                 let keep_direct = self.pairing.as_ref().is_some_and(|p| p.direct);
@@ -321,7 +348,11 @@ impl Remote {
                 self.snapshot = Some((status, devices));
             }
             Reply::Status(Err(err)) => {
-                self.error = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
+                let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
+                if let Some(outcome) = self.unconfirmed.as_ref().map(Mutation::outcome) {
+                    self.mutation_error = Some((outcome, err_text.clone()));
+                }
+                self.error = Some(err_text);
                 if let Some(backend) = backend {
                     self.start(backend, wake, Action::Refresh);
                 } else {
@@ -331,12 +362,15 @@ impl Remote {
             }
             Reply::Pairing(Ok((pairing, direct))) => {
                 self.unconfirmed = None;
+                self.mutation_error = None;
                 self.needs_read = false;
                 self.error = None;
                 self.set_pairing(pairing, direct);
             }
             Reply::Pairing(Err(err)) => {
-                self.error = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
+                let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
+                self.mutation_error = Some((MutationOutcome::Pair, err_text.clone()));
+                self.error = Some(err_text);
                 if let Some(backend) = backend {
                     self.start(backend, wake, Action::Refresh);
                 } else {
@@ -433,7 +467,7 @@ impl Remote {
         }
         self.recheck = None;
         if !matches!(action, Action::Refresh) {
-            self.sticky_revoke_error = None;
+            self.mutation_error = None;
             self.error = None;
         }
         let tunnel_origin = self
@@ -447,7 +481,9 @@ impl Remote {
         match &action {
             Action::Start => self.unconfirmed = Some(Mutation::Start),
             Action::Stop => self.unconfirmed = Some(Mutation::Stop),
-            Action::SetPreviews(_) => self.unconfirmed = Some(Mutation::SetPreviews),
+            Action::SetPreviews(enabled) => {
+                self.unconfirmed = Some(Mutation::SetPreviews(*enabled))
+            }
             Action::PairTunnel | Action::PairDirect(_) => {
                 self.clear_pairing();
                 self.unconfirmed = Some(Mutation::Pair);

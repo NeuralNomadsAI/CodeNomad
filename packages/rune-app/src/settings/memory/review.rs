@@ -102,6 +102,7 @@ pub(super) struct Review {
     unverified: bool,
     authority: Arc<AtomicU64>,
     cleanup_token: Arc<AtomicU64>,
+    enabled_token: Arc<AtomicU64>,
     epoch: u64,
     seen: super::seen::Seen,
 }
@@ -129,6 +130,15 @@ impl Review {
     pub fn revoke_authority(&self) {
         self.authority.fetch_add(1, Ordering::SeqCst);
         self.cleanup_token.fetch_add(1, Ordering::SeqCst);
+        self.enabled_token.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn revoke_cleanup_disable(&mut self) {
+        self.enabled_token.fetch_add(1, Ordering::SeqCst);
+        self.cleanup_token.fetch_add(1, Ordering::SeqCst);
+        self.tidy = None;
+        self.cleanup = None;
+        self.mark_active_tidy_interrupted();
     }
 
     fn mark_active_tidy_interrupted(&mut self) {
@@ -211,6 +221,7 @@ impl Review {
             Action::Retry => self.invalidate(),
             Action::Write(edit, fields) if !self.writing() && self.writable(&edit) => {
                 let admitted_gen = prefs_authority.load(Ordering::SeqCst);
+                self.write_result = None;
                 self.pending = Some((edit, fields, admitted_gen));
             }
             Action::Tidy => self.tidy = self.cleanup_intent(project, prefs_authority),
@@ -273,6 +284,8 @@ impl Review {
             authority_gen: prefs_authority.load(Ordering::SeqCst),
             cleanup_token: self.cleanup_token.clone(),
             cleanup_token_gen: self.cleanup_token.load(Ordering::SeqCst),
+            enabled_token: self.enabled_token.clone(),
+            enabled_token_gen: self.enabled_token.load(Ordering::SeqCst),
         })
     }
 
@@ -633,22 +646,22 @@ impl Review {
             let still_authorized = || {
                 prefs_auth.load(Ordering::SeqCst) == prefs_gen
                     && review_auth.load(Ordering::SeqCst) == review_gen
+                    && backend.client.drop_generation() == prepared_gen
                     && ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
                         .is_none_or(|id| backend.client.server_identity() == Some(id))
             };
-            let verified = if prefs_auth.load(Ordering::SeqCst) != prefs_gen
-                || review_auth.load(Ordering::SeqCst) != review_gen
-            {
+            // Re-attest live HTTP routing right before sending the draft when attestation is
+            // tracked; the server HTTP route has no server-id precondition header, so a fresh
+            // /api/meta check on the same client prevents sending to a foreign profile even if
+            // SSE remained attached to the old host.
+            let verified = if !still_authorized() {
                 false
-            } else if backend.client.tracks_server_attestation()
-                && (!ServerOwner::backend_verified(&backend)
-                    || backend.client.drop_generation() != prepared_gen)
-            {
+            } else if backend.client.tracks_server_attestation() {
                 backend.attest_server().await.is_ok() && still_authorized()
             } else {
-                still_authorized()
+                true
             };
             let result = if !verified || !still_authorized() {
                 Err(UNAVAILABLE)

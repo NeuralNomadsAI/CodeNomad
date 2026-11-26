@@ -27,6 +27,8 @@ pub(in crate::settings) struct Intent {
     pub authority_gen: u64,
     pub cleanup_token: Arc<AtomicU64>,
     pub cleanup_token_gen: u64,
+    pub enabled_token: Arc<AtomicU64>,
+    pub enabled_token_gen: u64,
 }
 
 impl PartialEq for Intent {
@@ -41,6 +43,8 @@ impl PartialEq for Intent {
             && self.authority_gen == other.authority_gen
             && Arc::ptr_eq(&self.cleanup_token, &other.cleanup_token)
             && self.cleanup_token_gen == other.cleanup_token_gen
+            && Arc::ptr_eq(&self.enabled_token, &other.enabled_token)
+            && self.enabled_token_gen == other.enabled_token_gen
     }
 }
 
@@ -49,6 +53,7 @@ impl Eq for Intent {}
 impl Intent {
     pub fn authority_valid(&self) -> bool {
         self.authority.load(Ordering::SeqCst) == self.authority_gen
+            && self.enabled_token.load(Ordering::SeqCst) == self.enabled_token_gen
     }
 
     pub fn token_valid(&self) -> bool {
