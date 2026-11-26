@@ -5,7 +5,7 @@ import {spawn,execFile} from 'node:child_process'
 import {spawnFixtureChild,stopFixtureChild,stopFixtureHandle,fixtureChildPid} from '../../../scripts/native-fixture-guards.mjs'
 import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,createStreamRedactor,stripFixtureServerSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {promisify} from 'node:util'
-import {existsSync,readFileSync,renameSync,unlinkSync,writeFileSync} from 'node:fs'
+import {existsSync,renameSync,writeFileSync} from 'node:fs'
 import {lstat,mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
 import path from 'node:path'
@@ -22,7 +22,7 @@ import {androidTsServer} from './android-ts-server.mjs'
 import {launchWeb} from './launcher-web.mjs'
 import {rustOrigin,signInFixture,until} from './fixture-host.mjs'
 import {assertWorktreeTestRoot} from '../../../scripts/rune/web-workspace-policy.mjs'
-import {evaluateWorkerExit,needsOwnedWindowsWorker} from './launcher-worker-guard.mjs'
+import {claimOwnedWorkerProfile,needsOwnedWindowsWorker,publishWorkerProof} from './launcher-worker-guard.mjs'
 const webMoreActions=process.argv.includes('--web-mobile-more-actions')
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||webMoreActions||process.argv.includes('--web-mobile')
 const webMobileDrawers=process.argv.includes('--web-mobile-drawers')
@@ -37,45 +37,15 @@ const root=path.resolve(import.meta.dirname,'../../..')
 const ownedWorker=process.argv.includes('--owned-mobile-worker')
 const workerProfileEnv=process.env.CODENOMAD_LAUNCHER_WORKER_PROFILE
 if(ownedWorker)delete process.env.CODENOMAD_LAUNCHER_WORKER_PROFILE
-if(ownedWorker&&workerProfileEnv){
-  const testsReal=(await assertWorktreeTestRoot(root)).testsReal
-  const resolvedProfile=path.resolve(workerProfileEnv)
-  assert.equal(path.dirname(resolvedProfile),testsReal,`Worker profile must reside under ${testsReal}`)
-  assert.match(path.basename(resolvedProfile),/^launcher-[0-9a-f-]+$/i,'Unexpected worker profile directory name')
-  writeFileSync(path.join(resolvedProfile,'.worker-started'),String(process.pid))
-}
+const validatedWorkerProfile=ownedWorker&&workerProfileEnv
+  ?await claimOwnedWorkerProfile(workerProfileEnv,(await assertWorktreeTestRoot(root)).testsReal)
+  :undefined
 if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDrawers||webSse7Tabs)&&!ownedWorker)){
   const testsReal=(await assertWorktreeTestRoot(root)).testsReal
   const workerProfile=path.join(testsReal,`launcher-${randomUUID()}`)
   await mkdir(workerProfile,{recursive:true})
   const workerEnv={...process.env,CODENOMAD_LAUNCHER_WORKER_PROFILE:workerProfile}
   const workerStartedFile=path.join(workerProfile,'.worker-started')
-  const workerProofFile=path.join(workerProfile,'proof.worker.json.tmp')
-  const supervisorProofTmp=path.join(workerProfile,'proof.supervisor.json.tmp')
-  const proofFile=path.join(workerProfile,'proof.json')
-  const publishOuterProof=({exit,workerStarted,unconfirmedStop=false,stopError=null,outerSignal=null})=>{
-    let proof
-    try{proof=JSON.parse(readFileSync(workerProofFile,'utf8'))}catch{}
-    const verdict=evaluateWorkerExit({exit,workerStarted,unconfirmedStop,stopError,outerSignal,proof})
-    const {workerExited,interrupted,finalResult,workerExitCode,workerExitSignal,workerStopError,workerSpawnError}=verdict
-    const finalProof={
-      ...(proof??{profile:workerProfile}),
-      result:finalResult,
-      interruptedSignal:interrupted,
-      workerExited,
-      workerExitCode,
-      workerExitSignal,
-      ...(workerStopError?{workerStopError}:{}),
-      ...(workerSpawnError?{workerSpawnError}:{}),
-    }
-    writeFileSync(supervisorProofTmp,JSON.stringify(finalProof,null,2))
-    renameSync(supervisorProofTmp,proofFile)
-    if(workerExited){
-      try{unlinkSync(workerProofFile)}catch{}
-      try{unlinkSync(workerStartedFile)}catch{}
-    }
-    return finalResult
-  }
   const graceMs=webAndroid?150000:25000
   const spawnPosixBridge=()=>{
     const guardsUrl=new URL('../../../scripts/native-fixture-guards.mjs',import.meta.url).href
@@ -125,7 +95,8 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
         try{exit=await Promise.race([closed,new Promise(r=>{timer=setTimeout(()=>r(null),500)})])}
         finally{clearTimeout(timer)}
       }
-      if(!exit||stopError||exit.error||exit.code===86||exit.signal)process.exit(86)
+      if(exit?.error){console.error(exit.error?.message??exit.error);process.exit(1)}
+      if(!exit||stopError||exit.code===86||exit.signal)process.exit(86)
       process.exit(exit.code??1)
     `
     return spawn(process.execPath,['--input-type=module','-e',bridgeCode],{
@@ -147,7 +118,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
       :spawnPosixBridge()
   }catch(spawnError){
     console.error(spawnError?.message??spawnError)
-    const finalResult=publishOuterProof({exit:{code:null,signal:null,error:spawnError},workerStarted:false})
+    const finalResult=publishWorkerProof({workerProfile,exit:{code:null,signal:null,error:spawnError},workerStarted:false})
     process.exit(finalResult)
   }
   worker.stdin?.on('error',()=>{})
@@ -200,7 +171,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   }
   process.off('SIGINT',stop)
   process.off('SIGTERM',stop)
-  const finalResult=publishOuterProof({exit,workerStarted:existsSync(workerStartedFile),unconfirmedStop,stopError,outerSignal})
+  const finalResult=publishWorkerProof({workerProfile,exit,workerStarted:existsSync(workerStartedFile),unconfirmedStop,stopError,outerSignal})
   process.exit(finalResult)
 }
 const webMissions=process.argv.includes('--web-missions')
@@ -252,12 +223,10 @@ if(web&&!draftOutput&&!gitOutput){
 }
 let run=`launcher-${randomUUID()}`
 let profile=path.join(output,run)
-if(ownedWorker&&workerProfileEnv){
-  const resolvedProfile=path.resolve(workerProfileEnv)
-  assert.equal(path.dirname(resolvedProfile),output,`Worker profile must reside under ${output}`)
-  assert.match(path.basename(resolvedProfile),/^launcher-[0-9a-f-]+$/i,'Unexpected worker profile directory name')
-  run=path.basename(resolvedProfile)
-  profile=resolvedProfile
+if(validatedWorkerProfile){
+  assert.equal(path.dirname(validatedWorkerProfile),output,`Worker profile must reside under ${output}`)
+  run=path.basename(validatedWorkerProfile)
+  profile=validatedWorkerProfile
 }
 if(webSearch){
   await mkdir(output,{recursive:true})

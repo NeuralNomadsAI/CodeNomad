@@ -963,6 +963,8 @@ async function runBench() {
       },
       errors,
       forbidden,
+      scope: 'browser-stage',
+      overallVerdictFile: 'proof.json',
       result: 'pass',
     }
   } catch (error) {

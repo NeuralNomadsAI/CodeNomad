@@ -1,3 +1,8 @@
+import assert from 'node:assert/strict'
+import {readFileSync,renameSync,unlinkSync,writeFileSync} from 'node:fs'
+import {lstat,realpath} from 'node:fs/promises'
+import path from 'node:path'
+
 export function needsOwnedWindowsWorker(argv, platform = process.platform) {
   if (platform !== 'win32' || argv.includes('--owned-mobile-worker')) return false
   return argv.includes('--web-android')
@@ -6,6 +11,19 @@ export function needsOwnedWindowsWorker(argv, platform = process.platform) {
     || argv.includes('--web-keyboard-viewport')
     || argv.includes('--web-mobile-drawers')
     || argv.includes('--web-sse-7tabs')
+}
+
+export async function claimOwnedWorkerProfile(workerProfilePath, testsReal, pid = process.pid) {
+  const canonicalRoot = await realpath(testsReal)
+  const resolvedProfile = path.resolve(workerProfilePath)
+  assert.equal(path.dirname(resolvedProfile), canonicalRoot, `Worker profile must reside under ${canonicalRoot}`)
+  assert.match(path.basename(resolvedProfile), /^launcher-[0-9a-f-]+$/i, 'Unexpected worker profile directory name')
+  const stat = await lstat(resolvedProfile)
+  assert(!stat.isSymbolicLink() && stat.isDirectory(), `Worker profile must be a real directory: ${resolvedProfile}`)
+  const profileReal = await realpath(resolvedProfile)
+  assert.equal(path.dirname(profileReal), canonicalRoot, `Worker profile canonical path must reside under ${canonicalRoot}`)
+  writeFileSync(path.join(profileReal, '.worker-started'), String(pid), { flag: 'wx' })
+  return profileReal
 }
 
 export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop = false, stopError = null, outerSignal = null, proof = null }) {
@@ -33,4 +51,32 @@ export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop
     ...(workerStopError ? { workerStopError } : {}),
     ...(spawnError ? { workerSpawnError: String(spawnError?.message ?? spawnError) } : {}),
   }
+}
+
+export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfirmedStop = false, stopError = null, outerSignal = null }) {
+  const workerStartedFile = path.join(workerProfile, '.worker-started')
+  const workerProofFile = path.join(workerProfile, 'proof.worker.json.tmp')
+  const supervisorProofTmp = path.join(workerProfile, 'proof.supervisor.json.tmp')
+  const proofFile = path.join(workerProfile, 'proof.json')
+  let proof
+  try { proof = JSON.parse(readFileSync(workerProofFile, 'utf8')) } catch {}
+  const verdict = evaluateWorkerExit({ exit, workerStarted, unconfirmedStop, stopError, outerSignal, proof })
+  const { workerExited, interrupted, finalResult, workerExitCode, workerExitSignal, workerStopError, workerSpawnError } = verdict
+  const finalProof = {
+    ...(proof ?? { profile: workerProfile }),
+    result: finalResult,
+    interruptedSignal: interrupted,
+    workerExited,
+    workerExitCode,
+    workerExitSignal,
+    ...(workerStopError ? { workerStopError } : {}),
+    ...(workerSpawnError ? { workerSpawnError } : {}),
+  }
+  writeFileSync(supervisorProofTmp, JSON.stringify(finalProof, null, 2))
+  renameSync(supervisorProofTmp, proofFile)
+  if (workerExited) {
+    try { unlinkSync(workerProofFile) } catch {}
+    try { unlinkSync(workerStartedFile) } catch {}
+  }
+  return finalResult
 }

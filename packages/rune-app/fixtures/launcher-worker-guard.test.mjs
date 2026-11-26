@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
+import {existsSync,readFileSync} from 'node:fs'
+import {mkdir,mkdtemp,rm,symlink} from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
-import {evaluateWorkerExit,needsOwnedWindowsWorker} from './launcher-worker-guard.mjs'
+import {claimOwnedWorkerProfile,evaluateWorkerExit,needsOwnedWindowsWorker,publishWorkerProof} from './launcher-worker-guard.mjs'
 
 test('Windows Job Object worker wraps mobile, keyboard viewport, and mobile drawers fixtures', () => {
   for (const flag of [
@@ -97,4 +101,48 @@ test('evaluateWorkerExit marks spawn errors, supervisor code 86, and unconfirmed
   assert.equal(clean.workerExited, true)
   assert.equal(clean.workerExitCode, 0)
   assert.equal(clean.finalResult, 0)
+})
+
+test('claimOwnedWorkerProfile rejects links and preexisting markers, and publishWorkerProof records unstarted bridge failure', async () => {
+  const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'cn-worker-guard-'))
+  try {
+    const testsRoot = path.join(tmpRoot, 'tests')
+    const outsideDir = path.join(tmpRoot, 'outside')
+    await mkdir(testsRoot, { recursive: true })
+    await mkdir(outsideDir, { recursive: true })
+
+    const realProfile = path.join(testsRoot, 'launcher-12345678-1234-1234-1234-123456789abc')
+    await mkdir(realProfile)
+    const claimed = await claimOwnedWorkerProfile(realProfile, testsRoot, 4242)
+    assert.equal(readFileSync(path.join(claimed, '.worker-started'), 'utf8'), '4242')
+    await assert.rejects(
+      () => claimOwnedWorkerProfile(realProfile, testsRoot, 4242),
+      { code: 'EEXIST' },
+    )
+
+    const linkProfile = path.join(testsRoot, 'launcher-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+    await symlink(outsideDir, linkProfile, process.platform === 'win32' ? 'junction' : 'dir')
+    await assert.rejects(
+      () => claimOwnedWorkerProfile(linkProfile, testsRoot, 4242),
+      /must be a real directory/,
+    )
+    assert.equal(existsSync(path.join(outsideDir, '.worker-started')), false)
+
+    const unstartedProfile = path.join(testsRoot, 'launcher-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
+    await mkdir(unstartedProfile)
+    const result = publishWorkerProof({
+      workerProfile: unstartedProfile,
+      exit: { code: 1, signal: null },
+      workerStarted: existsSync(path.join(unstartedProfile, '.worker-started')),
+    })
+    assert.equal(result, 1)
+    const proof = JSON.parse(readFileSync(path.join(unstartedProfile, 'proof.json'), 'utf8'))
+    assert.equal(proof.result, 1)
+    assert.equal(proof.workerExited, false)
+    assert.equal(proof.workerExitCode, null)
+    assert.equal(proof.workerStopError, undefined)
+    assert.equal(proof.workerSpawnError, 'Owned worker did not start (supervisor exit code=1, signal=null)')
+  } finally {
+    await rm(tmpRoot, { recursive: true, force: true })
+  }
 })
