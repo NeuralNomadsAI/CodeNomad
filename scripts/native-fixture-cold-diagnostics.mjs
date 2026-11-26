@@ -5,6 +5,7 @@ import path from "node:path"
 import { createHash } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import { fixtureChildPid, stopFixtureHandle } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, fixtureAttestationEnv } from "./native-fixture-http.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 
 const REGISTRATION = 32 * 1024, LOGS = 256 * 1024, OUTPUT = 512 * 1024
@@ -36,13 +37,20 @@ export function fixtureRedactor(values) {
   return input => { let text = String(input ?? ""); for (const secret of ordered) text = text.replaceAll(secret, "<redacted>"); return text }
 }
 
+export function coldDiagnosticWorkerEnv(sourceEnv = process.env) {
+  return {
+    ...Object.fromEntries(Object.entries(sourceEnv).filter(([key]) => /^(SystemRoot|WINDIR)$/i.test(key))),
+    ...fixtureAttestationEnv(sourceEnv),
+  }
+}
+
 // A killable owned process also interrupts synchronous SQLite/native filesystem work.
 // Credentials travel only over private IPC, never argv or inherited environment.
 async function runWorker(input, child, onSecrets) {
   const pid = child && await fixtureChildPid(child)
   const owned = () => validExpected(input.expected) && alive(child) && pid === input.expected.pid
   input.ownerAvailable = owned()
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(SystemRoot|WINDIR)$/i.test(key)))
+  const env = coldDiagnosticWorkerEnv(process.env)
   const worker = spawn(process.execPath, ["--max-old-space-size=64", fileURLToPath(import.meta.url), "--cold-diagnostic-child"],
     // Native ignore discards both streams at the OS boundary: zero retained bytes,
     // no pipe pumping and no free-form child/transport errors in exported evidence.
@@ -59,7 +67,9 @@ async function runWorker(input, child, onSecrets) {
           try { onSecrets?.(message.credentials); worker.send({ credentialsAccepted: true }, () => {}) }
           catch { resolve(failure("collector-credentials-unavailable")) }
         }
-        else if (message.checkOwner) { if (worker.connected) worker.send({ owned: owned() }, () => {}) }
+        else if (message.checkOwner) {
+          if (worker.connected) worker.send({ owned: owned() }, () => {})
+        }
         else resolve(message)
       })
       worker.send(input, error => { if (error) resolve(failure("collector-unavailable")) })
@@ -99,7 +109,7 @@ function registration(input) {
   if (!same(info, input.expected) || typeof info.id !== "string" || !info.id || info.id.length > 1024
     || !Number.isSafeInteger(info.pid) || info.pid <= 0 || typeof info.version !== "string" || !info.version || info.version.length > 1024) throw Error("incarnation-mismatch")
   const url = new URL(info.url)
-  if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
+  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1"
     || !url.port || ["9911", "28894"].includes(url.port) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw Error("endpoint-refused")
   // Native service registration stores a top-level password; also accept the public Basic shape.
   const auth = raw.auth ?? { type: "basic", username: "opencode", password: raw.password }
@@ -116,10 +126,17 @@ const ownerCheck = () => new Promise(resolve => {
 
 async function infoProbe(input, credentials) {
   if (!await ownerCheck()) return failure("owned-child-unavailable")
-  const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 2000)
+  const abort = new AbortController()
+  let timer = setTimeout(() => abort.abort(), 6000)
+  const armHttpTimeout = () => {
+    clearTimeout(timer)
+    if (!abort.signal.aborted) timer = setTimeout(() => abort.abort(), 2000)
+  }
+  const targetUrl = new URL("/api/info", credentials.info.url)
+  const attested = createAttestedFetch(targetUrl.origin, Number(targetUrl.port), input.expected.pid, { onAttested: armHttpTimeout })
   let response, reader
   try {
-    response = await fetch(new URL("/api/info", credentials.info.url), { method: "GET", redirect: "error",
+    response = await attested(targetUrl, { method: "GET", redirect: "error",
       headers: { authorization: `Basic ${credentials.basic}` }, signal: abort.signal })
     reader = response.body?.getReader()
     const chunks = []; let size = 0
@@ -135,7 +152,7 @@ async function infoProbe(input, credentials) {
     const version = pid === input.expected.pid && raw.version === input.expected.version ? input.expected.version : null
     return { status: response.status, pid, version, ...(pid !== input.expected.pid || version !== input.expected.version ? failure("http-identity-mismatch") : {}) }
   } catch { return failure(abort.signal.aborted ? "http-timeout" : "http-transport-unavailable") }
-  finally { clearTimeout(timer); abort.abort(); void reader?.cancel().catch(() => {}) }
+  finally { clearTimeout(timer); abort.abort(); void reader?.cancel().catch(() => {}); await attested.close() }
 }
 
 function logs(input) {
