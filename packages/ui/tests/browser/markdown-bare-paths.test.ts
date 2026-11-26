@@ -70,6 +70,7 @@ test("bare paths link exactly the files that exist", { timeout: 60_000 }, async 
     assert.equal(await page.evaluate(() => (window as any).fixture.target()), "README.md")
     await page.click('#main-root code a[href="docs/算法工作台MVP-design.md"]')
     assert.equal(await page.evaluate(() => (window as any).fixture.target()), "docs/算法工作台MVP-design.md")
+    assert.equal(await page.locator('#main-root code a[href="docs/算法工作台MVP-design.md"]').textContent(), "./docs/算法工作台MVP-design.md")
     await page.waitForFunction(() => {
       const anchor = document.querySelector(`#main-root a[href="${CSS.escape("README.md")}"]`)
       return anchor?.getAttribute("title") === (window as any).fixture.label("markdown.link.fileOpens")

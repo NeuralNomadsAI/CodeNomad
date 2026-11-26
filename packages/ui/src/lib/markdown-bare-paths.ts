@@ -46,26 +46,12 @@ export function barePathCandidates(text: string): BarePathCandidate[] {
   return candidates
 }
 
-/** An inline code span is one exact reference, not prose: its whole trimmed
- * content is a single candidate, never a split or a fallback. A link is
- * offered only when the literal path, the verified target and the generated
- * destination agree, so a span carrying a `#` (read as a URL fragment) or a
- * percent escape (read as an encoding of a different literal) stays plain,
- * and a missing or URL-shaped span never links a same-named local file. */
+// Admit only literal path segments. A colon is valid only in a drive prefix.
+const INLINE_PATH = /^(?:(?:[A-Za-z]:)?[\\/])?[\p{L}\p{M}\p{Nd}._~+=-]+(?:[\\/][\p{L}\p{M}\p{Nd}._~+=-]+)*[\\/]?$/u
+const INLINE_FILE_NAME = /^[^\\/]{2,}\.[A-Za-z0-9]{1,8}$/u
+
 export function inlineCodeCandidates(text: string): BarePathCandidate[] {
-  const lead = text.length - text.trimStart().length
-  const trimmed = text.trim()
-  const href = trimmed.replace(TRAILING_PUNCTUATION, "")
-  // Only separator, `./`-prefix and trailing-slash normalizations may apply:
-  // they name the same file. Anything else — a stripped fragment, a decoded
-  // escape, a rejected scheme — means the span is not an exact, unambiguous
-  // path.
-  const canonical = href.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "").replace(/([^/:])\/+$/, "$1")
-  if (!href || href.includes("#") || href.includes("%")) return []
-  if (projectLinkPath(href) !== canonical) return []
-  const hasSeparator = href.includes("/") || href.includes("\\")
-  if (!hasSeparator && !PLAIN_FILE_NAME.test(href)) return []
-  if (DRIVE_WITH_DOUBLE_SEPARATOR.test(href)) return []
-  const start = lead, end = lead + href.length
-  return [{ start, end, href }]
+  if (!INLINE_PATH.test(text)) return []
+  if (!/[\\/]/.test(text) && !INLINE_FILE_NAME.test(text)) return []
+  return [{ start: 0, end: text.length, href: text }]
 }

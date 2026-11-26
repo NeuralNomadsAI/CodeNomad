@@ -101,8 +101,11 @@ describe("inline code candidates", () => {
     assert.deepEqual(inlineCodeCandidates("./docs/issue#42.md"), [])
   })
 
-  it("trims surrounding spaces and trailing punctuation", () => {
-    assert.deepEqual(inlineCodeCandidates("  src/app.ts. ").map(candidate => candidate.href), ["src/app.ts"])
+  it("does not rewrite inline code as a URL or trim literal punctuation", () => {
+    for (const invalid of [" src/app.ts ", "src/app.ts!", "src/app.ts?", "src/a\tpp.ts", "src/app.ts\n", "//host/app.ts", ".//src/app.ts"]) {
+      assert.deepEqual(inlineCodeCandidates(invalid), [], JSON.stringify(invalid))
+    }
+    assert.deepEqual(inlineCodeCandidates("src/app.ts.").map(candidate => candidate.href), ["src/app.ts."])
   })
 
   it("recognizes spans whose edges are hyphen-glued CJK segments", () => {
