@@ -45,6 +45,7 @@ pub struct State {
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
     closed: (Sender<()>, crate::Receiver<()>),
     provider_usage: Option<crate::provider_usage::Watch>,
+    on_session_deleted: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Default for State {
@@ -64,6 +65,7 @@ impl Default for State {
             placement: None,
             closed: crate::bounded(1),
             provider_usage: None,
+            on_session_deleted: None,
         }
     }
 }
@@ -75,6 +77,20 @@ impl State {
     ) -> Self {
         self.provider_usage = watch;
         self
+    }
+
+    pub(crate) fn with_session_deleted(
+        mut self,
+        hook: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Self {
+        self.on_session_deleted = hook;
+        self
+    }
+
+    pub(super) fn notify_session_deleted(&self) {
+        if let Some(hook) = &self.on_session_deleted {
+            hook();
+        }
     }
 
     fn quota_ingress(&self, backend: &Backend) -> Option<crate::provider_usage::Ingress> {

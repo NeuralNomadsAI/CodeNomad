@@ -498,12 +498,6 @@ impl ReadingLane {
             reading.connection.fetch_add(1, SeqCst);
         }
     }
-
-    pub(super) fn notify_session_deleted(&self) {
-        if let Some(hook) = &self.on_session_deleted {
-            hook();
-        }
-    }
 }
 
 enum PageFailure {

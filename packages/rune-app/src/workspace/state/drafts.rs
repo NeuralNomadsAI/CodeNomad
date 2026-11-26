@@ -363,18 +363,25 @@ pub fn bound_with_adopt(s: &mut State, backend: &Backend, adopt_recovered: bool)
     let previous = super::active_session(s).map(str::to_owned);
     let same_session =
         !s.screen.is_launcher() && previous.as_deref() == Some(backend.session.as_str());
-    let outgoing_deleted = if !same_session && let Some(prev) = previous.as_deref() {
-        let stream_deleted = drain_incoming_session_deleted(s.incoming.as_ref());
+    let outgoing_deleted = if !same_session {
+        let stream_deleted = previous
+            .is_some()
+            .then(|| drain_incoming_session_deleted(s.incoming.as_ref()))
+            .unwrap_or(false);
         drain_window_deleted_sessions(s);
-        let had_pending = s.workspace.as_mut().is_some_and(|ui| {
-            let entry = &mut ui.entries[ui.active];
-            let pending = entry.pending_deleted.remove(prev) || stream_deleted;
-            if pending && let Tab::Workspace(saved) = &mut entry.saved {
-                saved.active_session_id = None;
-            }
-            pending
-        });
-        had_pending.then(|| prev.to_owned())
+        if let Some(prev) = previous.as_deref() {
+            let had_pending = s.workspace.as_mut().is_some_and(|ui| {
+                let entry = &mut ui.entries[ui.active];
+                let pending = entry.pending_deleted.remove(prev) || stream_deleted;
+                if pending && let Tab::Workspace(saved) = &mut entry.saved {
+                    saved.active_session_id = None;
+                }
+                pending
+            });
+            had_pending.then(|| prev.to_owned())
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -398,6 +405,16 @@ pub fn bound_with_adopt(s: &mut State, backend: &Backend, adopt_recovered: bool)
     let Tab::Workspace(saved) = &mut item.saved else {
         return String::new();
     };
+    if !same_session
+        && item.superseded_on_delete.remove(&backend.session)
+        && item.restored_drafts.remove(&backend.session).is_some()
+    {
+        saved.drafts.remove(&backend.session);
+        saved.attachment_drafts.remove(&backend.session);
+        saved.attachment_parts.remove(&backend.session);
+        item.live_drafts.remove(&backend.session);
+        item.derived_from.remove(&backend.session);
+    }
     saved.active_session_id = Some(backend.session.clone());
     let live = item.live_drafts.get(&backend.session);
     if !same_session && let Some(unconfirmed) = live.and_then(|draft| draft.unconfirmed.as_ref()) {
@@ -656,12 +673,30 @@ fn peek_closed_state(
     ui: &Ui,
     scope: &crate::workspace::Workspace,
     session_id: &str,
+    open_clear_authorities: &[ClearAuthority],
 ) -> ClosedState {
     let mut text: Option<String> = None;
     let mut attachment_draft = false;
     let mut attachment_parts: Option<SavedParts> = None;
     let mut explicitly_cleared = false;
-    for w in ui.closed.iter().filter(|w| same_project(scope, w)) {
+    for (idx, w) in ui.closed.iter().enumerate() {
+        if !same_project(scope, w) {
+            continue;
+        }
+        let is_restored = ui
+            .closed_restored
+            .get(idx)
+            .is_none_or(|set| set.contains(session_id));
+        if is_restored {
+            let copy = DraftCopy::from_workspace(w, session_id);
+            if copy.is_some()
+                && open_clear_authorities
+                    .iter()
+                    .any(|auth| auth.matches_restored(copy.as_ref()))
+            {
+                continue;
+            }
+        }
         if let Some(entry_text) = w.drafts.get(session_id) {
             attachment_draft = false;
             attachment_parts = None;
@@ -787,7 +822,6 @@ pub(super) fn recover_missing_session_draft_in(
             Some(Tab::Workspace(saved)) => saved.clone(),
             _ => return false,
         };
-        let closed_state = peek_closed_state(ui, &scope, session_id);
         let mut mutated = false;
         let mut recovered = false;
 
@@ -800,9 +834,8 @@ pub(super) fn recover_missing_session_draft_in(
             })
             .collect();
 
-        // Collect clear authorities across open sibling tabs AND closed occurrences so an
-        // explicit clear suppresses only targeted restored copies (even after closing or deferral)
-        // without discarding independent sibling edits.
+        // Collect clear authorities across open sibling tabs FIRST so superseded restored copies
+        // in `ui.closed` are excluded before selecting closed drafts to recover.
         let mut clear_authorities: Vec<ClearAuthority> = matching_tabs
             .iter()
             .filter_map(|&idx| {
@@ -819,6 +852,7 @@ pub(super) fn recover_missing_session_draft_in(
                 entry.clear_authority.get(session_id).cloned()
             })
             .collect();
+        let closed_state = peek_closed_state(ui, &scope, session_id, &clear_authorities);
         if closed_state.explicitly_cleared {
             clear_authorities.push(ClearAuthority::Persisted);
         }

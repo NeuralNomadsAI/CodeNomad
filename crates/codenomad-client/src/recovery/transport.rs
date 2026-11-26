@@ -49,7 +49,8 @@ pub(crate) async fn run_with_reading(
     let make_wire = || {
         Arc::new(
             stream::State::observing_preferences(out.clone(), wake.clone())
-                .with_provider_usage(provider_usage.clone()),
+                .with_provider_usage(provider_usage.clone())
+                .with_session_deleted(reading.and_then(|r| r.on_session_deleted.clone())),
         )
     };
     let mut wire = make_wire();
@@ -302,9 +303,6 @@ pub(crate) async fn run_with_reading(
                     continue;
                 }
                 if kind == "session.deleted" {
-                    if let Some(reading) = reading {
-                        reading.notify_session_deleted();
-                    }
                     publish(&out, &wake, Event::SessionDeleted).await;
                     wire.cancelled.store(true, SeqCst);
                     return Err("session scope changed".into());

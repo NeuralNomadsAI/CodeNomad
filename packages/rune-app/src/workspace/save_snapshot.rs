@@ -211,7 +211,35 @@ fn fit_text(snapshot: &mut Snapshot) -> Result<(), Error> {
             let Some(selected) = choose(&weights, excess) else {
                 continue;
             };
-            for index in selected {
+            let total_freed: usize = selected.iter().map(|&index| weights[index].1).sum();
+            let mut slack = total_freed.saturating_sub(excess);
+            // Downgrade selected whole mixed bundles back to text-only whenever their attachment
+            // marker fits within the slack, preserving as many attachment markers as possible
+            // within the same priority tier.
+            let mut downgraded = vec![false; selected.len()];
+            let mut whole_indices: Vec<usize> = selected
+                .iter()
+                .enumerate()
+                .filter_map(|(pos, &index)| {
+                    matches!(candidates[index], TextCandidate::WholeBundle { .. }).then_some(pos)
+                })
+                .collect();
+            whole_indices.sort_by_key(|&pos| {
+                let item = &items[selected[pos]];
+                (
+                    Reverse(item.priority),
+                    item.whole_units.saturating_sub(item.text_only_units),
+                )
+            });
+            for pos in whole_indices {
+                let item = &items[selected[pos]];
+                let marker_units = item.whole_units.saturating_sub(item.text_only_units);
+                if marker_units > 0 && marker_units <= slack {
+                    downgraded[pos] = true;
+                    slack -= marker_units;
+                }
+            }
+            for (pos, index) in selected.into_iter().enumerate() {
                 match &candidates[index] {
                     TextCandidate::Text { tab, id } => {
                         if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
@@ -230,8 +258,14 @@ fn fit_text(snapshot: &mut Snapshot) -> Result<(), Error> {
                     TextCandidate::WholeBundle { tab, id } => {
                         if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
                             saved.drafts.remove(id);
-                            saved.attachment_drafts.remove(id);
-                            saved.attachment_parts.remove(id);
+                            if downgraded[pos] {
+                                if let Some(parts) = saved.attachment_parts.get_mut(id) {
+                                    parts.mark_incomplete();
+                                }
+                            } else {
+                                saved.attachment_drafts.remove(id);
+                                saved.attachment_parts.remove(id);
+                            }
                         }
                     }
                 }

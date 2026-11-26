@@ -871,4 +871,57 @@ fn utf16_budget_sheds_attachment_only_markers_before_priority_text_and_without_l
     );
     assert!(!saved.drafts.contains_key(&long_ord));
     assert!(!saved.attachment_drafts.contains(&long_ord));
+
+    // 4. Within one priority tier, downgrading mixed bundles is decided per draft:
+    // two ordinary mixed drafts (100-unit key + 10-unit text + 100-unit marker = 210 whole / 110 text-only)
+    // with ~300 excess must drop ONE whole bundle and ONLY the text of the other (320 freed),
+    // preserving the second draft's attachment marker instead of dropping both markers.
+    let mut pair_tabs = Vec::new();
+    let mut pair_tab = workspace();
+    pair_tab.active_session_id = Some("ses_pair_keep".into());
+    pair_tab
+        .drafts
+        .insert("ses_pair_keep".into(), "a".repeat(25_700));
+    let ord_1 = format!("ses_pair_1_{}", "y".repeat(89));
+    let ord_2 = format!("ses_pair_2_{}", "z".repeat(89));
+    assert_eq!(ord_1.len(), 100);
+    assert_eq!(ord_2.len(), 100);
+    for id in [&ord_1, &ord_2] {
+        pair_tab.drafts.insert(id.clone(), "t".repeat(10));
+        pair_tab.attachment_drafts.insert(id.clone());
+    }
+    pair_tabs.push(Tab::Workspace(pair_tab));
+    // tab0 = "/repo"(5) + active_id(13) + active_key(13) + 25_700 + 2 * (100 + 10 + 100) = 26_151.
+    // 18 * (5 + 4_020) = 72_450 -> total = 98_601 -> excess = 98_601 - 98_304 = 297 (220 < 297 <= 320).
+    for i in 0..18 {
+        let mut filler = workspace();
+        filler.folder = format!("/y{i:02}/{}", "m".repeat(4_020));
+        pair_tabs.push(Tab::Workspace(filler));
+    }
+    let pair_snap = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: pair_tabs,
+        active: Some(0),
+    };
+    assert_eq!(encode(&pair_snap), Err(Error::Limit));
+    let (bytes, partial) = encode_for_save(&pair_snap).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let Tab::Workspace(saved) = &decoded.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(
+        saved.drafts.get("ses_pair_keep").map(String::len),
+        Some(25_700)
+    );
+    assert!(!saved.drafts.contains_key(&ord_1));
+    assert!(!saved.drafts.contains_key(&ord_2));
+    assert_eq!(
+        saved.attachment_drafts.len(),
+        1,
+        "exactly one mixed draft must retain its attachment marker when 320 units cover 297 excess"
+    );
 }

@@ -1706,4 +1706,106 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         Some("draft during receiver replacement")
     );
     assert!(!after_hook.drafts.contains_key("ses_hook_race"));
+
+    // 5. R5 Bloquant: A closes with independent draft, B closes with restored copy, C (still open)
+    // clears that restored copy and receives 404 before closing -> A's independent closed draft
+    // must be recovered and B's cleared copy must NOT overwrite or purge it.
+    let mut r5_b = draft_state();
+    let mut a_ind = closed("ses_r5_bloq", "");
+    a_ind.drafts.clear();
+    a_ind.active_session_id = Some("ses_r5_bloq".into());
+    let mut b_res = closed("ses_r5_bloq", "stale restored");
+    b_res.occurrence = 1;
+    b_res.active_session_id = None;
+    let mut c_clr = closed("ses_r5_bloq", "stale restored");
+    c_clr.occurrence = 2;
+    c_clr.active_session_id = Some("ses_r5_bloq".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![
+            Tab::Workspace(a_ind),
+            Tab::Workspace(b_res),
+            Tab::Workspace(c_clr),
+        ],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_r5_bloq"));
+    ui.entries[2].binding = Some(backend("ses_r5_bloq"));
+    r5_b.workspace = Some(ui);
+    r5_b.show_chat();
+    r5_b.draft = TextEdit::new("independent from closed A");
+    capture(&mut r5_b);
+    close(&mut r5_b, "tab-0", &mut tx);
+    if let Some(l) = r5_b.screen.launcher_mut() {
+        l.pending = false;
+    }
+    close(&mut r5_b, "tab-1", &mut tx);
+    if let Some(l) = r5_b.screen.launcher_mut() {
+        l.pending = false;
+    }
+    // Tab C is now active (index 0); clear its restored copy and receive 404 before closing.
+    r5_b.draft = TextEdit::new("");
+    capture(&mut r5_b);
+    r5_b.show_launcher();
+    assert!(recover_missing_session_draft(&mut r5_b, "ses_r5_bloq"));
+    let Tab::Workspace(after_c) = &r5_b.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected tab C");
+    };
+    assert_eq!(
+        after_c.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+        Some("independent from closed A")
+    );
+
+    // 6. R5 Moyen 2: After manual unselect_session (previous == None), a late session_deleted_hook
+    // proof queued in the same frame is drained BEFORE adopt_recovered_draft on bound_with_adopt.
+    let mut r5_m2 = draft_state();
+    r5_m2.draft = TextEdit::new(bound(&mut r5_m2, &backend("ses_manual_then_del")));
+    r5_m2.show_chat();
+    r5_m2.draft = TextEdit::new("draft after manual close");
+    let late_hook = session_deleted_hook(&r5_m2, "ses_manual_then_del").expect("hook");
+    assert!(unselect_session(&mut r5_m2, "ses_manual_then_del"));
+    r5_m2.show_launcher();
+    late_hook();
+    let adopted = bound_with_adopt(&mut r5_m2, &backend("ses_fresh_blank"), true);
+    assert_eq!(adopted, "draft after manual close");
+
+    // 7. R5 Moyen 3: Tab A is on the launcher with a restored copy (+ attachment marker);
+    // Tab B clears that copy and closes; opening the session in Tab A must open EMPTY.
+    let mut r5_m3 = draft_state();
+    let mut a_wait = closed("ses_open_empty", "cleared elsewhere");
+    a_wait.attachment_drafts.insert("ses_open_empty".into());
+    a_wait.active_session_id = None;
+    let mut b_clear = closed("ses_open_empty", "cleared elsewhere");
+    b_clear.occurrence = 1;
+    b_clear.attachment_drafts.insert("ses_open_empty".into());
+    b_clear.active_session_id = Some("ses_open_empty".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a_wait), Tab::Workspace(b_clear)],
+        active: Some(1),
+    });
+    ui.ready = true;
+    ui.entries[1].binding = Some(backend("ses_open_empty"));
+    r5_m3.workspace = Some(ui);
+    r5_m3.draft = TextEdit::new("");
+    r5_m3.composer.draft.attachments.clear();
+    r5_m3.composer.attachments_missing = false;
+    capture(&mut r5_m3);
+    close(&mut r5_m3, "tab-1", &mut tx);
+    if let Some(l) = r5_m3.screen.launcher_mut() {
+        l.pending = false;
+    }
+    // Tab A is now active on launcher; opening `ses_open_empty` must NOT reload cleared text/attachments.
+    let loaded = bound(&mut r5_m3, &backend("ses_open_empty"));
+    assert_eq!(loaded, "");
+    assert!(!r5_m3.composer.attachments_missing);
 }

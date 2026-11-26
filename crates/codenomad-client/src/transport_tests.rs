@@ -366,3 +366,79 @@ fn publishing_to_a_dropped_display_channel_returns_without_waking_it() {
         assert!(!woke.load(SeqCst));
     });
 }
+
+#[test]
+fn sse_session_deleted_notifies_hook_at_ingress_even_after_conversation_receiver_drops() {
+    use crate::recovery::{ReadingLane, demand};
+    use crate::transport::Event;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+    run(async {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let mut backend = Backend::unauthenticated(&format!("http://{address}/")).unwrap();
+            backend.workspace = "project-1".into();
+            backend.session = "ses-del-1".into();
+            let (out, events) = bounded(16);
+            let (_commands, input) = bounded(1);
+            let (demand, observer) = demand::open();
+            let (content, _snapshots) = bounded(1);
+            demand.publish(None);
+            let (deleted_tx, deleted_rx) = bounded::<()>(1);
+            let task = tokio::spawn(crate::transport::run_backend_reading(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+                ReadingLane {
+                    demand: observer,
+                    events: content,
+                    connection: Default::default(),
+                    on_session_deleted: Some(Arc::new(move || {
+                        let _ = deleted_tx.try_send(());
+                    })),
+                },
+            ));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .get_mut()
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
+data: {\"type\":\"server.connected\"}\n\n",
+                )
+                .await
+                .unwrap();
+            while let Ok(event) = events.recv().await {
+                if matches!(event, Event::AgentHint(true)) {
+                    break;
+                }
+            }
+            // Drop the conversation receiver BEFORE the SSE server sends `session.deleted`:
+            // `StatsChanged` fails to publish on the closed channel, yet the ingress hook still fires.
+            drop(events);
+            stream
+                .get_mut()
+                .write_all(
+                    b"data: {\"type\":\"instance.event\",\"instanceId\":\"project-1\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"ses-del-1\"}}}\n\n",
+                )
+                .await
+                .unwrap();
+            deleted_rx
+                .recv()
+                .await
+                .expect("SSE ingress hook must fire for validated session.deleted even after receiver drops");
+            let _ = task.await;
+        })
+        .await
+        .expect("SSE session.deleted ingress hook test timed out");
+    });
+}
