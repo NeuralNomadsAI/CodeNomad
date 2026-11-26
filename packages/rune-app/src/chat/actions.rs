@@ -115,7 +115,8 @@ impl Display {
             self.messages = Default::default();
             self.timeline = Default::default();
             self.search_highlight = None;
-            let next = self.saved.remove(session).unwrap_or_default();
+            let mut next = self.saved.remove(session).unwrap_or_default();
+            next.reading.clear_row_guard();
             self.saved.insert(
                 std::mem::replace(&mut self.session, session.into()),
                 std::mem::replace(&mut self.active, next),

@@ -8,12 +8,13 @@ import {createAttestedFetch,maskSetCookieHeaders,parseCookiePairs,stripFixtureSe
 import {launchOwnedChromium} from './web-chromium.mjs'
 import {pendingBrowser} from './web-pending-open.mjs'
 import {fileWrapBrowser} from './web-file-wrap.mjs'
+import {keyboardViewport} from './web-keyboard-viewport.mjs'
 import {outlineRestore} from './web-outline-restore.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,createPrivateOutputDir,privateChromiumEnv,workspacePolicy,writePrivateFile} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
-const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},'target-pid':{type:'string'},'launcher-pid':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},outline:{type:'boolean'}}})
+const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},'target-pid':{type:'string'},'launcher-pid':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},'keyboard-viewport':{type:'boolean'},outline:{type:'boolean'}}})
 assert(values.url&&values.project&&values['storage-state']&&values.out,'Pass --url --project --storage-state --out')
 const url=new URL(values.url)
 assert(url.hostname==='127.0.0.1'&&['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&url.pathname==='/'&&!url.hash,'Explicit isolated 127.0.0.1 root required')
@@ -35,6 +36,7 @@ const browserStorageState=url.protocol==='http:'
   ?{...rawStorage,cookies:(rawStorage?.cookies??[]).map(c=>({...c,value:'fixture-relay-placeholder'}))}
   :rawStorage
 const m=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/catalogues/fr.json'),'utf8'))
+assert(!values['keyboard-viewport']||(!values['pending-open']&&!values['file-wrap']&&!values.outline),'Keyboard viewport mode cannot combine with --pending-open, --file-wrap or --outline')
 let attestedFetch,ownedBrowser,primaryError=null
 const results=[]
 let wroteSummary=false
@@ -79,14 +81,29 @@ const retryDraft='Brouillon Beta enregistré après retry 🦀',unsaved='Derniè
 const palette=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/theme.json'),'utf8'))
 const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected'))
 const imagePage=await browser.newPage()
-  for(const spec of [{name:'desktop-light',width:values.outline?1400:1100,height:900,colorScheme:'light',touch:false},{name:'phone-dark',width:390,height:844,colorScheme:'dark',touch:true}]) {
+const resetKeyboard=()=>new Promise((resolve,reject)=>{
+  assert(typeof process.send==='function','Keyboard viewport runner requires fixture IPC channel')
+  const onReply=reply=>{cleanup();reply?.ok?resolve():reject(Error(`Keyboard reset failed: ${JSON.stringify(reply)}`))}
+  const onExit=()=>cleanup()||reject(Error('Fixture IPC closed before keyboard reset reply'))
+  const cleanup=()=>{process.off('message',onReply);process.off('disconnect',onExit)}
+  process.once('message',onReply);process.once('disconnect',onExit)
+  process.send('reset-keyboard')
+})
+  const sizes=values['keyboard-viewport']
+    ? [[320,720],[360,760],[390,844]].flatMap(([shortSide,longSide])=>[false,true].map(landscape=>({
+        name:`keyboard-${shortSide}-${landscape?'landscape':'portrait'}`,width:landscape?longSide:shortSide,
+        height:landscape?shortSide:longSide,colorScheme:'light',touch:true,
+      })))
+    : [{name:'desktop-light',width:values.outline?1400:1100,height:900,colorScheme:'light',touch:false},{name:'phone-dark',width:390,height:844,colorScheme:'dark',touch:true}]
+  for(const spec of sizes) {
     if(values.outline&&spec.touch)continue
+    if(values['keyboard-viewport'])await resetKeyboard()
     const context=await browser.newContext({viewport:{width:spec.width,height:spec.height},deviceScaleFactor:1,colorScheme:spec.colorScheme,isMobile:spec.touch,hasTouch:spec.touch,storageState:browserStorageState})
     const page=await context.newPage();page.setDefaultTimeout(20000)
     const record={context:spec.name,phoneEmulated:spec.touch,requests:[],eventSource:[],storage:[],storageLocal:[],history:[],errors:[],forbidden:[],stages:[]}
     results.push(record)
-     let forbidRelease=false,sequence=0,outlineGate
-    const policy=workspacePolicy({origin:url.origin,project:values.project,assets}),workspaces=policy.workspaces
+    let forbidRelease=false,sequence=0,outlineGate
+    const policy=workspacePolicy({origin:url.origin,project:values.project,assets,keyboardActions:Boolean(values['keyboard-viewport'])}),workspaces=policy.workspaces
     const stamp=()=>++sequence
     await page.addInitScript(({key,released,proof})=>{
       globalThis.__runeRestoreQuota=false
@@ -238,7 +255,11 @@ const imagePage=await browser.newPage()
         assert(Date.now()<deadline,'Restoration must read authoritative history')
         await page.waitForTimeout(20)
       }
-      await page.waitForFunction(({existing})=>{const text=document.querySelector('[data-rune-a11y]')?.textContent??'';return existing?text.includes('Existing project history')&&text.includes('Existing answer'):!text.includes('Existing project history')&&!text.includes('Existing answer')},{existing:session==='ses_existing'})
+      await page.waitForFunction(({existing,keyboard})=>{
+        const text=document.querySelector('[data-rune-a11y]')?.textContent??''
+        if(existing)return text.includes('Existing project history')&&text.includes('Existing answer')
+        return !text.includes('Existing project history')&&!text.includes('Existing answer')&&(!keyboard||text.includes('Question passage '))
+      },{existing:session==='ses_existing',keyboard:Boolean(values['keyboard-viewport'])})
       if(draft!==undefined)assert.equal(await (await field(m['rune.prompt'])).inputValue(),draft,'Occurrence draft must match exactly')
     }
     const tab=async index=>{await press(mirror().getByRole('tab',{name:values.project,exact:true}).nth(index))}
@@ -313,14 +334,38 @@ const imagePage=await browser.newPage()
     try {
       await page.goto(url.href,{waitUntil:'domcontentloaded',timeout:60000});await boot();await connect()
       await type(m['instanceInfo.labels.folder'],values.project);await page.keyboard.press('Enter')
-       await openSessions();await press(sessionRow('Existing history'));await reading('ses_existing');await type(m['rune.prompt'],draftA)
-       if(values.outline){
-         record.outline=await outlineRestore({page,m,boot,connect,draft:()=>reading('ses_existing',draftA),
-           holdNext:gate=>{outlineGate=gate}})
-         assert.deepEqual(record.errors,[])
-         assert.deepEqual(record.forbidden,[])
-         continue
-       }
+      if(values['keyboard-viewport']){
+        const headerHeight=palette.numbers[spec.colorScheme]['panel-header-height']
+        const panelPad=palette.numbers[spec.colorScheme]['space-sm']
+        const composerPad=palette.numbers[spec.colorScheme]['space-md']
+        await openSessions()
+        await press(sessionRow('Existing history'))
+        await reading('ses_existing')
+        assert.equal(workspaces.size,1,'Keyboard viewport requires a single admitted workspace')
+        const [workspaceId]=[...workspaces]
+        const productPalette=palette.product[spec.colorScheme].colors
+        const permission=await keyboardViewport(page,m,{kind:'permission',prefix:'Keyboard passage',heading:'Existing history',headerHeight,panelPad,composerPad,field,workspaceId,imagePage,palette:productPalette})
+        await openSessions()
+        await press(button(m['rune.more']))
+        await press(sessionRow('Another session'))
+        await reading('ses_another')
+        assert.equal(workspaces.size,1,'Keyboard viewport must stay within its single admitted workspace')
+        const question=await keyboardViewport(page,m,{kind:'question',prefix:'Question passage',heading:'Another session',headerHeight,panelPad,composerPad,field,workspaceId,imagePage,palette:productPalette})
+        await Promise.all([...responses])
+        record.keyboard={permission,question}
+        assert.deepEqual(record.errors,[])
+        assert.deepEqual(record.forbidden,[])
+        record.result='pass'
+        continue
+      }
+      await openSessions();await press(sessionRow('Existing history'));await reading('ses_existing');await type(m['rune.prompt'],draftA)
+      if(values.outline){
+        record.outline=await outlineRestore({page,m,boot,connect,draft:()=>reading('ses_existing',draftA),
+          holdNext:gate=>{outlineGate=gate}})
+        assert.deepEqual(record.errors,[])
+        assert.deepEqual(record.forbidden,[])
+        continue
+      }
       await press(button(m['instanceTabs.new.ariaLabel']))
       await type(m['instanceInfo.labels.folder'],values.project);await page.keyboard.press('Enter')
       await openSessions();await press(button(m['rune.more']));await press(sessionRow('Another session'));await reading('ses_another');await type(m['rune.prompt'],draftB)

@@ -20,6 +20,7 @@ pub(crate) struct Binding {
     pub(super) close: crate::components::window_close_button::WindowCloseState,
     preferences: Rc<Cell<DiffPreferences>>,
     placement_unconfirmed: Rc<RefCell<PlacementHolds>>,
+    preview_closed_by_event: bool,
     #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
     pub scene: bool,
 }
@@ -32,6 +33,7 @@ impl Default for Binding {
             close: Default::default(),
             preferences: Rc::new(Cell::new(DiffPreferences::default())),
             placement_unconfirmed: Default::default(),
+            preview_closed_by_event: false,
             #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
             scene: false,
         }
@@ -265,14 +267,20 @@ pub(crate) fn online(s: &mut State, online: bool) {
 }
 
 pub(crate) fn event(s: &mut State, event: &WorkspaceEvent) {
+    let had_preview = has_preview(s);
     if let Some(owner) = &mut s.git.owner {
         owner.event(event);
+    }
+    if had_preview && !has_preview(s) {
+        s.git.preview_closed_by_event = true;
     }
 }
 
 pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
     let preference = diff_preferences(s);
     let workspace_preview = crate::files::has_preview(s);
+    let event_closed = std::mem::take(&mut s.git.preview_closed_by_event);
+    let had_preview = has_preview(s) || event_closed;
     let can_place = can_place(s);
     let Some(owner) = &mut s.git.owner else {
         return false;
@@ -328,19 +336,31 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
         launcher.sessions = sessions.rows;
         launcher.next = sessions.next;
     }
-    if changed {
+    let closed_by_event = event_closed && !has_preview(s);
+    if changed || closed_by_event {
         sync_files(s);
         tx.instant();
+        restore_reading_if_closed(s, had_preview, tx);
     }
     publish_notice(s);
-    changed | super::menu::poll(s, tx)
+    changed | closed_by_event | super::menu::poll(s, tx)
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn poll_notices(s: &mut State) -> bool {
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn poll_notices(s: &mut State, tx: &mut rune::Tx) -> bool {
+    let event_closed = std::mem::take(&mut s.git.preview_closed_by_event);
+    let had_preview = has_preview(s) || event_closed;
     let changed = s.git.owner.as_mut().is_some_and(Ui::poll_results);
+    let closed_by_event = event_closed && !has_preview(s);
+    if changed || closed_by_event {
+        sync_files(s);
+        if s.git.owner.as_ref().is_none_or(|owner| owner.active) {
+            tx.instant();
+            restore_reading_if_closed(s, had_preview, tx);
+        }
+    }
     publish_notice(s);
-    changed
+    changed || closed_by_event
 }
 
 fn publish_notice(s: &mut State) {
@@ -506,8 +526,20 @@ pub(crate) fn has_preview(s: &State) -> bool {
 }
 
 pub(crate) fn close_preview(s: &mut State) {
+    s.git.preview_closed_by_event = false;
     if let Some(owner) = &mut s.git.owner {
         owner.close_preview();
+    }
+}
+
+pub(crate) fn restore_reading_if_closed(s: &mut State, had_preview: bool, tx: &mut rune::Tx) {
+    if had_preview
+        && !has_preview(s)
+        && !s.screen.is_launcher()
+        && !crate::files::has_preview(s)
+        && s.git.owner.as_ref().is_none_or(|owner| owner.active)
+    {
+        crate::chat::reading::restore_position(s, tx);
     }
 }
 

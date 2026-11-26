@@ -325,6 +325,9 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
     s.composer.picker.reset();
     renew_editor(s, tx);
     if !queued {
+        if let Some(reader) = &mut s.reader {
+            reader.clear_sync_undo();
+        }
         s.messages.push(
             Message {
                 completed: true,
@@ -412,6 +415,11 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         return;
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
+    if row.is_some()
+        && let Some(reader) = &mut s.reader
+    {
+        reader.clear_sync_undo();
+    }
     if let PromptOutcome::Confirmed(confirmed) = outcome {
         if confirmed != attempted {
             crate::chat::reader::settle_bookmark(s, attempted, Some(&confirmed));
