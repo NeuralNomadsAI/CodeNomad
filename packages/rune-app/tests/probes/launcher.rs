@@ -36,7 +36,11 @@ pub fn run() {
         s.screen.launcher().unwrap().error.is_some()
     });
     assert!(rt.state.screen.launcher().unwrap().connection.is_none());
-    rt.state.screen.launcher_mut().unwrap().password = TextEdit::new("fixture-backend");
+    let password = std::env::var("RUNE_PASSWORD")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "fixture-backend".into());
+    rt.state.screen.launcher_mut().unwrap().password = TextEdit::new(password);
     tap(&mut rt, "connect");
     wait(&mut rt, "connect", |s| {
         s.screen.launcher().unwrap().connection.is_some()

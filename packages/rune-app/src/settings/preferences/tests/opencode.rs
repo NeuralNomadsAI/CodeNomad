@@ -892,6 +892,7 @@ fn opencode_login_start_single_initial_read_and_reconnect_reload() {
             {
                 handled += 1;
                 match req.first.as_str() {
+                    "GET /api/meta HTTP/1.1" => req.reply(200, json!({"version": "1.0.0"})).await,
                     "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
                         req.reply(200, json!({"settings": {}})).await;
                     }

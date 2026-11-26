@@ -207,7 +207,9 @@ impl Panel {
         } else {
             false
         };
-        let editor = prefs.memory.poll_editor(&mut self.memory_editor);
+        let editor = prefs
+            .memory
+            .poll_editor(prefs.backend.as_ref(), &mut self.memory_editor);
         let mut palette_settled = self.general.settle_save(prefs);
         if !self.general.dirty() {
             if self.confirm_palette_close || self.pending_section.is_some() {
@@ -285,7 +287,9 @@ impl Panel {
     fn poll_scope(&mut self, prefs: &mut Preferences, wake: &rune::Waker, paired: bool) -> bool {
         let shown = self.shown && paired;
         let mut changed = self.scope.poll(prefs, wake, shown);
-        if matches!(self.section, Section::OpenCode | Section::Remote) && !self.local(prefs) {
+        if matches!(self.section, Section::OpenCode | Section::Remote)
+            && (self.scope.local_unsupported(prefs) || prefs.backend.is_none())
+        {
             prefs.hide_opencode();
             self.logging.close();
             self.remote.close();
@@ -295,17 +299,20 @@ impl Panel {
             changed = true;
         }
         let capable = self.scope.config_files(prefs);
-        if self.section == Section::ConfigFiles && !capable {
+        changed |= self.config_files.poll(
+            prefs,
+            wake,
+            shown && capable && self.section == Section::ConfigFiles,
+        );
+        if self.section == Section::ConfigFiles
+            && (self.scope.config_files_unsupported(prefs) || prefs.backend.is_none())
+            && !self.config_files.dirty()
+        {
             self.section = Section::General;
             prefs.memory.show(true);
             changed = true;
         }
         changed
-            | self.config_files.poll(
-                prefs,
-                wake,
-                shown && capable && self.section == Section::ConfigFiles,
-            )
     }
 
     fn local(&self, prefs: &Preferences) -> bool {
@@ -315,8 +322,19 @@ impl Panel {
     fn can_open_section(&self, prefs: &Preferences, section: Section) -> bool {
         match section {
             Section::Stats => super::stats::supported(prefs),
-            Section::OpenCode | Section::Remote => self.local(prefs),
-            Section::ConfigFiles => self.scope.config_files(prefs),
+            Section::OpenCode | Section::Remote => {
+                self.local(prefs)
+                    || (self.section == section
+                        && prefs.backend.is_some()
+                        && !self.scope.local_unsupported(prefs))
+            }
+            Section::ConfigFiles => {
+                self.scope.config_files(prefs)
+                    || self.config_files.dirty()
+                    || (self.section == Section::ConfigFiles
+                        && prefs.backend.is_some()
+                        && !self.scope.config_files_unsupported(prefs))
+            }
             _ => true,
         }
     }
@@ -498,8 +516,8 @@ pub(super) fn view(
     ]
     .into_iter()
     .filter(|section| match section {
-        Section::OpenCode | Section::Remote => local,
-        Section::ConfigFiles => panel.scope.config_files(prefs),
+        Section::OpenCode | Section::Remote => panel.can_open_section(prefs, *section),
+        Section::ConfigFiles => panel.can_open_section(prefs, Section::ConfigFiles),
         Section::Stats => super::stats::supported(prefs),
         _ => true,
     })
@@ -520,8 +538,10 @@ pub(super) fn view(
             };
             if !panel.shown
                 || (section == Section::Stats && !super::stats::supported(&prefs))
-                || (matches!(section, Section::OpenCode | Section::Remote) && !panel.local(&prefs))
-                || section == Section::ConfigFiles && !panel.scope.config_files(&prefs)
+                || (matches!(section, Section::OpenCode | Section::Remote)
+                    && !panel.can_open_section(&prefs, section))
+                || (section == Section::ConfigFiles
+                    && !panel.can_open_section(&prefs, Section::ConfigFiles))
                 || panel.config_files.busy()
             {
                 return;
@@ -684,18 +704,33 @@ pub(super) fn view(
                             .wrap()
                     }),
             ),
-        Section::OpenCode if local => {
+        Section::OpenCode
+            if local || (prefs.backend.is_some() && !panel.scope.local_unsupported(prefs)) =>
+        {
+            let transport_issue = prefs.transport_lost()
+                || !prefs.can_retry()
+                || prefs
+                    .backend
+                    .as_ref()
+                    .is_some_and(|b| !super::ServerOwner::backend_verified(b));
             let wake = Some(s.wake.clone());
-            let logs_action = opencode::logs_action_view(
-                &panel.opencode,
-                prefs,
-                &s.settings.shared,
-                wake.clone(),
-                &mut layers,
-                |s: &mut State| &mut s.settings.web.opencode,
-            );
-            col()
+            let mut body = col()
                 .full_width()
+                .children(
+                    (!local && (transport_issue || panel.scope.local_failed(prefs))).then(|| {
+                        layout::action_row()
+                            .child(text(t("rune.connect_error")).role("alert").wrap())
+                            .child(layout::button(
+                                t("sessionList.loadError.retry"),
+                                !prefs.can_retry(),
+                                |s: &mut State| {
+                                    s.settings.shared.borrow_mut().retry_general();
+                                    s.settings.web.scope.retry();
+                                    (s.wake)();
+                                },
+                            ))
+                    }),
+                )
                 .child(opencode::view(
                     &panel.opencode,
                     prefs,
@@ -716,47 +751,136 @@ pub(super) fn view(
                         }
                     },
                     |s| &mut s.settings.web.opencode,
-                ))
-                .child(opencode::executable_view(
+                ));
+            if local {
+                let logs_action = opencode::logs_action_view(
                     &panel.opencode,
                     prefs,
                     &s.settings.shared,
                     wake.clone(),
-                    |s: &mut State| &mut s.settings.web.opencode,
-                ))
-                .child(opencode::login_start_view(
-                    &panel.opencode,
-                    prefs,
-                    &s.settings.shared,
-                    wake,
-                    |s: &mut State| &mut s.settings.web.opencode,
-                ))
-                .child(panel.logging.view(
-                    &s.settings.shared,
                     &mut layers,
-                    logs_action,
-                    |s: &mut State| &mut s.settings.web.logging,
+                    |s: &mut State| &mut s.settings.web.opencode,
+                );
+                body = body
+                    .child(opencode::executable_view(
+                        &panel.opencode,
+                        prefs,
+                        &s.settings.shared,
+                        wake.clone(),
+                        |s: &mut State| &mut s.settings.web.opencode,
+                    ))
+                    .child(opencode::login_start_view(
+                        &panel.opencode,
+                        prefs,
+                        &s.settings.shared,
+                        wake,
+                        |s: &mut State| &mut s.settings.web.opencode,
+                    ))
+                    .child(panel.logging.view(
+                        &s.settings.shared,
+                        &mut layers,
+                        logs_action,
+                        |s: &mut State| &mut s.settings.web.logging,
+                    ));
+            }
+            body
+        }
+        Section::Remote
+            if local || (prefs.backend.is_some() && !panel.scope.local_unsupported(prefs)) =>
+        {
+            let transport_issue = prefs.transport_lost()
+                || !prefs.can_retry()
+                || prefs
+                    .backend
+                    .as_ref()
+                    .is_some_and(|b| !super::ServerOwner::backend_verified(b));
+            col()
+                .full_width()
+                .separate(Space::Sm)
+                .children(
+                    (!local && (transport_issue || panel.scope.local_failed(prefs))).then(|| {
+                        layout::action_row()
+                            .child(text(t("rune.connect_error")).role("alert").wrap())
+                            .child(layout::button(
+                                t("sessionList.loadError.retry"),
+                                !prefs.can_retry(),
+                                |s: &mut State| {
+                                    s.settings.shared.borrow_mut().retry_general();
+                                    s.settings.web.scope.retry();
+                                    (s.wake)();
+                                },
+                            ))
+                    }),
+                )
+                .child(panel.remote.view_gated(
+                    &s.settings.shared,
+                    local,
+                    |s: &mut State| {
+                        let paired = !crate::platform::pairing::required(s);
+                        let panel = &mut s.settings.web;
+                        (paired
+                            && panel.shown
+                            && panel.section == Section::Remote
+                            && panel.local(&s.settings.shared.borrow()))
+                        .then_some(&mut panel.remote)
+                    },
+                    |s: &mut State| &mut s.settings.web.remote,
                 ))
         }
-        Section::Remote if local => panel.remote.view(
-            &s.settings.shared,
-            |s: &mut State| {
-                let paired = !crate::platform::pairing::required(s);
-                let panel = &mut s.settings.web;
-                (paired
-                    && panel.shown
-                    && panel.section == Section::Remote
-                    && panel.local(&s.settings.shared.borrow()))
-                .then_some(&mut panel.remote)
-            },
-            |s: &mut State| &mut s.settings.web.remote,
-        ),
-        Section::ConfigFiles if panel.scope.config_files(prefs) => {
-            panel
-                .config_files
-                .view(&mut layers, &s.settings.shared, |s: &mut State| {
-                    &mut s.settings.web.config_files
-                })
+        Section::ConfigFiles => {
+            if panel.scope.config_files(prefs) {
+                panel
+                    .config_files
+                    .view(&mut layers, &s.settings.shared, |s: &mut State| {
+                        &mut s.settings.web.config_files
+                    })
+            } else if prefs.transport_lost()
+                || !prefs.can_retry()
+                || prefs
+                    .backend
+                    .as_ref()
+                    .is_some_and(|b| !super::ServerOwner::backend_verified(b))
+            {
+                col()
+                    .full_width()
+                    .child(
+                        layout::action_row()
+                            .child(text(t("rune.connect_error")).role("alert").wrap())
+                            .child(layout::button(
+                                t("sessionList.loadError.retry"),
+                                !prefs.can_retry(),
+                                |s: &mut State| {
+                                    s.settings.shared.borrow_mut().retry_general();
+                                    s.settings.web.scope.retry();
+                                    (s.wake)();
+                                },
+                            )),
+                    )
+                    .children(panel.config_files.has_editor().then(|| {
+                        panel
+                            .config_files
+                            .view(&mut layers, &s.settings.shared, |s: &mut State| {
+                                &mut s.settings.web.config_files
+                            })
+                    }))
+            } else if panel.scope.config_files_failed(prefs) {
+                layout::action_row()
+                    .child(text(t("rune.connect_error")).role("alert").wrap())
+                    .child(layout::button(
+                        t("sessionList.loadError.retry"),
+                        false,
+                        |s: &mut State| {
+                            s.settings.web.scope.retry();
+                            (s.wake)();
+                        },
+                    ))
+            } else if panel.scope.config_files_unsupported(prefs) {
+                text(t("settings.configFiles.errors.loadList"))
+                    .role("alert")
+                    .wrap()
+            } else {
+                text(t("rune.loading")).role("status")
+            }
         }
         Section::Advanced => col()
             .full_width()
@@ -792,7 +916,7 @@ pub(super) fn view(
             },
             local.then_some(open_remote),
         ),
-        Section::OpenCode | Section::Remote | Section::ConfigFiles => rune::el(),
+        Section::OpenCode | Section::Remote => rune::el(),
     };
     if let Some(editor) = prefs.memory.editor_view(
         &panel.memory_editor,

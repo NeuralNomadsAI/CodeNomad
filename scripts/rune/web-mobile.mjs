@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
-import {readFile} from 'node:fs/promises'
+import {mkdir,readFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
-import {chromium} from 'playwright'
-import {bundleAssetPaths} from './web-workspace-policy.mjs'
+import path from 'node:path'
+import {createAttestedFetch,probeProcessIdentity,verifyLoopbackListenerOwner} from '../native-fixture-http.mjs'
+import {launchOwnedChromium} from './web-chromium.mjs'
+import {bundleAssetPaths,privateChromiumEnv} from './web-workspace-policy.mjs'
 import {isExpectedWaitError, now, withBudget} from './web-budget.mjs'
 import {navigatePair} from './web-live.mjs'
 
@@ -26,14 +28,27 @@ export async function mobileClientHints(page, browser) {
   return cdp
 }
 
-export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fromLink=true}) {
+export async function pairFixture({origin, targetPid, profile: fixtureProfile, pairingUrl, storage, manifest, ui, fromLink=true}) {
   const url = new URL(pairingUrl)
   assert.match(origin, /^https:\/\/127\.0\.0\.1:\d+$/)
+  assert(Number.isSafeInteger(targetPid) && targetPid > 0, 'Attested target PID required for mobile pairing')
+  assert(typeof fixtureProfile === 'string' && fixtureProfile.length > 0, 'Isolated profile path required for mobile pairing')
   assert.equal(url.origin, origin)
   assert.equal(url.pathname, '/remote-pair')
   assert.match(url.hash, /^#[\w-]{32}$/)
-  const browser = await chromium.launch({headless:true})
+  await verifyLoopbackListenerOwner(Number(url.port), targetPid)
+  const pairProfile = path.join(fixtureProfile, 'pair-chromium')
+  await mkdir(pairProfile, {recursive: true})
+  const ca = await readFile(path.join(fixtureProfile, 'identity.data/tls/ca-cert.pem')).catch(() => undefined)
+  const targetProbe = await probeProcessIdentity(targetPid, {refresh: true})
+  assert(targetProbe.status === 'ok' && targetProbe.identity?.startId, 'Unable to attest mobile pairing server incarnation')
+  const targetStartId = targetProbe.identity.startId
+  const chromiumEnv = await privateChromiumEnv(pairProfile)
+  let ownedBrowser, attestedFetch, primaryError = null
   try {
+    ownedBrowser = await launchOwnedChromium({profile: pairProfile, env: chromiumEnv, origin, targetPid, targetStartId})
+    attestedFetch = createAttestedFetch(origin, Number(url.port), targetPid, {...(ca ? {ca} : {allowSelfSigned: true}), targetStartId})
+    const browser = ownedBrowser.browser
     const context = await browser.newContext({...mobileContext(browser), ignoreHTTPSErrors:true})
     const page = await context.newPage()
     await mobileClientHints(page,browser)
@@ -44,23 +59,38 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
       return requested.origin === origin && req.method() === 'GET' && assets.has(requested.pathname)
         ? route.continue() : route.abort()
     })
-    const get = (pathname, options) => context.request.get(new URL(pathname, origin).href, {maxRedirects:0,...options})
+    const cookieHeader = async () => (await context.cookies(origin)).map(c => `${c.name}=${c.value}`).join('; ')
+    const get = async (pathname, options = {}) => {
+      const cookie = await cookieHeader()
+      return attestedFetch(new URL(pathname, origin).href, {
+        redirect: 'manual', ...options,
+        headers: {...(cookie ? {cookie} : {}), ...options.headers},
+        signal: AbortSignal.timeout(15000),
+      })
+    }
     const entryHeaders={accept:'text/html',referer:'https://rune-pair-source.test/'}
-    const entry=method=>context.request.fetch(`${origin}/`,{method,maxRedirects:0,headers:entryHeaders})
-    assert.equal((await get('/api/workspaces')).status(), 401)
+    const entry = async method => {
+      const cookie = await cookieHeader()
+      return attestedFetch(`${origin}/`, {
+        method, redirect: 'manual',
+        headers: {...entryHeaders, ...(cookie ? {cookie} : {})},
+        signal: AbortSignal.timeout(15000),
+      })
+    }
+    assert.equal((await get('/api/workspaces')).status, 401)
     assert.deepEqual(await (await get('/api/auth/status')).json(), {authenticated:false,pairingRequired:true})
-    const redirect = await get('/', {maxRedirects:0,headers:{accept:'text/html'}})
-    assert.equal(redirect.status(), 302)
-    assert.equal(redirect.headers().location, '/remote-pair')
+    const redirect = await get('/', {headers:{accept:'text/html'}})
+    assert.equal(redirect.status, 302)
+    assert.equal(redirect.headers.get('location'), '/remote-pair')
     if(fromLink)for(const method of ['GET','HEAD']){
       const response=await entry(method)
-      assert.equal(response.status(),302,`${method} from an external page must redirect before pairing`)
-      assert.equal(response.headers().location,'/remote-pair')
-      if(method==='HEAD')assert.equal((await response.body()).length,0)
+      assert.equal(response.status,302,`${method} from an external page must redirect before pairing`)
+      assert.equal(response.headers.get('location'),'/remote-pair')
+      if(method==='HEAD')assert.equal((await response.arrayBuffer()).byteLength,0)
     }
     const guide = await get('/remote-pair')
-    assert.equal(guide.headers()['cache-control'], 'no-store')
-    assert.equal(guide.headers()['referrer-policy'], 'no-referrer')
+    assert.equal(guide.headers.get('cache-control'), 'no-store')
+    assert.equal(guide.headers.get('referrer-policy'), 'no-referrer')
     await page.goto(`${origin}/remote-pair?locale=he`)
     await page.waitForFunction(() => document.documentElement.lang==='he' && document.documentElement.dir==='rtl')
     assert(await page.getByRole('heading').textContent())
@@ -77,42 +107,63 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
     const cookies = await context.cookies()
     assert(cookies.some(c => c.name === '__Host-codenomad_device' && c.secure && c.httpOnly && c.sameSite === 'Lax'))
     assert.equal((await (await get('/api/auth/status')).json()).authenticated, true)
-    assert.equal((await get('/api/workspaces')).status(), 200)
+    assert.equal((await get('/api/workspaces')).status, 200)
     const pairedEntry={}
     if(fromLink)for(const method of ['GET','HEAD']){
       const response=await entry(method)
-      assert.equal(response.status(),200,`${method} from an external page must serve the client after pairing`)
-      assert.match(response.headers()['content-type'],/^text\/html/)
-      const body=await response.body()
+      assert.equal(response.status,200,`${method} from an external page must serve the client after pairing`)
+      assert.match(response.headers.get('content-type')??'',/^text\/html/)
+      const body=Buffer.from(await response.arrayBuffer())
       if(method==='GET')assert.match(body.toString('utf8'),/\.\/boot\.js/)
       else assert.equal(body.length,0)
-      pairedEntry[method]=response.status()
+      pairedEntry[method]=response.status
     }
     for (const pathname of ['/login', '/api/remote-control/devices', '/snippets/missing.js', '/app.d.ts', '/app_bg.wasm.br']) {
-      assert.equal((await get(pathname)).status(), 404, pathname)
+      assert.equal((await get(pathname)).status, 404, pathname)
     }
     const wasm = await get('/app_bg.wasm', {headers: {'accept-encoding': 'br'}})
-    assert.equal(wasm.status(), 200)
-    assert.equal(wasm.headers()['content-type'], 'application/wasm')
-    assert.equal(wasm.headers()['content-encoding'], 'br')
-    const cached = await get('/app_bg.wasm', {headers:{'accept-encoding': 'br', 'if-none-match':wasm.headers().etag}})
-    assert.equal(cached.status(), 304)
+    assert.equal(wasm.status, 200)
+    assert.equal(wasm.headers.get('content-type'), 'application/wasm')
+    assert.equal(wasm.headers.get('content-encoding'), 'br')
+    const cached = await get('/app_bg.wasm', {cache: 'force-cache', headers:{'accept-encoding': 'br', 'if-none-match': wasm.headers.get('etag')}})
+    assert.equal(cached.status, 304)
     const rawWasm = await get('/app_bg.wasm', {headers: {'accept-encoding': 'identity'}})
-    assert.equal(rawWasm.status(), 200)
-    assert.equal(rawWasm.headers()['content-type'], 'application/wasm')
-    assert.equal(rawWasm.headers()['content-encoding'], undefined)
-    assert.notEqual(rawWasm.headers().etag, wasm.headers().etag)
-    const rawCached = await get('/app_bg.wasm', {headers: {'accept-encoding': 'identity', 'if-none-match': rawWasm.headers().etag}})
-    assert.equal(rawCached.status(), 304)
-    assert.equal((await get('/app_bg.wasm',{headers:{origin:'https://foreign.invalid'}})).status(),403)
-    assert.equal((await get('/app_bg.wasm',{headers:{'x-codenomad-server-request':'1'}})).status(),404)
+    assert.equal(rawWasm.status, 200)
+    assert.equal(rawWasm.headers.get('content-type'), 'application/wasm')
+    assert.equal(rawWasm.headers.get('content-encoding'), null)
+    assert.notEqual(rawWasm.headers.get('etag'), wasm.headers.get('etag'))
+    const rawCached = await get('/app_bg.wasm', {cache: 'force-cache', headers: {'accept-encoding': 'identity', 'if-none-match': rawWasm.headers.get('etag')}})
+    assert.equal(rawCached.status, 304)
+    assert.equal((await get('/app_bg.wasm',{headers:{origin:'https://foreign.invalid'}})).status,403)
+    const serverAssetCookie = await cookieHeader()
+    const serverAsset = await attestedFetch.request({
+      path: '/app_bg.wasm',
+      method: 'GET',
+      headers: { ...(serverAssetCookie ? { cookie: serverAssetCookie } : {}), 'x-codenomad-server-request': '1' },
+      signal: AbortSignal.timeout(15000),
+    })
+    await serverAsset.body.dump()
+    assert.equal(serverAsset.statusCode, 404)
     const expectedWasmSha = manifest.files.find(row => row.file === 'app_bg.wasm').sha256
-    const sha256 = createHash('sha256').update(await wasm.body()).digest('hex')
+    const sha256 = createHash('sha256').update(Buffer.from(await wasm.arrayBuffer())).digest('hex')
     assert.equal(sha256, expectedWasmSha)
-    assert.equal(createHash('sha256').update(await rawWasm.body()).digest('hex'), expectedWasmSha)
+    assert.equal(createHash('sha256').update(Buffer.from(await rawWasm.arrayBuffer())).digest('hex'), expectedWasmSha)
     await context.storageState({path:storage})
     return {origin, sha256, paired:true, crossOriginLink:fromLink, clientBootReady:true, pairedEntry}
-  } finally { await browser.close() }
+  } catch (error) {
+    primaryError = error
+    throw error
+  } finally {
+    await attestedFetch?.close().catch(() => {})
+    if (ownedBrowser) {
+      try {
+        await ownedBrowser.close()
+      } catch (closeError) {
+        console.error(`Failed to close pairing browser: ${closeError.message}`)
+        if (!primaryError) throw closeError
+      }
+    }
+  }
 }
 
 export async function mobileTabBar(page, labels) {
