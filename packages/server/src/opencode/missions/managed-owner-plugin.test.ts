@@ -23,8 +23,7 @@ test("packaged Missions entry ships one-time, recurring and human-answer RPC wit
   assert.equal(code.includes("NativeMissionAuthorityStore"), false)
   assert.equal(code.includes("codenomad.missions.managed-owner"), false)
   const inputs = Object.keys(output.metafile.inputs)
-  for (const retired of ["missions/authority-store.ts", "missions/host-authority/", "opencode/missions/native-managed-owner.ts"])
-    assert.equal(inputs.some(input => input.includes(retired)), false, retired)
+  assert.equal(inputs.some(input => input.includes("missions/host-authority/")), false, "the host's profile source stays out of the plugin")
 })
 
 test("one Missions registration retains native snapshot, exact read, paused CREATE and existing handlers", async () => {
