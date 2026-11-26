@@ -65,10 +65,6 @@ pub fn multi_option_key(field_key: &str, value: &str) -> String {
     )
 }
 
-pub fn preserved_custom_option_key(field_key: &str, index: usize) -> String {
-    format!("multi-custom:{}:{field_key}:{index}", field_key.len())
-}
-
 pub fn field_group_key(field_key: &str) -> String {
     format!("form-group:{}:{field_key}", field_key.len())
 }
@@ -122,24 +118,79 @@ fn is_line_editable_custom(value: &str) -> bool {
     !value.contains(['\n', '\r']) && value.trim() == value
 }
 
+fn parse_u64_bound(field: &Value, key: &str) -> Result<Option<u64>, ()> {
+    match field.get(key) {
+        None => Ok(None),
+        Some(v) => v.as_u64().map(Some).ok_or(()),
+    }
+}
+
+fn parse_f64_bound(field: &Value, key: &str) -> Result<Option<f64>, ()> {
+    match field.get(key) {
+        None => Ok(None),
+        Some(v) => v.as_f64().filter(|n| n.is_finite()).map(Some).ok_or(()),
+    }
+}
+
+/// Validate that any declared length/item/numeric bounds have legal JSON types and finite values.
+pub fn valid_bounds(field: &Value) -> bool {
+    match field["type"].as_str() {
+        Some("string") => {
+            parse_u64_bound(field, "minLength").is_ok()
+                && parse_u64_bound(field, "maxLength").is_ok()
+        }
+        Some("multiselect") => {
+            parse_u64_bound(field, "minItems").is_ok() && parse_u64_bound(field, "maxItems").is_ok()
+        }
+        Some("number" | "integer") => {
+            parse_f64_bound(field, "minimum").is_ok() && parse_f64_bound(field, "maximum").is_ok()
+        }
+        Some("boolean") => true,
+        _ => false,
+    }
+}
+
 fn string_value_satisfies_bounds(field: &Value, raw: &str) -> bool {
+    let Ok(min_len) = parse_u64_bound(field, "minLength") else {
+        return false;
+    };
+    let Ok(max_len) = parse_u64_bound(field, "maxLength") else {
+        return false;
+    };
     let n = raw.encode_utf16().count() as u64;
-    n <= 20_000
-        && !field["minLength"].as_u64().is_some_and(|m| n < m)
-        && !field["maxLength"].as_u64().is_some_and(|m| n > m)
+    n <= 20_000 && min_len.is_none_or(|m| n >= m) && max_len.is_none_or(|m| n <= m)
 }
 
 /// Whether an active field requires a non-empty answer before submission.
 pub fn field_required(field: &Value) -> bool {
     field["required"] == true
-        || (field["type"] == "multiselect" && field["minItems"].as_u64().is_some_and(|m| m > 0))
+        || (field["type"] == "multiselect"
+            && parse_u64_bound(field, "minItems")
+                .ok()
+                .flatten()
+                .is_some_and(|m| m > 0))
+}
+
+/// Whether a custom-enabled string radio field currently holds text matching a declared option's
+/// wire value while that radio remains unchecked.
+pub fn custom_matches_declared_option(field: &Value, d: &Draft) -> bool {
+    field["type"] == "string"
+        && has_declared_options(field)
+        && field["custom"] == true
+        && !d.custom.text.is_empty()
+        && normalized_options(field)
+            .iter()
+            .any(|opt| opt.value == d.custom.text.as_str())
 }
 
 /// Whether an active field cannot be satisfied by any valid user action using the exact same
-/// bounds enforced by `value()` (e.g. empty/normalized-away required closed choices, contradictory
-/// `minItems`/`maxItems` or `minLength`/`maxLength`, or closed options exceeding the 20,000 UTF-16
-/// code-unit limit).
+/// validated bounds enforced by `value()` (malformed bounds, empty/normalized-away required closed
+/// choices, contradictory `minItems`/`maxItems` or `minLength`/`maxLength`, or closed options
+/// exceeding the 20,000 UTF-16 code-unit limit).
 pub fn field_unanswerable(field: &Value) -> bool {
+    if !valid_options_shape(field) || !valid_bounds(field) {
+        return true;
+    }
     match field["type"].as_str() {
         Some("string") if has_declared_options(field) && field["custom"] != true => {
             field["required"] == true
@@ -151,16 +202,29 @@ pub fn field_unanswerable(field: &Value) -> bool {
             if field["required"] != true {
                 return false;
             }
-            let min_len = field["minLength"].as_u64().unwrap_or(1).max(1);
-            let max_len = field["maxLength"].as_u64().unwrap_or(20_000).min(20_000);
+            let min_len = parse_u64_bound(field, "minLength")
+                .ok()
+                .flatten()
+                .unwrap_or(1)
+                .max(1);
+            let max_len = parse_u64_bound(field, "maxLength")
+                .ok()
+                .flatten()
+                .unwrap_or(20_000)
+                .min(20_000);
             min_len > max_len
         }
         Some("multiselect") => {
-            let min_needed = field["minItems"]
-                .as_u64()
+            let min_needed = parse_u64_bound(field, "minItems")
+                .ok()
+                .flatten()
                 .unwrap_or(0)
                 .max(u64::from(field["required"] == true));
-            let max_allowed = field["maxItems"].as_u64().unwrap_or(32).min(32);
+            let max_allowed = parse_u64_bound(field, "maxItems")
+                .ok()
+                .flatten()
+                .unwrap_or(32)
+                .min(32);
             if field["custom"] == true {
                 min_needed > max_allowed
             } else {
@@ -174,15 +238,21 @@ pub fn field_unanswerable(field: &Value) -> bool {
         Some("number") => {
             field["required"] == true
                 && matches!(
-                    (field["minimum"].as_f64(), field["maximum"].as_f64()),
-                    (Some(min), Some(max)) if min.is_finite() && max.is_finite() && min > max
+                    (
+                        parse_f64_bound(field, "minimum").ok().flatten(),
+                        parse_f64_bound(field, "maximum").ok().flatten()
+                    ),
+                    (Some(min), Some(max)) if min > max
                 )
         }
         Some("integer") => {
             field["required"] == true
                 && matches!(
-                    (field["minimum"].as_f64(), field["maximum"].as_f64()),
-                    (Some(min), Some(max)) if min.is_finite() && max.is_finite() && min.ceil() > max.floor()
+                    (
+                        parse_f64_bound(field, "minimum").ok().flatten(),
+                        parse_f64_bound(field, "maximum").ok().flatten()
+                    ),
+                    (Some(min), Some(max)) if min.ceil() > max.floor()
                 )
         }
         _ => false,
@@ -198,6 +268,7 @@ pub struct Draft {
     pub preserved_custom_selected: BTreeSet<String>,
     pub declared_options: Option<BTreeSet<String>>,
     pub prior_choice_values: BTreeSet<String>,
+    pub hidden_value: Option<String>,
     pub kind: Option<FieldKind>,
     pub dirty: bool,
 }
@@ -253,6 +324,7 @@ impl Default for Draft {
             preserved_custom_selected: BTreeSet::new(),
             declared_options: None,
             prior_choice_values: BTreeSet::new(),
+            hidden_value: None,
             kind: None,
             dirty: false,
         }
@@ -344,20 +416,22 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 drafts.insert(id, fresh_draft(field));
                 continue;
             };
-            // Reseed incompatible drafts on field-kind transitions and never migrate a wire choice
-            // identifier or prior choice default into a visible text editor.
+            // Reseed incompatible drafts on field-kind transitions, carry choice provenance across
+            // the field's lifetime, and keep hidden protocol defaults separate from display copy.
             if let Some(prev) = draft.kind
                 && prev != kind
             {
+                let mut choice_provenance = std::mem::take(&mut draft.prior_choice_values);
+                if prev == FieldKind::StringOptions {
+                    if let Some(prev_opts) = draft.declared_options.take() {
+                        choice_provenance.extend(prev_opts);
+                    }
+                    if let Some(prev_choice) = draft.choice.take() {
+                        choice_provenance.insert(prev_choice);
+                    }
+                }
                 match (prev, kind) {
                     (FieldKind::StringOptions, FieldKind::StringFree) => {
-                        let mut choice_provenance = std::mem::take(&mut draft.prior_choice_values);
-                        if let Some(prev_opts) = draft.declared_options.take() {
-                            choice_provenance.extend(prev_opts);
-                        }
-                        if let Some(prev_choice) = draft.choice.take() {
-                            choice_provenance.insert(prev_choice);
-                        }
                         let authored = std::mem::take(&mut draft.custom.text);
                         if !authored.is_empty() {
                             draft.edit = TextEdit::new(authored);
@@ -365,30 +439,39 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             draft.selected.clear();
                             draft.preserved_custom.clear();
                             draft.preserved_custom_selected.clear();
+                            draft.hidden_value = None;
                             draft.prior_choice_values = choice_provenance;
                             draft.kind = Some(kind);
                             continue;
                         }
                         let mut next = fresh_draft(field);
-                        if field["default"]
-                            .as_str()
-                            .is_some_and(|raw| choice_provenance.contains(raw))
+                        if let Some(raw) = field["default"].as_str()
+                            && choice_provenance.contains(raw)
                         {
                             next.edit = TextEdit::new("");
+                            if field["hidden"] == true {
+                                next.hidden_value = Some(raw.to_string());
+                            }
                         }
-                        next.prior_choice_values = choice_provenance;
+                        next.prior_choice_values.extend(choice_provenance);
                         *draft = next;
                         continue;
                     }
                     (FieldKind::StringFree, FieldKind::StringOptions) => {
                         if !draft.dirty && draft.edit.text.is_empty() {
-                            *draft = fresh_draft(field);
+                            let mut next = fresh_draft(field);
+                            next.prior_choice_values.extend(choice_provenance);
+                            *draft = next;
                             continue;
                         }
+                        draft.hidden_value = None;
+                        draft.prior_choice_values = choice_provenance;
                         draft.kind = Some(kind);
                     }
                     _ => {
-                        *draft = fresh_draft(field);
+                        let mut next = fresh_draft(field);
+                        next.prior_choice_values.extend(choice_provenance);
+                        *draft = next;
                         continue;
                     }
                 }
@@ -519,11 +602,26 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.preserved_custom.clear();
                 draft.preserved_custom_selected.clear();
                 draft.choice = None;
-                if kind == FieldKind::StringFree
-                    && draft.edit.text.is_empty()
-                    && !draft.custom.text.is_empty()
-                {
-                    draft.edit = TextEdit::new(&draft.custom.text);
+                if kind == FieldKind::StringFree {
+                    if field["hidden"] != true {
+                        if let Some(hidden) = draft.hidden_value.take()
+                            && draft.edit.text.is_empty()
+                            && !draft.prior_choice_values.contains(&hidden)
+                        {
+                            draft.edit = TextEdit::new(hidden);
+                        }
+                    } else if draft.hidden_value.is_none()
+                        && draft.edit.text.is_empty()
+                        && let Some(raw) = field["default"].as_str()
+                        && draft.prior_choice_values.contains(raw)
+                    {
+                        draft.hidden_value = Some(raw.to_string());
+                    }
+                    if draft.edit.text.is_empty() && !draft.custom.text.is_empty() {
+                        draft.edit = TextEdit::new(&draft.custom.text);
+                    }
+                } else {
+                    draft.hidden_value = None;
                 }
                 if !draft.custom.text.is_empty() {
                     draft.custom = TextEdit::new("");
@@ -566,11 +664,12 @@ pub fn supported(form: &Form) -> bool {
             f["type"].as_str(),
             Some("string" | "number" | "integer" | "boolean" | "multiselect")
         ) && valid_options_shape(f)
+            && valid_bounds(f)
             && !(f["when"].as_array().is_none() && field_unanswerable(f))
     })
 }
 pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
-    if !valid_options_shape(field) {
+    if !valid_options_shape(field) || !valid_bounds(field) {
         return Err(());
     }
     let text = d.edit.text.as_str();
@@ -579,11 +678,16 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
         || d.choice
             .as_deref()
             .is_some_and(|c| c.encode_utf16().count() > 20_000)
+        || d.hidden_value
+            .as_deref()
+            .is_some_and(|h| h.encode_utf16().count() > 20_000)
     {
         return Err(());
     }
     match field["type"].as_str() {
         Some("string") => {
+            let min_len = parse_u64_bound(field, "minLength")?;
+            let max_len = parse_u64_bound(field, "maxLength")?;
             if has_declared_options(field) {
                 if !text.is_empty() {
                     return Err(());
@@ -603,32 +707,38 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
                 }
                 let n = selected_text.encode_utf16().count() as u64;
                 if (field["required"] == true && selected_text.is_empty())
-                    || field["minLength"].as_u64().is_some_and(|m| n < m)
-                    || field["maxLength"].as_u64().is_some_and(|m| n > m)
+                    || min_len.is_some_and(|m| n < m)
+                    || max_len.is_some_and(|m| n > m)
                 {
                     return Err(());
                 }
-                if !from_custom {
-                    let options = normalized_options(field);
-                    if !options.iter().any(|o| o.value == selected_text) {
-                        return Err(());
-                    }
+                let options = normalized_options(field);
+                let is_declared = options.iter().any(|o| o.value == selected_text);
+                if (from_custom && is_declared) || (!from_custom && !is_declared) {
+                    return Err(());
                 }
                 return Ok(Some(json!(selected_text)));
             }
-            if text.is_empty() && field["required"] != true {
+            let effective = if field["hidden"] == true && text.is_empty() {
+                d.hidden_value.as_deref().unwrap_or("")
+            } else {
+                text
+            };
+            if effective.is_empty() && field["required"] != true {
                 return Ok(None);
             }
-            let n = text.encode_utf16().count() as u64;
-            if (field["required"] == true && text.is_empty())
-                || field["minLength"].as_u64().is_some_and(|m| n < m)
-                || field["maxLength"].as_u64().is_some_and(|m| n > m)
+            let n = effective.encode_utf16().count() as u64;
+            if (field["required"] == true && effective.is_empty())
+                || min_len.is_some_and(|m| n < m)
+                || max_len.is_some_and(|m| n > m)
             {
                 return Err(());
             }
-            Ok(Some(json!(text)))
+            Ok(Some(json!(effective)))
         }
         Some("number" | "integer") => {
+            let minimum = parse_f64_bound(field, "minimum")?;
+            let maximum = parse_f64_bound(field, "maximum")?;
             if text.trim().is_empty() {
                 return if field["required"] == true {
                     Err(())
@@ -639,8 +749,8 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
             let n = text.parse::<f64>().map_err(|_| ())?;
             if !n.is_finite()
                 || (field["type"] == "integer" && n.fract() != 0.0)
-                || field["minimum"].as_f64().is_some_and(|m| n < m)
-                || field["maximum"].as_f64().is_some_and(|m| n > m)
+                || minimum.is_some_and(|m| n < m)
+                || maximum.is_some_and(|m| n > m)
             {
                 return Err(());
             }
@@ -658,6 +768,8 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
             }
         },
         Some("multiselect") => {
+            let min_items = parse_u64_bound(field, "minItems")?;
+            let max_items = parse_u64_bound(field, "maxItems")?;
             let options = normalized_options(field);
             let is_declared = |entry: &str| options.iter().any(|o| o.value == entry);
             let mut values = d.selected.clone();
@@ -691,8 +803,8 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
             let count = values.len() as u64;
             if count > 32
                 || (field["required"] == true && count == 0)
-                || field["minItems"].as_u64().is_some_and(|m| count < m)
-                || field["maxItems"].as_u64().is_some_and(|m| count > m)
+                || min_items.is_some_and(|m| count < m)
+                || max_items.is_some_and(|m| count > m)
             {
                 return Err(());
             }

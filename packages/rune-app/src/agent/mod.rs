@@ -174,9 +174,19 @@ pub(crate) fn focused_control_key(
                         && !options.is_empty()
                         && key == agent_forms::clear_option_key(field_key))
                 }
-                Some("multiselect") => agent_forms::normalized_options(field)
-                    .iter()
-                    .any(|option| agent_forms::multi_option_key(field_key, option.value) == key),
+                Some("multiselect") => {
+                    agent_forms::normalized_options(field)
+                        .iter()
+                        .any(|option| agent_forms::multi_option_key(field_key, option.value) == key)
+                        || (field["custom"] == true
+                            && a.drafts
+                                .get(&(f.id.clone(), field_key.to_string()))
+                                .is_some_and(|d| {
+                                    d.preserved_custom.iter().any(|raw| {
+                                        agent_forms::multi_option_key(field_key, raw) == key
+                                    })
+                                }))
+                }
                 _ => false,
             };
             if matched {

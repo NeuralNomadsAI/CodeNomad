@@ -425,9 +425,13 @@ pub fn form_header(eyebrow: &str, title: &str, required: bool) -> El {
 }
 
 pub fn form_error(message: &str) -> El {
+    field_error("form-unsupported", message)
+}
+
+pub fn field_error(key: &str, message: &str) -> El {
     let t = tokens(layout::dark());
     text(message)
-        .key("form-unsupported")
+        .key(key.to_string())
         .role("alert")
         .text_role(TextRole::Label)
         .color(surface_text_color(
@@ -435,6 +439,135 @@ pub fn form_error(message: &str) -> El {
             &["status-error", "text-primary", "text-secondary"],
         ))
         .wrap_anywhere()
+}
+
+pub fn required_field_group(
+    key: &str,
+    label: &str,
+    description: Option<&str>,
+    required: bool,
+    children: Vec<El>,
+) -> El {
+    let t = tokens(layout::dark());
+    let mut group = col()
+        .key(key.to_string())
+        .w_full()
+        .gap(t.space(Space::Xs).px())
+        .role("group")
+        .label(label)
+        .required(required);
+    if let Some(desc) = non_empty(description) {
+        group = group.description(desc);
+    }
+    group.children(children)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn form_textarea<S: 'static>(
+    key: &str,
+    edit: &rune::TextEdit,
+    label: &str,
+    description: Option<&str>,
+    disabled: bool,
+    required: bool,
+    invalid: bool,
+    on_edit: impl Fn(&mut S) -> &mut rune::TextEdit + 'static,
+) -> El {
+    let dark = layout::dark();
+    let t = tokens(dark);
+    let k = crate::field_kit(dark);
+    let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+    let raw_fill = t.color("surface-field");
+    let raw_bgs = effective_backgrounds(raw_fill, base);
+    let mut fill =
+        if try_contrasting_color(t, &["text-primary", "text-secondary"], &raw_bgs, 4.5).is_some() {
+            raw_fill
+        } else {
+            composite_srgb(raw_fill, base)
+        };
+    let mut fill_bgs = effective_backgrounds(fill, base);
+    let border_candidates = [
+        "border-base",
+        "border-strong",
+        "text-secondary",
+        "text-primary",
+    ];
+    let border = if disabled {
+        t.color("border-muted")
+    } else if invalid {
+        let err_candidates = ["status-error", "text-primary", "text-secondary"];
+        if let Some(color) =
+            try_contrasting_color(t, &err_candidates, &[base, fill_bgs[0], fill_bgs[1]], 3.0)
+        {
+            color
+        } else {
+            fill = base;
+            fill_bgs = effective_backgrounds(fill, base);
+            contrasting_color(t, &err_candidates, &[base], 3.0)
+        }
+    } else if worst_contrast(fill, &[base]) >= 3.0 {
+        t.color("border-base")
+    } else if let Some(color) = try_contrasting_color(
+        t,
+        &border_candidates,
+        &[base, fill_bgs[0], fill_bgs[1]],
+        3.0,
+    ) {
+        color
+    } else {
+        fill = base;
+        fill_bgs = effective_backgrounds(fill, base);
+        contrasting_color(t, &border_candidates, &[base], 3.0)
+    };
+    let ink = if disabled {
+        t.color("text-muted")
+    } else {
+        contrasting_color(t, &["text-primary", "text-secondary"], &fill_bgs, 4.5)
+    };
+    let focus_color = contrasting_color(
+        t,
+        &[
+            "focus-ring-color",
+            "accent-primary",
+            "text-primary",
+            "text-secondary",
+        ],
+        &[fill_bgs[0], fill_bgs[1]],
+        3.0,
+    );
+    let metrics = k
+        .metrics
+        .text_area
+        .unwrap_or_else(|| rune_kit::TextAreaMetrics::kit(&k));
+    let mut input = rune::text_input(edit, metrics.style)
+        .key("input")
+        .w_full()
+        .color(ink)
+        .caret(ink, k.selection())
+        .label(label)
+        .required(required)
+        .invalid(invalid)
+        .disabled(disabled);
+    if let Some(desc) = non_empty(description) {
+        input = input.description(desc);
+    }
+    if !disabled {
+        input = input.on_edit(on_edit);
+    }
+    let viewport = rune::auto_grow(input, 1, 1);
+    let mut box_el = col()
+        .key(key.to_string())
+        .w_full()
+        .role("textbox")
+        .padding(metrics.padding)
+        .radius(0.0)
+        .fill(fill)
+        .border(1.0, border)
+        .child(viewport);
+    if !disabled && edit.focused {
+        box_el = box_el.outline(2.0, -2.0, focus_color);
+    }
+    box_el
 }
 
 pub fn clear_choice_button<S: 'static>(
@@ -446,7 +579,7 @@ pub fn clear_choice_button<S: 'static>(
 ) -> El {
     let t = tokens(layout::dark());
     let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
-    let fill = card_fill(t, false, disabled);
+    let mut fill = card_fill(t, false, disabled);
     let mut hover = card_hover_fill(t, fill);
     let border = if disabled {
         t.color("border-muted")
@@ -473,9 +606,37 @@ pub fn clear_choice_button<S: 'static>(
             }
             if let Some(color) = try_contrasting_color(t, &candidates, &boundary_bgs, 3.0) {
                 color
+            } else if !rest_visible {
+                if let Some(color) =
+                    try_contrasting_color(t, &candidates, &[base, rest[0], rest[1]], 3.0)
+                {
+                    hover = fill;
+                    color
+                } else {
+                    // When the control surface sits in the 2.5-2.9:1 gap where neither the fill
+                    // nor any single border reaches 3:1 against both dock and fill, match the
+                    // dock surface so a single high-contrast border meets >= 3:1 cleanly.
+                    fill = base;
+                    hover = card_hover_fill(t, fill);
+                    let next_hover_bgs = effective_backgrounds(hover, base);
+                    let next_hover_visible = worst_contrast(hover, &[base]) >= 3.0;
+                    if next_hover_visible {
+                        contrasting_color(t, &candidates, &[base], 3.0)
+                    } else if let Some(color) = try_contrasting_color(
+                        t,
+                        &candidates,
+                        &[base, next_hover_bgs[0], next_hover_bgs[1]],
+                        3.0,
+                    ) {
+                        color
+                    } else {
+                        hover = fill;
+                        contrasting_color(t, &candidates, &[base], 3.0)
+                    }
+                }
             } else {
                 hover = fill;
-                contrasting_color(t, &candidates, &[base, rest[0], rest[1]], 3.0)
+                t.color("border-base")
             }
         }
     };

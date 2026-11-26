@@ -1424,40 +1424,108 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             assert!(!md.selected.contains("prod"));
             assert_eq!(md.custom.text, "prod");
             assert_eq!((md.custom.anchor, md.custom.focus), (0, 4));
+            assert_eq!(
+                agent_forms::value(&a.forms[0].fields[0], md),
+                Ok(Some(json!([])))
+            );
             let rd = &a.drafts[&("form-r6-ident".into(), "radio_env".into())];
             assert_eq!(rd.choice, None);
             assert_eq!(rd.custom.text, "prod");
             assert_eq!((rd.custom.anchor, rd.custom.focus), (1, 3));
-            let ans = agent_forms::answer(&a.forms[0], &a.drafts).expect("optional answers");
+            // Typing a declared string option's wire value into custom while the radio is
+            // unchecked must conflict and block submission rather than submitting an unchecked radio.
+            assert!(agent_forms::custom_matches_declared_option(
+                &a.forms[0].fields[1],
+                rd
+            ));
+            assert!(agent_forms::value(&a.forms[0].fields[1], rd).is_err());
+            assert!(agent_forms::answer(&a.forms[0], &a.drafts).is_err());
+        }
+        let id_tree = id_rt.accessibility_json();
+        assert!(has_state(
+            find_input(&id_tree, "custom-radio_env"),
+            "invalid"
+        ));
+        let err_node = find_node(&id_tree, "field-error:9:radio_env")
+            .expect("conflict alert for declared string option in custom input");
+        assert_eq!(err_node["role"], "alert");
+        assert_eq!(err_node["name"], "Select an option");
+        assert!(has_state(
+            find_node(&id_tree, "answer-question").unwrap(),
+            "disabled"
+        ));
+        // Selecting the declared radio resolves the conflict and submits "prod".
+        let radio_prod_key = agent_forms::string_option_key("radio_env", "prod");
+        tap(&mut id_rt, &radio_prod_key);
+        let id_resolved = id_rt.accessibility_json();
+        assert!(has_state(
+            find_node(&id_resolved, &radio_prod_key).unwrap(),
+            "checked"
+        ));
+        assert!(!has_state(
+            find_input(&id_resolved, "custom-radio_env"),
+            "invalid"
+        ));
+        assert!(find_node(&id_resolved, "field-error:9:radio_env").is_none());
+        assert!(!has_state(
+            find_node(&id_resolved, "answer-question").unwrap(),
+            "disabled"
+        ));
+        {
+            let a = id_rt.state.agent.as_ref().unwrap();
+            let ans = agent_forms::answer(&a.forms[0], &a.drafts).expect("resolved answers");
             assert_eq!(ans["multi_env"], json!([]));
+            assert_eq!(ans["radio_env"], json!("prod"));
         }
 
         // 3. Removing options from a closed string whose default matched an option wire value
-        // must NOT leak that wire value into the replacement textbox.
+        // must NOT leak that wire value into the replacement textbox across repeated reseeds,
+        // while a hidden required string keeps submitting its internal default.
         let prov_form = Form {
             tool: None,
             infer_websearch: false,
             id: "form-r6-prov".into(),
             title: "Default provenance".into(),
-            fields: vec![json!({
-                "key": "env",
-                "title": "Environment",
-                "type": "string",
-                "default": "internal_prod",
-                "options": [{"value": "internal_prod", "label": "Production"}]
-            })],
+            fields: vec![
+                json!({
+                    "key": "env",
+                    "title": "Environment",
+                    "type": "string",
+                    "default": "internal_prod",
+                    "options": [{"value": "internal_prod", "label": "Production"}]
+                }),
+                json!({
+                    "key": "hidden_env",
+                    "title": "Hidden Environment",
+                    "type": "string",
+                    "hidden": true,
+                    "required": true,
+                    "default": "secret_tier",
+                    "options": [{"value": "secret_tier", "label": "Secret Tier"}]
+                }),
+            ],
         };
         let (state, _rx) = state_with_form(prov_form);
         let mut prt = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
         prt.frame(0.0);
         prt.update(|s, _| {
             let a = s.agent.as_mut().unwrap();
-            a.forms[0].fields = vec![json!({
-                "key": "env",
-                "title": "Environment",
-                "type": "string",
-                "default": "internal_prod"
-            })];
+            a.forms[0].fields = vec![
+                json!({
+                    "key": "env",
+                    "title": "Environment",
+                    "type": "string",
+                    "default": "internal_prod"
+                }),
+                json!({
+                    "key": "hidden_env",
+                    "title": "Hidden Environment",
+                    "type": "string",
+                    "hidden": true,
+                    "required": true,
+                    "default": "secret_tier"
+                }),
+            ];
             agent_forms::seed(&a.forms, &mut a.drafts);
         });
         prt.frame(1.0 / 60.0);
@@ -1473,12 +1541,69 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             !prt.elements().iter().any(|e| e
                 .text
                 .as_deref()
-                .is_some_and(|t| t.contains("internal_prod"))),
-            "prior choice wire default must not appear visibly"
+                .is_some_and(|t| t.contains("internal_prod") || t.contains("secret_tier"))),
+            "prior choice wire defaults must not appear visibly"
+        );
+        assert!(
+            !has_state(find_node(&ptree, "answer-question").unwrap(), "disabled"),
+            "hidden required string must keep submitting its preserved default"
+        );
+        {
+            let a = prt.state.agent.as_ref().unwrap();
+            let ans = agent_forms::answer(&a.forms[0], &a.drafts).expect("hidden default submits");
+            assert_eq!(ans["hidden_env"], json!("secret_tier"));
+            assert!(ans.get("env").is_none());
+        }
+        // Repeated reseed (closed with another option -> free with original wire value) must
+        // retain lifetime provenance and never leak internal_prod; unhiding hidden_env must
+        // also never copy secret_tier into the newly visible textbox.
+        prt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields[0] = json!({
+                "key": "env",
+                "title": "Environment",
+                "type": "string",
+                "default": "other_opt",
+                "options": [{"value": "other_opt", "label": "Other"}]
+            });
+            agent_forms::seed(&a.forms, &mut a.drafts);
+            a.forms[0].fields = vec![
+                json!({
+                    "key": "env",
+                    "title": "Environment",
+                    "type": "string",
+                    "default": "internal_prod"
+                }),
+                json!({
+                    "key": "hidden_env",
+                    "title": "Hidden Environment",
+                    "type": "string",
+                    "hidden": false,
+                    "required": true,
+                    "default": "secret_tier"
+                }),
+            ];
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        prt.frame(2.0 / 60.0);
+        let ptree2 = prt.accessibility_json();
+        assert_eq!(
+            find_input(&ptree2, "field-env")["value"]
+                .as_str()
+                .unwrap_or(""),
+            "",
+            "repeated reseed must retain prior choice provenance for the lifetime of the field"
+        );
+        assert_eq!(
+            find_input(&ptree2, "field-hidden_env")["value"]
+                .as_str()
+                .unwrap_or(""),
+            "",
+            "unhiding a field must never leak its prior choice wire value into the visible textbox"
         );
 
-        // 4. Visible multiline multiselect default with maxItems:1 is inspectable and removable
-        // so selecting a declared option enables Answer cleanly.
+        // 4. Visible multiline multiselect default with maxItems:1 uses stable value-based keys,
+        // participates in focused_control_key lookup, and preserves focus across promotion.
         let max1_form = Form {
             tool: None,
             infer_websearch: false,
@@ -1497,8 +1622,16 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let (state, _rx) = state_with_form(max1_form);
         let mut m1 = Runtime::new(state, render_form, (420.0, 640.0), Env::new(false, 1.0));
         m1.frame(0.0);
-        let custom_box_key = agent_forms::preserved_custom_option_key("tags", 0);
+        let custom_box_key = agent_forms::multi_option_key("tags", "team\nlocal");
         let prod_box_key = agent_forms::multi_option_key("tags", "prod");
+        assert_eq!(
+            crate::agent::focused_control_key(&m1.state, Some(&custom_box_key)),
+            Some((
+                custom_box_key.clone(),
+                Some("pending-content-form-r6-max1".into())
+            )),
+            "focused_control_key must recognize preserved multiline custom checkboxes"
+        );
         let m1_tree = m1.accessibility_json();
         let custom_box =
             find_node(&m1_tree, &custom_box_key).expect("visible structured default checkbox");
@@ -1532,8 +1665,62 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             json!(["prod"])
         );
 
-        // 5. Impossible bounds (minItems:2, maxItems:1; or required closed string exceeding
-        // 20,000 UTF-16 code units) are flagged unsupported and surface the localized error.
+        // Two preserved multiline defaults: promoting the focused first one to a declared option
+        // keeps keyboard focus on that exact option rather than shifting to the second one.
+        let promo_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r7-promo".into(),
+            title: "Stable preserved focus".into(),
+            fields: vec![json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "custom": true,
+                "options": [],
+                "default": ["first\nval", "second\nval"]
+            })],
+        };
+        let (state, _rx) = state_with_form(promo_form);
+        let mut pr = Runtime::new(state, render_form, (420.0, 640.0), Env::new(false, 1.0));
+        pr.frame(0.0);
+        let first_key = agent_forms::multi_option_key("tags", "first\nval");
+        let second_key = agent_forms::multi_option_key("tags", "second\nval");
+        pr.update(|_, tx| tx.focus(first_key.clone(), true));
+        pr.frame(1.0 / 60.0);
+        assert_eq!(focused_key(&mut pr).as_deref(), Some(first_key.as_str()));
+        pr.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields[0] = json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "custom": true,
+                "options": [{"value": "first\nval", "label": "First promoted"}],
+                "default": ["first\nval", "second\nval"]
+            });
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        pr.frame(2.0 / 60.0);
+        assert_eq!(
+            focused_key(&mut pr).as_deref(),
+            Some(first_key.as_str()),
+            "promoting a preserved multiline default must keep focus on the same value"
+        );
+        press_key(&mut pr, Key::Text(" ".into()));
+        let pr_tree = pr.accessibility_json();
+        assert!(has_state(
+            find_node(&pr_tree, &first_key).unwrap(),
+            "unchecked"
+        ));
+        assert!(has_state(
+            find_node(&pr_tree, &second_key).unwrap(),
+            "checked"
+        ));
+
+        // 5. Impossible or malformed bounds (minItems:2, maxItems:1; fractional maxItems:0.5;
+        // or required closed string exceeding 20,000 UTF-16 code units) are flagged unsupported,
+        // fail value() directly, and surface the localized error.
         let oversized = "x".repeat(20_001);
         for impossible_field in [
             json!({
@@ -1546,6 +1733,13 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
                     {"value": "a", "label": "A"},
                     {"value": "b", "label": "B"}
                 ]
+            }),
+            json!({
+                "key": "fractional_max",
+                "title": "Fractional maxItems",
+                "type": "multiselect",
+                "maxItems": 0.5,
+                "options": [{"value": "a", "label": "A"}]
             }),
             json!({
                 "key": "oversized_closed",
@@ -1570,6 +1764,17 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
                 !agent_forms::supported(&imp_form),
                 "form with unconditional impossible field must be unsupported"
             );
+            let mut drafts = agent_forms::Drafts::new();
+            agent_forms::seed(std::slice::from_ref(&imp_form), &mut drafts);
+            let k = impossible_field["key"].as_str().unwrap().to_string();
+            assert!(
+                agent_forms::value(
+                    &impossible_field,
+                    &drafts[&("form-r6-impossible".into(), k)]
+                )
+                .is_err(),
+                "value() must reject impossible or malformed bounds directly"
+            );
             let (state, _rx) = state_with_form(imp_form);
             let mut irt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
             irt.frame(0.0);
@@ -1582,6 +1787,103 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
                 find_node(&itree, "answer-question").unwrap(),
                 "disabled"
             ));
+        }
+
+        // 6. Requiredness semantics: sole editors expose `required` directly, while hybrid
+        // choice+custom fields expose `required` on a shared parent group rather than marking
+        // each individual sub-control mandatory.
+        let req_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r7-required".into(),
+            title: "Required semantics".into(),
+            fields: vec![
+                json!({
+                    "key": "req_text",
+                    "title": "Required text",
+                    "type": "string",
+                    "required": true
+                }),
+                json!({
+                    "key": "req_num",
+                    "title": "Required number",
+                    "type": "number",
+                    "required": true
+                }),
+                json!({
+                    "key": "req_custom_only",
+                    "title": "Custom only string",
+                    "type": "string",
+                    "required": true,
+                    "custom": true,
+                    "options": []
+                }),
+                json!({
+                    "key": "req_multi_custom_only",
+                    "title": "Custom only multi",
+                    "type": "multiselect",
+                    "required": true,
+                    "custom": true,
+                    "options": []
+                }),
+                json!({
+                    "key": "req_hybrid_radio",
+                    "title": "Hybrid radio",
+                    "type": "string",
+                    "required": true,
+                    "custom": true,
+                    "options": [{"value": "a", "label": "Option A"}]
+                }),
+                json!({
+                    "key": "req_hybrid_multi",
+                    "title": "Hybrid multi",
+                    "type": "multiselect",
+                    "required": true,
+                    "custom": true,
+                    "options": [{"value": "x", "label": "Item X"}]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(req_form);
+        let mut rrt = Runtime::new(state, render_form, (420.0, 960.0), Env::new(false, 1.0));
+        rrt.frame(0.0);
+        let rtree = rrt.accessibility_json();
+        for sole_key in [
+            "field-req_text",
+            "field-req_num",
+            "custom-req_custom_only",
+            "custom-req_multi_custom_only",
+        ] {
+            assert!(
+                has_state(find_input(&rtree, sole_key), "required"),
+                "sole editor {sole_key} must expose required state"
+            );
+        }
+        for (field_key, group_key, custom_key) in [
+            (
+                "req_hybrid_radio",
+                agent_forms::field_group_key("req_hybrid_radio"),
+                "custom-req_hybrid_radio",
+            ),
+            (
+                "req_hybrid_multi",
+                agent_forms::field_group_key("req_hybrid_multi"),
+                "custom-req_hybrid_multi",
+            ),
+        ] {
+            let shared_key = format!("field-required-group:{}:{field_key}", field_key.len());
+            let shared = find_node(&rtree, &shared_key)
+                .expect("shared required parent group for hybrid choice+custom field");
+            assert_eq!(shared["role"], "group");
+            assert!(has_state(shared, "required"));
+            assert!(
+                !has_state(find_node(&rtree, &group_key).unwrap(), "required"),
+                "inner choice group {group_key} must not claim individual requiredness in hybrid field"
+            );
+            assert!(
+                !has_state(find_input(&rtree, custom_key), "required"),
+                "inner custom input {custom_key} must not claim individual requiredness in hybrid field"
+            );
         }
     });
 }

@@ -24,6 +24,7 @@ struct Demo {
     radio: usize,
     checked_a: bool,
     checked_b: bool,
+    custom: rune::TextEdit,
 }
 
 fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
@@ -71,6 +72,16 @@ fn demo_view(s: &Demo, cx: &mut Cx<Demo>) -> El {
                 false,
                 |s: &mut Demo, _| s.radio = 0,
             ))
+            .child(form_textarea(
+                "custom-input",
+                &s.custom,
+                "Other values",
+                None,
+                false,
+                true,
+                false,
+                |s: &mut Demo| &mut s.custom,
+            ))
             .child(checkbox_group(
                 "check-grp",
                 "Tags",
@@ -103,8 +114,9 @@ fn assert_palette_controls(label: &str, dark: bool) {
         radio: 0,
         checked_a: false,
         checked_b: true,
+        custom: rune::TextEdit::new("Custom answer"),
     };
-    let mut rt = Runtime::new(demo, demo_view, (240.0, 640.0), Env::new(dark, 1.0));
+    let mut rt = Runtime::new(demo, demo_view, (240.0, 720.0), Env::new(dark, 1.0));
     rt.frame(0.0);
     let tree = rt.accessibility_json();
     let group = node(&tree, "radio-grp").unwrap();
@@ -259,6 +271,37 @@ fn assert_palette_controls(label: &str, dark: bool) {
         assert!(
             rest_boundary >= 3.0 && hover_boundary >= 3.0,
             "{label}/clear-btn boundary contrast below 3:1: rest={rest_boundary:.2} hover={hover_boundary:.2} (border={clear_border:?}, rest={rest_fill:?}, hover={hover_fill:?}, base={base:?})"
+        );
+    }
+
+    // Form custom/text editor meets >= 4.5:1 ink contrast against its actual painted field fill
+    // and >= 3:1 boundary visibility against the dock.
+    {
+        let box_el = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("custom-input"))
+            .expect("custom-input box");
+        assert_eq!(box_el.radius, 0.0, "{label}/custom-input must stay square");
+        let input_el = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("input") && e.path.starts_with(&box_el.path))
+            .expect("custom-input inner input");
+        let field_fill = painted_card_fill(&rt, "custom-input");
+        let field_bgs = effective_backgrounds(field_fill, base);
+        let ink = input_el.text_color.expect("custom-input text_color");
+        let ink_ratio = worst_contrast(ink, &field_bgs);
+        assert!(
+            ink_ratio >= 4.5,
+            "{label}/custom-input ink contrast below 4.5:1: {ink_ratio:.2} (ink={ink:?}, bgs={field_bgs:?})"
+        );
+        let field_border = box_el.border_color.expect("custom-input border_color");
+        let field_boundary = worst_contrast(field_fill, &[base]).max(worst_contrast(
+            field_border,
+            &[base, field_bgs[0], field_bgs[1]],
+        ));
+        assert!(
+            field_boundary >= 3.0,
+            "{label}/custom-input boundary contrast below 3:1: {field_boundary:.2}"
         );
     }
 
@@ -511,7 +554,11 @@ fn assert_palette_controls(label: &str, dark: bool) {
         &[clear_rest[0], clear_rest[1], clear_hover[0], clear_hover[1]],
     );
 
-    // Tabbing again moves focus to the unchecked checkbox without toggling it.
+    // Tabbing again moves focus through custom-input to the unchecked checkbox without toggling it.
+    rt.key(tab.clone());
+    rt.key_up(tab.clone());
+    now += 1.0;
+    rt.frame(now);
     rt.key(tab.clone());
     rt.key_up(tab);
     now += 1.0;
@@ -634,6 +681,27 @@ fn radio_and_checkbox_options_meet_contrast_focus_and_wrapping_across_all_palett
     palettes::with_resolved(Some(custom_mid_grey), || {
         assert_palette_controls("custom-mid-grey-dark", true);
     });
+
+    // Verify no-mans-land boundary palette (SurfaceBase=#343434, SurfaceSecondary=#CACACA)
+    // keeps Clear and editor boundaries >= 3:1 at rest and on hover.
+    let mid_gap = ColorSchemeColors::default_custom()
+        .with(ColorField::SurfaceBase, "#343434")
+        .unwrap()
+        .with(ColorField::SurfaceSecondary, "#CACACA")
+        .unwrap();
+    for dark in [false, true] {
+        let custom_gap = palettes::custom(Some("mid-gap"), dark, false, mid_gap.clone());
+        palettes::with_resolved(Some(custom_gap), || {
+            assert_palette_controls(
+                if dark {
+                    "custom-mid-gap-dark"
+                } else {
+                    "custom-mid-gap-light"
+                },
+                dark,
+            );
+        });
+    }
 }
 
 #[test]
@@ -642,8 +710,9 @@ fn reduced_tab_order_reaches_radios_clear_and_checkboxes_with_full_keyboard_acce
         radio: 0,
         checked_a: false,
         checked_b: true,
+        custom: rune::TextEdit::new(""),
     };
-    let mut rt = Runtime::new(demo, demo_view, (240.0, 640.0), Env::new(true, 1.0));
+    let mut rt = Runtime::new(demo, demo_view, (240.0, 720.0), Env::new(true, 1.0));
     rt.frame(0.0);
     rt.set_full_keyboard_access(false);
 
@@ -670,9 +739,11 @@ fn reduced_tab_order_reaches_radios_clear_and_checkboxes_with_full_keyboard_acce
     assert_eq!(focused(&mut rt).as_deref(), Some("opt-b"));
     assert_eq!(rt.state.radio, 1);
 
-    // Tab advances through Clear button and both checkboxes with Full Keyboard Access off.
+    // Tab advances through Clear button, custom editor, and both checkboxes with FKA off.
     send(&mut rt, Key::Tab);
     assert_eq!(focused(&mut rt).as_deref(), Some("clear-btn"));
+    send(&mut rt, Key::Tab);
+    assert_eq!(focused(&mut rt).as_deref(), Some("input"));
     send(&mut rt, Key::Tab);
     assert_eq!(focused(&mut rt).as_deref(), Some("chk-a"));
     send(&mut rt, Key::Enter);

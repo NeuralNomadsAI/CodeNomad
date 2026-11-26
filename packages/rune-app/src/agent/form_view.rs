@@ -1,9 +1,6 @@
 use crate::{State, agent_api::Form, agent_forms, components::button, strings::t};
 use rune::{El, col};
-use rune_theme_codenomad::{
-    Space, field_kit, form_controls,
-    layout::{self, Layout, textarea},
-};
+use rune_theme_codenomad::{Space, form_controls, layout::Layout};
 
 fn field_title(field: &serde_json::Value) -> Option<&str> {
     field["title"]
@@ -146,7 +143,10 @@ pub fn fields(s: &State, form: &Form) -> El {
                 let valid = agent_forms::normalized_options(field);
                 let allow_custom = field["custom"] == true;
                 let custom_active = allow_custom && !d.custom.text.is_empty();
+                let custom_conflict = agent_forms::custom_matches_declared_option(field, d);
                 let has_choice = !custom_active && d.choice.is_some();
+                let shared_required = required && !valid.is_empty() && allow_custom;
+                let mut children = Vec::new();
                 if !valid.is_empty() {
                     let total = valid.len();
                     let items = valid
@@ -179,19 +179,19 @@ pub fn fields(s: &State, form: &Form) -> El {
                             )
                         })
                         .collect();
-                    body = body.child(form_controls::radio_group(
+                    children.push(form_controls::radio_group(
                         &group_key,
                         &field_name,
                         field_desc,
                         false,
-                        required,
+                        required && !shared_required,
                         items,
                     ));
                     if field["required"] != true {
                         let id = identity.clone();
                         let clear_label = t("sessionList.selection.clearLabel");
                         let clear_accessible = format!("{field_name} · {clear_label}");
-                        body = body.child(form_controls::clear_choice_button(
+                        children.push(form_controls::clear_choice_button(
                             &agent_forms::clear_option_key(key),
                             clear_label,
                             &clear_accessible,
@@ -217,37 +217,49 @@ pub fn fields(s: &State, form: &Form) -> El {
                     } else {
                         field_name.clone()
                     };
-                    let mut editor = textarea(&d.custom)
-                        .label(custom_label)
-                        .disabled(locked)
-                        .on_edit(crate::screen::edit(
-                            &scope,
-                            crate::screen::Editor::Custom(id),
+                    children.push(form_controls::form_textarea(
+                        &format!("custom-{key}"),
+                        &d.custom,
+                        &custom_label,
+                        field_desc,
+                        locked,
+                        required && valid.is_empty(),
+                        custom_conflict,
+                        crate::screen::edit(&scope, crate::screen::Editor::Custom(id)),
+                    ));
+                    if custom_conflict {
+                        children.push(form_controls::field_error(
+                            &format!("field-error:{}:{key}", key.len()),
+                            t("formRequest.selectPlaceholder"),
                         ));
-                    if let Some(desc) = field_desc {
-                        editor = editor.description(desc);
                     }
-                    body = body.child(
-                        editor
-                            .build(&field_kit(layout::dark()))
-                            .key(format!("custom-{key}")),
-                    );
+                }
+                if shared_required {
+                    body = body.child(form_controls::required_field_group(
+                        &format!("field-required-group:{}:{key}", key.len()),
+                        &field_name,
+                        field_desc,
+                        true,
+                        children,
+                    ));
+                } else {
+                    for child in children {
+                        body = body.child(child);
+                    }
                 }
             }
             Some("string" | "number" | "integer") => {
                 let id = identity.clone();
-                let mut editor = textarea(&d.edit)
-                    .label(field_name.clone())
-                    .disabled(locked)
-                    .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Form(id)));
-                if let Some(desc) = field_desc {
-                    editor = editor.description(desc);
-                }
-                body = body.child(
-                    editor
-                        .build(&field_kit(layout::dark()))
-                        .key(format!("field-{key}")),
-                );
+                body = body.child(form_controls::form_textarea(
+                    &format!("field-{key}"),
+                    &d.edit,
+                    &field_name,
+                    field_desc,
+                    locked,
+                    required,
+                    false,
+                    crate::screen::edit(&scope, crate::screen::Editor::Form(id)),
+                ));
             }
             Some("multiselect") => {
                 let valid = agent_forms::normalized_options(field);
@@ -279,12 +291,12 @@ pub fn fields(s: &State, form: &Form) -> El {
                     })
                     .collect();
                 if field["custom"] == true {
-                    for (index, raw) in d.preserved_custom.iter().enumerate() {
+                    for raw in &d.preserved_custom {
                         let checked = d.preserved_custom_selected.contains(raw);
                         let value = raw.clone();
                         let id = identity.clone();
                         items.push(form_controls::checkbox_option(
-                            &agent_forms::preserved_custom_option_key(key, index),
+                            &agent_forms::multi_option_key(key, raw),
                             raw,
                             None,
                             checked,
@@ -302,33 +314,49 @@ pub fn fields(s: &State, form: &Form) -> El {
                         ));
                     }
                 }
-                if !items.is_empty() {
-                    body = body.child(form_controls::checkbox_group(
+                let allow_custom = field["custom"] == true;
+                let has_choices = !items.is_empty();
+                let shared_required = required && has_choices && allow_custom;
+                let mut children = Vec::new();
+                if has_choices {
+                    children.push(form_controls::checkbox_group(
                         &group_key,
                         &field_name,
                         field_desc,
-                        required,
+                        required && !shared_required,
                         items,
                     ));
                 }
-                if field["custom"] == true {
+                if allow_custom {
                     let id = identity.clone();
-                    let custom_label = format!("{field_name} · {}", t("rune.other_values"));
-                    let mut editor = textarea(&d.custom)
-                        .label(custom_label)
-                        .disabled(locked)
-                        .on_edit(crate::screen::edit(
-                            &scope,
-                            crate::screen::Editor::Custom(id),
-                        ));
-                    if let Some(desc) = field_desc {
-                        editor = editor.description(desc);
+                    let custom_label = if has_choices {
+                        format!("{field_name} · {}", t("rune.other_values"))
+                    } else {
+                        field_name.clone()
+                    };
+                    children.push(form_controls::form_textarea(
+                        &format!("custom-{key}"),
+                        &d.custom,
+                        &custom_label,
+                        field_desc,
+                        locked,
+                        required && !has_choices,
+                        false,
+                        crate::screen::edit(&scope, crate::screen::Editor::Custom(id)),
+                    ));
+                }
+                if shared_required {
+                    body = body.child(form_controls::required_field_group(
+                        &format!("field-required-group:{}:{key}", key.len()),
+                        &field_name,
+                        field_desc,
+                        true,
+                        children,
+                    ));
+                } else {
+                    for child in children {
+                        body = body.child(child);
                     }
-                    body = body.child(
-                        editor
-                            .build(&field_kit(layout::dark()))
-                            .key(format!("custom-{key}")),
-                    );
                 }
             }
             _ => {}
