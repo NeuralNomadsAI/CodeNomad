@@ -499,7 +499,15 @@ impl Preferences {
     }
 
     #[cfg(test)]
-    pub(super) fn fixture_config(&mut self, settings: Value) {
+    pub(super) fn fixture_settings(&mut self, settings: Value) {
+        self.config.snapshot = Some(json!({"settings": settings}));
+    }
+
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(super) fn fixture_config(&mut self, url: &str, settings: Value) {
+        let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        backend.base = url.into();
+        self.backend = Some(backend);
         self.config.snapshot = Some(json!({"settings": settings}));
     }
 

@@ -407,7 +407,7 @@ fn web_edit_bang_enters_shell_mode_but_paste_and_delete_to_bang_do_not() {
 fn shell_mode_honors_prompt_submit_on_enter_and_ignores_alternate_send() {
     let (mut rt, rx) = chat_runtime();
     rt.update(|s, _| {
-        crate::settings::fixture_config(s, serde_json::json!({ "promptSubmitOnEnter": false }));
+        crate::settings::fixture_settings(s, serde_json::json!({ "promptSubmitOnEnter": false }));
     });
     rt.frame(0.0);
 

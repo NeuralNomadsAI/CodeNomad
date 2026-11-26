@@ -12,6 +12,8 @@ pub(crate) use state::contains_project;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use state::evict_for_probe;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use state::has_wake_lock_eligible_work;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use state::native_window_store;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::poll_cached_notifications;
