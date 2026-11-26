@@ -355,8 +355,11 @@ fn close_blocked_inner(s: &State, index: usize, allow_uncertain_creation: bool) 
     if ui.entries[index].has_unsaved_large_drafts() {
         return true;
     }
+    let masked_by_auth_or_launcher =
+        ui.active == index && super::panel_state::mission_context_blocked(s);
+    let allow_uncertain = allow_uncertain_creation || masked_by_auth_or_launcher;
     if ui.entries[index].missions.as_ref().is_some_and(|panel| {
-        let creation_blocks = if allow_uncertain_creation {
+        let creation_blocks = if allow_uncertain {
             ui.mission_editor
                 .creation_in_flight(&panel.creation_scope_key())
         } else {
@@ -364,7 +367,8 @@ fn close_blocked_inner(s: &State, index: usize, allow_uncertain_creation: bool) 
                 .creation(&panel.creation_scope_key())
                 .is_some()
         };
-        creation_blocks || panel.has_unsaved_editor_draft(&ui.mission_editor)
+        creation_blocks
+            || (!masked_by_auth_or_launcher && panel.has_unsaved_editor_draft(&ui.mission_editor))
     }) {
         return true;
     }
@@ -375,7 +379,7 @@ fn close_blocked_inner(s: &State, index: usize, allow_uncertain_creation: bool) 
         .is_some_and(|(backend, project)| {
             let mut ws_backend = backend.clone();
             ws_backend.workspace.clone_from(&project.id);
-            if allow_uncertain_creation {
+            if allow_uncertain {
                 ui.mission_editor
                     .has_in_flight_creation_for_workspace(&ws_backend)
             } else {

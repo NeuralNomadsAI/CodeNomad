@@ -5343,6 +5343,84 @@ fn tab_close_requires_explicit_confirmation_for_uncertain_creation_and_retires_h
         holds_after.creation(&scope).is_none(),
         "closing the tab must retire the dead workspace creation hold"
     );
+
+    // When a 401 receipt enters authentication recovery (masking the form that hosts the
+    // explicit close-tab button), the tab must remain closable directly once no request is
+    // in flight so a failed re-authentication cannot trap the tab.
+    let (auth_base, _) = start_scripted_server(|_idx, raw| {
+        if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+            ("500 Internal Server Error".into(), "{}".into())
+        } else if raw.contains("/missions/creation/") {
+            ("401 Unauthorized".into(), "expired".into())
+        } else {
+            ("404 Not Found".into(), "{}".into())
+        }
+    });
+    let auth_backend = attested_backend(auth_base);
+    let mut auth_panel = Panel::new(
+        auth_backend.clone(),
+        Some("prj_1".into()),
+        Reads::default(),
+        noop_wake(),
+    );
+    let mut auth_holds = EditorHolds::default();
+    let mut auth_lifecycle = Lifecycle::default();
+    open_create_ready(&mut auth_panel, &mut auth_holds, &mut auth_lifecycle, None);
+    auth_panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Auth 401 hold");
+    auth_panel.submit_editor("tab-1", &mut auth_holds);
+    let auth_scope = auth_panel.creation_scope_key();
+    wait_until(|| {
+        poll_step(
+            &mut auth_panel,
+            "tab-1",
+            &mut auth_holds,
+            &mut auth_lifecycle,
+        );
+        auth_holds
+            .creation(&auth_scope)
+            .is_some_and(|h| h.state == HoldState::Uncertain)
+    });
+    let auth_state = crate::workspace::test_state_with_mission_panel(auth_panel, auth_holds);
+    let mut rt_auth = Runtime::new(
+        auth_state,
+        |s, _| crate::workspace::mission_reader(s),
+        (1200.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    rt_auth.frame(0.0);
+    let auth_tab_key = crate::workspace::test_mission_entry_mut(&mut rt_auth.state, 0).0;
+    rt_auth.update(|s, _| {
+        let (key, panel, mission_editor) = crate::workspace::test_mission_entry_mut(s, 0);
+        panel.reconcile_editor_creation(&key, mission_editor);
+    });
+    wait_until(|| {
+        rt_auth.update(|s, tx| {
+            crate::workspace::poll(s, 1.0, tx);
+        });
+        rt_auth
+            .state
+            .screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required)
+    });
+    assert!(
+        !crate::workspace::mission_has_editor(&rt_auth.state),
+        "authentication recovery must mask the Mission editor"
+    );
+    rt_auth.update(|s, tx| {
+        crate::workspace::close(s, &auth_tab_key, tx);
+    });
+    let (auth_after_key, auth_has_panel, auth_holds_after) =
+        crate::workspace::test_tab_state_and_holds(&rt_auth.state, 0);
+    assert_ne!(
+        auth_after_key, auth_tab_key,
+        "tab masked by authentication recovery must allow direct close when idle"
+    );
+    assert!(!auth_has_panel);
+    assert!(
+        auth_holds_after.creation(&auth_scope).is_none(),
+        "closing an auth-masked tab must retire its dead workspace creation hold"
+    );
 }
 
 #[test]

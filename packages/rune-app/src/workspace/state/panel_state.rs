@@ -136,7 +136,7 @@ fn authentication_required(s: &State) -> bool {
         .is_some_and(|l| l.authentication_required)
 }
 
-fn mission_context_blocked(s: &State) -> bool {
+pub(super) fn mission_context_blocked(s: &State) -> bool {
     crate::shell::launcher_replaces_project(s) || authentication_required(s) || pairing_required(s)
 }
 
