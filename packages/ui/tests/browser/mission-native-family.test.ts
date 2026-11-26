@@ -531,10 +531,9 @@ test("390px RTL red Mission row selects the exact same-active-child permission b
     await page.locator('.interruption-dock .interruption-navigation button').filter({ has: page.locator('svg.lucide-chevron-right') }).tap()
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("global-fixture.txt"))
     await page.locator(".shell-panel-toggle--right button:visible").tap()
-    const selectedSchedule = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/missions/A/schedule"))
-    await pickMission(page, "A")
-    await (await selectedSchedule).json()
-    // The red row opens the exact correlated permission; the global one is never a Mission's.
+    // A Mission without tasks carries its family's question on its own flag as soon as it is
+    // listed, before any selection: the red row opens the exact correlated permission, and
+    // the global one is never a Mission's.
     const row = missionRow(page, "Objective A")
     await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
     await row.locator(".mission-row-select").tap()

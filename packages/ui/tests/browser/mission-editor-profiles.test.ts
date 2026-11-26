@@ -369,7 +369,9 @@ test("recurring creation shares the draft, prefills its title and picks named co
     await form.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.waitForFunction(() => (document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled
       && document.querySelector('form.mission-editor button[type=submit]')?.textContent === "Create")
-    assert.doesNotMatch(await form.innerText(), /unconfirmed/)
+    // The refused creation is held and reread automatically: the form says so, with no button to press.
+    assert.equal(await form.getByRole("alert").filter({ hasText: "This change is unconfirmed." }).count(), 1)
+    assert.equal(await form.getByRole("button", { name: "Refresh saved request", exact: true }).count(), 0)
     assert.equal(writes.length, 1)
     const configuration = writes[0].configuration as Record<string, unknown>
     assert.equal(configuration.title, "My daily schedule")

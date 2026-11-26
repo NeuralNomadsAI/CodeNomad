@@ -396,7 +396,8 @@ test("conversation continuation and search failures retry their exact read insid
     assert.equal(await source.getAttribute("data-source-id"), "ses_tail")
     const continuations = reads.filter(request => request.searchParams.has("cursor"))
     assert.equal(continuations.length, 2)
-    for (const request of continuations) assert.deepEqual([...request.searchParams], [["cursor", "opaque_tail"]])
+    // A continuation keeps the page size: OpenCode otherwise falls back to 50 rows.
+    for (const request of continuations) assert.deepEqual([...request.searchParams].sort(), [["cursor", "opaque_tail"], ["limit", "200"]])
     await source.click()
     await page.getByRole("combobox", { name: "Search sources", exact: true }).fill("Recover")
     await retry.waitFor()
