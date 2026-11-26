@@ -49,20 +49,38 @@ test('assertSingleMultiplexedSse enforces 1 open HTTP 200 HTTP/1.1 hub EventSour
   assert.throws(() => assertSingleMultiplexedSse({...base, protocols: ['h2']}))
   assert.throws(() => assertSingleMultiplexedSse({...base, statuses: [500]}))
   assert.throws(() => assertSingleMultiplexedSse({...base, closedFlags: [true]}))
+  assert.throws(() => assertSingleMultiplexedSse({...base, connectionIds: ['hub-2']}))
   assert.throws(() => assertSingleMultiplexedSse({...base, connectionIds: ['stream-1']}))
 })
 
-test('evaluateConcurrentBatch validates 14 distinct CDP requestIds on HTTP/1.1 and wall budget', () => {
-  const results = Array.from({length: 14}, (_, i) => ({
-    kind: i % 2 === 0 ? 'history-window' : 'worktrees',
-    workspaceId: `ws-${Math.floor(i / 2) + 1}`,
-    requestId: `req-${i}`,
-    status: 200,
-    cdpStatus: 200,
-    ok: true,
-    protocol: 'http/1.1',
-    durationMs: 10 + i,
-  }))
+test('evaluateConcurrentBatch validates 14 distinct CDP requestIds, method/path, no redirects on HTTP/1.1', () => {
+  const results = Array.from({length: 14}, (_, i) => {
+    const kind = i % 2 === 0 ? 'history-window' : 'worktrees'
+    const workspaceId = `ws-${Math.floor(i / 2) + 1}`
+    const method = kind === 'history-window' ? 'POST' : 'GET'
+    const reqPath = kind === 'history-window'
+      ? `/api/workspaces/${workspaceId}/session-history/window`
+      : `/api/workspaces/${workspaceId}/worktrees`
+    return {
+      benchId: `bench-${i}`,
+      kind,
+      method,
+      workspaceId,
+      path: reqPath,
+      requestId: `req-${i}`,
+      cdpMethod: method,
+      cdpPath: reqPath,
+      cdpResponsePath: reqPath,
+      cdpRedirected: false,
+      cdpDuplicate: false,
+      cdpResponseCount: 1,
+      status: 200,
+      cdpStatus: 200,
+      ok: true,
+      protocol: 'http/1.1',
+      durationMs: 10 + i,
+    }
+  })
   const summary = evaluateConcurrentBatch(results, {expectedCount: 14, wallMs: 85.4, maxWallMs: 10000})
   assert.equal(summary.requestCount, 14)
   assert.equal(summary.distinctCdpRequests, 14)
@@ -81,6 +99,26 @@ test('evaluateConcurrentBatch validates 14 distinct CDP requestIds on HTTP/1.1 a
   ))
   assert.throws(() => evaluateConcurrentBatch(
     [{...results[0], requestId: results[1].requestId}, ...results.slice(1)],
+    {expectedCount: 14, wallMs: 50},
+  ))
+  assert.throws(() => evaluateConcurrentBatch(
+    [{...results[0], cdpRedirected: true}, ...results.slice(1)],
+    {expectedCount: 14, wallMs: 50},
+  ))
+  assert.throws(() => evaluateConcurrentBatch(
+    [{...results[0], cdpDuplicate: true}, ...results.slice(1)],
+    {expectedCount: 14, wallMs: 50},
+  ))
+  assert.throws(() => evaluateConcurrentBatch(
+    [{...results[0], cdpMethod: 'GET'}, ...results.slice(1)],
+    {expectedCount: 14, wallMs: 50},
+  ))
+  assert.throws(() => evaluateConcurrentBatch(
+    [{...results[0], cdpResponsePath: '/api/other'}, ...results.slice(1)],
+    {expectedCount: 14, wallMs: 50},
+  ))
+  assert.throws(() => evaluateConcurrentBatch(
+    [{...results[0], cdpResponseCount: 2}, ...results.slice(1)],
     {expectedCount: 14, wallMs: 50},
   ))
   assert.throws(() => evaluateConcurrentBatch(

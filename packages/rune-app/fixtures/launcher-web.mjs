@@ -67,6 +67,7 @@ export async function launchWeb({
   state.clientUseIpc=useIpc
   state.clientGroup=clientGroup
   state.clientStartedBy=new Date()
+  state.browserPids=new Set()
   state.clientClosed=new Promise(resolve=>{
     client.once('close',code=>resolve(code??1))
     client.once('error',()=>resolve(1))
@@ -80,6 +81,14 @@ export async function launchWeb({
   if(webSse7Tabs)client.on('message',action=>{
     state.mobileAction=(async()=>{
       try{
+        if(action?.type==='browser-pid'){
+          if(Number.isInteger(action.pid)&&action.pid>0)state.browserPids.add(action.pid)
+          return {value:true}
+        }
+        if(action?.type==='browser-closed'){
+          if(Number.isInteger(action.pid))state.browserPids.delete(action.pid)
+          return {value:true}
+        }
         if(action?.type==='emit-multiplex-sse')return {value:emitMultiplexSse(action.targets)}
         if(action?.type==='server-workspaces'){
           const res=await http.get('/api/workspaces')

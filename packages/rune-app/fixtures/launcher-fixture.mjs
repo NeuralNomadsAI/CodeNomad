@@ -503,6 +503,32 @@ async function restartWeb(previous,uiOrigin){
   assert(opened.ok())
   return {http,value:{older,witness:(await opened.json()).id}}
 }
+let clientStopPromise,clientStopError
+const stopClientOnce=child=>{
+  if(!child)return Promise.resolve()
+  if(!clientStopPromise){
+    const stopped=webState.clientClosed??new Promise(resolve=>child.once('close',resolve))
+    clientStopPromise=(async()=>{
+      try{
+        if(webState.clientUseIpc&&process.platform==='win32'){
+          await stopFixtureHandle(child,stopped,3000,2000)
+        }else{
+          await stopFixtureChild(child,stopped,3000,2000,{group:Boolean(webState.clientGroup),startedBy:webState.clientStartedBy})
+        }
+      }catch(error){
+        clientStopError=String(error?.message??error)
+      }finally{
+        if(process.platform!=='win32'&&webState.browserPids?.size){
+          for(const pid of webState.browserPids){
+            try{process.kill(-pid,'SIGKILL')}catch(error){if(error.code!=='ESRCH')clientStopError??=String(error.message)}
+          }
+          webState.browserPids.clear()
+        }
+      }
+    })()
+  }
+  return clientStopPromise
+}
 try{
   const origin=await startServer()
   if(web){
@@ -560,9 +586,6 @@ try{
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
-  const stopClient=(child,stopped)=>webState.clientUseIpc&&process.platform==='win32'
-    ?stopFixtureHandle(child,stopped,3000,2000)
-    :stopFixtureChild(child,stopped,3000,2000,{group:Boolean(webState.clientGroup),startedBy:webState.clientStartedBy})
   if(!restoreState&&!pendingOpen){
     const budget=webAndroid?Number(process.env.RUNE_ANDROID_CLIENT_BUDGET_MS??300000):web||filesState||gitPanel?300000:120000
     assert(Number.isInteger(budget)&&budget>0&&budget<=300000,'Invalid client deadline')
@@ -576,7 +599,7 @@ try{
       ])
       if(outcome.timedOut){
         expired=true
-        await stopClient(client,exited).catch(()=>{})
+        await stopClientOnce(client)
       }
       result=outcome.code
     }finally{clearTimeout(timer)}
@@ -622,25 +645,22 @@ try{
   control?.close()
   for(const gate of gates.values())gate.reject()
   client??=webState.client
-  if(client&&client.exitCode===null&&client.signalCode===null){
-    const closed=webState.clientClosed??new Promise(resolve=>client.once('close',resolve))
-    const stop=webState.clientUseIpc&&process.platform==='win32'
-      ?stopFixtureHandle(client,closed,3000,2000)
-      :stopFixtureChild(client,closed,3000,2000,{group:Boolean(webState.clientGroup),startedBy:webState.clientStartedBy})
-    await stop.catch(()=>{})
+  if(client&&(client.exitCode===null&&client.signalCode===null||webState.clientGroup||webState.browserPids?.size)){
+    await stopClientOnce(client)
   }
   if(webState.deviceLease){
-    await webState.clientClosed
+    await stopClientOnce(client)
     androidCleanup=await webState.deviceLease.close()
   }
   await webState.mobileAction
   await http?.dispose()
   await stopServer()
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result:androidCleanup?.length?1:result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2));await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
+  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result:androidCleanup?.length||clientStopError?1:result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,clientStopError,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2));await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
   if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
   if(web)await writeFile(path.join(profile,'browser-run.log'),webState.diagnostic)
   if(result===0){
+    assert(!clientStopError,`Owned client cleanup failed: ${clientStopError}`)
     if(webState.deviceLease)assert.deepEqual(androidCleanup,[],'Android fixture cleanup must complete')
     assert.equal(server.exitCode,0,'Owned server must exit cleanly')
   }

@@ -51,7 +51,7 @@ export function assertSingleMultiplexedSse({
   assert.equal(closedFlags[0], false, `Expected /api/events stream to remain open, got closed=${closedFlags[0]}`)
   const uniqueIds = [...new Set(connectionIds)]
   assert.equal(uniqueIds.length, 1, `Expected 1 shared connectionId, got ${JSON.stringify(uniqueIds)}`)
-  assert.match(uniqueIds[0], /^hub-\d+$/, `Expected shared hub connectionId, got ${uniqueIds[0]}`)
+  assert.equal(uniqueIds[0], 'hub-1', `Expected initial shared hub connectionId hub-1, got ${uniqueIds[0]}`)
   return {
     constructorCalls,
     activeCount,
@@ -68,12 +68,22 @@ export function evaluateConcurrentBatch(results, {expectedCount, wallMs, maxWall
   assert(Array.isArray(results) && results.length === expectedCount, `Expected ${expectedCount} concurrent responses, got ${results?.length}`)
   assert(Number.isFinite(wallMs) && wallMs >= 0 && wallMs <= maxWallMs, `Concurrent HTTP/1.1 batch exceeded ${maxWallMs} ms (${wallMs} ms)`)
   const seenRequestIds = new Set()
+  const seenBenchIds = new Set()
   for (const item of results) {
     assert.equal(item.status, 200, `Concurrent request ${item.kind} ${item.workspaceId} returned ${item.status}`)
     assert.equal(item.ok, true, `Concurrent request ${item.kind} ${item.workspaceId} payload invalid`)
+    assert(typeof item.benchId === 'string' && item.benchId.length > 0, `Concurrent request ${item.kind} ${item.workspaceId} missing benchId`)
+    assert(!seenBenchIds.has(item.benchId), `Duplicate benchId ${item.benchId} in concurrent batch`)
+    seenBenchIds.add(item.benchId)
     assert(typeof item.requestId === 'string' && item.requestId.length > 0, `Concurrent request ${item.kind} ${item.workspaceId} missing CDP requestId`)
     assert(!seenRequestIds.has(item.requestId), `Duplicate CDP requestId ${item.requestId} in concurrent batch`)
     seenRequestIds.add(item.requestId)
+    assert.equal(item.cdpRedirected, false, `Concurrent request ${item.benchId} unexpectedly redirected`)
+    assert.equal(item.cdpDuplicate, false, `Concurrent request ${item.benchId} observed duplicate CDP request`)
+    assert.equal(item.cdpResponseCount, 1, `Concurrent request ${item.benchId} observed ${item.cdpResponseCount} CDP responses, expected 1`)
+    assert.equal(item.cdpMethod, item.method, `Concurrent request ${item.benchId} CDP method ${item.cdpMethod}, expected ${item.method}`)
+    assert.equal(item.cdpPath, item.path, `Concurrent request ${item.benchId} CDP request path ${item.cdpPath}, expected ${item.path}`)
+    assert.equal(item.cdpResponsePath, item.path, `Concurrent request ${item.benchId} CDP response path ${item.cdpResponsePath}, expected ${item.path}`)
     assert.equal(item.cdpStatus, 200, `Concurrent request ${item.kind} ${item.workspaceId} CDP status ${item.cdpStatus}, expected 200`)
     assert.equal(item.protocol, 'http/1.1', `Concurrent request ${item.kind} ${item.workspaceId} used ${item.protocol}, expected http/1.1`)
   }
@@ -158,11 +168,24 @@ async function runBench() {
 
   const m = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/catalogues/fr.json'), 'utf8'))
   const assets = await bundleAssetPaths(path.resolve(root, process.env.RUNE_WEB_DIR ?? 'target/rune-web-connected'))
-  const browser = await chromium.launch({
+  const browserServer = await chromium.launchServer({
     headless: true,
     ...(values.executable ? {executablePath: values.executable} : {}),
     args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader'],
   })
+  const browserPid = browserServer.process()?.pid
+  if (Number.isInteger(browserPid) && browserPid > 0) {
+    await ipc({type: 'browser-pid', pid: browserPid})
+  }
+  let browser
+  const onStopSignal = () => {
+    Promise.resolve(browser?.close())
+      .catch(() => {})
+      .finally(() => browserServer.close().catch(() => {}))
+      .finally(() => process.exit(143))
+  }
+  process.once('SIGTERM', onStopSignal)
+  process.once('SIGINT', onStopSignal)
 
   const errors = []
   const forbidden = []
@@ -174,6 +197,7 @@ async function runBench() {
   let context
 
   try {
+    browser = await chromium.connect(browserServer.wsEndpoint())
     const policy = workspacePolicy({
       origin: url.origin,
       project: values.project,
@@ -256,15 +280,43 @@ async function runBench() {
         if (requested.origin === url.origin) {
           const benchHeader = Object.entries(event.request.headers ?? {}).find(([k]) => k.toLowerCase() === 'x-rune-bench-id')?.[1]
           if (typeof benchHeader === 'string' && benchHeader.length > 0) {
-            cdpBatchRequests.set(benchHeader, {
-              requestId: event.requestId,
-              benchId: benchHeader,
-              path: requested.pathname,
-              method: event.request.method,
-              protocol: null,
-              status: null,
-            })
-            cdpRequestIdToBenchId.set(event.requestId, benchHeader)
+            const existingByBench = cdpBatchRequests.get(benchHeader)
+            const existingBenchForReq = cdpRequestIdToBenchId.get(event.requestId)
+            if (existingByBench || existingBenchForReq || event.redirectResponse) {
+              const target = existingByBench ?? cdpBatchRequests.get(existingBenchForReq)
+              if (target) {
+                if (event.redirectResponse) target.redirected = true
+                if (existingByBench || existingBenchForReq) target.duplicate = true
+              } else {
+                cdpBatchRequests.set(benchHeader, {
+                  requestId: event.requestId,
+                  benchId: benchHeader,
+                  path: requested.pathname,
+                  responsePath: null,
+                  method: event.request.method,
+                  protocol: null,
+                  status: null,
+                  redirected: Boolean(event.redirectResponse),
+                  duplicate: Boolean(existingByBench || existingBenchForReq),
+                  responseCount: 0,
+                })
+                cdpRequestIdToBenchId.set(event.requestId, benchHeader)
+              }
+            } else {
+              cdpBatchRequests.set(benchHeader, {
+                requestId: event.requestId,
+                benchId: benchHeader,
+                path: requested.pathname,
+                responsePath: null,
+                method: event.request.method,
+                protocol: null,
+                status: null,
+                redirected: false,
+                duplicate: false,
+                responseCount: 0,
+              })
+              cdpRequestIdToBenchId.set(event.requestId, benchHeader)
+            }
           }
         }
       } catch {}
@@ -279,8 +331,14 @@ async function runBench() {
       if (benchId) {
         const entry = cdpBatchRequests.get(benchId)
         if (entry) {
+          entry.responseCount += 1
           entry.protocol = event.response.protocol
           entry.status = event.response.status
+          try {
+            entry.responsePath = new URL(event.response.url).pathname
+          } catch {
+            entry.responsePath = null
+          }
         }
       }
     })
@@ -434,6 +492,7 @@ async function runBench() {
           const res = await fetch(`/api/workspaces/${workspaceId}/session-history/window`, {
             method: 'POST',
             credentials: 'include',
+            redirect: 'error',
             headers: {
               'content-type': 'application/json',
               'x-codenomad-user-files': 'reference-v1',
@@ -445,6 +504,7 @@ async function runBench() {
           return {
             benchId: historyBenchId,
             kind: 'history-window',
+            method: 'POST',
             workspaceId,
             sessionID,
             path: `/api/workspaces/${workspaceId}/session-history/window`,
@@ -458,6 +518,7 @@ async function runBench() {
           const res = await fetch(`/api/workspaces/${workspaceId}/worktrees`, {
             method: 'GET',
             credentials: 'include',
+            redirect: 'error',
             headers: {
               'x-rune-bench-id': worktreesBenchId,
             },
@@ -466,6 +527,7 @@ async function runBench() {
           return {
             benchId: worktreesBenchId,
             kind: 'worktrees',
+            method: 'GET',
             workspaceId,
             sessionID,
             path: `/api/workspaces/${workspaceId}/worktrees`,
@@ -483,6 +545,12 @@ async function runBench() {
       return {
         ...entry,
         requestId: cdpEntry?.requestId ?? null,
+        cdpMethod: cdpEntry?.method ?? null,
+        cdpPath: cdpEntry?.path ?? null,
+        cdpResponsePath: cdpEntry?.responsePath ?? null,
+        cdpRedirected: Boolean(cdpEntry?.redirected),
+        cdpDuplicate: Boolean(cdpEntry?.duplicate),
+        cdpResponseCount: cdpEntry?.responseCount ?? 0,
         cdpStatus: cdpEntry?.status ?? null,
         protocol: cdpEntry?.protocol ?? null,
       }
@@ -507,34 +575,32 @@ async function runBench() {
     })
     await page.waitForFunction(() => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes('Multiplex live Tab 7'))
 
-    const waitMultiplexFrames = async targets => {
+    const waitMultiplexFrames = async (targets, workspaces) => {
+      const expectedTriples = workspaces.flatMap(workspaceId =>
+        targets.map(({sessionID, text}) => ({workspaceId, sessionID, text})),
+      )
       const deadline = Date.now() + 10000
       while (Date.now() < deadline) {
-        const matchedTargets = targets.filter(target => cdpSseFrames.some(f =>
+        const matchedTriples = expectedTriples.filter(triple => cdpSseFrames.some(f =>
           f.requestId === sseRequestId
           && f.nativeType === 'session.text.delta'
-          && f.instanceId === target.workspaceId
-          && f.sessionID === target.sessionID
-          && f.delta === target.text,
+          && f.instanceId === triple.workspaceId
+          && f.sessionID === triple.sessionID
+          && f.delta === triple.text,
         ))
-        const allMatchedFrames = cdpSseFrames.filter(f =>
-          f.requestId === sseRequestId
-          && f.nativeType === 'session.text.delta'
-          && targets.some(t => t.sessionID === f.sessionID && t.text === f.delta),
-        )
-        const distinctWorkspaces = new Set(allMatchedFrames.map(f => f.instanceId).filter(Boolean))
-        if (matchedTargets.length === targets.length && distinctWorkspaces.size === TAB_COUNT) {
+        if (matchedTriples.length === expectedTriples.length) {
           return {
-            frameCount: allMatchedFrames.length,
+            frameCount: matchedTriples.length,
+            expectedTripleCount: expectedTriples.length,
             matchedPairs: targets.map(({workspaceId, sessionID, text}) => ({workspaceId, sessionID, text})),
-            workspaceCount: distinctWorkspaces.size,
+            workspaceCount: workspaces.length,
           }
         }
         await page.waitForTimeout(25)
       }
-      throw Error(`Timed out waiting for exact multiplexed SSE (workspaceId, sessionID, delta) frames on ${sseRequestId}`)
+      throw Error(`Timed out waiting for all ${expectedTriples.length} multiplexed SSE (workspaceId, sessionID, delta) triples on ${sseRequestId}`)
     }
-    const multiplexedFrames = await waitMultiplexFrames(initialTargets)
+    const multiplexedFrames = await waitMultiplexFrames(initialTargets, openedWorkspaces)
 
     const waitExactFrame = async ({workspaceId, sessionID, text}) => {
       const deadline = Date.now() + 10000
@@ -554,22 +620,52 @@ async function runBench() {
 
     // Inactive tabs intentionally suspend live transcript readers (`chat::suspend` -> `stop_content()`)
     // and resume on activation (`chat::resume`) over the same shared EventHub without opening a new
-    // EventSource. Verify exact (workspaceId, sessionID, delta) wire delivery on `sseRequestId` for
-    // active + hidden workspaces, then verify live SSE-only rendering on Tabs 1 and 4 upon activation.
+    // EventSource. Wait for the resumed history window on Tabs 1 and 4, confirm the delta emitted
+    // while suspended is absent from the re-synced transcript, then emit a fresh SSE-only delta
+    // and verify exact delivery on `sseRequestId` plus live UI rendering.
     const tabsLocator = projectTabs()
-    await press(tabsLocator.nth(0))
-    await mirror().getByRole('heading', {name: 'Tab 1 session', exact: true}).waitFor({state: 'attached'})
-    const tab1Active = {workspaceId: openedWorkspaces[0], sessionID: 'ses_tab_1', text: 'Multiplex live Tab 1 active'}
-    await ipc({type: 'emit-multiplex-sse', targets: [{sessionID: tab1Active.sessionID, text: tab1Active.text}]})
-    await waitExactFrame(tab1Active)
-    await page.waitForFunction(() => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes('Multiplex live Tab 1 active'))
+    const verifyActivatedTab = async ({tabIndex, workspaceId, sessionID, heading, initialHistory, suspendedText, activeText}) => {
+      const resumeResponse = page.waitForResponse(res =>
+        res.request().method() === 'POST'
+        && new URL(res.url()).pathname === `/api/workspaces/${workspaceId}/session-history/window`
+        && res.status() === 200,
+      )
+      await press(tabsLocator.nth(tabIndex))
+      await resumeResponse
+      await mirror().getByRole('heading', {name: heading, exact: true}).waitFor({state: 'attached'})
+      await page.waitForFunction(
+        expected => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes(expected),
+        initialHistory,
+      )
+      const beforeActive = await page.evaluate(() => document.querySelector('[data-rune-a11y]')?.textContent ?? '')
+      assert(!beforeActive.includes(suspendedText), `Suspended tab ${sessionID} must not retain live-only delta "${suspendedText}" after chat::resume`)
+      await ipc({type: 'emit-multiplex-sse', targets: [{sessionID, text: activeText}]})
+      await waitExactFrame({workspaceId, sessionID, text: activeText})
+      await page.waitForFunction(
+        expected => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes(expected),
+        activeText,
+      )
+      return {workspaceId, sessionID, text: activeText, suspendedDeltaAbsentAfterResume: true}
+    }
 
-    await press(tabsLocator.nth(3))
-    await mirror().getByRole('heading', {name: 'Tab 4 session', exact: true}).waitFor({state: 'attached'})
-    const tab4Active = {workspaceId: openedWorkspaces[3], sessionID: 'ses_tab_4', text: 'Multiplex live Tab 4 active'}
-    await ipc({type: 'emit-multiplex-sse', targets: [{sessionID: tab4Active.sessionID, text: tab4Active.text}]})
-    await waitExactFrame(tab4Active)
-    await page.waitForFunction(() => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes('Multiplex live Tab 4 active'))
+    const tab1Active = await verifyActivatedTab({
+      tabIndex: 0,
+      workspaceId: openedWorkspaces[0],
+      sessionID: 'ses_tab_1',
+      heading: 'Tab 1 session',
+      initialHistory: 'Tab 1 initial history',
+      suspendedText: 'Multiplex live Tab 1',
+      activeText: 'Multiplex live Tab 1 active',
+    })
+    const tab4Active = await verifyActivatedTab({
+      tabIndex: 3,
+      workspaceId: openedWorkspaces[3],
+      sessionID: 'ses_tab_4',
+      heading: 'Tab 4 session',
+      initialHistory: 'Tab 4 initial history',
+      suspendedText: 'Multiplex live Tab 4',
+      activeText: 'Multiplex live Tab 4 active',
+    })
 
     multiplexedFrames.activeTabChecks = [
       {workspaceId: openedWorkspaces[6], sessionID: 'ses_tab_7', text: 'Multiplex live Tab 7'},
@@ -676,8 +772,14 @@ async function runBench() {
     }, null, 2)).catch(() => {})
     throw error
   } finally {
+    process.off('SIGTERM', onStopSignal)
+    process.off('SIGINT', onStopSignal)
     await context?.close().catch(() => {})
-    await browser.close().catch(() => {})
+    await browser?.close().catch(() => {})
+    await browserServer.close().catch(() => {})
+    if (Number.isInteger(browserPid) && browserPid > 0 && process.connected) {
+      await ipc({type: 'browser-closed', pid: browserPid}).catch(() => {})
+    }
   }
 }
 
