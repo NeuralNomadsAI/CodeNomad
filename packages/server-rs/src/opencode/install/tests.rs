@@ -220,6 +220,52 @@ fn legacy_npm_verification_preflight_and_removal_match_reference() {
             preserved.contains("export MY_CUSTOM_VAR=1"),
             "publish_commands must preserve customized companion script"
         );
+
+        // OpenCode 1.0–1.15.0 used a Node launcher (`bin/opencode`): verify its npm shims are recognized and removed.
+        let node_root = crate::shared::test_dir("install-legacy-node");
+        let node_prefix = layout::Prefix { root: node_root.clone() };
+        let node_pkg = legacy::legacy_package_root(&node_prefix);
+        std::fs::create_dir_all(node_pkg.join("bin")).unwrap();
+        std::fs::create_dir_all(node_prefix.commands()).unwrap();
+        let node_bin = node_pkg.join("bin").join("opencode");
+        std::fs::write(&node_bin, "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(
+            node_pkg.join("package.json"),
+            r#"{"name":"opencode-ai","version":"1.15.0","bin":{"opencode":"./bin/opencode"}}"#,
+        )
+        .unwrap();
+        let node_cmd = node_prefix.commands().join("opencode.cmd");
+        std::fs::write(
+            &node_cmd,
+            "@ECHO off\r\n\"%_prog%\"  \"%dp0%\\node_modules\\opencode-ai\\bin\\opencode\" %*\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            node_prefix.commands().join("opencode.ps1"),
+            "#!/usr/bin/env pwsh\n$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent\n\n$exe=\"\"\n\
+             if ($PSVersionTable.PSVersion -lt \"6.0\" -or $IsWindows) {\n  # Fix case when both the Windows and Linux builds of Node\n\
+             \x20 # are installed in the same directory\n  $exe=\".exe\"\n}\n$ret=0\nif (Test-Path \"$basedir/node$exe\") {\n\
+             \x20 # Support pipeline input\n  if ($MyInvocation.ExpectingInput) {\n    $input | & \"$basedir/node$exe\"  \"$basedir/node_modules/opencode-ai/bin/opencode\" $args\n\
+             \x20 } else {\n    & \"$basedir/node$exe\"  \"$basedir/node_modules/opencode-ai/bin/opencode\" $args\n  }\n  $ret=$LASTEXITCODE\n\
+             } else {\n  # Support pipeline input\n  if ($MyInvocation.ExpectingInput) {\n    $input | & \"node$exe\"  \"$basedir/node_modules/opencode-ai/bin/opencode\" $args\n\
+             \x20 } else {\n    & \"node$exe\"  \"$basedir/node_modules/opencode-ai/bin/opencode\" $args\n  }\n  $ret=$LASTEXITCODE\n}\nexit $ret\n",
+        )
+        .unwrap();
+        std::fs::write(
+            node_prefix.commands().join("opencode"),
+            "#!/bin/sh\nbasedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")\n\ncase `uname` in\n\
+             \x20 *CYGWIN*|*MINGW*|*MSYS*)\n    if command -v cygpath > /dev/null 2>&1; then\n      basedir=`cygpath -w \"$basedir\"`\n    fi\n  ;;\nesac\n\n\
+             if [ -x \"$basedir/node\" ]; then\n  exec \"$basedir/node\"  \"$basedir/node_modules/opencode-ai/bin/opencode\" \"$@\"\n\
+             else \n  exec node  \"$basedir/node_modules/opencode-ai/bin/opencode\" \"$@\"\nfi\n",
+        )
+        .unwrap();
+        let detected_node =
+            legacy::legacy_npm_installation(&node_cmd.to_string_lossy(), &node_prefix).expect("1.15.0 node shim");
+        legacy::remove_legacy(&node_prefix, &detected_node).unwrap();
+        assert!(!node_prefix.commands().join("opencode.cmd").exists());
+        assert!(!node_prefix.commands().join("opencode.ps1").exists());
+        assert!(!node_prefix.commands().join("opencode").exists());
+        let _ = std::fs::remove_dir_all(node_root);
     }
     let _ = std::fs::remove_dir_all(root);
 }

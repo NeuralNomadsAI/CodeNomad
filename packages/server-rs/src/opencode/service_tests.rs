@@ -414,6 +414,109 @@ async fn meta_exposes_latest_stable_server_version_on_stable_feed() {
     api_server.abort();
     server.abort();
     let _ = fs::remove_dir_all(dir);
+
+    // Switching preview -> stable while the initial preview lookup is in flight must not
+    // trigger an extra /releases/latest request, must keep update == null, and must still
+    // populate support.latestServerVersion once the in-flight response arrives.
+    let dir = scratch("meta-preview-to-stable");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://127.0.0.1:{}/", listener.local_addr().unwrap().port());
+    let latest_hits = Arc::new(AtomicUsize::new(0));
+    let latest_hits_srv = latest_hits.clone();
+    let (seen_tx, seen_rx) = tokio::sync::oneshot::channel::<()>();
+    let seen_tx = Arc::new(std::sync::Mutex::new(Some(seen_tx)));
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    let release_rx = Arc::new(tokio::sync::Mutex::new(Some(release_rx)));
+    let server = tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let latest_hits_srv = latest_hits_srv.clone();
+            let seen_tx = seen_tx.clone();
+            let release_rx = release_rx.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let first = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_owned();
+                let (status, body) = if first.starts_with("GET /repos/NeuralNomadsAI/CodeNomad/releases?per_page=30 ") {
+                    if let Some(tx) = seen_tx.lock().unwrap().take() {
+                        let _ = tx.send(());
+                    }
+                    if let Some(rx) = release_rx.lock().await.take() {
+                        let _ = rx.await;
+                    }
+                    (
+                        "200 OK",
+                        json!([
+                            {
+                                "tag_name": "v9.2.0-dev-1",
+                                "prerelease": true,
+                                "draft": false,
+                                "published_at": "2026-06-02T00:00:00Z",
+                                "assets": [{"name": "latest.json"}],
+                                "html_url": "https://example.invalid/v9.2.0-dev-1"
+                            },
+                            {
+                                "tag_name": "v2.6.0",
+                                "prerelease": false,
+                                "draft": false,
+                                "published_at": "2026-06-01T00:00:00Z",
+                                "assets": [{"name": "latest.json"}],
+                                "html_url": "https://example.invalid/v2.6.0"
+                            }
+                        ])
+                        .to_string(),
+                    )
+                } else if first.starts_with("GET /repos/NeuralNomadsAI/CodeNomad/releases/latest ") {
+                    latest_hits_srv.fetch_add(1, Ordering::SeqCst);
+                    ("404 Not Found", "{}".into())
+                } else {
+                    ("404 Not Found", "{}".into())
+                };
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            });
+        }
+    });
+    let (app, _) = test_app(&dir, "opencode");
+    app.releases.set_feed("preview");
+    assert_eq!(app.releases.snapshot().0, "preview");
+    let shutdown = CancellationToken::new();
+    let monitor = tokio::spawn(meta::releases::run_with_base(
+        app.clone(),
+        shutdown.clone(),
+        reqwest::Url::parse(&origin).unwrap(),
+        "NeuralNomadsAI/CodeNomad".into(),
+    ));
+    tokio::time::timeout(Duration::from_secs(5), seen_rx).await.unwrap().unwrap();
+    app.releases.set_feed("stable");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(latest_hits.load(Ordering::SeqCst), 0, "preview->stable switch must not fire /releases/latest");
+    let _ = release_tx.send(());
+    let router = meta::routes().with_state(app.clone());
+    let (base, api_server) = start_server(router).await;
+    let mut populated = None;
+    for _ in 0..40 {
+        let (status, body) = send_json(&base, Method::GET, "/api/meta", None).await;
+        assert_eq!(status, Status::OK);
+        assert_eq!(body["updateFeed"], "stable");
+        assert_eq!(body["update"], Value::Null);
+        if body["support"]["latestServerVersion"] == "2.6.0" {
+            populated = Some(body);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let meta = populated.expect("in-flight preview lookup must still populate latestServerVersion after switch");
+    assert_eq!(meta["support"]["latestServerUrl"], "https://example.invalid/v2.6.0");
+    assert_eq!(latest_hits.load(Ordering::SeqCst), 0);
+
+    shutdown.cancel();
+    let _ = monitor.await;
+    api_server.abort();
+    server.abort();
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[tokio::test]

@@ -291,7 +291,7 @@ impl Native {
                 .shared();
                 *slot = Some((id, shared.clone()));
                 tokio::spawn(async move {
-                    let result = run_acquire(&inner, shared_deadline).await;
+                    let result = run_acquire(&inner, id, shared_deadline).await;
                     let mut slot = inner.inflight.lock().unwrap();
                     if slot.as_ref().is_some_and(|(current_id, _)| *current_id == id) {
                         *slot = None;
@@ -353,8 +353,16 @@ impl Native {
     }
 }
 
-async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpoint>, Refusal> {
+fn is_active_flight(inner: &NativeInner, flight_id: u64) -> bool {
+    inner.inflight.lock().unwrap().as_ref().is_some_and(|(id, _)| *id == flight_id)
+}
+
+async fn run_acquire(inner: &NativeInner, flight_id: u64, deadline: Instant) -> Result<Arc<Endpoint>, Refusal> {
+    let retired = || Refusal::Failed("OpenCode connection was retired".into());
     for _attempt in 0..6 {
+        if !is_active_flight(inner, flight_id) {
+            return Err(retired());
+        }
         let generation = inner.generation.load(Ordering::SeqCst);
         let Some(lifecycle) = inner.lifecycle.read().unwrap().clone() else {
             return inner
@@ -372,6 +380,9 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
                 Ok(Some(found)) if found != **current => found,
                 _ => {
                     let mut validated = inner.validated.lock().unwrap();
+                    if !is_active_flight(inner, flight_id) {
+                        return Err(retired());
+                    }
                     if validated.is_none() || inner.generation.load(Ordering::SeqCst) != generation {
                         // Connection was invalidated or binary changed while discovery ran;
                         // retry acquisition within the same request deadline (TS `opencode-service.ts:196-204`).
@@ -384,6 +395,9 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
             _ => match lifecycle.discover(deadline).await? {
                 Some(found) => found,
                 None => {
+                    if !is_active_flight(inner, flight_id) {
+                        return Err(retired());
+                    }
                     if inner.generation.load(Ordering::SeqCst) != generation {
                         continue;
                     }
@@ -394,6 +408,9 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
                     match lifecycle.discover(deadline).await? {
                         Some(found) => found,
                         None => {
+                            if !is_active_flight(inner, flight_id) {
+                                return Err(retired());
+                            }
                             if inner.generation.load(Ordering::SeqCst) != generation {
                                 continue;
                             }
@@ -403,6 +420,9 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
                 }
             },
         };
+        if !is_active_flight(inner, flight_id) {
+            return Err(retired());
+        }
         if inner.generation.load(Ordering::SeqCst) != generation {
             continue;
         }
@@ -412,6 +432,9 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
             {
                 let mut endpoint = inner.endpoint.write().unwrap();
                 let mut validated = inner.validated.lock().unwrap();
+                if !is_active_flight(inner, flight_id) {
+                    return Err(retired());
+                }
                 if inner.generation.load(Ordering::SeqCst) != generation {
                     continue;
                 }
@@ -425,6 +448,9 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
         {
             let mut endpoint = inner.endpoint.write().unwrap();
             let mut validated = inner.validated.lock().unwrap();
+            if !is_active_flight(inner, flight_id) {
+                return Err(retired());
+            }
             if inner.generation.load(Ordering::SeqCst) != generation {
                 continue;
             }

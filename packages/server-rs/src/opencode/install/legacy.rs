@@ -180,17 +180,8 @@ fn is_busy_or_permission(err: &std::io::Error) -> bool {
 
 fn normalized_shim_lines(text: &str) -> Vec<String> {
     text.lines()
-        .map(str::trim)
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|line| !line.is_empty())
-        .map(|line| {
-            // Collapse multiple spaces only before the trailing `$args` / `"$@"` token as npm's cmd-shim varies spacing.
-            for suffix in ["$args", "\"$@\""] {
-                if let Some(head) = line.strip_suffix(suffix) {
-                    return format!("{} {suffix}", head.trim_end());
-                }
-            }
-            line.to_owned()
-        })
         .collect()
 }
 
@@ -209,29 +200,66 @@ pub(crate) fn is_npm_companion_shim(path: &Path, expected_binary: &Path) -> bool
     let actual = normalized_shim_lines(&script);
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if name.to_ascii_lowercase().ends_with(".ps1") {
-        let modern = super::layout::ps1(&target);
-        let with_ret = format!(
-            "#!/usr/bin/env pwsh\n$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent\n$exe=\"\"\n\
-             if ($PSVersionTable.PSVersion -lt \"6.0\" -or $IsWindows) {{\n  # Fix case when both the Windows and Linux builds of Node\n\
-             \x20 # are installed in the same directory\n  $exe=\".exe\"\n}}\n$ret=0\n# Support pipeline input\n\
+        let header = "#!/usr/bin/env pwsh\n$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent\n$exe=\"\"\n\
+             if ($PSVersionTable.PSVersion -lt \"6.0\" -or $IsWindows) {\n\
+             # Fix case when both the Windows and Linux builds of Node\n\
+             # are installed in the same directory\n\
+             $exe=\".exe\"\n\
+             }\n";
+        let direct_with_ret = format!(
+            "{header}$ret=0\n# Support pipeline input\n\
              if ($MyInvocation.ExpectingInput) {{\n  $input | & \"$basedir/{target}\" $args\n}} else {{\n  & \"$basedir/{target}\" $args\n}}\n\
              $ret=$LASTEXITCODE\nexit $ret\n"
         );
-        return actual == normalized_shim_lines(&modern) || actual == normalized_shim_lines(&with_ret);
+        // npm `cmd-shim` template when the package bin has `#!/usr/bin/env node` (OpenCode 1.0–1.15.0).
+        let node_launcher = format!(
+            "{header}$ret=0\nif (Test-Path \"$basedir/node$exe\") {{\n  # Support pipeline input\n\
+             if ($MyInvocation.ExpectingInput) {{\n    $input | & \"$basedir/node$exe\" \"$basedir/{target}\" $args\n\
+             }} else {{\n    & \"$basedir/node$exe\" \"$basedir/{target}\" $args\n  }}\n  $ret=$LASTEXITCODE\n\
+             }} else {{\n  # Support pipeline input\n  if ($MyInvocation.ExpectingInput) {{\n\
+             $input | & \"node$exe\" \"$basedir/{target}\" $args\n  }} else {{\n    & \"node$exe\" \"$basedir/{target}\" $args\n\
+             }}\n  $ret=$LASTEXITCODE\n}}\nexit $ret\n"
+        );
+        return [super::layout::ps1(&target), direct_with_ret, node_launcher]
+            .iter()
+            .any(|candidate| actual == normalized_shim_lines(candidate));
     }
     if !name.contains('.') {
-        let modern = super::layout::sh(&target);
-        let legacy_uname = format!(
-            "#!/bin/sh\nbasedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")\ncase `uname` in\n\
-             \x20 *CYGWIN*|*MINGW*|*MSYS*) basedir=`cygpath -w \"$basedir\"`;;\nesac\nexec \"$basedir/{target}\" \"$@\"\n"
-        );
-        let legacy_cygwin = format!(
-            "#!/bin/sh\nbasedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")\ncase `uname` in\n\
-             \x20 *CYGWIN*) basedir=`cygpath -w \"$basedir\"`;;\nesac\nexec \"$basedir/{target}\" \"$@\"\n"
-        );
-        return actual == normalized_shim_lines(&modern)
-            || actual == normalized_shim_lines(&legacy_uname)
-            || actual == normalized_shim_lines(&legacy_cygwin);
+        let header_wsl2 = "#!/bin/sh\nbasedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")\nbasedir_win=\"$basedir\"\n\
+             case `uname -a` in\n\
+             *CYGWIN*|*MINGW*|*MSYS*)\n  if command -v cygpath > /dev/null 2>&1; then\n    basedir_win=`cygpath -w \"$basedir\"`\n  fi\n;;\n\
+             *WSL2*)\n  if command -v wslpath > /dev/null 2>&1; then\n    basedir_win=\"$(wslpath -w \"$basedir\" 2> /dev/null)\"\n\
+             if [ $? -ne 0 ] || [ -z \"$basedir_win\" ]; then\n      echo \"Error: wslpath failed to convert path. WSL environment may be misconfigured.\" >&2\n\
+             exit 1\n    fi\n  fi\n;;\nesac\n";
+        let header_v6 = "#!/bin/sh\nbasedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")\n\
+             case `uname` in\n\
+             *CYGWIN*|*MINGW*|*MSYS*)\n  if command -v cygpath > /dev/null 2>&1; then\n    basedir=`cygpath -w \"$basedir\"`\n  fi\n;;\nesac\n";
+        let header_v5 = "#!/bin/sh\nbasedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")\n\
+             case `uname` in\n  *CYGWIN*|*MINGW*|*MSYS*) basedir=`cygpath -w \"$basedir\"`;;\nesac\n";
+        let header_v4 = "#!/bin/sh\nbasedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")\n\
+             case `uname` in\n  *CYGWIN*) basedir=`cygpath -w \"$basedir\"`;;\nesac\n";
+        let bodies = [
+            format!("exec \"$basedir/{target}\" \"$@\"\n"),
+            format!(
+                "if [ -x \"$basedir/node\" ]; then\n  exec \"$basedir/node\" \"$basedir/{target}\" \"$@\"\n\
+                 else\n  exec node \"$basedir/{target}\" \"$@\"\nfi\n"
+            ),
+            format!(
+                "if [ -x \"$basedir/node\" ]; then\n  exec \"$basedir/node\" \"$basedir_win/{target}\" \"$@\"\n\
+                 else\n  exec node \"$basedir_win/{target}\" \"$@\"\nfi\n"
+            ),
+            format!(
+                "if [ -x \"$basedir/node.exe\" ]; then\n  exec \"$basedir/node.exe\" \"$basedir/{target}\" \"$@\"\n\
+                 else\n  exec node \"$basedir/{target}\" \"$@\"\nfi\n"
+            ),
+        ];
+        for header in [header_wsl2, header_v6, header_v5, header_v4] {
+            for body in &bodies {
+                if actual == normalized_shim_lines(&format!("{header}{body}")) {
+                    return true;
+                }
+            }
+        }
     }
     false
 }

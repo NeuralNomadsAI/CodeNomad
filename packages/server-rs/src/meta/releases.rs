@@ -23,8 +23,10 @@ struct State {
     feed: &'static str,
     update: Option<Value>,
     latest_stable: Option<(String, String)>,
+    latest_stable_generation: u64,
     /// True on initial startup in `stable` mode and on periodic poll ticks; switching
-    /// `preview -> stable` never fires an extra stable-only request.
+    /// `preview -> stable` never fires an extra stable-only request because any in-flight
+    /// Preview fetch is detached (not aborted) and still populates `latest_stable`.
     stable_due: bool,
     generation: u64,
 }
@@ -42,6 +44,7 @@ impl Monitor {
                 feed,
                 update: (feed == "stable").then_some(Value::Null),
                 latest_stable: None,
+                latest_stable_generation: 0,
                 stable_due: feed == "stable",
                 generation: 0,
             }),
@@ -86,7 +89,7 @@ pub(crate) async fn run(app: Shared, shutdown: CancellationToken) {
 
 pub(crate) async fn run_with_base(app: Shared, shutdown: CancellationToken, url: Url, repo: String) {
     let monitor = &app.releases;
-    let repo = repo.trim();
+    let repo = repo.trim().to_owned();
     let parts: Vec<_> = repo.split('/').collect();
     if parts.len() != 2 || parts.iter().any(|p| p.is_empty() || p.chars().any(char::is_whitespace)) {
         return;
@@ -102,34 +105,58 @@ pub(crate) async fn run_with_base(app: Shared, shutdown: CancellationToken, url:
             (state.feed, state.generation, state.stable_due)
         };
         if feed == "preview" {
-            tokio::select! {
-                biased;
-                _ = shutdown.cancelled() => return,
-                _ = monitor.changed.notified() => continue,
-                result = latest(&client, url.clone(), repo, VERSION) => {
-                    if let Ok((update, stable)) = result {
-                        let mut state = monitor.state.lock().unwrap();
-                        if state.generation == generation && state.feed == "preview" {
-                            state.update = Some(update.unwrap_or(Value::Null));
-                            if stable.is_some() {
-                                state.latest_stable = stable;
-                            }
-                            state.stable_due = false;
-                        }
+            // Spawn so a mid-flight `preview -> stable` switch detaches rather than aborting:
+            // `state.update` stays strictly fenced by `generation`/`feed`, while `latest_stable`
+            // still populates from the already-started response without firing an extra request.
+            let app_task = app.clone();
+            let client_task = client.clone();
+            let url_task = url.clone();
+            let repo_task = repo.clone();
+            let shutdown_task = shutdown.clone();
+            let handle = tokio::spawn(async move {
+                let result = tokio::select! {
+                    biased;
+                    _ = shutdown_task.cancelled() => return,
+                    result = latest(&client_task, url_task, &repo_task, VERSION) => result,
+                };
+                if let Ok((update, stable)) = result {
+                    let mut state = app_task.releases.state.lock().unwrap();
+                    if state.generation == generation && state.feed == "preview" {
+                        state.update = Some(update.unwrap_or(Value::Null));
+                    }
+                    if let Some(stable) = stable
+                        && (state.latest_stable.is_none() || generation >= state.latest_stable_generation)
+                    {
+                        state.latest_stable = Some(stable);
+                        state.latest_stable_generation = generation;
+                        state.stable_due = false;
                     }
                 }
+            });
+            let abort = handle.abort_handle();
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => {
+                    abort.abort();
+                    return;
+                }
+                _ = monitor.changed.notified() => continue,
+                _ = handle => {}
             }
         } else if need_stable {
             tokio::select! {
                 biased;
                 _ = shutdown.cancelled() => return,
                 _ = monitor.changed.notified() => continue,
-                result = latest_stable_only(&client, url.clone(), repo) => {
+                result = latest_stable_only(&client, url.clone(), &repo) => {
                     if let Ok(stable) = result {
                         let mut state = monitor.state.lock().unwrap();
                         if state.generation == generation && state.feed == "stable" {
-                            if stable.is_some() {
-                                state.latest_stable = stable;
+                            if let Some(stable) = stable
+                                && (state.latest_stable.is_none() || generation >= state.latest_stable_generation)
+                            {
+                                state.latest_stable = Some(stable);
+                                state.latest_stable_generation = generation;
                             }
                             state.stable_due = false;
                         }
