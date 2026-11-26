@@ -518,7 +518,14 @@ const stopClientOnce=child=>{
     clientStopPromise=(async()=>{
       try{
         if(webState.clientUseIpc&&process.platform==='win32'){
-          await stopFixtureHandle(child,stopped,8000,2000)
+          if(child.exitCode===null&&child.signalCode===null&&child.connected){
+            try{child.send({type:'shutdown'})}catch{}
+            let timer
+            try{
+              await Promise.race([stopped,new Promise(r=>{timer=setTimeout(r,6000)})])
+            }finally{clearTimeout(timer)}
+          }
+          await stopFixtureHandle(child,stopped,1000,2000)
         }else{
           await stopFixtureChild(child,stopped,8000,2000,{startedBy:webState.clientStartedBy})
         }

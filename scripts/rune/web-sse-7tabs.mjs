@@ -6,6 +6,7 @@ import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import {chromium} from 'playwright'
+import {spawnFixtureChild, stopFixtureChild} from '../native-fixture-guards.mjs'
 import {bundleAssetPaths, fulfillWorkspaceCreation, privateWebFixture, workspacePolicy} from './web-workspace-policy.mjs'
 
 const TAB_COUNT = 7
@@ -122,7 +123,9 @@ function ipc(action) {
       cleanup()
       reject(Error(`No fixture IPC reply for ${action?.type ?? String(action)}`))
     }, 15000)
-    const onMessage = ({value, error}) => {
+    const onMessage = msg => {
+      if (msg?.type === 'shutdown') return
+      const {value, error} = msg ?? {}
       cleanup()
       if (error) reject(Error(error))
       else resolve(value)
@@ -136,7 +139,7 @@ function ipc(action) {
       process.off('message', onMessage)
       process.off('disconnect', onDisconnect)
     }
-    process.once('message', onMessage)
+    process.on('message', onMessage)
     process.once('disconnect', onDisconnect)
     process.send(action)
   })
@@ -175,6 +178,7 @@ async function runBench() {
 
   let browserProc = null
   let browser = null
+  let browserCdp = null
   let context = null
   let browserPid = null
   let browserExited = Promise.resolve(true)
@@ -186,6 +190,15 @@ async function runBench() {
     new Promise(resolve => setTimeout(resolve, ms)),
   ])
   const isProcExited = () => Boolean(!browserProc || browserProc.exitCode !== null || browserProc.signalCode !== null)
+  const isPosixGroupEmpty = () => {
+    if (process.platform === 'win32' || !Number.isInteger(browserPid) || browserPid <= 0) return true
+    try {
+      process.kill(-browserPid, 0)
+      return false
+    } catch (error) {
+      return error.code === 'ESRCH'
+    }
+  }
   const signalBrowserGroup = signal => {
     if (process.platform !== 'win32' && Number.isInteger(browserPid) && browserPid > 0) {
       try { process.kill(-browserPid, signal) } catch {}
@@ -197,16 +210,32 @@ async function runBench() {
     if (!stopPromise) {
       stopPromise = (async () => {
         if (context) await withTimeout(context.close(), 1000)
+        if (browserCdp) await withTimeout(browserCdp.send('Browser.close'), 1500)
         if (browser) await withTimeout(browser.close(), 1000)
-        if (!isProcExited()) {
-          signalBrowserGroup('SIGTERM')
-          await withTimeout(browserExited, 2000)
+        if (browserProc) {
+          if (process.platform === 'win32') {
+            if (!isProcExited()) await withTimeout(browserExited, 1500)
+            // Closes the dedicated Windows Job Object, guaranteeing zero surviving Chromium descendants.
+            await stopFixtureChild(browserProc, browserExited, 1000, 1500).catch(() => {})
+            return isProcExited()
+          }
+          if (!isProcExited() || !isPosixGroupEmpty()) {
+            signalBrowserGroup('SIGTERM')
+            const deadline = Date.now() + 2000
+            while ((!isProcExited() || !isPosixGroupEmpty()) && Date.now() < deadline) {
+              await new Promise(resolve => setTimeout(resolve, 25))
+            }
+          }
+          if (!isProcExited() || !isPosixGroupEmpty()) {
+            signalBrowserGroup('SIGKILL')
+            const deadline = Date.now() + 1500
+            while ((!isProcExited() || !isPosixGroupEmpty()) && Date.now() < deadline) {
+              await new Promise(resolve => setTimeout(resolve, 25))
+            }
+          }
+          return isProcExited() && isPosixGroupEmpty()
         }
-        if (!isProcExited()) {
-          signalBrowserGroup('SIGKILL')
-          await withTimeout(browserExited, 1500)
-        }
-        return isProcExited()
+        return true
       })()
     }
     return stopPromise
@@ -218,8 +247,12 @@ async function runBench() {
     abortStartup?.(signal)
     if (browserProc) void stopBrowserBounded()
   }
+  const onIpcShutdown = msg => {
+    if (msg?.type === 'shutdown') onStopSignal('SIGTERM')
+  }
   process.on('SIGTERM', onStopSignal)
   process.on('SIGINT', onStopSignal)
+  process.on('message', onIpcShutdown)
 
   const errors = []
   const forbidden = []
@@ -238,7 +271,8 @@ async function runBench() {
     const chromiumPath = values.executable || chromium.executablePath()
     const chromiumProfile = path.join(out, 'chromium-profile')
     await mkdir(chromiumProfile, {recursive: true})
-    browserProc = spawn(chromiumPath, [
+    const launchChromium = process.platform === 'win32' ? spawnFixtureChild : spawn
+    browserProc = launchChromium(chromiumPath, [
       '--headless=new',
       '--remote-debugging-port=0',
       '--no-first-run',
@@ -250,7 +284,7 @@ async function runBench() {
       '--use-angle=swiftshader',
       `--user-data-dir=${chromiumProfile}`,
     ], {
-      detached: process.platform !== 'win32',
+      ...(process.platform !== 'win32' ? {detached: true} : {}),
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -263,7 +297,7 @@ async function runBench() {
         if (browserProc.exitCode !== null || browserProc.signalCode !== null) resolve(true)
       })
     })
-    // Register the detached Chromium process group immediately upon spawn, before DevTools is ready.
+    // Register the Chromium process group immediately upon spawn and observe both promises together.
     const devToolsReady = new Promise((resolve, reject) => {
       let stderrBuf = ''
       let timer
@@ -290,13 +324,13 @@ async function runBench() {
       browserProc.once('exit', onExit)
       browserProc.once('error', onError)
     })
-    if (Number.isInteger(browserPid) && browserPid > 0) {
-      await ipc({type: 'browser-pid', pid: browserPid})
-    }
-    if (stoppingSignal) throw Error(`Interrupted while registering Chromium PID (${stoppingSignal})`)
-    const wsEndpoint = await devToolsReady
+    const registerPid = process.platform !== 'win32' && Number.isInteger(browserPid) && browserPid > 0
+      ? ipc({type: 'browser-pid', pid: browserPid})
+      : Promise.resolve()
+    const [, wsEndpoint] = await Promise.all([registerPid, devToolsReady])
     if (stoppingSignal) throw Error(`Interrupted before CDP connect (${stoppingSignal})`)
     browser = await chromium.connectOverCDP(wsEndpoint)
+    browserCdp = await browser.newBrowserCDPSession()
     const policy = workspacePolicy({
       origin: url.origin,
       project: values.project,
@@ -941,11 +975,11 @@ async function runBench() {
   } finally {
     try {
       const confirmedExited = await stopBrowserBounded()
-      if (confirmedExited && Number.isInteger(browserPid) && browserPid > 0 && process.connected) {
+      if (confirmedExited && process.platform !== 'win32' && Number.isInteger(browserPid) && browserPid > 0 && process.connected) {
         await ipc({type: 'browser-closed', pid: browserPid}).catch(() => {})
       }
-      if (pendingProof) {
-        assert(confirmedExited, `Chromium server process ${browserPid} did not exit cleanly before pass`)
+      if (pendingProof && !stoppingSignal) {
+        assert(confirmedExited, `Chromium process/group ${browserPid} did not exit cleanly before pass`)
         pendingProof.teardown.chromiumExited = true
         await writeFile(path.join(out, 'sse-7tabs-proof.json'), JSON.stringify(pendingProof, null, 2))
         console.log(JSON.stringify(pendingProof))
@@ -953,6 +987,7 @@ async function runBench() {
     } finally {
       process.off('SIGTERM', onStopSignal)
       process.off('SIGINT', onStopSignal)
+      process.off('message', onIpcShutdown)
     }
   }
 }

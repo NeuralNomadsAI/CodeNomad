@@ -61,7 +61,11 @@ export async function launchWeb({
   }
   const useIpc=webMobile||webKeyboard||webSse7Tabs
   const launch=useIpc?spawn:spawnFixtureChild
-  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(useIpc?['ipc']:[])]})
+  const jobEnv={
+    ...(process.env.CODENOMAD_FIXTURE_JOB_EXE?{CODENOMAD_FIXTURE_JOB_EXE:process.env.CODENOMAD_FIXTURE_JOB_EXE}:{}),
+    ...(process.env.CARGO_TARGET_DIR?{CARGO_TARGET_DIR:process.env.CARGO_TARGET_DIR}:{}),
+  }
+  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,...jobEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(useIpc?['ipc']:[])]})
   state.client=client
   state.clientUseIpc=useIpc
   state.clientStartedBy=new Date()
