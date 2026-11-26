@@ -98,7 +98,16 @@ impl Receipts {
             .unwrap_or_default()
     }
 
+    fn active(s: &State) -> bool {
+        !s.screen.is_launcher()
+            && !crate::git::has_preview(s)
+            && !crate::files::has_preview(s)
+            && !crate::workspace::mission_has_reader(s)
+            && matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming)
+    }
+
     pub(super) fn demand(s: &mut State, message: &str, visible: bool, lease: &Rc<()>) -> bool {
+        let active = Self::active(s);
         let key = Some(message.to_owned());
         let receipts = &mut s.transcript_display.receipts;
         if let Some(entry) = receipts.entries.get_mut(&key) {
@@ -108,7 +117,7 @@ impl Receipts {
             if !visible {
                 entry.dirty |= entry.job.take().is_some();
             }
-            visible && entry.dirty
+            active && receipts.backend.is_some() && visible && entry.dirty && entry.job.is_none()
         } else if visible && receipts.backend.is_some() {
             if receipts.entries.len() >= 24
                 && let Some(victim) = receipts.entries.iter().find_map(|(key, entry)| {
@@ -126,7 +135,7 @@ impl Receipts {
                 dirty: true,
                 ..Entry::default()
             });
-            true
+            active
         } else {
             false
         }
@@ -191,12 +200,7 @@ impl Receipts {
     }
 
     pub(crate) fn poll(s: &mut State, visible: bool) -> bool {
-        let active = visible
-            && s.screen.launcher().is_none()
-            && !crate::git::has_preview(s)
-            && !crate::files::has_preview(s)
-            && !crate::workspace::mission_has_reader(s)
-            && matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming);
+        let active = visible && Self::active(s);
         let receipts = &mut s.transcript_display.receipts;
         if !visible {
             receipts.suspend();

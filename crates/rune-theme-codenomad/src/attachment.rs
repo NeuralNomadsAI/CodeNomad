@@ -96,7 +96,8 @@ pub fn picture_preview<S: 'static>(
                     .child(text(label).text_role(crate::TextRole::Title))
                     .child(
                         layout::button(close_label, false, close.clone())
-                            .key("close-attachment-preview"),
+                            .key("close-attachment-preview")
+                            .autofocus(),
                     ),
             )
             .child(preview)

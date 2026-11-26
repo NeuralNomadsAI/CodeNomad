@@ -503,6 +503,14 @@ impl Preferences {
         self.config.snapshot = Some(json!({"settings": {"hotkeyOverrides": overrides}}));
     }
 
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(super) fn fixture_config(&mut self, url: &str, settings: Value) {
+        let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        backend.base = url.into();
+        self.backend = Some(backend);
+        self.config.snapshot = Some(json!({"settings": settings}));
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn prepare_all_drains(&mut self, check_revisions: bool, retry_failed: bool) {
         let Some(backend) = &self.backend else {
@@ -1469,6 +1477,21 @@ impl Preferences {
     #[cfg(test)]
     pub(super) fn fixture_state(&mut self, value: Value) {
         self.state.snapshot = Some(value);
+        self.revision += 1;
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_appearance(
+        &mut self,
+        light_scheme: &str,
+        dark_scheme: &str,
+        high_contrast: &str,
+    ) {
+        self.config.snapshot =
+            Some(json!({"settings":{"locale":"en","highContrast":high_contrast}}));
+        self.state.snapshot = Some(
+            json!({"appearancePreferences":{"mode":"system","light":{"scheme":{"id":light_scheme}},"dark":{"scheme":{"id":dark_scheme}}}}),
+        );
         self.revision += 1;
     }
 

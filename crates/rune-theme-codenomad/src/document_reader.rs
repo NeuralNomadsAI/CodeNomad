@@ -296,6 +296,9 @@ pub fn mermaid_error(dark: bool, message: &str, source: &str) -> El {
                 .font(t.text(TextRole::Mono)),
         )
 }
+/// Combined Mermaid element cap (`nodes + edges + subgraphs`) covering Solid's `maxEdges: 500`.
+pub(crate) const MERMAID_MAX_ITEMS: usize = 1_500;
+
 fn markdown_style(dark: bool) -> MarkdownStyle {
     let t = tokens(dark);
     let mut style = MarkdownStyle::from_kit(&kit(dark))
@@ -303,7 +306,8 @@ fn markdown_style(dark: bool) -> MarkdownStyle {
         .strong_weight(t.number("font-weight-regular").px())
         .link_underline(rune::Color::TRANSPARENT)
         .link_hover(t.color("accent-hover"))
-        .code_block(t.color("surface-inset"), t.color("border-muted"));
+        .code_block(t.color("surface-inset"), t.color("border-muted"))
+        .diagram_max_items(MERMAID_MAX_ITEMS);
     for level in 1..=4 {
         style = style.heading_font(level, font(t, &format!("readerHeading{level}")));
     }
@@ -401,4 +405,50 @@ pub fn mermaid(dark: bool, text: &str) -> Option<El> {
             t.color("surface-inset"),
         ),
     )
+}
+
+#[cfg(test)]
+mod mermaid_tests {
+    use super::*;
+
+    fn chain_flowchart(edges: usize) -> String {
+        let mut source = String::from("flowchart LR\n");
+        for i in 0..edges {
+            source.push_str(&format!("  N{i} --> N{}\n", i + 1));
+        }
+        source
+    }
+
+    #[test]
+    fn mermaid_renders_up_to_1500_items_and_rejects_above() {
+        assert!(mermaid(false, &chain_flowchart(500)).is_some());
+        // 750 nodes + 749 edges = 1,499 items (< 1,500 ceiling).
+        assert!(mermaid(false, &chain_flowchart(749)).is_some());
+        assert!(mermaid(false, &chain_flowchart(750)).is_none());
+
+        let md = format!("```mermaid\n{}```", chain_flowchart(500));
+        let mut rt = rune::Runtime::new(
+            md,
+            |md, _| {
+                markdown(
+                    false,
+                    md,
+                    "Mermaid diagram",
+                    |_: &mut String, _, _| {},
+                    |_, _| false,
+                    |_| rune::el(),
+                    |_| None,
+                )
+            },
+            (880.0, 520.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.02);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|el| el.label.as_deref() == Some("Mermaid diagram")),
+            "markdown file reader must render a 500-edge mermaid fence"
+        );
+    }
 }

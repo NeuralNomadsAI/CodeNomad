@@ -28,11 +28,14 @@ pub(super) fn view(
         ))
         .child(super::super::memory::view(
             prefs,
-            s.memory_help_failed,
+            &s.memory_help,
             |s: &mut Window, desired| {
                 super::super::memory::action(&mut s.shared.borrow_mut(), desired)
             },
-            |s: &mut Window, failed| s.memory_help_failed = failed,
+            |s: &mut Window| {
+                (s.section == Section::General && s.confirm_close.is_none() && !s.closing)
+                    .then_some(&mut s.memory_help)
+            },
             |s: &mut Window, edit| s.memory_editor.open(edit),
             |s: &mut Window, action| {
                 super::super::memory::review_action(&mut s.shared.borrow_mut(), action);

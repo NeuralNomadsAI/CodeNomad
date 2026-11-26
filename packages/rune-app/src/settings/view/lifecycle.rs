@@ -57,7 +57,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         s.logging.close();
                         prefs.hide_opencode();
                         prefs.memory.show(false);
-                        s.memory_help_failed = false;
+                        s.memory_help.clear();
                         s.remote.close();
                         s.info.close();
                     }

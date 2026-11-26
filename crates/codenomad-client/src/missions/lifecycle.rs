@@ -51,11 +51,11 @@ impl LifecycleRequest {
     }
 }
 
-fn request_id_valid(id: &str) -> bool {
+pub(super) fn request_id_valid(id: &str) -> bool {
     !id.is_empty() && id == id.trim() && id.encode_utf16().count() <= 128
 }
 
-fn request_id() -> Result<String> {
+pub fn request_id() -> Result<String> {
     let mut bytes = [0u8; 16];
     #[cfg(not(target_arch = "wasm32"))]
     getrandom::fill(&mut bytes).map_err(|_| "Mission request entropy unavailable")?;

@@ -76,7 +76,8 @@ fn view_app(s: &App, cx: &mut Cx<App>) -> El {
                         Button::new("Cancel")
                             .on_press(|s: &mut App| s.dialog = false)
                             .build(&kit(layout::dark()))
-                            .key("cancel"),
+                            .key("cancel")
+                            .autofocus(),
                     )
                     .child(
                         Button::new("Accept")
@@ -133,6 +134,62 @@ fn focused(rt: &Runtime<App>) -> Option<String> {
         .into_iter()
         .find(|e| e.focused)
         .and_then(|e| e.key)
+}
+#[test]
+fn pointer_opened_container_admits_the_first_keyboard_arrow() {
+    let mut rt = runtime();
+    tap(&mut rt, "actions:trigger");
+    let container = rt
+        .elements()
+        .into_iter()
+        .find(|node| node.key.as_deref() == Some("actions:menu"))
+        .unwrap();
+    println!(
+        "MENU_FOCUS opened focused={:?} focusable={}",
+        focused(&rt),
+        container.focusable
+    );
+    assert_eq!(focused(&rt).as_deref(), Some("actions:menu"));
+    assert!(container.focusable);
+    key(&mut rt, Key::Down);
+    println!("MENU_FOCUS down focused={:?}", focused(&rt));
+    assert_eq!(focused(&rt).as_deref(), Some("actions:item:open"));
+    key(&mut rt, Key::Enter);
+    assert!(!rt.state.menu.is_open("actions"));
+    deliver(&mut rt);
+    assert!(
+        rt.state
+            .events
+            .iter()
+            .any(|event| event.starts_with("select:"))
+    );
+}
+#[test]
+fn pointer_container_admits_home_end_and_typeahead() {
+    for (entry, target) in [
+        (Key::Home, "open"),
+        (Key::End, "last"),
+        (Key::PageUp, "open"),
+        (Key::PageDown, "last"),
+        (Key::Text("l".into()), "last"),
+    ] {
+        let mut rt = runtime();
+        rt.state.many = true;
+        tap(&mut rt, "actions:trigger");
+        assert_eq!(focused(&rt).as_deref(), Some("actions:menu"));
+        key(&mut rt, entry);
+        assert_eq!(focused(&rt), Some(format!("actions:item:{target}")));
+        // Container tab_index(-1) keeps it out of Tab cycling inside the open menu.
+        key(&mut rt, Key::Tab);
+        assert_eq!(focused(&rt), Some(format!("actions:item:{target}")));
+    }
+    // Tab directly from the pointer-focused container enters the first item, not the container.
+    let mut rt = runtime();
+    rt.state.many = true;
+    tap(&mut rt, "actions:trigger");
+    assert_eq!(focused(&rt).as_deref(), Some("actions:menu"));
+    key(&mut rt, Key::Tab);
+    assert_eq!(focused(&rt).as_deref(), Some("actions:item:open"));
 }
 #[test]
 fn selection_runs_after_actual_focus_return_and_captures_original_descriptor() {
@@ -244,6 +301,7 @@ fn trigger_arrows_open_at_edges_and_keep_menu_navigation() {
     deliver(&mut rt);
     key(&mut rt, Key::Text(" ".into()));
     assert!(rt.state.menu.is_open("actions"));
+    assert_eq!(focused(&rt).as_deref(), Some("actions:item:open"));
     assert_eq!(
         rt.state.events.iter().filter(|e| *e == "open:true").count(),
         4

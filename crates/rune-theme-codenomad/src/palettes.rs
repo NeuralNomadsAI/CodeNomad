@@ -9,7 +9,7 @@ use rune::Theme;
 use rune_kit::Kit;
 use serde_json::Value;
 use std::{
-    cell::{OnceCell, RefCell},
+    cell::{Cell, OnceCell, RefCell},
     rc::Rc,
     sync::OnceLock,
 };
@@ -39,6 +39,10 @@ impl Palette {
             .expect("generated palette base colors")
     }
 
+    pub(crate) fn is_high_contrast(&self) -> bool {
+        self.high_contrast
+    }
+
     pub(crate) fn theme(&self) -> &Theme {
         self.theme.get_or_init(|| {
             let mode = if self.dark { "dark" } else { "light" };
@@ -57,9 +61,16 @@ impl Palette {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PaletteKey {
+    BuiltIn(&'static str, bool),
+    Custom(u64),
+}
+
 pub struct CustomPalette {
     id: String,
     dark: bool,
+    generation: u64,
     base: &'static Palette,
     theme: Theme,
     kit: OnceCell<Kit>,
@@ -68,6 +79,14 @@ pub struct CustomPalette {
 
 impl CustomPalette {
     fn new(id: Option<&str>, dark: bool, high_contrast: bool, colors: &ColorSchemeColors) -> Self {
+        thread_local! {
+            static NEXT_GENERATION: Cell<u64> = const { Cell::new(1) };
+        }
+        let generation = NEXT_GENERATION.with(|next| {
+            let current = next.get();
+            next.set(current.wrapping_add(1).max(1));
+            current
+        });
         let base_id = if dark { "classic" } else { "light" };
         let base = built_in()
             .iter()
@@ -88,6 +107,7 @@ impl CustomPalette {
         Self {
             id: name,
             dark,
+            generation,
             base,
             theme,
             kit: OnceCell::new(),
@@ -140,6 +160,13 @@ impl ResolvedPalette {
         match self {
             Self::BuiltIn(palette) => palette.dark,
             Self::Custom(palette) => palette.dark,
+        }
+    }
+
+    pub(crate) fn cache_key(&self) -> PaletteKey {
+        match self {
+            Self::BuiltIn(palette) => PaletteKey::BuiltIn(palette.id, palette.is_high_contrast()),
+            Self::Custom(palette) => PaletteKey::Custom(palette.generation),
         }
     }
 

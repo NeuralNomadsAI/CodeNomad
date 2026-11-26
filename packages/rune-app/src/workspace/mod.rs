@@ -12,6 +12,8 @@ pub(crate) use state::contains_project;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use state::evict_for_probe;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use state::has_wake_lock_eligible_work;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use state::native_window_store;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::poll_cached_notifications;
@@ -35,7 +37,8 @@ pub(crate) use state::{
     has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_reader,
     mission_observation_project, mission_panel, mission_reader, mission_supported,
     missions_composing, reconcile_detached_online, restore_mission_reader_focus, right_panel_tab,
-    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_missions,
+    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_mission_briefing,
+    suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;

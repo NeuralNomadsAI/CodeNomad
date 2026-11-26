@@ -41,6 +41,45 @@ fn unsupported_advanced_switch_is_disabled_with_keyboard_help() {
     assert!(rt.state.advanced_help == Some(crate::settings::advanced::Toggle::LongReplies));
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_second_launch_advanced_switch_is_enabled_and_stages_change() {
+    fn find_switch(tree: &Value) -> Option<&Value> {
+        if tree["role"] == "switch" && tree["name"] == "Focus existing window on second launch" {
+            return Some(tree);
+        }
+        tree["children"].as_array()?.iter().find_map(find_switch)
+    }
+
+    let state = Window {
+        section: Section::Advanced,
+        ..Window::default()
+    };
+    let mut prefs = state.shared.borrow_mut();
+    prefs.fixture();
+    prefs.fixture_locale("en");
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    drop(prefs);
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    let switch = find_switch(&tree).unwrap();
+    let states = switch["states"].as_array().unwrap();
+    assert!(!states.contains(&Value::from("disabled")));
+    assert!(!states.contains(&Value::from("checked")));
+
+    rt.state
+        .shared
+        .borrow_mut()
+        .set_advanced_toggle(crate::settings::advanced::Toggle::SecondLaunch, true);
+    assert!(
+        rt.state
+            .shared
+            .borrow()
+            .advanced_pending(crate::settings::advanced::Toggle::SecondLaunch)
+    );
+}
+
 #[test]
 fn keyboard_shortcuts_records_the_focused_save_binding() {
     let mut state = Window {
@@ -585,6 +624,7 @@ fn pending_permissions_keep_tab_focus_and_refuse_new_selections() {
         "Tab navigation still includes the pending control"
     );
     press(&mut rt, rune::Key::Enter);
+    press(&mut rt, rune::Key::Down);
     let (x, y) = rt.find(KEY).unwrap();
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
@@ -593,6 +633,40 @@ fn pending_permissions_keep_tab_focus_and_refuse_new_selections() {
     assert_eq!(
         rt.state.shared.borrow().new_conversation_permissions(),
         "autonomous"
+    );
+}
+
+#[test]
+fn behavior_permissions_picker_steps_closed_without_opening_popup() {
+    const KEY: &str = "new-conversation-permissions-trigger";
+    let state = Window::default();
+    {
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture_locale("en");
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    rt.update(|_, tx| tx.focus(KEY, true));
+    rt.frame(0.02);
+    assert!(
+        !rt.state
+            .shared
+            .borrow()
+            .new_conversation_permissions_pending()
+    );
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Down,
+        mods: Default::default(),
+    });
+    rt.frame(0.02);
+    assert!(listbox(&rt.accessibility_json()).is_none());
+    assert!(
+        rt.state
+            .shared
+            .borrow()
+            .new_conversation_permissions_pending()
     );
 }
 

@@ -197,6 +197,101 @@ fn touch_release_keeps_the_page_and_a_new_reverse_pan_rejects_its_queued_complet
 }
 
 #[test]
+fn inward_drag_from_overscroll_cancels_pending_page_while_elastic_return_does_not() {
+    use crate::transport::{Command, HistoryEdge::Before};
+    let mut s = crate::init();
+    s.messages = (0..20).map(|i| user(&format!("drag-{i}"))).collect();
+    s.can_older = true;
+    let (out, commands) = bounded(4);
+    s.commands = Some(out);
+    let mut rt = Runtime::new(s, view, (800., 600.), Env::new(false, 1.0));
+    rt.poll = Some(crate::poll);
+    rt.frame(0.016);
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_to_instant("history", 0.0, 0.0);
+    });
+    for _ in 0..6 {
+        rt.frame(0.016);
+    }
+    let [x, y, w, h] = rt.presented("history").unwrap().0;
+    let x = x + w / 2.0;
+    // Pull downward into negative overscroll to request an older page.
+    rt.touch(1, TouchPhase::Started, x, y + h * 0.18, 0.2);
+    for i in 1..=8 {
+        rt.touch(
+            1,
+            TouchPhase::Moved,
+            x,
+            y + h * (0.18 + 0.07 * i as f32),
+            0.2 + f64::from(i) * 0.016,
+        );
+        rt.frame(0.016);
+    }
+    let Command::Page(Before, cancelled) = commands.try_recv().unwrap() else {
+        panic!("touch must request older history")
+    };
+    let overscroll = owner(&mut rt.state).scroll.get().viewport.offset[1];
+    assert!(
+        overscroll < -5.0,
+        "expected negative overscroll before inward drag: {overscroll}"
+    );
+    // Without releasing, drag back upward while still in negative overscroll:
+    // Rune reports ScrollSource::Direct, so the deliberate reverse drag must cancel paging.
+    rt.touch(1, TouchPhase::Moved, x, y + h * 0.62, 0.36);
+    rt.frame(0.016);
+    assert!(
+        owner(&mut rt.state).scroll.get().viewport.offset[1] < 0.0,
+        "inward drag step must still be inside negative overscroll"
+    );
+    rt.frame(0.016);
+    assert!(
+        cancelled.is_closed(),
+        "direct inward drag from overscroll must cancel pending older page"
+    );
+    // Finish the first gesture and settle back to top.
+    rt.touch(1, TouchPhase::Ended, x, y + h * 0.62, 0.38);
+    for _ in 0..90 {
+        rt.frame(0.016);
+    }
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_to_instant("history", 0.0, 0.0);
+    });
+    for _ in 0..4 {
+        rt.frame(0.016);
+    }
+    while commands.try_recv().is_ok() {}
+    // Second pull: release into elastic return and force view commits mid-rebound.
+    // Even if virtual_rows clamps offset during EdgeReturn, the rebound must not cancel paging.
+    rt.touch(2, TouchPhase::Started, x, y + h * 0.18, 2.0);
+    for i in 1..=8 {
+        rt.touch(
+            2,
+            TouchPhase::Moved,
+            x,
+            y + h * (0.18 + 0.07 * i as f32),
+            2.0 + f64::from(i) * 0.016,
+        );
+        rt.frame(0.016);
+    }
+    let Command::Page(Before, cancelled2) = commands.try_recv().unwrap() else {
+        panic!("second touch pull must request older history")
+    };
+    rt.touch(2, TouchPhase::Ended, x, y + h * 0.74, 2.13);
+    for step in 0..90 {
+        if step == 10 || step == 20 {
+            rt.update(|s, _| s.revision = s.revision.wrapping_add(1));
+        }
+        rt.frame(0.016);
+    }
+    assert!(
+        !cancelled2.is_closed(),
+        "elastic return with mid-rebound view commits must not cancel pending older page"
+    );
+}
+
+#[test]
 fn an_earlier_reader_sync_does_not_allow_a_second_page_and_resident_first_is_local() {
     use crate::{
         history::Page,

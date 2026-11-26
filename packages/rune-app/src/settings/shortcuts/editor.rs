@@ -192,7 +192,7 @@ fn row_view<S: 'static>(
             *recording = false;
             capture.refused = false;
             return false;
-        } else if reserved::blocks_recording(event) {
+        } else if reserved::blocks_recording(event, tx.key_base()) {
             capture.refused = true;
             #[cfg(target_arch = "wasm32")]
             layout::announce_alert(tx, t("hotkeys.reserved"));

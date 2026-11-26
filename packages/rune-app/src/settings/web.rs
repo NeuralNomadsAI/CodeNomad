@@ -68,7 +68,7 @@ pub(super) struct Panel {
     after_palette_save: Option<AfterPaletteSave>,
     general: super::general::Controls,
     behavior: super::behavior::General,
-    memory_help_failed: bool,
+    memory_help: super::ExternalLink,
     memory_editor: super::memory::editor::Editor,
     transcript_picker: Option<super::TranscriptRow>,
     announced_transcript_error: Option<&'static str>,
@@ -125,9 +125,10 @@ impl Panel {
         &mut self,
         prefs: &Preferences,
         filters_open: bool,
+        paired: bool,
         tx: &mut rune::Tx,
     ) -> bool {
-        if self.shown && self.section == Section::Info {
+        if paired && self.shown && self.section == Section::Info {
             self.info.announce(prefs, tx);
         }
         let transcript_error = ((self.shown && self.section == Section::Conversation)
@@ -317,7 +318,7 @@ pub(super) fn open_providers(s: &mut State) {
     panel.advanced_help = None;
     panel.recording_shortcut = false;
     panel.shortcut_capture = Default::default();
-    panel.memory_help_failed = false;
+    panel.memory_help.clear();
     open(s);
 }
 
@@ -378,7 +379,7 @@ fn close_panel(panel: &mut Panel, prefs: &mut Preferences) {
     }
     prefs.provider_target = None;
     prefs.memory.show(false);
-    panel.memory_help_failed = false;
+    panel.memory_help.clear();
     panel.transcript_picker = None;
 }
 
@@ -512,11 +513,16 @@ pub(super) fn view(
                 ))
                 .child(super::memory::view(
                     prefs,
-                    panel.memory_help_failed,
+                    &panel.memory_help,
                     |s: &mut State, desired| {
                         super::memory::action(&mut s.settings.shared.borrow_mut(), desired)
                     },
-                    |s: &mut State, failed| s.settings.web.memory_help_failed = failed,
+                    |s: &mut State| {
+                        let paired = !crate::platform::pairing::required(s);
+                        let panel = &mut s.settings.web;
+                        (paired && panel.shown && panel.section == Section::General)
+                            .then_some(&mut panel.memory_help)
+                    },
                     |s: &mut State, edit| s.settings.web.memory_editor.open(edit),
                     |s: &mut State, action| {
                         super::memory::review_action(&mut s.settings.shared.borrow_mut(), action);
@@ -674,8 +680,9 @@ pub(super) fn view(
         Section::Info => panel.info.view(
             &s.settings.shared,
             |s: &mut State| {
+                let paired = !crate::platform::pairing::required(s);
                 let panel = &mut s.settings.web;
-                (panel.shown && panel.section == Section::Info).then_some(&mut panel.info)
+                (paired && panel.shown && panel.section == Section::Info).then_some(&mut panel.info)
             },
             local.then_some(open_remote),
         ),
@@ -767,7 +774,7 @@ fn apply_web_section(panel: &mut Panel, prefs: &mut Preferences, section: Sectio
     panel.general.close();
     panel.advanced_help = None;
     panel.behavior.close();
-    panel.memory_help_failed = false;
+    panel.memory_help.clear();
     prefs.memory.show(panel.section == Section::General);
 }
 

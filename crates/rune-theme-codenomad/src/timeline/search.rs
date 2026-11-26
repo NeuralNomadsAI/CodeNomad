@@ -251,7 +251,9 @@ pub fn close<S: 'static>(label: &str, action: impl Fn(&mut S, &mut rune::Tx) + '
 }
 
 pub fn scope_picker(key: &str, options: &[&str], label: String) -> rune_kit::Select {
-    rune_kit::Select::new(key, options).label(label)
+    rune_kit::Select::new(key, options)
+        .label(label)
+        .step_closed(true)
 }
 
 pub fn build_scope(picker: rune_kit::Select, layer: &mut Vec<El>) -> El {
