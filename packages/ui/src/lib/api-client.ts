@@ -88,7 +88,7 @@ import { missionMutationRequest } from "./mission-mutation"
 import { missionLifecycleRequest, type MissionLifecycleInput } from "./mission-lifecycle-request"
 import { localHttp } from "./auth-recovery"
 import type { BackendHttp } from "./backend-transport"
-import { backgroundReads, missionReads, missionScheduleReads } from "./background-read-queue"
+import { backgroundReads, missionReads } from "./background-read-queue"
 import { readMissionTaskPage, readMissionPanelWindow, readMissionCurrentIdentity, type MissionPanelReadScope } from "./mission-task-page-read"
 import type { MissionCurrentSource } from "../../../server/src/missions/mission-current-source"
 import type { MissionPanelPageRequest } from "../../../server/src/missions/mission-panel-wire"
@@ -112,17 +112,13 @@ function secondaryRead<T>(signal: AbortSignal | undefined, read: () => Promise<T
   return backgroundReads.run(signal ?? new AbortController().signal, read, priority)
 }
 
+// The panel's journal reads, the schedule list and a schedule's current passage. The reads
+// of one schedule (document, capability, saved request) stay on the shared budget, so
+// the ones a click waits for never queue behind a list read.
 function missionRead<T>(signal: AbortSignal | undefined, read: () => Promise<T>): Promise<T> {
   return missionReads.run(signal ?? new AbortController().signal, read, "visible")
 }
 
-// The schedule list and a schedule's current passage answer from native schedule state,
-// which can be slow: their lane keeps them from holding the panel's journal reads. The
-// reads of one schedule (document, capability, saved request) stay on the shared budget,
-// so the ones a click waits for never queue behind a list read.
-function missionScheduleRead<T>(signal: AbortSignal | undefined, read: () => Promise<T>): Promise<T> {
-  return missionScheduleReads.run(signal ?? new AbortController().signal, read, "visible")
-}
 
 function currentPassageTransport(ctx: BackendHttp, instanceId: string, source: MissionCurrentSource, scope: MissionPanelReadScope, body?: MissionContentRequest) {
   source = structuredClone(source)
@@ -903,7 +899,7 @@ export function createServerApi(ctx: BackendHttp) {
     },
     fetchMissionSchedules(instanceId: string, input: { after?: string; limit?: number; directory?: string; kind?: "schedule" } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleList> {
       const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
-      return missionScheduleRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled?${query}`, { signal }))
+      return missionRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled?${query}`, { signal }))
     },
     fetchMissionScheduleCapability(instanceId: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleCapability> {
       const query = new URLSearchParams(directory === undefined ? {} : { directory })
@@ -940,7 +936,7 @@ export function createServerApi(ctx: BackendHttp) {
     fetchMissionCurrentPassage(instanceId: string, scheduleID: string, signal?: AbortSignal, owner: "daily" | "scheduled" = "daily"): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrent> {
       const deadline = performance.now() + TASK_READ_TIMEOUT_MS
       const live = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(TASK_READ_TIMEOUT_MS)])
-      return missionScheduleRead(live, async () => {
+      return missionRead(live, async () => {
         assertTaskReadLive(live, deadline)
         const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current${owner === "scheduled" ? "?owner=scheduled" : ""}`
         return readMissionCurrentIdentity(await ctx.fetch(ctx.url(path), { signal: live, credentials: "include" }), live)
