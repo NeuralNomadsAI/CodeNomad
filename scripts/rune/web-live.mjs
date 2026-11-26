@@ -63,6 +63,11 @@ export async function admitLiveRoute(req, {policy, origin, forbiddenRequests, on
   return allowed
 }
 
+function raceForbidden(promise, forbidden){
+  void promise.catch(()=>{})
+  return Promise.race([promise,forbidden])
+}
+
 async function fetchOwnedStatus(route, origin){
   const response=await route.fetch({maxRedirects:0})
   assert.equal(new URL(response.url()).origin,origin,'Auth status response must stay on the owned origin')
@@ -99,17 +104,20 @@ async function verifySseAuthenticated503Recovery({
       const releaseRecovered=Promise.withResolvers()
       const releaseHeldSse=Promise.withResolvers()
       const recoveredCaptured=Promise.withResolvers()
+      const forbiddenRejected=Promise.withResolvers()
       void first503Served.promise.catch(()=>{})
       void recoveredCaptured.promise.catch(()=>{})
+      void forbiddenRejected.promise.catch(()=>{})
       const failForbidden=err=>{
         forbiddenError??=err
-        first503Served.reject(err)
-        recoveredCaptured.reject(err)
+        forbiddenRejected.reject(err)
       }
+      const awaitStep=promise=>raceForbidden(promise,forbiddenRejected.promise)
       const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failForbidden})
       const routeEvents=async route=>{
         if(sseGate==='pass')return route.fallback()
         if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
+        if(sseGate==='pass')return route.fallback()
         if(sseGate==='admit-one'){
           sseGate='hold'
           return route.fallback()
@@ -140,8 +148,6 @@ async function verifySseAuthenticated503Recovery({
           assert.equal(body.authenticated,true)
           assert(!body.pairingRequired)
           recoveredStatuses++
-          sseGate='pass'
-          releaseHeldSse.resolve()
           await route.fulfill({response})
           recoveredCaptured.resolve()
         } catch (err) {
@@ -154,8 +160,8 @@ async function verifySseAuthenticated503Recovery({
       await page.route(authStatusUrl,routeStatus)
       try {
         await command('revoke')
-        await dialog.waitFor({timeout:15_000})
-        await page.getByText(messages['rune.pairing_guide'],{exact:true}).waitFor()
+        await awaitStep(dialog.waitFor({timeout:15_000}))
+        await awaitStep(page.getByText(messages['rune.pairing_guide'],{exact:true}).waitFor())
         await page.evaluate(()=>{
           globalThis.__runeSse503Signals=[]
           const onFocus=()=>globalThis.__runeSse503Signals.push('focus')
@@ -176,18 +182,18 @@ async function verifySseAuthenticated503Recovery({
         injectTransient503=true
         // Re-pair in the prepared tab without returning focus or clicking Check, then admit exactly
         // one authenticated EventSource so a single SSE episode drives both bounded retries (1 s, 2 s).
-        await pairFlow.complete()
+        await awaitStep(pairFlow.complete())
         sseGate='admit-one'
         try {
-          await withBudget(now()+20_000,'first transient 503 on SSE-driven /api/auth/status',()=>first503Served.promise)
+          await withBudget(now()+20_000,'first transient 503 on SSE-driven /api/auth/status',()=>awaitStep(first503Served.promise))
           assert.equal(await dialog.count(),1,'Pairing overlay must stay visible after the first transient 503 status failure')
         } finally {
           releaseRecovered.resolve()
         }
-        await withBudget(now()+20_000,'bounded retry /api/auth/status 200 after transient 503s',()=>recoveredCaptured.promise)
+        await withBudget(now()+20_000,'bounded retry /api/auth/status 200 after transient 503s',()=>awaitStep(recoveredCaptured.promise))
         if(forbiddenError)throw forbiddenError
         if(routeError)throw routeError
-        await dialog.waitFor({state:'detached',timeout:10_000})
+        await awaitStep(dialog.waitFor({state:'detached',timeout:10_000}))
         const accidentalSignals=await page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()??[])
         assert.deepEqual(accidentalSignals,[],'Authenticated SSE + 503 recovery must not rely on focus or visibility events')
         assert(sseBeforeFirstProbe>beforeSseAuth,'Authenticated SSE 200 on the original page must precede the first /api/auth/status probe')
@@ -344,15 +350,18 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         void staleReceivedByBrowser.promise.catch(()=>{})
         page.on('requestfailed',onAuthFailed)
         page.on('response',onAuthResponse)
+        const focusForbiddenRejected=Promise.withResolvers()
+        void focusForbiddenRejected.promise.catch(()=>{})
         const failFocusForbidden=err=>{
           focusForbiddenError??=err
-          staleCaptured.reject(err)
-          followUpCaptured.reject(err)
+          focusForbiddenRejected.reject(err)
         }
+        const awaitFocusStep=promise=>raceForbidden(promise,focusForbiddenRejected.promise)
         const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failFocusForbidden})
         const holdEvents=async route=>{
           if(!blockEvents)return route.fallback()
           if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
+          if(!blockEvents)return route.fallback()
           return route.fulfill({status:503,contentType:'application/json',body:'{}'})
         }
         const holdStaleStatus=async route=>{
@@ -422,10 +431,10 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
               }
             })
             await command('revoke')
-            await withBudget(now()+10_000,'first pre-pairing auth status capture',()=>staleCaptured.promise)
+            await withBudget(now()+10_000,'first pre-pairing auth status capture',()=>awaitFocusStep(staleCaptured.promise))
             assert.equal(await dialog.count(),0,'#pairing-recovery must not be open yet while the first /api/auth/status is held')
             // Re-pair in the prepared tab and return focus BEFORE the first status probe delivers pairingRequired=true.
-            await pairFlow.complete()
+            await awaitFocusStep(pairFlow.complete())
             await page.bringToFront()
             // Headless shell keeps every page visible/focused across tabs; when bringToFront emits
             // neither signal, dispatch window focus so Rune's real FocusCheck listener runs before release.
@@ -449,24 +458,25 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
             releaseStale.resolve()
             if(heldStale)await staleSettled.promise
           }
+          if(focusForbiddenError)throw focusForbiddenError
           if(staleError)throw staleError
           assert.equal(staleAborted,null,'Held first status probe must not abort before browser delivery')
-          const staleBrowserResponse=await withBudget(now()+5_000,'browser receipt of held first auth status',()=>staleReceivedByBrowser.promise)
+          const staleBrowserResponse=await withBudget(now()+5_000,'browser receipt of held first auth status',()=>awaitFocusStep(staleReceivedByBrowser.promise))
           assert.equal(staleBrowserResponse.status(),200)
           assert.equal(await staleBrowserResponse.finished(),null,'Browser must finish reading the held first status response')
           assert.equal((await staleBrowserResponse.json()).pairingRequired,true,'Browser must receive pairingRequired=true from the first probe')
           // Returning focus while the first status probe was in flight must queue a follow-up check
           // immediately once pairingRequired=true opens #pairing-recovery, without any click or SSE help.
           try {
-            await withBudget(now()+10_000,'follow-up auth status after first stale probe',()=>followUpCaptured.promise)
-            await dialog.waitFor()
-            await text(messages['rune.pairing_guide']).waitFor()
+            await withBudget(now()+10_000,'follow-up auth status after first stale probe',()=>awaitFocusStep(followUpCaptured.promise))
+            await awaitFocusStep(dialog.waitFor())
+            await awaitFocusStep(text(messages['rune.pairing_guide']).waitFor())
             assert.equal(await dialog.getByRole('textbox').count(),0,'Browser pairing never shows a password form')
           } finally {
             releaseFollowUp.resolve()
             if(heldFollowUp)await followUpSettled.promise
           }
-          await dialog.waitFor({state:'detached',timeout:10_000})
+          await awaitFocusStep(dialog.waitFor({state:'detached',timeout:10_000}))
           if(focusForbiddenError)throw focusForbiddenError
           assert.equal(eventSources(),beforeRevoke,'SSE stayed blocked until the pairing overlay dismissed')
           assert(postStaleStatus>=1,'Focus return during the first status probe must trigger a follow-up /api/auth/status check')
