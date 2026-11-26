@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 import { normalizeToolCallExpansionDefaults, type Preferences } from "../stores/preferences"
 import {
   TRANSCRIPT_PRESETS,
+  transcriptCustomAvailable,
   transcriptPreset,
   transcriptPresetPatch,
   transcriptVisibility,
@@ -104,6 +105,26 @@ describe("shared transcript visibility controls", () => {
         const mode = transcriptVisibility(applied, item) === "hidden" ? "collapsed" : "hidden"
         assert.equal(transcriptPreset({ ...applied, ...transcriptVisibilityPatch(applied, item, mode) }), "custom", `${preset}: ${item.key}`)
       }
+    }
+  })
+  it("keeps the Custom rows a preset replaces and applies them again with Custom", () => {
+    const balanced = { ...current(), ...transcriptPresetPatch("balanced") }
+    assert.equal(transcriptCustomAvailable(balanced), false)
+    assert.deepEqual(transcriptPresetPatch("custom", balanced), {})
+    // A detail row alone leaves the saved tool preset in place; the kept rows are explicit either way.
+    for (const changes of [["read", "diagnostics"], ["diagnostics"]]) {
+      let custom = balanced
+      for (const key of changes) custom = { ...custom, ...transcriptVisibilityPatch(custom, row(key), "hidden") }
+      const replaced = { ...custom, ...transcriptPresetPatch("everything", custom) }
+      assert.equal(transcriptPreset(replaced), "everything")
+      assert.equal(transcriptCustomAvailable(replaced), true)
+      assert.equal(replaced.transcriptCustomPreset?.toolCallExpansionDefaults.preset, "custom")
+      // Another preset leaves the kept rows alone.
+      assert.equal("transcriptCustomPreset" in transcriptPresetPatch("minimal", replaced), false)
+      const restored = { ...replaced, ...transcriptPresetPatch("custom", replaced) }
+      assert.equal(transcriptPreset(restored), "custom")
+      for (const item of rows) assert.equal(transcriptVisibility(restored, item), transcriptVisibility(custom, item), item.key)
+      assert.deepEqual(transcriptPresetPatch("custom", restored), {})
     }
   })
   it("hides every content row with Nothing and expands groups only with Everything", () => {

@@ -1,4 +1,4 @@
-import type { Preferences, ToolCallExpansionPreset, ToolCallExpansionPresetSelection, VisibilityPreference } from "../stores/preferences"
+import type { Preferences, ToolCallExpansionPreset, ToolCallExpansionPresetSelection, TranscriptDetailSettings, VisibilityPreference } from "../stores/preferences"
 import {
   buildToolExpansionPresetDefaults,
   getConfigurableToolEntries,
@@ -77,10 +77,38 @@ export function transcriptPreset(current: Preferences): ToolCallExpansionPresetS
     : "custom"
 }
 
-export function transcriptPresetPatch(preset: ToolCallExpansionPreset): Partial<Preferences> {
+const effectiveTools = (current: Preferences) =>
+  Object.fromEntries(getConfigurableToolEntries().map((entry) => [entry.tool, resolveToolVisibility(current, entry.tool)]))
+
+/** The current rows as explicit choices, independent of any preset's definition. */
+function customPreset(current: Preferences): TranscriptDetailSettings {
+  return {
+    showThinkingBlocks: current.showThinkingBlocks,
+    thinkingBlocksExpansion: current.thinkingBlocksExpansion,
+    toolCallExpansionDefaults: { preset: "custom", thinking: thinkingExpansion(current), tools: effectiveTools(current) },
+    toolOutputExpansion: current.toolOutputExpansion,
+    diagnosticsExpansion: current.diagnosticsExpansion,
+    systemMessagesVisibility: current.systemMessagesVisibility,
+    toolGroupVisibility: current.toolGroupVisibility,
+    toolInputsVisibility: current.toolInputsVisibility,
+    showUsageMetrics: current.showUsageMetrics,
+    usageMetricsExpansion: current.usageMetricsExpansion,
+  }
+}
+
+/** Custom can be chosen while it is shown or once a preset has replaced it. */
+export function transcriptCustomAvailable(current: Preferences): boolean {
+  return transcriptPreset(current) === "custom" || current.transcriptCustomPreset !== undefined
+}
+
+/** With `current`, a preset that replaces Custom rows keeps them for the Custom choice, which applies them again. */
+export function transcriptPresetPatch(preset: ToolCallExpansionPresetSelection, current?: Preferences): Partial<Preferences> {
+  const replaced = current && transcriptPreset(current) === "custom" ? current : undefined
+  if (preset === "custom") return replaced ? {} : { ...current?.transcriptCustomPreset }
   const tools = buildToolExpansionPresetDefaults(preset)
   const thinking = THINKING_EXPANSION_PRESETS[preset]
   return {
+    ...(replaced ? { transcriptCustomPreset: customPreset(replaced) } : {}),
     ...transcriptDetailPresets[preset],
     toolCallExpansionDefaults: { preset, thinking, tools },
     thinkingBlocksExpansion: thinking,
@@ -141,7 +169,7 @@ export function transcriptVisibilityPatch(current: Preferences, row: TranscriptV
   }
   // Preserve every configurable category before switching to per-type overrides.
   // Retired tools follow "Other tools" and no longer need separate overrides.
-  const tools = Object.fromEntries(getConfigurableToolEntries().map((entry) => [entry.tool, resolveToolVisibility(current, entry.tool)]))
+  const tools = effectiveTools(current)
   if (row.kind === "tool") tools[row.key] = mode
   const thinking = row.kind === "thinking" && mode !== "hidden" ? mode : thinkingExpansion(current)
   return {
