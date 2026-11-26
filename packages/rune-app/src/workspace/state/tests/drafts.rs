@@ -2683,6 +2683,18 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
     if let Some(l) = r13_b2.screen.launcher_mut() {
         l.pending = false;
     }
+    // Verify D immediately projects E's draft right after E closes, before any other capture.
+    let snap_b2_immediate = r13_b2.workspace.as_ref().unwrap().snapshot();
+    let bytes_b2_immediate = crate::workspace::encode(&snap_b2_immediate).unwrap();
+    let mut hydrated_b2_immediate = Ui::new();
+    hydrated_b2_immediate.hydrate(crate::workspace::decode(&bytes_b2_immediate).unwrap());
+    assert!(
+        hydrated_b2_immediate.entries.iter().any(|e| matches!(
+            &e.saved,
+            Tab::Workspace(w) if w.drafts.get("ses_r13_sync").map(String::as_str) == Some("from E without pending")
+        )),
+        "closing E without pending_drafts must immediately project E's draft onto pending tab D"
+    );
     // Switch to C (tab-1) and clear its restored copy -> D still keeps E's independent draft.
     select(&mut r13_b2, "tab-1", &mut tx);
     if let Some(l) = r13_b2.screen.launcher_mut() {
@@ -2864,6 +2876,22 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
     let mut ui_m1 = Ui::new();
     ui_m1.hydrate(crate::workspace::decode(&bytes_m1).unwrap());
     ui_m1.ready = true;
+    // Verify rehydrated snapshot kept Y on C and pruned superseded ancestor X from B.
+    let Tab::Workspace(rehydrated_b) = &ui_m1.entries[0].saved else {
+        panic!("expected workspace B");
+    };
+    assert!(
+        !rehydrated_b.drafts.contains_key("ses_r13_anc"),
+        "snapshot must prune superseded ancestor X from B"
+    );
+    let Tab::Workspace(rehydrated_c) = &ui_m1.entries[1].saved else {
+        panic!("expected workspace C");
+    };
+    assert_eq!(
+        rehydrated_c.drafts.get("ses_r13_anc").map(String::as_str),
+        Some("edited Y"),
+        "snapshot must keep projected edit Y on C"
+    );
     // Active tab is C (index 1, holding Y); bind, clear Y, and delete session -> X must not return.
     ui_m1.entries[1].binding = Some(backend("ses_r13_anc"));
     if let Tab::Workspace(w) = &mut ui_m1.entries[1].saved {
@@ -2877,5 +2905,164 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
     assert!(
         !crate::workspace::recover_missing_session_draft(&mut restarted_m1, "ses_r13_anc"),
         "clearing projected edit Y after restart must not resurrect superseded ancestor X"
+    );
+
+    // 24. R14 Bloquant: Tab A (index 0, launcher) is closing while Tab B (index 1) stays open;
+    // a queued window deletion notification in `ui.deleted_sessions` must recover both closed
+    // drafts and A's own draft onto surviving Tab B rather than onto closing Tab A.
+    let mut r14_b = draft_state();
+    let mut a14 = closed("ses_r14_q", "from closing A");
+    a14.active_session_id = None;
+    let mut b14 = closed("ses_r14_q", "");
+    b14.drafts.clear();
+    b14.occurrence = 1;
+    b14.active_session_id = None;
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a14.clone()), Tab::Workspace(b14)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.closed = vec![closed("ses_r14_q", "from closed q")];
+    ui.closed_restored = vec![Default::default()];
+    ui.closed_derived_from = vec![Default::default()];
+    let scope_r14 = crate::workspace::state::ProjectScope::from_workspace(&a14);
+    let _ = ui
+        .deleted_sessions
+        .0
+        .try_send((scope_r14, "ses_r14_q".into()));
+    r14_b.workspace = Some(ui);
+    r14_b.show_launcher();
+    close(&mut r14_b, "tab-0", &mut tx);
+    let snap_r14_b = r14_b.workspace.as_ref().unwrap().snapshot();
+    let bytes_r14_b = crate::workspace::encode(&snap_r14_b).unwrap();
+    let mut hydrated_r14_b = Ui::new();
+    hydrated_r14_b.hydrate(crate::workspace::decode(&bytes_r14_b).unwrap());
+    let Tab::Workspace(surviving_r14_b) = &hydrated_r14_b.entries[0].saved else {
+        panic!("expected surviving workspace B");
+    };
+    let mut texts_r14_b: Vec<&str> = surviving_r14_b
+        .drafts
+        .iter()
+        .filter(|(k, _)| crate::workspace::is_local_draft_id(k))
+        .map(|(_, v)| v.as_str())
+        .collect();
+    texts_r14_b.sort_unstable();
+    assert_eq!(
+        texts_r14_b,
+        vec!["from closed q", "from closing A"],
+        "queued window deletion during tab close must route drafts onto surviving sibling B"
+    );
+
+    // 25. R14 Moyen 1: Two closed drafts require a UUID slot; if UUID reservation fails during
+    // closing Tab A while Tab B has no projection for the session, close must be deferred so
+    // neither the closed drafts nor retry state are stranded and lost across restart.
+    let mut r14_m1 = draft_state();
+    let mut a14m = closed("ses_r14_def", "from A deferred");
+    a14m.active_session_id = Some("ses_r14_def".into());
+    let mut b14m = closed("ses_r14_def", "");
+    b14m.drafts.clear();
+    b14m.occurrence = 1;
+    b14m.active_session_id = None;
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a14m), Tab::Workspace(b14m)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_r14_def"));
+    ui.entries[0].pending_deleted.insert("ses_r14_def".into());
+    ui.closed = vec![
+        closed("ses_r14_def", "closed def 1"),
+        closed("ses_r14_def", "closed def 2"),
+    ];
+    ui.closed_restored = vec![Default::default(), Default::default()];
+    ui.closed_derived_from = vec![Default::default(), Default::default()];
+    r14_m1.workspace = Some(ui);
+    r14_m1.show_chat();
+    r14_m1.draft = TextEdit::new("from A deferred");
+    crate::workspace::state::tabs::close_with_uuid(&mut r14_m1, "tab-0", &mut tx, || None);
+    assert_eq!(
+        r14_m1.workspace.as_ref().unwrap().entries.len(),
+        2,
+        "close must be deferred while deletion recovery cannot reserve UUID slots"
+    );
+    assert!(
+        r14_m1.workspace.as_ref().unwrap().entries[0]
+            .pending_deleted
+            .contains("ses_r14_def"),
+        "deferred close must keep pending_deleted armed on A"
+    );
+    // Once UUID allocation works again, closing A succeeds and lands all 3 drafts on B.
+    close(&mut r14_m1, "tab-0", &mut tx);
+    assert_eq!(r14_m1.workspace.as_ref().unwrap().entries.len(), 1);
+    let Tab::Workspace(surviving_m1) = &r14_m1.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected surviving workspace B");
+    };
+    let mut texts_m1: Vec<&str> = surviving_m1
+        .drafts
+        .iter()
+        .filter(|(k, _)| crate::workspace::is_local_draft_id(k))
+        .map(|(_, v)| v.as_str())
+        .collect();
+    texts_m1.sort_unstable();
+    assert_eq!(
+        texts_m1,
+        vec!["closed def 1", "closed def 2", "from A deferred"],
+        "retry close after UUID recovery must deliver every draft onto surviving sibling B"
+    );
+
+    // 26. R14 Moyen 2: Legacy closed order [A, "", B] masks A and delivers B on first bind;
+    // consuming the tombstone must also prune masked A so a second bind never resurrects A.
+    let mut r14_m2 = draft_state();
+    let mut ui = Ui::new();
+    ui.fixture_ready();
+    ui.closed = vec![
+        closed("ses_r14_tomb", "masked A"),
+        closed("ses_r14_tomb", ""),
+        closed("ses_r14_tomb", "live B"),
+    ];
+    ui.closed_restored = vec![Default::default(), Default::default(), Default::default()];
+    ui.closed_derived_from = vec![Default::default(), Default::default(), Default::default()];
+    r14_m2.workspace = Some(ui);
+    opened(
+        &mut r14_m2,
+        &Project {
+            id: "proj-r14-c".into(),
+            path: "/fixture".into(),
+        },
+    );
+    new_tab(&mut r14_m2, &mut tx);
+    if let Some(l) = r14_m2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r14_m2,
+        &Project {
+            id: "proj-r14-d".into(),
+            path: "/fixture".into(),
+        },
+    );
+    select(&mut r14_m2, "tab-0", &mut tx);
+    if let Some(l) = r14_m2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    assert_eq!(bound(&mut r14_m2, &backend("ses_r14_tomb")), "live B");
+    select(&mut r14_m2, "tab-1", &mut tx);
+    if let Some(l) = r14_m2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    assert_eq!(
+        bound(&mut r14_m2, &backend("ses_r14_tomb")),
+        "",
+        "second bind must not resurrect A masked by consumed tombstone"
     );
 }

@@ -237,6 +237,15 @@ pub fn new_tab(s: &mut State, tx: &mut Tx) {
     capture(s);
 }
 pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
+    close_with_uuid(s, id, tx, || codenomad_client::http::random_uuid_v4().ok());
+}
+
+pub(super) fn close_with_uuid(
+    s: &mut State,
+    id: &str,
+    tx: &mut Tx,
+    mut next_uuid: impl FnMut() -> Option<String>,
+) {
     crate::shell::Panels::dismiss_outside(s, tx);
     if busy(s) {
         return;
@@ -252,40 +261,71 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         return;
     }
     let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
-    if active {
-        s.notifications.supersede_navigation();
-        stash(s);
-    } else {
-        capture(s);
-    }
-    super::drafts::drain_window_deleted_sessions(s);
-    let pending_deleted: Vec<String> = s
+    capture(s);
+    let mut deferred = super::drafts::drain_window_deleted_sessions_closing_with_uuid(
+        s,
+        Some(index),
+        &mut next_uuid,
+    )
+    .deferred;
+    let active_incoming_deleted =
+        active && super::drafts::drain_incoming_session_deleted(s.incoming.as_ref());
+    let pending_deleted: std::collections::BTreeSet<String> = s
         .workspace
         .as_mut()
-        .and_then(|ui| ui.entries.get_mut(index))
-        .map(|entry| {
-            let mut ids = entry.visits.poll_checks().deleted;
-            if entry
-                .cache
-                .as_mut()
-                .is_some_and(super::Cache::drain_session_deleted)
-                && let Tab::Workspace(saved) = &entry.saved
-                && let Some(active_id) = saved.active_session_id.as_deref()
-            {
-                ids.push(active_id.to_owned());
+        .map(|ui| {
+            let mut ids: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            let scope = ui.entries.get(index).and_then(|entry| match &entry.saved {
+                Tab::Workspace(saved) => Some(super::ProjectScope::from_workspace(saved)),
+                Tab::Blank => None,
+            });
+            if let Some(scope) = scope.as_ref() {
+                for (c_scope, c_id) in &ui.closed_pending_deleted {
+                    if c_scope.same_scope(scope) {
+                        ids.insert(c_id.clone());
+                    }
+                }
             }
-            ids.extend(std::mem::take(&mut entry.pending_deleted));
-            if let Tab::Workspace(saved) = &mut entry.saved
-                && let Some(active_id) = saved.active_session_id.as_deref()
-                && ids.iter().any(|id| id == active_id)
-            {
-                saved.active_session_id = None;
+            if let Some(entry) = ui.entries.get_mut(index) {
+                ids.extend(entry.visits.poll_checks().deleted);
+                if (active_incoming_deleted
+                    || (!active
+                        && entry
+                            .cache
+                            .as_mut()
+                            .is_some_and(super::Cache::drain_session_deleted)))
+                    && let Tab::Workspace(saved) = &entry.saved
+                    && let Some(active_id) = saved.active_session_id.as_deref()
+                {
+                    ids.insert(active_id.to_owned());
+                }
+                ids.extend(std::mem::take(&mut entry.pending_deleted));
             }
             ids
         })
         .unwrap_or_default();
     for deleted_id in pending_deleted {
-        super::drafts::recover_missing_session_draft_closing_in(s, index, &deleted_id);
+        let outcome = super::drafts::recover_missing_session_draft_closing_with_uuid(
+            s,
+            index,
+            &deleted_id,
+            &mut next_uuid,
+        );
+        if outcome.deferred {
+            if let Some(ui) = &mut s.workspace
+                && let Some(entry) = ui.entries.get_mut(index)
+            {
+                entry.pending_deleted.insert(deleted_id);
+            }
+            deferred = true;
+        }
+    }
+    if deferred {
+        return;
+    }
+    if active {
+        s.notifications.supersede_navigation();
+        stash(s);
     }
     let Some(ui) = &mut s.workspace else {
         return;

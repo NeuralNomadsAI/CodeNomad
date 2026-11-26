@@ -89,10 +89,29 @@ pub fn session_deleted_hook(
     }))
 }
 
+pub(super) struct RecoveryOutcome {
+    pub(super) recovered: bool,
+    pub(super) deferred: bool,
+}
+
 pub(super) fn drain_window_deleted_sessions(s: &mut State) -> bool {
+    drain_window_deleted_sessions_closing_with_uuid(s, None, || {
+        codenomad_client::http::random_uuid_v4().ok()
+    })
+    .recovered
+}
+
+pub(super) fn drain_window_deleted_sessions_closing_with_uuid(
+    s: &mut State,
+    closing_tab: Option<usize>,
+    mut next_uuid: impl FnMut() -> Option<String>,
+) -> RecoveryOutcome {
     let incoming: Vec<(super::ProjectScope, String)> = {
         let Some(ui) = &s.workspace else {
-            return false;
+            return RecoveryOutcome {
+                recovered: false,
+                deferred: false,
+            };
         };
         let mut items = Vec::new();
         while let Ok(item) = ui.deleted_sessions.1.try_recv() {
@@ -100,15 +119,34 @@ pub(super) fn drain_window_deleted_sessions(s: &mut State) -> bool {
         }
         items
     };
-    let mut changed = false;
+    let mut recovered = false;
+    let mut deferred = false;
     for (scope, id) in incoming {
         let open_idx = s.workspace.as_ref().and_then(|ui| {
             ui.entries
                 .iter()
-                .position(|entry| matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)))
+                .enumerate()
+                .find_map(|(idx, entry)| {
+                    (Some(idx) != closing_tab
+                        && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)))
+                    .then_some(idx)
+                })
+                .or_else(|| {
+                    ui.entries.iter().position(
+                        |entry| matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)),
+                    )
+                })
         });
         if let Some(idx) = open_idx {
-            changed |= recover_missing_session_draft_in(s, Some(idx), &id);
+            let outcome = recover_missing_session_draft_with_uuid_impl(
+                s,
+                Some(idx),
+                closing_tab,
+                &id,
+                &mut next_uuid,
+            );
+            recovered |= outcome.recovered;
+            deferred |= outcome.deferred;
         } else if let Some(ui) = &mut s.workspace
             && ui
                 .closed
@@ -124,7 +162,10 @@ pub(super) fn drain_window_deleted_sessions(s: &mut State) -> bool {
             ui.closed_pending_deleted.push((scope, id));
         }
     }
-    changed
+    RecoveryOutcome {
+        recovered,
+        deferred,
+    }
 }
 
 pub(super) fn drain_incoming_session_deleted(
@@ -536,6 +577,13 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
             }
         }
     }
+    let last_tombstone_idx = ui.closed.iter().enumerate().rev().find_map(|(idx, w)| {
+        (same_project(&scope, w)
+            && w.drafts.get(id).is_some_and(String::is_empty)
+            && !w.attachment_drafts.contains(id)
+            && !w.attachment_parts.contains_key(id))
+        .then_some(idx)
+    });
     for (idx, w) in ui.closed.iter_mut().enumerate() {
         if !same_project(&scope, w) {
             continue;
@@ -544,12 +592,11 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
             .closed_restored
             .get(idx)
             .is_none_or(|set| set.contains(id));
-        let is_empty_tombstone = w.drafts.get(id).is_some_and(String::is_empty)
-            && !w.attachment_drafts.contains(id)
-            && !w.attachment_parts.contains_key(id);
         let should_remove = if closed.explicitly_cleared {
             true
-        } else if delivered_closed_idx == Some(idx) || is_empty_tombstone {
+        } else if delivered_closed_idx == Some(idx)
+            || last_tombstone_idx.is_some_and(|tomb| idx <= tomb)
+        {
             true
         } else if is_restored {
             let copy = DraftCopy::from_workspace(w, id);
@@ -723,20 +770,6 @@ fn other_project_has_draft_content(
         .closed
         .iter()
         .any(|w| same_project(scope, w) && workspace_has_draft_content(w, key))
-}
-
-fn next_recovered_draft_id(ui: &Ui, scope: &crate::workspace::Workspace) -> Option<String> {
-    for _ in 0..8 {
-        if let Ok(uuid) = codenomad_client::http::random_uuid_v4() {
-            let candidate = format!("{RECOVERED_DRAFT_PREFIX}{uuid}");
-            if is_uuid_recovered_draft_id(&candidate)
-                && !project_has_any_draft_key(ui, scope, &candidate)
-            {
-                return Some(candidate);
-            }
-        }
-    }
-    None
 }
 
 fn earliest_recovered_draft_id(
@@ -1066,14 +1099,6 @@ fn reserve_recovery_keys_with(
     Some(keys)
 }
 
-fn recover_target_key(ui: &Ui, scope: &crate::workspace::Workspace) -> Option<String> {
-    if project_has_draft_content(ui, scope, NO_SESSION_DRAFT_ID) {
-        next_recovered_draft_id(ui, scope)
-    } else {
-        Some(NO_SESSION_DRAFT_ID.into())
-    }
-}
-
 /// Records confirmed deletion of the active conversation (e.g. native `session.deleted`)
 /// so its authored draft is recovered as soon as the session is unselected, switched, or closed.
 pub fn note_session_deleted(s: &mut State) {
@@ -1108,19 +1133,21 @@ pub(super) fn recover_missing_session_draft_in(
     recover_missing_session_draft_with_uuid_impl(s, origin_tab, None, session_id, || {
         codenomad_client::http::random_uuid_v4().ok()
     })
+    .recovered
 }
 
-pub(super) fn recover_missing_session_draft_closing_in(
+pub(super) fn recover_missing_session_draft_closing_with_uuid(
     s: &mut State,
     closing_tab: usize,
     session_id: &str,
-) -> bool {
+    next_uuid: impl FnMut() -> Option<String>,
+) -> RecoveryOutcome {
     recover_missing_session_draft_with_uuid_impl(
         s,
         Some(closing_tab),
         Some(closing_tab),
         session_id,
-        || codenomad_client::http::random_uuid_v4().ok(),
+        next_uuid,
     )
 }
 
@@ -1132,6 +1159,7 @@ fn recover_missing_session_draft_with_uuid(
     next_uuid: impl FnMut() -> Option<String>,
 ) -> bool {
     recover_missing_session_draft_with_uuid_impl(s, origin_tab, None, session_id, next_uuid)
+        .recovered
 }
 
 fn recover_missing_session_draft_with_uuid_impl(
@@ -1140,22 +1168,34 @@ fn recover_missing_session_draft_with_uuid_impl(
     closing_tab: Option<usize>,
     session_id: &str,
     mut next_uuid: impl FnMut() -> Option<String>,
-) -> bool {
+) -> RecoveryOutcome {
     if session_id.is_empty() || is_local_draft_id(session_id) {
-        return false;
+        return RecoveryOutcome {
+            recovered: false,
+            deferred: false,
+        };
     }
     let on_launcher = s.screen.is_launcher();
-    let (recovered, mutated) = {
+    let (recovered, deferred, mutated) = {
         let Some(ui) = &mut s.workspace else {
-            return false;
+            return RecoveryOutcome {
+                recovered: false,
+                deferred: false,
+            };
         };
         let origin = origin_tab.unwrap_or(ui.active);
         let scope = match ui.entries.get(origin).map(|item| &item.saved) {
             Some(Tab::Workspace(saved)) => saved.clone(),
-            _ => return false,
+            _ => {
+                return RecoveryOutcome {
+                    recovered: false,
+                    deferred: false,
+                };
+            }
         };
         let mut mutated = false;
         let mut recovered = false;
+        let mut open_uuid_deferred = false;
 
         let matching_tabs: Vec<usize> = ui
             .entries
@@ -1255,7 +1295,9 @@ fn recover_missing_session_draft_with_uuid_impl(
             mutated |= purge_closed_session(ui, &scope, session_id);
             // Clear undelivered copies from sibling pending_drafts before moving independent edits.
             for &idx in &matching_tabs {
-                if occurrence_in_active_chat_on(on_launcher, ui, idx, session_id) {
+                if Some(idx) != closing_tab
+                    && occurrence_in_active_chat_on(on_launcher, ui, idx, session_id)
+                {
                     continue;
                 }
                 let entry = &mut ui.entries[idx];
@@ -1276,7 +1318,9 @@ fn recover_missing_session_draft_with_uuid_impl(
 
             // Recover independent drafts (or clean remnants) across every same-project occurrence.
             for &idx in &matching_tabs {
-                if occurrence_in_active_chat_on(on_launcher, ui, idx, session_id) {
+                if Some(idx) != closing_tab
+                    && occurrence_in_active_chat_on(on_launcher, ui, idx, session_id)
+                {
                     ui.entries[idx].pending_deleted.insert(session_id.into());
                     if clear_authorities.iter().any(|auth| {
                         auth.matches_restored(ui.entries[idx].restored_drafts.get(session_id))
@@ -1300,10 +1344,13 @@ fn recover_missing_session_draft_with_uuid_impl(
                         Tab::Workspace(saved) if has_draft_content(&ui.entries[idx], saved, session_id)
                     );
                 let target = if has_content {
-                    match recover_target_key(ui, &scope) {
+                    match reserve_recovery_keys_with(ui, &scope, 1, &mut next_uuid)
+                        .and_then(|mut keys| keys.pop())
+                    {
                         Some(target) => Some(target),
                         None => {
                             ui.entries[idx].pending_deleted.insert(session_id.into());
+                            open_uuid_deferred = true;
                             continue;
                         }
                     }
@@ -1382,7 +1429,8 @@ fn recover_missing_session_draft_with_uuid_impl(
 
         let any_eligible_deferred = matching_tabs.iter().any(|&idx| {
             ui.entries[idx].pending_deleted.contains(session_id)
-                && !occurrence_in_active_chat_on(on_launcher, ui, idx, session_id)
+                && (Some(idx) == closing_tab
+                    || !occurrence_in_active_chat_on(on_launcher, ui, idx, session_id))
         });
         if closed_handled && !any_eligible_deferred {
             ui.closed_pending_deleted
@@ -1393,7 +1441,7 @@ fn recover_missing_session_draft_with_uuid_impl(
             ui.changed();
             ui.stage();
         }
-        (recovered, mutated)
+        (recovered, !closed_handled || open_uuid_deferred, mutated)
     };
     let _ = mutated;
     if recovered {
@@ -1407,7 +1455,10 @@ fn recover_missing_session_draft_with_uuid_impl(
             message,
         );
     }
-    recovered
+    RecoveryOutcome {
+        recovered,
+        deferred,
+    }
 }
 
 /// Retries any deferred deletion recoveries (e.g. after temporary UUID entropy failure or
