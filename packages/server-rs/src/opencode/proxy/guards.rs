@@ -44,9 +44,70 @@ pub(super) fn safe_route(value: &str) -> Option<String> {
     decode(value)
 }
 
+pub(super) fn valid_segment(seg: &str) -> bool {
+    !seg.is_empty()
+        && !seg.contains('/')
+        && seg.encode_utf16().count() <= 256
+        && !seg.chars().any(|c| c.is_ascii_control())
+}
+
+pub(super) fn is_credential_mutation(route: &str, method: &Method) -> bool {
+    let Some(rest) = route.strip_prefix("/api/credential/") else {
+        return false;
+    };
+    match *method {
+        Method::PATCH | Method::DELETE => valid_segment(rest),
+        Method::POST => rest.strip_suffix("/activate").is_some_and(valid_segment),
+        _ => false,
+    }
+}
+
+pub(super) fn is_integration_connect_mutation(route: &str, method: &Method) -> bool {
+    let Some(rest) = route.strip_prefix("/api/integration/") else {
+        return false;
+    };
+    let Some((integration_id, tail)) = rest.split_once("/connect/") else {
+        return false;
+    };
+    if !valid_segment(integration_id) {
+        return false;
+    }
+    match *method {
+        Method::POST => {
+            matches!(tail, "key" | "oauth" | "command" | "external")
+                || tail.strip_prefix("oauth/").and_then(|s| s.strip_suffix("/complete")).is_some_and(valid_segment)
+        }
+        Method::DELETE => {
+            tail.strip_prefix("oauth/").or_else(|| tail.strip_prefix("command/")).is_some_and(valid_segment)
+        }
+        _ => false,
+    }
+}
+
+pub(super) fn is_account_mutation(route: &str, method: &Method) -> bool {
+    is_credential_mutation(route, method) || is_integration_connect_mutation(route, method)
+}
+
+pub(super) fn is_account_no_store_route(route: &str, method: &Method) -> bool {
+    is_account_mutation(route, method)
+        || (*method == Method::GET
+            && route.strip_prefix("/api/integration/").and_then(|r| r.split_once("/connect/")).is_some_and(
+                |(id, tail)| {
+                    valid_segment(id)
+                        && tail
+                            .strip_prefix("oauth/")
+                            .or_else(|| tail.strip_prefix("command/"))
+                            .is_some_and(valid_segment)
+                },
+            ))
+}
+
 pub(super) fn guarded(route: &str, method: &Method) -> bool {
     if *method == Method::GET {
         return !route.starts_with("/api/fs/") && !route.starts_with("/api/pty") && !route.starts_with("/api/shell");
+    }
+    if is_account_mutation(route, method) {
+        return true;
     }
     let session_segment = route
         .strip_prefix("/api/session/")

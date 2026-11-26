@@ -130,6 +130,63 @@ async fn fake_native(State(state): State<Arc<NativeState>>, req: Request) -> Res
         }))
         .into_response(),
         (Method::DELETE, "/api/session/ses_owned") => Status::NO_CONTENT.into_response(),
+        (Method::GET, "/api/integration/openai") => Json(json!({
+            "location": {"directory": state.root},
+            "data": {
+                "id": "openai",
+                "name": "OpenAI",
+                "methods": [],
+                "connections": [
+                    {"type": "credential", "id": "cre_1", "label": "default", "method": "oauth"},
+                    {"type": "credential", "id": "cre_2", "label": "Work", "method": "oauth"}
+                ]
+            }
+        }))
+        .into_response(),
+        (Method::GET, "/api/credential") => {
+            let exp = crate::shared::now_ms() + 3_600_000;
+            Json(json!({
+                "data": [
+                    {
+                        "id": "cre_1",
+                        "integrationID": "openai",
+                        "label": "default",
+                        "active": true,
+                        "value": {
+                            "type": "oauth",
+                            "methodID": "chatgpt-browser",
+                            "access": "secret-remote-1",
+                            "expires": exp,
+                            "metadata": {"accountID": "acct-1", "email": "one@example.com"}
+                        }
+                    },
+                    {
+                        "id": "cre_2",
+                        "integrationID": "openai",
+                        "label": "Work",
+                        "active": false,
+                        "value": {
+                            "type": "oauth",
+                            "methodID": "chatgpt-browser",
+                            "access": "secret-remote-2",
+                            "expires": exp,
+                            "metadata": {"accountID": "acct-2", "email": "two@example.com"}
+                        }
+                    }
+                ]
+            }))
+            .into_response()
+        }
+        (Method::POST, "/api/credential/cre_1/activate") => Status::NO_CONTENT.into_response(),
+        (Method::PATCH, "/api/credential/cre_1") => Status::NO_CONTENT.into_response(),
+        (Method::DELETE, "/api/credential/cre_1") => Status::NO_CONTENT.into_response(),
+        (Method::POST, p) if p.starts_with("/api/integration/") && p.contains("/connect/") => {
+            Json(json!({"data": {"attemptID": "att_remote", "mode": "code", "url": "https://example.test/oauth"}}))
+                .into_response()
+        }
+        (Method::DELETE, p) if p.starts_with("/api/integration/") && p.contains("/connect/") => {
+            Status::NO_CONTENT.into_response()
+        }
         _ => Status::NOT_IMPLEMENTED.into_response(),
     }
 }
@@ -789,4 +846,219 @@ async fn remote_memory_requires_multi_backend_for_browsers_and_preserves_local_a
     local_task.abort();
     direct_task.abort();
     ingress_task.abort();
+}
+
+#[tokio::test]
+async fn paired_browser_and_server_device_admit_provider_accounts_and_connect_routes() {
+    let dir = TempDir(crate::shared::test_dir("remote-provider-accounts"));
+    let root = dir.0.join("project");
+    let foreign = dir.0.join("other");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&foreign).unwrap();
+    let root = dunce::canonicalize(&root).unwrap();
+    let foreign = dunce::canonicalize(&foreign).unwrap();
+    let root_str = root.to_string_lossy().into_owned();
+    let root_encoded = percent_encoding::utf8_percent_encode(&root_str, percent_encoding::NON_ALPHANUMERIC).to_string();
+
+    let native_state = Arc::new(NativeState {
+        root: root.clone(),
+        foreign,
+        calls: Mutex::new(Vec::new()),
+        global_form_scopes: Mutex::new(Vec::new()),
+    });
+    let native_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let native_addr = native_listener.local_addr().unwrap();
+    let native_task = tokio::spawn(async move {
+        axum::serve(native_listener, Router::new().fallback(any(fake_native)).with_state(native_state)).await.unwrap();
+    });
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    for ingress in [false, true] {
+        let mode = if ingress { "ingress" } else { "direct" };
+        let host = if ingress { "remote.example.test" } else { "192.168.1.44:9898" };
+        let origin = format!("https://{host}");
+        let origins = vec![origin.clone()];
+        let mode_dir = dir.0.join(mode);
+        std::fs::create_dir_all(&mode_dir).unwrap();
+        let devices = if ingress {
+            devices::open_ingress_for_test(&mode_dir, origin.clone())
+        } else {
+            devices::open_for_test(&mode_dir, origin.clone(), origins.clone())
+        };
+        let app = build_app(&dir.0, opencode::Native::test_connection(native_addr), devices);
+        let ws_id = Uuid::new_v4();
+        app.inner.lock().unwrap().workspaces.push(Workspace {
+            id: ws_id,
+            request_id: None,
+            path: root.clone(),
+            name: None,
+            status: "ready",
+            proxy_path: format!("/workspaces/{ws_id}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({"directory": root}),
+            temporary: None,
+        });
+        let router = auth::remote_routes()
+            .merge(crate::provider_usage::routes())
+            .route("/workspaces/{id}/instance/{*route}", any(opencode::proxy::relay))
+            .layer(from_fn_with_state((app.clone(), None), admit))
+            .layer(from_fn(per_request_channel(origin.clone(), Arc::from(origins), ingress)))
+            .with_state(app.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server_task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+        let browser_cookie = pair_browser(&client, &app, &base, host, &origin, ingress).await;
+        let server_cookie = pair_server_device(&client, &app, &base, host, &origin, ingress).await;
+
+        let accounts_url = format!("{base}/api/workspaces/{ws_id}/provider-accounts/openai");
+        let instance = format!("{base}/workspaces/{ws_id}/instance/api");
+
+        for (label, is_server, cookie) in [("browser", false, &browser_cookie), ("server-device", true, &server_cookie)]
+        {
+            let send = |method: Method, url: String, body: Option<Value>| {
+                let mut req = client.request(method, url).header(header::HOST, host).header(header::COOKIE, cookie);
+                if is_server {
+                    req = req.header("x-codenomad-server-request", "1");
+                } else {
+                    req = req.header(header::ORIGIN, &origin);
+                }
+                if let Some(body) = body {
+                    req = req.json(&body);
+                }
+                req.send()
+            };
+
+            // GET & PUT provider-accounts
+            let get_res = send(Method::GET, format!("{accounts_url}?directory={root_encoded}"), None).await.unwrap();
+            assert_eq!(get_res.status(), Status::OK, "{mode} {label} GET provider-accounts");
+            assert_eq!(get_res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+
+            let put_res =
+                send(Method::PUT, accounts_url.clone(), Some(json!({"directory": root_str, "enabled": true})))
+                    .await
+                    .unwrap();
+            assert_eq!(put_res.status(), Status::OK, "{mode} {label} PUT provider-accounts");
+            assert_eq!(put_res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+            let put_json: Value = put_res.json().await.unwrap();
+            assert_eq!(put_json["enabled"], true);
+            assert!(!put_json.to_string().contains("secret-remote"));
+
+            // Integration connect & credential proxy mutations
+            for (method, url, body) in [
+                (Method::POST, format!("{instance}/integration/openai/connect/key"), Some(json!({"key": "sk-remote"}))),
+                (
+                    Method::POST,
+                    format!("{instance}/integration/openai/connect/oauth"),
+                    Some(json!({"methodID": "chatgpt-browser"})),
+                ),
+                (
+                    Method::POST,
+                    format!("{instance}/integration/openai/connect/command"),
+                    Some(json!({"methodID": "cli"})),
+                ),
+                (
+                    Method::POST,
+                    format!("{instance}/integration/azure/connect/external"),
+                    Some(json!({"methodID": "azure-cli"})),
+                ),
+                (
+                    Method::POST,
+                    format!("{instance}/integration/openai/connect/oauth/att_remote/complete"),
+                    Some(json!({"code": "123"})),
+                ),
+                (Method::DELETE, format!("{instance}/integration/openai/connect/oauth/att_remote"), None),
+                (Method::DELETE, format!("{instance}/integration/openai/connect/command/att_remote"), None),
+                (Method::POST, format!("{instance}/credential/cre_1/activate"), None),
+                (Method::PATCH, format!("{instance}/credential/cre_1"), Some(json!({"label": "Remote"}))),
+                (Method::DELETE, format!("{instance}/credential/cre_1"), None),
+            ] {
+                let res = send(method.clone(), url.clone(), body).await.unwrap();
+                assert!(res.status().is_success(), "{mode} {label} {method} {url} -> {}", res.status());
+                assert_eq!(res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+            }
+
+            // Disallowed native credential export stays 403 with no-store
+            let export = send(Method::GET, format!("{instance}/credential"), None).await.unwrap();
+            assert_eq!(export.status(), Status::FORBIDDEN, "{mode} {label} GET /api/credential");
+            assert_eq!(export.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+        }
+
+        // Unpaired PUT provider-accounts is rejected with 401 and Cache-Control: no-store.
+        let unpaired = client
+            .put(&accounts_url)
+            .header(header::HOST, host)
+            .header(header::ORIGIN, &origin)
+            .json(&json!({"directory": root_str, "enabled": true}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unpaired.status(), Status::UNAUTHORIZED, "{mode} unpaired PUT");
+        assert_eq!(unpaired.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+
+        // Cross-origin paired browser mutation is rejected with 403 and Cache-Control: no-store.
+        let cross_origin = client
+            .post(format!("{instance}/credential/cre_1/activate"))
+            .header(header::HOST, host)
+            .header(header::ORIGIN, "https://evil.example")
+            .header(header::COOKIE, &browser_cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cross_origin.status(), Status::FORBIDDEN, "{mode} cross-origin activate");
+        assert_eq!(cross_origin.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+
+        server_task.abort();
+    }
+
+    // Local auth middleware also returns Cache-Control: no-store on unauthenticated account refusals.
+    let local_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = local_listener.local_addr().unwrap();
+    let local_auth = auth::Auth::new(auth::Settings {
+        username: "codenomad".into(),
+        password: Some("secret-pass".into()),
+        file: None,
+        cookie: auth::DEFAULT_COOKIE.into(),
+        token: false,
+        managed_local: false,
+        skip: false,
+        idle: Duration::from_secs(60),
+        absolute: Duration::from_secs(60),
+    })
+    .unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(4);
+    let local_app = Arc::new(App::new(
+        local_auth,
+        local_addr.port(),
+        dir.0.clone(),
+        dir.0.clone(),
+        false,
+        settings::Settings::new(settings::document::Location::resolve(dir.0.join("local.yaml").to_str().unwrap())),
+        Value::Null,
+        opencode::Native::test_connection(native_addr),
+        PathBuf::new(),
+        None,
+        files::watch::Watches::new(tx),
+        None,
+    ));
+    let local_ws = Uuid::new_v4();
+    let local_router = crate::provider_usage::routes()
+        .route("/workspaces/{id}/instance/{*route}", any(opencode::proxy::relay))
+        .layer(from_fn_with_state(local_app.clone(), auth::admit))
+        .with_state(local_app);
+    let local_base = format!("http://{local_addr}");
+    let local_task = tokio::spawn(async move { axum::serve(local_listener, local_router).await.unwrap() });
+    for (method, url) in [
+        (Method::PUT, format!("{local_base}/api/workspaces/{local_ws}/provider-accounts/openai")),
+        (Method::POST, format!("{local_base}/workspaces/{local_ws}/instance/api/credential/cre_1/activate")),
+    ] {
+        let res = client.request(method.clone(), &url).send().await.unwrap();
+        assert_eq!(res.status(), Status::UNAUTHORIZED, "local unauth {method} {url}");
+        assert_eq!(res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+    }
+    local_task.abort();
+    native_task.abort();
 }

@@ -8,7 +8,10 @@ use axum::{
 };
 use serde_json::{Value, json};
 
-use super::guards::{carrier_denied, directory_identity, foreign, marker, one_location, same_target, schedule_input};
+use super::guards::{
+    carrier_denied, directory_identity, foreign, is_account_mutation, is_account_no_store_route, is_json_content_type,
+    marker, one_location, same_target, schedule_input,
+};
 use crate::missions::human_answer;
 use crate::opencode::{Endpoint, controls, upstream_error};
 use crate::{Error, Shared, Workspace, error, not_found, unavailable};
@@ -19,6 +22,9 @@ pub(super) struct PreparedMutation {
     pub input: Option<Value>,
     pub rules_lock: Option<tokio::sync::OwnedMutexGuard<()>>,
     pub mutation: Option<crate::worktrees::fence::Entered>,
+    pub account_manual: Option<crate::provider_usage::selection::ManualGuard>,
+    pub account_context_dir: Option<String>,
+    pub account_verified_locs: Vec<VerifiedAccountLocation>,
     pub receipt: Option<crate::sessions::receipts::Prepared>,
 }
 
@@ -96,6 +102,8 @@ pub(super) struct MutationContext<'a> {
         &'a [(String, crate::opencode::prompt::Location, (Arc<std::sync::atomic::AtomicBool>, tokio::time::Instant))],
     pub trace_fence: bool,
     pub explicit: bool,
+    pub requested_dirs: &'a [String],
+    pub location_context_dir: Option<&'a str>,
     pub session_list: bool,
     pub target: &'a mut reqwest::Url,
 }
@@ -115,6 +123,8 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         prompt_locations,
         trace_fence,
         explicit,
+        requested_dirs,
+        location_context_dir,
         session_list,
         target,
     } = ctx;
@@ -124,6 +134,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     let revert_stage = session.is_some() && route.ends_with("/revert/stage") && head.method == Method::POST;
     let background =
         route.starts_with("/api/session/") && route.ends_with("/background") && head.method == Method::POST;
+    let account_mutation = is_account_mutation(route, &head.method);
     let inbox_patch = session.is_some()
         && head.method == Method::PATCH
         && route.strip_prefix("/api/session/").and_then(|r| r.split_once("/inbox/")).is_some_and(|(sid, item)| {
@@ -134,6 +145,11 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/'));
     let mut root_permissions = None;
     let mut input = None;
+    let mut account_verified_locs: Vec<VerifiedAccountLocation> = Vec::new();
+    let mut account_query_resolved: Option<String> = None;
+    let mut account_body_resolved: Option<String> = None;
+    let mut account_context_dir: Option<String> = None;
+    let mut has_body_location = false;
     if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE) {
         let mut body_empty = false;
         let data: Value = if let Some(data) = prompt_input.take() {
@@ -149,13 +165,18 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 body_empty = true;
                 json!({})
             } else {
-                if !head
-                    .headers
-                    .get(header::CONTENT_TYPE)
-                    .is_some_and(|v| v.as_bytes().starts_with(b"application/json"))
-                {
+                let valid_ct = if account_mutation {
+                    is_json_content_type(&head.headers)
+                } else {
+                    head.headers
+                        .get(header::CONTENT_TYPE)
+                        .is_some_and(|v| v.as_bytes().starts_with(b"application/json"))
+                };
+                if !valid_ct {
                     return Err(if control.is_some() {
                         controls::invalid("Invalid session control")
+                    } else if account_mutation {
+                        error(Status::BAD_REQUEST, "Invalid request body")
                     } else {
                         error(Status::BAD_REQUEST, "Session request requires a JSON object")
                     });
@@ -170,6 +191,41 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             control.validate(&data, &target)?;
             if head.method != Method::DELETE {
                 input = Some(data);
+            }
+        } else if account_mutation {
+            let Value::Object(mut data) = data else {
+                return Err(error(Status::BAD_REQUEST, "Invalid request body"));
+            };
+            if schedule_input(&data) {
+                return Err(carrier_denied());
+            }
+            let is_credential = route.starts_with("/api/credential/");
+            let opened = workspace.location["directory"].as_str().ok_or_else(upstream_error)?;
+            let resolved =
+                resolve_account_locations(app, workspace, &data, opened, requested_dirs, location_context_dir).await?;
+            validate_account_body(route, &head.method, &data, body_empty)?;
+            if !is_credential {
+                account_query_resolved = resolved.queries.first().map(|loc| loc.owned.directory.clone());
+                account_body_resolved = resolved.body.as_ref().map(|loc| loc.owned.directory.clone());
+                if let Some(ctx_loc) = &resolved.context {
+                    account_context_dir = Some(ctx_loc.owned.directory.clone());
+                }
+                has_body_location = resolved.body.is_some();
+            }
+            // Native OpenCode account endpoints never take `location` in the JSON body
+            // (including `location: null`); integration routes carry it in `location[directory]`
+            // or `x-opencode-directory`, while global credential mutations consume it only for
+            // workspace authority and deletion fencing.
+            data.remove("location");
+            account_verified_locs.extend(resolved.queries);
+            for item in [resolved.context, resolved.body].into_iter().flatten() {
+                account_verified_locs.push(item);
+            }
+            if account_verified_locs.is_empty() && !is_credential {
+                account_verified_locs.push(capture_account_location(app, workspace, opened.to_owned()).await?);
+            }
+            if head.method != Method::DELETE && !body_empty && !(is_credential && head.method == Method::POST) {
+                input = Some(Value::Object(data));
             }
         } else {
             let Value::Object(mut data) = data else {
@@ -238,6 +294,24 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 input = Some(Value::Object(data));
             }
         }
+    } else if is_account_no_store_route(route, &head.method) {
+        let opened = workspace.location["directory"].as_str().ok_or_else(upstream_error)?;
+        let empty = serde_json::Map::new();
+        let resolved =
+            resolve_account_locations(app, workspace, &empty, opened, requested_dirs, location_context_dir).await?;
+        if let Some(q_loc) = resolved.queries.first() {
+            account_query_resolved = Some(q_loc.owned.directory.clone());
+        }
+        if let Some(ctx_loc) = &resolved.context {
+            account_context_dir = Some(ctx_loc.owned.directory.clone());
+        }
+        account_verified_locs.extend(resolved.queries);
+        if let Some(ctx_loc) = resolved.context {
+            account_verified_locs.push(ctx_loc);
+        }
+        if account_verified_locs.is_empty() {
+            account_verified_locs.push(capture_account_location(app, workspace, opened.to_owned()).await?);
+        }
     }
     let rules_lock = if permissions_patch {
         #[cfg(test)]
@@ -299,6 +373,9 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             }
             checkouts.push(key);
         }
+        for loc in &account_verified_locs {
+            checkouts.push(fence::identity(&loc.owned.checkout));
+        }
         checkouts.extend(session.map(fence::session));
         if trace_fence {
             eprintln!("mutation-fence prompt {session:?}: admit");
@@ -329,6 +406,13 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     } else {
         None
     };
+    let account_manual =
+        if account_mutation { Some(app.provider_usage.accounts.manual_fence(endpoint).await) } else { None };
+    for loc in &account_verified_locs {
+        if !verify_account_location_live(app, workspace, loc).await {
+            return Err(foreign());
+        }
+    }
     if send_input {
         let session = session.ok_or_else(upstream_error)?;
         let mut url = endpoint.url.clone();
@@ -364,6 +448,10 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         }
         // `syncSessionMemoryContext`: advisory, bounded to its own 2 s budget.
         crate::memory::sync(app, endpoint, session, || async { recheck.verify().await.is_ok() }).await;
+        crate::provider_usage::selection::before_send(app, endpoint, principal, session, |dir| async move {
+            dir == directory && recheck.verify().await.is_ok()
+        })
+        .await?;
         let fresh = recheck.verify().await?;
         #[cfg(test)]
         crate::worktrees::fence_test_trace::record("permission rules", "waiting for send refresh");
@@ -374,7 +462,47 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         #[cfg(test)]
         crate::worktrees::fence_test_trace::record("permission rules", "send refresh finished");
     }
-    if !explicit && !create && session.is_none() && !matches!(route, "/api/project" | "/api/session/active") {
+    if account_mutation && route.starts_with("/api/credential/") {
+        let pairs: Vec<(String, String)> = target
+            .query_pairs()
+            .into_owned()
+            .filter(|(k, _)| !matches!(k.as_str(), "directory" | "location[directory]"))
+            .collect();
+        if pairs.is_empty() {
+            target.set_query(None);
+        } else {
+            target.query_pairs_mut().clear().extend_pairs(pairs);
+        }
+    } else if let Some(ref translated) = account_query_resolved {
+        let mut emitted_location = false;
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for (k, v) in target.query_pairs().into_owned() {
+            if matches!(k.as_str(), "directory" | "location[directory]") {
+                if !emitted_location {
+                    emitted_location = true;
+                    pairs.push(("location[directory]".into(), translated.clone()));
+                }
+            } else {
+                pairs.push((k, v));
+            }
+        }
+        target.query_pairs_mut().clear().extend_pairs(pairs);
+    }
+    if account_mutation
+        && !route.starts_with("/api/credential/")
+        && !explicit
+        && account_context_dir.is_none()
+        && let Some(ref translated) = account_body_resolved
+    {
+        target.query_pairs_mut().append_pair("location[directory]", translated);
+    } else if !explicit
+        && !has_body_location
+        && account_context_dir.is_none()
+        && !create
+        && session.is_none()
+        && !matches!(route, "/api/project" | "/api/session/active")
+        && !route.starts_with("/api/credential/")
+    {
         target.query_pairs_mut().append_pair(if session_list { "directory" } else { "location[directory]" }, directory);
     }
 
@@ -441,5 +569,264 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             return Err(upstream_error());
         }
     }
-    Ok(MutationOutcome::Ready(PreparedMutation { fork, root_permissions, input, rules_lock, mutation, receipt }))
+    Ok(MutationOutcome::Ready(PreparedMutation {
+        fork,
+        root_permissions,
+        input,
+        rules_lock,
+        mutation,
+        account_manual,
+        account_context_dir,
+        account_verified_locs,
+        receipt,
+    }))
+}
+
+pub(super) struct VerifiedAccountLocation {
+    raw: String,
+    owned: crate::worktrees::ownership::Owned,
+    checkout_handle: same_file::Handle,
+    anchor: PathBuf,
+    anchor_handle: same_file::Handle,
+}
+
+async fn capture_account_location(
+    app: &Shared,
+    workspace: &Workspace,
+    raw: String,
+) -> Result<VerifiedAccountLocation, Error> {
+    let owned = crate::worktrees::ownership::resolve(app, workspace, &raw).await.ok_or_else(foreign)?;
+    let dir_path = PathBuf::from(&owned.directory);
+    let checkout_path = owned.checkout.clone();
+    let (checkout_handle, anchor, anchor_handle) = tokio::task::spawn_blocking(move || {
+        let checkout_handle = same_file::Handle::from_path(&checkout_path).ok()?;
+        let anchor = crate::worktrees::ownership::existing_directory(&dir_path)?.to_path_buf();
+        let anchor_handle = same_file::Handle::from_path(&anchor).ok()?;
+        Some((checkout_handle, anchor, anchor_handle))
+    })
+    .await
+    .ok()
+    .flatten()
+    .ok_or_else(foreign)?;
+    Ok(VerifiedAccountLocation { raw, owned, checkout_handle, anchor, anchor_handle })
+}
+
+pub(super) async fn verify_account_location_live(
+    app: &Shared,
+    workspace: &Workspace,
+    loc: &VerifiedAccountLocation,
+) -> bool {
+    if !crate::sessions::permission_mode::workspace_current(app, workspace) {
+        return false;
+    }
+    let Some(latest) = crate::worktrees::ownership::resolve(app, workspace, &loc.raw).await else {
+        return false;
+    };
+    if latest.directory != loc.owned.directory || latest.checkout != loc.owned.checkout {
+        return false;
+    }
+    let dir_path = PathBuf::from(&latest.directory);
+    let checkout_path = latest.checkout;
+    let expected_anchor = loc.anchor.clone();
+    let handles = tokio::task::spawn_blocking(move || {
+        let checkout = same_file::Handle::from_path(&checkout_path).ok()?;
+        let anchor_live = crate::worktrees::ownership::existing_directory(&dir_path) == Some(expected_anchor.as_path());
+        if !anchor_live {
+            return None;
+        }
+        let anchor = same_file::Handle::from_path(&expected_anchor).ok()?;
+        Some((checkout, anchor))
+    })
+    .await
+    .ok()
+    .flatten();
+    handles.is_some_and(|(checkout, anchor)| checkout == loc.checkout_handle && anchor == loc.anchor_handle)
+}
+
+struct AccountLocations {
+    queries: Vec<VerifiedAccountLocation>,
+    context: Option<VerifiedAccountLocation>,
+    body: Option<VerifiedAccountLocation>,
+}
+
+async fn resolve_account_locations(
+    app: &Shared,
+    workspace: &Workspace,
+    data: &serde_json::Map<String, Value>,
+    opened: &str,
+    requested_dirs: &[String],
+    location_context_dir: Option<&str>,
+) -> Result<AccountLocations, Error> {
+    let invalid_loc = || error(Status::BAD_REQUEST, "Location does not belong to workspace");
+    if data.contains_key("workspace") || data.contains_key("workspaceID") {
+        return Err(invalid_loc());
+    }
+    let body_raw: Option<String> = if let Some(loc_val) = data.get("location")
+        && !loc_val.is_null()
+    {
+        let loc = loc_val.as_object().ok_or_else(invalid_loc)?;
+        if loc.contains_key("workspace") || loc.contains_key("workspaceID") || loc.keys().any(|k| k != "directory") {
+            return Err(invalid_loc());
+        }
+        let dir = match loc.get("directory") {
+            Some(v) => v
+                .as_str()
+                .filter(|s| !s.trim().is_empty() && !s.contains('\0') && s.encode_utf16().count() <= 4096)
+                .ok_or_else(invalid_loc)?,
+            None => opened,
+        };
+        Some(dir.to_owned())
+    } else {
+        None
+    };
+
+    let mut queries = Vec::with_capacity(requested_dirs.len());
+    for raw in requested_dirs {
+        queries.push(capture_account_location(app, workspace, raw.clone()).await?);
+    }
+    let context = match location_context_dir {
+        Some(raw) => Some(capture_account_location(app, workspace, raw.to_owned()).await?),
+        None => None,
+    };
+    let body = match body_raw {
+        Some(raw) => Some(capture_account_location(app, workspace, raw).await?),
+        None => None,
+    };
+
+    let mut canonical: Option<&str> = None;
+    for item in queries.iter().chain(context.iter()).chain(body.iter()) {
+        if let Some(prev) = canonical
+            && prev != item.owned.directory
+        {
+            return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
+        }
+        canonical = Some(item.owned.directory.as_str());
+    }
+    Ok(AccountLocations { queries, context, body })
+}
+
+fn validate_account_body(
+    route: &str,
+    method: &Method,
+    data: &serde_json::Map<String, Value>,
+    body_empty: bool,
+) -> Result<(), Error> {
+    let invalid = || error(Status::BAD_REQUEST, "Invalid request body");
+    let check_optional_label = |data: &serde_json::Map<String, Value>| -> Result<(), Error> {
+        if let Some(v) = data.get("label")
+            && !v.is_null()
+            && !v.as_str().is_some_and(|s| s.encode_utf16().count() <= 512 && !s.contains('\0'))
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    };
+    let check_optional_answer = |data: &serde_json::Map<String, Value>| -> Result<(), Error> {
+        if let Some(v) = data.get("answer")
+            && !v.is_null()
+            && !v.is_object()
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    };
+    if let Some(rest) = route.strip_prefix("/api/credential/") {
+        return match *method {
+            Method::PATCH => {
+                if body_empty || data.keys().any(|k| !matches!(k.as_str(), "label" | "location")) {
+                    return Err(invalid());
+                }
+                if !data
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.trim().is_empty() && s.encode_utf16().count() <= 256 && !s.contains('\0'))
+                {
+                    return Err(invalid());
+                }
+                Ok(())
+            }
+            Method::POST if rest.ends_with("/activate") => {
+                if !body_empty && data.keys().any(|k| k != "location") {
+                    return Err(invalid());
+                }
+                Ok(())
+            }
+            Method::DELETE => {
+                if !body_empty && data.keys().any(|k| k != "location") {
+                    return Err(invalid());
+                }
+                Ok(())
+            }
+            _ => Err(invalid()),
+        };
+    }
+    let Some((_, tail)) = route.strip_prefix("/api/integration/").and_then(|r| r.split_once("/connect/")) else {
+        return Err(invalid());
+    };
+    match (method, tail) {
+        (m, "key") if *m == Method::POST => {
+            if body_empty || data.keys().any(|k| !matches!(k.as_str(), "key" | "answer" | "label" | "location")) {
+                return Err(invalid());
+            }
+            if !data
+                .get("key")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty() && s.len() <= 65_536 && !s.contains('\0'))
+            {
+                return Err(invalid());
+            }
+            check_optional_answer(data)?;
+            check_optional_label(data)?;
+            Ok(())
+        }
+        (m, "oauth" | "external") if *m == Method::POST => {
+            if body_empty || data.keys().any(|k| !matches!(k.as_str(), "methodID" | "answer" | "label" | "location")) {
+                return Err(invalid());
+            }
+            if !data
+                .get("methodID")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty() && s.encode_utf16().count() <= 256 && !s.contains('\0'))
+            {
+                return Err(invalid());
+            }
+            check_optional_answer(data)?;
+            check_optional_label(data)?;
+            Ok(())
+        }
+        (m, "command") if *m == Method::POST => {
+            if body_empty || data.keys().any(|k| !matches!(k.as_str(), "methodID" | "label" | "location")) {
+                return Err(invalid());
+            }
+            if !data
+                .get("methodID")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty() && s.encode_utf16().count() <= 256 && !s.contains('\0'))
+            {
+                return Err(invalid());
+            }
+            check_optional_label(data)?;
+            Ok(())
+        }
+        (m, t) if *m == Method::POST && t.starts_with("oauth/") && t.ends_with("/complete") => {
+            if body_empty || data.keys().any(|k| !matches!(k.as_str(), "code" | "location")) {
+                return Err(invalid());
+            }
+            if !data
+                .get("code")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty() && s.len() <= 16_384 && !s.contains('\0'))
+            {
+                return Err(invalid());
+            }
+            Ok(())
+        }
+        (m, t) if *m == Method::DELETE && (t.starts_with("oauth/") || t.starts_with("command/")) => {
+            if !body_empty && data.keys().any(|k| k != "location") {
+                return Err(invalid());
+            }
+            Ok(())
+        }
+        _ => Err(invalid()),
+    }
 }
