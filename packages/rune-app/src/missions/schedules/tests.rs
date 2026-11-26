@@ -1415,9 +1415,9 @@ fn late_sibling_401_between_collect_and_apply_blocks_activation_play() {
         assert!(exp.is_empty());
 
         // Sibling control returns 401 AFTER collect_ready and BEFORE apply_ready.
-        while h.done.try_recv().is_ok() {}
+        assert!(h.holds.auth_sink().lock().unwrap().is_empty());
         ctrl_b.reply(401, json!({"error": "unauthorized"})).await;
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), h.done.recv()).await;
+        wait_auth_sink(&h.holds.auth_sink(), &h.done).await;
 
         let av = h.panel.active_schedule_view("occ-1");
         assert!(av.is_some());

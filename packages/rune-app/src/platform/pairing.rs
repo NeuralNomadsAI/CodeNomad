@@ -8,6 +8,7 @@ use wasm_bindgen::{JsCast, closure::Closure};
 #[derive(Default)]
 pub struct Recovery {
     required: bool,
+    auth_epoch: u64,
     result: Option<Receiver<Option<bool>>>,
     focus: Option<FocusCheck>,
 }
@@ -49,7 +50,8 @@ pub fn available() -> bool {
 }
 
 pub fn observe(s: &mut State) {
-    crate::workspace::revoke_schedule_continuations(s);
+    s.pairing.auth_epoch = s.pairing.auth_epoch.wrapping_add(1);
+    crate::workspace::revoke_schedule_continuations(s, s.pairing.auth_epoch);
     if s.pairing.result.is_some() || !available() {
         return;
     }
@@ -109,6 +111,10 @@ pub fn required(s: &State) -> bool {
 
 pub fn checking(s: &State) -> bool {
     s.pairing.result.is_some()
+}
+
+pub fn auth_epoch(s: &State) -> u64 {
+    s.pairing.auth_epoch
 }
 
 pub fn view(s: &State) -> El {

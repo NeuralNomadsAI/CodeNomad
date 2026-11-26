@@ -371,7 +371,10 @@ impl Editor {
             } else {
                 "status"
             }));
-            if key == "settings.configFiles.errors.loadList" || self.active.is_none() {
+            if key == "settings.configFiles.errors.loadList"
+                || self.active.is_none()
+                || (key == "settings.configFiles.errors.loadContent" && self.requested_id.is_some())
+            {
                 view = view.child(layout::button(
                     t("sessionList.loadError.retry"),
                     waiting,

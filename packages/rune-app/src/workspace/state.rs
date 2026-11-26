@@ -186,6 +186,8 @@ pub struct Ui {
     mission_briefing: crate::missions::BriefingRequests,
     mission_editor: crate::missions::EditorHolds,
     mission_schedules: crate::missions::ScheduleHolds,
+    #[cfg(target_arch = "wasm32")]
+    pairing_auth_epoch: u64,
     entries: Vec<Entry>,
     active: usize,
     next_key: u64,
@@ -231,6 +233,8 @@ impl Ui {
             mission_briefing: Default::default(),
             mission_editor: Default::default(),
             mission_schedules: Default::default(),
+            #[cfg(target_arch = "wasm32")]
+            pairing_auth_epoch: 0,
             entries: vec![entry("tab-0".into(), Tab::Blank)],
             active: 0,
             next_key: 1,

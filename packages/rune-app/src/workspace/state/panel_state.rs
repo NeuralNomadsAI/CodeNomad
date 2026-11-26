@@ -600,6 +600,18 @@ pub(super) fn poll_missions(
     s: &State,
     tx: &mut rune::Tx,
 ) -> (bool, Vec<crate::backend::Backend>, bool) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let epoch = crate::platform::pairing::auth_epoch(s);
+        if ui.pairing_auth_epoch != epoch {
+            ui.pairing_auth_epoch = epoch;
+            for entry in &mut ui.entries {
+                if let Some(panel) = entry.missions.as_mut() {
+                    panel.schedules.revoke_continuation();
+                }
+            }
+        }
+    }
     let finished = ui.mission_lifecycle.poll();
     let mut changed = !finished.is_empty();
     let mut auth_expired = Vec::new();
@@ -925,8 +937,12 @@ pub(super) fn deliver_mission_auth_expired(
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn revoke_schedule_continuations(s: &mut State) {
+pub(crate) fn revoke_schedule_continuations(s: &mut State, epoch: u64) {
     if let Some(ui) = &mut s.workspace {
+        if ui.pairing_auth_epoch == epoch {
+            return;
+        }
+        ui.pairing_auth_epoch = epoch;
         for entry in &mut ui.entries {
             if let Some(panel) = entry.missions.as_mut() {
                 panel.schedules.revoke_continuation();

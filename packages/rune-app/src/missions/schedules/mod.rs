@@ -271,17 +271,21 @@ impl ScheduleHolds {
         if req.validate().is_err() {
             return false;
         }
-        let (b, id, dir, wake) = (
+        let (b, id, dir, wake, sink) = (
             ctx.backend.clone(),
             key.schedule_id.clone(),
             ctx.directory.map(str::to_owned),
             ctx.wake.clone(),
+            self.auth_sink.clone(),
         );
         let (out_tx, rx) = bounded(1);
         platform::spawn(async move {
             let out = b
                 .mission_schedule_settings_apply(&id, &req, proof_expected_revision)
                 .await;
+            if matches!(out, ActOut::AuthExpired) {
+                push_auth_sink(&sink, b.clone());
+            }
             if out_tx
                 .send(Reply::ActApply(occ, dir, action, view_epoch, out))
                 .await
@@ -319,16 +323,20 @@ impl ScheduleHolds {
         if !self.has_capacity_for(&key) {
             return false;
         }
-        let (b, id, r, dir, wake) = (
+        let (b, id, r, dir, wake, sink) = (
             ctx.backend.clone(),
             key.schedule_id.clone(),
             req.clone(),
             ctx.directory.map(str::to_owned),
             ctx.wake.clone(),
+            self.auth_sink.clone(),
         );
         let (out_tx, rx) = bounded(1);
         platform::spawn(async move {
             let out = b.control_mission_schedule(&id, &r).await;
+            if matches!(out, CtrlOut::AuthExpired) {
+                push_auth_sink(&sink, b.clone());
+            }
             if out_tx
                 .send(Reply::Ctrl(occ, dir, r, view_epoch, out))
                 .await
@@ -367,10 +375,11 @@ impl ScheduleHolds {
             } => {
                 let req_id = request_id.clone();
                 let proof_rev = *proof_expected_revision;
-                let (b, id, wake) = (
+                let (b, id, wake, sink) = (
                     ctx.backend.clone(),
                     key.schedule_id.clone(),
                     ctx.wake.clone(),
+                    self.auth_sink.clone(),
                 );
                 let (out_tx, rx) = bounded(1);
                 platform::spawn(async move {
@@ -378,6 +387,9 @@ impl ScheduleHolds {
                     let out = b
                         .mission_schedule_settings_read(&id, &req_id, proof_rev, &c)
                         .await;
+                    if matches!(out, ActOut::AuthExpired) {
+                        push_auth_sink(&sink, b.clone());
+                    }
                     if out_tx.send(Reply::ActRead(out)).await.is_ok() {
                         wake();
                     }
@@ -387,6 +399,7 @@ impl ScheduleHolds {
                 true
             }
             ScheduleHoldPhase::Control(req, _) => {
+                let sink = self.auth_sink.clone();
                 spawn_receipt(
                     key,
                     e,
@@ -394,6 +407,7 @@ impl ScheduleHolds {
                     ctx.directory.map(str::to_owned),
                     req.clone(),
                     ctx.wake.clone(),
+                    sink,
                 );
                 true
             }
@@ -428,17 +442,6 @@ impl ScheduleHolds {
         changed |= self.drain_auth_sink();
         for b in &self.auth_expired {
             push_auth_expired(exp, b.clone());
-        }
-        for (_, b, reply) in &ready {
-            if matches!(
-                reply,
-                Reply::ActApply(_, _, _, _, ActOut::AuthExpired)
-                    | Reply::ActRead(ActOut::AuthExpired)
-                    | Reply::Ctrl(_, _, _, _, CtrlOut::AuthExpired)
-                    | Reply::Read(_, ReadOut::AuthExpired)
-            ) {
-                push_auth_expired(exp, b.clone());
-            }
         }
         (changed, ReadyScheduleReplies(ready))
     }
@@ -488,10 +491,14 @@ impl ScheduleHolds {
                     if let Some(e) = self.entries.get_mut(&key) {
                         e.min_rev = Some(e.min_rev.unwrap_or(0).max(revision));
                     }
-                    if let Some(v) = active
-                        .filter(|v| view_ok(v, &key, &occ, view_epoch, &b) && !expired(&b, exp))
-                        && let Ok(ctrl_req) =
-                            ScheduleControlRequest::new(action, revision, dir.clone())
+                    self.drain_auth_sink();
+                    let sink = self.auth_sink.clone();
+                    if let Some(v) = active.filter(|v| {
+                        view_ok(v, &key, &occ, view_epoch, &b)
+                            && !expired(&b, exp)
+                            && !expired(&b, &self.auth_expired)
+                    }) && let Ok(ctrl_req) =
+                        ScheduleControlRequest::new(action, revision, dir.clone())
                         && let Some(e) = self.entries.get_mut(&key)
                     {
                         let (bc, id, r, wake) = (
@@ -503,6 +510,9 @@ impl ScheduleHolds {
                         let (out_tx, rx) = bounded(1);
                         platform::spawn(async move {
                             let out = bc.control_mission_schedule(&id, &r).await;
+                            if matches!(out, CtrlOut::AuthExpired) {
+                                push_auth_sink(&sink, bc.clone());
+                            }
                             if out_tx
                                 .send(Reply::Ctrl(occ, dir, r, view_epoch, out))
                                 .await
@@ -531,12 +541,12 @@ impl ScheduleHolds {
                     self.entries.remove(&key);
                     evs.push(Ev::Refused(key, "missions.scheduleList.conflict"));
                 }
-                ActOut::AuthExpired => push_auth_expired(&mut self.auth_expired, b),
+                ActOut::AuthExpired => {}
                 ActOut::Unconfirmed => evs.push(Ev::NeedsRefresh(key)),
             },
             Reply::ActRead(out) => match out {
                 ActOut::Ready { revision } => self.settle(&key, Some(revision), evs),
-                ActOut::AuthExpired => push_auth_expired(&mut self.auth_expired, b),
+                ActOut::AuthExpired => {}
                 ActOut::Refused { .. } | ActOut::Conflict | ActOut::Unconfirmed => {
                     evs.push(Ev::NeedsRefresh(key));
                 }
@@ -551,21 +561,22 @@ impl ScheduleHolds {
                 evs.push(Ev::Refused(key, "missions.scheduleList.conflict"));
             }
             Reply::Ctrl(occ, dir, req, view_epoch, CtrlOut::Pending(partial)) => {
+                self.drain_auth_sink();
+                let sink = self.auth_sink.clone();
+                let auth_blocked = expired(&b, exp) || expired(&b, &self.auth_expired);
                 if let Some(e) = self.entries.get_mut(&key) {
                     set_partial(Some(e), partial);
-                    if let Some(v) = active
-                        .filter(|v| view_ok(v, &key, &occ, view_epoch, &b) && !expired(&b, exp))
+                    if let Some(v) =
+                        active.filter(|v| view_ok(v, &key, &occ, view_epoch, &b) && !auth_blocked)
                     {
-                        spawn_receipt(&key, e, b, dir, req, v.wake.clone());
+                        spawn_receipt(&key, e, b, dir, req, v.wake.clone(), sink);
                     } else {
                         evs.push(Ev::NeedsRefresh(key));
                     }
                 }
             }
             Reply::Ctrl(_, _, _, _, CtrlOut::AuthExpired)
-            | Reply::Read(_, ReadOut::AuthExpired) => {
-                push_auth_expired(&mut self.auth_expired, b);
-            }
+            | Reply::Read(_, ReadOut::AuthExpired) => {}
             Reply::Read(req, ReadOut::Ready(read)) => {
                 match classify_schedule_control_read(&key.schedule_id, &req, &read) {
                     CtrlOut::Settled(rev) => self.settle(&key, rev, evs),
@@ -616,6 +627,7 @@ fn spawn_receipt(
     dir: Option<String>,
     req: ScheduleControlRequest,
     wake: Wake,
+    sink: AuthSink,
 ) {
     let (bc, id, r) = (b.clone(), key.schedule_id.clone(), req.clone());
     let (out_tx, rx) = bounded(1);
@@ -624,6 +636,9 @@ fn spawn_receipt(
         let out = bc
             .mission_schedule_read(&id, dir.as_deref(), Some(&r.request_id), &c)
             .await;
+        if matches!(out, ReadOut::AuthExpired) {
+            push_auth_sink(&sink, bc.clone());
+        }
         if out_tx.send(Reply::Read(r, out)).await.is_ok() {
             wake();
         }
