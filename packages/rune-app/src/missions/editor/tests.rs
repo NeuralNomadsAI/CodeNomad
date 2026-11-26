@@ -5421,6 +5421,38 @@ fn tab_close_requires_explicit_confirmation_for_uncertain_creation_and_retires_h
         auth_holds_after.creation(&auth_scope).is_none(),
         "closing an auth-masked tab must retire its dead workspace creation hold"
     );
+
+    // By contrast, an unsaved Mission draft without a hold stays protected even during auth recovery.
+    let draft_backend = unattested_backend("http://127.0.0.1:9/".into());
+    let mut draft_panel = Panel::new(
+        draft_backend,
+        Some("prj_1".into()),
+        Reads::default(),
+        noop_wake(),
+    );
+    let mut draft_holds = EditorHolds::default();
+    draft_panel.open_create_editor(&mut draft_holds, None);
+    draft_panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Unsaved during auth");
+    let mut draft_state = crate::workspace::test_state_with_mission_panel(draft_panel, draft_holds);
+    if let Some(l) = draft_state.screen.launcher_mut() {
+        l.authentication_required = true;
+    }
+    let mut rt_draft = Runtime::new(
+        draft_state,
+        |_, _| rune::el(),
+        (1200.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt_draft.frame(0.0);
+    let draft_key = crate::workspace::test_mission_entry_mut(&mut rt_draft.state, 0).0;
+    rt_draft.update(|s, tx| {
+        crate::workspace::close(s, &draft_key, tx);
+    });
+    assert_eq!(
+        crate::workspace::test_tab_state_and_holds(&rt_draft.state, 0).0,
+        draft_key,
+        "unsaved Mission draft must remain protected against tab close during auth recovery"
+    );
 }
 
 #[test]

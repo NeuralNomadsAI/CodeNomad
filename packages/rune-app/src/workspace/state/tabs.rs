@@ -367,8 +367,7 @@ fn close_blocked_inner(s: &State, index: usize, allow_uncertain_creation: bool) 
                 .creation(&panel.creation_scope_key())
                 .is_some()
         };
-        creation_blocks
-            || (!masked_by_auth_or_launcher && panel.has_unsaved_editor_draft(&ui.mission_editor))
+        creation_blocks || panel.has_unsaved_editor_draft(&ui.mission_editor)
     }) {
         return true;
     }
