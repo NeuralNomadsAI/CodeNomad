@@ -9,7 +9,8 @@ describe("CLI shutdown wiring", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
     assert.match(source, /import\s*\{[^}]*\binstallShutdownSignalHandlers\b[^}]*\binstallShutdownStdinHandler\b[^}]*\}\s*from "\.\/shutdown"/)
     assert.match(source, /installShutdownSignalHandlers\(process, shutdown\)/)
-    assert.match(source, /installShutdownStdinHandler\(process\.stdin, shutdown, \(line\) => nativeParent\.handleLine\(line\)\)/)
+    // The native parent sees each line first; what it leaves goes to managed session control.
+    assert.match(source, /installShutdownStdinHandler\(process\.stdin, shutdown, \(line\) => nativeParent\.handleLine\(line\)\s*\|\|/)
   })
 })
 

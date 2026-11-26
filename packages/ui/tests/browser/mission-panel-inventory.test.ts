@@ -439,7 +439,16 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
     }))
     const buttons = () => f.page.locator(".mission-control button").allTextContents()
     const actions = () => f.page.locator(".mission-control-header button,.mission-action-bar button").allTextContents()
-    const before = await geometry(), labels = await buttons()
+    // A tree just mounted measures its rows over a few frames: compare against its settled layout.
+    let before = await geometry()
+    for (let frames = 0; ; frames++) {
+      assert.ok(frames < 60, "the panel layout settles")
+      await f.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+      const next = await geometry()
+      if (JSON.stringify(next) === JSON.stringify(before)) break
+      before = next
+    }
+    const labels = await buttons()
     const actionLabels = await actions()
     const stableNode = f.page.locator(index ? ".mission-tree-node" : ".mission-detail").first()
     const node = await stableNode.elementHandle()

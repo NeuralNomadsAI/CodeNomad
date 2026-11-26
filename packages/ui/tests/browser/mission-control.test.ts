@@ -1602,6 +1602,8 @@ test("compact mission rows retain a completed branching plan, direct readers and
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions(missions), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, "Ship the Mission Centre")
+    // The tree mounts its rows over the frames that follow its expansion.
+    await page.waitForFunction(() => document.querySelectorAll(".mission-tree .mission-tree-node").length === 6)
     assert.deepEqual(await page.locator(".mission-tree .mission-tree-node").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.taskKey)), ["research", "design", "implement", "review", "verify", "publish"])
     // The tree is the dependency graph: its edges are drawn with the single task view, not behind a disclosure.
     await page.locator('.mission-graph path[data-from="review"][data-to="publish"]').waitFor()
