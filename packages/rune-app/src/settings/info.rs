@@ -1,4 +1,4 @@
-use super::Preferences;
+use super::{ExternalLink, Preferences};
 use crate::{
     platform,
     strings::{locale, t},
@@ -25,8 +25,8 @@ pub(super) struct Info {
     failed: bool,
     refresh: bool,
     reread_feed: bool,
-    support_failed: bool,
-    release_failed: bool,
+    support_open: ExternalLink,
+    release_open: ExternalLink,
     diagnostics: diagnostics::Diagnostics,
     #[cfg(target_arch = "wasm32")]
     announced: [Option<&'static str>; 4],
@@ -36,7 +36,8 @@ impl Info {
     #[cfg(target_arch = "wasm32")]
     pub fn announce(&mut self, prefs: &Preferences, tx: &mut rune::Tx) {
         let notices = [
-            self.release_failed
+            self.release_open
+                .failed()
                 .then_some("settings.info.actions.failed"),
             prefs
                 .update_feed_failed()
@@ -67,7 +68,18 @@ impl Info {
     }
 
     pub fn close(&mut self) {
-        *self = Self::default();
+        let mut release_open = std::mem::take(&mut self.release_open);
+        release_open.clear();
+        let mut support_open = std::mem::take(&mut self.support_open);
+        support_open.clear();
+        let mut diagnostics = std::mem::take(&mut self.diagnostics);
+        diagnostics.reset();
+        *self = Self {
+            release_open,
+            support_open,
+            diagnostics,
+            ..Self::default()
+        };
     }
 
     pub fn poll(&mut self, prefs: &Preferences, wake: &Waker) -> bool {
@@ -186,17 +198,18 @@ impl Info {
                     if !info.failed && info.flight.is_none() && !prefs.update_feed_pending()
                         && info.current(&prefs).and_then(|m| release_offer(m).1).as_ref() == Some(&release)
                     {
-                        info.release_failed = tx.open_url(&release).is_err();
+                        info.release_open
+                            .open(&release, tx, move |s| access(s).map(|i| &mut i.release_open));
                     }
                 })))
-            .children(self.release_failed.then(|| text(t("settings.info.actions.failed")).wrap().role("alert")))
+            .children(self.release_open.failed().then(|| text(t("settings.info.actions.failed")).wrap().role("alert")))
             .child(layout::button(
                 t("settings.info.updates.refresh"),
                 busy || !prefs.can_retry(),
                 move |s: &mut S| {
                     if let Some(info) = access(s) {
                         info.refresh = true;
-                        info.release_failed = false;
+                        info.release_open.clear();
                     }
                 },
             ))
@@ -204,9 +217,12 @@ impl Info {
                 col().full_width().role("group").label(t("settings.info.updates.feed"))
                     .child(chrome::info_link(t("settings.info.updates.feed.help"), move |s: &mut S, tx| {
                         if let Some(info) = access(s) {
-                            info.release_failed = tx.open_url(&format!(
-                                "https://neuralnomadsai.github.io/CodeNomad/{}/updates.html#feed", locale()
-                            )).is_err();
+                            let url = format!(
+                                "https://neuralnomadsai.github.io/CodeNomad/{}/updates.html#feed",
+                                locale()
+                            );
+                            info.release_open
+                                .open(&url, tx, move |s| access(s).map(|i| &mut i.release_open));
                         }
                     }))
                     .child(chrome::segments(
@@ -239,7 +255,7 @@ impl Info {
             locale()
         );
         let support = card("settings.info.support.title")
-            .children(self.support_failed.then(|| {
+            .children(self.support_open.failed().then(|| {
                 text(t("commands.openSponsor.failed").replace("{url}", &sponsor))
                     .role("alert")
                     .wrap()
@@ -249,7 +265,9 @@ impl Info {
                 false,
                 move |s: &mut S, tx| {
                     if let Some(info) = access(s) {
-                        info.support_failed = tx.open_url(&sponsor).is_err();
+                        info.support_open.open(&sponsor, tx, move |s| {
+                            access(s).map(|i| &mut i.support_open)
+                        });
                     }
                 },
             ));

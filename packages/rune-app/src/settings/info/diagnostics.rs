@@ -30,12 +30,27 @@ pub(super) struct Diagnostics {
     form_read: Option<Receiver<Option<bool>>>,
     form: Option<bool>,
     feedback: Option<&'static str>,
-    copy: Option<Receiver<bool>>,
+    feedback_seq: u64,
+    copy: Option<(u64, Receiver<bool>)>,
     saving: bool,
-    save: Option<Receiver<bool>>,
+    save: Option<(u64, Receiver<bool>)>,
 }
 
 impl Diagnostics {
+    pub(super) fn reset(&mut self) {
+        let feedback_seq = self.feedback_seq.wrapping_add(1);
+        *self = Self {
+            feedback_seq,
+            ..Self::default()
+        };
+    }
+
+    fn begin_feedback(&mut self) -> u64 {
+        self.feedback_seq = self.feedback_seq.wrapping_add(1);
+        self.feedback = None;
+        self.feedback_seq
+    }
+
     pub(super) fn os(&self) -> String {
         self.client_os
             .clone()
@@ -91,8 +106,14 @@ impl Diagnostics {
             .form_read
             .as_ref()
             .and_then(|reply| reply.try_recv().ok());
-        let copy = self.copy.as_ref().and_then(|reply| reply.try_recv().ok());
-        let save = self.save.as_ref().and_then(|reply| reply.try_recv().ok());
+        let copy = self
+            .copy
+            .as_ref()
+            .and_then(|(seq, reply)| reply.try_recv().ok().map(|copied| (*seq, copied)));
+        let save = self
+            .save
+            .as_ref()
+            .and_then(|(seq, reply)| reply.try_recv().ok().map(|saved| (*seq, saved)));
         let changed = version.is_some() || form.is_some() || copy.is_some() || save.is_some();
         #[cfg(target_arch = "wasm32")]
         let mut changed = changed;
@@ -114,18 +135,22 @@ impl Diagnostics {
             self.form_read = None;
             self.form = form;
         }
-        if let Some(copied) = copy {
+        if let Some((seq, copied)) = copy {
             self.copy = None;
-            self.feedback = Some(if copied {
-                "settings.info.diagnostics.copied"
-            } else {
-                "settings.info.diagnostics.copyFailed"
-            });
+            if self.feedback_seq == seq {
+                self.feedback = Some(if copied {
+                    "settings.info.diagnostics.copied"
+                } else {
+                    "settings.info.diagnostics.copyFailed"
+                });
+            }
         }
-        if let Some(saved) = save {
+        if let Some((seq, saved)) = save {
             self.save = None;
             self.saving = false;
-            self.feedback = (!saved).then_some("settings.info.actions.failed");
+            if self.feedback_seq == seq {
+                self.feedback = (!saved).then_some("settings.info.actions.failed");
+            }
         }
         changed
     }
@@ -161,8 +186,8 @@ impl Diagnostics {
                                     info.diagnostics.opencode.as_ref(),
                                     &info.diagnostics.os(),
                                 );
-                                info.diagnostics.feedback = None;
-                                copy_report(info, &prefs, tx, access, report);
+                                let seq = info.diagnostics.begin_feedback();
+                                copy_report(info, &prefs, tx, access, seq, report);
                             },
                         ))
                         .child(layout::button_tx(
@@ -190,8 +215,8 @@ impl Diagnostics {
                                         )
                                     },
                                 );
-                                info.diagnostics.feedback = None;
-                                save_report(info, &prefs, tx, access, name, report);
+                                let seq = info.diagnostics.begin_feedback();
+                                save_report(info, &prefs, tx, access, seq, name, report);
                             },
                         ))
                         .child(chrome::primary_action_tx(
@@ -211,10 +236,23 @@ impl Diagnostics {
                                     info.diagnostics.form,
                                     info.diagnostics.client_os.as_deref(),
                                 );
-                                info.diagnostics.feedback = tx
-                                    .open_url(&link)
-                                    .is_err()
-                                    .then_some("settings.info.actions.failed");
+                                let owner = info.owner.clone();
+                                let seq = info.diagnostics.begin_feedback();
+                                let launch =
+                                    tx.open_url_then(&link, move |s: &mut S, result, _| {
+                                        if let Some(info) = access(s)
+                                            && info.owner == owner
+                                            && info.diagnostics.feedback_seq == seq
+                                        {
+                                            info.diagnostics.feedback = result
+                                                .is_err()
+                                                .then_some("settings.info.actions.failed");
+                                        }
+                                    });
+                                if launch.is_err() {
+                                    info.diagnostics.feedback =
+                                        Some("settings.info.actions.failed");
+                                }
                             },
                         )),
                 )
@@ -242,10 +280,11 @@ fn copy_report<S: 'static>(
     prefs: &Preferences,
     tx: &mut Tx,
     access: Access<S>,
+    seq: u64,
     report: String,
 ) {
     let (out, reply) = bounded(1);
-    info.diagnostics.copy = Some(reply);
+    info.diagnostics.copy = Some((seq, reply));
     crate::chat::tools::children::note_clipboard_write();
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -274,15 +313,18 @@ fn save_report<S: 'static>(
     prefs: &Preferences,
     tx: &mut Tx,
     access: Access<S>,
+    seq: u64,
     name: String,
     report: String,
 ) {
     #[cfg(target_arch = "wasm32")]
     {
         let _ = (prefs, tx, access);
-        info.diagnostics.feedback = platform::download_file(&name, report.as_bytes())
-            .is_err()
-            .then_some("settings.info.actions.failed");
+        if info.diagnostics.feedback_seq == seq {
+            info.diagnostics.feedback = platform::download_file(&name, report.as_bytes())
+                .is_err()
+                .then_some("settings.info.actions.failed");
+        }
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -303,15 +345,17 @@ fn save_report<S: 'static>(
                 match result {
                     Ok(Some(path)) => {
                         let (out, reply) = bounded(1);
-                        info.diagnostics.save = Some(reply);
+                        info.diagnostics.save = Some((seq, reply));
                         platform::spawn(async move {
                             send(out, device::save(path, report).await, &wake);
                         });
                     }
                     result => {
                         info.diagnostics.saving = false;
-                        info.diagnostics.feedback =
-                            result.is_err().then_some("settings.info.actions.failed");
+                        if info.diagnostics.feedback_seq == seq {
+                            info.diagnostics.feedback =
+                                result.is_err().then_some("settings.info.actions.failed");
+                        }
                     }
                 }
             },
@@ -482,5 +526,27 @@ fn report_and_public_issue_have_different_data_boundaries() {
     assert!(issue.contains("9.0.1") && issue.contains("9.0.2"));
     assert!(
         !issue.contains("192.0.2") && !issue.contains("127.0.0.1") && !issue.contains("private")
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn earlier_copy_completion_does_not_mask_newer_feedback_action() {
+    let mut diagnostics = Diagnostics::default();
+    let copy_seq = diagnostics.begin_feedback();
+    let (out, reply) = bounded(1);
+    diagnostics.copy = Some((copy_seq, reply));
+
+    let bug_seq = diagnostics.begin_feedback();
+    assert_ne!(copy_seq, bug_seq);
+    assert!(out.try_send(true).is_ok());
+
+    let wake: Waker = std::sync::Arc::new(|| {});
+    assert!(diagnostics.poll(None, &wake));
+    assert!(diagnostics.copy.is_none());
+    assert_eq!(diagnostics.feedback, None);
+    assert_eq!(
+        diagnostics.feedback_seq, bug_seq,
+        "stale copy completion must leave the newer action's feedback sequence intact"
     );
 }

@@ -131,9 +131,11 @@ pub fn download_label(name: &str) -> String {
 }
 
 pub fn error(s: &State) -> Option<rune::El> {
-    s.attachments
-        .error
-        .then(|| rune::text(t("rune.open_error")).role("alert"))
+    s.attachments.error.then(|| {
+        rune::text(t("rune.open_error"))
+            .role("alert")
+            .key("attachment-error")
+    })
 }
 
 pub fn skill_chip(skill: &crate::content::Skill) -> rune::El {

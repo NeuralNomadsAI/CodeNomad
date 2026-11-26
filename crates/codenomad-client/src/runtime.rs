@@ -21,16 +21,20 @@ pub async fn sleep(duration: Duration) {
     struct Timer {
         window: web_sys::Window,
         id: i32,
+        resolve: js_sys::Function,
         _callback: Closure<dyn FnMut()>,
     }
     impl Drop for Timer {
         fn drop(&mut self) {
             self.window.clear_timeout_with_handle(self.id);
+            // Settle the JS promise on cancellation so JsFuture releases its closures immediately.
+            let _ = self.resolve.call0(&wasm_bindgen::JsValue::NULL);
         }
     }
     let window = web_sys::window().expect("browser window");
     let mut pending = None;
     let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        let settle = resolve.clone();
         let done: Closure<dyn FnMut()> = Closure::new(move || {
             let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
         });
@@ -43,6 +47,7 @@ pub async fn sleep(duration: Duration) {
         pending = Some(Timer {
             window: window.clone(),
             id,
+            resolve: settle,
             _callback: done,
         });
     });
