@@ -203,6 +203,12 @@ impl Panel {
                 self.pending_section = None;
                 palette_settled = true;
             }
+        } else if self
+            .pending_section
+            .is_some_and(|next| !self.can_open_section(prefs, next))
+        {
+            self.pending_section = None;
+            palette_settled = true;
         }
         if self.confirm_config_close && !self.config_files.dirty() {
             self.confirm_config_close = false;
@@ -680,13 +686,19 @@ pub(super) fn view(
                         &mut s.settings.web.logging
                     }),
             ),
-        Section::Remote if local => panel.remote.view(&s.settings.shared, |s: &mut State| {
-            let panel = &mut s.settings.web;
-            (panel.shown
-                && panel.section == Section::Remote
-                && panel.local(&s.settings.shared.borrow()))
-            .then_some(&mut panel.remote)
-        }),
+        Section::Remote if local => panel.remote.view(
+            &s.settings.shared,
+            |s: &mut State| {
+                let paired = !crate::platform::pairing::required(s);
+                let panel = &mut s.settings.web;
+                (paired
+                    && panel.shown
+                    && panel.section == Section::Remote
+                    && panel.local(&s.settings.shared.borrow()))
+                .then_some(&mut panel.remote)
+            },
+            |s: &mut State| &mut s.settings.web.remote,
+        ),
         Section::ConfigFiles if panel.scope.config_files(prefs) => {
             panel
                 .config_files
@@ -762,14 +774,21 @@ pub(super) fn view(
                 }
             },
         ));
-    } else if let Some(next_section) = panel.pending_section.filter(|_| palette_dirty) {
+    } else if let Some(next_section) = panel
+        .pending_section
+        .filter(|&next| palette_dirty && panel.can_open_section(prefs, next))
+    {
         layers.push(super::config_files::confirm_discard(
             move |s: &mut State, accept, _| {
                 s.settings.web.pending_section = None;
-                if accept {
+                if accept && !s.settings.web.config_files.busy() {
                     let mut prefs = s.settings.shared.borrow_mut();
-                    s.settings.web.general.discard_draft(&mut prefs);
-                    apply_web_section(&mut s.settings.web, &mut prefs, next_section);
+                    if !s.settings.web.general.busy(&prefs)
+                        && s.settings.web.can_open_section(&prefs, next_section)
+                    {
+                        s.settings.web.general.discard_draft(&mut prefs);
+                        apply_web_section(&mut s.settings.web, &mut prefs, next_section);
+                    }
                 }
             },
         ));

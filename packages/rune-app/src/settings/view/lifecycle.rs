@@ -79,7 +79,10 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 }
                 let updated =
                     prefs.revision != std::mem::replace(&mut s.seen_revision, prefs.revision);
-                if !s.general.dirty() {
+                if !s.general.dirty()
+                    || s.pending_section
+                        .is_some_and(|next| !s.can_open_section(&prefs, next))
+                {
                     s.pending_section = None;
                 }
                 if let Some((epoch, _)) = s.after_palette_save

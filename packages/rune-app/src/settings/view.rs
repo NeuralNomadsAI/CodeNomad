@@ -517,10 +517,14 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ),
             Section::Remote => (
                 "remote",
-                s.remote.view(&s.shared, |s: &mut Window| {
-                    (s.section == Section::Remote && !s.closing && s.confirm_close.is_none())
-                        .then_some(&mut s.remote)
-                }),
+                s.remote.view(
+                    &s.shared,
+                    |s: &mut Window| {
+                        (s.section == Section::Remote && !s.closing && s.confirm_close.is_none())
+                            .then_some(&mut s.remote)
+                    },
+                    |s: &mut Window| &mut s.remote,
+                ),
             ),
             Section::ConfigFiles => (
                 "config-files",
@@ -627,18 +631,19 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     }
                 },
             ));
-        } else if let Some(next_section) = s
-            .pending_section
-            .filter(|_| s.general.dirty() && !palette_saving)
-        {
+        } else if let Some(next_section) = s.pending_section.filter(|&next| {
+            s.general.dirty() && !palette_saving && s.can_open_section(&prefs, next)
+        }) {
             layers.push(super::config_files::confirm_discard(
                 move |s: &mut Window, accept, _| {
                     s.pending_section = None;
-                    if accept {
+                    if accept && !s.config_files.busy() {
                         let mut prefs = s.shared.borrow_mut();
-                        s.general.discard_draft(&mut prefs);
-                        drop(prefs);
-                        s.switch_section(next_section);
+                        if !s.general.busy(&prefs) && s.can_open_section(&prefs, next_section) {
+                            s.general.discard_draft(&mut prefs);
+                            drop(prefs);
+                            s.switch_section(next_section);
+                        }
                     }
                 },
             ));
