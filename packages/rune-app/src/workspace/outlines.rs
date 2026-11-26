@@ -187,15 +187,76 @@ impl Cache {
         }
     }
 
+    pub(crate) fn retained_bytes(&self, seen_outlines: &mut HashSet<usize>) -> usize {
+        self.entries.iter().fold(0usize, |total, entry| {
+            if seen_outlines.insert(Arc::as_ptr(&entry.outline) as usize) {
+                total.saturating_add(crate::timeline::outline_weight(&entry.outline))
+            } else {
+                total
+            }
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_insert(&mut self, outline: Arc<Outline>) {
+        self.entries.push(Entry {
+            version: 0,
+            outline,
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn evict_under_pressure(
+        &mut self,
+        bytes_to_free: usize,
+        active_backend: Option<&Backend>,
+        active_project: Option<&str>,
+    ) -> usize {
+        if bytes_to_free == 0
+            || self.dirty
+            || self.saving.is_some()
+            || self.pending_write_before_freeze
+            || self.entries.is_empty()
+        {
+            return 0;
+        }
+        let mut freed = 0usize;
+        let mut index = self.entries.len();
+        while index > 0 && freed < bytes_to_free {
+            index -= 1;
+            let is_active = active_backend
+                .zip(active_project)
+                .is_some_and(|(backend, project)| {
+                    self.entries[index].outline.saved_for(backend, project)
+                });
+            if !is_active {
+                let removed = self.entries.remove(index).outline;
+                // Count freed bytes only when no inactive Timeline still holds a strong Arc clone.
+                if Arc::strong_count(&removed) == 1 {
+                    freed = freed.saturating_add(crate::timeline::outline_weight(&removed));
+                }
+            }
+        }
+        freed
+    }
+
     fn trim(&mut self) {
         let mut bytes = 0;
+        #[cfg(target_arch = "wasm32")]
+        const MAX_OUTLINE_BYTES: usize = 4 * 1024 * 1024;
+        #[cfg(not(target_arch = "wasm32"))]
+        const MAX_OUTLINE_BYTES: usize = 16 * 1024 * 1024;
         let keep = self
             .entries
             .iter()
             .take(16)
             .take_while(|entry| {
                 bytes += entry.outline.saved_weight().unwrap_or_default();
-                bytes <= 16 * 1024 * 1024
+                bytes <= MAX_OUTLINE_BYTES
             })
             .count();
         self.entries.drain(keep..);

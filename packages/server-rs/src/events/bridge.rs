@@ -4,7 +4,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
-        Arc, Mutex,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicI64, AtomicUsize, Ordering::Relaxed},
     },
     time::{Duration, Instant},
@@ -17,6 +17,68 @@ use uuid::Uuid;
 
 use super::upstream;
 use crate::{App, Shared};
+
+/// Integration notifications carry invalidation only (`integrations/events.ts:4-10`).
+static INTEGRATION_RPC_EVENT: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^rpc\.neuralnomads\.[a-z][a-z0-9-]{0,31}\.(status_changed|hosts_changed)$").unwrap()
+});
+
+#[derive(Debug, PartialEq)]
+enum IntegrationRelay {
+    Relay(Value),
+    Drop,
+    Malformed,
+}
+
+fn valid_location_str(value: &Value) -> Option<&str> {
+    value.as_str().filter(|s| !s.trim().is_empty() && !s.contains('\0'))
+}
+
+fn integration_event_for_relay(event: Value) -> IntegrationRelay {
+    let Some(kind) = event["type"].as_str() else {
+        return IntegrationRelay::Malformed;
+    };
+    if !kind.starts_with("rpc.neuralnomads.") {
+        return IntegrationRelay::Relay(event);
+    }
+    if !INTEGRATION_RPC_EVENT.is_match(kind) {
+        return IntegrationRelay::Drop;
+    }
+    let Some(raw_location) = event.get("location") else {
+        return IntegrationRelay::Drop;
+    };
+    // Match TS `if (!event.location) return undefined` (falsy values drop).
+    let falsy = match raw_location {
+        Value::Null | Value::Bool(false) => true,
+        Value::String(s) if s.is_empty() => true,
+        Value::Number(n) if n.as_f64() == Some(0.0) => true,
+        _ => false,
+    };
+    if falsy {
+        return IntegrationRelay::Drop;
+    }
+    // Match TS `readLocationRef(event.location)` (`location.ts:5-12`): malformed truthy
+    // location objects throw in `eventKey()` and reconnect the upstream stream.
+    let Some(location) = raw_location.as_object() else {
+        return IntegrationRelay::Malformed;
+    };
+    let Some(directory) = location.get("directory").and_then(valid_location_str) else {
+        return IntegrationRelay::Malformed;
+    };
+    let mut sanitized_location = serde_json::Map::new();
+    sanitized_location.insert("directory".into(), Value::String(directory.to_owned()));
+    if let Some(workspace_id) = location.get("workspaceID") {
+        let Some(ws) = valid_location_str(workspace_id) else {
+            return IntegrationRelay::Malformed;
+        };
+        sanitized_location.insert("workspaceID".into(), Value::String(ws.to_owned()));
+    }
+    IntegrationRelay::Relay(json!({
+        "type": kind,
+        "location": Value::Object(sanitized_location),
+        "data": {},
+    }))
+}
 
 /// Native events without a location that every workspace receives.
 const GLOBAL: &str = "agent.updated command.updated config.updated credential.switched credential.updated \
@@ -434,7 +496,19 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                     Err(_) if now() - seen.load(Relaxed) < 60_000 => continue,
                     Err(_) => break,
                 };
-                let Some(Ok(mut event)) = next else { break };
+                let Some(Ok(event)) = next else { break };
+                if event["type"].as_str().is_none() {
+                    break;
+                }
+                let mut event = match integration_event_for_relay(event) {
+                    IntegrationRelay::Relay(event) => event,
+                    IntegrationRelay::Drop => continue,
+                    IntegrationRelay::Malformed => {
+                        keep_connection = true;
+                        disconnect_reason = "Invalid location".into();
+                        break;
+                    }
+                };
                 let Some(kind) = event["type"].as_str().map(str::to_owned) else { break };
                 let received = (Instant::now(), now());
                 if !connected {
@@ -467,7 +541,6 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                     }
                     event["data"]["daemon"] = json!(daemon);
                 }
-                // Integration events can contain backend-only data and need the TS sanitizer.
                 if kind.starts_with("worktree.") || kind == "server.connected" {
                     // Match TS `instance-events.ts:170-173` & `manager.ts:506-511`: any worktree
                     // event invalidates every workspace's cached worktree inventory.
@@ -478,9 +551,6 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                     && let Some(id) = event["data"]["sessionID"].as_str()
                 {
                     lanes.receipts.retire(id);
-                }
-                if matches!(kind.as_str(), "integration.updated" | "rpc") {
-                    continue;
                 }
                 const SDK_FRAME_UNITS: usize = 16 * 1024 * 1024;
                 let wire = event.to_string();
@@ -842,5 +912,69 @@ mod tests {
             None,
             "stale subscription worker cannot repopulate locations after reconnect"
         );
+    }
+
+    #[test]
+    fn integration_event_filter_sanitizes_rpc_and_preserves_integration_updated() {
+        assert!(GLOBAL.split_whitespace().any(|kind| kind == "integration.updated"));
+        let updated = json!({"type": "integration.updated", "data": {"id": "app-1"}});
+        assert_eq!(integration_event_for_relay(updated.clone()), IntegrationRelay::Relay(updated));
+
+        let allowed = json!({
+            "type": "rpc.neuralnomads.my-app1.status_changed",
+            "location": {"directory": "/repo", "extra": "secret"},
+            "data": {"token": "do-not-leak", "nested": [1, 2]}
+        });
+        assert_eq!(
+            integration_event_for_relay(allowed),
+            IntegrationRelay::Relay(json!({
+                "type": "rpc.neuralnomads.my-app1.status_changed",
+                "location": {"directory": "/repo"},
+                "data": {}
+            }))
+        );
+
+        let hosts_with_ws = json!({
+            "type": "rpc.neuralnomads.a.hosts_changed",
+            "location": {"directory": "/repo", "workspaceID": "ws_remote", "extra": true},
+            "data": {"hosts": ["internal"]}
+        });
+        assert_eq!(
+            integration_event_for_relay(hosts_with_ws),
+            IntegrationRelay::Relay(json!({
+                "type": "rpc.neuralnomads.a.hosts_changed",
+                "location": {"directory": "/repo", "workspaceID": "ws_remote"},
+                "data": {}
+            }))
+        );
+
+        for dropped in [
+            json!({"type": "rpc.neuralnomads.my-app.other_event", "location": {"directory": "/repo"}, "data": {}}),
+            json!({"type": "rpc.neuralnomads.BadApp.status_changed", "location": {"directory": "/repo"}, "data": {}}),
+            json!({"type": "rpc.neuralnomads.9app.status_changed", "location": {"directory": "/repo"}, "data": {}}),
+            json!({"type": "rpc.neuralnomads.my-app.status_changed", "data": {}}),
+            json!({"type": "rpc.neuralnomads.my-app.status_changed", "location": null, "data": {}}),
+        ] {
+            assert_eq!(
+                integration_event_for_relay(dropped.clone()),
+                IntegrationRelay::Drop,
+                "expected drop for {dropped}"
+            );
+        }
+
+        for malformed in [
+            json!({"type": "rpc.neuralnomads.my-app.status_changed", "location": {"workspaceID": "w"}, "data": {}}),
+            json!({"type": "rpc.neuralnomads.my-app.status_changed", "location": {"directory": "   "}, "data": {}}),
+            json!({"type": "rpc.neuralnomads.my-app.status_changed", "location": {"directory": 123}, "data": {}}),
+            json!({"type": "rpc.neuralnomads.my-app.status_changed", "location": {"directory": "/repo", "workspaceID": null}, "data": {}}),
+            json!({"type": "rpc.neuralnomads.my-app.status_changed", "location": {"directory": "/repo", "workspaceID": ""}, "data": {}}),
+            json!({"type": "rpc.neuralnomads.my-app.status_changed", "location": ["/repo"], "data": {}}),
+        ] {
+            assert_eq!(
+                integration_event_for_relay(malformed.clone()),
+                IntegrationRelay::Malformed,
+                "expected malformed for {malformed}"
+            );
+        }
     }
 }

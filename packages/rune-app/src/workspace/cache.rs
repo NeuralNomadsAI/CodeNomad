@@ -231,6 +231,77 @@ impl Cache {
             crate::history::retained_bytes(&self.messages),
         )
     }
+    pub(super) fn rendered_bytes(
+        &self,
+        seen_outlines: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.transcript_display.retained_bytes(seen_outlines)
+    }
+    pub(super) fn files_and_git_bytes(
+        &self,
+        seen_file_drafts: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.files
+            .as_ref()
+            .map_or(0, |files| files.retained_bytes(seen_file_drafts))
+            .saturating_add(self.git.retained_bytes())
+    }
+    pub(super) fn draft_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
+        self.draft
+            .text
+            .len()
+            .saturating_add(self.composer.draft.retained_bytes(seen))
+            .saturating_add(
+                self.composer
+                    .recall
+                    .as_ref()
+                    .map_or(0, |recall| recall.retained_bytes(seen)),
+            )
+            .saturating_add(self.git.draft_bytes())
+    }
+    pub(super) fn evictable_rendered_bytes(&self, active_outline_ptr: Option<usize>) -> usize {
+        self.transcript_display
+            .evictable_rendered_bytes(active_outline_ptr)
+    }
+    pub(super) fn evictable_secondary_bytes(&self, active_outline_ptr: Option<usize>) -> usize {
+        let files = self
+            .files
+            .as_ref()
+            .map_or(0, crate::files::Ui::evictable_inactive_bytes);
+        let display = if self.history_protected() {
+            self.transcript_display.saved_sessions_bytes()
+        } else {
+            self.transcript_display
+                .evictable_rendered_bytes(active_outline_ptr)
+        };
+        files
+            .saturating_add(self.git.retained_bytes())
+            .saturating_add(display)
+    }
+    pub(super) fn evict_secondary_caches(&mut self, active_outline_ptr: Option<usize>) -> usize {
+        let mut freed = self
+            .files
+            .as_mut()
+            .map_or(0, crate::files::Ui::evict_inactive_caches);
+        freed = freed.saturating_add(self.git.evict_inactive_caches());
+        if self.history_protected() {
+            freed.saturating_add(self.transcript_display.evict_inactive_sessions())
+        } else {
+            let evictable = self
+                .transcript_display
+                .evictable_rendered_bytes(active_outline_ptr);
+            self.transcript_display.evict_rendered();
+            freed.saturating_add(evictable)
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn files_mut(&mut self) -> &mut Option<crate::files::Ui> {
+        &mut self.files
+    }
+    #[cfg(test)]
+    pub(super) fn timeline_ref(&self) -> &crate::timeline::Timeline {
+        &self.transcript_display.timeline
+    }
     pub(super) fn history_protected(&self) -> bool {
         self.phase == Phase::Streaming
             || self.agent.as_ref().is_some_and(|agent| agent.running)

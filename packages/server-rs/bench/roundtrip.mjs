@@ -14,17 +14,33 @@ import { parse as parseYaml } from "yaml"
 import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
 import { assertPrivateHost, fromDist, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
-const exe = process.argv[2]
-assert(path.isAbsolute(exe ?? ""), "usage: node roundtrip.mjs <absolute opencode executable>")
+const args = process.argv.slice(2)
+const lanFlag = args.includes("--lan")
+const exe = args.find(arg => !arg.startsWith("-"))
+assert(path.isAbsolute(exe ?? ""), "usage: node roundtrip.mjs <absolute opencode executable> [--lan]")
 await useBenchTemp()
-// Direct HTTPS pairing exists on private, non-loopback origins only, in both servers.
-const ip = Object.values(os.networkInterfaces()).flat().find(a => a?.family === "IPv4" && !a.internal
-  && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a.address))?.address
+const ciEnabled = (() => {
+  const raw = (process.env.CI ?? "").trim().toLowerCase()
+  return raw !== "" && raw !== "0" && raw !== "false"
+})()
+const lanEnv = (() => {
+  const raw = (process.env.CNRS_BENCH_LAN ?? "").trim().toLowerCase()
+  return raw === "1" || raw === "true" || raw === "yes"
+})()
+const useLan = lanFlag || lanEnv
+if (useLan) {
+  assert(!ciEnabled, "LAN bind (--lan / CNRS_BENCH_LAN=1) is forbidden when CI is set")
+}
+// Bind loopback by default; direct HTTPS pairing on a private LAN IP requires explicit opt-in outside CI.
+const ip = useLan
+  ? Object.values(os.networkInterfaces()).flat().find(a => a?.family === "IPv4" && !a.internal
+    && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a.address))?.address
+  : "127.0.0.1"
 assert(ip, "No private IPv4 address for the direct HTTPS origin")
 const free = host => new Promise(resolve => { const s = net.createServer().listen(0, host, () => { const { port } = s.address(); s.close(() => resolve(port)) }) })
 const sha = text => createHash("sha256").update(text).digest("hex").slice(0, 16)
 const json = (method, body) => ({ method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-const result = { ip, steps: [] }
+const result = { ip, lan: useLan, steps: [] }
 const step = (name, value) => { result.steps.push({ name, value }); return value }
 
 async function serve(label, fixture, config, extra = []) {
@@ -116,8 +132,8 @@ try {
       assert.equal(saved.status, 200, `${route}: ${JSON.stringify(saved.body)}`)
     }
     assert.equal((await read(ts, cookie, "/api/memory/settings", json("PUT", { enabled: true }))).status, 200)
-    const tsDevice = await pair(ts, cookie)
-    step("ts1 device admitted", await admitted(ts, tsDevice))
+    const tsDevice = useLan ? await pair(ts, cookie) : null
+    if (useLan) step("ts1 device admitted", await admitted(ts, tsDevice))
     await ts.stop()
     // Agents create entries (the UI only edits them): the reference's own store writes one.
     const { MemoryStore } = await fromDist("memory/store.js")
@@ -131,15 +147,17 @@ try {
     cookie = await signIn(rs, first)
     assert.equal(typeof cookie, "string", "Rust refused the TS password")
     step("rs identity kept", (await read(rs, cookie, "/api/meta")).body.serverId === identity)
-    step("rs ts device admitted", await admitted(rs, tsDevice))
+    if (useLan) step("rs ts device admitted", await admitted(rs, tsDevice))
     step("rs memory enabled from config.yaml", (await read(rs, cookie, "/api/memory/settings")).body)
     step("rs sees TS memory", (await titles(rs, cookie)).includes("Saved by TS"))
     for (const enabled of [false, true]) assert.equal((await read(rs, cookie, "/api/memory/settings", json("PUT", { enabled }))).status, 200)
     const entry = (await memory(rs, cookie, { action: "list", scope: "global" })).body.entries.find(e => e.title === "Saved by TS")
     await memory(rs, cookie, { action: "save", scope: "global", id: entry.id, revision: entry.revision, content: { title: "Saved by TS", type: "fact", text: "Edited by Rust" } })
-    const rsDevice = await pair(rs, cookie)
-    assert.equal((await read(rs, cookie, `/api/remote-control/devices/${tsDevice.id}`, { method: "DELETE" })).status, 204)
-    step("rs revoked ts device", !(await admitted(rs, tsDevice)))
+    const rsDevice = useLan ? await pair(rs, cookie) : null
+    if (useLan) {
+      assert.equal((await read(rs, cookie, `/api/remote-control/devices/${tsDevice.id}`, { method: "DELETE" })).status, 204)
+      step("rs revoked ts device", !(await admitted(rs, tsDevice)))
+    }
     const rotated = await read(rs, cookie, "/api/auth/password", json("POST", { password: second }))
     assert.equal(rotated.status, 200, JSON.stringify(rotated.body))
     await rs.stop()
@@ -163,9 +181,11 @@ try {
     step("ts2 memory settings", (await read(ts, cookie, "/api/memory/settings")).body)
     const listed = await titles(ts, cookie)
     step("ts2 sees the Rust edit", listed.includes("Edited by Rust"))
-    step("ts2 rust device admitted", await admitted(ts, rsDevice))
-    step("ts2 revoked ts device refused", !(await admitted(ts, tsDevice)))
-    step("ts2 devices", (await read(ts, cookie, "/api/remote-control/devices")).body.devices.map(d => d.id === rsDevice.id))
+    if (useLan) {
+      step("ts2 rust device admitted", await admitted(ts, rsDevice))
+      step("ts2 revoked ts device refused", !(await admitted(ts, tsDevice)))
+      step("ts2 devices", (await read(ts, cookie, "/api/remote-control/devices")).body.devices.map(d => d.id === rsDevice.id))
+    }
     await ts.stop()
     step("ts2 kept the Rust leaf", (await files(config))["tls/server-cert.pem"] === afterRs["tls/server-cert.pem"])
 
@@ -184,12 +204,14 @@ try {
     live = undefined
 
     const expect = {
-      "ts1 device admitted": true, "rs identity kept": true, "rs ts device admitted": true,
-      "rs memory enabled from config.yaml": { enabled: true }, "rs sees TS memory": true, "rs revoked ts device": true,
+      ...(useLan ? { "ts1 device admitted": true, "rs ts device admitted": true, "rs revoked ts device": true } : {}),
+      "rs identity kept": true,
+      "rs memory enabled from config.yaml": { enabled: true }, "rs sees TS memory": true,
       "rs kept TS files": [], "rs kept config.yaml": true, "rs issued a new leaf with the TS authority": true, "ts2 refuses the old password": 401,
       "ts2 identity kept": true, "ts2 preferences": { locale: "fr" }, "ts2 recent folders": [{ path: "kept", lastAccessed: 1 }],
-      "ts2 memory settings": { enabled: true }, "ts2 sees the Rust edit": true, "ts2 rust device admitted": true,
-      "ts2 revoked ts device refused": true, "ts2 devices": [true], "ts2 kept the Rust leaf": true, "ts-fresh https accepted": 200,
+      "ts2 memory settings": { enabled: true }, "ts2 sees the Rust edit": true,
+      ...(useLan ? { "ts2 rust device admitted": true, "ts2 revoked ts device refused": true, "ts2 devices": [true] } : {}),
+      "ts2 kept the Rust leaf": true, "ts-fresh https accepted": 200,
       "ts-fresh kept the Rust authority": true, "ts-fresh signed a new leaf": true,
     }
     for (const [name, value] of Object.entries(expect)) assert.deepEqual(result.steps.find(s => s.name === name)?.value, value, name)

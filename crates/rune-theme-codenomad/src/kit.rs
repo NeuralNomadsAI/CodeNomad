@@ -310,6 +310,7 @@ pub(crate) fn build_from(
             border: c("accent-primary"),
             mark: c("text-on-accent"),
         }),
+        ..Metrics::default()
     };
     Kit {
         dark,
