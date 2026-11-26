@@ -151,7 +151,7 @@ pub fn actions(s: &State, form: &Form) -> El {
         .child(button(
             "answer-question",
             t("rune.answer"),
-            a.locked() || agent_forms::answer(form, &a.drafts).is_err(),
+            a.forms_locked() || agent_forms::answer(form, &a.drafts).is_err(),
             crate::screen::action(&scope, move |s: &mut State| {
                 if let Some(a) = s.agent.as_mut() {
                     a.answer_form(&id)
@@ -161,7 +161,7 @@ pub fn actions(s: &State, form: &Form) -> El {
         .child(button(
             "cancel-question",
             t("rune.cancel_question"),
-            a.locked(),
+            a.forms_locked(),
             crate::screen::action(&scope, move |s: &mut State| {
                 if let Some(a) = s.agent.as_mut() {
                     a.cancel_form(cancel.clone())
