@@ -116,6 +116,32 @@ impl Default for Section {
     }
 }
 
+pub(super) fn set_after_palette_save(
+    slot: &mut Option<(u64, AfterPaletteSave)>,
+    close_request: Option<&Rc<CloseRequest>>,
+    epoch: u64,
+    after: AfterPaletteSave,
+) {
+    if !matches!(after, AfterPaletteSave::Close)
+        && let Some(request) = close_request
+    {
+        request.close_main_after.set(false);
+    }
+    *slot = Some((epoch, after));
+}
+
+pub(super) fn clear_after_palette_save(
+    slot: &mut Option<(u64, AfterPaletteSave)>,
+    close_request: Option<&Rc<CloseRequest>>,
+) {
+    if matches!(slot, Some((_, AfterPaletteSave::Close)))
+        && let Some(request) = close_request
+    {
+        request.close_main_after.set(false);
+    }
+    *slot = None;
+}
+
 impl Window {
     pub(super) fn with_notification_permission(
         mut self,
@@ -186,6 +212,7 @@ impl Window {
     }
 
     fn switch_section(&mut self, next: Section) {
+        clear_after_palette_save(&mut self.after_palette_save, self.close_request.as_ref());
         self.general.close();
         self.transcript_picker.set(None);
         self.advanced_help = None;
@@ -233,7 +260,12 @@ impl Window {
             let mut prefs = self.shared.borrow_mut();
             self.general.settle_save(&mut prefs);
             if self.general.busy(&prefs) {
-                self.after_palette_save = Some((prefs.binding_epoch(), AfterPaletteSave::Close));
+                set_after_palette_save(
+                    &mut self.after_palette_save,
+                    self.close_request.as_ref(),
+                    prefs.binding_epoch(),
+                    AfterPaletteSave::Close,
+                );
                 return;
             }
         }
@@ -464,12 +496,20 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 if next != s.section {
                     let prefs = s.shared.borrow();
                     if s.general.busy(&prefs) {
-                        s.after_palette_save =
-                            Some((prefs.binding_epoch(), AfterPaletteSave::Section(next)));
+                        set_after_palette_save(
+                            &mut s.after_palette_save,
+                            s.close_request.as_ref(),
+                            prefs.binding_epoch(),
+                            AfterPaletteSave::Section(next),
+                        );
                         return;
                     }
                     drop(prefs);
                     if s.general.dirty() {
+                        clear_after_palette_save(
+                            &mut s.after_palette_save,
+                            s.close_request.as_ref(),
+                        );
                         s.pending_section = Some(PendingSection::Section(next));
                         return;
                     }

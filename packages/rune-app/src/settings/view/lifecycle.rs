@@ -9,24 +9,44 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             prefs.window_wake = Some(wake);
             if std::mem::take(&mut prefs.open_providers) {
                 if s.section != Section::Providers && s.general.busy(&prefs) {
-                    s.after_palette_save = Some((
+                    super::set_after_palette_save(
+                        &mut s.after_palette_save,
+                        s.close_request.as_ref(),
                         prefs.binding_epoch(),
                         super::AfterPaletteSave::Section(Section::Providers),
-                    ));
+                    );
                 } else if s.general.dirty() && s.section != Section::Providers {
+                    super::clear_after_palette_save(
+                        &mut s.after_palette_save,
+                        s.close_request.as_ref(),
+                    );
                     s.pending_section = Some(super::PendingSection::Section(Section::Providers));
                 } else {
+                    super::clear_after_palette_save(
+                        &mut s.after_palette_save,
+                        s.close_request.as_ref(),
+                    );
                     s.section = Section::Providers;
                 }
             } else if let Some(id) = prefs.open_config_file.take() {
                 if s.section != Section::ConfigFiles && s.general.busy(&prefs) {
-                    s.after_palette_save = Some((
+                    super::set_after_palette_save(
+                        &mut s.after_palette_save,
+                        s.close_request.as_ref(),
                         prefs.binding_epoch(),
                         super::AfterPaletteSave::ConfigFile(id),
-                    ));
+                    );
                 } else if s.general.dirty() && s.section != Section::ConfigFiles {
+                    super::clear_after_palette_save(
+                        &mut s.after_palette_save,
+                        s.close_request.as_ref(),
+                    );
                     s.pending_section = Some(super::PendingSection::ConfigFile(id));
                 } else {
+                    super::clear_after_palette_save(
+                        &mut s.after_palette_save,
+                        s.close_request.as_ref(),
+                    );
                     s.section = Section::ConfigFiles;
                     s.config_files.request_file(id);
                 }
@@ -69,19 +89,29 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         Section::Providers
                     };
                     if s.section != target && s.general.busy(&prefs) {
-                        s.after_palette_save = Some((
+                        super::set_after_palette_save(
+                            &mut s.after_palette_save,
+                            s.close_request.as_ref(),
                             prefs.binding_epoch(),
                             match jump_config {
                                 Some(id) => super::AfterPaletteSave::ConfigFile(id),
                                 None => super::AfterPaletteSave::Section(Section::Providers),
                             },
-                        ));
+                        );
                     } else if s.general.dirty() && s.section != target {
+                        super::clear_after_palette_save(
+                            &mut s.after_palette_save,
+                            s.close_request.as_ref(),
+                        );
                         s.pending_section = match jump_config {
                             Some(id) => Some(super::PendingSection::ConfigFile(id)),
                             None => Some(super::PendingSection::Section(Section::Providers)),
                         };
                     } else {
+                        super::clear_after_palette_save(
+                            &mut s.after_palette_save,
+                            s.close_request.as_ref(),
+                        );
                         s.section = target;
                         s.pending_section = None;
                         if let Some(id) = jump_config {
@@ -129,40 +159,47 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 if let Some((epoch, _)) = &s.after_palette_save
                     && *epoch != prefs.binding_epoch()
                 {
-                    s.after_palette_save = None;
+                    super::clear_after_palette_save(
+                        &mut s.after_palette_save,
+                        s.close_request.as_ref(),
+                    );
                 }
                 if !s.general.busy(&prefs)
                     && let Some((epoch, after)) = s.after_palette_save.take()
-                    && epoch == prefs.binding_epoch()
-                    && !s.general.dirty()
-                    && !prefs.palette_save_failed()
                 {
-                    match after {
-                        super::AfterPaletteSave::Close => {
-                            drop(prefs);
-                            s.request_close(tx);
-                            return true;
-                        }
-                        super::AfterPaletteSave::Section(next) => {
-                            let allowed = s.can_open_section(&prefs, next);
-                            drop(prefs);
-                            if allowed {
-                                s.switch_section(next);
+                    if epoch == prefs.binding_epoch()
+                        && !s.general.dirty()
+                        && !prefs.palette_save_failed()
+                    {
+                        match after {
+                            super::AfterPaletteSave::Close => {
+                                drop(prefs);
+                                s.request_close(tx);
                                 return true;
                             }
-                            prefs = s.shared.borrow_mut();
-                        }
-                        super::AfterPaletteSave::ConfigFile(id) => {
-                            let allowed = s.can_open_section(&prefs, Section::ConfigFiles)
-                                || s.host_support.pending(&prefs);
-                            drop(prefs);
-                            if allowed {
-                                s.config_files.request_file(id);
-                                s.switch_section(Section::ConfigFiles);
-                                return true;
+                            super::AfterPaletteSave::Section(next) => {
+                                let allowed = s.can_open_section(&prefs, next);
+                                drop(prefs);
+                                if allowed {
+                                    s.switch_section(next);
+                                    return true;
+                                }
+                                prefs = s.shared.borrow_mut();
                             }
-                            prefs = s.shared.borrow_mut();
+                            super::AfterPaletteSave::ConfigFile(id) => {
+                                let allowed = s.can_open_section(&prefs, Section::ConfigFiles)
+                                    || s.host_support.pending(&prefs);
+                                drop(prefs);
+                                if allowed {
+                                    s.config_files.request_file(id);
+                                    s.switch_section(Section::ConfigFiles);
+                                    return true;
+                                }
+                                prefs = s.shared.borrow_mut();
+                            }
                         }
+                    } else if matches!(after, super::AfterPaletteSave::Close) {
+                        s.cancel_close_main();
                     }
                 }
                 if matches!(

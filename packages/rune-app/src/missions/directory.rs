@@ -224,12 +224,14 @@ impl Panel {
         self.reader
             .retained_bytes()
             .saturating_add(self.detail.retained_bytes())
+            .saturating_add(self.schedules.retained_bytes())
     }
 
     pub(crate) fn evict_inactive_caches(&mut self) -> usize {
         self.reader
             .evict_cache()
             .saturating_add(self.detail.evict_snapshot())
+            .saturating_add(self.schedules.evict_cache())
     }
 
     pub(crate) fn evict_closed_reader_cache(&mut self) -> usize {
@@ -243,6 +245,11 @@ impl Panel {
     #[cfg(test)]
     pub(crate) fn fixture_cache_body(&mut self, mission_id: &str, text: String) {
         self.reader.fixture_cache_body(mission_id, text);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_add_schedules(&mut self, count: usize, payload_bytes: usize) {
+        self.schedules.fixture_add_rows(count, payload_bytes);
     }
 
     #[cfg(test)]

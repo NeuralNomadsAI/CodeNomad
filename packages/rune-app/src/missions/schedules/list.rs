@@ -210,7 +210,129 @@ impl Default for Schedules {
     }
 }
 
+fn launch_item_bytes(item: &codenomad_client::missions::LaunchItem) -> usize {
+    use codenomad_client::missions::LaunchItem;
+    match item {
+        LaunchItem::Now | LaunchItem::In(_) | LaunchItem::Every(_) => 24,
+        LaunchItem::Cron(expr, zone) => expr.len().saturating_add(zone.len()).saturating_add(48),
+        LaunchItem::At(_, zone) => zone.len().saturating_add(32),
+        LaunchItem::Condition(kind, key, detail) => kind
+            .len()
+            .saturating_add(key.len())
+            .saturating_add(detail.len())
+            .saturating_add(64),
+    }
+}
+
+fn schedule_bytes(doc: &UnifiedSchedule) -> usize {
+    let roots = doc.configuration.roots.iter().fold(0usize, |acc, r| {
+        acc.saturating_add(r.directory.len()).saturating_add(32)
+    });
+    let launch = doc
+        .configuration
+        .launch
+        .items
+        .iter()
+        .fold(0usize, |acc, item| {
+            acc.saturating_add(launch_item_bytes(item))
+        });
+    let carriers = doc.technical.carriers.iter().fold(0usize, |acc, c| {
+        acc.saturating_add(c.role.len())
+            .saturating_add(c.session_id.len())
+            .saturating_add(c.schedule_id.as_deref().map_or(0, str::len))
+            .saturating_add(64)
+    });
+    let history = doc.history.iter().fold(0usize, |acc, h| {
+        acc.saturating_add(h.id.len())
+            .saturating_add(h.coordinator_session_id.len())
+            .saturating_add(h.outcome.len())
+            .saturating_add(h.reason.as_deref().map_or(0, str::len))
+            .saturating_add(64)
+    });
+    doc.id
+        .len()
+        .saturating_add(doc.kind.len())
+        .saturating_add(doc.configuration.title.len())
+        .saturating_add(doc.configuration.objective.len())
+        .saturating_add(doc.configuration.notes.as_deref().map_or(0, str::len))
+        .saturating_add(roots)
+        .saturating_add(launch)
+        .saturating_add(doc.observation.state.len())
+        .saturating_add(doc.observation.native_status.as_deref().map_or(0, str::len))
+        .saturating_add(doc.observation.kind.len())
+        .saturating_add(carriers)
+        .saturating_add(doc.available_actions.len().saturating_mul(8))
+        .saturating_add(doc.block_reason.as_deref().map_or(0, str::len))
+        .saturating_add(
+            doc.pending_passage
+                .as_ref()
+                .map_or(0, |p| p.coordinator_session_id.len().saturating_add(32)),
+        )
+        .saturating_add(history)
+        .saturating_add(doc.control.as_ref().map_or(0, |c| {
+            c.request_id
+                .len()
+                .saturating_add(c.action.len())
+                .saturating_add(64)
+        }))
+        .saturating_add(doc.schedule_activation.as_ref().map_or(0, |a| {
+            a.request_id
+                .len()
+                .saturating_add(a.state.len())
+                .saturating_add(64)
+        }))
+        .saturating_add(256)
+}
+
 impl Schedules {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.rows
+            .iter()
+            .fold(0usize, |acc, doc| acc.saturating_add(schedule_bytes(doc)))
+            .saturating_add(self.next.as_deref().map_or(0, str::len))
+    }
+
+    pub(crate) fn evict_cache(&mut self) -> usize {
+        let before = self.retained_bytes();
+        if before == 0 {
+            return 0;
+        }
+        self.generation = self.generation.wrapping_add(1);
+        self.view_epoch = self.view_epoch.wrapping_add(1);
+        self.cancel_flights();
+        self.rows = Vec::new();
+        self.next = None;
+        self.fresh.clear();
+        self.error = false;
+        self.failed_append = false;
+        self.selection_error = None;
+        before
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_add_rows(&mut self, count: usize, payload_bytes: usize) {
+        let payload = "あ".repeat((payload_bytes / 3).max(1));
+        for index in 0..count {
+            let doc = UnifiedSchedule::from_value(&serde_json::json!({
+                "id": format!("sched-{index}"),
+                "kind": "schedule",
+                "revision": 1,
+                "state": "paused",
+                "configuration": {
+                    "title": format!("Schedule {index}"),
+                    "objective": payload,
+                    "notes": payload,
+                    "roots": [],
+                    "launch": { "when": [{ "kind": "cron", "expression": "0 9 * * *", "zone": "UTC" }] }
+                },
+                "observation": { "state": "unarmed", "timeGeneration": 0, "kind": "schedule" }
+            }))
+            .expect("valid schedule fixture");
+            self.rows.push(doc);
+        }
+        self.next = Some("cursor-next".into());
+    }
+
     pub(crate) fn bind_auth(&mut self, sink: AuthSink) {
         self.auth_sink = sink;
     }

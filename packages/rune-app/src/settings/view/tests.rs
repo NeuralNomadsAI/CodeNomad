@@ -1082,3 +1082,45 @@ fn conversation_preferences_render_presets_headers_and_all_21_rows_in_solid_orde
         "narrow Chat container (<672px) must fold presets into a 2×2 grid: {b0_narrow:?} vs {b2_narrow:?}"
     );
 }
+
+#[test]
+fn config_file_jump_during_palette_save_cancels_deferred_main_window_close() {
+    let request = Rc::new(CloseRequest::default());
+    request.close_main_after.set(true);
+    let mut window = Window::default();
+    window.close_request = Some(request.clone());
+    set_after_palette_save(
+        &mut window.after_palette_save,
+        window.close_request.as_ref(),
+        7,
+        AfterPaletteSave::Close,
+    );
+    assert!(request.close_main_after.get());
+
+    set_after_palette_save(
+        &mut window.after_palette_save,
+        window.close_request.as_ref(),
+        7,
+        AfterPaletteSave::ConfigFile("opencode".into()),
+    );
+    assert!(
+        !request.close_main_after.get(),
+        "superseding deferred close with a config-file jump must cancel close_main_after"
+    );
+
+    request.close_main_after.set(true);
+    set_after_palette_save(
+        &mut window.after_palette_save,
+        window.close_request.as_ref(),
+        7,
+        AfterPaletteSave::Close,
+    );
+    clear_after_palette_save(
+        &mut window.after_palette_save,
+        window.close_request.as_ref(),
+    );
+    assert!(
+        !request.close_main_after.get(),
+        "clearing a deferred Close must also cancel close_main_after"
+    );
+}

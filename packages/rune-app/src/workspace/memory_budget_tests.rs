@@ -292,6 +292,55 @@ fn global_ceiling_evicts_inactive_tabs_in_deterministic_lru_order() {
 }
 
 #[test]
+fn inactive_mission_schedule_pages_are_measured_and_evicted_under_pressure() {
+    let mut s = crate::init();
+    s.messages.push(message_with_size("active", 4_000));
+
+    let mut ui = Ui::new();
+    let (cache, _) = build_inactive_tab(TabFixture {
+        workspace_id: "tab-schedules",
+        ..Default::default()
+    });
+    let mut panel = crate::missions::Panel::new(
+        test_backend("tab-schedules"),
+        Some("tab-schedules".into()),
+        Default::default(),
+        Arc::new(|| {}),
+    );
+    panel.fixture_add_schedules(8, 30_000);
+    let before_panel = panel.retained_bytes();
+    assert!(
+        before_panel >= 400_000,
+        "expected schedule objectives/notes to be counted in retained_bytes, got {before_panel}"
+    );
+    assert_eq!(panel.evictable_inactive_bytes(), before_panel);
+    ui.push_fixture_entry("tab-schedules", 1, cache, Some(panel));
+    s.workspace = Some(ui);
+
+    let after = enforce_with(
+        &mut s,
+        Limits {
+            global_bytes: 32_000,
+            inactive_history_bytes: usize::MAX,
+            inactive_history_rows: usize::MAX,
+        },
+    );
+    assert!(
+        after.total() <= 32_000,
+        "expected total {} <= 32000 after evicting inactive schedule pages",
+        after.total()
+    );
+    let remaining = s.workspace.as_ref().unwrap().entries_slice()[1]
+        .missions_ref()
+        .unwrap()
+        .retained_bytes();
+    assert_eq!(
+        remaining, 0,
+        "evicted inactive schedule pages must drop retained bytes to 0"
+    );
+}
+
+#[test]
 fn non_evictable_mission_summaries_do_not_mask_evictable_file_caches_on_newer_tabs() {
     let mut s = crate::init();
     s.messages.push(message_with_size("active", 4_000));
