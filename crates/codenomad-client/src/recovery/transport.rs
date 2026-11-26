@@ -22,6 +22,7 @@ pub(super) async fn next_input(
     rx: &Receiver<Input>,
     reading: Option<&ReadingLane>,
     generation: u64,
+    active_reader: bool,
     deadline: Option<Instant>,
 ) -> Option<Input> {
     if let Ok(input) = rx.try_recv() {
@@ -33,10 +34,11 @@ pub(super) async fn next_input(
     }
     let receive = async { Some(rx.recv().await.unwrap_or(Input::Command(Command::Close))) };
     let demand = async {
-        if let Some(reading) = reading
-            && reading.demand.changed_after(generation).await.is_some()
-        {
-            return None;
+        if let Some(reading) = reading {
+            let changed = reading.demand.changed_after(generation).await;
+            if changed.is_some() || active_reader {
+                return None;
+            }
         }
         std::future::pending::<Option<Input>>().await
     };
@@ -99,7 +101,14 @@ pub(crate) async fn run_with_reading(
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
-        let input = next_input(&rx, reading, reader.generation, deadline).await;
+        let input = next_input(
+            &rx,
+            reading,
+            reader.generation,
+            reader.active_reader,
+            deadline,
+        )
+        .await;
         reader.demand(reading);
         if retry.is_some_and(|at| Instant::now() >= at) {
             retry = None;

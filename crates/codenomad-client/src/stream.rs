@@ -31,7 +31,7 @@ pub use staleness::probe_stale;
 mod browser;
 
 pub struct State {
-    pub cancelled: AtomicBool,
+    cancelled: AtomicBool,
     pub version: AtomicU64,
     pub alive: AtomicBool,
     pub running: AtomicBool,
@@ -118,6 +118,10 @@ impl State {
     pub fn cancel(&self) {
         self.cancelled.store(true, SeqCst);
         self.cancel_signal.0.close();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(SeqCst)
     }
 
     pub(crate) async fn wait_cancelled(&self, out: &Sender<Input>) {

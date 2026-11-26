@@ -108,7 +108,7 @@ fn stream_cancel_and_stop_waiters_notify_waker_synchronously() {
     let mut cx = Context::from_waker(&waker);
     let mut auth_close = pin!(close_for_authentication(&running, &events_tx));
     assert!(auth_close.as_mut().poll(&mut cx).is_pending());
-    assert!(running.cancelled.load(SeqCst));
+    assert!(running.is_cancelled());
     assert_eq!(wakes.0.load(SeqCst), 0);
     drop(events_rx);
     assert!(
@@ -222,14 +222,15 @@ fn next_input_wakes_on_demand_and_guards_all_spin_windows() {
     // Idle wait notifies the waker synchronously when demand changes.
     let (wakes, waker) = counter_waker();
     let mut cx = Context::from_waker(&waker);
-    let mut fut = pin!(next_input(&rx, Some(&reading), 0, None));
+    let mut fut = pin!(next_input(&rx, Some(&reading), 0, true, None));
     assert!(fut.as_mut().poll(&mut cx).is_pending());
     assert_eq!(wakes.0.load(SeqCst), 0);
     let gen1 = demand_tx.publish(Some(demand::Target::Latest));
     assert!(wakes.0.load(SeqCst) >= 1, "demand change must notify waker");
     assert!(matches!(fut.as_mut().poll(&mut cx), Poll::Ready(None)));
 
-    // Dropping Demand while the reader is active & dirty must deactivate the reader and never spin.
+    // Dropping Demand while the reader is active wakes next_input once so Reader::demand can
+    // release the window and deactivate, after which next_input stays Pending (no spin).
     let (ev_tx, _ev_rx) = bounded(1);
     let wire = stream::State::observing_preferences(ev_tx, Arc::new(|| {}));
     wire.upstream.store(true, SeqCst);
@@ -238,14 +239,39 @@ fn next_input_wakes_on_demand_and_guards_all_spin_windows() {
     assert!(reader.active_reader && reader.dirty);
     assert!(reader.next_sync_at(true, &wire, Some(&reading)).is_some());
 
+    let (wakes, waker) = counter_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut drop_wake = pin!(next_input(
+        &rx,
+        Some(&reading),
+        gen1,
+        reader.active_reader,
+        None
+    ));
+    assert!(drop_wake.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(wakes.0.load(SeqCst), 0);
     drop(demand_tx);
+    assert!(
+        wakes.0.load(SeqCst) >= 1,
+        "dropping Demand while active must wake next_input once"
+    );
+    assert!(matches!(
+        drop_wake.as_mut().poll(&mut cx),
+        Poll::Ready(None)
+    ));
     assert!(reader.next_sync_at(true, &wire, Some(&reading)).is_none());
     reader.demand(Some(&reading));
     assert!(!reader.active_reader && !reader.dirty);
 
     let (wakes, waker) = counter_waker();
     let mut cx = Context::from_waker(&waker);
-    let mut fut = pin!(next_input(&rx, Some(&reading), gen1, None));
+    let mut fut = pin!(next_input(
+        &rx,
+        Some(&reading),
+        gen1,
+        reader.active_reader,
+        None
+    ));
     assert!(fut.as_mut().poll(&mut cx).is_pending());
     assert_eq!(wakes.0.load(SeqCst), 0);
     tx.try_send(Input::Opened(1)).unwrap();
@@ -319,8 +345,16 @@ fn dropping_demand_during_active_sync_stops_sync_without_spinning() {
                 "unexpected request: {req}"
             );
 
-            // Drop Demand while the history read is in flight: must cancel and stay idle (no retry spin).
+            // Drop Demand while the history read is in flight: must abort the request (EOF on
+            // server socket) and stay idle (no retry spin).
             drop(demand_tx);
+            let mut probe = [0u8; 1];
+            let read =
+                tokio::time::timeout(Duration::from_secs(2), stalled_history.read(&mut probe))
+                    .await
+                    .expect("stalled history socket must close when Demand drops")
+                    .unwrap();
+            assert_eq!(read, 0, "aborted history request should reach EOF");
             assert!(
                 tokio::time::timeout(Duration::from_millis(50), listener.accept())
                     .await
@@ -422,19 +456,26 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
             let (_, _, ev) = snapshots.recv().await.unwrap();
             assert!(matches!(ev, Event::ReaderSync { .. }));
 
-            // 3. Drop SSE -> enters 500 ms backoff; Command::Retry wakes reconnect immediately.
+            // 3. Drop SSE twice so automatic backoff is 1000 ms; Command::Retry must wake
+            // reconnect well before that automatic backoff.
             drop(sse1);
             while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
-            commands.send(Command::Retry).await.unwrap();
             let (socket, _) = listener.accept().await.unwrap();
-            let mut sse2 = BufReader::new(socket);
-            let req = read_request_line(&mut sse2).await;
-            assert!(req.contains("connectionId=stream-2"), "got {req}");
+            drop(socket);
+            while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
+            commands.send(Command::Retry).await.unwrap();
+            let (socket, _) = tokio::time::timeout(Duration::from_millis(450), listener.accept())
+                .await
+                .expect("Command::Retry must bypass the 1000 ms automatic backoff")
+                .unwrap();
+            let mut sse3 = BufReader::new(socket);
+            let req = read_request_line(&mut sse3).await;
+            assert!(req.contains("connectionId=stream-3"), "got {req}");
 
             // 4. Close exits cleanly.
             commands.send(Command::Close).await.unwrap();
             task.await.unwrap().unwrap();
-            drop(sse2);
+            drop(sse3);
         })
         .await
         .expect("recovery transport wake test timed out");
