@@ -9,11 +9,11 @@ import { isLocalAbsolutePath, pidAlive, probeProcessIdentity, processIdentityOf,
 const jobs = new WeakMap()
 const jobIdentities = new WeakMap()
 
-export function fixtureJobExecutable({ required = process.platform === "win32" || process.platform === "darwin" } = {}) {
+export function fixtureJobExecutable({ required = process.platform === "win32" || process.platform === "darwin", env = process.env } = {}) {
   const root = fileURLToPath(new URL("../", import.meta.url))
   const suffix = process.platform === "win32" ? ".exe" : ""
-  const rawExe = process.env.CODENOMAD_FIXTURE_JOB_EXE
-    || path.resolve(root, process.env.CARGO_TARGET_DIR || "target", "debug", `codenomad-fixture-job${suffix}`)
+  const rawExe = env.CODENOMAD_FIXTURE_JOB_EXE
+    || path.resolve(root, env.CARGO_TARGET_DIR || "target", "debug", `codenomad-fixture-job${suffix}`)
   try {
     if (!isLocalAbsolutePath(rawExe)) throw new Error("Expected an absolute local path")
     const exe = resolveLocalExecutable(rawExe, "fixture job launcher")

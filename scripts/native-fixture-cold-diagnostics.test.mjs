@@ -1,13 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from "node:fs/promises"
+import { chmod, copyFile, mkdtemp, mkdir, readFile, realpath, writeFile, rm, symlink } from "node:fs/promises"
 import { createServer } from "node:http"
 import { spawn } from "node:child_process"
 import { DatabaseSync } from "node:sqlite"
 import path from "node:path"
 import os from "node:os"
-import { collectColdFailure, fixtureRedactor } from "./native-fixture-cold-diagnostics.mjs"
-import { stopFixtureHandle as stopFixtureChild } from "./native-fixture-guards.mjs"
+import { coldDiagnosticWorkerEnv, collectColdFailure, fixtureRedactor } from "./native-fixture-cold-diagnostics.mjs"
+import { fixtureJobExecutable, stopFixtureHandle as stopFixtureChild } from "./native-fixture-guards.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 import { createHash } from "node:crypto"
 
@@ -670,4 +670,85 @@ test("ten-second collector deadline kills and reaps synchronous SQL without reta
   const marker = JSON.parse(await readFile(path.join(f.root, "failure-diagnostic.json"), "utf8"))
   assert.equal(marker.error, "cold-failure-diagnostic-unavailable")
   f.edit(db => db.exec("BEGIN EXCLUSIVE; ROLLBACK"))
+})
+
+test("coldDiagnosticWorkerEnv propagates only the resolved fixture job binary and Windows system root", async t => {
+  await mkdir(path.join(os.tmpdir(), "opencode"), { recursive: true })
+  const externalTarget = await mkdtemp(path.join(os.tmpdir(), "opencode", "cold-diag-target-"))
+  t.after(() => rm(externalTarget, { recursive: true, force: true }))
+  const suffix = process.platform === "win32" ? ".exe" : ""
+  const debugDir = path.join(externalTarget, "debug")
+  await mkdir(debugDir, { recursive: true })
+  const fakeExe = path.join(debugDir, `codenomad-fixture-job${suffix}`)
+  await writeFile(fakeExe, "fixture-job")
+  if (process.platform !== "win32") await chmod(fakeExe, 0o755)
+  const expectedExe = await realpath(fakeExe)
+
+  const fromCargoTarget = coldDiagnosticWorkerEnv({
+    SystemRoot: "C:\\Windows",
+    WINDIR: "C:\\Windows",
+    CARGO_TARGET_DIR: externalTarget,
+    PATH: "C:\\Tools",
+    OPENCODE_SERVER_PASSWORD: "secret",
+    OPENAI_API_KEY: "secret",
+    RUNE_SERVER_EXE: "C:\\other\\codenomad-rs.exe",
+  })
+  assert.deepEqual(Object.keys(fromCargoTarget).sort(), ["CODENOMAD_FIXTURE_JOB_EXE", "SystemRoot", "WINDIR"])
+  assert.equal(fromCargoTarget.CODENOMAD_FIXTURE_JOB_EXE, expectedExe)
+
+  const fromExplicitExe = coldDiagnosticWorkerEnv({
+    SystemRoot: "C:\\Windows",
+    CODENOMAD_FIXTURE_JOB_EXE: fakeExe,
+    AWS_SECRET_ACCESS_KEY: "secret",
+  })
+  assert.deepEqual(Object.keys(fromExplicitExe).sort(), ["CODENOMAD_FIXTURE_JOB_EXE", "SystemRoot"])
+  assert.equal(fromExplicitExe.CODENOMAD_FIXTURE_JOB_EXE, expectedExe)
+
+  const fromMissingExplicit = coldDiagnosticWorkerEnv({
+    SystemRoot: "C:\\Windows",
+    CODENOMAD_FIXTURE_JOB_EXE: path.join(externalTarget, `missing-fixture-job${suffix}`),
+    CARGO_TARGET_DIR: externalTarget,
+  })
+  assert.deepEqual(Object.keys(fromMissingExplicit).sort(), ["SystemRoot"])
+})
+
+test("cold worker attests loopback HTTP with an external CARGO_TARGET_DIR and explicit CODENOMAD_FIXTURE_JOB_EXE", async t => {
+  const realExe = fixtureJobExecutable({ required: false })
+  if (!realExe) { t.skip("codenomad-fixture-job binary is not built"); return }
+  await mkdir(path.join(os.tmpdir(), "opencode"), { recursive: true })
+  const externalTarget = await mkdtemp(path.join(os.tmpdir(), "opencode", "cold-diag-ext-bin-"))
+  t.after(() => rm(externalTarget, { recursive: true, force: true }))
+  const suffix = process.platform === "win32" ? ".exe" : ""
+  const debugDir = path.join(externalTarget, "debug")
+  await mkdir(debugDir, { recursive: true })
+  const copiedExe = path.join(debugDir, `codenomad-fixture-job${suffix}`)
+  await copyFile(realExe, copiedExe)
+  if (process.platform !== "win32") await chmod(copiedExe, 0o755)
+
+  const savedTarget = process.env.CARGO_TARGET_DIR
+  const savedExe = process.env.CODENOMAD_FIXTURE_JOB_EXE
+  const restore = () => {
+    if (savedTarget === undefined) delete process.env.CARGO_TARGET_DIR
+    else process.env.CARGO_TARGET_DIR = savedTarget
+    if (savedExe === undefined) delete process.env.CODENOMAD_FIXTURE_JOB_EXE
+    else process.env.CODENOMAD_FIXTURE_JOB_EXE = savedExe
+  }
+  t.after(restore)
+
+  for (const mode of ["external-cargo-target", "explicit-fixture-job-exe"]) {
+    if (mode === "external-cargo-target") {
+      process.env.CARGO_TARGET_DIR = externalTarget
+      delete process.env.CODENOMAD_FIXTURE_JOB_EXE
+    } else {
+      delete process.env.CARGO_TARGET_DIR
+      process.env.CODENOMAD_FIXTURE_JOB_EXE = copiedExe
+    }
+    const f = await fixture(t)
+    const result = await f.collect()
+    assert.equal(result.error, undefined, `${mode}: ${JSON.stringify(result)}`)
+    assert.equal(result.evidence.http.status, 200, mode)
+    assert.equal(result.evidence.http.pid, f.child.pid, mode)
+    assert.equal(result.evidence.http.version, f.expected.version, mode)
+    assert.equal(f.requests.length, 1, mode)
+  }
 })

@@ -39,7 +39,7 @@ for (const name of ["DATA", "CONFIG", "STATE", "CACHE", "RUNTIME"]) env[`XDG_${n
 env.XDG_RUNTIME_DIR = path.join(root, "runtime")
 for (const directory of [project, env.TEMP, env.ProgramData, env.OPENCODE_CONFIG_DIR, ...Object.entries(env).filter(([k]) => k.startsWith("XDG_")).map(([,v]) => v)]) await mkdir(directory, { recursive: true })
 // Imported backend modules must see the same private roots as the child service.
-for (const key of Object.keys(process.env)) if (/^(OPENCODE_|XDG_|CODENOMAD_|WSL_)/i.test(key)) delete process.env[key]
+for (const key of Object.keys(process.env)) if (/^(OPENCODE_|XDG_|CODENOMAD_|WSL_)/i.test(key) && !/^CODENOMAD_FIXTURE_JOB_EXE$/i.test(key)) delete process.env[key]
 Object.assign(process.env, env)
 execFileSync("git", ["init", "-q", project], { env })
 await writeFile(path.join(project, "input.txt"), "deterministic native useful-work input\n")

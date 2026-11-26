@@ -74,7 +74,7 @@ async function journey(kind) {
   for (const name of ["CONFIG", "DATA", "STATE", "CACHE"]) env[`XDG_${name}_HOME`] = path.join(root, `xdg-${name.toLowerCase()}`)
   env.XDG_RUNTIME_DIR = path.join(root, "runtime")
   for (const [name, directory] of Object.entries(env)) if (/^(HOME|USERPROFILE|APPDATA|LOCALAPPDATA|ProgramData|TEMP|TMP|OPENCODE_CONFIG_DIR|XDG_.*)$/.test(name)) await mkdir(directory, { recursive: true })
-  for (const name of Object.keys(process.env)) if (/^(OPENCODE_|CODENOMAD_|XDG_|WSL_|npm_config_|GIT_)/i.test(name)) delete process.env[name]
+  for (const name of Object.keys(process.env)) if (/^(OPENCODE_|CODENOMAD_|XDG_|WSL_|npm_config_|GIT_)/i.test(name) && !/^CODENOMAD_FIXTURE_JOB_EXE$/i.test(name)) delete process.env[name]
   Object.assign(process.env, env)
   process.env.CLI_CONFIG = path.join(root, "profile.yaml")
   const [{ default: Fastify }, { default: pino }, { OpenCode }, { Service },

@@ -474,6 +474,7 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
   const allowSelfSigned=opts.allowSelfSigned===true
   const ca=opts.ca
   const probeIdentity=opts.probeIdentity??probeProcessIdentity
+  const onAttested=typeof opts.onAttested==='function'?opts.onAttested:null
   const enforceIncarnation=verifyOwner===verifyLoopbackListenerOwner||opts.targetStartId!=null||opts.probeIdentity!=null
   let expectedStartId=opts.targetStartId??null
   const checkIncarnation=async()=>{
@@ -526,7 +527,7 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
                     servername,
                     ...(ca?{ca,rejectUnauthorized:true}:{rejectUnauthorized:!allowSelfSigned}),
                   })
-                  tlsSocket.once('secureConnect',()=>done(null,tlsSocket))
+                  tlsSocket.once('secureConnect',()=>{onAttested?.();done(null,tlsSocket)})
                   tlsSocket.once('error',err=>done(err,null))
                 },postError=>done(postError,null))
             })
@@ -558,6 +559,7 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
               .then(()=>checkIncarnation())
               .then(()=>{
                 if(closed||socket.destroyed){done(Error('Socket closed during peer attestation'),null);return}
+                onAttested?.()
                 done(null,socket)
               },postError=>done(postError,null))
           })
