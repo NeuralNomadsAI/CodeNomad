@@ -6,7 +6,7 @@
 
 import { backendOf } from "../lib/backend-client"
 import { backgroundReads } from "../lib/background-read-queue"
-import { barePathCandidates, type BarePathCandidate } from "../lib/markdown-bare-paths"
+import { barePathCandidates, type BarePathCandidate, type BarePathPiece } from "../lib/markdown-bare-paths"
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
 import { canOpenLocalPaths } from "../lib/workspace-open"
 import type { SessionLinkBase, SessionLinkTitles } from "./markdown-session-links"
@@ -158,7 +158,10 @@ interface ResolvedTarget {
   name: string
 }
 
-const SKIP_TEXT = "code, pre, a, [data-local-image]"
+// Inline code spans carry file paths agents backtick constantly, so they
+// convert like prose; fenced code blocks (`pre`) stay literal, as do
+// hand-written links and local-image labels.
+const SKIP_TEXT = "pre, a, [data-local-image]"
 
 const walkHits = (container: ParentNode) => {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
@@ -186,18 +189,23 @@ const resolveTarget = (href: string, base: string): ResolvedTarget | undefined =
 /** One existence-gated pass over a rendered markdown container: bare-path
  * candidates that resolve inside the session's worktree and name a linkable entry
  * become anchors the shared click routing and link decoration already
- * serve. The container is walked once to warm the directory cache and walked
- * again after the listings land, so a fallback/final html commit between the
- * two walks can never strand a wrap. Fire-and-forget; errors never break
- * rendering. */
+ * serve. A token with non-ASCII letters offers its integral reading first —
+ * the whole token as one path with the letters in its name — and falls back
+ * to its boundary pieces, which convert independently exactly as the
+ * ASCII-only grammar did. The container is walked once to warm the directory
+ * cache and walked again after the listings land, so a fallback/final html
+ * commit between the two walks can never strand a wrap. Fire-and-forget;
+ * errors never break rendering. */
 export function linkBarePaths(container: ParentNode, options: LinkBarePathsOptions): void {
   void (async () => {
     try {
       const parents = new Set<string>()
       for (const { candidates } of walkHits(container)) {
         for (const candidate of candidates) {
-          const target = resolveTarget(candidate.href, options.base.base)
-          if (target) parents.add(target.parent)
+          for (const piece of candidate.integral ? [candidate.integral, ...candidate.pieces] : candidate.pieces) {
+            const target = resolveTarget(piece.href, options.base.base)
+            if (target) parents.add(target.parent)
+          }
         }
       }
       if (!parents.size || options.signal.aborted || !container.isConnected) return
@@ -210,19 +218,30 @@ export function linkBarePaths(container: ParentNode, options: LinkBarePathsOptio
       // children while the listings were in flight.
       let wrapped = false
       for (const { node, candidates } of walkHits(container)) {
-        const matches = candidates
-          .map(candidate => ({ candidate, target: resolveTarget(candidate.href, options.base.base) }))
-          .filter(({ target }) => target !== undefined && nameSets.get(target.parent)?.has(target.name))
-          .sort((left, right) => right.candidate.start - left.candidate.start)
+        const matches: BarePathPiece[] = []
+        for (const candidate of candidates) {
+          if (candidate.integral) {
+            const target = resolveTarget(candidate.integral.href, options.base.base)
+            if (target !== undefined && nameSets.get(target.parent)?.has(target.name)) {
+              matches.push(candidate.integral)
+              continue
+            }
+          }
+          for (const piece of candidate.pieces) {
+            const target = resolveTarget(piece.href, options.base.base)
+            if (target !== undefined && nameSets.get(target.parent)?.has(target.name)) matches.push(piece)
+          }
+        }
         if (!matches.length) continue
-        for (const { candidate } of matches) {
-          if (candidate.end < node.nodeValue!.length) node.splitText(candidate.end)
-          const target = candidate.start > 0 ? node.splitText(candidate.start) : node
+        matches.sort((left, right) => right.start - left.start)
+        for (const piece of matches) {
+          if (piece.end < node.nodeValue!.length) node.splitText(piece.end)
+          const target = piece.start > 0 ? node.splitText(piece.start) : node
           const anchor = document.createElement("a")
-          anchor.setAttribute("href", candidate.href)
+          anchor.setAttribute("href", piece.href)
           const range = document.createRange()
           range.setStart(target, 0)
-          range.setEnd(target, candidate.end - candidate.start)
+          range.setEnd(target, piece.end - piece.start)
           range.surroundContents(anchor)
         }
         wrapped = true

@@ -32,7 +32,8 @@ serverApi.listWorkspaceFiles = (async (_id: string, relativePath = ".", director
   if (holdListing && !released) await new Promise<void>(resolve => { pendingReleases.push(resolve) })
   if (relativePath === "src") return entries([["app.ts", "file"], ["inner", "directory"],
     ...(includeGone ? ([["gone.ts", "file"]] as Array<[string, string]>) : [])])
-  if (relativePath === ".") return entries([["README.md", "file"], ["src", "directory"], ["docs", "directory"]])
+  if (relativePath === "docs") return entries([["算法工作台MVP-design.md", "file"]])
+  if (relativePath === ".") return entries([["README.md", "file"], ["src", "directory"], ["docs", "directory"], ["设计.md", "file"]])
   if (relativePath === "and") throw new Error("no such directory")
   return []
 }) as typeof serverApi.listWorkspaceFiles
@@ -47,9 +48,13 @@ const initialText = [
   "The fix lives in src/app.ts and src/gone.ts today.",
   "Also see README.md and the old /fixture-root/README.md copy.",
   "Outside the worktree: /etc/passwd. A directory: src/inner.",
-  "Prose keeps and/or unclear; code stays: `src/app.ts`.",
+  "Prose keeps and/or unclear; inline code links too: `src/app.ts`.",
   "看看src/app.ts吧。",
   "A hand-written [readme](./README.md) keeps its own anchor.",
+  "规格写入 docs/算法工作台MVP-design.md，待确认两项。",
+  "根目录的 设计.md 也是；对比 src/app.ts和README.md 的差异。",
+  "也寫進 `docs/算法工作台MVP-design.md` 了。",
+  "```\nsrc/app.ts\n```",
 ].join("\n\n")
 
 let renderCount = 0
