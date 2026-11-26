@@ -159,12 +159,12 @@ impl Editor {
                         .label(name)
                         .disabled(!ready || self.selected.is_some())
                         .on_edit(move |s| &mut edit(s).name)
-                        .build(field_kit(layout::dark()))
+                        .build(&field_kit(layout::dark()))
                         .key("environment-name"),
                 )
                 .child(
                     field
-                        .build(field_kit(layout::dark()))
+                        .build(&field_kit(layout::dark()))
                         .key("environment-value"),
                 )
                 .child(
