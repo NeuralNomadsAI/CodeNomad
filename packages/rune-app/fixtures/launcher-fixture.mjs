@@ -35,46 +35,71 @@ assert(!historyReturnOnly || webMobile&&!webAndroid)
 assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes('--web-mobile'))
 const root=path.resolve(import.meta.dirname,'../../..')
 const ownedWorker=process.argv.includes('--owned-mobile-worker')
-const workerProfileArgIndex=process.argv.indexOf('--worker-profile')
-const workerProfileArg=workerProfileArgIndex>=0?process.argv[workerProfileArgIndex+1]:undefined
+const workerProfileEnv=process.env.CODENOMAD_LAUNCHER_WORKER_PROFILE
+if(ownedWorker)delete process.env.CODENOMAD_LAUNCHER_WORKER_PROFILE
 if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDrawers||webSse7Tabs)&&!ownedWorker)){
   const testsReal=(await assertWorktreeTestRoot(root)).testsReal
   const workerProfile=path.join(testsReal,`launcher-${randomUUID()}`)
   await mkdir(workerProfile,{recursive:true})
-  const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker','--worker-profile',workerProfile],{windowsHide:true,stdio:['pipe','inherit','inherit']})
+  const workerEnv={...process.env,CODENOMAD_LAUNCHER_WORKER_PROFILE:workerProfile}
+  const workerStartedBy=new Date()
+  const worker=process.platform==='win32'
+    ?spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:['pipe','inherit','inherit'],env:workerEnv})
+    :spawn(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{detached:true,windowsHide:true,stdio:['pipe','inherit','inherit'],env:workerEnv})
   worker.stdin?.on('error',()=>{})
   const closed=new Promise(resolve=>{
     worker.once('close',(code,signal)=>resolve({code,signal}))
     worker.once('error',error=>resolve({code:1,signal:null,error}))
   })
-  const graceMs=webAndroid?70000:12000
-  let stopping,stopError,outerSignal
+  const graceMs=webAndroid?150000:25000
+  let stopping,stopError,outerSignal,stopSettled
+  const stopDone=new Promise(resolve=>{stopSettled=resolve})
   const stop=signal=>{
     outerSignal??=signal
-    stopping??=stopFixtureChild(worker,closed,graceMs,2000,{close:()=>{try{worker.stdin?.end(signal==='SIGINT'?'shutdown:SIGINT\n':'shutdown:SIGTERM\n')}catch{}}}).catch(error=>{stopError=error;console.error(error.message)})
+    stopping??=stopFixtureChild(worker,closed,graceMs,2000,{
+      ...(process.platform!=='win32'?{group:true,startedBy:workerStartedBy}:{}),
+      close:()=>{try{worker.stdin?.end(signal==='SIGINT'?'shutdown:SIGINT\n':'shutdown:SIGTERM\n')}catch{}},
+    }).catch(error=>{
+      stopError=error
+      console.error(error.message)
+    }).finally(()=>{stopSettled({exited:false})})
   }
   process.on('SIGINT',stop)
   process.on('SIGTERM',stop)
-  const exit=await closed
-  await stopping
+  const outcome=await Promise.race([
+    closed.then(exit=>({exited:true,exit})),
+    stopDone,
+  ])
+  let exit=outcome.exited?outcome.exit:null
+  if(outcome.exited){
+    await stopping
+  }else{
+    let timer
+    try{
+      exit=await Promise.race([closed,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),500)})])
+    }finally{clearTimeout(timer)}
+  }
   process.off('SIGINT',stop)
   process.off('SIGTERM',stop)
   const proofTmp=path.join(workerProfile,'proof.json.tmp')
   const proofFile=path.join(workerProfile,'proof.json')
   let proof
   try{proof=JSON.parse(readFileSync(proofTmp,'utf8'))}catch{}
-  const workerCode=exit.code??(exit.signal==='SIGINT'?130:exit.signal==='SIGTERM'?143:1)
-  const supervisorFailed=workerCode!==0||Boolean(exit.signal)||Boolean(exit.error)||Boolean(stopError)
-  const interrupted=proof?.interruptedSignal??outerSignal??exit.signal??(workerCode===130?'SIGINT':workerCode===143?'SIGTERM':null)
+  const workerExited=exit!==null
+  const workerCode=workerExited?(exit.code??(exit.signal==='SIGINT'?130:exit.signal==='SIGTERM'?143:1)):null
+  const supervisorFailed=!workerExited||workerCode!==0||Boolean(exit.signal)||Boolean(exit.error)||Boolean(stopError)
+  const interrupted=outerSignal??proof?.interruptedSignal??exit?.signal??(workerCode===130?'SIGINT':workerCode===143?'SIGTERM':null)
   const finalResult=proof?.result===0&&!supervisorFailed&&!interrupted?0:1
   const finalProof={
     ...(proof??{profile:workerProfile}),
     result:finalResult,
     interruptedSignal:interrupted,
-    workerExitCode:exit.code,
-    workerExitSignal:exit.signal,
+    workerExited,
+    workerExitCode:workerExited?exit.code:null,
+    workerExitSignal:workerExited?exit.signal:null,
+    ...(!workerExited&&!stopError?{workerStopError:'Owned worker exit was not confirmed after stop'}:{}),
     ...(stopError?{workerStopError:String(stopError?.message??stopError)}:{}),
-    ...(exit.error?{workerSpawnError:String(exit.error?.message??exit.error)}:{}),
+    ...(exit?.error?{workerSpawnError:String(exit.error?.message??exit.error)}:{}),
   }
   writeFileSync(proofTmp,JSON.stringify(finalProof,null,2))
   renameSync(proofTmp,proofFile)
@@ -129,8 +154,8 @@ if(web&&!draftOutput&&!gitOutput){
 }
 let run=`launcher-${randomUUID()}`
 let profile=path.join(output,run)
-if(ownedWorker&&workerProfileArg){
-  const resolvedProfile=path.resolve(workerProfileArg)
+if(ownedWorker&&workerProfileEnv){
+  const resolvedProfile=path.resolve(workerProfileEnv)
   assert.equal(path.dirname(resolvedProfile),output,`Worker profile must reside under ${output}`)
   assert.match(path.basename(resolvedProfile),/^launcher-[0-9a-f-]+$/i,'Unexpected worker profile directory name')
   run=path.basename(resolvedProfile)
@@ -639,10 +664,24 @@ const teardownErrors=[]
 const recordTeardown=async(label,fn)=>{
   try{await fn()}catch(error){teardownErrors.push(`${label}: ${error?.message??error}`)}
 }
+let pairingStopPromise,pairingStopError
+const stopPairingOnce=()=>{
+  const helper=webState.pairingChild
+  if(!helper)return Promise.resolve()
+  if(!pairingStopPromise){
+    const stopped=webState.pairingClosed??new Promise(resolve=>helper.once('close',resolve))
+    pairingStopPromise=stopFixtureChild(helper,stopped,5000,2000,{startedBy:webState.pairingStartedBy}).catch(error=>{
+      pairingStopError=String(error?.message??error)
+    })
+  }
+  return pairingStopPromise
+}
 function finalize(){
   return finalizePromise??=(async()=>{
     try{control?.close()}catch(error){teardownErrors.push(`control close: ${error?.message??error}`)}
     for(const gate of gates.values())gate.reject()
+    await stopPairingOnce()
+    if(pairingStopError)teardownErrors.push(`pairing stop: ${pairingStopError}`)
     let leaseOpenFailed=false
     if(webState.deviceLeaseOpen){
       try{await webState.deviceLeaseOpen}catch{leaseOpenFailed=true}
@@ -694,6 +733,7 @@ function finalize(){
 const onLauncherSignal=signal=>{
   if(proofPublished||interruptedSignal)return
   interruptedSignal=signal
+  if(webState.pairingChild)void stopPairingOnce()
   const activeClient=client??webState.client
   if(activeClient)void stopClientOnce(activeClient)
   abortClientWait?.(signal)
@@ -745,7 +785,7 @@ try{
       const row=store.append('assistant',text,true)
       return {sessionID,messageID:row.id,text}
     }
-    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env:clientEnv,origin,serverPid,runLog:host.stdout(),http,mobile,restart:restartWeb,
+    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env:clientEnv,origin,serverPid,runLog:host.stdout(),http,mobile,restart:restartWeb,isInterrupted:()=>Boolean(interruptedSignal),
       webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard:()=>{keyboardPermissionSettled=false;keyboardFormSettled=false},webRestore,webTimeline,webTouchHistory,webSearch,webOutline,webSse7Tabs,emitMultiplexSse,appendHistory},webState)
     client=webState.client
     if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)

@@ -6,12 +6,61 @@ import {chromium} from 'playwright'
 import path from 'node:path'
 import {spawnFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 import {createAttestedTcpRelay,fixtureAttestationEnv,resolveLoopbackListenerPid,stripFixtureServerSecrets,verifyExecutableMatches,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../../../scripts/native-fixture-http.mjs'
-import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 import {serverBinary} from './fixture-binaries.mjs'
 
+async function runIsolatedPairFixture({root,options,state,isInterrupted}){
+  if(isInterrupted?.())throw Error('Launcher interrupted before pairing')
+  const pairProofFile=path.join(options.profile,'pair-proof.json')
+  const mobileUrl=new URL('../../../scripts/rune/web-mobile.mjs',import.meta.url).href
+  const helperCode=`
+    import {readFileSync,writeFileSync} from 'node:fs'
+    import {pairFixture} from ${JSON.stringify(mobileUrl)}
+    const payload=JSON.parse(readFileSync(0,'utf8'))
+    const paired=await pairFixture(payload.options)
+    writeFileSync(payload.outFile,JSON.stringify(paired),{mode:0o600})
+  `
+  const helperEnv={
+    ...stripFixtureServerSecrets(process.env),
+    ...fixtureAttestationEnv(process.env,{includeServerRoots:true}),
+  }
+  const helper=spawnFixtureChild(process.execPath,['--input-type=module','-e',helperCode],{
+    cwd:root,
+    env:helperEnv,
+    windowsHide:true,
+    stdio:['pipe','pipe','pipe'],
+  })
+  const startedBy=new Date()
+  let helperErr=''
+  for(const stream of [helper.stdout,helper.stderr]){
+    stream?.on('data',chunk=>{helperErr=(helperErr+chunk).slice(-16384)})
+  }
+  const closed=new Promise(resolve=>{
+    helper.once('close',(code,signal)=>resolve({code,signal}))
+    helper.once('error',error=>resolve({code:1,signal:null,error}))
+  })
+  state.pairingChild=helper
+  state.pairingClosed=closed
+  state.pairingStartedBy=startedBy
+  helper.stdin?.on('error',()=>{})
+  helper.stdin?.end(JSON.stringify({options,outFile:pairProofFile}))
+  try{
+    const exit=await closed
+    if(isInterrupted?.())throw Error('Launcher interrupted during pairing')
+    if(exit.error)throw exit.error
+    assert.equal(exit.code,0,`Isolated pairing helper failed (code=${exit.code}, signal=${exit.signal}): ${helperErr.trim()}`)
+    return JSON.parse(await readFile(pairProofFile,'utf8'))
+  }finally{
+    if(state.pairingChild===helper){
+      state.pairingChild=undefined
+      state.pairingClosed=undefined
+      state.pairingStartedBy=undefined
+    }
+  }
+}
+
 export async function launchWeb({
-  root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,serverPid,runLog,http,mobile,restart,
+  root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,serverPid,runLog,http,mobile,restart,isInterrupted,
   webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,webSse7Tabs,emitMultiplexSse,appendHistory,
 }, state) {
   if(webTimeline||webSearch||webOutline){
@@ -25,9 +74,15 @@ export async function launchWeb({
     uiOrigin=ts?.https??runLog.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1]
     assert(uiOrigin,'HTTPS fixture missing')
     if(!webAndroid){
+      if(isInterrupted?.())throw Error('Launcher interrupted before pairing')
       const issue=await http.post('/api/remote-control/pairings')
       assert.equal(issue.status(),200)
-      paired=await pairFixture({origin:uiOrigin,targetPid:serverPid,profile,pairingUrl:(await issue.json()).url,storage,manifest,ui,fromLink:webSse7Tabs?false:!sameOriginPairing})
+      paired=await runIsolatedPairFixture({
+        root,
+        options:{origin:uiOrigin,targetPid:serverPid,profile,pairingUrl:(await issue.json()).url,storage,manifest,ui,fromLink:webSse7Tabs?false:!sameOriginPairing},
+        state,
+        isInterrupted,
+      })
     }
   }else{
     await http.storageState({path:storage})
@@ -63,6 +118,7 @@ export async function launchWeb({
   if(webMoreActions)args.push('--more-actions-only')
   const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
   if(webAndroid){
+    if(isInterrupted?.())throw Error('Launcher interrupted before Android lease')
     androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
     // Validate ADB config and attest the private ADB server PID and executable before opening the TCP relay.
     const device=androidDevice(androidEnv)
@@ -96,6 +152,7 @@ export async function launchWeb({
       if(state.deviceLeaseOpen===opening)state.deviceLeaseOpen=undefined
     }
   }
+  if(isInterrupted?.())throw Error('Launcher interrupted before client launch')
   const safeClientEnv=stripFixtureServerSecrets(env)
   const attestationEnv=fixtureAttestationEnv(process.env,{includeServerRoots:true})
   const useIpc=webMobile||webKeyboard||webSse7Tabs

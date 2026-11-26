@@ -105,10 +105,7 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
   assert(Array.isArray(expectedEntries) && expectedEntries.length > 0, 'Expected non-empty injected SSE entries')
   const injectedIds = new Set(expectedEntries.map(entry => entry.assistantMessageID))
   assert(injectedIds.size > 0 && ![...injectedIds].some(id => typeof id !== 'string' || !id.length), 'Expected non-empty assistantMessageIDs')
-  const actualFrames = frames.filter(f =>
-    f.nativeType === 'session.text.delta'
-    && (injectedIds.has(f.assistantMessageID) || (typeof f.assistantMessageID === 'string' && f.assistantMessageID.startsWith('sse-live-'))),
-  )
+  const actualFrames = frames.filter(f => f.nativeType === 'session.text.delta')
   for (const frame of actualFrames) {
     assert.equal(frame.requestId, sseRequestId, `Injected SSE frame for ${frame.assistantMessageID} arrived on unexpected requestId ${frame.requestId}`)
     assert.equal(typeof frame.assistantMessageID, 'string', 'Injected SSE frame assistantMessageID must be a string')
