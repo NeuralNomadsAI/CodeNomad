@@ -63,8 +63,8 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
   if(workspaces){
     const button=page.getByRole('button',{name:messages['rune.older'],exact:true})
     const disabled=await button.evaluate(el=>el.disabled||el.getAttribute('aria-disabled')==='true')
-    older={expected:'disabled',observed:disabled?'disabled':'enabled',status:disabled?'pass':'known-gap',
-      ...(disabled?{}:{issue:'https://github.com/anomalyco/rune/issues/118'})}
+    assert.equal(disabled,true,'Older messages button must expose disabled state while reconnecting')
+    older={expected:'disabled',observed:'disabled',status:'pass'}
   }
   await command('resume')
   await text('Mobile recovered history').waitFor()
