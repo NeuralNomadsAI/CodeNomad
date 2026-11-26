@@ -56,7 +56,6 @@ export const exemptions: Record<string, string> = {
   "mission-lifecycle-revision.test.ts": "diagnostic harness owns the server lifecycle",
   "mission-native-family.test.ts": "stateful SSE middleware driven by the test",
   "mission-navigation.test.ts": "instruments the server object directly",
-  "mission-recurrence-predispatch.test.ts": "no fixture page of its own",
   "native-mission-integration.qualification.ts": "qualification harness with capture middleware on its own server",
   "notification-icon-badge.test.ts": "Vite config diverges from the canonical daemon config",
   "notification-routing.test.ts": "served by a harness that borrows from the daemon",

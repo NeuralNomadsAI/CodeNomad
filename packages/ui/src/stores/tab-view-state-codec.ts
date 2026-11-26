@@ -14,7 +14,6 @@ export interface RestorableBrowserPreview extends RestorableTabPreview { targetU
 export const SESSION_BROWSER_STATE_KEY = "opencode-session-browser-state-v1"
 export interface RestorableTabMissionView {
   selected?: string
-  selectedRecurrence?: string
   selectedScheduled?: string
   selectedTask?: MissionTaskSelectionKey
   reader?: MissionReaderTarget
@@ -79,7 +78,7 @@ function normalizeMissionView(value: unknown): RestorableTabMissionView | undefi
   const result: RestorableTabMissionView = {}
   if (record(value.disclosures)) result.disclosures = Object.fromEntries(Object.entries(value.disclosures)
     .filter((entry): entry is [string, boolean] => /^[a-zA-Z0-9_-]{11}$/.test(entry[0]) && typeof entry[1] === "boolean").slice(-160))
-  for (const key of ["selected", "selectedRecurrence", "selectedScheduled"] as const) {
+  for (const key of ["selected", "selectedScheduled"] as const) {
     if (id(value[key])) result[key] = value[key]
   }
   if (record(value.selectedTask) && id(value.selectedTask.missionId) && id(value.selectedTask.taskId)) {
@@ -90,7 +89,7 @@ function normalizeMissionView(value: unknown): RestorableTabMissionView | undefi
   if (!record(r) || !id(r.missionId)
     || !["overview", "task", "report", "change", "recurrence", "playbook"].includes(String(r.kind))
     || (r.itemId !== undefined && !id(r.itemId))
-    || (r.kind === "recurrence" && (!id(r.instanceId) || !id(r.projectID)))
+    || (r.kind === "recurrence" && (!id(r.instanceId) || !id(r.projectID) || r.scheduleOwner !== "scheduled"))
     || (r.taskMode !== undefined && r.taskMode !== "native" && r.taskMode !== "independent")
     || (r.scheduleOwner !== undefined && r.scheduleOwner !== "scheduled")) return result
   if (r.kind === "playbook" && !Object.prototype.hasOwnProperty.call(missionProfileRoles, r.missionId)) return result
@@ -101,12 +100,12 @@ function normalizeMissionView(value: unknown): RestorableTabMissionView | undefi
   if (r.recurrence !== undefined) {
     const recurrence = r.recurrence
     if (!record(recurrence) || !["instanceId", "projectID", "scheduleID", "passageID"].every(key => id(recurrence[key]))
-      || (recurrence.owner !== undefined && recurrence.owner !== "daily" && recurrence.owner !== "scheduled")
+      || recurrence.owner !== "scheduled"
       || r.kind === "playbook") return result
     reader.recurrence = {
       instanceId: recurrence.instanceId as string, projectID: recurrence.projectID as string,
       scheduleID: recurrence.scheduleID as string, passageID: recurrence.passageID as string,
-      ...(recurrence.owner === undefined ? {} : { owner: recurrence.owner }),
+      owner: recurrence.owner,
     }
   }
   result.reader = reader

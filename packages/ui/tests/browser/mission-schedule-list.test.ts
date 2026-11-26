@@ -186,7 +186,11 @@ test("unified waiting and exact successful passages distinguish prepared, pause,
   try {
     await entry.waitFor(); await waitMark("prepared")
     assert.equal(await entry.locator(".mission-row-mark").evaluate(element => getComputedStyle(element, "::after").content), "none")
-    await select(page); await click(page, "Play"); await waitMark("waiting")
+    // An unselected schedule's children are its selected detail: its chevron selects and expands it.
+    const expander = page.locator('[data-mission-key="scheduled:msn_schedule"] .session-item-expander')
+    await expander.click(); await detail(page).waitFor()
+    assert.deepEqual([await entry.getAttribute("aria-current"), await expander.getAttribute("aria-expanded")], ["true", "true"])
+    await click(page, "Play"); await waitMark("waiting")
     assert.match(await entry.getAttribute("title") ?? "", /Waiting for scheduled run/)
     await click(page, "Pause"); await waitMark("paused")
     await click(page, "Resume"); await waitMark("waiting")
@@ -203,7 +207,7 @@ test("unified waiting and exact successful passages distinguish prepared, pause,
     assert.deepEqual(await page.evaluate(async ({ second, third }) => {
       const { scheduleSuccessSeen } = await import("/src/stores/mission-view-state.ts")
       const scope = JSON.stringify(["fixture", "project"])
-      return [second, third].map(id => scheduleSuccessSeen(scope, "scheduled", "msn_schedule", id))
+      return [second, third].map(id => scheduleSuccessSeen(scope, "msn_schedule", id))
     }, { second, third: f.doc.history.at(-1)!.id }), [true, false])
     await page.locator('[data-mission-key="scheduled:msn_schedule"] .session-item-expander').click({ button: "right" })
     await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()

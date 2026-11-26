@@ -264,23 +264,6 @@ test("history preview: cancelled old read cannot clear B; revoked B settles its 
   dispose()
 })
 
-test("archived passage: detached demand is idle, and old settlement cannot clear B", async () => {
-  const backend = attachment(), requests: ReturnType<typeof deferred>[] = [], client = {}
-  let dispose!: () => void
-  const create = component("./mission-recurrence-passage-reader.tsx", "MissionRecurrencePassageReader", "{ loading }", { ...solid, ...backend,
-    cache: new Map(), useI18n: () => ({ t: (key: string) => key }), getOpenCodeInstanceGeneration: () => 1,
-    instances: () => new Map([["i", { client, folder: "/repo", metadata: { project: { id: "p" } } }]]),
-    serverApi: { fetchMissionRecurrencePassagePage: () => { const request = deferred(); requests.push(request); return request.promise } },
-  })
-  const reader = createRoot(close => { dispose = close; return create({ instanceId: "i", scope: "scope", projectID: "p", scheduleID: "s", receipt: {} }) })
-  backend.replace(); assert.equal(requests.length, 2)
-  requests[0].reject(new Error("failed A")); await flush(); assert.equal(reader.loading(), true)
-  backend.revoke(); requests[1].reject(new DOMException("cancelled", "AbortError")); await flush()
-  assert.equal(reader.loading(), false)
-  backend.replace(); backend.revoke(); requests[2].reject(new DOMException("cancelled", "AbortError")); await flush()
-  dispose()
-})
-
 test("skills: already revoked demand never advertises an undispatched read", () => {
   const backend = attachment(); backend.revoke()
   let loading = false, dispose!: () => void, dispatched = 0

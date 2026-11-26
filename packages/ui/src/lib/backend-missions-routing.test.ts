@@ -12,12 +12,11 @@ type Case = Wire & { global?: boolean; refused?: boolean; call(api: ServerApi, i
 const missionID = "mis/1", scheduleID = "sch/1", passageID = "pas/1", directory = "/repo a+#é"
 const scope = { projectID: "project", current: () => true }
 const signal = new AbortController().signal
-const source = { owner: "daily" as const, projectID: "project", scheduleID, passageID, missionID, digest: "a".repeat(43) }
-const sourceWire = '{"owner":"daily","projectID":"project","scheduleID":"sch/1","passageID":"pas/1","missionID":"mis/1","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+const source = { owner: "scheduled" as const, projectID: "project", scheduleID, passageID, missionID, digest: "a".repeat(43) }
+const sourceWire = '{"owner":"scheduled","projectID":"project","scheduleID":"sch/1","passageID":"pas/1","missionID":"mis/1","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 const configuration = { title: "Title", objective: "Goal", template: "custom" as const, profiles: {}, taskMode: "native" as const,
   watchedConversationIDs: [], launch: { when: [] } }
 const configurationWire = '{"title":"Title","objective":"Goal","template":"custom","profiles":{},"taskMode":"native","watchedConversationIDs":[],"launch":{"when":[]}}'
-const intent = { scheduleID, requestID: "req/1", expectedRevision: 7, action: "pause" as const, directory, retry: true }
 const map: MissionMap = { version: 1, id: missionID, projectID: "project", projectCanonical: "/repo", objective: "Goal", template: "custom",
   status: "active", coordinatorSessionId: "coordinator", actors: [], tasks: [{ id: "tsk_1", key: "task", title: "Task", brief: "Brief",
     role: "worker", blockedBy: [], status: "ready", outstandingExecution: false, createdAt: 1, updatedAt: 1 }],
@@ -67,23 +66,8 @@ const cases: Case[] = [
     call: (a, id) => a.missionScheduleSettings(id, missionID, { requestID: "req/1", expectedDocumentRevision: 7 }) },
   { url: "/missions/mis%2F1/schedule-settings", method: "POST", body: '{"requestID":"req/1","expectedDocumentRevision":7}',
     call: (a, id) => a.missionScheduleSettings(id, missionID, { requestID: "req/1", expectedDocumentRevision: 7 }, true) },
-  { url: "/missions/recurrence", method: "GET", body: "", call: (a, id) => a.fetchMissionRecurrence(id) },
-  { url: "/missions/recurrence", method: "POST", body: '{"requestID":"req/1","title":"Title","instructions":"Goal","template":"custom","clock":{"time":"09:00","zone":"UTC"},"watchedConversationIDs":[],"profiles":{},"taskMode":"native","directory":"/repo a+#é"}',
-    call: (a, id) => a.createMissionRecurrence(id, { requestID: "req/1", title: "Title", instructions: "Goal", template: "custom",
-      clock: { time: "09:00", zone: "UTC" }, watchedConversationIDs: [], profiles: {}, taskMode: "native", directory }) },
-  { url: "/missions/recurrence/sch%2F1/control", method: "POST", body: '{"scheduleID":"sch/1","requestID":"req/1","expectedRevision":7,"action":"pause","directory":"/repo a+#é","retry":true}',
-    call: (a, id) => a.controlMissionRecurrence(id, scheduleID, intent) },
-  { url: "/missions/recurrence/sch%2F1/control/status", method: "POST", body: '{"requestID":"req/1","expectedRevision":7,"action":"pause","directory":"/repo a+#é"}',
-    call: (a, id) => a.missionRecurrenceControlStatus(id, scheduleID, intent) },
-  { url: "/missions/recurrence/sch%2F1/run-now", method: "POST", body: '{"requestID":"req/1","expectedRevision":7,"directory":"/repo a+#é"}',
-    call: (a, id) => a.runMissionRecurrenceNow(id, intent) },
-  { url: "/missions/recurrence/sch%2F1/run-now/status?requestID=req%2F1&expectedRevision=7&directory=%2Frepo+a%2B%23%C3%A9", method: "GET", body: "",
-    call: (a, id) => a.missionRecurrenceRunNowStatus(id, intent) },
-  { url: "/missions/recurrence/sch%2F1/passages/pas%2F1?section=2&page=3&revision=7", method: "GET", body: "",
-    call: (a, id) => a.fetchMissionRecurrencePassagePage(id, scheduleID, passageID, { section: 2, page: 3, revision: 7 }) },
-  { url: "/missions/recurrence/sch%2F1/current", method: "GET", body: "", call: (a, id) => a.fetchMissionCurrentPassage(id, scheduleID) },
   { url: "/missions/recurrence/sch%2F1/current?owner=scheduled", method: "GET", body: "",
-    call: (a, id) => a.fetchMissionCurrentPassage(id, scheduleID, undefined, "scheduled") },
+    call: (a, id) => a.fetchMissionCurrentPassage(id, scheduleID) },
   { url: "/missions/recurrence/sch%2F1/current/pas%2F1/content?kind=task&itemId=tsk%2F1&section=brief&page=2&revision=7&owner=scheduled", method: "GET", body: "",
     call: (a, id) => a.fetchMissionCurrentContent(id, { scheduleID, passageID, kind: "task", itemId: "tsk/1", section: "brief", page: 2, revision: 7, owner: "scheduled" }) },
   { url: "/missions/recurrence/sch%2F1/current/pas%2F1/page", method: "POST", refused: true,

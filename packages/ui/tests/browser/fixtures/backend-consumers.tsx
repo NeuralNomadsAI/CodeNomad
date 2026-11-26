@@ -32,7 +32,7 @@ for (const id of ["w1", "lab~w1", "lab~mission"]) {
     status: "starting", client: null, proxyPath: "", port: 0, pid: 0, metadata: { project: { id: "p" } as any } })
   settleAbandonedSessionListRestoration(id)
 }
-updateMissionProjectView("lab~mission", { reader: { kind: "recurrence", missionId: "daily", instanceId: "lab~mission", projectID: "p" } })
+updateMissionProjectView("lab~mission", { reader: { kind: "recurrence", missionId: "schedule", instanceId: "lab~mission", projectID: "p", scheduleOwner: "scheduled" } })
 function Fixture() {
   const { t } = useI18n()
   return <>

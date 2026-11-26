@@ -214,7 +214,7 @@ test("MissionControl actor and scheduled navigation reject late hydration on an 
       ...owner, beginGesture: surfaces.beginGesture, applySurface: surfaces.applySurface,
       props: { instanceId: "workspace", activeSessionId: () => "session", onRevealConversation: () => { reveals++ } },
       intent: 0, conversationEpoch: 0, scope: () => "unchanged-view", captureView: () => () => true,
-      passageSchedule: () => undefined, currentPassage: { snapshot: () => undefined }, selectedScheduled: () => "schedule",
+      currentPassage: { snapshot: () => undefined }, selectedScheduled: () => route === "scheduled" ? "schedule" : undefined,
       mission: () => mission, missions: () => [mission], includesSession: () => true, scheduled: { ownsSession: () => true },
       instances: () => new Map([["workspace", { client }]]), getOpenCodeInstanceGeneration: () => 1,
       getAuthoritativelyDeletedSessionIdsForInstance: () => new Set(), sessions: () => new Map([["workspace", new Map([["session", {}]])]]),

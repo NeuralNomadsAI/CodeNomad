@@ -416,8 +416,6 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `components/mission-profile-controls.tsx` | A | profile catalog/default hydration; delayed read and selection | captureBackendOperation, controller/generation/current; retained profile view demand. |
 | `components/mission-reader.tsx` | A | retryTarget/openActor; map/task more/load; conversation navigation | captureBackendOperation, generation/current/disposed; delegated page and session readers receive signal; clipboard/layout separate. |
 | `components/mission-recovery-button.tsx` | A+C | recover | captureBackendOperation/current/disposed; durable recovery mutation retained. |
-| `components/mission-recurrence-list.tsx` | A+C | act/check/stop; run-now/control/status; schedule history refresh | captureBackendOperation/generation/current; request receipts and durable recurrence mutation. |
-| `components/mission-recurrence-passage-reader.tsx` | A | archived passage page read | captureBackendOperation, controller/generation/current; captured physical folder plus persisted view scope. |
 | `components/mission-schedule-controls.ts` | A+C | receipt/reconcile/act; capability/detail/settings/control | captureBackendOperation, generation/controller/current; sent schedule mutation owns receipt. |
 | `components/mission-subagent-depth.tsx` | A+C | read/save; delayed depth settings request | captureBackendOperation, controller/epoch/generation/current; persisted depth mutation retained. |
 | `components/preferences-window.tsx` | C+IPC | flush; applyRequest; project SDK context; request/persistence queues; close/scroll flush | Native preferences request generation, sequential queues and current window request; durable storage flush; instance SDK cache cleanup. |
@@ -494,13 +492,13 @@ Tool, Markdown and attachment images follow the [passive media contract](TRANSCR
 | Native browser holds | holdNativeBrowser, releaseNativeBrowser | C; the view's hold ID owns the session hold, renewed while the view shows the session and released when it stops |
 | Conversation permission mode | readConversationPermissionMode, setConversationPermissionMode | S for reads, C for writes; the conversation and attachment fence publication |
 | Mission display windows | fetchMissionPanel, fetchMissionTasks, fetchMissionCurrentPanel, fetchMissionCurrentTasks | scope: supplied signal/current and capped deadline; per-transfer checks and secondary queue |
-| Mission content/current identity | fetchMissionContent, fetchMissionCurrentPassage, fetchMissionCurrentBody, fetchMissionCurrentContent, fetchMissionRecurrencePassagePage, fetchMissionRecurrence | S; body/current transfer also validates deadline/current identity |
+| Mission content/current identity | fetchMissionContent, fetchMissionCurrentPassage, fetchMissionCurrentBody, fetchMissionCurrentContent | S; body/current transfer also validates deadline/current identity |
 | Mission schedule reads | fetchMissionSchedules, fetchMissionScheduleCapability, fetchMissionSchedule | S; secondary queue |
 | One-time Mission creation receipt | missionCreationReceipt | S; bounded read of the exact original request |
-| Mission client-lived reads/receipts | fetchMissionPlaybooks, fetchMissionAdmission, missionRecurrenceControlStatus, missionRecurrenceRunNowStatus | C; request ID/revision receipt or caller A publication guard |
+| Mission client-lived reads/receipts | fetchMissionPlaybooks, fetchMissionAdmission | C; request ID/revision receipt or caller A publication guard |
 | Mission held-request reads | fetchMission, fetchMissionScheduleCreation, missionScheduleSettings | S+C; the automatic held-request reread supplies its view/owner signal and deadline; other callers keep the request ID/revision receipt or caller A publication guard |
 | Mission schedule save | saveMissionSchedule | S+C; request ID/revision owner; the automatic `retry: true` of a recorded partial preparation supplies an owner signal and deadline |
-| Mission mutations | controlMissionSchedule, controlMissionRecurrence, runMissionRecurrenceNow, createMissionRecurrence, createMission, editMission, deleteMission, controlMission, recoverMission | C; request ID/revision/admission transaction owner |
+| Mission mutations | controlMissionSchedule, createMission, editMission, deleteMission, controlMission, recoverMission | C; request ID/revision/admission transaction owner |
 | Event connection | connectEvents | Captured backend EventSource; ServerEvents owns generation/close/dispose |
 | Panel-extension reads | list, catalog, panel, assets, assetRead, workItems, workItemUrl; API4 images, imageRead, imagesStatus, prefillReferences, conversationStatus, conversation, preferencesGet, preferencesSet | Supplied signal in createPanelExtensionsApi; API4 authority includes instance/extension/digest/session |
 | Panel-extension administration | inspect, inspectCatalog, install, installCatalog, activate, remove | C; owning backend's client and operation captured at admission (`panelExtensionsFor`), with consent/digest |
