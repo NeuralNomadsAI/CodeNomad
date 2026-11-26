@@ -403,19 +403,83 @@ test("unqualified tombstone and mismatched receipts never settle a DELETE hold",
   assert.ok(scheduledMissionHold(f.fence, "msn_owned")); assert.equal(f.state.writes.length, 1)
 })
 
-test("CHECK settles on a qualified compacted tombstone and rejects an unqualified one", async t => {
-  const f = await fixture(t), payload = { requestID: "check_compact", expectedRevision: 5, action: "check" as const }
-  f.state.write = async () => ({ document: null, deleted: true, pending: false })
-  assert.equal((await f.post(payload)).statusCode, 503)
-  assert.ok(scheduledMissionHold(f.fence, "msn_owned"))
-  const f2 = await fixture(t)
+test("CHECK settles on a qualified compacted tombstone (direct and after lost POST via GET) and rejects malformed tombstones", async t => {
+  const payload = { requestID: "check_compact", expectedRevision: 5, action: "check" as const }
+  const malformed = [
+    { document: null, deleted: true, pending: false },
+    { document: null, deleted: true, pending: false, deletionReceipt: { id: "msn_owned", requestID: "", expectedRevision: 2, deleteManagedSessions: false },
+      checkReceipt: { id: "msn_owned", requestID: "check_compact", expectedRevision: 5, action: "check" } },
+    { document: null, deleted: true, pending: false, deletionReceipt: { id: "msn_owned", requestID: "delete_original", expectedRevision: -1, deleteManagedSessions: false },
+      checkReceipt: { id: "msn_owned", requestID: "check_compact", expectedRevision: 5, action: "check" } },
+    { document: null, deleted: true, pending: false, deletionReceipt: { id: "msn_owned", requestID: "delete_original", expectedRevision: 2, deleteManagedSessions: false } },
+    { document: null, deleted: true, pending: false, deletionReceipt: { id: "msn_owned", requestID: "delete_original", expectedRevision: 2, deleteManagedSessions: false },
+      checkReceipt: { id: "msn_owned", requestID: "other_check", expectedRevision: 5, action: "check" } },
+    { document: null, deleted: true, pending: true, deletionReceipt: { id: "msn_owned", requestID: "delete_original", expectedRevision: 2, deleteManagedSessions: false },
+      checkReceipt: { id: "msn_owned", requestID: "check_compact", expectedRevision: 5, action: "check" } },
+  ]
+  for (const bad of malformed) {
+    const f = await fixture(t)
+    f.state.write = async () => bad
+    assert.equal((await f.post(payload)).statusCode, 503)
+    assert.ok(scheduledMissionHold(f.fence, "msn_owned"))
+    // Tombstones never qualify for partial retry.
+    f.state.read = async () => bad
+    assert.equal((await f.post({ ...payload, retry: true })).statusCode, 503)
+    assert.equal(f.state.writes.length, 1)
+  }
   const tombstone = {
     document: null, deleted: true, pending: false,
     deletionReceipt: { id: "msn_owned", requestID: "delete_original", expectedRevision: 2, deleteManagedSessions: false },
+    checkReceipt: { id: "msn_owned", requestID: "check_compact", expectedRevision: 5, action: "check" as const },
   }
-  f2.state.write = async () => tombstone
-  const settled = await f2.post(payload)
+  // Direct POST settlement.
+  const fDirect = await fixture(t)
+  fDirect.state.write = async () => tombstone
+  const settled = await fDirect.post(payload)
   assert.equal(settled.statusCode, 200)
   assert.deepEqual(settled.json(), tombstone)
-  assert.equal(scheduledMissionHold(f2.fence, "msn_owned"), undefined)
+  assert.equal(scheduledMissionHold(fDirect.fence, "msn_owned"), undefined)
+  // Lost POST response recovers via GET without another write.
+  const fLost = await fixture(t)
+  fLost.state.write = async () => { throw new Error("Lost Check ACK after compaction") }
+  assert.equal((await fLost.post(payload)).statusCode, 503)
+  assert.ok(scheduledMissionHold(fLost.fence, "msn_owned"))
+  const deletion = fLost.deleting()
+  fLost.state.read = async input => {
+    assert.equal(input.requestID, "check_compact")
+    return tombstone
+  }
+  const recovered = await fLost.get("msn_owned", "?requestID=check_compact")
+  assert.equal(recovered.statusCode, 200)
+  assert.deepEqual(recovered.json(), tombstone)
+  assert.equal(scheduledMissionHold(fLost.fence, "msn_owned"), undefined)
+  assert.equal(fLost.state.writes.length, 1)
+  await deletion.done
+})
+
+test("concurrent client control against a held request gets a typed no-effect refusal, and Check receives checkReceipt when original completes", async t => {
+  const f = await fixture(t)
+  f.state.write = async () => { throw new Error("Lost Play ACK") }
+  assert.equal((await f.post()).statusCode, 503)
+  const originalHold = scheduledMissionHold(f.fence, "msn_owned")!
+  // Second client Pause/Stop/Delete gets typed schedule-refused without mutating originalHold.
+  for (const action of ["pause", "stop", "delete"] as const) {
+    const refused = await f.post({ requestID: `second_${action}`, expectedRevision: 0, action, ...(action === "delete" ? { deleteManagedSessions: false } : {}) })
+    assert.equal(refused.statusCode, 409)
+    assert.equal(refused.json().code, "schedule-refused")
+    assert.equal(refused.json().pending, false)
+    assert.equal(refused.json().refusal.requestID, `second_${action}`)
+    assert.equal(refused.json().refusal.action, action)
+    assert.equal(refused.json().refusal.reason, "control-conflict")
+    assert.equal(scheduledMissionHold(f.fence, "msn_owned"), originalHold)
+  }
+  assert.equal(f.state.writes.length, 1)
+  // Original completes before second client Check POST arrives: Check gets 200 with checkReceipt and settles the hold.
+  f.state.read = async () => f.result()
+  const checked = await f.post({ requestID: "second_check", expectedRevision: 0, action: "check" })
+  assert.equal(checked.statusCode, 200)
+  assert.equal(checked.json().document.control.requestID, control.requestID)
+  assert.deepEqual(checked.json().checkReceipt, { id: "msn_owned", requestID: "second_check", expectedRevision: 0, action: "check" })
+  assert.equal(scheduledMissionHold(f.fence, "msn_owned"), undefined)
+  assert.equal(f.state.writes.length, 1)
 })

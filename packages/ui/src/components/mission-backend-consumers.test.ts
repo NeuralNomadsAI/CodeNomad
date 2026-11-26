@@ -624,27 +624,33 @@ test("schedule check label uses checkStatus and dispatches check without confirm
   assert.equal(calls[0][2].action, "check")
 })
 
-test("schedule check proceeds across 503 schedule-pending preflight reads and settles compacted deletions", async () => {
+test("schedule check proceeds across 503 schedule-pending preflight reads, settles compacted deletions directly or via GET, and rejects malformed tombstones", async () => {
   const { HttpResponseError } = await import("../lib/retryable-file-search")
-  const { pendingMissionScheduleRevision } = await import("../lib/mission-schedule-receipt")
+  const { pendingMissionScheduleRevision, refusedMissionScheduleReceipt } = await import("../lib/mission-schedule-receipt")
   const { exactMissionScheduleControl } = await import("./mission-schedule-controls")
   const calls: any[] = [], feedbacks: Array<string | undefined> = [], settled: Array<number | undefined> = []
-  const doc = { id: "msn_stuck", revision: 21, availableActions: ["check", "play"], configuration: { title: "Sync", launch: { when: [] } } }
+  const doc = { id: "msn_stuck", revision: 21, availableActions: ["check", "pause", "play"], configuration: { title: "Sync", launch: { when: [] } } }
   const pending503 = (revision: number) => new HttpResponseError("pending", 503, null, "schedule-pending", {
     pending: true, code: "schedule-pending",
     document: { id: doc.id, revision, control: { requestID: "reconcile_20", expectedRevision: 20, action: "reconcile", pending: false } },
   })
-  const tombstone = {
+  const makeTombstone = (checkRequestID: string) => ({
     pending: false, deleted: true, document: null,
     deletionReceipt: { id: doc.id, requestID: "delete_orig", expectedRevision: 5, deleteManagedSessions: false },
-  }
-  const makeScope = (preflightRevision: number) => {
+    checkReceipt: { id: doc.id, requestID: checkRequestID, expectedRevision: 21, action: "check" as const },
+  })
+  const makeScope = (preflightRevision: number, overrides: Record<string, any> = {}) => {
     const scope = controlScope({
-      fetchMissionSchedule: async () => { throw pending503(preflightRevision) },
-      controlMissionSchedule: async (...args: any[]) => { calls.push(args); return tombstone },
+      fetchMissionSchedule: async (_owner: string, _id: string, input: any) => {
+        if (input?.requestID) return makeTombstone(input.requestID)
+        throw pending503(preflightRevision)
+      },
+      controlMissionSchedule: async (...args: any[]) => { calls.push(args); return makeTombstone(args[2].requestID) },
+      ...overrides,
     })
     scope.props.document = () => doc
     scope.pendingMissionScheduleRevision = pendingMissionScheduleRevision
+    scope.refusedMissionScheduleReceipt = refusedMissionScheduleReceipt
     scope.exactMissionScheduleControl = exactMissionScheduleControl
     scope.setFeedback = (value?: string) => { feedbacks.push(value) }
     scope.settle = (_key: string, hold: any, _current: any, revision?: number) => {
@@ -658,18 +664,61 @@ test("schedule check proceeds across 503 schedule-pending preflight reads and se
   assert.equal(calls[0][2].action, "check")
   assert.equal(calls[0][2].expectedRevision, 21)
   assert.deepEqual(settled, [undefined])
+  // Lost POST response recovers via GET receipt() using persisted checkReceipt without another write.
+  settled.length = 0
+  const lostScope = makeScope(21, {
+    controlMissionSchedule: async (...args: any[]) => { calls.push(args); throw new Error("network dropped") },
+  })
+  await production("./mission-schedule-controls.ts", "act", lostScope)("check")
+  assert.equal(calls.length, 2)
+  assert.equal(lostScope.holds.size, 1)
+  const lostHold = lostScope.holds.get("scope")
+  await production("./mission-schedule-controls.ts", "receipt", lostScope)("scope", lostHold, () => true)
+  assert.equal(lostScope.holds.size, 0)
+  assert.deepEqual(settled, [undefined])
+  // Second-client Check settles when backend returns the completed original control alongside exact checkReceipt.
+  settled.length = 0
+  const concurrentCheck = makeScope(21, {
+    controlMissionSchedule: async (...args: any[]) => ({
+      pending: false,
+      document: { id: doc.id, revision: 22, control: { requestID: "other_play", expectedRevision: 20, action: "play", pending: false } },
+      checkReceipt: { id: doc.id, requestID: args[2].requestID, expectedRevision: 21, action: "check" as const },
+    }),
+  })
+  await production("./mission-schedule-controls.ts", "act", concurrentCheck)("check")
+  assert.equal(concurrentCheck.holds.size, 0)
+  assert.deepEqual(settled, [22])
+  // Second-client Pause hitting another client's backend hold receives typed schedule-refused and releases its UI hold.
+  feedbacks.length = 0
+  const concurrentPause = makeScope(21, {
+    controlMissionSchedule: async (...args: any[]) => {
+      throw new HttpResponseError("refused", 409, null, "schedule-refused", {
+        pending: false,
+        refusal: { missionID: doc.id, requestID: args[2].requestID, expectedRevision: 21, action: "pause", reason: "control-conflict" },
+      })
+    },
+  })
+  await production("./mission-schedule-controls.ts", "act", concurrentPause)("pause")
+  assert.equal(concurrentPause.holds.size, 0)
+  assert.ok(feedbacks.includes("missions.scheduleList.conflict"))
   // Stale revision on 503 schedule-pending reports conflict without dispatching.
   feedbacks.length = 0
   await production("./mission-schedule-controls.ts", "act", makeScope(22))("check")
-  assert.equal(calls.length, 1)
+  assert.equal(calls.length, 2)
   assert.ok(feedbacks.includes("missions.scheduleList.conflict"))
   // Non-recovery play still fails on 503 schedule-pending without dispatching.
   feedbacks.length = 0
   await production("./mission-schedule-controls.ts", "act", makeScope(21))("play")
-  assert.equal(calls.length, 1)
+  assert.equal(calls.length, 2)
   assert.ok(feedbacks.includes("missions.scheduleList.readFailed"))
-  // Unqualified tombstone does not satisfy exactMissionScheduleControl for check.
-  const hold = { phase: "control" as const, action: "check" as const, requestID: "req_c", expectedRevision: 21, partial: false, pending: false, document: doc as any }
-  assert.equal(exactMissionScheduleControl(tombstone, hold, doc.id), true)
+  // Malformed tombstones and missing pending flag never satisfy exactMissionScheduleControl.
+  const hold = { phase: "control" as const, action: "check" as const, requestID: "req_check_1", expectedRevision: 21, partial: false, pending: false, document: doc as any }
+  const good = makeTombstone("req_check_1")
+  assert.equal(exactMissionScheduleControl(good, hold, doc.id), true)
+  assert.equal(exactMissionScheduleControl({ deleted: true, document: null, deletionReceipt: good.deletionReceipt, checkReceipt: good.checkReceipt } as any, hold, doc.id), false)
   assert.equal(exactMissionScheduleControl({ pending: false, deleted: true, document: null }, hold, doc.id), false)
+  assert.equal(exactMissionScheduleControl({ ...good, deletionReceipt: { ...good.deletionReceipt, requestID: "" } }, hold, doc.id), false)
+  assert.equal(exactMissionScheduleControl({ ...good, deletionReceipt: { ...good.deletionReceipt, expectedRevision: -1 } }, hold, doc.id), false)
+  assert.equal(exactMissionScheduleControl({ ...good, checkReceipt: undefined }, hold, doc.id), false)
+  assert.equal(exactMissionScheduleControl({ ...good, checkReceipt: { ...good.checkReceipt, requestID: "req_other" } }, hold, doc.id), false)
 })

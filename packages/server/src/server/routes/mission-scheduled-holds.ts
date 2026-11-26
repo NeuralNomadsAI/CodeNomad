@@ -14,7 +14,10 @@ export type ScheduledHoldBinding = {
 }
 type Receipt = { pending?: unknown; deleted?: unknown; document?: { id?: unknown; control?: {
   requestID?: unknown; action?: unknown; expectedRevision?: unknown; pending?: unknown
-} | null } | null; deletionReceipt?: { id?: unknown; requestID?: unknown; expectedRevision?: unknown; deleteManagedSessions?: unknown } }
+} | null } | null; deletionReceipt?: { id?: unknown; requestID?: unknown; expectedRevision?: unknown; deleteManagedSessions?: unknown };
+  checkReceipt?: { id?: unknown; requestID?: unknown; expectedRevision?: unknown; action?: unknown } }
+const receiptID = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{3,100}$/.test(value)
+const nonNegativeInt = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0
 const held = new WeakMap<WorktreeDeletionFence, Map<string, ReturnType<typeof record>>>()
 export class ScheduledHoldError extends Error {
   constructor(readonly status: 409 | 503, message: string) { super(message) }
@@ -44,18 +47,24 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
       || fresh.digest !== original.digest || fresh.connection !== connection && current(connection))
       throw new ScheduledHoldError(409, "Held Mission schedule scope differs")
   }
-  const qualifiedCheckDeletion = (result: Receipt | null) =>
-    original.action === "check" && result?.document === null && result.deleted === true && !!result.deletionReceipt
-    && result.deletionReceipt.id === original.missionID
-    && typeof result.deletionReceipt.requestID === "string" && Number.isSafeInteger(result.deletionReceipt.expectedRevision)
-    && typeof result.deletionReceipt.deleteManagedSessions === "boolean"
-  const exact = (raw: unknown) => {
-    const result = raw as Receipt | null, control = result?.document?.control
+  const validDeletion = (result: Receipt | null) => {
     const deleted = result?.deletionReceipt
-    if (original.action === "delete" && result?.document === null && deleted)
-      return deleted.id === original.missionID && deleted.requestID === original.requestID
+    return result?.pending === false && result.deleted === true && result.document === null && !!deleted
+      && deleted.id === original.missionID && receiptID(deleted.requestID)
+      && nonNegativeInt(deleted.expectedRevision) && typeof deleted.deleteManagedSessions === "boolean"
+  }
+  const settledDeletion = (result: Receipt | null) => {
+    if (!validDeletion(result)) return false
+    const deleted = result!.deletionReceipt!
+    if (original.action === "delete")
+      return deleted.requestID === original.requestID
         && deleted.expectedRevision === original.expectedRevision && deleted.deleteManagedSessions === (original.deleteManagedSessions ?? false)
-    if (qualifiedCheckDeletion(result)) return true
+    const checked = result!.checkReceipt
+    return original.action === "check" && !!checked && checked.id === original.missionID
+      && checked.requestID === original.requestID && checked.expectedRevision === original.expectedRevision && checked.action === "check"
+  }
+  const exactControl = (raw: unknown) => {
+    const result = raw as Receipt | null, control = result?.document?.control
     return result?.document?.id === original.missionID && control?.requestID === original.requestID
       && control.action === original.action && control.expectedRevision === original.expectedRevision && typeof control.pending === "boolean"
   }
@@ -71,7 +80,7 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
     },
     retry(fresh: ScheduledHoldBinding, raw: unknown, freshRelease?: () => void) {
       bound(fresh)
-      if (busy || !exact(raw) || (raw as Receipt).pending !== true || fresh.connection !== connection && !freshRelease)
+      if (busy || !exactControl(raw) || (raw as Receipt).pending !== true || fresh.connection !== connection && !freshRelease)
         throw new ScheduledHoldError(503, "Exact partial Mission schedule receipt unavailable")
       if (fresh.connection !== connection) {
         const previous = releasePermit
@@ -88,10 +97,8 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
     settle(fresh: ScheduledHoldBinding, raw: unknown) {
       bound(fresh)
       const receipt = raw as Receipt | null
-      const settledDeletion = (original.action === "delete" && receipt?.document === null && !!receipt.deletionReceipt)
-        || qualifiedCheckDeletion(receipt)
-      if (!dispatched || !exact(raw) || receipt?.pending !== false
-        || !settledDeletion && receipt?.document?.control?.pending !== false) return false
+      if (!dispatched || receipt?.pending !== false) return false
+      if (!settledDeletion(receipt) && (!exactControl(raw) || receipt.document?.control?.pending !== false)) return false
       active = false; busy = false; drop(); releasePermit(); return true
     },
     dispose() {

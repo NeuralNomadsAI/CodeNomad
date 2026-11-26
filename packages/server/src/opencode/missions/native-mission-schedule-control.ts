@@ -229,9 +229,5 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
     const compacted = yield* Effect.tryPromise(() => compactNativeMissionDocumentDeletion(ctx, store, missionID, run, current, actorPending))
     if (compacted.managedOrReleasePending) actorPending = true
   }
-  return yield* Effect.promise(async () => {
-    const fresh = await store.read(missionID)
-    return nativeMissionScheduleResult(ctx, fresh, run, actorPending,
-      action === "check" && fresh && "deletedAt" in fresh ? undefined : requestID)
-  })
+  return yield* Effect.promise(async () => nativeMissionScheduleResult(ctx, await store.read(missionID), run, actorPending, requestID))
 })

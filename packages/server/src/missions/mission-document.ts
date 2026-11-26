@@ -284,6 +284,7 @@ export function missionDocumentPassageID(doc: Pick<MissionDocument, "projectID" 
 export const missionTombstoneSchema = missionDocumentDeletionIdentitySchema.extend({ version: z.literal(1), id: documentID, projectID: nativeDocumentID,
   projectCanonical: z.string().min(1).max(4096), revision: documentCounter,
   deletedAt: documentTimestamp, timeGeneration: generation,
+  checks: z.array(z.object({ requestID, expectedRevision: documentCounter }).strict()).max(16).optional(),
   creation: missionPreparationCreationSchema.pick({ requestID: true, digest: true, author: true }).optional() }).strict()
 export type MissionDocumentTombstone = z.infer<typeof missionTombstoneSchema>
 export const missionTombstoneRegistrySchema = z.object({ version: z.literal(1), revision: documentCounter,

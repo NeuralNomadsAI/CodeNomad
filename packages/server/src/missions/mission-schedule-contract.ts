@@ -123,6 +123,8 @@ const result = { type: "object", properties: { document: { ...summary, type: ["o
     required: ["missionID", "requestID", "expectedRevision", "action", "payloadDigest", "reason"], additionalProperties: false },
   deletionReceipt: { type: "object", properties: { id: text, requestID: text, expectedRevision: counter, deleteManagedSessions: { type: "boolean" } },
     required: ["id", "requestID", "expectedRevision", "deleteManagedSessions"], additionalProperties: false },
+  checkReceipt: { type: "object", properties: { id: text, requestID: text, expectedRevision: counter, action: { const: "check" } },
+    required: ["id", "requestID", "expectedRevision", "action"], additionalProperties: false },
 }, required: ["document", "pending"], additionalProperties: false } as const
 
 /** Native RPC validates the wire first; the strict domain codec and signed action

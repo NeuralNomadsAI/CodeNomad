@@ -37,7 +37,12 @@ const body = z.object({ requestID: id, expectedRevision: z.number().int().nonneg
 }).strict().refine(value => ["create", "configure"].includes(value.action) === !!value.configuration
   && (value.deleteManagedSessions === undefined || value.action === "delete") && (value.action !== "create" || value.expectedRevision === 0)
   && !(value.action === "create" && value.configuration && !requiresMissionCalendar(value.configuration.launch)))
-const resultSchema = z.object({ pending: z.boolean(), deleted: z.boolean().optional(), refusal: missionScheduleRefusalSchema.optional(), document: z.object({ id,
+const deletionReceiptSchema = z.object({ id, requestID: id, expectedRevision: z.number().int().nonnegative().safe(),
+  deleteManagedSessions: z.boolean() }).strict()
+const checkReceiptSchema = z.object({ id, requestID: id, expectedRevision: z.number().int().nonnegative().safe(),
+  action: z.literal("check") }).strict()
+const resultSchema = z.object({ pending: z.boolean(), deleted: z.boolean().optional(), refusal: missionScheduleRefusalSchema.optional(),
+  deletionReceipt: deletionReceiptSchema.optional(), checkReceipt: checkReceiptSchema.optional(), document: z.object({ id,
   control: z.object({ requestID: id, expectedRevision: z.number().int().nonnegative().safe(), action: z.enum([...missionScheduleActions, "reconcile"]), pending: z.boolean() }).strict().nullable(),
 }).passthrough().nullable() }).passthrough()
 
@@ -165,7 +170,9 @@ export async function executeScheduledMission(deps: ScheduledMissionDeps, args: 
               result = resultSchema.parse(await lifetime.wait(rpc.scheduleRead({ missionID, requestID: binding.requestID }, options)))
               await owned.refresh(); check(owned)
             }
-            return held!.settle(binding, result) ? reply.send(result) : pending(result)
+            return held!.settle(binding, result)
+              ? reply.send(checking ? { ...result, checkReceipt: { id: missionID, requestID: value.requestID, expectedRevision: value.expectedRevision, action: "check" as const } } : result)
+              : pending(result)
           }
           let retryReceipt: unknown
           if (existing) {
@@ -198,12 +205,24 @@ export async function executeScheduledMission(deps: ScheduledMissionDeps, args: 
             await owned.refresh(); check(owned)
             if (value && value.action !== "check" && (value.requestID !== existing.binding.requestID || value.action !== existing.binding.action
               || value.expectedRevision !== existing.binding.expectedRevision || digestFor(configurationFor(location)) !== existing.binding.digest))
-              throw new ScheduledHoldError(409, "Held Mission request differs")
+              return reply.code(409).send({
+                document: null, pending: false, missionID, error: "Mission schedule action refused", code: "schedule-refused",
+                refusal: {
+                  missionID: missionID!, requestID: value.requestID, expectedRevision: value.expectedRevision, action: value.action,
+                  payloadDigest: missionSchedulePayloadDigest({ configuration: configurationFor(location), deleteManagedSessions: value.deleteManagedSessions }),
+                  reason: "control-conflict",
+                },
+              })
             const options = { location, ...locationRequestOptions(location), signal: lifetime.signal }, rpc = rpcFor(client)
             retryReceipt = resultSchema.parse(await lifetime.wait(rpc.scheduleRead({ missionID, requestID: existing.binding.requestID }, options)))
             await owned.refresh(); check(owned)
             const binding = { ...existing.binding, connection }
-            if (existing.settle(binding, retryReceipt)) return reply.send(retryReceipt)
+            if (existing.settle(binding, retryReceipt)) {
+              const checkSettled = value?.action === "check" && value.requestID !== existing.binding.requestID
+              return reply.send(checkSettled
+                ? { ...(retryReceipt as object), checkReceipt: { id: missionID!, requestID: value.requestID, expectedRevision: value.expectedRevision, action: "check" as const } }
+                : retryReceipt)
+            }
             if (value?.action === "check" && value.requestID !== existing.binding.requestID || value?.retry && value.action !== "check") {
               if (existing.connection === connection) return await effect(owned, rpc, options)
               // A retired connection's permit remains held until a fresh physical

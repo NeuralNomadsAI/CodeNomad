@@ -2,7 +2,8 @@ import { HttpResponseError } from "./retryable-file-search"
 
 export type MissionScheduleControlReceipt = { pending: boolean; document: { id: string; revision?: number; kind?: "one-time" | "schedule"; dormant?: boolean; control: { requestID: string; expectedRevision: number;
   action: string; pending: boolean } | null } | null; deleted?: boolean;
-  deletionReceipt?: { id: string; requestID: string; expectedRevision: number; deleteManagedSessions: boolean } }
+  deletionReceipt?: { id: string; requestID: string; expectedRevision: number; deleteManagedSessions: boolean };
+  checkReceipt?: { id: string; requestID: string; expectedRevision: number; action: "check" } }
 
 export function refusedMissionScheduleReceipt(error: unknown, request: { requestID: string; expectedRevision: number; action: string }, missionID?: string) {
   if (!(error instanceof HttpResponseError) || error.status !== 409 || error.code !== "schedule-refused") return false

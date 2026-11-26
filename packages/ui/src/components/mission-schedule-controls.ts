@@ -18,17 +18,25 @@ type ActivationRefusal = Extract<MissionScheduleCapability["activation"], { avai
 
 // Exact dispatched identities survive navigation and remount. Unresolved entries
 // never evict; the ceiling refuses another control rather than forgetting one.
-const qualifiedCheckDeletion = (result: ControlReceipt, id: string) =>
-  result.deleted === true && result.document === null && result.deletionReceipt?.id === id
-  && typeof result.deletionReceipt.requestID === "string" && Number.isSafeInteger(result.deletionReceipt.expectedRevision)
+const validReceiptID = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{3,100}$/.test(value)
+const nonNegativeInt = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+const validDeletionReceipt = (result: ControlReceipt, id: string) =>
+  result.deleted === true && result.document === null && !!result.deletionReceipt && result.deletionReceipt.id === id
+  && validReceiptID(result.deletionReceipt.requestID) && nonNegativeInt(result.deletionReceipt.expectedRevision)
   && typeof result.deletionReceipt.deleteManagedSessions === "boolean"
+const exactCheckReceipt = (result: ControlReceipt, hold: Hold, id: string) =>
+  !!result.checkReceipt && result.checkReceipt.id === id && result.checkReceipt.requestID === hold.requestID
+  && result.checkReceipt.expectedRevision === hold.expectedRevision && result.checkReceipt.action === "check"
 
 export function exactMissionScheduleControl(result: ControlReceipt, hold: Hold, id: string) {
-  if (hold.phase !== "control" || result.pending) return false
-  if (hold.action === "delete") return !!("deleted" in result && result.deleted && result.deletionReceipt?.id === id
-    && result.deletionReceipt.requestID === hold.requestID && result.deletionReceipt.expectedRevision === hold.expectedRevision
-    && result.deletionReceipt.deleteManagedSessions === false)
-  if (hold.action === "check" && qualifiedCheckDeletion(result, id)) return true
+  if (hold.phase !== "control" || result.pending !== false) return false
+  if (hold.action === "delete") return validDeletionReceipt(result, id)
+    && result.deletionReceipt!.requestID === hold.requestID && result.deletionReceipt!.expectedRevision === hold.expectedRevision
+    && result.deletionReceipt!.deleteManagedSessions === false
+  if (hold.action === "check") {
+    if (validDeletionReceipt(result, id) && exactCheckReceipt(result, hold, id)) return true
+    if (exactCheckReceipt(result, hold, id) && result.document?.id === id && result.document.control?.pending === false) return true
+  }
   const receipt = result.document?.control
   return result.document?.id === id && receipt?.requestID === hold.requestID && receipt.expectedRevision === hold.expectedRevision
     && receipt.action === hold.action && receipt.pending === false

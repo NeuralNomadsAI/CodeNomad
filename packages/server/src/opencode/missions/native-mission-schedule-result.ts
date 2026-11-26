@@ -25,8 +25,12 @@ export function nativeMissionScheduleActorControl(doc: MissionDocument, requestI
 export async function nativeMissionScheduleResult(ctx: Plugin.Context, doc: MissionDocument | MissionDocumentTombstone | undefined,
   run: MissionNativeRunner, forcePending = false, requestID?: string) {
   const result = missionScheduleView(doc, undefined, doc && !("deletedAt" in doc) ? await nativeMissionScheduleObservation(ctx, doc, run) : undefined)
-  if (!doc || "deletedAt" in doc) return { ...result,
-    pending: result.pending || forcePending || !!(requestID && (!doc || doc.requestID !== requestID)) }
+  if (!doc || "deletedAt" in doc) {
+    const checked = doc && requestID ? doc.checks?.find(item => item.requestID === requestID) : undefined
+    return { ...result,
+      ...(checked ? { checkReceipt: { id: doc!.id, requestID: checked.requestID, expectedRevision: checked.expectedRevision, action: "check" as const } } : {}),
+      pending: result.pending || forcePending || !!(requestID && (!doc || doc.requestID !== requestID && !checked)) }
+  }
   const owner = doc.calendarOwner
   const control = requestID ? nativeScheduleOwnerControlReceipt(doc, requestID) : owner?.receipts.at(-1) ?? owner?.operation
   const initial = control?.action === "play" ? nativeImmediatePlayPassage(doc, control.requestID) : undefined
