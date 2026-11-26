@@ -23,13 +23,13 @@ pub(crate) use state::{
     switch_tab_for_child, workspace_notification,
 };
 pub(crate) use state::{
-    Ui, active_session, attachment_draft_admissible, bound, can_close_active, can_new,
-    can_switch_tabs, capture, capture_files_mode, close, connected, conversation_stream_clients,
-    draft_changed, file_draft_status, file_wrap, files_tab, has_conversation_stream, input_ready,
-    new_tab, opened, panel_width, poll, poll_file_drafts, prepare_open, renew_connection,
-    restore_files_mode, resume, retry, schedule_catalogue, schedule_catalogue_refresh, select,
-    select_index, select_relative, status, strip, toggle_file_wrap, unconfirmed_drafts_full,
-    unselect_missing,
+    Ui, active_project_title, active_session, attachment_draft_admissible, bound, can_close_active,
+    can_new, can_switch_tabs, capture, capture_files_mode, close, connected,
+    conversation_stream_clients, draft_changed, file_draft_status, file_wrap, files_tab,
+    has_conversation_stream, input_ready, new_tab, opened, panel_width, poll, poll_file_drafts,
+    prepare_open, rename_tab, renew_connection, restore_files_mode, resume, retry,
+    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative, status,
+    strip, tab_rename_seed, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
@@ -78,6 +78,7 @@ pub struct Workspace {
     pub backend_id: Option<String>,
     pub server_id: Option<String>,
     pub folder: String,
+    pub project_name: Option<String>,
     pub occurrence: u64,
     pub workspace_id: Option<String>,
     pub active_session_id: Option<String>,
@@ -221,6 +222,7 @@ fn snapshot_bytes(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
                 for (key, entry) in [
                     ("backendId", &workspace.backend_id),
                     ("serverId", &workspace.server_id),
+                    ("projectName", &workspace.project_name),
                     ("workspaceId", &workspace.workspace_id),
                     ("activeSessionId", &workspace.active_session_id),
                 ] {
@@ -283,6 +285,7 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     "backendId",
                     "serverId",
                     "folder",
+                    "projectName",
                     "occurrence",
                     "workspaceId",
                     "activeSessionId",
@@ -351,6 +354,9 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     .as_str()
                     .ok_or(Error::Malformed)?
                     .to_owned(),
+                project_name: optional_string(value, "projectName")?
+                    .map(|name| name.trim().to_owned())
+                    .filter(|name| !name.is_empty()),
                 occurrence: value
                     .get("occurrence")
                     .map(|v| integer(Some(v)))
@@ -471,6 +477,12 @@ fn snapshot_string_units(snapshot: &Snapshot) -> Result<usize, Error> {
         take(&workspace.folder, 4096, false, &mut remaining)?;
         if !codenomad_client::absolute_server_path(&workspace.folder) {
             return Err(Error::Malformed);
+        }
+        if let Some(name) = &workspace.project_name {
+            take(name, 256, false, &mut remaining)?;
+            if name.trim().is_empty() || name.chars().any(char::is_control) {
+                return Err(Error::Malformed);
+            }
         }
         if let Some(id) = &workspace.backend_id {
             take(id, 64, false, &mut remaining)?;

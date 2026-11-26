@@ -2,6 +2,7 @@
 pub mod command_palette;
 pub mod icons;
 pub mod notices;
+pub mod tab_rename;
 use crate::{
     Length, Space, TextRole, kit,
     layout::{self, enter_action},

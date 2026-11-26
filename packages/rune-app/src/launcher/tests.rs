@@ -1448,6 +1448,7 @@ fn reauthentication_hydrates_unbound_restored_attachment_draft() {
                 backend_id: Some("external".into()),
                 server_id: Some("srv-att".into()),
                 folder: project.path.clone(),
+                project_name: None,
                 occurrence: 0,
                 workspace_id: Some(project.id.clone()),
                 active_session_id: Some("ses-att".into()),

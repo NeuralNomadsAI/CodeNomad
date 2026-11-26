@@ -85,8 +85,8 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
             let press_scope = scope.clone();
             rows.push(theme::command_row(
                 format!("command-palette-item-{id}"),
-                item.label,
-                item.description,
+                item.label.as_ref(),
+                item.description.as_deref(),
                 shortcut.as_deref(),
                 selected == Some(index),
                 item.disabled,

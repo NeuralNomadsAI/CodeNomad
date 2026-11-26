@@ -8,6 +8,8 @@ pub(crate) use shortcuts::global_blocked as shortcut_blocked;
 mod sidebar;
 pub(crate) mod status_permissions;
 pub(crate) mod status_usage;
+pub(crate) mod tab_rename;
+pub(crate) mod workspace_open;
 
 use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};
 use rune::{Cx, El, Tx, col, text};
@@ -153,7 +155,7 @@ pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> 
 
 pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     use rune::{Key, Mods};
-    if command_palette::handle_key(s, event, tx) {
+    if tab_rename::handle_key(s, event, tx) || command_palette::handle_key(s, event, tx) {
         return true;
     }
     if shortcuts::modal_open(s) {

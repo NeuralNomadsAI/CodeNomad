@@ -11,7 +11,11 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         .iter()
         .map(|e| match &e.saved {
             Tab::Blank => strings::t("instanceTabs.new.ariaLabel"),
-            Tab::Workspace(w) => w.folder.as_str(),
+            Tab::Workspace(w) => w
+                .project_name
+                .as_deref()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or(w.folder.as_str()),
         })
         .collect();
     let tabs: Vec<_> = ui

@@ -13,6 +13,7 @@ fn workspace(id: &str, draft: &str) -> Workspace {
         backend_id: None,
         server_id: None,
         folder: "/fixture".into(),
+        project_name: None,
         occurrence: 0,
         workspace_id: None,
         active_session_id: Some(id.into()),

@@ -164,6 +164,10 @@ impl Launcher {
     pub fn has_owned_server(&self) -> bool {
         self.host.is_some()
     }
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn set_fixture_host(&mut self, host: crate::platform::LocalHost) {
+        self.host = Some(host);
+    }
     pub fn new(wake: rune::Waker) -> Self {
         let boot = if crate::platform::setting("RUNE_BACKEND").is_none() {
             crate::platform::start_local(wake.clone())
@@ -674,6 +678,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.search = TextEdit::new("");
             let auth_required = l.authentication_required;
             crate::workspace::opened(s, &project);
+            s.command_palette.dismiss();
+            s.tab_rename.dismiss();
             match restored {
                 Restored::Bound(backend, title, slug) if !auth_required && !stopped_in_flight => {
                     if stale_connection {

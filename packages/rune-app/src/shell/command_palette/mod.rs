@@ -138,6 +138,14 @@ fn visible_commands(s: &State) -> Vec<commands::CommandItem> {
     commands::filter(&s.command_palette.query.text, commands::collect(s))
 }
 
+#[cfg(test)]
+pub(in crate::shell) fn item_disabled(s: &State, id: &str) -> Option<bool> {
+    visible_commands(s)
+        .into_iter()
+        .find(|item| item.id == id)
+        .map(|item| item.disabled)
+}
+
 fn resolved_selection(
     items: &[commands::CommandItem],
     current: Option<&'static str>,

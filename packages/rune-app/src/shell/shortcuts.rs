@@ -24,6 +24,7 @@ pub(super) fn modal_open(s: &State) -> bool {
         return true;
     }
     settings::blocks_shell_shortcuts(s)
+        || super::tab_rename::is_open(s)
         || super::command_palette::is_open(s)
         || notifications::history_open(s)
         || crate::files::modal_open(s)
@@ -46,6 +47,7 @@ fn overlay_open(s: &State) -> bool {
 
 fn any_editor_composing(s: &State) -> bool {
     s.draft.is_composing()
+        || super::tab_rename::is_composing(s)
         || super::command_palette::is_composing(s)
         || s.files
             .as_ref()
@@ -134,6 +136,8 @@ fn can_browse_home(s: &State, tx: &Tx) -> bool {
 enum Action {
     OpenCommandPalette,
     BrowseFolder,
+    RenameInstance(String),
+    OpenWorkspace(crate::platform::workspace_open::WorkspaceTarget),
     NewInstance,
     CloseInstance,
     InstancePrev,
@@ -163,6 +167,12 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         return false;
     }
     let browse_home = can_browse_home(s, tx);
+    let rename_tab = tx
+        .focused()
+        .and_then(|key| key.strip_prefix("t-"))
+        .filter(|tab_key| workspace::tab_rename_seed(s, tab_key).is_some())
+        .map(str::to_owned);
+    let can_open_workspace = super::workspace_open::can_open(s);
     let has_workspace = s.workspace.is_some();
     let project_open = has_project(s);
     let session_open = project_open && has_active_session(s);
@@ -172,6 +182,25 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         }
         if browse_home && matches("browse-folder") {
             return Some(Action::BrowseFolder);
+        }
+        if let Some(tab_key) = rename_tab.as_ref()
+            && matches("instance-rename")
+        {
+            return Some(Action::RenameInstance(tab_key.clone()));
+        }
+        if can_open_workspace {
+            use crate::platform::workspace_open::{Editor, WorkspaceTarget};
+            if matches("open-workspace-folder") {
+                return Some(Action::OpenWorkspace(WorkspaceTarget::Folder));
+            }
+            if matches("open-workspace-terminal") {
+                return Some(Action::OpenWorkspace(WorkspaceTarget::Terminal));
+            }
+            for editor in Editor::ALL {
+                if matches(editor.command_id()) {
+                    return Some(Action::OpenWorkspace(WorkspaceTarget::Editor(editor)));
+                }
+            }
         }
         // Match Solid's registration priority: setupTabKeyboardShortcuts, then registerNavigationShortcuts.
         if project_open && matches("session-new") {
@@ -227,6 +256,12 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             if ready {
                 crate::platform::browse(s, tx);
             }
+        }
+        Action::RenameInstance(tab_key) => {
+            super::tab_rename::open_for_tab(s, &tab_key, tx);
+        }
+        Action::OpenWorkspace(target) => {
+            super::workspace_open::open(s, target);
         }
         Action::NewInstance => {
             if workspace::can_new(s) {

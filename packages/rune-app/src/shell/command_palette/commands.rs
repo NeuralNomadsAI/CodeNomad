@@ -1,10 +1,16 @@
 use crate::{
-    State, launcher, settings,
-    shell::{launcher_replaces_project, notifications, shortcuts, sidebar},
-    strings::t,
+    State, launcher,
+    platform::workspace_open::{Editor, WorkspaceTarget},
+    settings,
+    shell::{
+        launcher_replaces_project, notifications, shortcuts, sidebar, tab_rename, workspace_open,
+    },
+    strings::{locale, t},
     workspace,
 };
 use rune::Tx;
+use rune_theme_codenomad::catalogue;
+use std::borrow::Cow;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Category {
@@ -35,9 +41,9 @@ impl Category {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct CommandItem {
     pub id: &'static str,
-    pub label: &'static str,
-    pub description: Option<&'static str>,
-    pub keywords: &'static str,
+    pub label: Cow<'static, str>,
+    pub description: Option<Cow<'static, str>>,
+    pub keywords: Cow<'static, str>,
     pub category: Category,
     pub shortcut_id: Option<&'static str>,
     pub disabled: bool,
@@ -56,6 +62,7 @@ impl CommandItem {
         }
         if self
             .description
+            .as_deref()
             .is_some_and(|desc| desc.to_lowercase().contains(needle))
         {
             return true;
@@ -71,6 +78,26 @@ impl CommandItem {
     }
 }
 
+fn static_item(
+    id: &'static str,
+    label: &'static str,
+    description: Option<&'static str>,
+    keywords: &'static str,
+    category: Category,
+    shortcut_id: Option<&'static str>,
+    disabled: bool,
+) -> CommandItem {
+    CommandItem {
+        id,
+        label: Cow::Borrowed(label),
+        description: description.map(Cow::Borrowed),
+        keywords: Cow::Borrowed(keywords),
+        category,
+        shortcut_id,
+        disabled,
+    }
+}
+
 pub(super) fn collect(s: &State) -> Vec<CommandItem> {
     let mut items = Vec::new();
     let has_workspace = s.workspace.is_some();
@@ -83,43 +110,97 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
 
     // Instance commands
     if has_workspace {
-        items.push(CommandItem {
-            id: "new-instance",
-            label: t("commands.newInstance.label"),
-            description: None,
-            keywords: t("commands.newInstance.keywords"),
-            category: Category::Instance,
-            shortcut_id: Some("new-instance"),
-            disabled: !workspace::can_new(s),
-        });
-        items.push(CommandItem {
-            id: "close-instance",
-            label: t("commands.closeInstance.label"),
-            description: None,
-            keywords: t("commands.closeInstance.keywords"),
-            category: Category::Instance,
-            shortcut_id: Some("close-instance"),
-            disabled: !workspace::can_close_active(s),
-        });
+        items.push(static_item(
+            "new-instance",
+            t("commands.newInstance.label"),
+            None,
+            t("commands.newInstance.keywords"),
+            Category::Instance,
+            Some("new-instance"),
+            !workspace::can_new(s),
+        ));
+        items.push(static_item(
+            "close-instance",
+            t("commands.closeInstance.label"),
+            None,
+            t("commands.closeInstance.keywords"),
+            Category::Instance,
+            Some("close-instance"),
+            !workspace::can_close_active(s),
+        ));
+        if tab_rename::can_rename_active(s) {
+            items.push(static_item(
+                "rename-instance",
+                t("hotkeys.action.instance-rename"),
+                None,
+                t("instanceTab.actions.rename"),
+                Category::Instance,
+                Some("instance-rename"),
+                false,
+            ));
+        }
         if tab_count > 1 {
             let can_switch = workspace::can_switch_tabs(s);
+            items.push(static_item(
+                "next-instance",
+                t("commands.nextInstance.label"),
+                None,
+                t("commands.nextInstance.keywords"),
+                Category::Instance,
+                Some("instance-next"),
+                !can_switch,
+            ));
+            items.push(static_item(
+                "previous-instance",
+                t("commands.previousInstance.label"),
+                None,
+                t("commands.previousInstance.keywords"),
+                Category::Instance,
+                Some("instance-prev"),
+                !can_switch,
+            ));
+        }
+    }
+    if workspace_open::available() {
+        let can_open_workspace = workspace_open::can_open(s);
+        let lang = locale();
+        items.push(static_item(
+            "open-workspace-folder",
+            t("commands.openWorkspace.folder.label"),
+            Some(t("commands.openWorkspace.folder.description")),
+            t("commands.openWorkspace.folder.keywords"),
+            Category::Instance,
+            Some("open-workspace-folder"),
+            !can_open_workspace,
+        ));
+        items.push(static_item(
+            "open-workspace-terminal",
+            t("commands.openWorkspace.terminal.label"),
+            Some(t("commands.openWorkspace.terminal.description")),
+            t("commands.openWorkspace.terminal.keywords"),
+            Category::Instance,
+            Some("open-workspace-terminal"),
+            !can_open_workspace,
+        ));
+        let editor_keywords = t("commands.openWorkspace.editor.keywords");
+        for editor in Editor::ALL {
+            let name = editor.display_name();
             items.push(CommandItem {
-                id: "next-instance",
-                label: t("commands.nextInstance.label"),
-                description: None,
-                keywords: t("commands.nextInstance.keywords"),
+                id: editor.command_id(),
+                label: Cow::Owned(catalogue::format(
+                    lang,
+                    "commands.openWorkspace.editor.label",
+                    &[("editor", name)],
+                )),
+                description: Some(Cow::Owned(catalogue::format(
+                    lang,
+                    "commands.openWorkspace.editor.description",
+                    &[("editor", name)],
+                ))),
+                keywords: Cow::Owned(format!("{name},{editor_keywords}")),
                 category: Category::Instance,
-                shortcut_id: Some("instance-next"),
-                disabled: !can_switch,
-            });
-            items.push(CommandItem {
-                id: "previous-instance",
-                label: t("commands.previousInstance.label"),
-                description: None,
-                keywords: t("commands.previousInstance.keywords"),
-                category: Category::Instance,
-                shortcut_id: Some("instance-prev"),
-                disabled: !can_switch,
+                shortcut_id: Some(editor.command_id()),
+                disabled: !can_open_workspace,
             });
         }
     }
@@ -129,15 +210,15 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
             .launcher()
             .is_some_and(|l| l.connection.is_some() && !l.authentication_required)
     {
-        items.push(CommandItem {
-            id: "browse-folder",
-            label: t("hotkeys.action.browse-folder"),
-            description: None,
-            keywords: t("commands.newInstance.keywords"),
-            category: Category::Instance,
-            shortcut_id: Some("browse-folder"),
-            disabled: !workspace_ready || launcher_pending,
-        });
+        items.push(static_item(
+            "browse-folder",
+            t("hotkeys.action.browse-folder"),
+            None,
+            t("commands.newInstance.keywords"),
+            Category::Instance,
+            Some("browse-folder"),
+            !workspace_ready || launcher_pending,
+        ));
     }
 
     // Session commands
@@ -147,15 +228,15 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
             && s.screen.launcher().is_some_and(|l| {
                 !l.creation_uncertain && l.connection.is_some() && l.project.is_some()
             });
-        items.push(CommandItem {
-            id: "new-session",
-            label: t("commands.newSession.label"),
-            description: Some(t("commands.newSession.description")),
-            keywords: t("commands.newSession.keywords"),
-            category: Category::Session,
-            shortcut_id: Some("session-new"),
-            disabled: !can_create_session,
-        });
+        items.push(static_item(
+            "new-session",
+            t("commands.newSession.label"),
+            Some(t("commands.newSession.description")),
+            t("commands.newSession.keywords"),
+            Category::Session,
+            Some("session-new"),
+            !can_create_session,
+        ));
         if session_open {
             let tab_key = s.workspace.as_ref().map(|ui| ui.active_key()).or_else(|| {
                 s.screen
@@ -175,116 +256,116 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
                         && s.composer.draft.attachments.is_empty()
                         && s.composer.unconfirmed_id().is_none()
                         && s.composer.command_unconfirmed.is_none()));
-            items.push(CommandItem {
-                id: "close-session",
-                label: t("commands.closeSession.label"),
-                description: Some(t("commands.closeSession.description")),
-                keywords: t("commands.closeSession.keywords"),
-                category: Category::Session,
-                shortcut_id: Some("close-session"),
-                disabled: !can_close_session,
-            });
+            items.push(static_item(
+                "close-session",
+                t("commands.closeSession.label"),
+                Some(t("commands.closeSession.description")),
+                t("commands.closeSession.keywords"),
+                Category::Session,
+                Some("close-session"),
+                !can_close_session,
+            ));
         }
         if s.screen
             .launcher()
             .is_some_and(|l| sidebar::visible_session_ids(l).len() > 1)
         {
-            items.push(CommandItem {
-                id: "next-session",
-                label: t("commands.nextSession.label"),
-                description: None,
-                keywords: t("commands.nextSession.keywords"),
-                category: Category::Session,
-                shortcut_id: Some("session-next"),
-                disabled: !session_nav_allowed,
-            });
-            items.push(CommandItem {
-                id: "previous-session",
-                label: t("commands.previousSession.label"),
-                description: None,
-                keywords: t("commands.previousSession.keywords"),
-                category: Category::Session,
-                shortcut_id: Some("session-prev"),
-                disabled: !session_nav_allowed,
-            });
+            items.push(static_item(
+                "next-session",
+                t("commands.nextSession.label"),
+                None,
+                t("commands.nextSession.keywords"),
+                Category::Session,
+                Some("session-next"),
+                !session_nav_allowed,
+            ));
+            items.push(static_item(
+                "previous-session",
+                t("commands.previousSession.label"),
+                None,
+                t("commands.previousSession.keywords"),
+                Category::Session,
+                Some("session-prev"),
+                !session_nav_allowed,
+            ));
         }
     }
     if crate::timeline::search::available(s) {
-        items.push(CommandItem {
-            id: "session-search",
-            label: t("hotkeys.action.session-search"),
-            description: None,
-            keywords: t("messageSection.search.ariaLabel"),
-            category: Category::Session,
-            shortcut_id: Some("session-search"),
-            disabled: false,
-        });
+        items.push(static_item(
+            "session-search",
+            t("hotkeys.action.session-search"),
+            None,
+            t("messageSection.search.ariaLabel"),
+            Category::Session,
+            Some("session-search"),
+            false,
+        ));
     }
 
     // Input & Focus commands
     if session_open {
-        items.push(CommandItem {
-            id: "clear-input",
-            label: t("commands.clearInput.label"),
-            description: None,
-            keywords: t("commands.clearInput.keywords"),
-            category: Category::InputFocus,
-            shortcut_id: None,
-            disabled: !crate::composer::menu::can_clear(s),
-        });
+        items.push(static_item(
+            "clear-input",
+            t("commands.clearInput.label"),
+            None,
+            t("commands.clearInput.keywords"),
+            Category::InputFocus,
+            None,
+            !crate::composer::menu::can_clear(s),
+        ));
     }
 
     // System commands
     if project_open {
-        items.push(CommandItem {
-            id: "toggle-left-panel",
-            label: t("window.menu.leftPanel"),
-            description: None,
-            keywords: "",
-            category: Category::System,
-            shortcut_id: None,
-            disabled: false,
-        });
-        items.push(CommandItem {
-            id: "toggle-right-panel",
-            label: t("window.menu.rightPanel"),
-            description: None,
-            keywords: "",
-            category: Category::System,
-            shortcut_id: None,
-            disabled: false,
-        });
+        items.push(static_item(
+            "toggle-left-panel",
+            t("window.menu.leftPanel"),
+            None,
+            "",
+            Category::System,
+            None,
+            false,
+        ));
+        items.push(static_item(
+            "toggle-right-panel",
+            t("window.menu.rightPanel"),
+            None,
+            "",
+            Category::System,
+            None,
+            false,
+        ));
     }
-    items.push(CommandItem {
-        id: "open-notifications",
-        label: t("toastHistory.title"),
-        description: None,
-        keywords: "",
-        category: Category::System,
-        shortcut_id: None,
-        disabled: false,
-    });
+    items.push(static_item(
+        "open-notifications",
+        t("toastHistory.title"),
+        None,
+        "",
+        Category::System,
+        None,
+        false,
+    ));
     if has_workspace || settings::bound_backend(s).is_some() {
-        items.push(CommandItem {
-            id: "open-settings",
-            label: t("settings.title"),
-            description: None,
-            keywords: t("commands.openAbout.keywords"),
-            category: Category::System,
-            shortcut_id: None,
-            disabled: false,
-        });
+        items.push(static_item(
+            "open-settings",
+            t("settings.title"),
+            None,
+            t("commands.openAbout.keywords"),
+            Category::System,
+            None,
+            false,
+        ));
     }
     if crate::platform::titlebar::available() {
-        items.push(CommandItem {
-            id: "toggle-fullscreen",
-            label: t("window.menu.native.fullScreen"),
-            description: None,
-            keywords: "",
-            category: Category::System,
-            shortcut_id: None,
-            disabled: false,
-        });
+        items.push(static_item(
+            "toggle-fullscreen",
+            t("window.menu.native.fullScreen"),
+            None,
+            "",
+            Category::System,
+            None,
+            false,
+        ));
     }
 
     items
@@ -324,8 +405,29 @@ pub(super) fn execute(s: &mut State, id: &str, tx: &mut Tx) {
                 workspace::close(s, &key, tx);
             }
         }
+        "rename-instance" => {
+            tab_rename::open_active(s, tx);
+        }
         "next-instance" => workspace::select_relative(s, true, tx),
         "previous-instance" => workspace::select_relative(s, false, tx),
+        "open-workspace-folder" => {
+            workspace_open::open(s, WorkspaceTarget::Folder);
+        }
+        "open-workspace-terminal" => {
+            workspace_open::open(s, WorkspaceTarget::Terminal);
+        }
+        "open-workspace-editor-vscode" => {
+            workspace_open::open(s, WorkspaceTarget::Editor(Editor::VsCode));
+        }
+        "open-workspace-editor-cursor" => {
+            workspace_open::open(s, WorkspaceTarget::Editor(Editor::Cursor));
+        }
+        "open-workspace-editor-zed" => {
+            workspace_open::open(s, WorkspaceTarget::Editor(Editor::Zed));
+        }
+        "open-workspace-editor-vscodium" => {
+            workspace_open::open(s, WorkspaceTarget::Editor(Editor::VsCodium));
+        }
         "browse-folder" => {
             if crate::platform::folder_picker_available()
                 && workspace::input_ready(s)
@@ -346,10 +448,8 @@ pub(super) fn execute(s: &mut State, id: &str, tx: &mut Tx) {
         "toggle-right-panel" => crate::shell::toggle_panel(s, 1, tx),
         "open-notifications" => notifications::open_history(s, tx),
         "open-settings" => settings::open_preferences(s),
-        "toggle-fullscreen" => {
-            if crate::platform::titlebar::available() {
-                tx.toggle_full_screen();
-            }
+        "toggle-fullscreen" if crate::platform::titlebar::available() => {
+            tx.toggle_full_screen();
         }
         _ => {}
     }

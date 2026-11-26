@@ -322,6 +322,7 @@ mod tests {
             backend_id: None,
             server_id: None,
             folder: "/repo".into(),
+            project_name: None,
             occurrence: 0,
             workspace_id: Some("ws".into()),
             active_session_id: None,

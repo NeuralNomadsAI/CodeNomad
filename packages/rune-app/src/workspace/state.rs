@@ -1,8 +1,8 @@
 mod tabs;
 use tabs::{activate, close_blocked};
 pub use tabs::{
-    can_close_active, can_new, can_switch_tabs, close, new_tab, select, select_index,
-    select_relative,
+    active_project_title, can_close_active, can_new, can_switch_tabs, close, new_tab, rename_tab,
+    select, select_index, select_relative, tab_rename_seed,
 };
 
 mod drafts;
@@ -452,6 +452,28 @@ pub fn opened(s: &mut State, project: &Project) {
     let occurrence = (0..super::MAX_TABS as u64).find(|ordinal| !ui.entries.iter().any(|entry| {
         matches!(&entry.saved, Tab::Workspace(w) if same_folder(&w.folder, &project.path) && w.backend_id == backend_id && (backend_id.is_none() || w.server_id == l.server_id) && w.occurrence == *ordinal)
     })).unwrap_or(0);
+    let inherited_name = ui
+        .entries
+        .iter()
+        .find_map(|entry| match &entry.saved {
+            Tab::Workspace(w)
+                if same_folder(&w.folder, &project.path)
+                    && w.backend_id == backend_id
+                    && (backend_id.is_none() || w.server_id == l.server_id) =>
+            {
+                w.project_name.clone()
+            }
+            _ => None,
+        })
+        .or_else(|| {
+            ui.closed.iter().rev().find_map(|w| {
+                (same_folder(&w.folder, &project.path)
+                    && w.backend_id == backend_id
+                    && (backend_id.is_none() || w.server_id == l.server_id))
+                    .then(|| w.project_name.clone())
+                    .flatten()
+            })
+        });
     let item = &mut ui.entries[ui.active];
     if matches!(&item.saved, Tab::Workspace(w) if same_folder(&w.folder, &project.path) && w.backend_id == backend_id && (backend_id.is_none() || w.server_id == l.server_id))
     {
@@ -499,6 +521,7 @@ pub fn opened(s: &mut State, project: &Project) {
                 None
             },
             folder: project.path.clone(),
+            project_name: inherited_name,
             occurrence,
             workspace_id: Some(project.id.clone()),
             active_session_id: None,
@@ -515,6 +538,8 @@ pub fn opened(s: &mut State, project: &Project) {
         item.catalogue.schedule(ui.clock);
     }
     ui.changed();
+    s.command_palette.dismiss();
+    s.tab_rename.dismiss();
 }
 
 pub fn schedule_catalogue(s: &mut State) {

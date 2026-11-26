@@ -244,6 +244,111 @@ pub fn can_switch_tabs(s: &State) -> bool {
         .is_some_and(|ui| ui.entries.len() > 1 && !busy(s))
 }
 
+fn path_basename(path: &str) -> &str {
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    trimmed
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|part| !part.is_empty())
+        .unwrap_or(path)
+}
+
+fn sanitize_project_name(raw: &str) -> Option<String> {
+    let cleaned: String = raw
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    let mut units = 0usize;
+    for ch in trimmed.chars() {
+        let next = ch.len_utf16();
+        if units + next > 256 {
+            break;
+        }
+        out.push(ch);
+        units += next;
+    }
+    let final_name = out.trim();
+    (!final_name.is_empty()).then(|| final_name.to_owned())
+}
+
+pub fn active_project_title(s: &State) -> Option<&str> {
+    let (_, saved) = super::active_workspace(s)?;
+    Some(
+        saved
+            .project_name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(saved.folder.as_str()),
+    )
+}
+
+pub fn tab_rename_seed(s: &State, tab_key: &str) -> Option<String> {
+    let ui = s.workspace.as_ref()?;
+    let entry = ui.entries.iter().find(|entry| entry.key == tab_key)?;
+    let Tab::Workspace(saved) = &entry.saved else {
+        return None;
+    };
+    Some(
+        saved
+            .project_name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| path_basename(&saved.folder))
+            .to_owned(),
+    )
+}
+
+pub fn rename_tab(s: &mut State, tab_key: &str, raw_name: &str) -> bool {
+    let Some(ui) = &mut s.workspace else {
+        return false;
+    };
+    let Some((folder, backend_id, server_id)) = ui
+        .entries
+        .iter()
+        .find(|entry| entry.key == tab_key)
+        .and_then(|entry| match &entry.saved {
+            Tab::Workspace(w) => {
+                Some((w.folder.clone(), w.backend_id.clone(), w.server_id.clone()))
+            }
+            Tab::Blank => None,
+        })
+    else {
+        return false;
+    };
+    let next_name = sanitize_project_name(raw_name);
+    let mut changed = false;
+    for entry in &mut ui.entries {
+        if let Tab::Workspace(w) = &mut entry.saved
+            && super::same_folder(&w.folder, &folder)
+            && w.backend_id == backend_id
+            && (backend_id.is_none() || w.server_id == server_id)
+            && w.project_name != next_name
+        {
+            w.project_name = next_name.clone();
+            changed = true;
+        }
+    }
+    for w in &mut ui.closed {
+        if super::same_folder(&w.folder, &folder)
+            && w.backend_id == backend_id
+            && (backend_id.is_none() || w.server_id == server_id)
+            && w.project_name != next_name
+        {
+            w.project_name = next_name.clone();
+            changed = true;
+        }
+    }
+    if changed {
+        ui.changed();
+    }
+    changed
+}
+
 pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     crate::shell::Panels::dismiss_outside(s, tx);
     if busy(s) {

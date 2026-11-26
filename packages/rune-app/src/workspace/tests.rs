@@ -5,6 +5,7 @@ fn workspace() -> Workspace {
         backend_id: None,
         server_id: None,
         folder: "/".into(),
+        project_name: None,
         occurrence: 0,
         workspace_id: None,
         active_session_id: None,
@@ -233,7 +234,6 @@ fn rejects_malformed_future_and_unsupported_state() {
     for (key, entry) in [
         ("attachments", json!({"ses_a":[]})),
         ("viewState", json!({"files":true})),
-        ("projectName", json!("unloaded")),
         ("auth", json!("secret")),
     ] {
         let mut input = base.clone();

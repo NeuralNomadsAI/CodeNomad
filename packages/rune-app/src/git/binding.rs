@@ -375,6 +375,17 @@ pub(crate) fn mode(s: &State) -> Mode {
     s.git.owner.as_ref().map_or(Mode::Workspace, Ui::mode)
 }
 
+pub(crate) fn active_checkout_slug(s: &State, workspace_id: &str) -> String {
+    if let Some(owner) = &s.git.owner
+        && owner.backend.workspace == workspace_id
+        && !owner.session_checkout_removed()
+        && !owner.slug.is_empty()
+    {
+        return owner.slug.clone();
+    }
+    "root".into()
+}
+
 pub(crate) fn files_checkout(s: &State, directory: &str) -> Option<String> {
     let owner = s.git.owner.as_ref()?;
     if let Some(tree) = owner.tree() {
