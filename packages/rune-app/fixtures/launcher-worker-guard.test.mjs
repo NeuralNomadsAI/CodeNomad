@@ -157,6 +157,24 @@ test('claimOwnedWorkerProfile rejects links and preexisting markers, and publish
     assert.equal(proof.workerExitCode, null)
     assert.equal(proof.workerStopError, undefined)
     assert.equal(proof.workerSpawnError, 'Owned worker did not start (supervisor exit code=1, signal=null)')
+
+    assert.throws(
+      () => publishWorkerProof({ workerProfile: realProfile, exit: { code: 0, signal: null } }),
+      /Worker start token is required/,
+    )
+
+    writeFileSync(path.join(realProfile, 'proof.worker.json.tmp'), JSON.stringify({ result: 0 }))
+    const verifiedResult = publishWorkerProof({
+      workerProfile: realProfile,
+      workerToken: 'tok-run-1',
+      exit: { code: 0, signal: null },
+    })
+    assert.equal(verifiedResult, 0)
+    assert.equal(existsSync(path.join(realProfile, '.worker-started')), true)
+    assert.equal(existsSync(path.join(realProfile, 'proof.worker.json.tmp')), false)
+    const verifiedProof = JSON.parse(readFileSync(path.join(realProfile, 'proof.json'), 'utf8'))
+    assert.equal(verifiedProof.result, 0)
+    assert.equal(verifiedProof.workerExited, true)
   } finally {
     await rm(tmpRoot, { recursive: true, force: true })
   }

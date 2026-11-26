@@ -19,11 +19,13 @@ export function summarizeLatencies(samplesMs) {
     return v
   }).sort((a, b) => a - b)
   const at = p => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1))]
+  const mid = Math.floor(sorted.length / 2)
+  const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
   const totalMs = sorted.reduce((sum, v) => sum + v, 0)
   return {
     count: sorted.length,
     minMs: Math.round(sorted[0] * 10) / 10,
-    medianMs: Math.round(at(0.5) * 10) / 10,
+    medianMs: Math.round(median * 10) / 10,
     p95Ms: Math.round(at(0.95) * 10) / 10,
     maxMs: Math.round(sorted.at(-1) * 10) / 10,
     totalMs: Math.round(totalMs * 10) / 10,

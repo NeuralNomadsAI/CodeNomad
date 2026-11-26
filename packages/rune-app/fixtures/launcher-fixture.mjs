@@ -40,8 +40,9 @@ const workerTokenEnv=process.env.CODENOMAD_LAUNCHER_WORKER_TOKEN
 if(ownedWorker){
   delete process.env.CODENOMAD_LAUNCHER_WORKER_PROFILE
   delete process.env.CODENOMAD_LAUNCHER_WORKER_TOKEN
+  assert(workerProfileEnv&&workerTokenEnv,'--owned-mobile-worker requires CODENOMAD_LAUNCHER_WORKER_PROFILE and CODENOMAD_LAUNCHER_WORKER_TOKEN')
 }
-const validatedWorkerProfile=ownedWorker&&workerProfileEnv
+const validatedWorkerProfile=ownedWorker
   ?await claimOwnedWorkerProfile(workerProfileEnv,(await assertWorktreeTestRoot(root)).testsReal,workerTokenEnv)
   :undefined
 if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDrawers||webSse7Tabs)&&!ownedWorker)){

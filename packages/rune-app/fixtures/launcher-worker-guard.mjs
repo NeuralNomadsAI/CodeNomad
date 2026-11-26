@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {lstatSync,readFileSync,renameSync,unlinkSync,writeFileSync} from 'node:fs'
+import {closeSync,constants,fstatSync,lstatSync,openSync,readFileSync,renameSync,unlinkSync,writeFileSync} from 'node:fs'
 import {lstat,realpath} from 'node:fs/promises'
 import path from 'node:path'
 
@@ -30,13 +30,22 @@ export async function claimOwnedWorkerProfile(workerProfilePath, testsReal, toke
 export function readOwnedWorkerStarted(workerProfile, token) {
   if (typeof token !== 'string' || !token.length) return false
   const markerPath = path.join(workerProfile, '.worker-started')
+  let fd = null
   try {
-    const stat = lstatSync(markerPath)
-    if (!stat.isFile() || stat.isSymbolicLink()) return false
-    const [firstLine] = readFileSync(markerPath, 'utf8').split(/\r?\n/)
+    const linkStat = lstatSync(markerPath)
+    if (!linkStat.isFile() || linkStat.isSymbolicLink()) return false
+    const flags = constants.O_RDONLY | (constants.O_NOFOLLOW || 0)
+    fd = openSync(markerPath, flags)
+    const fdStat = fstatSync(fd)
+    if (!fdStat.isFile() || fdStat.dev !== linkStat.dev || fdStat.ino !== linkStat.ino) return false
+    const [firstLine] = readFileSync(fd, 'utf8').split(/\r?\n/)
     return firstLine === token
   } catch {
     return false
+  } finally {
+    if (fd !== null) {
+      try { closeSync(fd) } catch {}
+    }
   }
 }
 
@@ -67,16 +76,15 @@ export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop
   }
 }
 
-export function publishWorkerProof({ workerProfile, workerToken, exit, workerStarted, unconfirmedStop = false, stopError = null, outerSignal = null }) {
-  const workerStartedFile = path.join(workerProfile, '.worker-started')
+export function publishWorkerProof({ workerProfile, workerToken, exit, unconfirmedStop = false, stopError = null, outerSignal = null }) {
+  assert(typeof workerToken === 'string' && workerToken.length > 0, 'Worker start token is required')
   const workerProofFile = path.join(workerProfile, 'proof.worker.json.tmp')
   const supervisorProofTmp = path.join(workerProfile, 'proof.supervisor.json.tmp')
   const proofFile = path.join(workerProfile, 'proof.json')
-  const ownedMarkerVerified = workerToken ? readOwnedWorkerStarted(workerProfile, workerToken) : false
-  const effectiveWorkerStarted = workerToken ? ownedMarkerVerified : Boolean(workerStarted)
+  const workerStarted = readOwnedWorkerStarted(workerProfile, workerToken)
   let proof
   try { proof = JSON.parse(readFileSync(workerProofFile, 'utf8')) } catch {}
-  const verdict = evaluateWorkerExit({ exit, workerStarted: effectiveWorkerStarted, unconfirmedStop, stopError, outerSignal, proof })
+  const verdict = evaluateWorkerExit({ exit, workerStarted, unconfirmedStop, stopError, outerSignal, proof })
   const { workerExited, interrupted, finalResult, workerExitCode, workerExitSignal, workerStopError, workerSpawnError } = verdict
   const finalProof = {
     ...(proof ?? { profile: workerProfile }),
@@ -92,9 +100,6 @@ export function publishWorkerProof({ workerProfile, workerToken, exit, workerSta
   renameSync(supervisorProofTmp, proofFile)
   if (workerExited) {
     try { unlinkSync(workerProofFile) } catch {}
-    if (ownedMarkerVerified) {
-      try { unlinkSync(workerStartedFile) } catch {}
-    }
   }
   return finalResult
 }

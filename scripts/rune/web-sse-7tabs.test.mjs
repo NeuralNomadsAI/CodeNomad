@@ -18,6 +18,15 @@ test('summarizeLatencies computes min, median, p95, max, and total', () => {
     maxMs: 40.9,
     totalMs: 118.7,
   })
+  const evenStats = summarizeLatencies([10, 40, 20, 30])
+  assert.deepEqual(evenStats, {
+    count: 4,
+    minMs: 10,
+    medianMs: 25,
+    p95Ms: 40,
+    maxMs: 40,
+    totalMs: 100,
+  })
   assert.throws(() => summarizeLatencies([]))
   assert.throws(() => summarizeLatencies([-1]))
 })
