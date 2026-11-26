@@ -771,4 +771,11 @@ test("a completed mission walks its family once a pending request descends from 
   assert.equal(form.mission.actors[0].state, "form")
   // Another conversation's request, or the actor's own, leaves the family unwalked.
   for (const sessionID of ["stranger", "coord"]) assert.equal((await read({ permissions: [{ sessionID }] })).counts.list, 0, sessionID)
+  // A request's ancestry is read once between observations, not at each of them.
+  const cache = new MissionActivityCache(), client = native({ sessions, permissions: [{ sessionID: "stranger" }] }), counts = counted(client)
+  const observe = () => projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache, snapshot: done() })
+  await observe()
+  const first = counts.get
+  await observe()
+  assert.equal(counts.get, first + 1, "only the actor is read again")
 })
