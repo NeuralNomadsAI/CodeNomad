@@ -288,12 +288,20 @@ pub(super) fn remove_confirm_card(
     detail.push('\n');
     detail.push_str(t("instanceServiceStatus.plugins.sources.removeRecovery"));
     let escape_scope = s.input_scope.clone();
+    let modal_scope = s.input_scope.clone();
     settings::card(
         col()
+            .key("plugins-remove-dialog")
             .full_width()
             .separate(Space::Xs)
             .role("alertdialog")
             .label(&action)
+            .description(&detail)
+            .modal_tx(true, move |s: &mut State, tx| {
+                if s.input_scope == modal_scope {
+                    s.status_services.plugins.cancel_remove_confirm(tx);
+                }
+            })
             .child(text(&action).text_role(TextRole::Button).role("heading"))
             .child(text(&detail).wrap())
             .child(
@@ -306,7 +314,8 @@ pub(super) fn remove_confirm_card(
                                 s.status_services.plugins.cancel_remove_confirm(tx);
                             }),
                         )
-                        .key("plugins-remove-cancel"),
+                        .key("plugins-remove-cancel")
+                        .autofocus(),
                     )
                     .child(
                         settings::primary_action(
@@ -332,5 +341,4 @@ pub(super) fn remove_confirm_card(
                 }
             }),
     )
-    .key("plugins-remove-dialog")
 }

@@ -37,10 +37,12 @@ pub(super) struct PendingInstall {
     pub spec: String,
     pub started_at: f64,
     pub expired_notified: bool,
+    pub seen_in_snapshot: bool,
 }
 
 struct PendingActivation {
     id: u64,
+    location_epoch: u64,
     name: String,
     scope: Scope,
     enabled: bool,
@@ -49,6 +51,7 @@ struct PendingActivation {
 
 struct PendingAdd {
     id: u64,
+    location_epoch: u64,
     directory: String,
     scope: Scope,
     rx: Receiver<Result<String, ActionError>>,
@@ -76,11 +79,14 @@ pub(crate) struct PluginsPanel {
     dirty: bool,
     pub(super) clock: f64,
     consent_epoch: u64,
+    location_epoch: u64,
     pub(super) write_unconfirmed: bool,
     pub(super) write_active: bool,
     location_unconfirmed: bool,
     confirmed_settled_id: u64,
+    attempted_settled_id: u64,
     confirmed_package_generations: HashMap<String, u64>,
+    attempted_package_generations: HashMap<String, u64>,
     unconfirmed_packages: HashSet<String>,
     pub(super) runtime_unconfirmed: HashSet<String>,
     read: Option<ReadFlight>,
@@ -113,11 +119,14 @@ impl Default for PluginsPanel {
             dirty: false,
             clock: 0.0,
             consent_epoch: 1,
+            location_epoch: 1,
             write_unconfirmed: false,
             write_active: false,
             location_unconfirmed: false,
             confirmed_settled_id: 0,
+            attempted_settled_id: 0,
             confirmed_package_generations: HashMap::new(),
+            attempted_package_generations: HashMap::new(),
             unconfirmed_packages: HashSet::new(),
             runtime_unconfirmed: HashSet::new(),
             read: None,
@@ -199,6 +208,7 @@ impl PluginsPanel {
                 self.read = None;
                 self.write_unconfirmed = true;
                 self.location_unconfirmed = true;
+                self.location_epoch = self.location_epoch.wrapping_add(1);
                 self.revoke_consent();
                 if let Some(backend) = &mut self.backend
                     && !backend.session.is_empty()
@@ -213,6 +223,7 @@ impl PluginsPanel {
         self.online = true;
         self.write_unconfirmed = true;
         self.location_unconfirmed = true;
+        self.location_epoch = self.location_epoch.wrapping_add(1);
         self.read = None;
         self.dirty = true;
         self.revoke_consent();
@@ -233,6 +244,7 @@ impl PluginsPanel {
         self.online = false;
         self.write_unconfirmed = true;
         self.location_unconfirmed = true;
+        self.location_epoch = self.location_epoch.wrapping_add(1);
         self.read = None;
         self.dirty = true;
         self.feedback_error = None;
@@ -392,15 +404,7 @@ impl PluginsPanel {
                 plugins::RuntimeSource::Package { target, .. } => target == &item.spec,
                 _ => false,
             });
-            if loaded {
-                continue;
-            }
-            let configured = snap
-                .configured_sources
-                .iter()
-                .any(|s| s.target == item.spec);
-            let within_window = self.clock - item.started_at <= INSTALL_PENDING_S;
-            if (configured || within_window) && !out.contains(&item.spec.as_str()) {
+            if !loaded && !out.contains(&item.spec.as_str()) {
                 out.push(item.spec.as_str());
             }
         }
@@ -412,7 +416,7 @@ impl PluginsPanel {
     }
 
     pub(super) fn mutations_locked(&self) -> bool {
-        !self.online || self.write_active || self.write_unconfirmed
+        !self.online || self.write_active || self.write_unconfirmed || self.location_unconfirmed
     }
 
     pub(super) fn package_busy(&self, target: &str) -> bool {
@@ -466,6 +470,7 @@ impl PluginsPanel {
         let id = guard.id();
         self.pending_activation = Some(PendingActivation {
             id,
+            location_epoch: self.location_epoch,
             name: plugin_id.clone(),
             scope,
             enabled,
@@ -529,6 +534,7 @@ impl PluginsPanel {
         let id = guard.id();
         self.pending_add = Some(PendingAdd {
             id,
+            location_epoch: self.location_epoch,
             directory: directory.clone(),
             scope,
             rx,
@@ -697,6 +703,7 @@ impl PluginsPanel {
                     .read
                     .as_ref()
                     .is_some_and(|(_, _, read_gen, _)| *read_gen == obs.settled_id);
+                let already_failed = self.failed && self.attempted_settled_id == obs.settled_id;
                 if foreign_settled {
                     if self.pending_activation.is_none()
                         && self.pending_add.is_none()
@@ -707,7 +714,7 @@ impl PluginsPanel {
                             self.revoke_consent();
                             changed = true;
                         }
-                        if !in_flight_covers {
+                        if !in_flight_covers && !already_failed {
                             self.dirty = true;
                             changed = true;
                         }
@@ -729,11 +736,18 @@ impl PluginsPanel {
                     let in_flight_covers = self.read.as_ref().is_some_and(|(_, _, _, pkg_gens)| {
                         pkg_gens.get(target).copied().unwrap_or(0) == obs.settled_id
                     });
+                    let already_failed = self.failed
+                        && self
+                            .attempted_package_generations
+                            .get(target)
+                            .copied()
+                            .unwrap_or(0)
+                            == obs.settled_id;
                     if obs.active || obs.settled_id != confirmed {
                         if self.unconfirmed_packages.insert(target.to_owned()) {
                             changed = true;
                         }
-                        if !obs.active && !in_flight_covers {
+                        if !obs.active && !in_flight_covers && !already_failed {
                             self.dirty = true;
                         }
                     }
@@ -863,6 +877,8 @@ impl PluginsPanel {
             let (out, rx) = bounded(1);
             let read_gen = barrier::settled_id(&Kind::Plugins, &backend.base);
             let pkg_gens = barrier::package_generations(&backend.base);
+            self.attempted_settled_id = read_gen;
+            self.attempted_package_generations = pkg_gens.clone();
             self.dirty = false;
             self.read = Some((cancel, rx, read_gen, pkg_gens.clone()));
             let (reads, wake) = (reads.clone(), wake.clone());
@@ -898,11 +914,13 @@ impl PluginsPanel {
             };
             if let Some(outcome) = outcome {
                 let pending = self.pending_activation.take().unwrap();
+                let stale_location =
+                    pending.location_epoch != self.location_epoch || self.location_unconfirmed;
                 match outcome {
                     Ok(ActivationResult {
                         snapshot: snap,
                         reload_pending,
-                    }) => {
+                    }) if !stale_location => {
                         let missing_revisions = snap
                             .targets
                             .iter()
@@ -929,13 +947,19 @@ impl PluginsPanel {
                             self.dirty = true;
                         }
                     }
+                    Ok(_) => {
+                        self.write_unconfirmed = true;
+                        self.dirty = true;
+                    }
                     Err(err) => {
-                        let scope_label = t(pending.scope.i18n_key());
-                        self.feedback_error = Some(
-                            t(err.activation_i18n_key())
-                                .replace("{name}", &pending.name)
-                                .replace("{scope}", scope_label),
-                        );
+                        if !stale_location {
+                            let scope_label = t(pending.scope.i18n_key());
+                            self.feedback_error = Some(
+                                t(err.activation_i18n_key())
+                                    .replace("{name}", &pending.name)
+                                    .replace("{scope}", scope_label),
+                            );
+                        }
                         self.write_unconfirmed = true;
                         self.dirty = true;
                     }
@@ -952,6 +976,8 @@ impl PluginsPanel {
             };
             if let Some(outcome) = outcome {
                 let pending = self.pending_add.take().unwrap();
+                let stale_location =
+                    pending.location_epoch != self.location_epoch || self.location_unconfirmed;
                 match outcome {
                     Ok(spec) => {
                         self.record_pending_install(pending.directory, pending.scope, spec);
@@ -962,25 +988,28 @@ impl PluginsPanel {
                         self.dirty = true;
                     }
                     Err(err) => {
-                        let scope_label = t(pending.scope.i18n_key());
-                        let global_label = t(Scope::Global.i18n_key());
-                        self.add_error = Some(
-                            t(err.add_source_i18n_key())
-                                .replace("{scope}", scope_label)
-                                .replace("{global}", global_label),
-                        );
-                        let definite_rejection = matches!(
-                            &err,
-                            ActionError::Code(code)
-                                if matches!(
-                                    code.as_str(),
-                                    "invalid-spec"
-                                        | "local-path"
-                                        | "plugin-id"
-                                        | "duplicate"
-                                        | "global-only"
-                                )
-                        );
+                        if !stale_location {
+                            let scope_label = t(pending.scope.i18n_key());
+                            let global_label = t(Scope::Global.i18n_key());
+                            self.add_error = Some(
+                                t(err.add_source_i18n_key())
+                                    .replace("{scope}", scope_label)
+                                    .replace("{global}", global_label),
+                            );
+                        }
+                        let definite_rejection = !stale_location
+                            && matches!(
+                                &err,
+                                ActionError::Code(code)
+                                    if matches!(
+                                        code.as_str(),
+                                        "invalid-spec"
+                                            | "local-path"
+                                            | "plugin-id"
+                                            | "duplicate"
+                                            | "global-only"
+                                    )
+                            );
                         if definite_rejection {
                             self.confirmed_settled_id = self.confirmed_settled_id.max(pending.id);
                         } else {
@@ -1050,18 +1079,32 @@ impl PluginsPanel {
             spec,
             started_at: self.clock,
             expired_notified: false,
+            seen_in_snapshot: false,
         });
     }
 
     fn prune_loaded_installs(&mut self, snap: &Snapshot) {
-        self.pending_installs.retain(|item| {
+        self.pending_installs.retain_mut(|item| {
             if !plugins::location_matches(&item.directory, &snap.directory) {
                 return true;
             }
-            !snap.runtime.iter().any(|r| match &r.source {
+            let loaded = snap.runtime.iter().any(|r| match &r.source {
                 plugins::RuntimeSource::Package { target, .. } => target == &item.spec,
                 _ => false,
-            })
+            });
+            if loaded {
+                return false;
+            }
+            let configured = snap
+                .configured_sources
+                .iter()
+                .any(|s| s.target == item.spec);
+            if configured {
+                item.seen_in_snapshot = true;
+                true
+            } else {
+                !item.seen_in_snapshot
+            }
         });
     }
 }

@@ -317,7 +317,8 @@ fn excludes_managed_codenomad_plugins_from_ordinary_controls_and_surfaces_attent
 
 #[test]
 fn add_source_timeout_exceeds_server_budget_and_turns_queued_hang_into_uncertain_failure() {
-    assert!(super::ADD_SOURCE_TIMEOUT >= std::time::Duration::from_secs(30));
+    // Covers two server add turns (20 s + 5 s abort grace each).
+    assert!(super::ADD_SOURCE_TIMEOUT >= std::time::Duration::from_secs(50));
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

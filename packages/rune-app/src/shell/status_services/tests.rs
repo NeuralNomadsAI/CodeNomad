@@ -841,6 +841,13 @@ fn timer_transitions_update_a11y_at_rest_and_escape_restores_focus() {
                     .iter()
                     .any(|e| e.focused && e.key.as_deref() == Some(key))
             };
+            let before_modal = rt.accessibility_json();
+            let installing = t("instanceServiceStatus.plugins.sources.pendingLabel");
+            assert!(
+                before_modal.to_string().contains(installing),
+                "{before_modal}"
+            );
+
             // Open confirmation from the Remove button via real keyboard Enter.
             rt.update(|_, tx| tx.focus("plugin-remove-global-@acme/plugin", true));
             rt.frame(10.0);
@@ -860,8 +867,6 @@ fn timer_transitions_update_a11y_at_rest_and_escape_restores_focus() {
             let before = rt.accessibility_json();
             let confirm_before = node(&before, "plugins-remove-confirm").expect("confirm button");
             assert!(is_disabled(confirm_before), "{before}");
-            let installing = t("instanceServiceStatus.plugins.sources.pendingLabel");
-            assert!(before.to_string().contains(installing), "{before}");
 
             // Before 0.6s: poll returns false (no unnecessary redraw) and schedules wakeup.
             assert!(!poll_at(&mut rt.state, 10.3));
@@ -1078,5 +1083,461 @@ fn managed_reload_pending_detached_native_status_and_multitab_package_fence() {
                 connected: true,
             });
         assert!(tab_a.status_services.plugins.write_unconfirmed);
+    });
+}
+
+#[test]
+fn late_patch_after_reconnect_cannot_publish_stale_worktree_or_unlock_writes() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let mut backend = http.backend.clone();
+        backend.session = "ses-1".into();
+        backend.session_directory = Some("/repo/old-wt".into());
+
+        let mut s = crate::init();
+        s.status_services.bind(&backend);
+        s.status_services.online(true);
+        s.status_services.show(true);
+        s.status_services.plugins.expanded = true;
+        assert!(poll_at(&mut s, 1.0));
+        http.accept()
+            .await
+            .reply(
+                200,
+                sample_controls_snapshot("/repo/old-wt", false, false, Some(REV_A)),
+            )
+            .await;
+        poll_until(&mut s, 1.0, |s| {
+            s.status_services.plugins.snapshot.is_some()
+        });
+
+        // Launch PATCH in old worktree, then disconnect and reconnect before it replies.
+        s.status_services.plugins.toggle_activation(
+            "acme-plugin".into(),
+            Scope::Project,
+            true,
+            false,
+            &s.wake,
+        );
+        let patch_req = http.accept().await;
+        assert!(
+            patch_req
+                .header
+                .starts_with("PATCH /api/workspaces/owned/plugin-controls")
+        );
+
+        s.status_services.online(false);
+        s.status_services.online(true);
+        assert!(s.status_services.plugins.mutations_locked());
+
+        // Late PATCH reply from old worktree MUST NOT publish or unlock mutations.
+        patch_req
+            .reply(
+                200,
+                json!({
+                    "snapshot": sample_controls_snapshot("/repo/old-wt", true, false, Some(REV_A)),
+                    "changed": true,
+                    "reloadPending": false
+                }),
+            )
+            .await;
+        poll_until(&mut s, 2.0, |s| {
+            !s.status_services.plugins.write_active && s.status_services.plugins.reading()
+        });
+        assert!(s.status_services.plugins.mutations_locked());
+        assert_eq!(
+            s.status_services
+                .plugins
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .controls[0]
+                .project,
+            ScopeRuleState::Default
+        );
+
+        // Second click before reconciliation completes is refused.
+        s.status_services.plugins.toggle_activation(
+            "acme-plugin".into(),
+            Scope::Project,
+            true,
+            false,
+            &s.wake,
+        );
+
+        // Fresh reconciliation GET resolves session Location to new worktree before unlocking.
+        let dir_req = http.accept().await;
+        assert!(
+            dir_req
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/ses-1 "),
+            "{}",
+            dir_req.header
+        );
+        dir_req
+            .reply(
+                200,
+                json!({ "data": { "id": "ses-1", "location": { "directory": "/repo/new-wt" } } }),
+            )
+            .await;
+        let snap_req = http.accept().await;
+        assert!(
+            snap_req.header.contains("directory=%2Frepo%2Fnew-wt"),
+            "{}",
+            snap_req.header
+        );
+        snap_req
+            .reply(
+                200,
+                sample_controls_snapshot("/repo/new-wt", false, false, Some(REV_B)),
+            )
+            .await;
+        poll_until(&mut s, 2.0, |s| {
+            !s.status_services.plugins.reading() && !s.status_services.plugins.mutations_locked()
+        });
+        assert_eq!(
+            s.status_services
+                .plugins
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .directory,
+            "/repo/new-wt"
+        );
+        http.quiet().await;
+    });
+}
+
+#[test]
+fn failed_reconciliation_does_not_auto_retry_until_refresh_and_mcp_uses_neutral_error() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let mut backend = http.backend.clone();
+        backend.session_directory = Some("/repo/a".into());
+
+        let mut s = crate::init();
+        s.status_services.bind(&backend);
+        s.status_services.online(true);
+        s.status_services.show(true);
+        s.status_services.mcp.expanded = true;
+        s.status_services.plugins.expanded = true;
+        assert!(poll_at(&mut s, 1.0));
+        let mcp_ok = json!({
+            "location": { "directory": "/repo/a" },
+            "data": [{ "name": "docs", "status": { "status": "connected" } }]
+        });
+        for _ in 0..2 {
+            let req = http.accept().await;
+            if req.header.contains("/instance/api/mcp") {
+                req.reply(200, mcp_ok.clone()).await;
+            } else {
+                req.reply(
+                    200,
+                    sample_controls_snapshot("/repo/a", false, false, Some(REV_A)),
+                )
+                .await;
+            }
+        }
+        poll_until(&mut s, 1.0, |s| {
+            !s.status_services.mcp.reading() && !s.status_services.plugins.reading()
+        });
+
+        // Trigger MCP write failure -> reconciliation GET fails -> must NOT auto-retry in poll loop.
+        s.status_services
+            .mcp
+            .toggle_server("docs".into(), false, &s.wake);
+        http.accept()
+            .await
+            .reply(500, json!({ "error": "boom" }))
+            .await;
+        poll_until(&mut s, 1.0, |s| s.status_services.mcp.reading());
+        http.accept()
+            .await
+            .reply(500, json!({ "error": "down" }))
+            .await;
+        poll_until(&mut s, 1.0, |s| {
+            !s.status_services.mcp.reading() && s.status_services.mcp.failed
+        });
+        for step in 0..5 {
+            let _ = poll_at(&mut s, 2.0 + step as f64);
+        }
+        http.quiet().await;
+
+        // MCP error alert uses neutral copy (integrations.line.failed), not plugin copy.
+        let mcp_snap = s.status_services.mcp.snapshot.clone();
+        layout::with_source_palette(|| {
+            let mut rt = Runtime::new(
+                crate::init(),
+                |st, cx| {
+                    layout::render(cx, |_| col().full_width().full_height().children(view(st)))
+                },
+                (340.0, 500.0),
+                Env::new(false, 1.0),
+            );
+            rt.state.status_services.bind(&backend);
+            rt.state.status_services.online(true);
+            rt.state.status_services.show(true);
+            rt.state.status_services.mcp.expanded = true;
+            rt.state.status_services.mcp.failed = true;
+            rt.state.status_services.mcp.snapshot = mcp_snap;
+            rt.frame(0.0);
+            let tree = rt.accessibility_json().to_string();
+            assert!(tree.contains(t("integrations.line.failed")), "{tree}");
+            assert!(
+                !tree.contains(t("instanceServiceStatus.plugins.errors.refresh")),
+                "{tree}"
+            );
+        });
+
+        // Explicit Refresh recovers MCP reconciliation.
+        s.status_services.mcp.request_refresh();
+        assert!(poll_at(&mut s, 8.0));
+        http.accept().await.reply(200, mcp_ok).await;
+        poll_until(&mut s, 8.0, |s| {
+            !s.status_services.mcp.reading() && !s.status_services.mcp.failed
+        });
+
+        // Same no-auto-retry check for Plugins reconciliation GET after a failed write.
+        s.status_services.plugins.toggle_activation(
+            "acme-plugin".into(),
+            Scope::Project,
+            true,
+            false,
+            &s.wake,
+        );
+        http.accept()
+            .await
+            .reply(500, json!({ "error": "boom" }))
+            .await;
+        poll_until(&mut s, 9.0, |s| s.status_services.plugins.reading());
+        http.accept()
+            .await
+            .reply(500, json!({ "error": "down" }))
+            .await;
+        poll_until(&mut s, 9.0, |s| {
+            !s.status_services.plugins.reading() && s.status_services.plugins.failed
+        });
+        assert!(s.status_services.plugins.mutations_locked());
+        for step in 0..5 {
+            let _ = poll_at(&mut s, 10.0 + step as f64);
+        }
+        http.quiet().await;
+
+        // Explicit Refresh reconciles Plugins and unlocks mutations.
+        s.status_services.plugins.request_refresh();
+        assert!(poll_at(&mut s, 16.0));
+        http.accept()
+            .await
+            .reply(
+                200,
+                sample_controls_snapshot("/repo/a", false, false, Some(REV_A)),
+            )
+            .await;
+        poll_until(&mut s, 16.0, |s| {
+            !s.status_services.plugins.reading() && !s.status_services.plugins.mutations_locked()
+        });
+    });
+}
+
+#[test]
+fn unseen_acknowledged_install_stays_visible_past_120s_until_loaded_or_removed() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let mut backend = http.backend.clone();
+        backend.session_directory = Some("/repo/a".into());
+
+        let mut s = crate::init();
+        s.status_services.bind(&backend);
+        s.status_services.online(true);
+        s.status_services.show(true);
+        s.status_services.plugins.expanded = true;
+        assert!(poll_at(&mut s, 10.0));
+        http.accept()
+            .await
+            .reply(
+                200,
+                sample_controls_snapshot("/repo/a", false, false, Some(REV_A)),
+            )
+            .await;
+        poll_until(&mut s, 10.0, |s| {
+            s.status_services.plugins.snapshot.is_some()
+        });
+
+        // POST /plugin-sources succeeds, then reconciliation GET fails (never saw configured_sources).
+        s.status_services.plugins.open_add();
+        s.status_services.plugins.add_spec = rune::TextEdit::new("@acme/slow@1.0.0");
+        s.status_services.plugins.submit_add(&s.wake);
+        http.accept()
+            .await
+            .reply(
+                200,
+                json!({ "scope": "global", "spec": "@acme/slow@1.0.0", "reloadPending": true }),
+            )
+            .await;
+        poll_until(&mut s, 10.0, |s| s.status_services.plugins.reading());
+        http.accept()
+            .await
+            .reply(500, json!({ "error": "temporary" }))
+            .await;
+        poll_until(&mut s, 10.0, |s| {
+            !s.status_services.plugins.reading() && s.status_services.plugins.failed
+        });
+
+        // Crossing 120s MUST keep the unseen install visible as Not confirmed + Refresh.
+        assert!(poll_at(&mut s, 131.0));
+        let snap = s.status_services.plugins.snapshot.as_ref().unwrap();
+        assert_eq!(
+            s.status_services.plugins.pending_specs_for(snap),
+            vec!["@acme/slow@1.0.0"]
+        );
+        assert!(
+            !s.status_services
+                .plugins
+                .is_install_pending("/repo/a", "@acme/slow@1.0.0")
+        );
+
+        // Once seen in configured_sources, a subsequent GET omitting it prunes it.
+        s.status_services.plugins.request_refresh();
+        assert!(poll_at(&mut s, 132.0));
+        let mut with_slow = sample_controls_snapshot("/repo/a", false, false, Some(REV_A));
+        with_slow["configured"]["sources"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "target": "@acme/slow@1.0.0",
+                "scope": "global",
+                "path": "/home/opencode.jsonc",
+                "entryIndex": 1,
+                "expectedRevision": REV_A
+            }));
+        http.accept().await.reply(200, with_slow).await;
+        poll_until(&mut s, 132.0, |s| !s.status_services.plugins.reading());
+        let snap = s.status_services.plugins.snapshot.as_ref().unwrap();
+        assert_eq!(
+            s.status_services.plugins.pending_specs_for(snap),
+            vec!["@acme/slow@1.0.0"]
+        );
+
+        s.status_services.plugins.request_refresh();
+        assert!(poll_at(&mut s, 133.0));
+        http.accept()
+            .await
+            .reply(
+                200,
+                sample_controls_snapshot("/repo/a", false, false, Some(REV_B)),
+            )
+            .await;
+        poll_until(&mut s, 133.0, |s| !s.status_services.plugins.reading());
+        let snap = s.status_services.plugins.snapshot.as_ref().unwrap();
+        assert!(s.status_services.plugins.pending_specs_for(snap).is_empty());
+    });
+}
+
+#[test]
+fn remove_confirm_modal_traps_focus_has_description_and_restores_focus_on_expiry() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let mut backend = http.backend.clone();
+        backend.session_directory = Some("/repo/a".into());
+
+        let mut s = crate::init();
+        s.status_services.bind(&backend);
+        s.status_services.online(true);
+        s.status_services.show(true);
+        s.status_services.plugins.expanded = true;
+        assert!(poll_at(&mut s, 10.0));
+        http.accept()
+            .await
+            .reply(
+                200,
+                sample_controls_snapshot("/repo/a", false, false, Some(REV_A)),
+            )
+            .await;
+        poll_until(&mut s, 10.0, |s| {
+            s.status_services.plugins.snapshot.is_some()
+        });
+
+        layout::with_source_palette(|| {
+            let mut rt = Runtime::new(
+                s,
+                |st, cx| {
+                    layout::render(cx, |_| col().full_width().full_height().children(view(st)))
+                },
+                (360.0, 620.0),
+                Env::new(false, 1.0),
+            );
+            rt.frame(10.0);
+            let is_focused = |rt: &Runtime<State>, key: &str| {
+                rt.elements()
+                    .iter()
+                    .any(|e| e.focused && e.key.as_deref() == Some(key))
+            };
+            assert!(!super::super::shortcuts::modal_open(&rt.state));
+
+            rt.update(|_, tx| tx.focus("plugin-remove-global-@acme/plugin", true));
+            rt.frame(10.0);
+            rt.key(rune::KeyEvent {
+                key: rune::Key::Enter,
+                mods: rune::Mods::default(),
+            });
+            rt.frame(10.0);
+            rt.frame(10.0);
+            assert!(super::super::shortcuts::modal_open(&rt.state));
+            assert!(is_focused(&rt, "plugins-remove-cancel"));
+
+            // Accessible alertdialog carries the remove warning in its description.
+            let tree = rt.accessibility_json();
+            let dialog = node(&tree, "plugins-remove-dialog").expect("alertdialog");
+            assert_eq!(dialog["role"], "alert-dialog");
+            assert!(
+                dialog["description"].as_str().is_some_and(
+                    |d| d.contains(t("instanceServiceStatus.plugins.sources.removeWarning"))
+                ),
+                "{dialog}"
+            );
+
+            // Enable confirm button at +0.65s, then verify Tab and Shift+Tab trap focus inside the modal.
+            assert!(poll_at(&mut rt.state, 10.65));
+            rt.update(|_, _| {});
+            rt.frame(10.65);
+
+            rt.key(rune::KeyEvent {
+                key: rune::Key::Tab,
+                mods: rune::Mods::default(),
+            });
+            rt.frame(10.65);
+            assert!(is_focused(&rt, "plugins-remove-confirm"));
+
+            rt.key(rune::KeyEvent {
+                key: rune::Key::Tab,
+                mods: rune::Mods::default(),
+            });
+            rt.frame(10.65);
+            assert!(is_focused(&rt, "plugins-remove-cancel"));
+
+            rt.key(rune::KeyEvent {
+                key: rune::Key::Tab,
+                mods: rune::Mods {
+                    shift: true,
+                    ..rune::Mods::default()
+                },
+            });
+            rt.frame(10.65);
+            assert!(is_focused(&rt, "plugins-remove-confirm"));
+
+            // Natural 120s expiry dismisses the dialog and restores focus to the Remove trigger.
+            rt.update(|st, tx| {
+                assert!(
+                    st.status_services
+                        .plugins
+                        .poll(131.0, &st.reads, &st.wake, tx)
+                );
+            });
+            rt.frame(131.0);
+            rt.frame(131.0);
+            assert!(!super::super::shortcuts::modal_open(&rt.state));
+            assert!(node(&rt.accessibility_json(), "plugins-remove-dialog").is_none());
+            assert!(is_focused(&rt, "plugin-remove-global-@acme/plugin"));
+        });
     });
 }

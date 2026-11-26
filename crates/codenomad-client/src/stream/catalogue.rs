@@ -408,10 +408,37 @@ impl CatalogueWatch {
         let generation = self.signals.workspace_generation.load(SeqCst);
         let overflow = self.signals.workspace_overflow.swap(false, SeqCst);
         let mut events = VecDeque::new();
-        for workspace_id in self.signals.workspace_stopped.lock().unwrap().drain() {
-            events.push_back(WorkspaceEvent::Stopped { workspace_id });
+        let stopped_ids: HashSet<String> = self
+            .signals
+            .workspace_stopped
+            .lock()
+            .unwrap()
+            .drain()
+            .collect();
+        for workspace_id in &stopped_ids {
+            events.push_back(WorkspaceEvent::Stopped {
+                workspace_id: workspace_id.clone(),
+            });
         }
-        events.extend(self.signals.workspace_events.lock().unwrap().drain());
+        for event in self.signals.workspace_events.lock().unwrap().drain() {
+            let superseded = match &event {
+                WorkspaceEvent::NativeFilesystemChanged { workspace_id }
+                | WorkspaceEvent::FilesChanged { workspace_id, .. }
+                | WorkspaceEvent::WorktreesChanged { workspace_id }
+                | WorkspaceEvent::SessionMoved { workspace_id, .. }
+                | WorkspaceEvent::ServicesConfigChanged { workspace_id }
+                | WorkspaceEvent::NativeStreamStatus { workspace_id, .. }
+                | WorkspaceEvent::Stopped { workspace_id } => stopped_ids.contains(workspace_id),
+                WorkspaceEvent::PluginsChanged { workspace_id, .. }
+                | WorkspaceEvent::McpStatusChanged { workspace_id } => workspace_id
+                    .as_ref()
+                    .is_some_and(|id| stopped_ids.contains(id)),
+                _ => false,
+            };
+            if !superseded {
+                events.push_back(event);
+            }
+        }
         (generation, overflow, events)
     }
 
@@ -778,5 +805,41 @@ mod tests {
         assert!(!signals.workspace_overflow.load(SeqCst));
         signals.observe(&json!({"type":"workspace.stopped","workspaceId":"w-128"}));
         assert!(signals.workspace_overflow.load(SeqCst));
+    }
+
+    #[test]
+    fn stopped_workspace_drops_earlier_events_in_same_batch() {
+        let (watch, _task) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
+            Arc::new(|| {}),
+        );
+        watch.signals.observe(&json!({
+            "type": "instance.eventStatus",
+            "instanceId": "proj-1",
+            "status": "connected"
+        }));
+        watch.signals.observe(&json!({
+            "type": "workspace.stopped",
+            "workspaceId": "proj-1"
+        }));
+        watch.signals.observe(&json!({
+            "type": "instance.eventStatus",
+            "instanceId": "proj-2",
+            "status": "connected"
+        }));
+        let (_, overflow, events) = watch.take_workspace_events();
+        assert!(!overflow);
+        assert!(events.iter().any(|ev| matches!(
+            ev,
+            WorkspaceEvent::Stopped { workspace_id } if workspace_id == "proj-1"
+        )));
+        assert!(!events.iter().any(|ev| matches!(
+            ev,
+            WorkspaceEvent::NativeStreamStatus { workspace_id, .. } if workspace_id == "proj-1"
+        )));
+        assert!(events.iter().any(|ev| matches!(
+            ev,
+            WorkspaceEvent::NativeStreamStatus { workspace_id, connected: true } if workspace_id == "proj-2"
+        )));
     }
 }

@@ -61,6 +61,10 @@ impl Services {
         self.plugins.invalidate(directory);
     }
 
+    pub(crate) fn confirm_open(&self) -> bool {
+        self.plugins.confirm_remove.is_some()
+    }
+
     pub(crate) fn dismiss_confirm(&mut self, tx: &mut rune::Tx) -> bool {
         self.plugins.cancel_remove_confirm(tx)
     }

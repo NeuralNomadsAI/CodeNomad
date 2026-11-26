@@ -33,6 +33,7 @@ pub(super) struct McpPanel {
     dirty: bool,
     location_unconfirmed: bool,
     confirmed_generations: HashMap<String, u64>,
+    attempted_generations: HashMap<String, u64>,
     unconfirmed_servers: HashSet<String>,
     read: Option<ReadFlight>,
     pending_toggles: Vec<(String, String, u64)>,
@@ -54,6 +55,7 @@ impl Default for McpPanel {
             dirty: false,
             location_unconfirmed: false,
             confirmed_generations: HashMap::new(),
+            attempted_generations: HashMap::new(),
             unconfirmed_servers: HashSet::new(),
             read: None,
             pending_toggles: Vec::new(),
@@ -281,11 +283,18 @@ impl McpPanel {
                 let in_flight_covers = self.read.as_ref().is_some_and(|(_, _, gens)| {
                     gens.get(&server.name).copied().unwrap_or(0) == obs.settled_id
                 });
+                let already_attempted = self.failed
+                    && self
+                        .attempted_generations
+                        .get(&server.name)
+                        .copied()
+                        .unwrap_or(0)
+                        == obs.settled_id;
                 if obs.active || obs.settled_id != confirmed {
                     if self.unconfirmed_servers.insert(server.name.clone()) {
                         changed = true;
                     }
-                    if !obs.active && !in_flight_covers {
+                    if !obs.active && !in_flight_covers && !already_attempted {
                         self.dirty = true;
                     }
                 }
@@ -372,6 +381,7 @@ impl McpPanel {
             let (cancel, cancelled) = bounded(1);
             let (out, rx) = bounded(1);
             let read_gens = barrier::mcp_generations(&backend.base);
+            self.attempted_generations = read_gens.clone();
             self.dirty = false;
             self.read = Some((cancel, rx, read_gens.clone()));
             let (reads, wake) = (reads.clone(), wake.clone());
@@ -420,7 +430,7 @@ pub(super) fn view(s: &State) -> Option<El> {
         } else if panel.failed && panel.snapshot.is_none() {
             body = body.child(
                 layout::action_row()
-                    .child(text(t("instanceServiceStatus.plugins.errors.load")).role("alert"))
+                    .child(text(t("integrations.line.failed")).role("alert"))
                     .child(
                         layout::button(
                             t("settings.providers.refresh"),
@@ -436,11 +446,7 @@ pub(super) fn view(s: &State) -> Option<El> {
         if panel.failed && panel.snapshot.is_some() {
             body = body.child(
                 layout::action_row()
-                    .child(
-                        text(t("instanceServiceStatus.plugins.errors.refresh"))
-                            .wrap()
-                            .role("alert"),
-                    )
+                    .child(text(t("integrations.line.failed")).wrap().role("alert"))
                     .child(
                         layout::button(
                             t("settings.providers.refresh"),
