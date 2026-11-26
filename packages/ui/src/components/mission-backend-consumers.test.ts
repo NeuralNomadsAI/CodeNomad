@@ -603,3 +603,23 @@ test("schedule control passive capability display is owner routed", async () => 
   createRoot(close => { dispose = close; createEffect(effect) }); await flush()
   assert.deepEqual(calls, ["capability"]); assert.equal(published, "available"); dispose()
 })
+
+test("schedule check label uses checkStatus and dispatches check without confirmation", async () => {
+  const calls: any[] = [], confirms: string[] = []
+  const doc = { id: "m", revision: 2, availableActions: ["check"], configuration: { title: "Sync", launch: { when: [] } } }
+  const scope = controlScope({
+    fetchMissionSchedule: async () => ({ document: doc }),
+    controlMissionSchedule: async (...args: any[]) => {
+      calls.push(args)
+      return { document: { ...doc, revision: 3, control: { requestID: args[2].requestID, expectedRevision: 2, action: "check", pending: false } } }
+    },
+  })
+  scope.props.document = () => doc
+  scope.showConfirmDialog = async (message: string) => { confirms.push(message); return false }
+  const label = production("./mission-schedule-controls.ts", "label", { t: (key: string) => key })
+  assert.equal(label("check"), "missionsPanel.action.checkStatus")
+  await production("./mission-schedule-controls.ts", "act", scope)("check")
+  assert.deepEqual(confirms, [])
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][2].action, "check")
+})

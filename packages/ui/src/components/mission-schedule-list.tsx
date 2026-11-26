@@ -76,7 +76,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       const [expanded, expand] = createMissionDisclosure(() => props.instanceId, () => id, () => "schedule:instructions")
       const primary = () => (["pause", "resume", "play"] as const).find(action => controls.pendingAction() === action)
         ?? (["pause", "resume", "play"] as const).find(action => doc().availableActions.includes(action))
-      const action = (name: "play" | "resume" | "pause" | "stop" | "run-now") => ({ key: name, label: controls.label(name),
+      const action = (name: "play" | "resume" | "pause" | "stop" | "run-now" | "check") => ({ key: name, label: controls.label(name),
         disabled: !controls.capable(name), busy: controls.pendingAction() === name, onSelect: () => controls.act(name) })
       const status = () => controls.progress() ?? (controls.held()
         ? controls.publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain"
@@ -88,7 +88,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
         && !controls.held() && !controls.busy() && doc().availableActions.includes("configure")
       return <section id={props.detailId} class="mission-detail mission-unified-schedule" aria-label={doc().configuration.title}>
         <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.passage?.reading ?? props.overview?.reading ?? expanded()} onToggleReader={() => props.passage ? props.passage.onToggle() : props.overview ? props.overview.onToggle() : expand(!expanded())}
-          primary={primary() ? action(primary()!) : undefined} stop={action("stop")} runNow={action("run-now")}
+          primary={primary() ? action(primary()!) : undefined} stop={action("stop")} runNow={action("run-now")} check={action("check")}
           onEdit={() => { if (editable()) props.onEdit(id) }} editDisabled={!editable()}
           onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")} deleteBusy={controls.pendingAction() === "delete"}
           onOpenConversation={doc().pendingPassage ? () => props.onOpenConversation(doc().pendingPassage!.coordinatorSessionID) : undefined}

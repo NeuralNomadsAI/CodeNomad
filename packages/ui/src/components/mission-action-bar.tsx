@@ -25,7 +25,7 @@ function primaryIcon(key?: string): JSX.Element {
  * is announced and joins the primary button's tooltip. */
 export function MissionActionBar(props: {
   label: string; reading: boolean; onToggleReader?: () => void
-  primary?: MissionPrimaryAction; stop?: MissionPrimaryAction; request?: MissionPrimaryAction; onOpenConversation?: () => void
+  primary?: MissionPrimaryAction; stop?: MissionPrimaryAction; request?: MissionPrimaryAction; check?: MissionPrimaryAction; onOpenConversation?: () => void
   /** Names Open conversation's target when it is not the coordinator's. */
   openLabel?: string
   /** Interrupts a graceful Pause's still-running steps at once. */
@@ -77,6 +77,12 @@ export function MissionActionBar(props: {
     { key: "edit", get label() { return t("missionsPanel.picker.edit") }, get icon() { return <Pencil class="h-3.5 w-3.5" /> },
       get disabled() { return !props.onEdit || props.editDisabled }, onSelect: () => props.onEdit?.() },
   ]
+  const checkItem: ActionOverflowMenuItem = {
+    key: "check", get label() { return props.check?.label ?? t("missionsPanel.action.checkStatus") },
+    get description() { return props.check?.ariaLabel }, get icon() { return <RefreshCw class="h-3.5 w-3.5" /> },
+    get disabled() { return !props.check || props.check.disabled || props.check.busy }, onSelect: () => props.check?.onSelect(),
+  }
+  const menuItems = createMemo(() => props.check ? [...menu, checkItem] : menu)
   let bar: HTMLDivElement | undefined
   const toolbar = () => <div ref={bar} class="mission-action-bar" role="toolbar" aria-label={props.label}>
     <button type="button" class="mission-control-icon-button" aria-label={primaryLabel()} title={[primaryLabel(), feedbackText()].filter(Boolean).join(" — ")}
@@ -105,7 +111,7 @@ export function MissionActionBar(props: {
       disabled={!props.onDelete || props.deleteDisabled || props.deleteBusy} aria-busy={props.deleteBusy || undefined} onClick={() => props.onDelete?.()}>
       <Show when={props.deleteBusy} fallback={<Trash2 class="h-4 w-4" aria-hidden="true" />}><span class="inline-flex animate-spin"><LoaderCircle class="h-3.5 w-3.5" aria-hidden="true" /></span></Show>
     </button>
-    <ActionOverflowMenu label={t("messageItem.actions.more")} items={menu} triggerClass="mission-control-icon-button" />
+    <ActionOverflowMenu label={t("messageItem.actions.more")} items={menuItems()} triggerClass="mission-control-icon-button" />
   </div>
   const mount = () => props.inline ? undefined : slot?.()
   // A schedule's toolbar yields the line while one of its passage tasks' reader is open.
