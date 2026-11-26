@@ -158,7 +158,6 @@ impl Http {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .cookie_store(true)
-            .timeout(REQUEST_TIMEOUT)
             .build()?;
         #[cfg(target_arch = "wasm32")]
         let client = Client::new();
@@ -185,7 +184,6 @@ impl Http {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .cookie_provider(jar)
-            .timeout(REQUEST_TIMEOUT)
             .build()?;
         Ok(Self::from_client(client))
     }
@@ -468,6 +466,10 @@ impl Http {
     pub fn get(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::GET, url)
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn stream_get(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.0.get(url)
+    }
     pub fn post(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::POST, url)
     }
@@ -488,7 +490,7 @@ pub async fn pairing_required() -> Result<Option<bool>> {
     let response = Http::new()?
         .get(format!("{base}api/auth/status"))
         .fetch_cache_no_store()
-        .timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(15))
         .send()
         .await?
         .error_for_status()?;

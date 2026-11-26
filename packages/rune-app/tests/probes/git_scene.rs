@@ -13,6 +13,10 @@ pub fn view(s: &crate::State) -> rune::El {
         .and_then(|width| width.parse::<f32>().ok())
         .filter(|width| width.is_finite() && *width > 0.0)
         .unwrap_or(360.0);
+    view_with_width(s, width)
+}
+
+pub(super) fn view_with_width(s: &crate::State, width: f32) -> rune::El {
     rune::col()
         .full_width()
         .full_height()
@@ -25,7 +29,13 @@ pub fn view(s: &crate::State) -> rune::El {
                 .child(
                     git_panel::conversation_column()
                         .child(crate::git::reader(s))
-                        .child(crate::composer::view::view(s, false, None, rune::el())),
+                        .child(crate::composer::view::view(
+                            s,
+                            rune_theme_codenomad::interruption::SessionLayout::default(),
+                            crate::chat::ComposerCaretPins::default(),
+                            None,
+                            rune::el(),
+                        )),
                 )
                 .child(crate::git::panel(s, width, rune::el())),
         )
@@ -35,11 +45,30 @@ pub fn changes(s: &mut crate::State) {
     setup(s, Mode::Changes);
 }
 
+#[cfg(test)]
+pub(super) fn changes_explicit(s: &mut crate::State) {
+    setup_with(s, Mode::Changes, None, false, None);
+}
+
 pub fn commits(s: &mut crate::State) {
     setup(s, Mode::History);
 }
 
 fn setup(s: &mut crate::State, mode: Mode) {
+    let empty = crate::platform::setting("RUNE_GIT_PANEL_STATE");
+    let long_subject = crate::platform::setting("RUNE_GIT_LONG_SUBJECT").as_deref() == Some("1");
+    let detail =
+        crate::platform::setting("RUNE_GIT_COMMIT_DETAIL").filter(|_| mode == Mode::History);
+    setup_with(s, mode, empty.as_deref(), long_subject, detail.as_deref());
+}
+
+fn setup_with(
+    s: &mut crate::State,
+    mode: Mode,
+    empty: Option<&str>,
+    long_subject: bool,
+    detail: Option<&str>,
+) {
     const PATH: &str = "src/components/git-panel.tsx";
     let Ok(client) = codenomad_client::http::Http::new() else {
         return;
@@ -59,9 +88,8 @@ fn setup(s: &mut crate::State, mode: Mode) {
         s.reads.clone(),
         s.wake.clone(),
     );
-    let empty = crate::platform::setting("RUNE_GIT_PANEL_STATE");
     let inventory = Worktrees {
-        repository: match empty.as_deref() {
+        repository: match empty {
             Some("no-git") => Repository::NoGit,
             Some("uninitialized") => Repository::Uninitialized,
             _ => Repository::Git,
@@ -111,7 +139,7 @@ fn setup(s: &mut crate::State, mode: Mode) {
             whitespace_only: false,
         },
     ];
-    let subject = if crate::platform::setting("RUNE_GIT_LONG_SUBJECT").as_deref() == Some("1") {
+    let subject = if long_subject {
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     } else {
         "Make Git history the starting point"
@@ -144,9 +172,7 @@ fn setup(s: &mut crate::State, mode: Mode) {
         before: "export function openGitPanel() {\n  return {\n    title: \"Git Changes\",\n    view: \"changes\",\n    diffPlacement: \"sidebar\",\n  }\n}\n".into(),
         after: "export function openGitPanel() {\n  return {\n    title: \"Git\",\n    view: \"history\",\n    diffPlacement: \"conversation\",\n    preserveDraft: true,\n  }\n}\n".into(),
     });
-    if let Some(detail) =
-        crate::platform::setting("RUNE_GIT_COMMIT_DETAIL").filter(|_| mode == Mode::History)
-    {
+    if let Some(detail) = detail {
         ui.load_commit_scene(Details {
             id: "1".repeat(40),
             message: if detail == "hash" {
@@ -161,7 +187,7 @@ fn setup(s: &mut crate::State, mode: Mode) {
         });
     }
     if let Some(state) = empty {
-        ui.load_empty_scene(&state);
+        ui.load_empty_scene(state);
     }
     s.git.owner = Some(ui);
     s.git.scene = true;

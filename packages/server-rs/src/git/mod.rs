@@ -637,6 +637,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({"directory": root}),
+            temporary: None,
         });
         let id_str = id.to_string();
 

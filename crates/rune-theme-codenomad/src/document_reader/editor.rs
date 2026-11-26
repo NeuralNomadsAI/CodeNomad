@@ -7,16 +7,19 @@ mod anchor;
 pub use anchor::{LineAnchor, SourceLayout};
 
 // Rune's TextArea keeps the multiline editor; a full-width scroll surface determines wrap.
-// Pinned TextArea metrics in rune-kit/src/controls/text_input.rs.
-const INSET: f32 = 8.0;
-const LINE_HEIGHT: f32 = 17.5;
+pub fn metrics(dark: bool) -> rune_kit::TextAreaMetrics {
+    code_kit(dark)
+        .metrics
+        .text_area
+        .expect("code_kit defines text_area metrics")
+}
 fn drawing_width(dark: bool, text: &str, viewport_width: f32) -> f32 {
-    let style = code_kit(dark).ty.ui;
+    let m = metrics(dark);
     let lines = text.as_bytes().iter().filter(|&&c| c == b'\n').count() + 1;
     (source_width(dark, viewport_width)
-        - gutter_width(style, lines)
+        - gutter_width(m.style, lines)
         - tokens(dark).space(Space::Lg).px()
-        + INSET)
+        + m.padding)
         .max(0.0)
 }
 pub fn field(
@@ -27,18 +30,17 @@ pub fn field(
     wrap: bool,
     viewport_width: Option<f32>,
 ) -> TextArea {
+    let m = metrics(dark);
     let viewport_width = viewport_width.map(|width| drawing_width(dark, &edit.text, width));
     let available = if wrap {
         viewport_width
     } else {
-        let style = code_kit(dark).ty.ui;
         let span = edit
             .text
             .split('\n')
-            .map(|line| rune::text::advance(line, style))
+            .map(|line| rune::text::advance(line, m.style))
             .fold(0.0, f32::max);
-        // TextArea owns 8 points of inset on each side at this Rune pin.
-        Some((span.ceil() + 2.0 * INSET + 1.0).max(viewport_width.unwrap_or_default()))
+        Some((span.ceil() + 2.0 * m.padding + 1.0).max(viewport_width.unwrap_or_default()))
     };
     TextArea::new(edit)
         .label(label)
@@ -63,14 +65,13 @@ pub fn editor_view(
     } else {
         None
     };
-    let mut style = code_kit(dark).ty.ui;
-    style.line_height = LINE_HEIGHT;
+    let m = metrics(dark);
     source_view(
         dark,
         rune::row()
             .w_full()
             .literal_direction()
-            .child(gutter_style(dark, text, width, style, INSET).pt(INSET))
+            .child(gutter_style(dark, text, width, m.style, m.padding).pt(m.padding))
             .child(field)
             .child(anchor_watch.pin(Some(0.0), Some(0.0), None, None)),
         wrap,
@@ -81,8 +82,13 @@ pub fn code_kit(dark: bool) -> &'static rune_kit::Kit {
     static KITS: [OnceLock<rune_kit::Kit>; 4] = [const { OnceLock::new() }; 4];
     KITS[crate::palette_index(dark)].get_or_init(|| {
         let mut kit = kit(dark).clone();
-        kit.ty.ui = source_font(dark);
+        let style = source_font(dark);
+        kit.ty.ui = style;
         kit.c.bg_base = tokens(dark).color("surface-inset");
+        kit.metrics.text_area = Some(rune_kit::TextAreaMetrics {
+            style,
+            padding: tokens(dark).space(Space::Sm).px(),
+        });
         kit
     })
 }

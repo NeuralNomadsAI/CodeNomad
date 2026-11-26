@@ -30,7 +30,7 @@ pub(super) struct Window {
     general: super::general::Controls,
     transcript_picker: Cell<Option<super::TranscriptRow>>,
     behavior: super::behavior::General,
-    memory_help_failed: bool,
+    memory_help: super::ExternalLink,
     memory_editor: super::memory::editor::Editor,
     seen_revision: u64,
     section: Section,
@@ -322,7 +322,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     .borrow_mut()
                     .memory
                     .show(s.section == Section::General);
-                s.memory_help_failed = false;
+                s.memory_help.clear();
                 if s.section != Section::Providers {
                     s.providers.suspend();
                 }
@@ -468,10 +468,14 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ),
             Section::Remote => (
                 "remote",
-                s.remote.view(&s.shared, |s: &mut Window| {
-                    (s.section == Section::Remote && !s.closing && !s.confirm_close)
-                        .then_some(&mut s.remote)
-                }),
+                s.remote.view(
+                    &s.shared,
+                    |s: &mut Window| {
+                        (s.section == Section::Remote && !s.closing && !s.confirm_close)
+                            .then_some(&mut s.remote)
+                    },
+                    |s: &mut Window| &mut s.remote,
+                ),
             ),
             Section::ConfigFiles => (
                 "config-files",
@@ -558,10 +562,13 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             |s: &mut Window, focused, _| {
                 if !focused {
                     s.recording_shortcut = false;
-                } else if s.section == Section::OpenCode {
-                    s.check_opencode(Some(false));
-                } else if focused && s.section == Section::General {
-                    s.shared.borrow_mut().memory.invalidate();
+                } else {
+                    codenomad_client::stream::probe_stale();
+                    if s.section == Section::OpenCode {
+                        s.check_opencode(Some(false));
+                    } else if s.section == Section::General {
+                        s.shared.borrow_mut().memory.invalidate();
+                    }
                 }
             },
         )

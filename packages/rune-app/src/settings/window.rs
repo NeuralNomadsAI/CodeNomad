@@ -12,18 +12,19 @@ use std::{
     rc::Rc,
 };
 
-pub(crate) fn entries(touch: bool) -> impl IntoIterator<Item = El> {
+pub(crate) fn entries(touch: bool, skip_tab: bool) -> impl IntoIterator<Item = El> {
     #[cfg(not(target_arch = "wasm32"))]
     return [rune_theme_codenomad::tabs::BarAction::Settings
         .button(touch, strings::t("settings.title"), open)
+        .tab_index(if skip_tab { -1 } else { 0 })
         .key("open-preferences")];
     #[cfg(target_arch = "wasm32")]
-    return [web::entry(touch)];
+    return [web::entry(touch, skip_tab)];
 }
 
-pub(crate) fn direct_entry(s: &State, touch: bool) -> El {
+pub(crate) fn direct_entry(s: &State, touch: bool, skip_tab: bool) -> El {
     if s.workspace.is_none() && s.settings.shared.borrow().backend.is_some() {
-        rune_theme_codenomad::layout::action_row().children(entries(touch))
+        rune_theme_codenomad::layout::action_row().children(entries(touch, skip_tab))
     } else {
         rune::el()
     }
@@ -31,6 +32,7 @@ pub(crate) fn direct_entry(s: &State, touch: bool) -> El {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn open(s: &mut State) {
+    s.shell.leave_project();
     open_window(s, false);
 }
 

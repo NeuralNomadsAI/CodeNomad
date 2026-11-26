@@ -110,6 +110,12 @@ pub struct Authentication {
     pub backend: crate::backend::Backend,
     pub confirmed: bool,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentLane {
+    Session,
+    Permissions,
+    Forms,
+}
 #[derive(Debug)]
 pub enum Event {
     Connected(crate::backend::Backend),
@@ -117,6 +123,7 @@ pub enum Event {
     Workspace(WorkspaceEvent),
     Preferences(crate::settings::Owner),
     AgentHint(bool),
+    AgentControl(AgentLane),
     SessionUsage(crate::content::Usage),
     FamilyUsage(crate::content::FamilyChange),
     ObservedRunning {
