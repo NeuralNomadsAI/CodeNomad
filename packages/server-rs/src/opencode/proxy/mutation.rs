@@ -211,11 +211,12 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                     account_context_dir = Some(ctx_loc.owned.directory.clone());
                 }
                 has_body_location = resolved.body.is_some();
-                // Native OpenCode integration connect endpoints take `location` in query
-                // (`location[directory]`) or `x-opencode-directory`, never in the JSON body
-                // (including `location: null`).
-                data.remove("location");
             }
+            // Native OpenCode account endpoints never take `location` in the JSON body
+            // (including `location: null`); integration routes carry it in `location[directory]`
+            // or `x-opencode-directory`, while global credential mutations consume it only for
+            // workspace authority and deletion fencing.
+            data.remove("location");
             account_verified_locs.extend(resolved.queries);
             for item in [resolved.context, resolved.body].into_iter().flatten() {
                 account_verified_locs.push(item);
@@ -223,7 +224,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             if account_verified_locs.is_empty() && !is_credential {
                 account_verified_locs.push(capture_account_location(app, workspace, opened.to_owned()).await?);
             }
-            if head.method != Method::DELETE && !body_empty {
+            if head.method != Method::DELETE && !body_empty && !(is_credential && head.method == Method::POST) {
                 input = Some(Value::Object(data));
             }
         } else {

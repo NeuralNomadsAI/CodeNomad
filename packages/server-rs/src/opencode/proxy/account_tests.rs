@@ -551,8 +551,8 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
         assert_eq!(last.body, Some(json!({"methodID": "azure-cli"})));
     }
 
-    // Credential mutations consume x-codenomad-location and query location for authority/fence only,
-    // never forwarding x-opencode-directory or query directory to the global native endpoint.
+    // Credential mutations consume query, header, and body location for authority/fence only,
+    // never forwarding location in query, x-opencode-directory, or JSON body (and keeping activate empty).
     let (status, cc, _) = call_relay(
         &app,
         Method::POST,
@@ -560,8 +560,8 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
             "{base}/credential/cre_1/activate?location[directory]={}",
             percent_encoding::utf8_percent_encode(&linked_str, percent_encoding::NON_ALPHANUMERIC)
         ),
-        None,
-        None,
+        Some("application/json"),
+        Some(&json!({"location": {"directory": linked_str}}).to_string()),
         &[("x-codenomad-location", &linked_ctx)],
     )
     .await;
@@ -573,6 +573,45 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
         assert_eq!(last.path, "/api/credential/cre_1/activate");
         assert!(last.query.is_none(), "credential activate must not forward query location");
         assert!(last.dir_header.is_none(), "credential activate must not forward x-opencode-directory");
+        assert!(last.body.is_none(), "credential activate must drop body.location and forward empty body");
+    }
+    let (status, cc, _) = call_relay(
+        &app,
+        Method::PATCH,
+        &format!("{base}/credential/cre_1"),
+        Some("application/json"),
+        Some(&json!({"label": "WithLoc", "location": {"directory": linked_str}}).to_string()),
+        &[("x-codenomad-location", &linked_ctx)],
+    )
+    .await;
+    assert_eq!(status, Status::NO_CONTENT);
+    assert_eq!(cc, "no-store");
+    {
+        let calls = &mock.lock().unwrap().calls;
+        let last = calls.last().unwrap();
+        assert_eq!(last.path, "/api/credential/cre_1");
+        assert!(last.query.is_none());
+        assert!(last.dir_header.is_none());
+        assert_eq!(last.body, Some(json!({"label": "WithLoc"})));
+    }
+    let (status, cc, _) = call_relay(
+        &app,
+        Method::DELETE,
+        &format!("{base}/credential/cre_1"),
+        Some("application/json"),
+        Some(&json!({"location": {"directory": linked_str}}).to_string()),
+        &[],
+    )
+    .await;
+    assert_eq!(status, Status::NO_CONTENT);
+    assert_eq!(cc, "no-store");
+    {
+        let calls = &mock.lock().unwrap().calls;
+        let last = calls.last().unwrap();
+        assert_eq!(last.path, "/api/credential/cre_1");
+        assert!(last.query.is_none());
+        assert!(last.dir_header.is_none());
+        assert!(last.body.is_none());
     }
 
     // GET integration connect status polling validates and forwards canonical location[directory].
