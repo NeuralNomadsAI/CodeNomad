@@ -205,9 +205,6 @@ pub(crate) enum EditorEvent {
         origin: Option<FormOrigin>,
         code: MutationCode,
     },
-    CreateAuthExpired {
-        origin: Option<FormOrigin>,
-    },
     CreateReceiptRejected {
         scope: CreationScopeKey,
     },
@@ -228,10 +225,6 @@ pub(crate) enum EditorEvent {
         key: EditHoldKey,
         origin: Option<FormOrigin>,
         code: MutationCode,
-    },
-    EditAuthExpired {
-        key: EditHoldKey,
-        origin: Option<FormOrigin>,
     },
     EditUncertain {
         key: EditHoldKey,
@@ -266,6 +259,18 @@ impl EditorHolds {
                 .origin
                 .as_ref()
                 .is_some_and(|origin| origin.occurrence == occurrence)
+            {
+                entry.auto_start_alive = false;
+            }
+        }
+    }
+
+    pub(crate) fn revoke_auto_start_for_connection(&mut self, backend: &Backend) {
+        for entry in self.creations.values_mut() {
+            if entry
+                .origin
+                .as_ref()
+                .is_some_and(|origin| origin.backend.client.same_connection(&backend.client))
             {
                 entry.auto_start_alive = false;
             }
@@ -537,6 +542,11 @@ impl EditorHolds {
             }
         }
 
+        // Permanently revoke auto-start for every expired connection across poll cycles.
+        for backend in &expired {
+            self.revoke_auto_start_for_connection(backend);
+        }
+
         // Phase 2: settle every drained reply against the complete same-tick auth fence.
         let mut changed = false;
         let mut events = Vec::new();
@@ -599,13 +609,7 @@ impl EditorHolds {
                         code,
                     });
                 }
-                CreateMissionOutcome::AuthExpired => {
-                    let entry = self.creations.remove(&key).unwrap();
-                    events.push(EditorEvent::CreateAuthExpired {
-                        origin: entry.origin,
-                    });
-                }
-                CreateMissionOutcome::Uncertain => {
+                CreateMissionOutcome::AuthExpired | CreateMissionOutcome::Uncertain => {
                     if let Some(entry) = self.creations.get_mut(&key) {
                         entry.state = HoldState::Uncertain;
                         entry.auto_start_alive = false;
@@ -687,14 +691,7 @@ impl EditorHolds {
                         code,
                     });
                 }
-                UpdateMissionOutcome::AuthExpired => {
-                    let entry = self.edits.remove(&key).unwrap();
-                    events.push(EditorEvent::EditAuthExpired {
-                        key,
-                        origin: entry.origin,
-                    });
-                }
-                UpdateMissionOutcome::Uncertain => {
+                UpdateMissionOutcome::AuthExpired | UpdateMissionOutcome::Uncertain => {
                     if let Some(entry) = self.edits.get_mut(&key) {
                         entry.state = HoldState::Uncertain;
                         entry.checking = false;

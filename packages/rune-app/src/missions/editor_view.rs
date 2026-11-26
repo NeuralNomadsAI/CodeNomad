@@ -1,8 +1,8 @@
 use super::{
     directory::Panel,
     editor::{
-        EditorGesture, Mode, PrefillState, TEXT_LIMIT, TITLE_LIMIT, notes_limit_exceeded,
-        objective_limit_exceeded, title_limit_exceeded,
+        DefaultsState, EditorGesture, Mode, PrefillState, TEXT_LIMIT, TITLE_LIMIT,
+        notes_limit_exceeded, objective_limit_exceeded, title_limit_exceeded,
     },
     editor_holds::{EditorHolds, HoldState},
 };
@@ -117,6 +117,30 @@ pub(crate) fn view<S: 'static>(
         content = content.child(theme::note(t(key), role));
     }
 
+    if form.mode == Mode::Create && creation_hold.is_none() {
+        match form.defaults_state {
+            DefaultsState::Loading => {
+                content = content.child(theme::note(t("missions.control.loading"), "status"));
+            }
+            DefaultsState::Failed => {
+                content = content
+                    .child(theme::note(
+                        t("missions.control.reader.unavailable"),
+                        "alert",
+                    ))
+                    .child(
+                        layout::button_tx(
+                            t("missionsPanel.reader.retry"),
+                            false,
+                            move |s: &mut S, tx| act(s, EditorGesture::RetryDefaults, tx),
+                        )
+                        .key("mission-editor-defaults-retry"),
+                    );
+            }
+            DefaultsState::Ready => {}
+        }
+    }
+
     if form.mode == Mode::Edit {
         match form.prefill {
             PrefillState::Loading => {
@@ -154,7 +178,7 @@ pub(crate) fn view<S: 'static>(
                 content = content.child(theme::note(t(reason), "alert")).child(
                     layout::button_tx(
                         t("missionsPanel.reader.retry"),
-                        false,
+                        form.reopening.is_some() || form.doc_rechecking,
                         move |s: &mut S, tx| act(s, EditorGesture::RetryPrefill, tx),
                     )
                     .key("mission-editor-prefill-retry"),
@@ -286,7 +310,7 @@ pub(crate) fn view<S: 'static>(
                         && let Some(form) = p.editor.form.as_mut()
                         && let Some(chosen) = Template::ALL.get(index).copied()
                     {
-                        form.template = chosen;
+                        form.select_template(chosen);
                     }
                 },
             )
@@ -318,7 +342,7 @@ pub(crate) fn view<S: 'static>(
                         && let Some(form) = p.editor.form.as_mut()
                         && let Some(chosen) = TaskMode::ALL.get(index).copied()
                     {
-                        form.task_mode = chosen;
+                        form.select_task_mode(chosen);
                     }
                 },
             )

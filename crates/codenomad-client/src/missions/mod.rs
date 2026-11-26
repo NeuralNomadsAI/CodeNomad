@@ -10,6 +10,7 @@ mod directory;
 mod editor;
 mod lifecycle;
 mod model;
+mod profile_defaults;
 pub use activity::{Activity, Actor, ActorState, Coverage};
 pub use attention::Attention;
 pub use briefing::{
@@ -40,3 +41,9 @@ pub use lifecycle::{
     request_id,
 };
 pub use model::{Cleanup, DirectoryPage, DirectoryRows, RunState, Status, Summary, Window};
+pub use profile_defaults::{
+    MissionDefaultScope, MissionDefaultsOutcome, MissionExecution, MissionModelRef,
+    MissionProfileDefault, MissionProfiles, compare_model_error, freeze_compare_profiles,
+    mission_defaults_for, mission_task_mode_for, normalize_mission_defaults, template_roles,
+    valid_mission_profiles,
+};

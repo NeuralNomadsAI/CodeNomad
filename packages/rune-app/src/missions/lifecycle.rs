@@ -495,7 +495,8 @@ impl Lifecycle {
                 {
                     self.auth_expired.push(backend);
                 }
-                return false;
+                // Keep the original intent so re-authentication reconciles read-only instead of replaying.
+                return true;
             }
             finished.push((source.clone(), intent.target.clone(), outcome));
             if let LifecycleOutcome::Acknowledged(revision) = outcome {

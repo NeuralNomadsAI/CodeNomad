@@ -3,10 +3,11 @@ mod tests;
 
 use super::{
     BodyDescriptor, ContentOutcome, ContentRefusal, ContentSelector, LifecycleAction,
-    LifecycleRequest, LifecycleTarget, RunState, Status, Template, content_digest,
+    LifecycleRequest, LifecycleTarget, MissionProfiles, RunState, Status, Template,
+    compare_model_error, content_digest,
     directory::panel_id,
     lifecycle::{request_id, request_id_valid},
-    utf16_len,
+    utf16_len, valid_mission_profiles,
 };
 use crate::{
     backend::{Backend, read_json_limited},
@@ -149,6 +150,8 @@ pub struct CreateMissionRequest {
     pub notes: Option<String>,
     pub template: Template,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<MissionProfiles>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub task_mode: Option<TaskMode>,
 }
 
@@ -172,6 +175,20 @@ impl CreateMissionRequest {
         template: Template,
         task_mode: TaskMode,
     ) -> Result<Self> {
+        Self::with_request_id_and_profiles(
+            request_id, objective, title, notes, template, None, task_mode,
+        )
+    }
+
+    pub fn with_request_id_and_profiles(
+        request_id: String,
+        objective: &str,
+        title: Option<&str>,
+        notes: &str,
+        template: Template,
+        profiles: Option<MissionProfiles>,
+        task_mode: TaskMode,
+    ) -> Result<Self> {
         let trimmed_objective = js_trim(objective).to_owned();
         let trimmed_title = title
             .map(js_trim)
@@ -184,6 +201,7 @@ impl CreateMissionRequest {
             title: trimmed_title,
             notes,
             template,
+            profiles,
             task_mode: Some(task_mode),
         };
         request.validate()?;
@@ -201,6 +219,12 @@ impl CreateMissionRequest {
                 .notes
                 .as_deref()
                 .is_some_and(|notes| !valid_notes_input(notes))
+            || self
+                .profiles
+                .as_ref()
+                .is_some_and(|profiles| !valid_mission_profiles(self.template, profiles))
+            || (self.template == Template::Compare
+                && compare_model_error(self.profiles.as_ref()).is_some())
         {
             return Err("invalid Mission creation request".into());
         }
@@ -517,10 +541,24 @@ impl Backend {
         if status == StatusCode::UNAUTHORIZED {
             return DocumentEditCheck::AuthExpired;
         }
+        let body = read_json_limited(response, MAX_RESPONSE_BYTES).await.ok();
         if !status.is_success() {
+            if let Some(body) = body.as_ref() {
+                if status == StatusCode::SERVICE_UNAVAILABLE
+                    && (body["pending"] == true
+                        || body["code"].as_str() == Some("schedule-pending"))
+                {
+                    return DocumentEditCheck::Locked("missions.scheduling.lock.uncertain");
+                }
+                if status == StatusCode::CONFLICT
+                    && (body["deleted"] == true || body["code"].as_str() == Some("mission-deleted"))
+                {
+                    return DocumentEditCheck::Locked("missions.scheduling.lock.deleted");
+                }
+            }
             return DocumentEditCheck::Unavailable;
         }
-        let Ok(body) = read_json_limited(response, MAX_RESPONSE_BYTES).await else {
+        let Some(body) = body else {
             return DocumentEditCheck::Unavailable;
         };
         if body["deleted"] == true {

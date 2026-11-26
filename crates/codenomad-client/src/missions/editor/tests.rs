@@ -1,4 +1,8 @@
 use super::*;
+use crate::missions::{
+    MissionDefaultScope, MissionDefaultsOutcome, freeze_compare_profiles, mission_defaults_for,
+    mission_task_mode_for, normalize_mission_defaults,
+};
 use serde_json::json;
 use std::future::Future;
 use tokio::{
@@ -541,6 +545,40 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             DocumentEditCheck::Locked("missions.scheduling.lock.journal")
         );
 
+        let (base, _t) = spawn_http(
+            "503 Service Unavailable",
+            json!({
+                "missionID": "msn_alpha123",
+                "pending": true,
+                "code": "schedule-pending"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base)
+                .read_mission_edit_document("msn_alpha123")
+                .await,
+            DocumentEditCheck::Locked("missions.scheduling.lock.uncertain")
+        );
+
+        let (base, _t) = spawn_http(
+            "409 Conflict",
+            json!({
+                "missionID": "msn_alpha123",
+                "deleted": true,
+                "code": "mission-deleted"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base)
+                .read_mission_edit_document("msn_alpha123")
+                .await,
+            DocumentEditCheck::Locked("missions.scheduling.lock.deleted")
+        );
+
         let (base, _t) = spawn_http("401 Unauthorized", "{}".into()).await;
         assert_eq!(
             backend(base)
@@ -972,6 +1010,155 @@ fn read_editor_body_verifies_digest_and_confirms_absent_notes() {
                 )
                 .await,
             EditorBodyOutcome::Changed
+        );
+    });
+}
+
+#[test]
+fn mission_profile_defaults_resolve_task_mode_compare_models_and_freezing() {
+    let raw = json!([
+        {
+            "template": "all",
+            "taskMode": "independent",
+            "profiles": {
+                "coordinator": {
+                    "model": { "providerID": "anthropic", "id": "claude-sonnet-4", "variant": "default" }
+                },
+                "roles": {
+                    "specialist": { "agent": "general" }
+                }
+            }
+        },
+        {
+            "template": "compare",
+            "profiles": {
+                "roles": {
+                    "model-a": { "model": { "providerID": "openai", "id": "gpt-5" } },
+                    "model-b": { "model": { "providerID": "anthropic", "id": "claude-sonnet-4" } }
+                }
+            }
+        }
+    ]);
+    let defaults = normalize_mission_defaults(&raw).unwrap();
+    assert_eq!(
+        mission_task_mode_for(&defaults, Template::Custom),
+        TaskMode::Independent
+    );
+    assert_eq!(
+        mission_task_mode_for(&defaults, Template::Compare),
+        TaskMode::Independent
+    );
+
+    assert_eq!(
+        compare_model_error(None),
+        Some("missions.compare.compare-models-required")
+    );
+    let compare_profiles = mission_defaults_for(&defaults, Template::Compare).unwrap();
+    assert_eq!(compare_model_error(Some(&compare_profiles)), None);
+    let frozen = freeze_compare_profiles(Template::Compare, Some(&compare_profiles)).unwrap();
+    let judge = frozen
+        .roles
+        .as_ref()
+        .and_then(|roles| roles.get("comparator"))
+        .and_then(|exec| exec.model.as_ref())
+        .expect("comparator inherits coordinator model");
+    assert_eq!(judge.provider_id, "anthropic");
+    assert_eq!(judge.id, "claude-sonnet-4");
+    assert_eq!(
+        judge.variant, None,
+        "default variant must be stripped when freezing comparator"
+    );
+
+    // Valid Compare CreateMissionRequest succeeds and serializes profiles + taskMode.
+    let req = CreateMissionRequest::with_request_id_and_profiles(
+        "req-cmp".into(),
+        "Compare two models",
+        Some("Compare"),
+        "",
+        Template::Compare,
+        Some(frozen.clone()),
+        TaskMode::Independent,
+    )
+    .expect("valid compare profiles must pass validation");
+    let body = serde_json::to_value(&req).unwrap();
+    assert_eq!(body["template"], "compare");
+    assert_eq!(body["taskMode"], "independent");
+    assert_eq!(
+        body["profiles"]["roles"]["comparator"]["model"]["id"],
+        "claude-sonnet-4"
+    );
+    assert!(
+        body["profiles"]["roles"]["comparator"]["model"]
+            .get("variant")
+            .is_none()
+    );
+
+    // Identical model-a and model-b (even with different variants) are rejected.
+    let identical_raw = json!([{
+        "template": "compare",
+        "profiles": {
+            "roles": {
+                "model-a": { "model": { "providerID": "openai", "id": "gpt-5", "variant": "high" } },
+                "model-b": { "model": { "providerID": "openai", "id": "gpt-5", "variant": "low" } }
+            }
+        }
+    }]);
+    let identical = normalize_mission_defaults(&identical_raw).unwrap();
+    let identical_profiles = mission_defaults_for(&identical, Template::Compare);
+    assert_eq!(
+        compare_model_error(identical_profiles.as_ref()),
+        Some("missions.compare.compare-models-identical")
+    );
+    assert!(
+        CreateMissionRequest::with_request_id_and_profiles(
+            "req-dup".into(),
+            "Compare same model",
+            None,
+            "",
+            Template::Compare,
+            identical_profiles,
+            TaskMode::Native,
+        )
+        .is_err()
+    );
+
+    // Legacy "custom" single entry migrates to "all", and malformed defaults fail closed.
+    let legacy = normalize_mission_defaults(&json!([{
+        "template": "custom",
+        "taskMode": "independent",
+        "profiles": {}
+    }]))
+    .unwrap();
+    assert_eq!(legacy.len(), 1);
+    assert_eq!(legacy[0].template, MissionDefaultScope::All);
+    assert!(normalize_mission_defaults(&json!("bad")).is_none());
+
+    // Backend::read_mission_defaults reads /api/storage/config/ui?authoritative=1 and handles 401/malformed.
+    block_on(async {
+        let (base, req_handle) = spawn_http(
+            "200 OK",
+            json!({ "settings": { "missionProfileDefaults": raw } }).to_string(),
+        )
+        .await;
+        let outcome = backend(base).read_mission_defaults().await;
+        let sent = req_handle.await.unwrap();
+        assert!(sent.starts_with("GET /api/storage/config/ui?authoritative=1 "));
+        assert!(matches!(outcome, MissionDefaultsOutcome::Ready(list) if list.len() == 2));
+
+        let (base, _t) = spawn_http("401 Unauthorized", "{}".into()).await;
+        assert_eq!(
+            backend(base).read_mission_defaults().await,
+            MissionDefaultsOutcome::AuthExpired
+        );
+
+        let (base, _t) = spawn_http(
+            "200 OK",
+            json!({ "settings": { "missionProfileDefaults": "invalid" } }).to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base).read_mission_defaults().await,
+            MissionDefaultsOutcome::Unavailable
         );
     });
 }

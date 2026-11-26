@@ -180,7 +180,7 @@ impl Panel {
             .rebind(&scope, &self.backend, holds, &self.reads, &self.wake);
         if self
             .editor
-            .resume(&self.backend, holds, &self.reads, &self.wake)
+            .resume(&scope, &self.backend, holds, &self.reads, &self.wake)
         {
             let since = self.detail.request_fresh_refresh();
             self.editor.set_reopen_since(since);
@@ -208,7 +208,14 @@ impl Panel {
         self.detail.cancel_lookup();
         self.editor_suspended = false;
         let scope = self.creation_scope_key();
-        self.editor.open_create(&scope, holds, return_focus);
+        self.editor.open_create(
+            &scope,
+            &self.backend,
+            holds,
+            &self.reads,
+            &self.wake,
+            return_focus,
+        );
         (self.wake)();
     }
 
@@ -318,6 +325,10 @@ impl Panel {
                 self.reconcile_editor_edit(occurrence, holds);
                 false
             }
+            EditorGesture::RetryDefaults => {
+                self.retry_editor_defaults();
+                false
+            }
             EditorGesture::RetryPrefill => {
                 self.retry_editor_prefill();
                 false
@@ -331,10 +342,14 @@ impl Panel {
 
     pub(crate) fn submit_editor(&mut self, occurrence: &str, holds: &mut EditorHolds) {
         let scope = self.creation_scope_key();
-        if self
-            .editor
-            .submit(occurrence, &scope, &self.backend, holds, &self.wake)
-        {
+        if self.editor.submit(
+            occurrence,
+            &scope,
+            &self.backend,
+            holds,
+            &self.reads,
+            &self.wake,
+        ) {
             (self.wake)();
         }
     }
@@ -358,6 +373,12 @@ impl Panel {
         }
     }
 
+    pub(super) fn retry_editor_defaults(&mut self) {
+        self.editor
+            .retry_defaults(&self.backend, &self.reads, &self.wake);
+        (self.wake)();
+    }
+
     pub(super) fn retry_editor_prefill(&mut self) {
         self.editor
             .retry_prefill(&self.backend, &self.reads, &self.wake);
@@ -379,19 +400,23 @@ impl Panel {
         }
     }
 
-    pub(crate) fn observe_editor_detail(&mut self, holds: &EditorHolds) -> bool {
+    pub(crate) fn observe_editor_detail(&mut self, holds: &mut EditorHolds) -> bool {
         let mut changed = false;
         if self.editor_suspended && self.editor.is_open() {
             self.editor_suspended = false;
+            let scope = self.creation_scope_key();
             if self
                 .editor
-                .resume(&self.backend, holds, &self.reads, &self.wake)
+                .resume(&scope, &self.backend, holds, &self.reads, &self.wake)
             {
                 let since = self.detail.request_fresh_refresh();
                 self.editor.set_reopen_since(since);
             }
             changed = true;
         }
+        changed |= self
+            .editor
+            .poll_async(Some(holds), &self.backend, &self.wake);
         changed
             | self.editor.observe_detail(
                 self.detail.snapshot.as_ref(),
@@ -438,6 +463,8 @@ impl Panel {
                 changed = true;
             }
         }
+        self.editor
+            .ensure_defaults_if_loading(&self.backend, &self.reads, &self.wake);
         changed
     }
 
@@ -1085,7 +1112,7 @@ impl Panel {
             &self.reads,
             &self.wake,
         );
-        changed |= self.editor.poll_prefill();
+        changed |= self.editor.poll_async(None, &self.backend, &self.wake);
         changed | self.poll_control_fields()
     }
 

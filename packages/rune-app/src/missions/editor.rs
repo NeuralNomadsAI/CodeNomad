@@ -19,8 +19,10 @@ use codenomad_client::{
     missions::{
         BodyDescriptor, ContentSelector, CreateMissionRequest, DocumentEditCheck,
         EditorBodyOutcome, LifecycleTarget, MISSION_TEXT_MAX, MISSION_TITLE_MAX, MapHeader,
-        RunState, TaskMode, Template, UpdateMissionRequest, derive_mission_title, js_trim,
-        request_id, utf16_len, valid_notes_input, valid_objective_input, valid_title_input,
+        MissionDefaultsOutcome, MissionProfileDefault, MissionProfiles, RunState, TaskMode,
+        Template, UpdateMissionRequest, compare_model_error, derive_mission_title,
+        freeze_compare_profiles, js_trim, mission_defaults_for, mission_task_mode_for, request_id,
+        utf16_len, valid_notes_input, valid_objective_input, valid_title_input,
     },
 };
 use rune::edit::TextEdit;
@@ -43,6 +45,13 @@ pub(super) enum PrefillState {
     DocumentLocked(&'static str),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DefaultsState {
+    Loading,
+    Ready,
+    Failed,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum EditorGesture {
     OpenCreate { return_focus: Option<String> },
@@ -50,6 +59,7 @@ pub(crate) enum EditorGesture {
     Submit,
     ReconcileCreation,
     ReconcileEdit,
+    RetryDefaults,
     RetryPrefill,
     Reopen,
 }
@@ -129,8 +139,15 @@ pub(crate) struct Form {
     pub(super) notes: TextEdit,
     pub(super) template: Template,
     pub(super) task_mode: TaskMode,
+    pub(super) custom_task_mode: bool,
+    pub(super) defaults_state: DefaultsState,
+    pub(super) defaults_loaded: bool,
+    pub(super) defaults: Vec<MissionProfileDefault>,
+    pub(super) profiles: Option<MissionProfiles>,
     pub(super) start_on_creation: bool,
     pub(super) prefill: PrefillState,
+    pub(super) has_loaded_draft: bool,
+    pub(super) doc_rechecking: bool,
     pub(super) edit: Option<EditTarget>,
     pub(super) reopening: Option<u64>,
     pub(super) reopen_target: Option<EditTarget>,
@@ -159,8 +176,19 @@ impl Form {
             notes: TextEdit::new(""),
             template: Template::Custom,
             task_mode: TaskMode::Native,
+            custom_task_mode: hold.is_some(),
+            defaults_state: if hold.is_some() {
+                DefaultsState::Ready
+            } else {
+                DefaultsState::Loading
+            },
+            defaults_loaded: false,
+            defaults: Vec::new(),
+            profiles: None,
             start_on_creation: false,
             prefill: PrefillState::Ready,
+            has_loaded_draft: false,
+            doc_rechecking: false,
             edit: None,
             reopening: None,
             reopen_target: None,
@@ -194,12 +222,19 @@ impl Form {
             notes: TextEdit::new(""),
             template: target.template,
             task_mode: target.task_mode,
+            custom_task_mode: true,
+            defaults_state: DefaultsState::Ready,
+            defaults_loaded: true,
+            defaults: Vec::new(),
+            profiles: None,
             start_on_creation: false,
             prefill: if hold.is_some() {
                 PrefillState::Ready
             } else {
                 PrefillState::Loading
             },
+            has_loaded_draft: hold.is_some(),
+            doc_rechecking: false,
             edit: Some(target),
             reopening: None,
             reopen_target: None,
@@ -225,6 +260,9 @@ impl Form {
         self.notes = TextEdit::new(hold.request.notes.as_deref().unwrap_or(""));
         self.template = hold.request.template;
         self.task_mode = hold.request.task_mode.unwrap_or_default();
+        self.custom_task_mode = true;
+        self.profiles = hold.request.profiles.clone();
+        self.defaults_state = DefaultsState::Ready;
         self.start_on_creation = hold.start_on_creation;
         self.request_id = hold.request.request_id.clone();
         self.last_payload = create_payload_identity(
@@ -232,6 +270,7 @@ impl Form {
             hold.request.title.as_deref().unwrap_or(""),
             hold.request.notes.as_deref().unwrap_or(""),
             hold.request.template,
+            hold.request.profiles.as_ref(),
             hold.request.task_mode.unwrap_or_default(),
         );
         self.error = None;
@@ -241,6 +280,8 @@ impl Form {
         self.objective = TextEdit::new(&hold.request.objective);
         self.notes = TextEdit::new(hold.request.notes.as_deref().unwrap_or(""));
         self.prefill = PrefillState::Ready;
+        self.has_loaded_draft = true;
+        self.doc_rechecking = false;
         self.request_id = hold.request.request_id.clone();
         self.last_payload = edit_payload_identity(
             hold.request.expected_revision,
@@ -253,6 +294,21 @@ impl Form {
         self.error = None;
     }
 
+    pub(super) fn select_template(&mut self, chosen: Template) {
+        self.template = chosen;
+        if self.mode == Mode::Create {
+            self.profiles = mission_defaults_for(&self.defaults, chosen);
+            if !self.custom_task_mode {
+                self.task_mode = mission_task_mode_for(&self.defaults, chosen);
+            }
+        }
+    }
+
+    pub(super) fn select_task_mode(&mut self, chosen: TaskMode) {
+        self.task_mode = chosen;
+        self.custom_task_mode = true;
+    }
+
     pub(super) fn derived_title(&self) -> String {
         derive_mission_title(&self.objective.text)
     }
@@ -262,7 +318,7 @@ impl Form {
         creation_hold: Option<&CreationHoldView>,
         edit_hold: Option<&EditHoldView>,
     ) -> bool {
-        if self.reopening.is_some() {
+        if self.reopening.is_some() || self.doc_rechecking {
             return true;
         }
         match self.mode {
@@ -290,13 +346,21 @@ impl Form {
     ) -> bool {
         match self.mode {
             Mode::Create => creation_hold.is_some_and(|h| h.state == HoldState::Pending),
-            Mode::Edit => edit_hold.is_some_and(|h| h.state == HoldState::Pending),
+            Mode::Edit => {
+                self.doc_rechecking || edit_hold.is_some_and(|h| h.state == HoldState::Pending)
+            }
         }
     }
 
     pub(super) fn compare_error(&self) -> Option<&'static str> {
-        (self.mode == Mode::Create && self.template == Template::Compare)
-            .then_some("missions.compare.compare-models-required")
+        if self.mode == Mode::Create
+            && self.template == Template::Compare
+            && self.defaults_state == DefaultsState::Ready
+        {
+            compare_model_error(self.profiles.as_ref())
+        } else {
+            None
+        }
     }
 
     pub(super) fn can_submit(
@@ -311,7 +375,11 @@ impl Form {
             return false;
         }
         match self.mode {
-            Mode::Create => valid_title_input(&self.title.text) && self.compare_error().is_none(),
+            Mode::Create => {
+                self.defaults_state == DefaultsState::Ready
+                    && valid_title_input(&self.title.text)
+                    && self.compare_error().is_none()
+            }
             Mode::Edit => self.edit.is_some() && !self.edit_conflict,
         }
     }
@@ -322,6 +390,18 @@ struct PrefillReply {
     document: Option<DocumentEditCheck>,
     objective: EditorBodyOutcome,
     notes: EditorBodyOutcome,
+    backend: Backend,
+}
+
+struct DefaultsReply {
+    serial: u64,
+    outcome: MissionDefaultsOutcome,
+    backend: Backend,
+}
+
+struct DocRecheckReply {
+    serial: u64,
+    check: DocumentEditCheck,
     backend: Backend,
 }
 
@@ -341,6 +421,13 @@ pub(crate) struct Editor {
     prefill_flight: Option<Receiver<PrefillReply>>,
     prefill_cancel: Option<Sender<()>>,
     prefill_serial: u64,
+    defaults_flight: Option<Receiver<DefaultsReply>>,
+    defaults_cancel: Option<Sender<()>>,
+    defaults_serial: u64,
+    doc_recheck_flight: Option<Receiver<DocRecheckReply>>,
+    doc_recheck_cancel: Option<Sender<()>>,
+    doc_recheck_serial: u64,
+    doc_recheck_submit: Option<(String, u64)>,
     auth_expired: Vec<Backend>,
     focus_initial: Option<&'static str>,
 }
@@ -369,22 +456,34 @@ impl Editor {
         reads: &Reads,
         wake: &Wake,
     ) {
-        self.cancel_prefill();
+        self.cancel_async();
         holds.revoke_auto_start_for_scope(scope);
         let next = self.next_generation();
         if let Some(form) = &mut self.form {
             form.generation = next;
+            form.doc_rechecking = false;
         }
-        let restart = self.form.as_ref().and_then(|form| {
+        let create_needs_defaults = self.form.as_ref().is_some_and(|form| {
+            form.mode == Mode::Create && form.defaults_state != DefaultsState::Ready
+        }) && holds.creation(scope).is_none();
+        if create_needs_defaults {
+            if let Some(form) = &mut self.form {
+                form.defaults_state = DefaultsState::Loading;
+            }
+            self.start_defaults_load(backend, reads, wake);
+            return;
+        }
+        let restart_prefill = self.form.as_ref().and_then(|form| {
             if form.mode == Mode::Edit
-                && (form.prefill != PrefillState::Ready || form.reopen_target.is_some())
+                && (form.reopen_target.is_some()
+                    || (!form.has_loaded_draft && form.prefill != PrefillState::Ready))
             {
                 form.reopen_target.clone().or_else(|| form.edit.clone())
             } else {
                 None
             }
         });
-        if let Some(target) = restart
+        if let Some(target) = restart_prefill
             && holds.edit(&target.hold_key(backend)).is_none()
         {
             if let Some(form) = &mut self.form
@@ -393,6 +492,21 @@ impl Editor {
                 form.prefill = PrefillState::Loading;
             }
             self.start_prefill(target, backend, reads, wake);
+            return;
+        }
+        let recheck_doc = self.form.as_ref().and_then(|form| {
+            (form.mode == Mode::Edit
+                && form.has_loaded_draft
+                && form.reopen_target.is_none()
+                && form.reopening.is_none())
+            .then(|| form.edit.clone())
+            .flatten()
+            .filter(|e| e.has_document)
+        });
+        if let Some(target) = recheck_doc
+            && holds.edit(&target.hold_key(backend)).is_none()
+        {
+            self.start_doc_recheck(target, None, backend, reads, wake);
         }
     }
 
@@ -451,10 +565,13 @@ impl Editor {
     pub(crate) fn open_create(
         &mut self,
         scope: &CreationScopeKey,
+        backend: &Backend,
         holds: &mut EditorHolds,
+        reads: &Reads,
+        wake: &Wake,
         return_focus: Option<String>,
     ) {
-        self.cancel_prefill();
+        self.cancel_async();
         holds.revoke_auto_start_for_scope(scope);
         let generation = self.next_generation();
         let hold = holds.creation(scope);
@@ -464,6 +581,9 @@ impl Editor {
         } else {
             "mission-editor-objective"
         });
+        if hold.is_none() {
+            self.start_defaults_load(backend, reads, wake);
+        }
     }
 
     pub(crate) fn open_edit(
@@ -481,7 +601,7 @@ impl Editor {
         if target.read_only && hold.is_none() {
             return false;
         }
-        self.cancel_prefill();
+        self.cancel_async();
         holds.revoke_auto_start_for_scope(scope);
         let generation = self.next_generation();
         self.form = Some(Form::new_edit(
@@ -508,7 +628,7 @@ impl Editor {
         holds: &mut EditorHolds,
         return_focus: Option<String>,
     ) {
-        self.cancel_prefill();
+        self.cancel_async();
         holds.revoke_auto_start_for_scope(scope);
         let generation = self.next_generation();
         let target = EditTarget::from_hold(hold, title, template, run_state);
@@ -517,32 +637,45 @@ impl Editor {
     }
 
     pub(crate) fn close(&mut self) -> Option<String> {
-        self.cancel_prefill();
+        self.cancel_async();
         let _ = self.next_generation();
         self.focus_initial = None;
         self.form.take().and_then(|form| form.return_focus)
     }
 
     pub(crate) fn suspend(&mut self) {
-        self.cancel_prefill();
+        self.cancel_async();
+        let next = self.next_generation();
+        if let Some(form) = &mut self.form {
+            form.generation = next;
+            form.doc_rechecking = false;
+        }
     }
 
-    /// Resumes any prefill or conflict-reopen interrupted by `suspend()` on the same connection.
+    /// Resumes any prefill, document-lock check, defaults load or conflict-reopen interrupted by
+    /// `suspend()` on the same connection.
     /// Returns `true` when the caller must request a fresh detail refresh and pass its serial to `set_reopen_since`.
     pub(crate) fn resume(
         &mut self,
+        scope: &CreationScopeKey,
         backend: &Backend,
         holds: &EditorHolds,
         reads: &Reads,
         wake: &Wake,
     ) -> bool {
-        if self.active_edit_hold(backend, holds).is_some() {
-            return false;
-        }
         let Some(form) = self.form.as_ref() else {
             return false;
         };
-        if form.mode != Mode::Edit {
+        if form.mode == Mode::Create {
+            if holds.creation(scope).is_none()
+                && form.defaults_state == DefaultsState::Loading
+                && self.defaults_flight.is_none()
+            {
+                self.start_defaults_load(backend, reads, wake);
+            }
+            return false;
+        }
+        if self.active_edit_hold(backend, holds).is_some() {
             return false;
         }
         if form.reopening.is_some() && form.reopen_target.is_none() {
@@ -551,14 +684,24 @@ impl Editor {
         if self.prefill_flight.is_none() {
             let restart = if let Some(target) = form.reopen_target.clone() {
                 Some(target)
-            } else if form.prefill == PrefillState::Loading {
+            } else if !form.has_loaded_draft && form.prefill == PrefillState::Loading {
                 form.edit.clone()
             } else {
                 None
             };
             if let Some(target) = restart {
                 self.start_prefill(target, backend, reads, wake);
+                return false;
             }
+        }
+        if self.doc_recheck_flight.is_none()
+            && form.has_loaded_draft
+            && form.reopening.is_none()
+            && form.reopen_target.is_none()
+            && form.prefill == PrefillState::Ready
+            && let Some(target) = form.edit.clone().filter(|e| e.has_document)
+        {
+            self.start_doc_recheck(target, None, backend, reads, wake);
         }
         false
     }
@@ -589,20 +732,42 @@ impl Editor {
         std::mem::take(&mut self.auth_expired)
     }
 
-    pub(super) fn retry_prefill(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) {
-        let Some(target) = self
-            .form
-            .as_ref()
-            .filter(|f| f.mode == Mode::Edit)
-            .and_then(|f| f.reopen_target.as_ref().or(f.edit.as_ref()))
-            .cloned()
-        else {
+    pub(super) fn retry_defaults(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) {
+        let Some(form) = &mut self.form else {
             return;
         };
-        if let Some(form) = &mut self.form {
-            if form.reopen_target.is_none() {
-                form.prefill = PrefillState::Loading;
+        if form.mode != Mode::Create {
+            return;
+        }
+        form.defaults_state = DefaultsState::Loading;
+        form.error = None;
+        self.start_defaults_load(backend, reads, wake);
+    }
+
+    pub(super) fn retry_prefill(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) {
+        let Some(form) = self.form.as_ref().filter(|f| f.mode == Mode::Edit) else {
+            return;
+        };
+        if let Some(target) = form.reopen_target.clone() {
+            if let Some(form) = &mut self.form {
+                form.reopening = Some(0);
+                form.error = None;
             }
+            self.start_prefill(target, backend, reads, wake);
+            return;
+        }
+        let Some(target) = form.edit.clone() else {
+            return;
+        };
+        if form.has_loaded_draft && matches!(form.prefill, PrefillState::DocumentLocked(_)) {
+            if let Some(form) = &mut self.form {
+                form.error = None;
+            }
+            self.start_doc_recheck(target, None, backend, reads, wake);
+            return;
+        }
+        if let Some(form) = &mut self.form {
+            form.prefill = PrefillState::Loading;
             form.error = None;
         }
         self.start_prefill(target, backend, reads, wake);
@@ -688,6 +853,7 @@ impl Editor {
         scope: &CreationScopeKey,
         backend: &Backend,
         holds: &mut EditorHolds,
+        reads: &Reads,
         wake: &Wake,
     ) -> bool {
         let Some(mode) = self.form.as_ref().map(|f| f.mode) else {
@@ -695,7 +861,7 @@ impl Editor {
         };
         match mode {
             Mode::Create => self.submit_create(occurrence, scope, backend, holds, wake),
-            Mode::Edit => self.submit_edit(occurrence, backend, holds, wake),
+            Mode::Edit => self.submit_edit(occurrence, backend, holds, reads, wake),
         }
     }
 
@@ -719,11 +885,13 @@ impl Editor {
         if !form.can_submit(None, None) {
             return false;
         }
+        let frozen_profiles = freeze_compare_profiles(form.template, form.profiles.as_ref());
         let payload_key = create_payload_identity(
             &form.objective.text,
             &form.title.text,
             &form.notes.text,
             form.template,
+            frozen_profiles.as_ref(),
             form.task_mode,
         );
         if (!form.last_payload.is_empty() && form.last_payload != payload_key)
@@ -744,12 +912,13 @@ impl Editor {
         } else {
             None
         };
-        let Ok(request) = CreateMissionRequest::with_request_id(
+        let Ok(request) = CreateMissionRequest::with_request_id_and_profiles(
             form.request_id.clone(),
             &form.objective.text,
             title,
             &form.notes.text,
             form.template,
+            frozen_profiles,
             form.task_mode,
         ) else {
             form.error = Some("missions.control.mutation.error");
@@ -776,6 +945,44 @@ impl Editor {
     }
 
     fn submit_edit(
+        &mut self,
+        occurrence: &str,
+        backend: &Backend,
+        holds: &mut EditorHolds,
+        reads: &Reads,
+        wake: &Wake,
+    ) -> bool {
+        let Some(target) = self.form.as_ref().and_then(|f| f.edit.clone()) else {
+            return false;
+        };
+        let key = target.hold_key(backend);
+        if let Some(existing) = holds.edit(&key) {
+            if let Some(form) = &mut self.form {
+                form.adopt_edit_hold(&existing);
+            }
+            return false;
+        }
+        let Some(form) = self.form.as_ref() else {
+            return false;
+        };
+        if !form.can_submit(None, None) {
+            return false;
+        }
+        if target.has_document {
+            let generation = form.generation;
+            self.start_doc_recheck(
+                target,
+                Some((occurrence.to_owned(), generation)),
+                backend,
+                reads,
+                wake,
+            );
+            return true;
+        }
+        self.dispatch_edit_patch(occurrence, backend, holds, wake)
+    }
+
+    fn dispatch_edit_patch(
         &mut self,
         occurrence: &str,
         backend: &Backend,
@@ -876,6 +1083,130 @@ impl Editor {
         holds.reconcile_edit(&key, origin, backend, wake)
     }
 
+    pub(crate) fn poll_async(
+        &mut self,
+        holds: Option<&mut EditorHolds>,
+        backend: &Backend,
+        wake: &Wake,
+    ) -> bool {
+        let mut changed = self.poll_defaults();
+        changed |= self.poll_prefill();
+        changed |= self.poll_doc_recheck(holds, backend, wake);
+        changed
+    }
+
+    fn poll_defaults(&mut self) -> bool {
+        let Some(reply) = self
+            .defaults_flight
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok())
+        else {
+            return false;
+        };
+        self.defaults_flight = None;
+        self.defaults_cancel = None;
+        if matches!(reply.outcome, MissionDefaultsOutcome::AuthExpired) {
+            self.record_auth_expired(reply.backend.clone());
+        }
+        if reply.serial != self.defaults_serial {
+            return false;
+        }
+        let Some(form) = &mut self.form else {
+            return false;
+        };
+        if form.mode != Mode::Create {
+            return false;
+        }
+        match reply.outcome {
+            MissionDefaultsOutcome::Ready(defaults) => {
+                form.defaults = defaults;
+                form.profiles = mission_defaults_for(&form.defaults, form.template);
+                if !form.custom_task_mode {
+                    form.task_mode = mission_task_mode_for(&form.defaults, form.template);
+                }
+                form.defaults_loaded = true;
+                form.defaults_state = DefaultsState::Ready;
+            }
+            MissionDefaultsOutcome::AuthExpired | MissionDefaultsOutcome::Unavailable => {
+                form.defaults_state = DefaultsState::Failed;
+            }
+        }
+        true
+    }
+
+    pub(crate) fn ensure_defaults_if_loading(
+        &mut self,
+        backend: &Backend,
+        reads: &Reads,
+        wake: &Wake,
+    ) {
+        if self.form.as_ref().is_some_and(|form| {
+            form.mode == Mode::Create && form.defaults_state == DefaultsState::Loading
+        }) && self.defaults_flight.is_none()
+        {
+            self.start_defaults_load(backend, reads, wake);
+        }
+    }
+
+    fn poll_doc_recheck(
+        &mut self,
+        holds: Option<&mut EditorHolds>,
+        backend: &Backend,
+        wake: &Wake,
+    ) -> bool {
+        if self.doc_recheck_submit.is_some() && holds.is_none() {
+            return false;
+        }
+        let Some(reply) = self
+            .doc_recheck_flight
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok())
+        else {
+            return false;
+        };
+        self.doc_recheck_flight = None;
+        self.doc_recheck_cancel = None;
+        let pending_submit = self.doc_recheck_submit.take();
+        if matches!(reply.check, DocumentEditCheck::AuthExpired) {
+            self.record_auth_expired(reply.backend.clone());
+        }
+        if reply.serial != self.doc_recheck_serial {
+            return false;
+        }
+        let Some(form) = &mut self.form else {
+            return false;
+        };
+        if form.mode != Mode::Edit {
+            return false;
+        }
+        form.doc_rechecking = false;
+        match reply.check {
+            DocumentEditCheck::Editable { lock_help } => {
+                if let Some(edit) = &mut form.edit {
+                    edit.document_lock_help = lock_help;
+                }
+                form.prefill = PrefillState::Ready;
+                form.error = None;
+                let form_gen = form.generation;
+                if let Some((occurrence, submit_gen)) = pending_submit
+                    && submit_gen == form_gen
+                    && reply.backend.client.same_connection(&backend.client)
+                    && let Some(holds) = holds
+                {
+                    let _ = self.dispatch_edit_patch(&occurrence, backend, holds, wake);
+                }
+            }
+            DocumentEditCheck::Locked(reason) => {
+                form.prefill = PrefillState::DocumentLocked(reason);
+                form.error = None;
+            }
+            DocumentEditCheck::AuthExpired | DocumentEditCheck::Unavailable => {
+                form.error = Some("missions.control.reader.unavailable");
+            }
+        }
+        true
+    }
+
     pub(crate) fn poll_prefill(&mut self) -> bool {
         let Some(reply) = self
             .prefill_flight
@@ -901,7 +1232,7 @@ impl Editor {
         if form.mode != Mode::Edit {
             return false;
         }
-        if let Some(mut new_target) = form.reopen_target.take() {
+        if form.reopen_target.is_some() {
             match reply.document {
                 Some(DocumentEditCheck::AuthExpired) => {
                     form.reopening = None;
@@ -909,6 +1240,7 @@ impl Editor {
                     return true;
                 }
                 Some(DocumentEditCheck::Locked(reason)) => {
+                    // Retain reopen_target and user draft untouched until the lock clears.
                     form.reopening = None;
                     form.prefill = PrefillState::DocumentLocked(reason);
                     form.error = None;
@@ -920,13 +1252,16 @@ impl Editor {
                     return true;
                 }
                 Some(DocumentEditCheck::Editable { lock_help }) => {
-                    new_target.document_lock_help = lock_help;
+                    if let Some(target) = &mut form.reopen_target {
+                        target.document_lock_help = lock_help;
+                    }
                 }
                 None => {}
             }
             match (reply.objective, reply.notes) {
                 (EditorBodyOutcome::Ready(obj), EditorBodyOutcome::Ready(notes)) => {
-                    if form.prefill == PrefillState::Ready {
+                    let new_target = form.reopen_target.take().unwrap();
+                    if form.has_loaded_draft {
                         form.previous_draft = Some(format_previous_draft(
                             &form.objective.text,
                             &form.notes.text,
@@ -939,6 +1274,7 @@ impl Editor {
                     form.edit = Some(new_target);
                     form.objective = TextEdit::new(&obj);
                     form.notes = TextEdit::new(&notes);
+                    form.has_loaded_draft = true;
                     form.prefill = PrefillState::Ready;
                     form.reopening = None;
                     form.edit_conflict = false;
@@ -994,6 +1330,7 @@ impl Editor {
             (EditorBodyOutcome::Ready(obj), EditorBodyOutcome::Ready(notes)) => {
                 form.objective = TextEdit::new(&obj);
                 form.notes = TextEdit::new(&notes);
+                form.has_loaded_draft = true;
                 form.prefill = PrefillState::Ready;
             }
         }
@@ -1052,18 +1389,6 @@ impl Editor {
                 }
                 (false, None)
             }
-            EditorEvent::CreateAuthExpired { origin } => {
-                if let Some(form) = &mut self.form
-                    && matches_origin(form, Mode::Create, origin)
-                {
-                    if let Ok(fresh) = request_id() {
-                        form.request_id = fresh;
-                    }
-                    form.last_payload.clear();
-                    return (true, None);
-                }
-                (false, None)
-            }
             EditorEvent::CreateReceiptRejected { scope } => {
                 if scope == scope_key
                     && let Some(form) = &mut self.form
@@ -1073,6 +1398,9 @@ impl Editor {
                         form.request_id = fresh;
                     }
                     form.last_payload.clear();
+                    if !form.defaults_loaded {
+                        form.defaults_state = DefaultsState::Loading;
+                    }
                     form.error = Some("missions.control.mutation.error");
                     return (true, None);
                 }
@@ -1143,22 +1471,6 @@ impl Editor {
                     }
                     form.last_payload.clear();
                     form.error = Some(code.error_key());
-                    return (true, None);
-                }
-                (false, None)
-            }
-            EditorEvent::EditAuthExpired { key, origin } => {
-                if let Some(form) = &mut self.form
-                    && matches_origin(form, Mode::Edit, origin)
-                    && form
-                        .edit
-                        .as_ref()
-                        .is_some_and(|e| e.hold_key(backend) == *key)
-                {
-                    if let Ok(fresh) = request_id() {
-                        form.request_id = fresh;
-                    }
-                    form.last_payload.clear();
                     return (true, None);
                 }
                 (false, None)
@@ -1282,6 +1594,113 @@ impl Editor {
         });
     }
 
+    fn start_defaults_load(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) {
+        self.cancel_defaults();
+        let serial = self.defaults_serial;
+        let (out, incoming) = bounded(1);
+        let (cancel_tx, cancelled) = bounded(1);
+        self.defaults_flight = Some(incoming);
+        self.defaults_cancel = Some(cancel_tx);
+        let backend_clone = backend.clone();
+        let reads = reads.clone();
+        let wake_clone = wake.clone();
+        platform::spawn(async move {
+            let Some(_permit) = reads.preview(&cancelled).await else {
+                return;
+            };
+            let Some(outcome) = crate::platform::reads::cancellable(
+                &cancelled,
+                backend_clone.read_mission_defaults(),
+            )
+            .await
+            else {
+                return;
+            };
+            let _ = out
+                .send(DefaultsReply {
+                    serial,
+                    outcome,
+                    backend: backend_clone,
+                })
+                .await;
+            wake_clone();
+        });
+    }
+
+    fn start_doc_recheck(
+        &mut self,
+        target: EditTarget,
+        pending_submit: Option<(String, u64)>,
+        backend: &Backend,
+        reads: &Reads,
+        wake: &Wake,
+    ) {
+        self.cancel_doc_recheck();
+        let serial = self.doc_recheck_serial;
+        let (out, incoming) = bounded(1);
+        let (cancel_tx, cancelled) = bounded(1);
+        self.doc_recheck_flight = Some(incoming);
+        self.doc_recheck_cancel = Some(cancel_tx);
+        self.doc_recheck_submit = pending_submit;
+        if let Some(form) = &mut self.form {
+            form.doc_rechecking = true;
+            form.error = None;
+        }
+        let backend_clone = backend.clone();
+        let reads = reads.clone();
+        let wake_clone = wake.clone();
+        platform::spawn(async move {
+            let Some(_permit) = reads.preview(&cancelled).await else {
+                return;
+            };
+            let Some(check) = crate::platform::reads::cancellable(
+                &cancelled,
+                backend_clone.read_mission_edit_document(&target.mission_id),
+            )
+            .await
+            else {
+                return;
+            };
+            let _ = out
+                .send(DocRecheckReply {
+                    serial,
+                    check,
+                    backend: backend_clone,
+                })
+                .await;
+            wake_clone();
+        });
+    }
+
+    fn cancel_async(&mut self) {
+        self.cancel_prefill();
+        self.cancel_defaults();
+        self.cancel_doc_recheck();
+    }
+
+    fn cancel_defaults(&mut self) {
+        self.defaults_cancel = None;
+        if let Some(rx) = self.defaults_flight.take()
+            && let Ok(reply) = rx.try_recv()
+            && matches!(reply.outcome, MissionDefaultsOutcome::AuthExpired)
+        {
+            self.record_auth_expired(reply.backend);
+        }
+        self.defaults_serial = self.defaults_serial.saturating_add(1);
+    }
+
+    fn cancel_doc_recheck(&mut self) {
+        self.doc_recheck_cancel = None;
+        self.doc_recheck_submit = None;
+        if let Some(rx) = self.doc_recheck_flight.take()
+            && let Ok(reply) = rx.try_recv()
+            && matches!(reply.check, DocumentEditCheck::AuthExpired)
+        {
+            self.record_auth_expired(reply.backend);
+        }
+        self.doc_recheck_serial = self.doc_recheck_serial.saturating_add(1);
+    }
+
     fn cancel_prefill(&mut self) {
         self.prefill_cancel = None;
         if let Some(rx) = self.prefill_flight.take()
@@ -1309,14 +1728,19 @@ fn create_payload_identity(
     title: &str,
     notes: &str,
     template: Template,
+    profiles: Option<&MissionProfiles>,
     task_mode: TaskMode,
 ) -> String {
+    let profiles_json = profiles
+        .and_then(|p| serde_json::to_string(p).ok())
+        .unwrap_or_default();
     format!(
-        "{}\0{}\0{}\0{}\0{}",
+        "{}\0{}\0{}\0{}\0{}\0{}",
         js_trim(objective),
         js_trim(title),
         notes,
         template.as_str(),
+        profiles_json,
         task_mode.as_str()
     )
 }

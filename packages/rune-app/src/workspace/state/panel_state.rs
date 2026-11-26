@@ -558,9 +558,9 @@ pub(super) fn poll_missions(
                 ui.mission_editor
                     .revoke_auto_start_for_occurrence(&entry.key);
             }
-            changed |= panel.observe_editor_detail(&ui.mission_editor);
+            changed |= panel.observe_editor_detail(&mut ui.mission_editor);
             changed |= panel.poll();
-            changed |= panel.observe_editor_detail(&ui.mission_editor);
+            changed |= panel.observe_editor_detail(&mut ui.mission_editor);
             extend_unique_auth(&mut auth_expired, panel.drain_auth_expired());
         }
     }
