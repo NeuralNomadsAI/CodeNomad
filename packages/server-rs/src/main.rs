@@ -16,6 +16,7 @@ mod meta;
 #[rustfmt::skip] // Frozen while its contract is redesigned: moved, never reformatted.
 mod missions;
 mod opencode;
+mod opencode_settings;
 mod previews;
 mod provider_usage;
 mod remote_control;
@@ -144,6 +145,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(settings::routes())
         .merge(memory::routes())
         .merge(subagent_depth::routes())
+        .merge(opencode_settings::routes())
         .merge(sessions::routes(shutdown.clone()))
         .merge(events::routes())
         .merge(extensions::routes())
