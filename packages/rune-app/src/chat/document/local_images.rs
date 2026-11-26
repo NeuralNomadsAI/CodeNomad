@@ -79,7 +79,6 @@ struct Slot {
     lease: Rc<()>,
     label: String,
     image: Option<Image>,
-    failed: bool,
 }
 
 pub(super) struct Plan {
@@ -225,7 +224,6 @@ impl Plan {
                 let Some(slot) = slot else {
                     return markdown::prose_image(el);
                 };
-                let pending = slot.image.is_none() && !slot.failed;
                 let content = if slot.image.is_some() {
                     markdown::prose_image(el)
                 } else {
@@ -259,8 +257,8 @@ impl Plan {
                 let scope = scope.clone();
                 let target = key.clone();
                 // Rune Kit stamps a positional `bN` key on the root element returned by `image_frame`.
-                // Keep the source-scoped key and clip-aware visibility handlers on a child so each
-                // image tracks its own visibility (including inside scrollable tool panes) and
+                // Keep the source-scoped key and live clip-gate handlers on a child so Pictures
+                // re-evaluates live image and pane clip geometry on every admission/reconnect and
                 // replacing a failed source at the same path fires a fresh visibility event on screen.
                 col().full_width().child(
                     content
@@ -269,53 +267,39 @@ impl Plan {
                         .on_drawn_layout_tx(move |s: &mut State, _, tx| {
                             if s.current_scope(&layout_scope) {
                                 let rect = layout_drawn.get();
-                                if rect[2] > 0.0 && rect[3] > 0.0 {
-                                    let in_view = s.transcript_display.tool_clock.rect_in_view(
-                                        rect,
-                                        s.tool_diff_preferences.history_bounds.get(),
-                                        &layout_clip,
-                                    );
-                                    s.transcript_display.pictures.local_visibility(
+                                if rect[2] > 0.0
+                                    && rect[3] > 0.0
+                                    && s.transcript_display.pictures.refresh_local_clip(
                                         &layout_target,
                                         &layout_source,
                                         &layout_mime,
                                         &layout_lease,
-                                        in_view,
-                                    );
-                                    if in_view && pending {
-                                        tx.wake_after(std::time::Duration::ZERO);
-                                    }
+                                        &layout_drawn,
+                                        &layout_clip,
+                                        &s.transcript_display.tool_clock,
+                                        s.tool_diff_preferences.history_bounds.get(),
+                                    )
+                                {
+                                    tx.wake_after(std::time::Duration::ZERO);
                                 }
                             }
                             tx.live_only();
                         })
                         .on_visible(move |s: &mut State, visible, tx| {
-                            if s.current_scope(&scope) {
-                                let rect = visible_drawn.get();
-                                let effective = visible
-                                    && if visible_clip.is_clipped() {
-                                        rect[2] > 0.0
-                                            && rect[3] > 0.0
-                                            && s.transcript_display.tool_clock.rect_in_view(
-                                                rect,
-                                                s.tool_diff_preferences.history_bounds.get(),
-                                                &visible_clip,
-                                            )
-                                    } else {
-                                        rect[2] <= 0.0
-                                            || rect[3] <= 0.0
-                                            || s.transcript_display.tool_clock.rect_in_view(
-                                                rect,
-                                                s.tool_diff_preferences.history_bounds.get(),
-                                                &visible_clip,
-                                            )
-                                    };
-                                s.transcript_display
-                                    .pictures
-                                    .local_visibility(&target, &source, &mime, &lease, effective);
-                                if effective && pending {
-                                    tx.wake_after(std::time::Duration::ZERO);
-                                }
+                            if s.current_scope(&scope)
+                                && s.transcript_display.pictures.local_visibility(
+                                    &target,
+                                    &source,
+                                    &mime,
+                                    &lease,
+                                    &visible_drawn,
+                                    &visible_clip,
+                                    &s.transcript_display.tool_clock,
+                                    s.tool_diff_preferences.history_bounds.get(),
+                                    visible,
+                                )
+                            {
+                                tx.wake_after(std::time::Duration::ZERO);
                             }
                             tx.live_only();
                         }),
@@ -346,11 +330,10 @@ pub(crate) fn local_image_path(src: &str) -> Option<String> {
     {
         return parse_file_url(&cleaned_url);
     }
-    let value = trim_whatwg_c0_space(src);
-    if has_uri_scheme(value) && !has_windows_drive_prefix(value) {
+    if has_uri_scheme(&cleaned_url) && !has_windows_drive_prefix(&cleaned_url) {
         return None;
     }
-    Some(normalize_path(value))
+    Some(normalize_path(trim_whatwg_c0_space(src)))
 }
 
 fn trim_whatwg_c0_space(value: &str) -> &str {
@@ -749,7 +732,6 @@ pub(super) fn prepare(
                         lease,
                         label,
                         image: Some(image),
-                        failed: false,
                     }));
             }
             LocalImageState::Pending | LocalImageState::Failed => {
@@ -774,7 +756,6 @@ pub(super) fn prepare(
                             lease,
                             label,
                             image: None,
-                            failed,
                         }));
                 } else {
                     // Wait for the web 1x1 sentinel microtask before lifting this slot into Block::Image.

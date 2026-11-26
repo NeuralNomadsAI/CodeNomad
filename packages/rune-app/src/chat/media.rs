@@ -1,13 +1,17 @@
 use crate::{
     State,
     backend::Backend,
+    chat::tools::duration::{ActiveClip, Clock},
     content::PictureSource,
     screen,
     strings::{locale, t},
 };
 use codenomad_client::{Receiver, Sender, bounded};
 use rune::{El, Image, ImageCache};
-use rune_theme_codenomad::{attachment, catalogue, layout};
+use rune_theme_codenomad::{
+    attachment, catalogue,
+    layout::{self, DrawnRect},
+};
 use std::{
     cell::RefCell,
     collections::{HashMap, VecDeque},
@@ -43,9 +47,28 @@ struct Entry {
     media: PictureSource,
     mime: String,
     visible: bool,
+    clip_gate: Option<(Rc<DrawnRect>, ActiveClip)>,
     request: Option<(Sender<()>, Receiver<Option<Arc<Vec<u8>>>>)>,
     image: Option<Image>,
     settled: bool,
+}
+
+fn entry_in_view(entry: &Entry, view: Option<(&Clock, [f32; 4])>) -> bool {
+    if !entry.visible {
+        return false;
+    }
+    let Some((drawn, clip)) = &entry.clip_gate else {
+        return true;
+    };
+    let Some((clock, bounds)) = view else {
+        return true;
+    };
+    let rect = drawn.get();
+    if clip.is_clipped() {
+        rect[2] > 0.0 && rect[3] > 0.0 && clock.rect_in_view(rect, bounds, clip)
+    } else {
+        rect[2] <= 0.0 || rect[3] <= 0.0 || clock.rect_in_view(rect, bounds, clip)
+    }
 }
 
 impl Pictures {
@@ -77,7 +100,16 @@ impl Pictures {
         self.hover = None;
     }
 
+    #[cfg(test)]
     pub(crate) fn retry_interrupted(&mut self) {
+        self.retry_interrupted_with(None);
+    }
+
+    pub(crate) fn retry_interrupted_in_view(&mut self, clock: &Clock, bounds: [f32; 4]) {
+        self.retry_interrupted_with(Some((clock, bounds)));
+    }
+
+    fn retry_interrupted_with(&mut self, view: Option<(&Clock, [f32; 4])>) {
         for (key, entry) in &mut self.images {
             if entry.image.is_none()
                 && (entry.settled || entry.request.is_some())
@@ -90,7 +122,7 @@ impl Pictures {
             {
                 entry.request = None;
                 entry.settled = false;
-                if entry.visible {
+                if entry_in_view(entry, view) && !self.waiting.iter().any(|queued| queued == key) {
                     self.waiting.push_back(key.clone());
                 }
             }
@@ -140,15 +172,101 @@ impl Pictures {
         (key, lease, state)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn local_visibility(
         &mut self,
         key: &str,
         media: &PictureSource,
         mime: &str,
         lease: &Rc<()>,
+        drawn: &Rc<DrawnRect>,
+        clip: &ActiveClip,
+        clock: &Clock,
+        bounds: [f32; 4],
         visible: bool,
-    ) {
-        self.visibility(key, media, mime, lease, visible);
+    ) -> bool {
+        if matches!(media, PictureSource::Unavailable) {
+            return false;
+        }
+        if visible {
+            let entry = self.images.entry(key.into()).or_insert_with(|| Entry {
+                lease: Rc::downgrade(lease),
+                media: media.clone(),
+                mime: mime.into(),
+                visible: false,
+                clip_gate: None,
+                request: None,
+                image: None,
+                settled: false,
+            });
+            entry.visible = true;
+            entry.clip_gate = Some((drawn.clone(), clip.clone()));
+            let in_view = entry_in_view(entry, Some((clock, bounds)));
+            if in_view
+                && entry.request.is_none()
+                && entry.image.is_none()
+                && !entry.settled
+                && !self.waiting.iter().any(|queued| queued == key)
+            {
+                self.waiting.push_back(key.into());
+                return true;
+            }
+            if !in_view {
+                self.waiting.retain(|queued| queued != key);
+            }
+            false
+        } else {
+            if let Some(entry) = self.images.get_mut(key) {
+                entry.visible = false;
+                self.waiting.retain(|queued| queued != key);
+                if self.hover.as_ref().is_some_and(|(anchor, _)| anchor == key) {
+                    self.hover = None;
+                }
+            }
+            false
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn refresh_local_clip(
+        &mut self,
+        key: &str,
+        media: &PictureSource,
+        mime: &str,
+        lease: &Rc<()>,
+        drawn: &Rc<DrawnRect>,
+        clip: &ActiveClip,
+        clock: &Clock,
+        bounds: [f32; 4],
+    ) -> bool {
+        if matches!(media, PictureSource::Unavailable) {
+            return false;
+        }
+        let entry = self.images.entry(key.into()).or_insert_with(|| Entry {
+            lease: Rc::downgrade(lease),
+            media: media.clone(),
+            mime: mime.into(),
+            visible: true,
+            clip_gate: None,
+            request: None,
+            image: None,
+            settled: false,
+        });
+        entry.clip_gate = Some((drawn.clone(), clip.clone()));
+        let in_view = entry_in_view(entry, Some((clock, bounds)));
+        if in_view
+            && entry.request.is_none()
+            && entry.image.is_none()
+            && !entry.settled
+            && !self.waiting.iter().any(|queued| queued == key)
+        {
+            self.waiting.push_back(key.into());
+            return true;
+        }
+        if !in_view {
+            self.waiting.retain(|queued| queued != key);
+        }
+        false
     }
 
     #[cfg(test)]
@@ -157,13 +275,14 @@ impl Pictures {
         key: &str,
         source: &PictureSource,
         mime: &str,
+        clock: &Clock,
+        bounds: [f32; 4],
     ) -> bool {
         let key = source_key(key, source, mime);
         self.waiting.iter().any(|queued| queued == &key)
-            || self
-                .images
-                .get(&key)
-                .is_some_and(|entry| entry.visible || entry.request.is_some())
+            || self.images.get(&key).is_some_and(|entry| {
+                entry.request.is_some() || entry_in_view(entry, Some((clock, bounds)))
+            })
     }
 
     fn visibility(
@@ -183,6 +302,7 @@ impl Pictures {
                 media: media.clone(),
                 mime: mime.into(),
                 visible: false,
+                clip_gate: None,
                 request: None,
                 image: None,
                 settled: false,
@@ -202,15 +322,49 @@ impl Pictures {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn poll(
         &mut self,
         reads: &crate::platform::reads::Reads,
         wake: &rune::Waker,
     ) -> bool {
+        self.poll_with(reads, wake, None)
+    }
+
+    pub(crate) fn poll_in_view(
+        &mut self,
+        reads: &crate::platform::reads::Reads,
+        wake: &rune::Waker,
+        clock: &Clock,
+        bounds: [f32; 4],
+    ) -> bool {
+        self.poll_with(reads, wake, Some((clock, bounds)))
+    }
+
+    fn poll_with(
+        &mut self,
+        reads: &crate::platform::reads::Reads,
+        wake: &rune::Waker,
+        view: Option<(&Clock, [f32; 4])>,
+    ) -> bool {
         self.images
             .retain(|_, entry| entry.lease.strong_count() > 0);
-        self.waiting
-            .retain(|key| self.images.get(key).is_some_and(|entry| entry.visible));
+        self.waiting.retain(|key| {
+            self.images
+                .get(key)
+                .is_some_and(|entry| entry_in_view(entry, view))
+        });
+        for (key, entry) in &self.images {
+            if entry.clip_gate.is_some()
+                && !entry.settled
+                && entry.request.is_none()
+                && entry.image.is_none()
+                && entry_in_view(entry, view)
+                && !self.waiting.iter().any(|queued| queued == key)
+            {
+                self.waiting.push_back(key.clone());
+            }
+        }
         let mut changed = false;
         for entry in self.images.values_mut() {
             if let Some(bytes) = entry
@@ -258,7 +412,10 @@ impl Pictures {
             && let Some(key) = self.waiting.pop_front()
         {
             let Some(entry) = self.images.get_mut(&key).filter(|entry| {
-                entry.visible && !entry.settled && entry.request.is_none() && entry.image.is_none()
+                entry_in_view(entry, view)
+                    && !entry.settled
+                    && entry.request.is_none()
+                    && entry.image.is_none()
             }) else {
                 continue;
             };

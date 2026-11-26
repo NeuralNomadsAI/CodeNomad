@@ -81,6 +81,7 @@ fn local_image_path_matches_solid_rules() {
     );
     assert!(is_file_url("fi\tle:///tmp/chart.png"));
     assert_eq!(local_image_path("fi\tle:///tmp/a/../chart.png"), None);
+    assert_eq!(local_image_path("ft\tp:chart.png"), None);
     assert_eq!(
         local_image_path("/tmp/chart.png\u{00A0}").as_deref(),
         Some("/tmp/chart.png\u{00A0}")
@@ -837,12 +838,17 @@ fn offscreen_failed_image_is_not_requeued_on_reconnect_while_other_prose_stays_v
     // Reconnect while the failed image is offscreen and the tail of m2 is visible:
     // the offscreen failed image must NOT be re-queued.
     rt.update(|s, _| {
-        s.transcript_display.pictures.retry_interrupted();
+        let bounds = s.tool_diff_preferences.history_bounds.get();
+        s.transcript_display
+            .pictures
+            .retry_interrupted_in_view(&s.transcript_display.tool_clock, bounds);
         assert!(
             !s.transcript_display.pictures.local_visible_or_queued(
                 "fragment-m2:0-local-image-0",
                 &source,
                 "image/png",
+                &s.transcript_display.tool_clock,
+                bounds,
             ),
             "offscreen failed image must stay unqueued across reconnect while tail prose is visible"
         );
@@ -852,62 +858,142 @@ fn offscreen_failed_image_is_not_requeued_on_reconnect_while_other_prose_stays_v
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn clipped_tool_pane_keeps_failed_image_unqueued_across_reconnect() {
-    let tool_msg = history::decode_message(&json!({
-        "id":"m1","type":"assistant","time":{"completed":1},
-        "content":[{
-            "type":"tool","id":"call-http","name":"read",
-            "state":{
-                "status":"completed",
-                "input":{"filePath":"/tmp/pane.png"},
-                "content":[{"type":"file","filename":"/tmp/pane.png","mime":"image/png","uri":"https://127.0.0.1:1/pane.png"}]
-            }
-        }]
-    }))
-    .unwrap();
-    let source = PictureSource::Http("https://127.0.0.1:1/pane.png".into());
-    let mut state = init();
-    state.phase = Phase::Ready;
-    state.messages = vec![tool_msg.into()];
-    let mut rt = Runtime::new(
-        state,
-        |s, _| {
-            let filler = "pane line\n\n".repeat(40);
-            crate::strings::with_locale("en", || {
-                super::super::clipped_tool_pane(s, "skill-pane-clip", false, || {
-                    super::super::prose_search(
-                        s,
-                        "m1",
-                        "skill-card",
-                        "skill-doc".into(),
-                        &format!("{filler}![Clipped image](/tmp/pane.png)"),
-                        Conversation::Root,
-                        None,
-                    )
-                })
+    fn view_short(s: &State, _: &mut rune::Cx<State>) -> rune::El {
+        let filler = "pane line\n\n".repeat(40);
+        crate::strings::with_locale("en", || {
+            super::super::clipped_tool_pane(s, "skill-pane-clip", false, || {
+                super::super::prose_search(
+                    s,
+                    "m1",
+                    "skill-card",
+                    "skill-doc".into(),
+                    &format!("{filler}![Clipped image](/tmp/pane.png)"),
+                    Conversation::Root,
+                    None,
+                )
             })
-        },
-        (800.0, 900.0),
-        Env::new(false, 1.0),
-    );
-    for _ in 0..5 {
-        rt.update(|s, tx| {
-            if crate::chat::events::poll_chat(s, 4) {
-                tx.instant();
-            }
-        });
-        rt.frame(1.0 / 60.0);
+        })
     }
-    rt.update(|s, _| {
-        s.transcript_display.pictures.retry_interrupted();
-        assert!(
-            !s.transcript_display.pictures.local_visible_or_queued(
-                "skill-doc-local-image-0",
-                &source,
-                "image/png",
-            ),
-            "image clipped below a scrollable tool pane must stay unqueued even when the pane is inside the window"
-        );
-    });
+    fn view_memoized(s: &State, _: &mut rune::Cx<State>) -> rune::El {
+        let filler = format!("{}\n\n", "pane memoized line ".repeat(600));
+        crate::strings::with_locale("en", || {
+            super::super::clipped_tool_pane(s, "skill-pane-clip", false, || {
+                super::super::prose_search(
+                    s,
+                    "m1",
+                    "skill-card",
+                    "skill-doc".into(),
+                    &format!("{filler}![Clipped image](/tmp/pane.png)"),
+                    Conversation::Root,
+                    None,
+                )
+            })
+        })
+    }
+    let source = PictureSource::Http("https://127.0.0.1:1/pane.png".into());
+    for (label, view_fn) in [
+        (
+            "short",
+            view_short as fn(&State, &mut rune::Cx<State>) -> rune::El,
+        ),
+        (
+            "memoized",
+            view_memoized as fn(&State, &mut rune::Cx<State>) -> rune::El,
+        ),
+    ] {
+        let tool_msg = history::decode_message(&json!({
+            "id":"m1","type":"assistant","time":{"completed":1},
+            "content":[{
+                "type":"tool","id":"call-http","name":"read",
+                "state":{
+                    "status":"completed",
+                    "input":{"filePath":"/tmp/pane.png"},
+                    "content":[{"type":"file","filename":"/tmp/pane.png","mime":"image/png","uri":"https://127.0.0.1:1/pane.png"}]
+                }
+            }]
+        }))
+        .unwrap();
+        let mut state = init();
+        state.phase = Phase::Ready;
+        state.messages = vec![tool_msg.into()];
+        let mut rt = Runtime::new(state, view_fn, (800.0, 900.0), Env::new(false, 1.0));
+        for _ in 0..5 {
+            rt.update(|s, tx| {
+                if crate::chat::events::poll_chat(s, 4) {
+                    tx.instant();
+                }
+            });
+            rt.frame(1.0 / 60.0);
+        }
+        // Initially inside the 900px window but clipped below the 15-line pane -> must not queue.
+        rt.update(|s, _| {
+            let bounds = s.tool_diff_preferences.history_bounds.get();
+            assert!(
+                !s.transcript_display.pictures.local_visible_or_queued(
+                    "skill-doc-local-image-0",
+                    &source,
+                    "image/png",
+                    &s.transcript_display.tool_clock,
+                    bounds,
+                ),
+                "{label}: clipped image below pane must stay unqueued initially"
+            );
+        });
+        // Scroll the pane down so the image enters the pane, loads, and settles to Failed.
+        for _ in 0..8 {
+            rt.wheel(200.0, 80.0, -4000.0);
+            rt.frame(1.0 / 60.0);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            rt.update(|s, tx| {
+                if crate::chat::events::poll_chat(s, 4) {
+                    tx.instant();
+                }
+            });
+            rt.frame(1.0 / 60.0);
+            let mut failed = false;
+            rt.update(|s, _| {
+                failed = matches!(
+                    s.transcript_display
+                        .pictures
+                        .local_slot("skill-doc-local-image-0", &source, "image/png")
+                        .2,
+                    LocalImageState::Failed
+                );
+            });
+            if failed {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{label}: scrolled-in pane image did not settle to Failed"
+            );
+            std::thread::yield_now();
+        }
+        // Scroll the pane back to the top so the failed image moves below the pane clip edge
+        // while staying inside the window, then reconnect -> must NOT be re-queued.
+        for _ in 0..8 {
+            rt.wheel(200.0, 80.0, 4000.0);
+            rt.frame(1.0 / 60.0);
+        }
+        rt.update(|s, _| {
+            let bounds = s.tool_diff_preferences.history_bounds.get();
+            s.transcript_display
+                .pictures
+                .retry_interrupted_in_view(&s.transcript_display.tool_clock, bounds);
+            assert!(
+                !s.transcript_display.pictures.local_visible_or_queued(
+                    "skill-doc-local-image-0",
+                    &source,
+                    "image/png",
+                    &s.transcript_display.tool_clock,
+                    bounds,
+                ),
+                "{label}: failed image scrolled back behind pane clip must stay unqueued across reconnect"
+            );
+        });
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

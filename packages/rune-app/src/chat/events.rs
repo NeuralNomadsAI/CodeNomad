@@ -71,7 +71,10 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     s.status_permissions.online(true);
                     workspace::mission_event(s, None);
                     s.transcript_display.receipts.reconnect();
-                    s.transcript_display.pictures.retry_interrupted();
+                    s.transcript_display.pictures.retry_interrupted_in_view(
+                        &s.transcript_display.tool_clock,
+                        s.tool_diff_preferences.history_bounds.get(),
+                    );
                     s.transcript_display.usage_family.refresh();
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
@@ -494,7 +497,12 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
         }
     }
     if super::tools::children::Children::poll_and_promote(s)
-        | s.transcript_display.pictures.poll(&s.reads, &s.wake)
+        | s.transcript_display.pictures.poll_in_view(
+            &s.reads,
+            &s.wake,
+            &s.transcript_display.tool_clock,
+            s.tool_diff_preferences.history_bounds.get(),
+        )
         | super::receipts::Receipts::poll(s, visible)
     {
         s.revision += 1;

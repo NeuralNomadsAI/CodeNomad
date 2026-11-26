@@ -54,7 +54,17 @@ pub(super) fn clipped_tool_pane(
         .transcript_display
         .tool_clock
         .with_active_clip(&nested, build);
-    markdown::tool_pane(content, large).drawn_rect_into(&clip)
+    let watch_clip = clip.clone();
+    let prev = std::cell::Cell::new(clip.get());
+    markdown::tool_pane(content, large)
+        .drawn_rect_into(&clip)
+        .on_drawn_layout_tx(move |_: &mut State, _, tx| {
+            let current = watch_clip.get();
+            if current != prev.replace(current) {
+                tx.wake_after(std::time::Duration::ZERO);
+            }
+            tx.live_only();
+        })
 }
 
 pub(super) fn bounded_prose_matches(

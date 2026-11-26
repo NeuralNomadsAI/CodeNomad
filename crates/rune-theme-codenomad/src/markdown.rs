@@ -618,11 +618,12 @@ fn literal_breaks_with_images<'a>(
                 Event::End(pulldown_cmark::TagEnd::Image) => {
                     stripped_image_depth -= 1;
                     if stripped_image_depth == 0 {
-                        let shown = if stripped_alt.trim().is_empty() {
-                            stripped_fallback.as_str()
-                        } else {
-                            stripped_alt.as_str()
-                        };
+                        let shown =
+                            if stripped_alt.trim().is_empty() && !stripped_fallback.is_empty() {
+                                stripped_fallback.as_str()
+                            } else {
+                                stripped_alt.as_str()
+                            };
                         push_escaped_image_fallback(&mut result, shown);
                         stripped_alt.clear();
                         stripped_fallback.clear();
@@ -1106,7 +1107,7 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
     assert!(ok_spans[0][0].start > rewritten.find("## ![Head]()").unwrap());
     assert_eq!(
         prose_lifted_images(
-            "![A](a.png)\n\n## ![B](b.png)\n\n*![C](c.png)*\n\n[![D](d.png)](https://example.test)\n\n> ![E](e.png)\n\n![outer ![inner](https://example.test/x.png) `code`](outer.png)",
+            "![A](a.png)\n\n## ![B](b.png)\n\n*![C](c.png)*\n\n[![D](d.png)](https://example.test)\n\n> ![E](e.png)\n\n![outer ![inner](https://example.test/x.png) `code`](outer.png)\n\n![left![ ](https://example.test/i.png)right](ws.png)",
             false
         ),
         vec![
@@ -1121,6 +1122,10 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
             LiftedImage {
                 src: "outer.png".into(),
                 alt: "outer inner code".into(),
+            },
+            LiftedImage {
+                src: "ws.png".into(),
+                alt: "left right".into(),
             },
         ]
     );
