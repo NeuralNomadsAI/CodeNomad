@@ -571,3 +571,124 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
         Some(HistoryEdge::Oldest)
     );
 }
+
+#[test]
+fn restore_search_reads_new_history_detached_state_on_sync() {
+    use crate::chat::search_hit::SearchHit;
+    use codenomad_client::search::{Hit, Kind};
+    use serde_json::json;
+
+    crate::platform::block_on(async {
+        let make_state = |initially_detached: bool| {
+            let mut state = init();
+            crate::settings::fixture_transcript(
+                &mut state,
+                json!({"toolCallExpansionDefaults":{"tools":{"websearch":"hidden"}}}),
+            );
+            let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            let mut agent = crate::agent::Ui::new(crate::agent::start(backend, state.wake.clone()));
+            agent.forms = crate::agent_api::forms(
+                &json!({"data":[{
+                    "id":"form-ws","sessionID":"session","title":"Choose search provider",
+                    "fields":[{"key":"provider"}],"metadata":{"kind":"websearch.provider"}
+                }]}),
+                "session",
+            )
+            .unwrap();
+            state.agent = Some(agent);
+            let (reader, lane) = Reader::open();
+            state.reader = Some(reader);
+            state.history_detached = initially_detached;
+            (state, lane)
+        };
+        let make_hit = |message: &str| {
+            let mut hit = SearchHit::new(
+                &Hit {
+                    session: "session".into(),
+                    message: message.into(),
+                    role: "assistant".into(),
+                    part: 0,
+                    kind: Kind::Tool,
+                    excerpt: "Needle".into(),
+                },
+                "Needle",
+                false,
+            );
+            hit.restore_pending = true;
+            hit
+        };
+        let make_row = |id: &str, call: &str| -> crate::history::Row {
+            crate::history::decode_message(&json!({
+                "id": id,
+                "type": "assistant",
+                "time": {"completed": 1},
+                "content": [{
+                    "type": "tool",
+                    "id": call,
+                    "name": "websearch",
+                    "state": {"status": "completed", "content": [{"type": "text", "text": "Needle"}]}
+                }]
+            }))
+            .unwrap()
+            .into()
+        };
+
+        // 1. Live -> detached historical window: restore_search must see history_detached = true
+        //    and refuse inferring the active form onto a historical hidden websearch.
+        let (mut state, lane) = make_state(false);
+        state.transcript_display.search_highlight = Some(make_hit("past"));
+        lane.events
+            .try_send((
+                0,
+                0,
+                Event::Sync(crate::history::Page {
+                    rows: vec![make_row("past", "ws_past")],
+                    older: None,
+                    newer: Some("newer-cursor".into()),
+                    running: false,
+                    user_file_references: false,
+                }),
+            ))
+            .unwrap();
+        assert!(poll_chat(&mut state, 8));
+        assert!(state.history_detached);
+        assert!(
+            state.transcript_display.search_highlight.is_none(),
+            "detached sync must refuse hidden historical websearch during restore_search"
+        );
+        assert!(
+            !state
+                .transcript_display
+                .search_revealed("tool-past:7:ws_past")
+        );
+
+        // 2. Detached -> live tail window: restore_search must see history_detached = false
+        //    and admit the inferred websearch at the tail.
+        let (mut state, lane) = make_state(true);
+        state.transcript_display.search_highlight = Some(make_hit("tail"));
+        lane.events
+            .try_send((
+                0,
+                0,
+                Event::Sync(crate::history::Page {
+                    rows: vec![make_row("tail", "ws_tail")],
+                    older: Some("older-cursor".into()),
+                    newer: None,
+                    running: false,
+                    user_file_references: false,
+                }),
+            ))
+            .unwrap();
+        assert!(poll_chat(&mut state, 8));
+        assert!(!state.history_detached);
+        assert!(
+            state.transcript_display.search_highlight.is_some(),
+            "tail sync must admit inferred websearch during restore_search"
+        );
+        assert!(
+            state
+                .transcript_display
+                .search_revealed("tool-tail:7:ws_tail")
+        );
+    });
+}
