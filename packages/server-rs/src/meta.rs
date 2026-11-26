@@ -56,6 +56,7 @@ pub fn document(
         "sidecars",
         "service-usage",
         "provider-usage",
+        "plugin-controls",
         "websearch-settings",
         "image-settings",
         "remote-control",
