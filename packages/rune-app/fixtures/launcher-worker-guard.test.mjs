@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {needsOwnedWindowsWorker} from './launcher-worker-guard.mjs'
+import {evaluateWorkerExit,needsOwnedWindowsWorker} from './launcher-worker-guard.mjs'
 
 test('Windows Job Object worker wraps mobile, keyboard viewport, and mobile drawers fixtures', () => {
   for (const flag of [
@@ -31,4 +31,52 @@ test('Windows Job Object worker wraps mobile, keyboard viewport, and mobile draw
     needsOwnedWindowsWorker(['node', 'launcher-fixture.mjs', '--web'], 'win32'),
     false,
   )
+})
+
+test('evaluateWorkerExit marks spawn errors, supervisor code 86, and unconfirmed stops as not exited', () => {
+  const enoent = Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })
+  const spawnFailed = evaluateWorkerExit({
+    exit: { code: null, signal: null, error: enoent },
+    proof: { result: 0 },
+  })
+  assert.equal(spawnFailed.workerExited, false)
+  assert.equal(spawnFailed.workerExitCode, null)
+  assert.equal(spawnFailed.workerSpawnError, 'spawn ENOENT')
+  assert.equal(spawnFailed.finalResult, 1)
+
+  const spawnWithCode = evaluateWorkerExit({
+    exit: { code: 1, signal: null, error: enoent },
+  })
+  assert.equal(spawnWithCode.workerExited, false)
+  assert.equal(spawnWithCode.workerExitCode, null)
+  assert.equal(spawnWithCode.finalResult, 1)
+
+  const incompleteTree = evaluateWorkerExit({
+    exit: { code: 86, signal: null },
+    proof: { result: 0 },
+  })
+  assert.equal(incompleteTree.workerExited, false)
+  assert.equal(incompleteTree.workerExitCode, 86)
+  assert.equal(incompleteTree.workerStopError, 'Fixture supervisor reported incomplete child tree termination')
+  assert.equal(incompleteTree.finalResult, 1)
+
+  const escalated = evaluateWorkerExit({
+    exit: { code: null, signal: 'SIGKILL' },
+    unconfirmedStop: true,
+    stopError: new Error('Owned POSIX bridge did not confirm worker exit before escalation'),
+    outerSignal: 'SIGINT',
+    proof: { result: 0, interruptedSignal: 'SIGTERM' },
+  })
+  assert.equal(escalated.workerExited, false)
+  assert.equal(escalated.interrupted, 'SIGINT')
+  assert.equal(escalated.workerStopError, 'Owned POSIX bridge did not confirm worker exit before escalation')
+  assert.equal(escalated.finalResult, 1)
+
+  const clean = evaluateWorkerExit({
+    exit: { code: 0, signal: null },
+    proof: { result: 0 },
+  })
+  assert.equal(clean.workerExited, true)
+  assert.equal(clean.workerExitCode, 0)
+  assert.equal(clean.finalResult, 0)
 })

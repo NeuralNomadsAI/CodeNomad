@@ -22,7 +22,7 @@ import {androidTsServer} from './android-ts-server.mjs'
 import {launchWeb} from './launcher-web.mjs'
 import {rustOrigin,signInFixture,until} from './fixture-host.mjs'
 import {assertWorktreeTestRoot} from '../../../scripts/rune/web-workspace-policy.mjs'
-import {needsOwnedWindowsWorker} from './launcher-worker-guard.mjs'
+import {evaluateWorkerExit,needsOwnedWindowsWorker} from './launcher-worker-guard.mjs'
 const webMoreActions=process.argv.includes('--web-mobile-more-actions')
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||webMoreActions||process.argv.includes('--web-mobile')
 const webMobileDrawers=process.argv.includes('--web-mobile-drawers')
@@ -112,7 +112,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   worker.stdin?.on('error',()=>{})
   const closed=new Promise(resolve=>{
     worker.once('close',(code,signal)=>resolve({code,signal}))
-    worker.once('error',error=>resolve({code:1,signal:null,error}))
+    worker.once('error',error=>resolve({code:null,signal:null,error}))
   })
   const outerGraceMs=process.platform==='win32'?graceMs:graceMs+15000
   let stopping,stopError,outerSignal,stopSettled,unconfirmedStop=false
@@ -164,21 +164,17 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   const proofFile=path.join(workerProfile,'proof.json')
   let proof
   try{proof=JSON.parse(readFileSync(workerProofFile,'utf8'))}catch{}
-  const workerExited=exit!==null&&!unconfirmedStop&&exit.code!==86&&exit.signal===null&&!stopError
-  const workerCode=exit?(exit.code??(exit.signal==='SIGINT'?130:exit.signal==='SIGTERM'?143:1)):null
-  const supervisorFailed=!workerExited||workerCode!==0||Boolean(exit?.signal)||Boolean(exit?.error)||Boolean(stopError)
-  const interrupted=outerSignal??proof?.interruptedSignal??exit?.signal??(workerCode===130?'SIGINT':workerCode===143?'SIGTERM':null)
-  const finalResult=proof?.result===0&&!supervisorFailed&&!interrupted?0:1
+  const verdict=evaluateWorkerExit({exit,unconfirmedStop,stopError,outerSignal,proof})
+  const {workerExited,interrupted,finalResult,workerExitCode,workerExitSignal,workerStopError,workerSpawnError}=verdict
   const finalProof={
     ...(proof??{profile:workerProfile}),
     result:finalResult,
     interruptedSignal:interrupted,
     workerExited,
-    workerExitCode:exit?exit.code:null,
-    workerExitSignal:exit?exit.signal:null,
-    ...(!workerExited&&!stopError?{workerStopError:exit?.code===86?'Fixture supervisor reported incomplete child tree termination':'Owned worker exit was not confirmed after stop'}:{}),
-    ...(stopError?{workerStopError:String(stopError?.message??stopError)}:{}),
-    ...(exit?.error?{workerSpawnError:String(exit.error?.message??exit.error)}:{}),
+    workerExitCode,
+    workerExitSignal,
+    ...(workerStopError?{workerStopError}:{}),
+    ...(workerSpawnError?{workerSpawnError}:{}),
   }
   writeFileSync(supervisorProofTmp,JSON.stringify(finalProof,null,2))
   renameSync(supervisorProofTmp,proofFile)
