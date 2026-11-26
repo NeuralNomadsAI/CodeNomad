@@ -52,17 +52,19 @@ impl H {
         let wake: Wake = Arc::new(move || {
             let _ = tx.try_send(());
         });
+        let holds = ScheduleHolds::default();
         let panel = Panel::new(
             http.backend.clone(),
             Some("proj_1".into()),
             Reads::default(),
             wake,
         )
-        .with_owner_scope("/owned".into());
+        .with_owner_scope("/owned".into())
+        .with_schedule_auth(holds.auth_sender());
         Self {
             http,
             panel,
-            holds: Default::default(),
+            holds,
             auth_expired: Vec::new(),
             done,
         }
@@ -426,6 +428,7 @@ fn r2_activation_proof_confirm_401_stale_invalidation_and_page_step_down() {
             .await;
         h.http.quiet().await;
         assert!(h.act(G::RetryList));
+        assert!(!h.act(G::RetryList));
         let r4 = h.http.accept().await;
         assert!(r4.header.contains("limit=4"));
         r4.reply(503, js(r#"{"error":"too-large"}"#)).await;
@@ -485,6 +488,7 @@ fn r2_activation_proof_confirm_401_stale_invalidation_and_page_step_down() {
         })
         .await;
         assert!(h.holds.get(&h.key("msn_s1")).is_none());
+        assert!(!h.act(G::Action(A::Resume)));
         h.http.quiet().await;
 
         // R2 #4: Confirming Delete parks in pending_pre and respects same-tick 401 barrier
@@ -524,6 +528,22 @@ fn r2_activation_proof_confirm_401_stale_invalidation_and_page_step_down() {
         fresh_req.reply(200, list(vec![s1], None)).await;
         h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_s1"))
             .await;
+
+        // R3 #1: 401 decoded right as panel drops on tab close still reaches window-scoped ScheduleHolds
+        h.panel.schedules.clear_selection();
+        let (s, c) = h.panel.schedule_parts();
+        s.refresh(c);
+        let req = h.http.accept().await;
+        let mut holds = h.holds;
+        let done = h.done;
+        let mut panel = h.panel;
+        req.reply(401, js(r#"{"error":"unauthorized"}"#)).await;
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(100), done.recv()).await;
+        panel.suspend();
+        drop(panel);
+        let (changed, _) = holds.poll(None, &[]);
+        assert!(changed);
+        assert_eq!(holds.drain_auth_expired().len(), 1);
     });
 }
 

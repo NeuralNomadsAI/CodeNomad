@@ -44,7 +44,9 @@ pub(crate) fn list_section<S: 'static>(
             .description(row_status(d)),
         );
     }
-    if ui.schedules.error {
+    if ui.schedules.loading() {
+        list = list.child(note("missions.control.loading", "status"));
+    } else if ui.schedules.error {
         list = list
             .child(note("missions.scheduleList.readFailed", "status"))
             .child(tbtn(
@@ -53,8 +55,6 @@ pub(crate) fn list_section<S: 'static>(
                 G::RetryList,
                 act,
             ));
-    } else if ui.schedules.loading() {
-        list = list.child(note("missions.control.loading", "status"));
     } else if ui.schedules.next.is_some() {
         list = list.child(tbtn(
             "missions.scheduleList.more",

@@ -674,7 +674,8 @@ pub(super) fn poll_missions(
                 }
                 let mut panel =
                     missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone())
-                        .with_owner_scope(folder);
+                        .with_owner_scope(folder)
+                        .with_schedule_auth(ui.mission_schedules.auth_sender());
                 panel.selected.clone_from(&saved.view.selected_mission);
                 entry.missions = Some(panel);
             }

@@ -11,7 +11,7 @@ pub(crate) use view::{confirmation, detail_section, list_section};
 
 use crate::platform;
 use codenomad_client::{
-    Receiver, TryRecvError, Wake,
+    Receiver, Sender, TryRecvError, Wake,
     backend::Backend,
     bounded,
     missions::{
@@ -124,14 +124,38 @@ struct Entry {
     flight: Option<(Backend, Receiver<Reply>)>,
 }
 
-#[derive(Default)]
 pub(crate) struct ScheduleHolds {
     entries: HashMap<ScheduleHoldKey, Entry>,
     pub confirmation: Option<ScheduleConfirmation>,
+    auth_tx: Sender<Backend>,
+    auth_rx: Receiver<Backend>,
     auth_expired: Vec<Backend>,
+}
+impl Default for ScheduleHolds {
+    fn default() -> Self {
+        let (auth_tx, auth_rx) = bounded(16);
+        Self {
+            entries: HashMap::new(),
+            confirmation: None,
+            auth_tx,
+            auth_rx,
+            auth_expired: Vec::new(),
+        }
+    }
 }
 
 impl ScheduleHolds {
+    pub(crate) fn auth_sender(&self) -> Sender<Backend> {
+        self.auth_tx.clone()
+    }
+    fn drain_auth_channel(&mut self) -> bool {
+        let mut got = false;
+        while let Ok(b) = self.auth_rx.try_recv() {
+            push_auth_expired(&mut self.auth_expired, b);
+            got = true;
+        }
+        got
+    }
     pub(crate) fn get(&self, key: &ScheduleHoldKey) -> Option<(&ScheduleHoldPhase, bool)> {
         self.entries.get(key).map(|e| (&e.phase, e.checking))
     }
@@ -195,6 +219,7 @@ impl ScheduleHolds {
         changed
     }
     pub(crate) fn drain_auth_expired(&mut self) -> Vec<Backend> {
+        self.drain_auth_channel();
         std::mem::take(&mut self.auth_expired)
     }
 
@@ -265,7 +290,7 @@ impl ScheduleHolds {
         active: Option<&ActiveScheduleView<'_>>,
         exp: &[Backend],
     ) -> (bool, Vec<ScheduleHoldEvent>) {
-        let (mut changed, mut evs) = (false, Vec::new());
+        let (mut changed, mut evs) = (self.drain_auth_channel(), Vec::new());
         for key in self.entries.keys().cloned().collect::<Vec<_>>() {
             let Some(e) = self.entries.get_mut(&key) else {
                 continue;

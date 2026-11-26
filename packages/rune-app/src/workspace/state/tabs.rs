@@ -286,6 +286,14 @@ fn close_inner(s: &mut State, id: &str, allow_uncertain_creation: bool, tx: &mut
         panel.suspend();
         dropped_auth = panel.drain_auth_expired();
     }
+    for b in ui.mission_schedules.drain_auth_expired() {
+        if !dropped_auth
+            .iter()
+            .any(|k| k.client.same_connection(&b.client))
+        {
+            dropped_auth.push(b);
+        }
+    }
     for expired in &dropped_auth {
         ui.mission_editor.revoke_auto_start_for_connection(expired);
     }

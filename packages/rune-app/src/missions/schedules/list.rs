@@ -199,6 +199,9 @@ impl Default for Schedules {
 }
 
 impl Schedules {
+    pub(crate) fn bind_auth(&mut self, tx: Sender<Backend>) {
+        self.auth_tx = tx;
+    }
     pub(crate) fn visible(&self) -> bool {
         self.visible
     }
@@ -376,11 +379,14 @@ impl Schedules {
                 true
             }
             G::RetryList => {
+                if self.loading() || !self.visible {
+                    return false;
+                }
                 if self.error && self.page_limit > 1 {
                     self.page_limit = (self.page_limit / 2).max(1);
                 }
-                if self.failed_append && self.next.is_some() && self.visible {
-                    self.error = false;
+                self.error = false;
+                if self.failed_append && self.next.is_some() {
                     self.start_list(true, ctx);
                 } else {
                     self.failed_append = false;
@@ -668,6 +674,9 @@ impl Schedules {
                         self.refresh(ctx);
                         return;
                     };
+                    if let Some(slot) = self.rows.iter_mut().find(|x| x.id == doc.id) {
+                        *slot = doc.clone();
+                    }
                     if !doc.owns_directory(ctx.directory) {
                         self.feedback = Some((m.key.schedule_id, "missions.scheduleList.conflict"));
                         return;

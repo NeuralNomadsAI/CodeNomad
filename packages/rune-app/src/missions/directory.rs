@@ -138,6 +138,11 @@ impl Panel {
         self
     }
 
+    pub(crate) fn with_schedule_auth(mut self, tx: Sender<Backend>) -> Self {
+        self.schedules.bind_auth(tx);
+        self
+    }
+
     pub(crate) fn creation_scope_key(&self) -> CreationScopeKey {
         CreationScopeKey::new(&self.backend, &self.owner_scope)
     }
