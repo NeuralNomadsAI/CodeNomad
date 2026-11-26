@@ -125,17 +125,25 @@ export async function pairFixture({origin, targetPid, profile: fixtureProfile, p
     assert.equal(wasm.status, 200)
     assert.equal(wasm.headers.get('content-type'), 'application/wasm')
     assert.equal(wasm.headers.get('content-encoding'), 'br')
-    const cached = await get('/app_bg.wasm', {headers:{'accept-encoding': 'br', 'if-none-match': wasm.headers.get('etag')}})
+    const cached = await get('/app_bg.wasm', {cache: 'force-cache', headers:{'accept-encoding': 'br', 'if-none-match': wasm.headers.get('etag')}})
     assert.equal(cached.status, 304)
     const rawWasm = await get('/app_bg.wasm', {headers: {'accept-encoding': 'identity'}})
     assert.equal(rawWasm.status, 200)
     assert.equal(rawWasm.headers.get('content-type'), 'application/wasm')
     assert.equal(rawWasm.headers.get('content-encoding'), null)
     assert.notEqual(rawWasm.headers.get('etag'), wasm.headers.get('etag'))
-    const rawCached = await get('/app_bg.wasm', {headers: {'accept-encoding': 'identity', 'if-none-match': rawWasm.headers.get('etag')}})
+    const rawCached = await get('/app_bg.wasm', {cache: 'force-cache', headers: {'accept-encoding': 'identity', 'if-none-match': rawWasm.headers.get('etag')}})
     assert.equal(rawCached.status, 304)
     assert.equal((await get('/app_bg.wasm',{headers:{origin:'https://foreign.invalid'}})).status,403)
-    assert.equal((await get('/app_bg.wasm',{headers:{'x-codenomad-server-request':'1'}})).status,404)
+    const serverAssetCookie = await cookieHeader()
+    const serverAsset = await attestedFetch.request({
+      path: '/app_bg.wasm',
+      method: 'GET',
+      headers: { ...(serverAssetCookie ? { cookie: serverAssetCookie } : {}), 'x-codenomad-server-request': '1' },
+      signal: AbortSignal.timeout(15000),
+    })
+    await serverAsset.body.dump()
+    assert.equal(serverAsset.statusCode, 404)
     const expectedWasmSha = manifest.files.find(row => row.file === 'app_bg.wasm').sha256
     const sha256 = createHash('sha256').update(Buffer.from(await wasm.arrayBuffer())).digest('hex')
     assert.equal(sha256, expectedWasmSha)

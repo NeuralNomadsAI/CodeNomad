@@ -811,3 +811,77 @@ test('attested transports reject same-PID target incarnation changes and admit r
   assert.equal(childRes.code,0,`descendant client failed: ${childRes.stderr}`)
   assert.deepEqual(JSON.parse(childRes.stdout),{status:200,body:'ok'})
 })
+
+test('createAttestedFetch connects to HTTPS 127.0.0.1 without IP SNI and routes synchronous tls.connect errors without unhandled rejections',{timeout:25000},async t=>{
+  const {createServer:createHttpsServer}=await import('node:https')
+  const {createRequire}=await import('node:module')
+  const forge=createRequire(import.meta.url)('node-forge')
+  const keys=forge.pki.rsa.generateKeyPair(2048)
+  const cert=forge.pki.createCertificate()
+  cert.publicKey=keys.publicKey
+  cert.serialNumber='01'
+  cert.validity.notBefore=new Date(Date.now()-60_000)
+  cert.validity.notAfter=new Date(Date.now()+86_400_000)
+  cert.setSubject([{name:'commonName',value:'127.0.0.1'}])
+  cert.setIssuer([{name:'commonName',value:'127.0.0.1'}])
+  cert.setExtensions([
+    {name:'basicConstraints',cA:true},
+    {name:'subjectAltName',altNames:[{type:7,ip:'127.0.0.1'}]},
+  ])
+  cert.sign(keys.privateKey,forge.md.sha256.create())
+  const pemCert=forge.pki.certificateToPem(cert)
+  const pemKey=forge.pki.privateKeyToPem(keys.privateKey)
+
+  const server=createHttpsServer({key:pemKey,cert:pemCert},(req,res)=>{
+    res.setHeader('x-seen-sec-fetch-mode',req.headers['sec-fetch-mode']??'')
+    res.end('ok-https-ip')
+  })
+  t.after(()=>{server.closeAllConnections?.();return new Promise(resolve=>server.close(resolve))})
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
+  const port=server.address().port
+  const origin=`https://127.0.0.1:${port}`
+  const noopVerify={verifyOwner:async()=>{},verifyPeer:async()=>{}}
+
+  // 1) Trusted CA against an IP-SAN 127.0.0.1 server succeeds without passing an IP literal in TLS SNI.
+  let attestedCalls=0
+  const withCa=createAttestedFetch(origin,port,process.pid,{
+    ...noopVerify,
+    ca:pemCert,
+    onAttested:()=>{attestedCalls++},
+  })
+  t.after(()=>withCa.close())
+  const resCa=await withCa(`${origin}/ca`,{headers:{connection:'close'},signal:AbortSignal.timeout(5000)})
+  assert.equal(resCa.status,200)
+  assert.equal(await resCa.text(),'ok-https-ip')
+  assert.equal(attestedCalls,1)
+
+  // 1b) attestedFetch.request uses the same attested TLS pool without injecting browser Fetch Metadata headers.
+  const rawRes=await withCa.request({path:'/raw',method:'GET',headers:{connection:'close'},signal:AbortSignal.timeout(5000)})
+  assert.equal(rawRes.statusCode,200)
+  assert.equal(rawRes.headers['x-seen-sec-fetch-mode'],'')
+  assert.equal(await rawRes.body.text(),'ok-https-ip')
+  assert.equal(attestedCalls,2)
+
+  // 2) allowSelfSigned: true also succeeds against https://127.0.0.1 without IP SNI.
+  const selfSigned=createAttestedFetch(origin,port,process.pid,{...noopVerify,allowSelfSigned:true})
+  t.after(()=>selfSigned.close())
+  const resSelf=await selfSigned(`${origin}/self`,{headers:{connection:'close'},signal:AbortSignal.timeout(5000)})
+  assert.equal(resSelf.status,200)
+  assert.equal(await resSelf.text(),'ok-https-ip')
+
+  // 3) Untrusted self-signed cert is still rejected when neither ca nor allowSelfSigned is set.
+  const strict=createAttestedFetch(origin,port,process.pid,{...noopVerify})
+  t.after(()=>strict.close())
+  await assert.rejects(strict(`${origin}/strict`,{signal:AbortSignal.timeout(5000)}))
+
+  // 4) A synchronous throw inside tls.connect() must settle via done(err, null) with zero unhandledRejection events.
+  const unhandled=[]
+  const onUnhandled=reason=>{unhandled.push(reason)}
+  process.on('unhandledRejection',onUnhandled)
+  t.after(()=>process.off('unhandledRejection',onUnhandled))
+  const brokenTls=createAttestedFetch(origin,port,process.pid,{...noopVerify,ca:12345})
+  t.after(()=>brokenTls.close())
+  await assert.rejects(brokenTls(`${origin}/sync-throw`,{signal:AbortSignal.timeout(5000)}))
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.deepEqual(unhandled,[])
+})

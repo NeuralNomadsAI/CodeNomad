@@ -12,6 +12,8 @@ import { fixtureAttestationEnv, resolveFixtureJobBinary } from "./native-fixture
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 import { createHash } from "node:crypto"
 
+// infoProbe allows 6000 ms for peer attestation + 2000 ms for HTTP, under the 10_000 ms worker deadline.
+const COLLECT_BOUND_MS = 9500
 const oldPassword = 'old-long-"password\\é', password = 'cold-long-"password\\漢'
 const token = value => Buffer.from(`opencode:${value}`).toString("base64")
 const driver = (await readFile(new URL("./test-native-mission-schedule-product.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n")
@@ -208,7 +210,7 @@ test("a genuinely refused loopback port records only a safe transport category",
   const start = Date.now(), result = await f.collect()
   assert.deepEqual(result.evidence.http, { error: "http-transport-unavailable" })
   assert.equal(f.requests.length, 0)
-  assert(Date.now() - start < 5000)
+  assert(Date.now() - start < COLLECT_BOUND_MS)
   assert(!JSON.stringify(result).includes("ECONNREFUSED"))
   assert(!JSON.stringify(result).includes(f.expected.url))
 })
@@ -244,7 +246,9 @@ test("no network or disk collection before failure, on success, or at another st
 
 for (const mode of ["transport", "never-ending", "redirect", "body-overflow", "bad-pid", "bad-version", "bad-json"]) test(`single bounded GET: ${mode}`, async t => {
   const f = await fixture(t)
+  let requestAt = 0
   f.handle((request, response) => {
+    requestAt = Date.now()
     if (mode === "transport") return request.socket.destroy()
     if (mode === "never-ending") { response.writeHead(503); response.write('{"pid":'); return }
     if (mode === "redirect") return response.writeHead(302, { location: "/must-not-follow" }).end()
@@ -254,7 +258,8 @@ for (const mode of ["transport", "never-ending", "redirect", "body-overflow", "b
   })
   const start = Date.now(), result = await f.collect()
   assert.match(result.evidence.http.error, new RegExp({ transport: "transport", "never-ending": "timeout", redirect: "transport", "body-overflow": "overflow", "bad-pid": "identity-mismatch", "bad-version": "identity-mismatch", "bad-json": "body-unavailable" }[mode]))
-  assert(Date.now() - start < 5000)
+  assert(Date.now() - start < COLLECT_BOUND_MS)
+  assert(requestAt > 0 && Date.now() - requestAt < 5000)
   assert.equal(f.requests.length, 1); assert.equal(f.requests[0].url, "/api/info")
 })
 
@@ -296,7 +301,7 @@ for (const mode of ["missing-schema", "oversize-document", "oversize-message", "
     assert.equal(result.evidence.sql.schedules[0].last_outcome, null)
     assert.equal(result.evidence.sql.schedules[0].whenSHA256, null)
   } else assert(result.evidence.sql.error)
-  assert(Date.now() - start < 5000)
+  assert(Date.now() - start < COLLECT_BOUND_MS)
   if (lock) { lock.exec("ROLLBACK"); lock.close(); lock = undefined }
   if (mode !== "missing-schema") f.edit(db => assert.equal(db.prepare("SELECT run_count FROM schedule").get()?.run_count ?? 0, 0))
 })

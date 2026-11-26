@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto'
 import {existsSync,lstatSync,readFileSync,realpathSync} from 'node:fs'
 import {Agent as HttpAgent,createServer,request as httpRequest} from 'node:http'
 import {createRequire} from 'node:module'
-import net from 'node:net'
+import net,{isIP} from 'node:net'
 import path from 'node:path'
 import tls from 'node:tls'
 import {fileURLToPath,pathToFileURL} from 'node:url'
@@ -385,8 +385,9 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
       return
     }
     let upstream
+    let tunneled=false
     const teardown=(status)=>{
-      if(status&&!socket.destroyed){
+      if(status&&!tunneled&&!socket.destroyed){
         socket.end(`HTTP/1.1 ${status}\r\n\r\n`,()=>{try{socket.destroy()}catch{}})
       }else{
         try{socket.destroy()}catch{}
@@ -402,31 +403,32 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
     const expectedStartId=currentTargetStartId
     const reqGen=generation
     const gate=requireClientAttestation?clientGate.verify(socket):Promise.resolve(true)
-    gate.then(allowed=>{
+    const listenerCheck=verifyLoopbackListenerOwner(targetPort,pid,undefined,{coalesce:true}).then(()=>true,()=>false)
+    Promise.all([gate.catch(()=>false),listenerCheck]).then(([allowed,listenerOk])=>{
       if(!allowed||closed||socket.destroyed){teardown('403 Forbidden');return}
-      return verifyLoopbackListenerOwner(targetPort,pid).then(()=>{
-        if(closed||socket.destroyed||reqGen!==generation||pid!==currentTargetPid){teardown('502 Bad Gateway');return}
-        upstream=net.createConnection({host:'127.0.0.1',port:targetPort})
-        tunnelSockets.add(upstream)
-        upstream.once('close',()=>{tunnelSockets.delete(upstream);try{socket.destroy()}catch{}})
-        upstream.once('error',()=>teardown('502 Bad Gateway'))
-        upstream.once('connect',()=>{
-          if(closed||socket.destroyed||upstream.destroyed||!upstream.localPort||reqGen!==generation||pid!==currentTargetPid){
-            teardown('502 Bad Gateway');return
-          }
-          attestPeerWithRetry(upstream.localPort,targetPort,pid,verifyLoopbackConnectionPeer,()=>closed||socket.destroyed||upstream.destroyed||reqGen!==generation||pid!==currentTargetPid)
-            .then(()=>assertTargetIncarnation(pid,expectedStartId,probeIdentity))
-            .then(()=>{
-              if(closed||socket.destroyed||upstream.destroyed||reqGen!==generation||pid!==currentTargetPid){teardown('502 Bad Gateway');return}
-              socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
-              if(head?.length)upstream.write(head)
-              socket.pipe(upstream)
-              upstream.pipe(socket)
-              socket.resume()
-            },()=>teardown('502 Bad Gateway'))
-        })
-      },()=>teardown('502 Bad Gateway'))
-    },()=>teardown('403 Forbidden')).catch(()=>teardown('502 Bad Gateway'))
+      if(!listenerOk||reqGen!==generation||pid!==currentTargetPid){teardown('502 Bad Gateway');return}
+      upstream=net.createConnection({host:'127.0.0.1',port:targetPort})
+      tunnelSockets.add(upstream)
+      upstream.once('close',()=>{tunnelSockets.delete(upstream);try{socket.destroy()}catch{}})
+      upstream.once('error',()=>teardown('502 Bad Gateway'))
+      upstream.once('connect',()=>{
+        if(closed||socket.destroyed||upstream.destroyed||!upstream.localPort||reqGen!==generation||pid!==currentTargetPid){
+          teardown('502 Bad Gateway');return
+        }
+        attestPeerWithRetry(upstream.localPort,targetPort,pid,verifyLoopbackConnectionPeer,()=>closed||socket.destroyed||upstream.destroyed||reqGen!==generation||pid!==currentTargetPid)
+          .then(()=>assertTargetIncarnation(pid,expectedStartId,probeIdentity))
+          .then(()=>{
+            if(closed||socket.destroyed||upstream.destroyed||reqGen!==generation||pid!==currentTargetPid){teardown('502 Bad Gateway');return}
+            tunneled=true
+            socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+            if(head?.length)upstream.write(head)
+            socket.pipe(upstream)
+            upstream.pipe(socket)
+            socket.resume()
+          })
+          .catch(()=>teardown('502 Bad Gateway'))
+      })
+    }).catch(()=>teardown('502 Bad Gateway'))
   })
   server.on('upgrade',rejectDetached)
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
@@ -500,18 +502,28 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
         try{
           if(isHttps){
             const tcpSocket=net.createConnection({host:'127.0.0.1',port})
+            let tlsSocket=null
             let settled=false
             const done=(err,sock)=>{
               if(settled)return
               settled=true
               tcpSocket.off('close',onEarlyClose)
               tcpSocket.off('error',onEarlyError)
+              if(tlsSocket){
+                tlsSocket.off('close',onEarlyClose)
+                tlsSocket.off('error',onEarlyError)
+                tlsSocket.off('secureConnect',onSecureConnect)
+              }
               pendingSockets.delete(entry)
-              if(err){try{tcpSocket.destroy()}catch{}}
+              if(err){
+                try{tlsSocket?.destroy()}catch{}
+                try{tcpSocket.destroy()}catch{}
+              }
               cb(err,sock)
             }
             const onEarlyClose=()=>done(Error('Socket closed during peer attestation'),null)
             const onEarlyError=err=>done(err,null)
+            const onSecureConnect=()=>{try{onAttested?.()}catch(err){done(err,null);return}done(null,tlsSocket)}
             const entry={socket:tcpSocket,fail:err=>done(err,null)}
             pendingSockets.add(entry)
             tcpSocket.once('close',onEarlyClose)
@@ -525,15 +537,20 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
                 .then(()=>checkIncarnation())
                 .then(()=>{
                   if(closed||tcpSocket.destroyed){done(Error('Socket closed during peer attestation'),null);return}
-                  const servername=new URL(origin).hostname
-                  const tlsSocket=tls.connect({
+                  const rawHost=new URL(origin).hostname
+                  const unbracketedHost=rawHost.startsWith('[')&&rawHost.endsWith(']')?rawHost.slice(1,-1):rawHost
+                  const servername=isIP(unbracketedHost)===0?rawHost:undefined
+                  tlsSocket=tls.connect({
                     socket:tcpSocket,
-                    servername,
+                    host:unbracketedHost,
+                    ...(servername?{servername}:{}),
                     ...(ca?{ca,rejectUnauthorized:true}:{rejectUnauthorized:!allowSelfSigned}),
                   })
-                  tlsSocket.once('secureConnect',()=>{try{onAttested?.()}catch(err){done(err,null);return}done(null,tlsSocket)})
-                  tlsSocket.once('error',err=>done(err,null))
-                },postError=>done(postError,null))
+                  tlsSocket.once('close',onEarlyClose)
+                  tlsSocket.once('error',onEarlyError)
+                  tlsSocket.once('secureConnect',onSecureConnect)
+                })
+                .catch(postError=>done(postError,null))
             })
             return
           }
@@ -565,7 +582,8 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
                 if(closed||socket.destroyed){done(Error('Socket closed during peer attestation'),null);return}
                 try{onAttested?.()}catch(err){done(err,null);return}
                 done(null,socket)
-              },postError=>done(postError,null))
+              })
+              .catch(postError=>done(postError,null))
           })
         }finally{attestedConnectDepth--}
       },error=>cb(error,null))
@@ -592,6 +610,7 @@ export function createAttestedFetch(origin,port,pid,verifyOwnerOrOptions=verifyL
     }
     return undiciFetch(input,{...init,duplex:'half',dispatcher:pool,redirect:init.redirect??'error'})
   }
+  fetchBound.request=options=>pool.request(options)
   fetchBound.close=close
   return fetchBound
 }
@@ -650,9 +669,10 @@ export function createAttestedHttpAgent(port,pid,verifyOwnerOrOptions=verifyLoop
           .then(()=>{
             if(closed||settled||socket.destroyed){finish(Error('Socket closed during peer attestation'));return}
             finish(null,socket)
-          },finish)
+          })
+          .catch(finish)
       })
-    },finish)
+    }).catch(finish)
     return undefined
   }
   agent.destroy=()=>{
@@ -717,7 +737,8 @@ export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verif
               client.pipe(upstream)
               upstream.pipe(client)
               client.resume()
-            },teardown)
+            })
+            .catch(teardown)
         })
       })
     },teardown).catch(teardown)

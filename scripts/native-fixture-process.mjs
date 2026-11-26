@@ -630,10 +630,31 @@ export async function verifyPrivateFixtureServer({targetPid,launcherPid,profile,
   return {targetPid,targetStartId}
 }
 
+let inFlightWin32Netstat=null
+let inFlightWin32NetstatFreshTick=false
+
+async function win32TcpTable({fresh=false}={}){
+  if(fresh&&inFlightWin32Netstat&&!inFlightWin32NetstatFreshTick){
+    await inFlightWin32Netstat.catch(()=>{})
+  }
+  if(inFlightWin32Netstat)return inFlightWin32Netstat
+  const task=execFileAsync(netstatBin(),['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
+    .then(res=>res.stdout)
+  inFlightWin32Netstat=task
+  inFlightWin32NetstatFreshTick=true
+  queueMicrotask(()=>{if(inFlightWin32Netstat===task)inFlightWin32NetstatFreshTick=false})
+  try{return await task}finally{
+    if(inFlightWin32Netstat===task){
+      inFlightWin32Netstat=null
+      inFlightWin32NetstatFreshTick=false
+    }
+  }
+}
+
 export async function resolveLoopbackListenerPid(port){
   assert(Number.isSafeInteger(port)&&port>0&&port<=65535,'Invalid loopback port')
   if(process.platform==='win32'){
-    const {stdout}=await execFileAsync(netstatBin(),['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
+    const stdout=await win32TcpTable({fresh:true})
     const owners=new Set()
     for(const line of stdout.split(/\r?\n/)){
       const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+0\.0\.0\.0:0\s+\S+\s+(\d+)\s*$/i.exec(line)
@@ -673,15 +694,22 @@ export async function resolveLoopbackListenerPid(port){
   return [...owners][0]
 }
 
-export async function verifyLoopbackListenerOwner(port,pid,forbidden='the shared OpenCode service is forbidden'){
+export async function verifyLoopbackListenerOwner(port,pid,forbidden='the shared OpenCode service is forbidden',{coalesce=false}={}){
   assert(Number.isSafeInteger(port)&&port>0&&port<=65535,'Invalid loopback port')
   assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID')
   if(process.platform==='win32'){
-    const {stdout}=await execFileAsync(netstatBin(),['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
-    const owners=new Set()
-    for(const line of stdout.split(/\r?\n/)){
-      const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+0\.0\.0\.0:0\s+\S+\s+(\d+)\s*$/i.exec(line)
-      if(match&&Number(match[1])===port)owners.add(Number(match[2]))
+    const parseOwners=stdout=>{
+      const owners=new Set()
+      for(const line of stdout.split(/\r?\n/)){
+        const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+0\.0\.0\.0:0\s+\S+\s+(\d+)\s*$/i.exec(line)
+        if(match&&Number(match[1])===port)owners.add(Number(match[2]))
+      }
+      return owners
+    }
+    const hadInFlight=coalesce&&Boolean(inFlightWin32Netstat)
+    let owners=parseOwners(await win32TcpTable({fresh:!coalesce}))
+    if(hadInFlight&&!(owners.size===1&&owners.has(pid))){
+      owners=parseOwners(await win32TcpTable({fresh:true}))
     }
     assert(owners.size===1&&owners.has(pid),`Loopback port 127.0.0.1:${port} is not owned by fixture PID ${pid}; ${forbidden}`)
     return
@@ -720,7 +748,7 @@ export async function verifyLoopbackConnectionPeer(localPort,remotePort,pid,forb
   assert(Number.isSafeInteger(remotePort)&&remotePort>0&&remotePort<=65535,'Invalid remote loopback port')
   assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID')
   if(process.platform==='win32'){
-    const {stdout}=await execFileAsync(netstatBin(),['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
+    const stdout=await win32TcpTable()
     const owners=new Set()
     for(const line of stdout.split(/\r?\n/)){
       const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+127\.0\.0\.1:(\d+)\s+ESTABLISHED\s+(\d+)\s*$/i.exec(line)
@@ -777,7 +805,7 @@ export async function attestPeerWithRetry(localPort,remotePort,pid,checkPeer,isC
 
 export async function resolveLoopbackPeerPid(localPort,remotePort){
   if(process.platform==='win32'){
-    const {stdout}=await execFileAsync(netstatBin(),['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
+    const stdout=await win32TcpTable()
     const owners=new Set()
     for(const line of stdout.split(/\r?\n/)){
       const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+127\.0\.0\.1:(\d+)\s+ESTABLISHED\s+(\d+)\s*$/i.exec(line)

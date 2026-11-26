@@ -553,8 +553,9 @@ try{
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
   if(!restoreState&&!pendingOpen){
-    const budget=webAndroid?Number(process.env.RUNE_ANDROID_CLIENT_BUDGET_MS??300000):web||filesState||gitPanel?300000:120000
-    assert(Number.isInteger(budget)&&budget>0&&budget<=300000,'Invalid client deadline')
+    const maxBudget=webMobile?480000:300000
+    const budget=webAndroid?Number(process.env.RUNE_ANDROID_CLIENT_BUDGET_MS??300000):webMobile?480000:web||filesState||gitPanel?300000:120000
+    assert(Number.isInteger(budget)&&budget>0&&budget<=maxBudget,'Invalid client deadline')
     const timer=setTimeout(()=>{expired=true;client.kill()},budget)
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)

@@ -13,18 +13,20 @@ export function launchChromium(executablePath,env){
 
 export async function launchOwnedChromium({executablePath=chromium.executablePath(),profile,env,origin,targetPid,targetStartId,injectCookie}){
   const data=path.join(profile,'chromium')
-  if(origin)assert(Number.isSafeInteger(targetPid)&&targetPid>0,'Attested target PID required for browser origin guard')
-  const guard=origin?await originGuardProxy(new URL(origin).origin,targetPid,{requireClientAttestation:true,allowDescendants:true,injectCookie,targetStartId}):null
+  const parsedOrigin=origin?new URL(origin):null
+  if(parsedOrigin)assert(Number.isSafeInteger(targetPid)&&targetPid>0,'Attested target PID required for browser origin guard')
+  const guard=parsedOrigin?await originGuardProxy(parsedOrigin.origin,targetPid,{requireClientAttestation:true,allowDescendants:true,injectCookie,targetStartId}):null
   const networkArgs=guard?[
     '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
     `--proxy-server=http://127.0.0.1:${guard.port}`,
     '--proxy-bypass-list=<-loopback>',
     '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+    ...(parsedOrigin.protocol==='https:'?['--ignore-certificate-errors']:[]),
   ]:[]
   let host,browser,pid,cdpRelay
   try{
     host=launchFixture(executablePath,[
-      ...graphics,...networkArgs,'--headless=new','--disable-background-networking','--disable-component-update',
+      ...graphics,...networkArgs,'--headless=new','--disable-back-forward-cache','--disable-background-networking','--disable-component-update',
       '--disable-extensions','--disable-sync','--no-first-run','--no-default-browser-check',
       '--remote-debugging-port=0','--remote-debugging-address=127.0.0.1',`--user-data-dir=${data}`,
       'about:blank',
