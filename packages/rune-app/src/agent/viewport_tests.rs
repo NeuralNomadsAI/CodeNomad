@@ -3081,9 +3081,15 @@ fn expanded_dock_with_timeline_banner_case(reduced_motion: bool) {
             "{label}: rail width {} must match {RAIL_WIDTH}",
             rail[2]
         );
+        let rtl = rune_theme_codenomad::catalogue::direction(crate::strings::locale()) == "rtl";
+        let abuts = if rtl {
+            (rail[0] + rail[2] - history[0]).abs() <= 1.0 && rail[0] >= -0.5
+        } else {
+            (rail[0] - (history[0] + history[2])).abs() <= 1.0 && rail[0] + rail[2] <= 800.5
+        };
         assert!(
-            (rail[0] - (history[0] + history[2])).abs() <= 1.0 && rail[0] + rail[2] <= 800.5,
-            "{label}: rail horizontal placement {rail:?} must abut history {history:?} inside viewport"
+            abuts,
+            "{label}: rail horizontal placement {rail:?} must abut history {history:?} inside viewport (rtl={rtl})"
         );
     };
     let assert_rail_clickable = |rt: &mut Runtime<State>, rail: [f32; 4], label: &str| {
