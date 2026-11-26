@@ -48,6 +48,7 @@ fn open_window(s: &mut State, providers: bool) {
         let target = providers::Target::capture(s);
         let mut prefs = host.shared.borrow_mut();
         prefs.provider_target = target;
+        prefs.missions.capture_opener(s);
         prefs.open_providers = true;
     }
     if let Some((window, token, request)) = &host.window
@@ -78,6 +79,7 @@ fn open_window(s: &mut State, providers: bool) {
     {
         let mut prefs = host.shared.borrow_mut();
         prefs.provider_target = target;
+        prefs.missions.capture_opener(s);
         prefs.open_providers = providers;
         prefs
             .memory

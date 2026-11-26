@@ -586,7 +586,7 @@ impl Preferences {
         self.config.draining()
             || self.state.draining()
             || self.server.draining()
-            || (!self.config.read_failed() && self.missions.draining())
+            || self.missions.draining(self.config.read_failed())
     }
     pub fn bind(&mut self, owner: Option<Backend>) -> bool {
         if self.backend.as_ref().map(|b| &b.client_id) == owner.as_ref().map(|b| &b.client_id) {
@@ -954,6 +954,7 @@ impl Preferences {
         let ctx = super::missions::ConfigContext {
             backend: self.backend.as_ref(),
             config_loaded,
+            config_refreshing: self.config.refreshing(),
             config_snapshot: self.config.snapshot.as_ref(),
             config_guard,
             transport_lost: self.transport_lost,
@@ -1086,7 +1087,9 @@ impl Preferences {
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         #[cfg(not(target_arch = "wasm32"))]
         let (poll_config, poll_state, poll_server) = (
-            revalidate_idle || self.config.has_unconfirmed() || self.missions.draining(),
+            revalidate_idle
+                || self.config.has_unconfirmed()
+                || self.missions.needs_config_revalidation(),
             revalidate_idle || self.state.has_unconfirmed(),
             (self.show_server || self.show_environment || self.server.unsettled())
                 && (revalidate_idle || self.server.has_unconfirmed()),

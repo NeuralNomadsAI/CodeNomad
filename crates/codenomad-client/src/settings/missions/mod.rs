@@ -159,14 +159,18 @@ pub async fn read_mission_catalog(
     backend: &Backend,
     workspace: &str,
     session: Option<&str>,
+    pinned_directory: Option<&str>,
 ) -> Result<MissionCatalog> {
     if !valid_id(workspace) || session.is_some_and(|id| !valid_id(id)) {
         return Err("Invalid mission catalog Location".into());
     }
-    let location = if let Some(session) = session {
-        Some(super::session_directory(backend, workspace, session).await?)
-    } else {
-        None
+    let location = match pinned_directory {
+        Some(dir) if crate::absolute_server_path(dir) => Some(dir.to_owned()),
+        Some(_) => return Err("Invalid mission catalog Location".into()),
+        None => match session {
+            Some(session) => Some(super::session_directory(backend, workspace, session).await?),
+            None => None,
+        },
     };
     let directory = location.as_deref();
     let base = format!("{}workspaces/{workspace}/instance/api", backend.base);

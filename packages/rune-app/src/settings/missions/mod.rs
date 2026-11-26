@@ -119,7 +119,17 @@ impl Missions {
             || (!prefs.missions.defaults.writing()
                 && !defaults::defaults_valid(prefs.config_loaded(), prefs.saved(Owner::Config)));
         let catalog_demanded = active && !config_disabled;
-        let catalog_changed = self.catalog.poll(online_target, catalog_demanded, wake);
+        let open_epoch = prefs.missions.open_epoch();
+        let (catalog_changed, catalog_dir) = self.catalog.poll(
+            online_target,
+            prefs.missions.pinned_directory(),
+            open_epoch,
+            catalog_demanded,
+            wake,
+        );
+        if let Some(dir) = catalog_dir {
+            prefs.missions.pin_directory(dir);
+        }
         let depth_changed = if active {
             let can_retry = prefs.can_retry();
             let transport_lost = prefs.is_transport_lost();

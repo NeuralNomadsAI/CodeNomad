@@ -61,7 +61,12 @@ pub(super) fn build_agent_picker<S: 'static>(
         values.push(Some(saved.to_owned()));
     }
     for agent in available {
-        labels.push(agent.id.clone());
+        let label = if agent.id == native || labels.contains(&agent.id) {
+            format!("{} · {}", agent.id, t("missions.control.execution.agent"))
+        } else {
+            agent.id.clone()
+        };
+        labels.push(label);
         values.push(Some(agent.id.clone()));
     }
     let current_index = current_agent
@@ -232,7 +237,12 @@ pub(super) fn build_variant_picker<S: 'static>(
         values.push(Some(saved.to_owned()));
     }
     for variant in available {
-        labels.push(variant.clone());
+        let label = if variant == native || labels.contains(variant) {
+            format!("{variant} · {}", t("missions.control.execution.variant"))
+        } else {
+            variant.clone()
+        };
+        labels.push(label);
         values.push(Some(variant.clone()));
     }
     let current_index = current_variant

@@ -1,13 +1,14 @@
 //! Persistent Missions write state stored on `Preferences` and its config-bridge helpers.
 use super::{defaults, depth, library};
 use crate::{backend::Backend, settings::providers::Target};
-use codenomad_client::settings::missions::MissionPreferenceExpectation;
+use codenomad_client::{absolute_server_path, settings::missions::MissionPreferenceExpectation};
 use rune::Waker;
 use serde_json::Value;
 
 pub(in crate::settings) struct ConfigContext<'a> {
     pub backend: Option<&'a Backend>,
     pub config_loaded: bool,
+    pub config_refreshing: bool,
     pub config_snapshot: Option<&'a Value>,
     pub config_guard: Option<(u64, u64)>,
     pub transport_lost: bool,
@@ -25,8 +26,15 @@ pub(in crate::settings) struct ConfigEffects {
 
 impl ConfigEffects {
     fn merge(&mut self, other: Self) {
-        if other.applied.is_some() {
-            self.applied = other.applied;
+        // When two independent writes settle in the same poll, neither ACK order is proven;
+        // invalidate Owner::Config so one authoritative GET publishes the latest server state.
+        match (&self.applied, other.applied) {
+            (Some(_), Some(_)) => {
+                self.applied = None;
+                self.invalidate = true;
+            }
+            (None, Some(applied)) => self.applied = Some(applied),
+            (_, None) => {}
         }
         self.invalidate |= other.invalidate;
         self.revalidate_transport |= other.revalidate_transport;
@@ -42,13 +50,37 @@ pub(in crate::settings) struct Shared {
     pub(super) defaults: defaults::State,
     pub(super) library: library::State,
     pub(super) depth: depth::State,
+    open_epoch: u64,
+    pinned_directory: Option<String>,
 }
 
 impl Shared {
+    pub(in crate::settings) fn capture_opener(&mut self, s: &crate::State) {
+        self.open_epoch = self.open_epoch.wrapping_add(1);
+        self.pinned_directory = capture_opener_directory(s);
+    }
+
+    pub(super) fn open_epoch(&self) -> u64 {
+        self.open_epoch
+    }
+
+    pub(super) fn pinned_directory(&self) -> Option<&str> {
+        self.pinned_directory.as_deref()
+    }
+
+    pub(super) fn pin_directory(&mut self, directory: String) {
+        if self.pinned_directory.is_none() && absolute_server_path(&directory) {
+            self.pinned_directory = Some(directory);
+        }
+    }
+
     pub(in crate::settings) fn rebind(&mut self, same_address: bool) {
         self.defaults.rebind(same_address);
         self.library.rebind(same_address);
         self.depth.rebind(same_address);
+        if !same_address {
+            self.pinned_directory = None;
+        }
     }
 
     pub(in crate::settings) fn suspend_reads(&mut self) {
@@ -56,8 +88,13 @@ impl Shared {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(in crate::settings) fn draining(&self) -> bool {
-        self.defaults.draining() || self.library.pending() || self.depth.saving()
+    pub(in crate::settings) fn draining(&self, config_read_failed: bool) -> bool {
+        self.depth.saving() || self.library.pending() || self.defaults.draining(config_read_failed)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::settings) fn needs_config_revalidation(&self) -> bool {
+        self.library.pending() || self.defaults.needs_config_revalidation()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -87,7 +124,19 @@ impl Shared {
         active: bool,
         wake: &Waker,
     ) -> bool {
-        self.depth.poll(target, transport_lost, active, wake)
+        let pinned = self.pinned_directory.as_deref();
+        let (changed, resolved) = self.depth.poll(
+            target,
+            pinned,
+            self.open_epoch,
+            transport_lost,
+            active,
+            wake,
+        );
+        if let Some(dir) = resolved {
+            self.pin_directory(dir);
+        }
+        changed
     }
 
     pub(in crate::settings) fn start_defaults_reload(
@@ -135,4 +184,22 @@ impl Shared {
     ) -> bool {
         self.library.start_reset(ctx, owner, expected, wake)
     }
+}
+
+fn capture_opener_directory(s: &crate::State) -> Option<String> {
+    if let Some((_, directory)) = crate::git::file_link_scope(s)
+        && absolute_server_path(directory)
+    {
+        return Some(directory.to_owned());
+    }
+    if let Some(launcher) = s.screen.launcher()
+        && crate::workspace::active_session(s).is_none()
+        && let Some(project) = launcher.project.as_ref()
+        && absolute_server_path(&project.path)
+    {
+        return Some(project.path.clone());
+    }
+    crate::settings::bound_backend(s)
+        .and_then(|backend| backend.session_directory)
+        .filter(|path| absolute_server_path(path))
 }

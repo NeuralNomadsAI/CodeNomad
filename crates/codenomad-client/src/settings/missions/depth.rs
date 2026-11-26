@@ -104,7 +104,7 @@ pub async fn read_subagent_depth(
     let value = read_json(response)
         .await
         .map_err(|_| SubagentDepthError::Failed)?;
-    parse_subagent_depth(&value, directory).ok_or(SubagentDepthError::Failed)
+    parse_subagent_depth(&value).ok_or(SubagentDepthError::Failed)
 }
 
 pub async fn set_subagent_depth(
@@ -150,16 +150,14 @@ fn parse_safe_u64(value: &Value, min: u64) -> Option<u64> {
         .filter(|&n| n >= min && n <= MAX_SAFE_INTEGER)
 }
 
-fn parse_subagent_depth(value: &Value, requested_directory: &str) -> Option<SubagentDepthSnapshot> {
+fn parse_subagent_depth(value: &Value) -> Option<SubagentDepthSnapshot> {
     let map = value.as_object()?;
     let location = map.get("location")?;
     if location.get("workspaceID").is_some() {
         return None;
     }
     let directory = location.get("directory")?.as_str()?.to_owned();
-    if !crate::absolute_server_path(&directory)
-        || !crate::same_server_path(requested_directory, &directory)
-    {
+    if !crate::absolute_server_path(&directory) {
         return None;
     }
     let capability = match map.get("capability")? {
@@ -239,7 +237,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn subagent_depth_rejects_mismatched_location_and_bad_expectation() {
+    fn subagent_depth_rejects_invalid_location_bounds_and_bad_expectation() {
         let valid = json!({
             "location": {"directory": "/repo"},
             "capability": {"minimum": 0, "maximum": 10, "default": 2},
@@ -254,10 +252,18 @@ mod tests {
                 "emptyExperimental": false
             }
         });
-        assert!(parse_subagent_depth(&valid, "/repo").is_some());
-        assert!(parse_subagent_depth(&valid, "/other").is_none());
+        assert!(parse_subagent_depth(&valid).is_some());
+        let mut relative = valid.clone();
+        relative["location"]["directory"] = json!("relative/path");
+        assert!(parse_subagent_depth(&relative).is_none());
+        let mut with_ws = valid.clone();
+        with_ws["location"]["workspaceID"] = json!("foreign");
+        assert!(parse_subagent_depth(&with_ws).is_none());
+        let mut inverted = valid.clone();
+        inverted["capability"] = json!({"minimum": 2, "maximum": 1});
+        assert!(parse_subagent_depth(&inverted).is_none());
         let mut bad_etag = valid.clone();
         bad_etag["project"]["expectation"] = json!("not-hex");
-        assert!(parse_subagent_depth(&bad_etag, "/repo").is_none());
+        assert!(parse_subagent_depth(&bad_etag).is_none());
     }
 }

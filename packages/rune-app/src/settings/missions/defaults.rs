@@ -177,7 +177,14 @@ impl State {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn draining(&self) -> bool {
+    pub(super) fn draining(&self, config_read_failed: bool) -> bool {
+        self.write_flight.is_some()
+            || self.delete_flight.is_some()
+            || (!config_read_failed && !self.needs_reload && !self.queued.is_empty())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn needs_config_revalidation(&self) -> bool {
         self.write_flight.is_some()
             || self.delete_flight.is_some()
             || (!self.needs_reload && !self.queued.is_empty())
@@ -410,6 +417,7 @@ impl State {
         // Wait for Preferences to publish any completed ACK/reload before popping the next edit.
         if effects.applied.is_none()
             && !effects.invalidate
+            && !ctx.config_refreshing
             && self.write_flight.is_none()
             && self.in_flight_edit.is_none()
             && !self.needs_reload

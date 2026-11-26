@@ -37,9 +37,29 @@ type ReadFlight = (
 );
 type SaveFlight = Receiver<Result<(), SubagentDepthError>>;
 
+fn confirmed_depth_value(snapshot: Option<&SubagentDepthSnapshot>) -> String {
+    snapshot
+        .and_then(|s| s.project.as_ref())
+        .and_then(|p| p.depth)
+        .map_or_else(String::new, |d| d.to_string())
+}
+
+fn valid_depth_choice(snapshot: &SubagentDepthSnapshot, value: &str) -> bool {
+    let (Some(capability), Some(_)) = (&snapshot.capability, &snapshot.project) else {
+        return false;
+    };
+    if value.is_empty() {
+        return true;
+    }
+    value
+        .parse::<u64>()
+        .ok()
+        .is_some_and(|d| d >= capability.minimum && capability.maximum.is_none_or(|max| d <= max))
+}
+
 #[derive(Default)]
 pub(super) struct State {
-    scope: Option<(String, Option<String>)>,
+    scope: Option<(String, u64)>,
     authority: u64,
     seen_revision: Option<u64>,
     read_started_revision: Option<u64>,
@@ -215,6 +235,7 @@ impl State {
                     self.seen_revision = None;
                 }
                 Err(SubagentDepthError::Unsupported) => {
+                    self.draft = confirmed_depth_value(self.snapshot.as_ref());
                     self.dirty = false;
                     self.queued = None;
                     self.phase = Phase::Unsupported;
@@ -233,35 +254,51 @@ impl State {
     pub(super) fn poll(
         &mut self,
         target: Option<&Target>,
+        pinned_directory: Option<&str>,
+        open_epoch: u64,
         transport_lost: bool,
         active: bool,
         wake: &rune::Waker,
-    ) -> bool {
-        let (mut changed, _) = self.poll_save_only(transport_lost);
+    ) -> (bool, Option<String>) {
+        let mut changed = false;
+        let mut resolved_directory = None;
         let Some(target) = target else {
+            let (save_changed, _) = self.poll_save_only(transport_lost);
+            changed |= save_changed;
             // Preserve scope, snapshot, and Uncertain state when the panel closes with no target.
             if self.read_flight.is_some() || self.seen_revision.is_some() {
                 self.suspend();
                 changed = true;
             }
-            return changed;
+            return (changed, None);
         };
 
         let (backend, workspace, authority, _) = target.stats_source();
         let (_, session) = target.location();
-        let scope = (workspace.to_owned(), session.map(str::to_owned));
+        let scope = (workspace.to_owned(), open_epoch);
+        // Check scope and authority BEFORE consuming any in-flight PUT receipt.
         if self.scope.as_ref() != Some(&scope) {
-            *self = Self {
-                scope: Some(scope),
-                authority,
-                ..Self::default()
-            };
+            let keep_same_checkout = self.scope.as_ref().is_some_and(|(w, _)| w == workspace)
+                && self.snapshot.as_ref().is_some_and(|s| {
+                    pinned_directory.is_none_or(|dir| same_server_path(dir, &s.directory))
+                })
+                && (self.phase == Phase::Uncertain || self.save_flight.is_some());
+            if keep_same_checkout {
+                self.scope = Some(scope);
+                self.suspend();
+            } else {
+                *self = Self {
+                    scope: Some(scope),
+                    authority,
+                    ..Self::default()
+                };
+            }
             changed = true;
         } else if self.authority != authority {
             self.authority = authority;
             self.seen_revision = None;
             self.queued = None;
-            if self.phase == Phase::Saving {
+            if self.phase == Phase::Saving || self.save_flight.is_some() {
                 self.save_flight = None;
                 self.pending_save = false;
                 self.phase = Phase::Uncertain;
@@ -274,7 +311,7 @@ impl State {
         }
 
         if transport_lost || !target.online() {
-            if self.phase == Phase::Saving {
+            if self.phase == Phase::Saving || self.save_flight.is_some() {
                 self.save_flight = None;
                 self.phase = Phase::Uncertain;
                 self.pending_save = false;
@@ -285,8 +322,11 @@ impl State {
                 self.suspend();
                 changed = true;
             }
-            return changed;
+            return (changed, None);
         }
+
+        let (save_changed, _) = self.poll_save_only(false);
+        changed |= save_changed;
 
         let revision = target.revision().wrapping_add(self.manual_epoch);
         if let Some(result) = self
@@ -306,15 +346,13 @@ impl State {
             } else {
                 match result {
                     Ok(snapshot) => {
-                        let fresh = snapshot
-                            .project
-                            .as_ref()
-                            .and_then(|p| p.depth)
-                            .map_or_else(String::new, |d| d.to_string());
+                        resolved_directory = Some(snapshot.directory.clone());
+                        let fresh = confirmed_depth_value(Some(&snapshot));
                         let queued = self.queued.take().filter(|queued| {
                             queued.authority == self.authority
                                 && same_server_path(&queued.directory, &snapshot.directory)
                                 && queued.base == fresh
+                                && valid_depth_choice(&snapshot, &queued.value)
                         });
                         self.snapshot = Some(snapshot);
                         self.draft = fresh;
@@ -395,7 +433,7 @@ impl State {
                 self.suspend();
                 changed = true;
             }
-            return changed;
+            return (changed, resolved_directory);
         }
 
         if self.read_flight.is_none()
@@ -409,6 +447,9 @@ impl State {
             let backend = backend.clone();
             let workspace = workspace.to_owned();
             let session = session.map(str::to_owned);
+            let pinned = pinned_directory
+                .map(str::to_owned)
+                .or_else(|| self.snapshot.as_ref().map(|s| s.directory.clone()));
             let wake = wake.clone();
             self.seen_revision = Some(revision);
             self.read_started_revision = Some(revision);
@@ -417,9 +458,13 @@ impl State {
             self.read_flight = Some((cancel, inbox));
             platform::spawn(async move {
                 let task = async {
-                    let directory =
-                        resolve_workspace_directory(&backend, &workspace, session.as_deref())
-                            .await?;
+                    let directory = match pinned {
+                        Some(directory) => directory,
+                        None => {
+                            resolve_workspace_directory(&backend, &workspace, session.as_deref())
+                                .await?
+                        }
+                    };
                     read_subagent_depth(&backend, &workspace, &directory).await
                 };
                 if let Some(result) = platform::reads::cancellable(&cancelled, task).await
@@ -430,7 +475,7 @@ impl State {
             });
             changed = true;
         }
-        changed
+        (changed, resolved_directory)
     }
 }
 

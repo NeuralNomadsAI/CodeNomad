@@ -45,6 +45,7 @@ pub(super) struct State {
     needs_reload: bool,
     reconciliation_pending: bool,
     flight: Option<Receiver<Reply>>,
+    flight_is_reload: bool,
 }
 
 pub(super) fn raw_models(snapshot: Option<&Value>) -> Option<&Value> {
@@ -61,6 +62,13 @@ impl State {
     pub(super) fn rebind(&mut self, same_address: bool) {
         if !same_address {
             *self = Self::default();
+            return;
+        }
+        // Cancel stale reload GETs across reconnect, while keeping in-flight mutations as barriers.
+        if self.flight_is_reload {
+            self.flight = None;
+            self.flight_is_reload = false;
+            self.pending_label = None;
         }
     }
 
@@ -122,6 +130,7 @@ impl State {
         let (out, inbox) = bounded(1);
         let wake = wake.clone();
         self.flight = Some(inbox);
+        self.flight_is_reload = false;
         platform::spawn(async move {
             let outcome = patch_mission_preferences(
                 &backend,
@@ -163,6 +172,7 @@ impl State {
         let (out, inbox) = bounded(1);
         let wake = wake.clone();
         self.flight = Some(inbox);
+        self.flight_is_reload = false;
         platform::spawn(async move {
             let outcome = patch_mission_preferences(
                 &backend,
@@ -199,6 +209,7 @@ impl State {
         let (out, inbox) = bounded(1);
         let wake = wake.clone();
         self.flight = Some(inbox);
+        self.flight_is_reload = true;
         platform::spawn(async move {
             let snapshot = Owner::Config.read(&backend).await.ok();
             if out.send(Reply::Reload { snapshot, guard }).await.is_ok() {
@@ -215,6 +226,7 @@ impl State {
             return effects;
         };
         self.flight = None;
+        self.flight_is_reload = false;
         self.pending_label = None;
         match reply {
             Reply::Remove { outcome, guard } | Reply::Reset { outcome, guard } => match outcome {

@@ -263,6 +263,7 @@ fn open(s: &mut State) {
     let target = Target::capture(s);
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.provider_target = target;
+    prefs.missions.capture_opener(s);
     prefs
         .memory
         .show(s.settings.web.section == Section::General);
