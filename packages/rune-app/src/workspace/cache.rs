@@ -99,6 +99,13 @@ impl Cache {
             files.event(event.clone());
             delivered = true;
         }
+        if matches!(
+            event,
+            codenomad_client::transport::WorkspaceEvent::Stopped { .. }
+        ) && let Some(agent) = &mut self.agent
+        {
+            delivered |= agent.workspace_stopped(target);
+        }
         delivered
     }
 
@@ -241,6 +248,10 @@ impl Cache {
         self.transcript_display.evict_rendered();
     }
     pub fn navigation_blocked(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        if self.phase == Phase::RestoreFailed {
+            return false;
+        }
         self.composer.blocks_navigation()
             || self
                 .agent

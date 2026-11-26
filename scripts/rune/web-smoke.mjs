@@ -772,7 +772,7 @@ try {
           assert(Math.abs(backingWidth-width*measured.viewport.dpr)<=1 && Math.abs(backingHeight-height*measured.viewport.dpr)<=1)
           assert.equal(measured.android.touchScroll.moved,true,'Physical touch dispatch must move the portrait transcript')
           measured.live=await mobileLive({page,context,url,messages,revoke:control,
-            eventSources:()=>eventSource,workspaces:policy.workspaces,fromLink:!values['same-origin-pairing'],tap})
+            eventSources:()=>eventSource,workspaces:policy.workspaces,policy,fromLink:!values['same-origin-pairing'],tap})
          }
          assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
         assert.equal(errors.length, 0, 'Web app must initialize and handle multiline input without JS exceptions')

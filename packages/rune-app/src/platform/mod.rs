@@ -15,6 +15,8 @@ pub(crate) mod notifications_web;
 pub(crate) use notifications_web as notifications;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod pairing;
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) mod pairing_state;
 pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
