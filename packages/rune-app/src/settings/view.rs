@@ -39,7 +39,7 @@ pub(super) struct Window {
     token: Option<Rc<Cell<bool>>>,
     close_request: Option<Rc<CloseRequest>>,
     confirm_close: Option<CloseConfirm>,
-    after_palette_save: Option<AfterPaletteSave>,
+    after_palette_save: Option<(u64, AfterPaletteSave)>,
     closing: bool,
     general: super::general::Controls,
     transcript_picker: Cell<Option<super::TranscriptRow>>,
@@ -153,9 +153,10 @@ impl Window {
         {
             self.general = general;
             self.section = Section::General;
-            let saving = self.general.busy(&self.shared.borrow());
+            let prefs = self.shared.borrow();
+            let saving = self.general.busy(&prefs);
             if saving {
-                self.after_palette_save = Some(AfterPaletteSave::Close);
+                self.after_palette_save = Some((prefs.binding_epoch(), AfterPaletteSave::Close));
             } else {
                 self.confirm_close = self.general.dirty().then_some(CloseConfirm::Palette);
             }
@@ -192,13 +193,24 @@ impl Window {
         }
     }
 
+    fn can_open_section(&self, prefs: &Preferences, section: Section) -> bool {
+        match section {
+            Section::Stats => super::stats::supported(prefs),
+            Section::ConfigFiles => self.host_support.config_files(prefs),
+            _ => true,
+        }
+    }
+
     fn request_close(&mut self, tx: &mut rune::Tx) {
         if self.config_files.busy() {
             return;
         }
-        if self.general.busy(&self.shared.borrow()) {
-            self.after_palette_save = Some(AfterPaletteSave::Close);
-            return;
+        {
+            let prefs = self.shared.borrow();
+            if self.general.busy(&prefs) {
+                self.after_palette_save = Some((prefs.binding_epoch(), AfterPaletteSave::Close));
+                return;
+            }
         }
         self.info.close();
         {
@@ -383,10 +395,13 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     _ => Section::General,
                 };
                 if next != s.section {
-                    if s.general.busy(&s.shared.borrow()) {
-                        s.after_palette_save = Some(AfterPaletteSave::Section(next));
+                    let prefs = s.shared.borrow();
+                    if s.general.busy(&prefs) {
+                        s.after_palette_save =
+                            Some((prefs.binding_epoch(), AfterPaletteSave::Section(next)));
                         return;
                     }
+                    drop(prefs);
                     if s.general.dirty() {
                         s.pending_section = Some(next);
                         return;

@@ -9,8 +9,10 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             prefs.window_wake = Some(wake);
             if std::mem::take(&mut prefs.open_providers) {
                 if s.section != Section::Providers && s.general.busy(&prefs) {
-                    s.after_palette_save =
-                        Some(super::AfterPaletteSave::Section(Section::Providers));
+                    s.after_palette_save = Some((
+                        prefs.binding_epoch(),
+                        super::AfterPaletteSave::Section(Section::Providers),
+                    ));
                 } else if s.general.dirty() && s.section != Section::Providers {
                     s.pending_section = Some(Section::Providers);
                 } else {
@@ -41,8 +43,10 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 let jump = std::mem::take(&mut prefs.open_providers);
                 if jump && !s.config_files.busy() && s.confirm_close.is_none() && !s.closing {
                     if s.section != Section::Providers && s.general.busy(&prefs) {
-                        s.after_palette_save =
-                            Some(super::AfterPaletteSave::Section(Section::Providers));
+                        s.after_palette_save = Some((
+                            prefs.binding_epoch(),
+                            super::AfterPaletteSave::Section(Section::Providers),
+                        ));
                     } else if s.general.dirty() && s.section != Section::Providers {
                         s.pending_section = Some(Section::Providers);
                     } else {
@@ -78,21 +82,33 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 if !s.general.dirty() {
                     s.pending_section = None;
                 }
+                if let Some((epoch, _)) = s.after_palette_save
+                    && epoch != prefs.binding_epoch()
+                {
+                    s.after_palette_save = None;
+                }
                 if !s.general.busy(&prefs)
-                    && let Some(after) = s.after_palette_save.take()
+                    && let Some((epoch, after)) = s.after_palette_save.take()
+                    && epoch == prefs.binding_epoch()
                     && !s.general.dirty()
                     && !prefs.palette_save_failed()
                 {
-                    drop(prefs);
                     match after {
                         super::AfterPaletteSave::Close => {
+                            drop(prefs);
                             s.request_close(tx);
+                            return true;
                         }
                         super::AfterPaletteSave::Section(next) => {
-                            s.switch_section(next);
+                            let allowed = s.can_open_section(&prefs, next);
+                            drop(prefs);
+                            if allowed {
+                                s.switch_section(next);
+                                return true;
+                            }
+                            prefs = s.shared.borrow_mut();
                         }
                     }
-                    return true;
                 }
                 if matches!(
                     s.confirm_close,

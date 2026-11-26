@@ -65,7 +65,7 @@ pub(super) struct Panel {
     shown: bool,
     section: Section,
     pending_section: Option<Section>,
-    after_palette_save: Option<AfterPaletteSave>,
+    after_palette_save: Option<(u64, AfterPaletteSave)>,
     general: super::general::Controls,
     behavior: super::behavior::General,
     memory_help: super::ExternalLink,
@@ -208,15 +208,29 @@ impl Panel {
             self.confirm_config_close = false;
             palette_settled = true;
         }
-        if !self.general.busy(prefs)
-            && let Some(after) = self.after_palette_save.take()
+        if let Some((epoch, _)) = self.after_palette_save
+            && epoch != prefs.binding_epoch()
         {
-            if !self.general.dirty() && !prefs.palette_save_failed() {
-                match after {
-                    AfterPaletteSave::Close => request_close_panel(self, prefs),
-                    AfterPaletteSave::Section(section) => apply_web_section(self, prefs, section),
+            self.after_palette_save = None;
+            palette_settled = true;
+        }
+        if !self.general.busy(prefs)
+            && let Some((epoch, after)) = self.after_palette_save.take()
+            && epoch == prefs.binding_epoch()
+            && !self.general.dirty()
+            && !prefs.palette_save_failed()
+        {
+            match after {
+                AfterPaletteSave::Close => {
+                    request_close_panel(self, prefs);
+                    palette_settled = true;
                 }
-                palette_settled = true;
+                AfterPaletteSave::Section(section) => {
+                    if self.can_open_section(prefs, section) {
+                        apply_web_section(self, prefs, section);
+                        palette_settled = true;
+                    }
+                }
             }
         }
         picker_closed
@@ -279,6 +293,15 @@ impl Panel {
     fn local(&self, prefs: &Preferences) -> bool {
         self.scope.local(prefs)
     }
+
+    fn can_open_section(&self, prefs: &Preferences, section: Section) -> bool {
+        match section {
+            Section::Stats => super::stats::supported(prefs),
+            Section::OpenCode | Section::Remote => self.local(prefs),
+            Section::ConfigFiles => self.scope.config_files(prefs),
+            _ => true,
+        }
+    }
 }
 
 pub(super) fn entry(touch: bool) -> El {
@@ -304,11 +327,17 @@ pub(super) fn open_providers(s: &mut State) {
         return;
     }
     if panel.section != Section::Providers {
-        if panel.general.busy(&s.settings.shared.borrow()) {
-            panel.after_palette_save = Some(AfterPaletteSave::Section(Section::Providers));
+        let prefs = s.settings.shared.borrow();
+        if panel.general.busy(&prefs) {
+            panel.after_palette_save = Some((
+                prefs.binding_epoch(),
+                AfterPaletteSave::Section(Section::Providers),
+            ));
+            drop(prefs);
             open(s);
             return;
         }
+        drop(prefs);
         if panel.general.dirty() {
             panel.pending_section = Some(Section::Providers);
             open(s);
@@ -343,7 +372,7 @@ fn request_close_panel(panel: &mut Panel, prefs: &mut Preferences) {
         return;
     }
     if panel.general.busy(prefs) {
-        panel.after_palette_save = Some(AfterPaletteSave::Close);
+        panel.after_palette_save = Some((prefs.binding_epoch(), AfterPaletteSave::Close));
         return;
     }
     if panel.config_files.dirty() {
@@ -475,7 +504,8 @@ pub(super) fn view(
             }
             if section != panel.section {
                 if panel.general.busy(&prefs) {
-                    panel.after_palette_save = Some(AfterPaletteSave::Section(section));
+                    panel.after_palette_save =
+                        Some((prefs.binding_epoch(), AfterPaletteSave::Section(section)));
                     return;
                 }
                 if panel.general.dirty() {
@@ -716,7 +746,8 @@ pub(super) fn view(
                 s.settings.web.confirm_config_close = false;
                 if accept {
                     s.settings.web.config_files = Default::default();
-                    close(s);
+                    let mut prefs = s.settings.shared.borrow_mut();
+                    request_close_panel(&mut s.settings.web, &mut prefs);
                 }
             },
         ));
@@ -727,8 +758,7 @@ pub(super) fn view(
                 if accept {
                     let mut prefs = s.settings.shared.borrow_mut();
                     s.settings.web.general.discard_draft(&mut prefs);
-                    drop(prefs);
-                    close(s);
+                    request_close_panel(&mut s.settings.web, &mut prefs);
                 }
             },
         ));
