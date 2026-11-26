@@ -24,6 +24,7 @@ pub(super) struct Target {
     location_epoch: u64,
     observed: Option<u64>,
     authority: u64,
+    native_authority: u64,
     online: bool,
     native_online: bool,
     stats: [u64; 2],
@@ -34,21 +35,33 @@ pub(super) struct Target {
 
 impl Target {
     pub fn capture(s: &State) -> Option<Self> {
-        let (backend, workspace, session, owned_tab) = if let Some(l) = s.screen.launcher() {
-            let backend = l.connection.clone()?;
-            let workspace = l.project.as_ref()?.id.clone();
-            let session = crate::workspace::active_session(s).map(str::to_owned);
-            (backend, workspace, session, true)
-        } else {
-            let backend = super::bound_backend(s)?;
-            let (workspace, session) = (backend.workspace.clone(), backend.session.clone());
-            (
-                backend,
-                workspace,
-                (!session.is_empty()).then_some(session),
-                false,
-            )
-        };
+        let (backend, workspace, session, owned_tab, native_online) =
+            if let Some(l) = s.screen.launcher() {
+                let backend = l.connection.clone()?;
+                let workspace = l.project.as_ref()?.id.clone();
+                let session = crate::workspace::active_session(s).map(str::to_owned);
+                let native_online = l
+                    .catalogue_watch
+                    .as_ref()
+                    .and_then(|watch| watch.native_connected(&workspace))
+                    .unwrap_or(true);
+                (backend, workspace, session, true, native_online)
+            } else {
+                let backend = super::bound_backend(s)?;
+                let (workspace, session) = (backend.workspace.clone(), backend.session.clone());
+                let native_online = s
+                    .settings
+                    .shared
+                    .borrow()
+                    .is_native_stream_online(&workspace);
+                (
+                    backend,
+                    workspace,
+                    (!session.is_empty()).then_some(session),
+                    false,
+                    native_online,
+                )
+            };
         Some(Self {
             backend,
             workspace,
@@ -58,8 +71,9 @@ impl Target {
             location_epoch: 0,
             observed: None,
             authority: 0,
+            native_authority: 0,
             online: true,
-            native_online: true,
+            native_online,
             stats: [0; 2],
             stats_status: None,
             integrations: 0,
@@ -119,12 +133,16 @@ impl Target {
     pub fn native_transport(&mut self, connected: bool) -> bool {
         if self.native_online != connected {
             self.native_online = connected;
-            self.authority = self.authority.wrapping_add(1);
+            self.native_authority = self.native_authority.wrapping_add(1);
             self.invalidate_location();
             true
         } else {
             false
         }
+    }
+
+    pub(super) fn provider_authority(&self) -> u64 {
+        self.authority.wrapping_add(self.native_authority)
     }
 
     pub(super) fn observe_native_status(&mut self, status: Option<(bool, Option<u64>)>) -> bool {
@@ -226,7 +244,7 @@ impl Target {
     }
 
     pub fn revision(&self) -> u64 {
-        self.authority.wrapping_add(self.revision)
+        self.provider_authority().wrapping_add(self.revision)
     }
 
     pub fn location_epoch(&self) -> u64 {
@@ -281,6 +299,7 @@ impl Target {
             location_epoch: 0,
             observed: None,
             authority: 0,
+            native_authority: 0,
             online: true,
             native_online: true,
             stats: [0; 2],
@@ -360,7 +379,7 @@ impl Catalog {
                     || workspace != &target.workspace
                     || session != &target.session
             })
-            || self.authority != target.authority
+            || self.authority != target.provider_authority()
         {
             self.clear_models();
             self.scope = Some((
@@ -368,7 +387,7 @@ impl Catalog {
                 target.workspace.clone(),
                 target.session.clone(),
             ));
-            self.authority = target.authority;
+            self.authority = target.provider_authority();
             changed = true;
         }
         if let Some(result) = self

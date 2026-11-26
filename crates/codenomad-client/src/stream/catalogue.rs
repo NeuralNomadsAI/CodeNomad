@@ -520,6 +520,16 @@ impl CatalogueWatch {
         std::mem::take(&mut *self.signals.provider_locations.lock().unwrap())
     }
 
+    pub fn native_connected(&self, workspace: &str) -> Option<bool> {
+        self.signals
+            .stats
+            .lock()
+            .unwrap()
+            .status
+            .get(workspace)
+            .map(|(connected, _)| *connected)
+    }
+
     pub fn take_integration_changes(&self) -> (CatalogueChanges, SessionCatalogueChanges) {
         (
             std::mem::take(&mut *self.signals.integrations.lock().unwrap()),

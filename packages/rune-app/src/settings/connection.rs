@@ -71,6 +71,7 @@ pub(crate) fn invalidate(s: &State, owner: codenomad_client::settings::Owner) {
 pub(super) fn provider_stopped(s: &State, workspace: &str) {
     {
         let mut prefs = s.settings.shared.borrow_mut();
+        prefs.set_native_stream_online(workspace, true);
         if prefs
             .provider_target
             .as_ref()
@@ -146,6 +147,7 @@ pub(crate) fn connection_event(
                 return;
             }
             let mut prefs = s.settings.shared.borrow_mut();
+            prefs.set_native_stream_online(workspace_id, *connected);
             if prefs.provider_target.as_mut().is_some_and(|target| {
                 if !target.is_workspace(workspace_id) {
                     return false;
@@ -207,9 +209,6 @@ pub(crate) fn connection_event(
                 provider_transport(s, true);
             }
         }
-        Event::Reconnecting if affects_preferences => {
-            provider_transport(s, false);
-        }
         Event::ConnectionLost => {
             if affects_preferences {
                 s.settings.transcript_filters.close_preset_menu();
@@ -235,6 +234,7 @@ pub(crate) fn connection_event(
                     prefs.revalidate_transport();
                 }
                 prefs.memory.transport(false);
+                prefs.clear_native_stream_state();
                 drop(prefs);
                 provider_transport(s, false);
             }

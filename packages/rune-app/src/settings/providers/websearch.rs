@@ -216,7 +216,7 @@ impl WebSearch {
                     || workspace != &target.workspace
                     || session != &target.session
             })
-            || self.authority != target.authority;
+            || self.authority != target.provider_authority();
         if scope_changed {
             self.reset_read_state(true);
             self.scope_id = Some((
@@ -224,7 +224,7 @@ impl WebSearch {
                 target.workspace.clone(),
                 target.session.clone(),
             ));
-            self.authority = target.authority;
+            self.authority = target.provider_authority();
             self.seen_location = Some(target.location_epoch());
             self.seen_settled_id = Some(obs.settled_id);
             changed = true;

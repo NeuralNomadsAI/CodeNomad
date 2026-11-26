@@ -165,6 +165,7 @@ fn new_runtime(base: &str) -> Runtime<Harness> {
         location_epoch: 0,
         observed: None,
         authority: 0,
+        native_authority: 0,
         online: true,
         native_online: true,
         stats: [0; 2],
@@ -1638,4 +1639,52 @@ fn native_stream_drop_and_reconnect_revoke_write_authority_until_fresh_location_
             "unexpected body: {second_put}"
         );
     });
+}
+
+#[test]
+fn direct_native_outage_persists_before_capture_and_keeps_integrations_authority_isolated() {
+    use codenomad_client::transport::{Event, WorkspaceEvent};
+
+    let root = crate::init();
+    assert!(root.screen.launcher().is_none());
+    let mut backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+    backend.workspace = "ws-direct".into();
+    backend.session = "ses-direct".into();
+    root.settings.shared.borrow_mut().backend = Some(backend);
+
+    // Native drop arrives while Preferences is closed (no Target yet) alongside Reconnecting.
+    crate::settings::connection_event(
+        &root,
+        &Event::Workspace(WorkspaceEvent::NativeStreamStatus {
+            workspace_id: "ws-direct".into(),
+            connected: false,
+        }),
+        true,
+    );
+    crate::settings::connection_event(&root, &Event::Reconnecting, true);
+
+    // Capturing Target during the outage must start offline so writes cannot proceed.
+    let target = Target::capture(&root).unwrap();
+    assert!(!target.online());
+    let initial_integrations_auth = target.integrations_source().3;
+    let initial_provider_auth = target.provider_authority();
+    root.settings.shared.borrow_mut().provider_target = Some(target);
+
+    // Native reconnect without ReadingLane (emits NativeStreamStatus(true) + Reconnecting)
+    // must restore Providers online without bumping Integrations' authority.
+    crate::settings::connection_event(
+        &root,
+        &Event::Workspace(WorkspaceEvent::NativeStreamStatus {
+            workspace_id: "ws-direct".into(),
+            connected: true,
+        }),
+        true,
+    );
+    crate::settings::connection_event(&root, &Event::Reconnecting, true);
+
+    let shared = root.settings.shared.borrow();
+    let target = shared.provider_target.as_ref().unwrap();
+    assert!(target.online());
+    assert_eq!(target.integrations_source().3, initial_integrations_auth);
+    assert_ne!(target.provider_authority(), initial_provider_auth);
 }

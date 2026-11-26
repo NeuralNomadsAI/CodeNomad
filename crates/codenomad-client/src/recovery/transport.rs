@@ -163,11 +163,29 @@ pub(crate) async fn run_with_reading(
             Some(Input::Unavailable(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
                 reader.dirty = true;
+                publish(
+                    &out,
+                    &wake,
+                    Event::Workspace(crate::transport::WorkspaceEvent::NativeStreamStatus {
+                        workspace_id: backend.workspace.clone(),
+                        connected: false,
+                    }),
+                )
+                .await;
                 if reading.is_some() || !reader.historical {
                     publish(&out, &wake, Event::Reconnecting).await;
                 }
             }
             Some(Input::Available(e, v)) if e == epoch => {
+                publish(
+                    &out,
+                    &wake,
+                    Event::Workspace(crate::transport::WorkspaceEvent::NativeStreamStatus {
+                        workspace_id: backend.workspace.clone(),
+                        connected: true,
+                    }),
+                )
+                .await;
                 if reading.is_some() {
                     publish(&out, &wake, Event::AgentHint(true)).await;
                 } else if v > reader.fence && !reader.historical {
