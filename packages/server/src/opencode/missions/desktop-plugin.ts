@@ -13,6 +13,7 @@ import type { MissionDocumentAccess } from "../../missions/mission-document-one-
 import { boundedMissionList } from "../../missions/inspect-view"
 import type { MissionControl } from "../../missions/control"
 import type { NativeJournalRange } from "./native-journal-range"
+import type { NativeCoordinatorGoalRuntime } from "./native-coordinator-goal"
 
 export interface NativeDocumentBusiness {
   select(sessionID: string): Promise<MissionBusinessRoute | undefined>
@@ -22,7 +23,8 @@ export interface NativeDocumentBusiness {
 /** One-time Missions only: the `codenomad-missions/v2` journal. Setup never
  * reads, creates or repairs the retired `authority-v2` namespace. */
 export function desktopPlugin(presenceDirectory: string | readonly string[], humanGate?: NativeHumanAnswerGate, documents?: MissionDocumentAccess,
-  documentBusiness?: NativeDocumentBusiness, range?: NativeJournalRange | (() => NativeJournalRange | undefined)): Plugin.Plugin {
+  documentBusiness?: NativeDocumentBusiness, range?: NativeJournalRange | (() => NativeJournalRange | undefined),
+  coordinatorGoal?: NativeCoordinatorGoalRuntime): Plugin.Plugin {
   return {
     id: "codenomad.missions",
     setup: async ctx => {
@@ -86,7 +88,8 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
             }, beforeTool: async () => {} }
             ordinary = selected
           }, beforeTool: async () => {}, beforeJournalWrite: async () => {} },
-          (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>, humanGate, false, index, documents)
+          (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>, humanGate, false, index, documents, coordinatorGoal)
+          void coordinatorGoal?.reconcileProject(true).catch(() => undefined)
           return async () => { ordinary = undefined; await dispose() }
         } catch (error) { ordinary = undefined; throw error }
       }, console.error, () => retainMissionWork(() => journal.snapshot(), () => journal.readHints(hintsShowWork))) }

@@ -175,7 +175,8 @@ export interface MissionsPluginPolicy {
 
 export async function setupMissionsPlugin(context: MissionsPluginContext, transport?: MissionInputTransport,
   policy?: MissionsPluginPolicy, createManagedRoot?: MissionManagedRootCreation, humanGate?: NativeHumanAnswerGate, business = true,
-  journalIndex?: MissionJournalIndex, documents?: MissionDocumentAccess): Promise<() => Promise<void>> {
+  journalIndex?: MissionJournalIndex, documents?: MissionDocumentAccess,
+  coordinatorGoal?: { reconcileMission(missionID: string): Promise<unknown>; cleanupMission(missionID: string): Promise<void> }): Promise<() => Promise<void>> {
   let active = true
   let notificationOutbox: MissionNotificationOutbox | undefined
   const registrations: Registration[] = []
@@ -238,7 +239,10 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       const session = await context.session.get({ sessionID: input.targetSessionID ?? coordinatorID })
       await validateNativeExecution(context, session.location.directory, input)
     },
-    changed: (missionID, revision) => rpcRegistration?.events.emit("changed", { missionID, revision }) ?? Promise.resolve(),
+    changed: async (missionID, revision) => {
+      await rpcRegistration?.events.emit("changed", { missionID, revision })
+      await coordinatorGoal?.reconcileMission(missionID).catch(() => undefined)
+    },
   })
 
   try {
@@ -332,7 +336,12 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       create: async (input, context) => { assertActive(); return mutationResult(context, () => control.create(parseCreateMissionInput(input))) },
       creationReceipt: async input => { assertActive(); return control.creationReceipt(parseCreateMissionInput(input)) },
       update: async (input, context) => { assertActive(); return mutationResult(context, () => control.update(parseUpdateMissionInput(input))) },
-      delete: async (input, context) => { assertActive(); return mutationResult(context, () => control.delete(parseDeleteMissionInput(input))) },
+      delete: async (input, context) => { assertActive(); return mutationResult(context, async () => {
+        const parsed = parseDeleteMissionInput(input)
+        const result = await control.delete(parsed)
+        await coordinatorGoal?.cleanupMission(parsed.missionID).catch(() => undefined)
+        return result
+      }) },
     }
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       projectControl: tracked(handlers.projectControl),
@@ -771,6 +780,7 @@ const prepareSchema = {
     taskMode: { ...missionTaskModeSchema, description: "Explicit policy wins; omission inherits Missions preferences (type exception, then global), then native." },
     startOnCreation: { type: "boolean", description: "Default false. True only for the user's explicit automatic first-Play request; recovered creation leaves Play explicit." },
     ...missionPreparationOptionsWire,
+    coordinatorGoal: { type: "boolean", description: "Default false. Keep the coordinator active with OpenCode's /goal across turns and restarts." },
   },
   required: ["requestID", "objective", "template"],
   additionalProperties: false,
@@ -837,6 +847,7 @@ const inspectSchema = {
         notes: { type: "string", maxLength: 20_000 },
         profiles: { ...missionProfilesSchema, description: MISSION_PROFILES_DESCRIPTION },
         taskMode: { ...missionTaskModeSchema, description: "Declared task policy for this new mission only; omission inherits Missions preferences (type exception, then global), then native. Independent requires explicit reasoned independent declarations, not a native-helper ban or new-root authorization." },
+        coordinatorGoal: { type: "boolean", description: "Default false. Keep the coordinator active with OpenCode's /goal across turns and restarts." },
       },
       required: ["objective", "template"],
       additionalProperties: false,
@@ -923,6 +934,7 @@ export function parseInspectInput(input: unknown): MissionInspectInput & {
   const start = object(value.start)
   const template = requiredText(start.template, "start.template", 40)
   if (!isTemplate(template)) throw new Error("start.template is unsupported")
+  if (start.coordinatorGoal !== undefined && typeof start.coordinatorGoal !== "boolean") throw new Error("start.coordinatorGoal must be boolean")
   return {
     missionID,
     start: {
@@ -930,6 +942,7 @@ export function parseInspectInput(input: unknown): MissionInspectInput & {
       ...(start.title === undefined ? {} : { title: missionTitle(start.title) }),
       template,
       ...(start.taskMode === undefined ? {} : { taskMode: parseMissionTaskMode(start.taskMode) }),
+      ...(start.coordinatorGoal === undefined ? {} : { coordinatorGoal: start.coordinatorGoal as boolean }),
       notes: optionalBodyText(start.notes, "start.notes", 20_000),
       ...(start.profiles === undefined ? {} : { profiles: parseMissionProfiles(start.profiles) }),
     },
@@ -1016,10 +1029,12 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
   if (!isTemplate(template)) throw new Error("template is unsupported")
   if (value.prepared !== undefined && typeof value.prepared !== "boolean") throw new Error("prepared must be boolean")
   if (value.startOnCreation !== undefined && typeof value.startOnCreation !== "boolean") throw new Error("startOnCreation must be boolean")
+  if (value.coordinatorGoal !== undefined && typeof value.coordinatorGoal !== "boolean") throw new Error("coordinatorGoal must be boolean")
   return {
     ...(value.permissions === undefined ? {} : { permissions: sessionPermissionRules.parse(value.permissions) }),
     ...(value.prepared === undefined ? {} : { prepared: value.prepared as boolean }),
     ...(value.startOnCreation === undefined ? {} : { startOnCreation: value.startOnCreation as boolean }),
+    ...(value.coordinatorGoal === undefined ? {} : { coordinatorGoal: value.coordinatorGoal as boolean }),
     ...(value.preparationOptions === undefined ? {} : { preparationOptions: missionPreparationOptionsSchema.strict().parse(value.preparationOptions) }),
     requestID: requiredText(value.requestID, "requestID", 128),
     ...(value.title === undefined ? {} : { title: missionTitle(value.title) }),

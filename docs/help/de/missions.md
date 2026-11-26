@@ -64,6 +64,10 @@ Kalenderbasierte Zeitplanung benötigt einen expliziten Agenten und ein Modell f
 
 **Automatisch starten** steht außerhalb der Zeitplanung und ist standardmäßig aus. Ausgeschaltet erstellt es eine pausierte Mission für späteres ▶ Starten. Eingeschaltet fordert es den Start nach bestätigter Erstellung mit den üblichen Prüfungen und automatischer Vorbereitung der Zeitplanung an.
 
+### Koordinator mit /goal aktiv halten {#coordinator-goal}
+
+**Koordinator mit /goal aktiv halten** steht für einmalige Missionen bereit und ist standardmäßig aus. Aktiviert setzt der Start OpenCode `/goal` auf dem Koordinator; Pausieren und Fortsetzen der Mission pausieren und setzen das Ziel fort, Abschluss oder Stopp entfernen es. Startet OpenCode während der Ausführung neu, setzt Missions das durch den Neustart pausierte Ziel automatisch fort (bei aktivierten OpenCode-Automationen auch bei geschlossenem CodeNomad); manuelle Pausen, Stillstand und Rundenlimits bleiben unberührt. Status und Steuerung erscheinen in der Missionsübersicht.
+
 ## Zeitplanung {#daily-schedules}
 
 ### Kriterien {#native-scheduling}

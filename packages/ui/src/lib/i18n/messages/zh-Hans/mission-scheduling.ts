@@ -35,6 +35,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.searchSource": "搜索来源",
   "missions.scheduling.error.files": "请输入有效的相对文件路径。",
   "missions.scheduling.startOnCreation": "自动启动",
+  "missions.scheduling.coordinatorGoal": "使用 /goal 保持协调器持续运行",
+  "missions.scheduling.coordinatorGoalHint": "启动后为协调器启用 /goal，并在 OpenCode 重启后自动恢复。手动暂停、停滞或达到轮次上限时会保持暂停。",
   "missions.scheduling.source.now": "一次，现在",
   "missions.settings.effectiveOrigin": "OpenCode 配置文件：",
   "missions.settings.noOrigin": "无文档路径",

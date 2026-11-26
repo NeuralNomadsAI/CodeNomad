@@ -67,6 +67,8 @@ export interface MissionStartInput {
   notes?: string
   profiles?: MissionProfiles
   taskMode?: MissionTaskMode
+  /** Keep the coordinator active with OpenCode's `/goal` across turns and daemon restarts. */
+  coordinatorGoal?: boolean
 }
 
 export interface MissionInspectInput {

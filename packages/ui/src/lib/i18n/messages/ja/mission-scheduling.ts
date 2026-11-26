@@ -35,6 +35,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.searchSource": "ソースを検索",
   "missions.scheduling.error.files": "有効な相対ファイルパスを入力してください。",
   "missions.scheduling.startOnCreation": "自動的に開始",
+  "missions.scheduling.coordinatorGoal": "/goal でコーディネーターを継続実行",
+  "missions.scheduling.coordinatorGoalHint": "開始後にコーディネーターで /goal を有効にし、OpenCode の再起動後も自動で再開します。手動一時停止・停滞・ラウンド上限による停止は一時停止のままになります。",
   "missions.scheduling.source.now": "1 回、今すぐ",
   "missions.settings.effectiveOrigin": "OpenCode 設定ファイル：",
   "missions.settings.noOrigin": "ドキュメントのパスなし",

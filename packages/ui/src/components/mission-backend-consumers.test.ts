@@ -85,7 +85,7 @@ test("recovery admission is remote; detached completion cannot notify the view",
 })
 
 // These routing cases opt out of automatic start; either unexpected opt-in or continuation fails.
-const editorStart = { startOnCreation: () => false, captureStart: (requested: boolean) => {
+const editorStart = { startOnCreation: () => false, coordinatorGoal: () => false, captureStart: (requested: boolean) => {
   if (requested) throw new Error("Unexpected automatic start opt-in")
   return async () => { throw new Error("Unexpected automatic start continuation") }
 }, coordinatorReady: production("./mission-editor.tsx", "coordinatorReady", { coordinatorSessionID: () => undefined }) }

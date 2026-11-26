@@ -22,6 +22,7 @@ import { registerNativeMissionScheduleRuntime } from "./native-mission-schedule-
 import { useNativeMissionDocuments } from "./native-mission-document-access"
 import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 import type { NativeJournalRange } from "./native-journal-range"
+import { registerNativeCoordinatorGoalRuntime } from "./native-coordinator-goal"
 
 export function withNativeRecurrenceRpc(ctx: Plugin.Context, artifacts?: NativeScheduleArtifacts): Plugin.Context["rpc"] {
   const documentInvocation = nativeInvocation()
@@ -96,6 +97,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], art
     const persistent = yield* withNativeRecurrenceRpc(ctx, artifacts).register(CODENOMAD_MISSIONS_RPC,
       forwarding as Parameters<typeof ctx.rpc.register<typeof CODENOMAD_MISSIONS_RPC>>[1]).pipe(Effect.orDie)
     const documentBusiness = yield* registerNativeMissionScheduleRuntime(ctx, artifacts, invocation).pipe(Effect.orDie)
+    const coordinatorGoal = yield* registerNativeCoordinatorGoalRuntime(ctx, invocation).pipe(Effect.orDie)
     const register: typeof ctx.rpc.register = (definition, handlers) => definition.id !== CODENOMAD_MISSIONS_RPC_ID
       ? ctx.rpc.register(definition, handlers)
       : Effect.sync(() => {
@@ -126,7 +128,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], art
       verify: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.verify(input)) }).pipe(Effect.orDie),
     }).pipe(Effect.orDie)
     yield* Effect.acquireRelease(Effect.promise(async () => {
-         try { await run(fromPromise(promisePlugin(presenceDirectory, humanGate, documents, documentBusiness, currentJournalRange)).effect(nativeCtx)) }
+         try { await run(fromPromise(promisePlugin(presenceDirectory, humanGate, documents, documentBusiness, currentJournalRange, coordinatorGoal)).effect(nativeCtx)) }
         catch (error) { await Effect.runPromise(Scope.close(scope, Exit.void)); throw error }
         return scope
     }), owned => Scope.close(owned, Exit.void))

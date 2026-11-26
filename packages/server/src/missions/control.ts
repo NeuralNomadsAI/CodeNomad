@@ -542,6 +542,7 @@ export class MissionControl {
       if (!event || event.type !== "mission.created" || event.requestID !== input.requestID
         || event.objective !== input.objective || event.title !== input.title || event.notes !== input.notes
         || event.template !== input.template || Boolean(event.prepared) !== Boolean(input.prepared)
+        || Boolean(event.coordinatorGoal) !== Boolean(input.coordinatorGoal)
         || !sameMissionProfiles(event.profiles, input.profiles) || (event.taskMode ?? "native") !== (input.taskMode ?? "native")
         || !isDeepStrictEqual(event.preparedBy, input.preparedBy) || !isDeepStrictEqual(event.creationDefaults, input.creationDefaults)
         || input.coordinatorSessionID !== undefined && event.coordinator.sessionID !== input.coordinatorSessionID
@@ -647,6 +648,7 @@ export class MissionControl {
         || !isDeepStrictEqual(existingEvent.preparedBy, input.preparedBy)
         || !isDeepStrictEqual(existingEvent.creationDefaults, input.creationDefaults)
         || Boolean(existingEvent.startOnCreation) !== Boolean(input.startOnCreation)
+        || Boolean(existingEvent.coordinatorGoal) !== Boolean(input.coordinatorGoal)
         || (input.coordinatorSessionID !== undefined && existingEvent.coordinator.sessionID !== input.coordinatorSessionID)) {
         // Healthy original creation evidence rejects the changed request before
         // coordinator lookup/creation, profile writes or journal publication.
@@ -734,6 +736,7 @@ export class MissionControl {
       ...(input.prepared === undefined ? {} : { prepared: input.prepared }),
       ...(input.preparedBy === undefined ? {} : { preparedBy: { ...input.preparedBy } }),
       ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation }),
+      ...(input.coordinatorGoal ? { coordinatorGoal: true } : {}),
       coordinator: { sessionID: coordinator.id, title: coordinator.title ?? "Mission coordinator", location: coordinator.location },
       createdAt,
     })
@@ -1252,6 +1255,7 @@ export class MissionControl {
         notes: input.start.notes,
         template: input.start.template,
         taskMode: input.start.taskMode,
+        ...(input.start.coordinatorGoal ? { coordinatorGoal: true } : {}),
         ...(input.start.profiles === undefined ? {} : { profiles: input.start.profiles }),
         ...(resolved.creationDefaults === undefined ? {} : { creationDefaults: resolved.creationDefaults }),
         coordinator: {
@@ -1386,6 +1390,7 @@ export class MissionControl {
         || created.title !== input.title || created.notes !== input.notes || created.template !== input.template
         || !sameChoices
         || Boolean(created.startOnCreation) !== Boolean(input.startOnCreation)
+        || Boolean(created.coordinatorGoal) !== Boolean(input.coordinatorGoal)
         || created.preparedBy?.missionID !== source?.id || created.preparedBy?.coordinatorSessionID !== sessionID) {
         throw missionRecoveryControlError("prepare-conflict")
       }

@@ -68,6 +68,10 @@ Calendar-backed scheduling requires an explicit agent and model for the coordina
 
 **Start automatically** is outside Scheduling and off by default. Leave it off to create a paused Mission, then use ▶ **Start** in the header. Turn it on to request Start after creation is confirmed, with the ordinary checks and automatic scheduling preparation.
 
+### Keep coordinator active with /goal {#coordinator-goal}
+
+**Keep coordinator active with /goal** is available for one-time Missions and off by default. When enabled, starting the Mission arms OpenCode `/goal` on the coordinator, pausing and resuming the Mission pauses and resumes that goal, and finishing or stopping clears it. If OpenCode restarts while the Mission is running, Missions resumes the restart-paused goal automatically (including when CodeNomad is closed, if OpenCode automations are enabled), while leaving manual, stall, or round-limit pauses untouched. The live goal status and controls appear in the Mission overview.
+
 ## Scheduling {#daily-schedules}
 
 ### Criteria {#native-scheduling}

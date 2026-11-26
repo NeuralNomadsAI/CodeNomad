@@ -56,6 +56,7 @@ export async function prepareMissionOneTimeDocument(access: MissionDocumentAcces
       // One-time admission resolves the owning backend/profile afresh at each send.
       profileID: null, executionHost: null, roots: [{ mode: "directory-only", directory: location.directory }],
       watchedConversationIDs: input.watchedConversationIDs ?? options.watchedConversationIDs,
+      ...(input.coordinatorGoal || options.coordinatorGoal ? { coordinatorGoal: true } : {}),
       launch: { timing: { kind: "immediate" }, condition: null, ends: { maxLaunches: null, afterMs: null, at: null } },
     }, createdAt, current, { creationRequestID: input.requestID, creationDigest: digest,
       ...(input.creationDefaults === undefined ? {} : { creationDefaults: input.creationDefaults }),

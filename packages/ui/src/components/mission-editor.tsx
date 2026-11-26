@@ -196,6 +196,7 @@ export function MissionEditor(props: {
   const deleteManagedSessions = () => deleteSessions
   const deleteSessions = draft?.deleteManagedSessions ?? untrack(() => config.preferences().missionDeleteSessions)
   const [startOnCreation, setStartOnCreation] = createSignal(Boolean(held?.startOnCreation ?? draft?.startOnCreation))
+  const [coordinatorGoal, setCoordinatorGoal] = createSignal(Boolean(held?.coordinatorGoal ?? draft?.coordinatorGoal ?? original?.coordinatorGoal))
   const [deleteAttempted, setDeleteAttempted] = createSignal(Boolean(draft?.deleteAttempted))
   const [pending, setPending] = createSignal(false)
   const [error, setError] = createSignal("")
@@ -215,6 +216,7 @@ export function MissionEditor(props: {
       setTitleOverride(config.title); setObjective(config.objective); setNotes(config.notes ?? ""); setTemplate(config.template)
       setProfiles(copyMissionProfiles(config.profiles)); setTaskMode(config.taskMode); setWatched(config.watchedConversationIDs)
       setCoordinatorSessionID(config.coordinatorSessionID)
+      setCoordinatorGoal(Boolean(config.coordinatorGoal))
       setCustomProfiles(true); setCustomTaskMode(true)
     }, captureDraft: () => captureDraft(), onSaved: (mission, scheduleID) => props.onSaved(mission, scheduleID) })
   const policy = createMemo(() => { try { return missionSchedulingPolicy(schedule.scheduling(), schedule.directory()) } catch { return undefined } })
@@ -292,6 +294,7 @@ export function MissionEditor(props: {
     customProfiles: customProfiles(), taskMode: taskMode(), customTaskMode: customTaskMode(), defaults: defaults(),
     defaultsReady: defaultsReady(), draftId, selectedModel: selectedModel(), savedBaselines: savedBaselines(), optionsOpen: true, profileDetailsOpen: profilesFold?.open ?? profilesOpen(),
     requestId, lastPayload, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(), startOnCreation: startOnCreation(),
+    coordinatorGoal: coordinatorGoal(),
     ...(coordinatorSessionID() !== undefined ? { coordinatorSessionID: coordinatorSessionID() } : {}),
     deleteAutoSubmitted: kind === "delete" && !autoSubmit(), deleteError: kind === "delete" ? error() : undefined,
     scheduling: structuredClone(schedule.scheduling()), scheduleDocument: schedule.document(),
@@ -347,6 +350,7 @@ export function MissionEditor(props: {
       const payload = structuralLocked() ? { ...stored, objective: objective().trim(), notes: notes() }
         : { title: submittedTitle(), objective: objective().trim(), notes: notes(), template: template(),
         watchedConversationIDs: ids, profiles: selected, taskMode: taskMode() ?? "native", launch: policy()!,
+        ...(mode() === "once" && coordinatorGoal() ? { coordinatorGoal: true } : {}),
         ...(coordinatorSessionID() ? { coordinatorSessionID: coordinatorSessionID() } : {}) }
       const serialized = JSON.stringify(payload)
       if (lastPayload && lastPayload !== serialized) requestId = generateUUID()
@@ -387,6 +391,7 @@ export function MissionEditor(props: {
         const heldModel = submittedMissionModel(existingHold.requestId)
         setSelectedModel(heldModel); resetDraftBaselines(heldModel)
         setStartOnCreation(!!existingHold.startOnCreation)
+        setCoordinatorGoal(!!existingHold.coordinatorGoal)
         setWatched([...(existingHold.watchedConversationIDs ?? [])])
         setShownRequestId(existingHold.requestId)
       }
@@ -399,6 +404,7 @@ export function MissionEditor(props: {
     if (!current()) return
     const fields = { objective: objective().trim(), notes: notes(), template: template(),
       ...(kind === "create" ? { title: submittedTitle(), watchedConversationIDs: [...watchedIDs()] } : {}),
+      ...(kind === "create" && coordinatorGoal() ? { coordinatorGoal: true } : {}),
       ...(kind === "create" && taskMode() !== undefined ? { taskMode: taskMode() } : {}),
       ...(kind === "create" && effectiveProfiles() !== undefined ? { profiles: copyMissionProfiles(effectiveProfiles()) } : {}) }
     const payload = kind === "create" ? missionCreationPayloadIdentity({ ...fields, directory })
@@ -544,6 +550,11 @@ export function MissionEditor(props: {
     <Show when={kind === "create"}><label class="mission-create-autostart">
       <input type="checkbox" checked={startOnCreation()} disabled={structuralLocked()}
         onChange={event => setStartOnCreation(event.currentTarget.checked)} />{t("missions.scheduling.startOnCreation")}
+    </label></Show>
+    <Show when={mode() === "once" && (kind === "create" || !structuralLocked())}><label class="mission-create-autostart">
+      <input type="checkbox" checked={coordinatorGoal()} disabled={structuralLocked()}
+        onChange={event => setCoordinatorGoal(event.currentTarget.checked)} />
+      <span>{t("missions.scheduling.coordinatorGoal")}<SettingsInfoTip text={t("missions.scheduling.coordinatorGoalHint")} /></span>
     </label></Show>
     <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()} repository={repository()} paging={sourceChoices.reader} active={isActive}
       capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
