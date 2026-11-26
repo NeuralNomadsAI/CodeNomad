@@ -21,56 +21,51 @@ test('summarizeLatencies computes min, median, p95, max, and total', () => {
   assert.throws(() => summarizeLatencies([-1]))
 })
 
-test('assertSingleMultiplexedSse enforces 1 HTTP/1.1 hub EventSource', () => {
-  const ok = assertSingleMultiplexedSse({
+test('assertSingleMultiplexedSse enforces 1 open HTTP 200 HTTP/1.1 hub EventSource', () => {
+  const base = {
     constructorCalls: 1,
     activeCount: 1,
+    openReadyCount: 1,
     cdpEventSourceRequests: 1,
     protocols: ['http/1.1'],
+    statuses: [200],
+    closedFlags: [false],
     connectionIds: ['hub-1'],
-  })
+  }
+  const ok = assertSingleMultiplexedSse(base)
   assert.deepEqual(ok, {
     constructorCalls: 1,
     activeCount: 1,
+    openReadyCount: 1,
     cdpEventSourceRequests: 1,
     protocol: 'http/1.1',
+    status: 200,
+    closed: false,
     connectionId: 'hub-1',
   })
 
-  assert.throws(() => assertSingleMultiplexedSse({
-    constructorCalls: 7,
-    activeCount: 7,
-    cdpEventSourceRequests: 7,
-    protocols: ['http/1.1'],
-    connectionIds: ['hub-1'],
-  }))
-  assert.throws(() => assertSingleMultiplexedSse({
-    constructorCalls: 1,
-    activeCount: 1,
-    cdpEventSourceRequests: 1,
-    protocols: ['h2'],
-    connectionIds: ['hub-1'],
-  }))
-  assert.throws(() => assertSingleMultiplexedSse({
-    constructorCalls: 1,
-    activeCount: 1,
-    cdpEventSourceRequests: 1,
-    protocols: ['http/1.1'],
-    connectionIds: ['stream-1'],
-  }))
+  assert.throws(() => assertSingleMultiplexedSse({...base, constructorCalls: 7, activeCount: 7, openReadyCount: 7, cdpEventSourceRequests: 7}))
+  assert.throws(() => assertSingleMultiplexedSse({...base, openReadyCount: 0}))
+  assert.throws(() => assertSingleMultiplexedSse({...base, protocols: ['h2']}))
+  assert.throws(() => assertSingleMultiplexedSse({...base, statuses: [500]}))
+  assert.throws(() => assertSingleMultiplexedSse({...base, closedFlags: [true]}))
+  assert.throws(() => assertSingleMultiplexedSse({...base, connectionIds: ['stream-1']}))
 })
 
-test('evaluateConcurrentBatch validates 14 HTTP/1.1 responses and wall budget', () => {
+test('evaluateConcurrentBatch validates 14 distinct CDP requestIds on HTTP/1.1 and wall budget', () => {
   const results = Array.from({length: 14}, (_, i) => ({
     kind: i % 2 === 0 ? 'history-window' : 'worktrees',
     workspaceId: `ws-${Math.floor(i / 2) + 1}`,
+    requestId: `req-${i}`,
     status: 200,
+    cdpStatus: 200,
     ok: true,
     protocol: 'http/1.1',
     durationMs: 10 + i,
   }))
   const summary = evaluateConcurrentBatch(results, {expectedCount: 14, wallMs: 85.4, maxWallMs: 10000})
   assert.equal(summary.requestCount, 14)
+  assert.equal(summary.distinctCdpRequests, 14)
   assert.equal(summary.wallMs, 85.4)
   assert.equal(summary.latencies.minMs, 10)
   assert.equal(summary.latencies.maxMs, 23)
@@ -78,6 +73,18 @@ test('evaluateConcurrentBatch validates 14 HTTP/1.1 responses and wall budget', 
   assert.throws(() => evaluateConcurrentBatch(results, {expectedCount: 14, wallMs: 12000, maxWallMs: 10000}))
   assert.throws(() => evaluateConcurrentBatch(
     [{...results[0], protocol: 'h2'}, ...results.slice(1)],
+    {expectedCount: 14, wallMs: 50},
+  ))
+  assert.throws(() => evaluateConcurrentBatch(
+    [{...results[0], protocol: null}, ...results.slice(1)],
+    {expectedCount: 14, wallMs: 50},
+  ))
+  assert.throws(() => evaluateConcurrentBatch(
+    [{...results[0], requestId: results[1].requestId}, ...results.slice(1)],
+    {expectedCount: 14, wallMs: 50},
+  ))
+  assert.throws(() => evaluateConcurrentBatch(
+    [{...results[0], cdpStatus: 503}, ...results.slice(1)],
     {expectedCount: 14, wallMs: 50},
   ))
 })

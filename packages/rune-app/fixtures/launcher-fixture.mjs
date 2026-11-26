@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
-import {spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {spawnFixtureChild,stopFixtureChild,stopFixtureHandle} from '../../../scripts/native-fixture-guards.mjs'
 import {promisify} from 'node:util'
 import {mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
@@ -556,14 +556,30 @@ try{
     if(gitPanel)await signIn(origin)
     const args=gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'
     client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
+    webState.clientStartedBy=new Date()
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
+  const stopClient=(child,stopped)=>webState.clientUseIpc&&process.platform==='win32'
+    ?stopFixtureHandle(child,stopped,3000,2000)
+    :stopFixtureChild(child,stopped,3000,2000,{group:Boolean(webState.clientGroup),startedBy:webState.clientStartedBy})
   if(!restoreState&&!pendingOpen){
     const budget=webAndroid?Number(process.env.RUNE_ANDROID_CLIENT_BUDGET_MS??300000):web||filesState||gitPanel?300000:120000
     assert(Number.isInteger(budget)&&budget>0&&budget<=300000,'Invalid client deadline')
-    const timer=setTimeout(()=>{expired=true;client.kill()},budget)
-    try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
+    const exited=webState.clientClosed??new Promise((resolve,reject)=>{client.once('close',code=>resolve(code??1));client.once('error',reject)})
+    webState.clientClosed=exited
+    let timer
+    try{
+      const outcome=await Promise.race([
+        exited.then(code=>({timedOut:false,code})),
+        new Promise(resolve=>{timer=setTimeout(()=>resolve({timedOut:true,code:1}),budget)}),
+      ])
+      if(outcome.timedOut){
+        expired=true
+        await stopClient(client,exited).catch(()=>{})
+      }
+      result=outcome.code
+    }finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
   assert.equal(result,0,webState.diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webMoreActions||webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||mobileSessionSearch||historyReturnOnly||webMoreActions?1:webTouchHistory?4:webMissions||webGitImages?2:webSse7Tabs?7:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
@@ -606,7 +622,13 @@ try{
   control?.close()
   for(const gate of gates.values())gate.reject()
   client??=webState.client
-  if(client?.exitCode===null&&client.signalCode===null)client.kill()
+  if(client&&client.exitCode===null&&client.signalCode===null){
+    const closed=webState.clientClosed??new Promise(resolve=>client.once('close',resolve))
+    const stop=webState.clientUseIpc&&process.platform==='win32'
+      ?stopFixtureHandle(client,closed,3000,2000)
+      :stopFixtureChild(client,closed,3000,2000,{group:Boolean(webState.clientGroup),startedBy:webState.clientStartedBy})
+    await stop.catch(()=>{})
+  }
   if(webState.deviceLease){
     await webState.clientClosed
     androidCleanup=await webState.deviceLease.close()

@@ -60,9 +60,17 @@ export async function launchWeb({
     await state.deviceLease.open()
   }
   const useIpc=webMobile||webKeyboard||webSse7Tabs
+  const clientGroup=process.platform!=='win32'
   const launch=useIpc?spawn:spawnFixtureChild
-  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(useIpc?['ipc']:[])]})
+  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},detached:clientGroup,windowsHide:true,stdio:['ignore','pipe','pipe',...(useIpc?['ipc']:[])]})
   state.client=client
+  state.clientUseIpc=useIpc
+  state.clientGroup=clientGroup
+  state.clientStartedBy=new Date()
+  state.clientClosed=new Promise(resolve=>{
+    client.once('close',code=>resolve(code??1))
+    client.once('error',()=>resolve(1))
+  })
   if(webKeyboard)client.on('message',action=>{
     if(action==='reset-keyboard'){
       resetKeyboard()
@@ -82,7 +90,6 @@ export async function launchWeb({
       }catch(error){return {error:String(error.message)}}
     })().then(reply=>{if(client.connected)client.send(reply,()=>{})})
   })
-  if(webAndroid)state.clientClosed=new Promise(resolve=>client.once('close',resolve))
   if(mobile)client.on('message',action=>{
     state.mobileAction=(async()=>{
       try{

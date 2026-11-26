@@ -31,24 +31,35 @@ export function summarizeLatencies(samplesMs) {
 export function assertSingleMultiplexedSse({
   constructorCalls,
   activeCount,
+  openReadyCount,
   cdpEventSourceRequests,
   protocols,
+  statuses,
+  closedFlags,
   connectionIds,
   expectedActive = 1,
 }) {
   assert.equal(constructorCalls, 1, `Expected exactly 1 EventSource constructor call, got ${constructorCalls}`)
   assert.equal(activeCount, expectedActive, `Expected ${expectedActive} active EventSource(s), got ${activeCount}`)
+  assert.equal(openReadyCount, expectedActive, `Expected ${expectedActive} OPEN EventSource(s), got ${openReadyCount}`)
   assert.equal(cdpEventSourceRequests, 1, `Expected exactly 1 CDP /api/events request, got ${cdpEventSourceRequests}`)
   assert(Array.isArray(protocols) && protocols.length === 1, `Expected 1 SSE protocol entry, got ${JSON.stringify(protocols)}`)
   assert.equal(protocols[0], 'http/1.1', `Expected HTTP/1.1 on HTTPS /api/events, got ${protocols[0]}`)
+  assert(Array.isArray(statuses) && statuses.length === 1, `Expected 1 SSE status entry, got ${JSON.stringify(statuses)}`)
+  assert.equal(statuses[0], 200, `Expected HTTP 200 on /api/events, got ${statuses[0]}`)
+  assert(Array.isArray(closedFlags) && closedFlags.length === 1, `Expected 1 SSE closed flag, got ${JSON.stringify(closedFlags)}`)
+  assert.equal(closedFlags[0], false, `Expected /api/events stream to remain open, got closed=${closedFlags[0]}`)
   const uniqueIds = [...new Set(connectionIds)]
   assert.equal(uniqueIds.length, 1, `Expected 1 shared connectionId, got ${JSON.stringify(uniqueIds)}`)
   assert.match(uniqueIds[0], /^hub-\d+$/, `Expected shared hub connectionId, got ${uniqueIds[0]}`)
   return {
     constructorCalls,
     activeCount,
+    openReadyCount,
     cdpEventSourceRequests,
     protocol: protocols[0],
+    status: statuses[0],
+    closed: closedFlags[0],
     connectionId: uniqueIds[0],
   }
 }
@@ -56,15 +67,20 @@ export function assertSingleMultiplexedSse({
 export function evaluateConcurrentBatch(results, {expectedCount, wallMs, maxWallMs = 10000}) {
   assert(Array.isArray(results) && results.length === expectedCount, `Expected ${expectedCount} concurrent responses, got ${results?.length}`)
   assert(Number.isFinite(wallMs) && wallMs >= 0 && wallMs <= maxWallMs, `Concurrent HTTP/1.1 batch exceeded ${maxWallMs} ms (${wallMs} ms)`)
+  const seenRequestIds = new Set()
   for (const item of results) {
     assert.equal(item.status, 200, `Concurrent request ${item.kind} ${item.workspaceId} returned ${item.status}`)
     assert.equal(item.ok, true, `Concurrent request ${item.kind} ${item.workspaceId} payload invalid`)
-    if (item.protocol !== undefined) {
-      assert.equal(item.protocol, 'http/1.1', `Concurrent request ${item.kind} ${item.workspaceId} used ${item.protocol}, expected http/1.1`)
-    }
+    assert(typeof item.requestId === 'string' && item.requestId.length > 0, `Concurrent request ${item.kind} ${item.workspaceId} missing CDP requestId`)
+    assert(!seenRequestIds.has(item.requestId), `Duplicate CDP requestId ${item.requestId} in concurrent batch`)
+    seenRequestIds.add(item.requestId)
+    assert.equal(item.cdpStatus, 200, `Concurrent request ${item.kind} ${item.workspaceId} CDP status ${item.cdpStatus}, expected 200`)
+    assert.equal(item.protocol, 'http/1.1', `Concurrent request ${item.kind} ${item.workspaceId} used ${item.protocol}, expected http/1.1`)
   }
+  assert.equal(seenRequestIds.size, expectedCount, `Expected ${expectedCount} distinct CDP requestIds, got ${seenRequestIds.size}`)
   return {
     requestCount: results.length,
+    distinctCdpRequests: seenRequestIds.size,
     wallMs: Math.round(wallMs * 10) / 10,
     latencies: summarizeLatencies(results.map(r => r.durationMs)),
   }
@@ -152,7 +168,8 @@ async function runBench() {
   const forbidden = []
   const cdpStreams = new Map()
   const cdpSseFrames = []
-  const cdpProtocols = new Map()
+  const cdpBatchRequests = new Map()
+  const cdpRequestIdToBenchId = new Map()
   const openedWorkspaces = []
   let context
 
@@ -175,6 +192,7 @@ async function runBench() {
 
     await page.addInitScript(() => {
       const NativeEventSource = globalThis.EventSource
+      const instances = new Set()
       const probe = {
         constructorCalls: 0,
         activeCount: 0,
@@ -186,9 +204,14 @@ async function runBench() {
         connectionIds: [],
       }
       globalThis.__runeSse7TabsProbe = probe
+      globalThis.__runeSse7TabsRead = () => ({
+        ...probe,
+        openReadyCount: [...instances].filter(es => es.readyState === NativeEventSource.OPEN).length,
+      })
       class InstrumentedEventSource extends NativeEventSource {
         constructor(url, init) {
           super(url, init)
+          instances.add(this)
           probe.constructorCalls += 1
           probe.activeCount += 1
           const parsed = new URL(String(url), location.href)
@@ -230,6 +253,20 @@ async function runBench() {
             closeReason: null,
           })
         }
+        if (requested.origin === url.origin) {
+          const benchHeader = Object.entries(event.request.headers ?? {}).find(([k]) => k.toLowerCase() === 'x-rune-bench-id')?.[1]
+          if (typeof benchHeader === 'string' && benchHeader.length > 0) {
+            cdpBatchRequests.set(benchHeader, {
+              requestId: event.requestId,
+              benchId: benchHeader,
+              path: requested.pathname,
+              method: event.request.method,
+              protocol: null,
+              status: null,
+            })
+            cdpRequestIdToBenchId.set(event.requestId, benchHeader)
+          }
+        }
       } catch {}
     })
     cdp.on('Network.responseReceived', event => {
@@ -238,14 +275,14 @@ async function runBench() {
         stream.protocol = event.response.protocol
         stream.status = event.response.status
       }
-      try {
-        const requested = new URL(event.response.url)
-        if (requested.origin === url.origin) {
-          const list = cdpProtocols.get(requested.pathname) ?? []
-          list.push(event.response.protocol)
-          cdpProtocols.set(requested.pathname, list)
+      const benchId = cdpRequestIdToBenchId.get(event.requestId)
+      if (benchId) {
+        const entry = cdpBatchRequests.get(benchId)
+        if (entry) {
+          entry.protocol = event.response.protocol
+          entry.status = event.response.status
         }
-      } catch {}
+      }
     })
     cdp.on('Network.loadingFinished', event => {
       const stream = cdpStreams.get(event.requestId)
@@ -271,6 +308,7 @@ async function runBench() {
         instanceId: parsed?.instanceId ?? null,
         nativeType: parsed?.event?.type ?? null,
         sessionID: parsed?.event?.data?.sessionID ?? null,
+        delta: parsed?.event?.data?.delta ?? null,
       })
     })
 
@@ -354,15 +392,18 @@ async function runBench() {
     }
 
     const readSseState = async (expectedActive = 1) => {
-      const pageProbe = await page.evaluate(() => ({...globalThis.__runeSse7TabsProbe}))
+      const pageProbe = await page.evaluate(() => globalThis.__runeSse7TabsRead())
       const streamsList = [...cdpStreams.values()]
       return {
         pageProbe,
         summary: assertSingleMultiplexedSse({
           constructorCalls: pageProbe.constructorCalls,
           activeCount: pageProbe.activeCount,
+          openReadyCount: pageProbe.openReadyCount,
           cdpEventSourceRequests: streamsList.length,
           protocols: streamsList.map(s => s.protocol),
+          statuses: streamsList.map(s => s.status),
+          closedFlags: streamsList.map(s => s.closed),
           connectionIds: streamsList.map(s => s.connectionId),
           expectedActive,
         }),
@@ -382,10 +423,12 @@ async function runBench() {
     const batchTargets = openedWorkspaces.map((workspaceId, index) => ({
       workspaceId,
       sessionID: `ses_tab_${index + 1}`,
+      historyBenchId: `bench-${index * 2}`,
+      worktreesBenchId: `bench-${index * 2 + 1}`,
     }))
     const batchStarted = performance.now()
     const rawBatch = await page.evaluate(async targets => {
-      const jobs = targets.flatMap(({workspaceId, sessionID}) => [
+      const jobs = targets.flatMap(({workspaceId, sessionID, historyBenchId, worktreesBenchId}) => [
         (async () => {
           const t0 = performance.now()
           const res = await fetch(`/api/workspaces/${workspaceId}/session-history/window`, {
@@ -394,11 +437,13 @@ async function runBench() {
             headers: {
               'content-type': 'application/json',
               'x-codenomad-user-files': 'reference-v1',
+              'x-rune-bench-id': historyBenchId,
             },
             body: JSON.stringify({sessionID, target: {kind: 'latest'}}),
           })
           const body = await res.json()
           return {
+            benchId: historyBenchId,
             kind: 'history-window',
             workspaceId,
             sessionID,
@@ -413,9 +458,13 @@ async function runBench() {
           const res = await fetch(`/api/workspaces/${workspaceId}/worktrees`, {
             method: 'GET',
             credentials: 'include',
+            headers: {
+              'x-rune-bench-id': worktreesBenchId,
+            },
           })
           const body = await res.json()
           return {
+            benchId: worktreesBenchId,
             kind: 'worktrees',
             workspaceId,
             sessionID,
@@ -429,10 +478,15 @@ async function runBench() {
       return await Promise.all(jobs)
     }, batchTargets)
     const batchWallMs = performance.now() - batchStarted
-    const enrichedBatch = rawBatch.map(entry => ({
-      ...entry,
-      protocol: cdpProtocols.get(entry.path)?.at(-1) ?? 'unknown',
-    }))
+    const enrichedBatch = rawBatch.map(entry => {
+      const cdpEntry = cdpBatchRequests.get(entry.benchId)
+      return {
+        ...entry,
+        requestId: cdpEntry?.requestId ?? null,
+        cdpStatus: cdpEntry?.status ?? null,
+        protocol: cdpEntry?.protocol ?? null,
+      }
+    })
     const concurrentBatch = evaluateConcurrentBatch(enrichedBatch, {
       expectedCount: TAB_COUNT * 2,
       wallMs: batchWallMs,
@@ -440,57 +494,93 @@ async function runBench() {
     })
     await readSseState(1)
 
-    // Verify live multiplexed SSE delivery across multiple tabs through the single EventSource.
+    // Verify live multiplexed SSE delivery across active and hidden tabs through the single EventSource.
     const sseRequestId = [...cdpStreams.keys()][0]
+    const initialTargets = [
+      {tabIndex: 6, workspaceId: openedWorkspaces[6], sessionID: 'ses_tab_7', text: 'Multiplex live Tab 7'},
+      {tabIndex: 0, workspaceId: openedWorkspaces[0], sessionID: 'ses_tab_1', text: 'Multiplex live Tab 1'},
+      {tabIndex: 3, workspaceId: openedWorkspaces[3], sessionID: 'ses_tab_4', text: 'Multiplex live Tab 4'},
+    ]
     await ipc({
       type: 'emit-multiplex-sse',
-      targets: [
-        {sessionID: 'ses_tab_7', text: 'Multiplex live Tab 7'},
-        {sessionID: 'ses_tab_1', text: 'Multiplex live Tab 1'},
-        {sessionID: 'ses_tab_4', text: 'Multiplex live Tab 4'},
-      ],
+      targets: initialTargets.map(({sessionID, text}) => ({sessionID, text})),
     })
     await page.waitForFunction(() => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes('Multiplex live Tab 7'))
 
-    const waitMultiplexFrames = async expectedSessions => {
+    const waitMultiplexFrames = async targets => {
       const deadline = Date.now() + 10000
       while (Date.now() < deadline) {
-        const matched = cdpSseFrames.filter(f =>
+        const matchedTargets = targets.filter(target => cdpSseFrames.some(f =>
           f.requestId === sseRequestId
           && f.nativeType === 'session.text.delta'
-          && expectedSessions.includes(f.sessionID),
+          && f.instanceId === target.workspaceId
+          && f.sessionID === target.sessionID
+          && f.delta === target.text,
+        ))
+        const allMatchedFrames = cdpSseFrames.filter(f =>
+          f.requestId === sseRequestId
+          && f.nativeType === 'session.text.delta'
+          && targets.some(t => t.sessionID === f.sessionID && t.text === f.delta),
         )
-        const distinctSessions = new Set(matched.map(f => f.sessionID))
-        const distinctWorkspaces = new Set(matched.map(f => f.instanceId).filter(Boolean))
-        if (distinctSessions.size === expectedSessions.length && distinctWorkspaces.size === TAB_COUNT) {
+        const distinctWorkspaces = new Set(allMatchedFrames.map(f => f.instanceId).filter(Boolean))
+        if (matchedTargets.length === targets.length && distinctWorkspaces.size === TAB_COUNT) {
           return {
-            frameCount: matched.length,
-            sessions: [...distinctSessions].sort(),
+            frameCount: allMatchedFrames.length,
+            matchedPairs: targets.map(({workspaceId, sessionID, text}) => ({workspaceId, sessionID, text})),
             workspaceCount: distinctWorkspaces.size,
           }
         }
         await page.waitForTimeout(25)
       }
-      throw Error(`Timed out waiting for multiplexed SSE frames across ${TAB_COUNT} workspaces`)
+      throw Error(`Timed out waiting for exact multiplexed SSE (workspaceId, sessionID, delta) frames on ${sseRequestId}`)
     }
-    const multiplexedFrames = await waitMultiplexFrames(['ses_tab_1', 'ses_tab_4', 'ses_tab_7'])
+    const multiplexedFrames = await waitMultiplexFrames(initialTargets)
 
-    // Switch to Tab 1 and Tab 4 and verify live SSE rendering on each without opening any new EventSource.
+    const waitExactFrame = async ({workspaceId, sessionID, text}) => {
+      const deadline = Date.now() + 10000
+      while (Date.now() < deadline) {
+        const hit = cdpSseFrames.find(f =>
+          f.requestId === sseRequestId
+          && f.nativeType === 'session.text.delta'
+          && f.instanceId === workspaceId
+          && f.sessionID === sessionID
+          && f.delta === text,
+        )
+        if (hit) return hit
+        await page.waitForTimeout(25)
+      }
+      throw Error(`Timed out waiting for exact SSE frame (${workspaceId}, ${sessionID}, ${text}) on ${sseRequestId}`)
+    }
+
+    // Inactive tabs intentionally suspend live transcript readers (`chat::suspend` -> `stop_content()`)
+    // and resume on activation (`chat::resume`) over the same shared EventHub without opening a new
+    // EventSource. Verify exact (workspaceId, sessionID, delta) wire delivery on `sseRequestId` for
+    // active + hidden workspaces, then verify live SSE-only rendering on Tabs 1 and 4 upon activation.
     const tabsLocator = projectTabs()
     await press(tabsLocator.nth(0))
     await mirror().getByRole('heading', {name: 'Tab 1 session', exact: true}).waitFor({state: 'attached'})
-    await ipc({type: 'emit-multiplex-sse', targets: [{sessionID: 'ses_tab_1', text: 'Multiplex live Tab 1 active'}]})
+    const tab1Active = {workspaceId: openedWorkspaces[0], sessionID: 'ses_tab_1', text: 'Multiplex live Tab 1 active'}
+    await ipc({type: 'emit-multiplex-sse', targets: [{sessionID: tab1Active.sessionID, text: tab1Active.text}]})
+    await waitExactFrame(tab1Active)
     await page.waitForFunction(() => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes('Multiplex live Tab 1 active'))
 
     await press(tabsLocator.nth(3))
     await mirror().getByRole('heading', {name: 'Tab 4 session', exact: true}).waitFor({state: 'attached'})
-    await ipc({type: 'emit-multiplex-sse', targets: [{sessionID: 'ses_tab_4', text: 'Multiplex live Tab 4 active'}]})
+    const tab4Active = {workspaceId: openedWorkspaces[3], sessionID: 'ses_tab_4', text: 'Multiplex live Tab 4 active'}
+    await ipc({type: 'emit-multiplex-sse', targets: [{sessionID: tab4Active.sessionID, text: tab4Active.text}]})
+    await waitExactFrame(tab4Active)
     await page.waitForFunction(() => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes('Multiplex live Tab 4 active'))
+
+    multiplexedFrames.activeTabChecks = [
+      {workspaceId: openedWorkspaces[6], sessionID: 'ses_tab_7', text: 'Multiplex live Tab 7'},
+      tab1Active,
+      tab4Active,
+    ]
 
     const sseAfterMultiplex = await readSseState(1)
 
     // Close 6 tabs via the real UI close buttons (always from index 0, inside the visible strip)
-    // and confirm the single EventSource stays steady (no leak/churn).
+    // and confirm the single EventSource stays steady and only the surviving tab's workspace remains.
     const closeLabel = m['instanceTab.actions.close.ariaLabel']
     for (let remaining = TAB_COUNT; remaining > 1; remaining--) {
       const closeButtons = mirror().getByRole('button', {name: closeLabel, exact: true})
@@ -506,6 +596,24 @@ async function runBench() {
       }
     }
     const sseAfterClosingSixTabs = await readSseState(1)
+    const survivingWorkspaceId = openedWorkspaces[TAB_COUNT - 1]
+    let workspacesAfterClosingSixTabs = []
+    const sixCloseDeadline = Date.now() + 10000
+    while (Date.now() < sixCloseDeadline) {
+      workspacesAfterClosingSixTabs = await ipc({type: 'server-workspaces'})
+      if (workspacesAfterClosingSixTabs.length === 1 && workspacesAfterClosingSixTabs[0]?.id === survivingWorkspaceId) break
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    assert.equal(
+      workspacesAfterClosingSixTabs.length,
+      1,
+      `Expected 1 surviving workspace after closing 6 tabs, got ${JSON.stringify(workspacesAfterClosingSixTabs.map(w => w.id))}`,
+    )
+    assert.equal(
+      workspacesAfterClosingSixTabs[0]?.id,
+      survivingWorkspaceId,
+      `Expected surviving workspace ${survivingWorkspaceId}, got ${workspacesAfterClosingSixTabs[0]?.id}`,
+    )
 
     // Navigate away + close the page to trigger real pagehide cleanup and verify server-side
     // EventSource teardown (pong 204 -> 404) and zero leaked workspaces.
@@ -545,6 +653,7 @@ async function runBench() {
       multiplexedFrames,
       teardown: {
         cdpEventSourceCount: cdpStreams.size,
+        workspacesAfterClosingSixTabs: workspacesAfterClosingSixTabs.map(w => w.id),
         serverPongBeforeCloseStatus: pongBeforeClose.status(),
         serverPongAfterCloseStatus: pongAfterCloseStatus,
         cdpStreamClosed: Boolean(finalStream?.closed),
