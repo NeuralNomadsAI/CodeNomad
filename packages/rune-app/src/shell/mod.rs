@@ -6,6 +6,7 @@ mod shortcuts;
 pub(crate) use shortcuts::global_blocked as shortcut_blocked;
 mod sidebar;
 pub(crate) mod status_permissions;
+pub(crate) mod status_services;
 pub(crate) mod status_usage;
 
 use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};

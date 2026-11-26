@@ -47,6 +47,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.conversation_client_id = Some(backend.client_id.clone());
                 s.conversation_stream_connected = false;
                 s.status_permissions.bind(&backend);
+                s.status_services.bind(&backend);
                 s.status_usage.bind(&backend);
                 s.transcript_display.children.bind(backend.clone());
                 s.transcript_display.usage_family.bind(backend.clone());
@@ -69,6 +70,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     s.conversation_stream_connected = true;
                     s.transcript_display.messages.refresh();
                     s.status_permissions.online(true);
+                    s.status_services.online(true);
                     workspace::mission_event(s, None);
                     s.transcript_display.receipts.reconnect();
                     s.transcript_display.pictures.retry_interrupted();
@@ -107,6 +109,14 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 codenomad_client::transport::WorkspaceEvent::PermissionModeChanged { root },
             ) => {
                 s.status_permissions.invalidate(root.as_deref());
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::PluginsChanged {
+                directory,
+            }) => {
+                s.status_services.invalidate_plugins(directory.as_deref());
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::McpStatusChanged) => {
+                s.status_services.invalidate_mcp();
             }
             Event::Workspace(
                 codenomad_client::transport::WorkspaceEvent::ComposerCataloguesChanged,
@@ -193,6 +203,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
                 ) {
                     s.status_permissions.online(false);
+                    s.status_services.location_moved();
                     s.status_usage.disconnect();
                     chat::reader::suspend(s);
                     s.composer.picker.set_attachments_supported(false);
@@ -219,6 +230,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 if s.reader.is_none() {
                     // Direct startup also uses Reconnecting to stage a fresh transcript read.
                     s.status_permissions.synchronized();
+                    s.status_services.synchronized();
                 }
                 chat::reader::reconcile_bookmark(s, &page.rows);
                 if let Some(reader) = &mut s.reader {
@@ -288,6 +300,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.transcript_display.messages.offline();
                 s.transcript_display.tool_clock.pause();
                 s.status_permissions.online(false);
+                s.status_services.online(false);
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::reconnecting(s);
                 #[cfg(target_arch = "wasm32")]
@@ -345,6 +358,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.conversation_stream_connected = false;
                 s.transcript_display.receipts.clear();
                 s.status_permissions.online(false);
+                s.status_services.online(false);
                 s.status_usage.disconnect();
                 s.transcript_display.children.clear();
                 s.transcript_display.tool_clock.reset();
@@ -465,6 +479,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 }
                 s.composer.picker.set_attachments_supported(false);
                 s.status_permissions.online(false);
+                s.status_services.online(false);
                 s.status_usage.disconnect();
                 chat::reader::suspend(s);
                 git::online(s, false);

@@ -54,6 +54,10 @@ fn launch(s: &mut crate::State, startup: Startup, anchor: Option<String>) {
         Startup::Bound(backend) => Some(backend),
         Startup::Configured { .. } => None,
     });
+    s.status_services.attach(match &startup {
+        Startup::Bound(backend) => Some(backend),
+        Startup::Configured { .. } => None,
+    });
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);

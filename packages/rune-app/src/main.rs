@@ -72,6 +72,7 @@ struct State {
     workspace: Option<workspace::Ui>,
     shell: shell::Panels,
     status_permissions: shell::status_permissions::Permissions,
+    status_services: shell::status_services::Services,
     status_usage: shell::status_usage::Panel,
     chat_title: String,
     messages: Vec<history::Row>,
@@ -136,6 +137,7 @@ fn init() -> State {
         workspace: None,
         shell: Default::default(),
         status_permissions: Default::default(),
+        status_services: Default::default(),
         status_usage: Default::default(),
         chat_title: String::new(),
         messages: vec![],
@@ -282,6 +284,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         changed |= settings::poll_stats(s, now, tx);
     }
     changed |= shell::status_permissions::poll(s, tx);
+    changed |= shell::status_services::poll(s, tx);
     changed |= shell::status_usage::poll(s, now, tx);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
