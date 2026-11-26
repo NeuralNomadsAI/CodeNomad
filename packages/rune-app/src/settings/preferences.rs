@@ -37,6 +37,7 @@ pub(super) struct Preferences {
     closing_stream_client_id: Option<String>,
     authentication_required: bool,
     transport_lost: bool,
+    mission_disconnected: bool,
     observed_clients: Vec<(String, bool)>,
     seen_drops: Vec<(String, u64)>,
     seen_drop_generation: u64,
@@ -811,6 +812,10 @@ impl Preferences {
             .map_or_else(Default::default, PreferencesWatch::take_missions)
     }
 
+    pub(super) fn take_mission_disconnected(&mut self) -> bool {
+        std::mem::take(&mut self.mission_disconnected)
+    }
+
     #[cfg(test)]
     pub fn invalidate(&mut self, owner: Owner) {
         let server_active = self.show_server || self.show_environment || self.server.unsettled();
@@ -898,6 +903,7 @@ impl Preferences {
                 self.config.mark_transport_lost();
                 self.state.mark_transport_lost();
                 self.server.mark_transport_lost();
+                self.mission_disconnected = true;
                 disconnected = true;
                 if !self.transport_lost {
                     self.transport_lost = true;

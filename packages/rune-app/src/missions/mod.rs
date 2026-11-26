@@ -21,7 +21,7 @@ pub(crate) use briefing_view::{
     confirmation as briefing_confirmation, controls as briefing_controls,
 };
 pub(crate) use directory::Panel;
-pub(crate) use editor::EditorGesture;
+pub(crate) use editor::{CloseSurface, EditorGesture, LeaveIntent};
 pub(crate) use editor_holds::EditorHolds;
 pub(crate) use editor_view::view as editor_view;
 pub(crate) use lifecycle::{Gesture, Lifecycle, Source};

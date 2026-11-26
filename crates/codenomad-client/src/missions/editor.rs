@@ -531,8 +531,9 @@ impl Backend {
         }
     }
 
-    /// Reads the unified Mission document via `GET /missions/{id}/schedule` to verify
-    /// whether one-time text edits are currently allowed or blocked by a document lock.
+    /// Reads the unified Mission document via `GET /missions/{id}/schedule` alongside the
+    /// workspace's own `GET /workspaces/{ws}/instance/api/location` to verify whether one-time
+    /// text edits are currently allowed in this workspace's directory-only scope.
     pub async fn read_mission_edit_document(&self, mission_id: &str) -> DocumentEditCheck {
         if !valid_id(&self.workspace)
             || !panel_id(mission_id)
@@ -540,17 +541,59 @@ impl Backend {
         {
             return DocumentEditCheck::Unavailable;
         }
-        let Ok(url) = missions_url(self, &[mission_id, "schedule"]) else {
+        let Ok(schedule_url) = missions_url(self, &[mission_id, "schedule"]) else {
             return DocumentEditCheck::Unavailable;
         };
-        let Ok(response) = self.client.get(url).timeout(RECEIPT_TIMEOUT).send().await else {
-            return DocumentEditCheck::Unavailable;
+        let location_url = format!(
+            "{}workspaces/{}/instance/api/location",
+            self.base, self.workspace
+        );
+        let schedule_fut = async {
+            let Ok(response) = self
+                .client
+                .get(schedule_url)
+                .timeout(RECEIPT_TIMEOUT)
+                .send()
+                .await
+            else {
+                return Err(false);
+            };
+            let status = response.status();
+            if status == StatusCode::UNAUTHORIZED {
+                return Err(true);
+            }
+            let body = read_json_limited(response, MAX_RESPONSE_BYTES).await.ok();
+            Ok((status, body))
         };
-        let status = response.status();
-        if status == StatusCode::UNAUTHORIZED {
+        let location_fut = async {
+            let Ok(response) = self
+                .client
+                .get(location_url)
+                .timeout(RECEIPT_TIMEOUT)
+                .send()
+                .await
+            else {
+                return Err(false);
+            };
+            let status = response.status();
+            if status == StatusCode::UNAUTHORIZED {
+                return Err(true);
+            }
+            if !status.is_success() {
+                return Err(false);
+            }
+            read_json_limited(response, MAX_RESPONSE_BYTES)
+                .await
+                .map_err(|_| false)
+        };
+        let (schedule_res, location_res) =
+            futures_lite::future::zip(schedule_fut, location_fut).await;
+        if matches!(schedule_res, Err(true)) || matches!(location_res, Err(true)) {
             return DocumentEditCheck::AuthExpired;
         }
-        let body = read_json_limited(response, MAX_RESPONSE_BYTES).await.ok();
+        let Ok((status, body)) = schedule_res else {
+            return DocumentEditCheck::Unavailable;
+        };
         if !status.is_success() {
             if let Some(body) = body.as_ref() {
                 if status == StatusCode::SERVICE_UNAVAILABLE
@@ -576,6 +619,27 @@ impl Backend {
         let doc = &body["document"];
         if !doc.is_object() || doc["id"].as_str() != Some(mission_id) || !doc["edit"].is_object() {
             return DocumentEditCheck::Unavailable;
+        }
+        let Ok(location_body) = location_res else {
+            return DocumentEditCheck::Unavailable;
+        };
+        let Some(workspace_dir) = location_body["directory"]
+            .as_str()
+            .filter(|dir| !dir.is_empty() && dir.len() <= 4096 && !dir.contains('\0'))
+        else {
+            return DocumentEditCheck::Unavailable;
+        };
+        let scope_matches = doc["configuration"]["roots"]
+            .as_array()
+            .is_some_and(|roots| {
+                roots.len() == 1
+                    && roots[0]["mode"].as_str() == Some("directory-only")
+                    && roots[0]["directory"]
+                        .as_str()
+                        .is_some_and(|dir| crate::same_server_path(dir, workspace_dir))
+            });
+        if !scope_matches {
+            return DocumentEditCheck::Locked("missions.scheduling.lock.scope");
         }
         let unconfirmed_first_play =
             doc.get("firstPlay")

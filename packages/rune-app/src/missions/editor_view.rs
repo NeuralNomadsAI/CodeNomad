@@ -421,6 +421,33 @@ pub(crate) fn view<S: 'static>(
         content = content.child(theme::note(t(err), "alert"));
     }
 
+    if form.pending_leave.is_some() {
+        content = content
+            .child(theme::note(
+                t("settings.configFiles.confirmDiscard.message"),
+                "alert",
+            ))
+            .child(
+                layout::action_row()
+                    .child(
+                        layout::button_tx(
+                            t("settings.memory.discardConfirm"),
+                            false,
+                            move |s: &mut S, tx| act(s, EditorGesture::ConfirmDiscard, tx),
+                        )
+                        .key("mission-editor-discard-confirm"),
+                    )
+                    .child(
+                        layout::button_tx(
+                            t("missions.control.cancel"),
+                            false,
+                            move |s: &mut S, tx| act(s, EditorGesture::CancelDiscard, tx),
+                        )
+                        .key("mission-editor-discard-cancel"),
+                    ),
+            );
+    }
+
     // Action footer
     let cancel_cb = on_close;
     let mut actions = layout::action_row().child(

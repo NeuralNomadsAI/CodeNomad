@@ -262,8 +262,17 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     let Some(ui) = &mut s.workspace else {
         return;
     };
-    let removed = ui.entries.remove(index);
+    let mut removed = ui.entries.remove(index);
     s.notifications.forget_tab(id);
+    ui.mission_editor.revoke_auto_start_for_occurrence(id);
+    let mut dropped_auth = Vec::new();
+    if let Some(mut panel) = removed.missions.take() {
+        panel.suspend();
+        dropped_auth = panel.drain_auth_expired();
+    }
+    for expired in &dropped_auth {
+        ui.mission_editor.revoke_auto_start_for_connection(expired);
+    }
     if let Tab::Workspace(mut saved) = removed.saved {
         // Undelivered copies still belong to their closed source.
         saved
@@ -289,6 +298,18 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         }
     }
     if let (Some(backend), Some(project)) = (removed.binding, removed.project) {
+        let mut ws_backend = backend.clone();
+        ws_backend.workspace.clone_from(&project.id);
+        let still_referenced = ui.entries.iter().any(|entry| {
+            entry.project.as_ref().is_some_and(|p| p.id == project.id)
+                && entry
+                    .binding
+                    .as_ref()
+                    .is_some_and(|b| b.base == backend.base)
+        });
+        if !still_referenced {
+            ui.mission_editor.retire_creation_workspace(&ws_backend);
+        }
         platform::spawn(async move {
             let _ = backend.release_project(&project.id).await;
         });
@@ -309,6 +330,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     } else {
         tx.instant();
     }
+    let _ = super::panel_state::deliver_mission_auth_expired(s, dropped_auth);
     capture(s);
 }
 pub(super) fn close_blocked(s: &State, index: usize) -> bool {
@@ -319,6 +341,26 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
         return true;
     }
     if ui.entries[index].has_unsaved_large_drafts() {
+        return true;
+    }
+    if ui.entries[index].missions.as_ref().is_some_and(|panel| {
+        ui.mission_editor
+            .creation(&panel.creation_scope_key())
+            .is_some()
+            || panel.has_unsaved_editor_draft(&ui.mission_editor)
+    }) {
+        return true;
+    }
+    if ui.entries[index]
+        .binding
+        .as_ref()
+        .zip(ui.entries[index].project.as_ref())
+        .is_some_and(|(backend, project)| {
+            let mut ws_backend = backend.clone();
+            ws_backend.workspace.clone_from(&project.id);
+            ui.mission_editor.has_creation_for_workspace(&ws_backend)
+        })
+    {
         return true;
     }
     if ui.active == index {

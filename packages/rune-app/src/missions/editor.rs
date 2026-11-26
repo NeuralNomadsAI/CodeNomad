@@ -63,6 +63,23 @@ pub(crate) enum EditorGesture {
     RetryDefaults,
     RetryPrefill,
     Reopen,
+    ConfirmDiscard,
+    CancelDiscard,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum LeaveIntent {
+    Close,
+    SelectMission(String),
+    OpenOverview(String),
+    OpenTask(String, String, String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CloseSurface {
+    Closed(Option<String>),
+    PromptedDiscard,
+    CancelledPrompt,
 }
 
 #[derive(Clone, Debug)]
@@ -149,6 +166,10 @@ pub(crate) struct Form {
     pub(super) start_on_creation: bool,
     pub(super) prefill: PrefillState,
     pub(super) has_loaded_draft: bool,
+    pub(super) initial_objective: String,
+    pub(super) initial_notes: String,
+    pub(super) has_hold: bool,
+    pub(super) catalog_rechecking: bool,
     pub(super) doc_rechecking: bool,
     pub(super) edit: Option<EditTarget>,
     pub(super) reopening: Option<u64>,
@@ -156,6 +177,7 @@ pub(crate) struct Form {
     pub(super) previous_draft: Option<String>,
     pub(super) previous_draft_open: bool,
     pub(super) lock_help_open: bool,
+    pub(super) pending_leave: Option<LeaveIntent>,
     pub(super) request_id: String,
     pub(super) last_payload: String,
     pub(super) error: Option<&'static str>,
@@ -191,6 +213,10 @@ impl Form {
             start_on_creation: false,
             prefill: PrefillState::Ready,
             has_loaded_draft: false,
+            initial_objective: String::new(),
+            initial_notes: String::new(),
+            has_hold: hold.is_some(),
+            catalog_rechecking: false,
             doc_rechecking: false,
             edit: None,
             reopening: None,
@@ -198,6 +224,7 @@ impl Form {
             previous_draft: None,
             previous_draft_open: false,
             lock_help_open: false,
+            pending_leave: None,
             request_id: request_id().unwrap_or_default(),
             last_payload: String::new(),
             error: None,
@@ -238,6 +265,10 @@ impl Form {
                 PrefillState::Loading
             },
             has_loaded_draft: hold.is_some(),
+            initial_objective: String::new(),
+            initial_notes: String::new(),
+            has_hold: hold.is_some(),
+            catalog_rechecking: false,
             doc_rechecking: false,
             edit: Some(target),
             reopening: None,
@@ -245,6 +276,7 @@ impl Form {
             previous_draft: None,
             previous_draft_open: false,
             lock_help_open: false,
+            pending_leave: None,
             request_id: request_id().unwrap_or_default(),
             last_payload: String::new(),
             error: None,
@@ -277,6 +309,9 @@ impl Form {
             hold.request.profiles.as_ref(),
             hold.request.task_mode.unwrap_or_default(),
         );
+        self.has_hold = true;
+        self.catalog_rechecking = false;
+        self.pending_leave = None;
         self.error = None;
     }
 
@@ -285,7 +320,9 @@ impl Form {
         self.notes = TextEdit::new(hold.request.notes.as_deref().unwrap_or(""));
         self.prefill = PrefillState::Ready;
         self.has_loaded_draft = true;
+        self.has_hold = true;
         self.doc_rechecking = false;
+        self.pending_leave = None;
         self.request_id = hold.request.request_id.clone();
         self.last_payload = edit_payload_identity(
             hold.request.expected_revision,
@@ -296,6 +333,40 @@ impl Form {
         self.reopen_target = None;
         self.edit_conflict = false;
         self.error = None;
+    }
+
+    pub(super) fn has_unsaved_draft_fields(&self) -> bool {
+        match self.mode {
+            Mode::Create => {
+                !self.objective.text.is_empty()
+                    || !self.title.text.is_empty()
+                    || !self.notes.text.is_empty()
+                    || self.start_on_creation
+                    || self.template != Template::Custom
+                    || self.custom_task_mode
+            }
+            Mode::Edit => {
+                (self.has_loaded_draft
+                    && (self.objective.text != self.initial_objective
+                        || self.notes.text != self.initial_notes))
+                    || self.previous_draft.is_some()
+            }
+        }
+    }
+
+    pub(super) fn has_unsaved_draft(
+        &self,
+        creation_hold: Option<&CreationHoldView>,
+        edit_hold: Option<&EditHoldView>,
+    ) -> bool {
+        if creation_hold.is_some() || edit_hold.is_some() {
+            return false;
+        }
+        self.has_unsaved_draft_fields()
+    }
+
+    pub(super) fn is_dirty_unsubmitted(&self) -> bool {
+        !self.has_hold && self.has_unsaved_draft_fields()
     }
 
     pub(super) fn select_template(&mut self, chosen: Template) {
@@ -322,7 +393,7 @@ impl Form {
         creation_hold: Option<&CreationHoldView>,
         edit_hold: Option<&EditHoldView>,
     ) -> bool {
-        if self.reopening.is_some() || self.doc_rechecking {
+        if self.reopening.is_some() || self.doc_rechecking || self.catalog_rechecking {
             return true;
         }
         match self.mode {
@@ -349,7 +420,10 @@ impl Form {
         edit_hold: Option<&EditHoldView>,
     ) -> bool {
         match self.mode {
-            Mode::Create => creation_hold.is_some_and(|h| h.state == HoldState::Pending),
+            Mode::Create => {
+                self.catalog_rechecking
+                    || creation_hold.is_some_and(|h| h.state == HoldState::Pending)
+            }
             Mode::Edit => {
                 self.doc_rechecking || edit_hold.is_some_and(|h| h.state == HoldState::Pending)
             }
@@ -428,6 +502,12 @@ struct DocRecheckReply {
     backend: Backend,
 }
 
+struct CreateRecheckReply {
+    serial: u64,
+    outcome: MissionCatalogOutcome,
+    backend: Backend,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct AppliedSave {
     pub mission_id: String,
@@ -452,6 +532,11 @@ pub(crate) struct Editor {
     doc_recheck_serial: u64,
     doc_recheck_submit: Option<(String, u64)>,
     ready_edit_submit: Option<(String, u64, Backend)>,
+    create_recheck_flight: Option<Receiver<CreateRecheckReply>>,
+    create_recheck_cancel: Option<Sender<()>>,
+    create_recheck_serial: u64,
+    create_recheck_submit: Option<(String, u64)>,
+    ready_create_submit: Option<(String, u64, Backend)>,
     auth_expired: Vec<Backend>,
     focus_initial: Option<&'static str>,
 }
@@ -486,6 +571,7 @@ impl Editor {
         if let Some(form) = &mut self.form {
             form.generation = next;
             form.doc_rechecking = false;
+            form.catalog_rechecking = false;
         }
         let create_needs_defaults = self.form.as_ref().is_some_and(|form| {
             form.mode == Mode::Create && form.defaults_state != DefaultsState::Ready
@@ -686,19 +772,93 @@ impl Editor {
         if let Some(form) = &mut self.form {
             form.generation = next;
             form.doc_rechecking = false;
+            form.catalog_rechecking = false;
         }
     }
 
     pub(crate) fn invalidate_generation(&mut self) {
         let next = self.next_generation();
         self.ready_edit_submit = None;
-        let dropped_submit = self.doc_recheck_submit.take().is_some();
+        self.ready_create_submit = None;
+        let dropped_edit = self.doc_recheck_submit.take().is_some();
+        let dropped_create = self.create_recheck_submit.take().is_some();
         if let Some(form) = &mut self.form {
             form.generation = next;
-            if dropped_submit {
+            if dropped_edit {
                 form.doc_rechecking = false;
             }
+            if dropped_create {
+                form.catalog_rechecking = false;
+            }
         }
+    }
+
+    pub(crate) fn sync_hold_flags(
+        &mut self,
+        scope: &CreationScopeKey,
+        backend: &Backend,
+        holds: &EditorHolds,
+    ) {
+        let Some(form) = &mut self.form else {
+            return;
+        };
+        form.has_hold = match form.mode {
+            Mode::Create => holds.creation(scope).is_some(),
+            Mode::Edit => form
+                .edit
+                .as_ref()
+                .is_some_and(|e| holds.edit(&e.hold_key(backend)).is_some()),
+        };
+    }
+
+    pub(crate) fn has_unsaved_draft(
+        &self,
+        scope: &CreationScopeKey,
+        backend: &Backend,
+        holds: &EditorHolds,
+    ) -> bool {
+        let Some(form) = self.form.as_ref() else {
+            return false;
+        };
+        let creation_hold = (form.mode == Mode::Create)
+            .then(|| holds.creation(scope))
+            .flatten();
+        let edit_hold = form
+            .edit
+            .as_ref()
+            .and_then(|e| holds.edit(&e.hold_key(backend)));
+        form.has_unsaved_draft(creation_hold.as_ref(), edit_hold.as_ref())
+    }
+
+    pub(crate) fn request_leave_from_form(&mut self, intent: LeaveIntent) -> bool {
+        let Some(form) = &mut self.form else {
+            return true;
+        };
+        if form.is_dirty_unsubmitted() {
+            form.pending_leave = Some(intent);
+            false
+        } else {
+            true
+        }
+    }
+
+    pub(crate) fn arm_leave(&mut self, intent: LeaveIntent) {
+        if let Some(form) = &mut self.form {
+            form.pending_leave = Some(intent);
+        }
+    }
+
+    pub(crate) fn cancel_pending_leave(&mut self) -> bool {
+        self.form
+            .as_mut()
+            .and_then(|form| form.pending_leave.take())
+            .is_some()
+    }
+
+    pub(crate) fn take_pending_leave(&mut self) -> Option<LeaveIntent> {
+        self.form
+            .as_mut()
+            .and_then(|form| form.pending_leave.take())
     }
 
     /// Resumes any prefill, document-lock check, defaults load or conflict-reopen interrupted by
@@ -909,12 +1069,45 @@ impl Editor {
             return false;
         };
         match mode {
-            Mode::Create => self.submit_create(occurrence, scope, backend, holds, wake),
+            Mode::Create => self.submit_create(occurrence, scope, backend, holds, reads, wake),
             Mode::Edit => self.submit_edit(occurrence, backend, holds, reads, wake),
         }
     }
 
     fn submit_create(
+        &mut self,
+        occurrence: &str,
+        scope: &CreationScopeKey,
+        backend: &Backend,
+        holds: &mut EditorHolds,
+        reads: &Reads,
+        wake: &Wake,
+    ) -> bool {
+        if let Some(existing) = holds.creation(scope) {
+            if let Some(form) = &mut self.form {
+                form.adopt_creation_hold(&existing);
+            }
+            return false;
+        }
+        let Some(form) = self.form.as_ref() else {
+            return false;
+        };
+        if !form.can_submit(None, None) {
+            return false;
+        }
+        let frozen_profiles = freeze_compare_profiles(form.template, form.profiles.as_ref());
+        let has_profiles = frozen_profiles.as_ref().is_some_and(|profiles| {
+            profiles.coordinator.is_some() || profiles.roles.as_ref().is_some_and(|r| !r.is_empty())
+        });
+        if has_profiles {
+            let submit_gen = form.generation;
+            self.start_create_recheck((occurrence.to_owned(), submit_gen), backend, reads, wake);
+            return true;
+        }
+        self.dispatch_create_post(occurrence, scope, backend, holds, wake)
+    }
+
+    fn dispatch_create_post(
         &mut self,
         occurrence: &str,
         scope: &CreationScopeKey,
@@ -974,13 +1167,14 @@ impl Editor {
             return true;
         };
         form.error = None;
+        form.pending_leave = None;
         let start_on_creation = form.start_on_creation;
         let origin = FormOrigin {
             occurrence: occurrence.to_owned(),
             generation: form.generation,
             backend: backend.clone(),
         };
-        if !holds.start_create(
+        if holds.start_create(
             scope.clone(),
             request,
             start_on_creation,
@@ -988,6 +1182,8 @@ impl Editor {
             backend,
             wake,
         ) {
+            form.has_hold = true;
+        } else {
             form.error = Some("missions.control.mutation.error");
         }
         true
@@ -1079,12 +1275,15 @@ impl Editor {
             return true;
         };
         form.error = None;
+        form.pending_leave = None;
         let origin = FormOrigin {
             occurrence: occurrence.to_owned(),
             generation: form.generation,
             backend: backend.clone(),
         };
-        if !holds.start_edit(key, target.target, request, origin, backend, wake) {
+        if holds.start_edit(key, target.target, request, origin, backend, wake) {
+            form.has_hold = true;
+        } else {
             form.error = Some("missions.control.mutation.error");
         }
         true
@@ -1136,6 +1335,7 @@ impl Editor {
         let mut changed = self.poll_defaults();
         changed |= self.poll_prefill();
         changed |= self.poll_doc_recheck(backend);
+        changed |= self.poll_create_recheck(backend);
         changed
     }
 
@@ -1261,35 +1461,103 @@ impl Editor {
         true
     }
 
-    pub(crate) fn commit_ready_edit_submit(
+    fn poll_create_recheck(&mut self, backend: &Backend) -> bool {
+        let Some(reply) = self
+            .create_recheck_flight
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok())
+        else {
+            return false;
+        };
+        self.create_recheck_flight = None;
+        self.create_recheck_cancel = None;
+        let pending_submit = self.create_recheck_submit.take();
+        if matches!(reply.outcome, MissionCatalogOutcome::AuthExpired) {
+            self.record_auth_expired(reply.backend.clone());
+        }
+        if reply.serial != self.create_recheck_serial {
+            return false;
+        }
+        let Some(form) = &mut self.form else {
+            return false;
+        };
+        if form.mode != Mode::Create {
+            return false;
+        }
+        match reply.outcome {
+            MissionCatalogOutcome::Ready(catalog) => {
+                form.catalog = Some(catalog);
+                if form.profile_catalog_error().is_some() {
+                    form.catalog_rechecking = false;
+                    form.error = None;
+                    return true;
+                }
+                let form_gen = form.generation;
+                if let Some((occurrence, submit_gen)) = pending_submit
+                    && submit_gen == form_gen
+                    && reply.backend.client.same_connection(&backend.client)
+                {
+                    self.ready_create_submit = Some((occurrence, submit_gen, reply.backend));
+                } else {
+                    form.catalog_rechecking = false;
+                }
+            }
+            MissionCatalogOutcome::AuthExpired | MissionCatalogOutcome::Unavailable => {
+                form.catalog_rechecking = false;
+                form.error = Some("missions.control.reader.unavailable");
+            }
+        }
+        true
+    }
+
+    pub(crate) fn commit_ready_submits(
         &mut self,
+        scope: &CreationScopeKey,
         holds: &mut EditorHolds,
         backend: &Backend,
         wake: &Wake,
         auth_expired: &[Backend],
     ) -> bool {
-        let Some((occurrence, submit_gen, reply_backend)) = self.ready_edit_submit.take() else {
-            return false;
-        };
-        let Some(form) = &mut self.form else {
-            return false;
-        };
-        form.doc_rechecking = false;
-        if form.mode != Mode::Edit
-            || form.generation != submit_gen
-            || !reply_backend.client.same_connection(&backend.client)
+        let mut changed = false;
+        if let Some((occurrence, submit_gen, reply_backend)) = self.ready_create_submit.take()
+            && let Some(form) = &mut self.form
         {
-            return true;
+            form.catalog_rechecking = false;
+            changed = true;
+            if form.mode == Mode::Create
+                && form.generation == submit_gen
+                && reply_backend.client.same_connection(&backend.client)
+            {
+                if auth_expired
+                    .iter()
+                    .any(|expired| expired.client.same_connection(&backend.client))
+                {
+                    form.error = Some("missions.control.reader.unavailable");
+                } else {
+                    self.dispatch_create_post(&occurrence, scope, backend, holds, wake);
+                }
+            }
         }
-        if auth_expired
-            .iter()
-            .any(|expired| expired.client.same_connection(&backend.client))
+        if let Some((occurrence, submit_gen, reply_backend)) = self.ready_edit_submit.take()
+            && let Some(form) = &mut self.form
         {
-            form.error = Some("missions.control.reader.unavailable");
-            return true;
+            form.doc_rechecking = false;
+            changed = true;
+            if form.mode == Mode::Edit
+                && form.generation == submit_gen
+                && reply_backend.client.same_connection(&backend.client)
+            {
+                if auth_expired
+                    .iter()
+                    .any(|expired| expired.client.same_connection(&backend.client))
+                {
+                    form.error = Some("missions.control.reader.unavailable");
+                } else {
+                    self.dispatch_edit_patch(&occurrence, backend, holds, wake);
+                }
+            }
         }
-        self.dispatch_edit_patch(&occurrence, backend, holds, wake);
-        true
+        changed
     }
 
     pub(crate) fn poll_prefill(&mut self) -> bool {
@@ -1359,6 +1627,8 @@ impl Editor {
                     form.edit = Some(new_target);
                     form.objective = TextEdit::new(&obj);
                     form.notes = TextEdit::new(&notes);
+                    form.initial_objective = obj;
+                    form.initial_notes = notes;
                     form.has_loaded_draft = true;
                     form.prefill = PrefillState::Ready;
                     form.reopening = None;
@@ -1415,6 +1685,8 @@ impl Editor {
             (EditorBodyOutcome::Ready(obj), EditorBodyOutcome::Ready(notes)) => {
                 form.objective = TextEdit::new(&obj);
                 form.notes = TextEdit::new(&notes);
+                form.initial_objective = obj;
+                form.initial_notes = notes;
                 form.has_loaded_draft = true;
                 form.prefill = PrefillState::Ready;
             }
@@ -1469,6 +1741,7 @@ impl Editor {
                         form.request_id = fresh;
                     }
                     form.last_payload.clear();
+                    form.has_hold = false;
                     form.error = Some(code.error_key());
                     return (true, None);
                 }
@@ -1483,6 +1756,7 @@ impl Editor {
                         form.request_id = fresh;
                     }
                     form.last_payload.clear();
+                    form.has_hold = false;
                     if !form.defaults_loaded {
                         form.defaults_state = DefaultsState::Loading;
                     }
@@ -1496,6 +1770,8 @@ impl Editor {
                     && let Some(form) = &mut self.form
                     && form.mode == Mode::Create
                 {
+                    form.has_hold = true;
+                    form.pending_leave = None;
                     form.error = None;
                     return (true, None);
                 }
@@ -1537,6 +1813,7 @@ impl Editor {
                         .as_ref()
                         .is_some_and(|e| e.hold_key(backend) == *key)
                 {
+                    form.has_hold = false;
                     form.edit_conflict = true;
                     form.error = Some("missions.control.mutation.conflict");
                     return (true, None);
@@ -1555,6 +1832,7 @@ impl Editor {
                         form.request_id = fresh;
                     }
                     form.last_payload.clear();
+                    form.has_hold = false;
                     form.error = Some(code.error_key());
                     return (true, None);
                 }
@@ -1568,6 +1846,8 @@ impl Editor {
                         .as_ref()
                         .is_some_and(|e| e.hold_key(backend) == *key)
                 {
+                    form.has_hold = true;
+                    form.pending_leave = None;
                     form.error = None;
                     return (true, None);
                 }
@@ -1772,10 +2052,68 @@ impl Editor {
         });
     }
 
+    fn start_create_recheck(
+        &mut self,
+        pending_submit: (String, u64),
+        backend: &Backend,
+        reads: &Reads,
+        wake: &Wake,
+    ) {
+        self.cancel_create_recheck();
+        let serial = self.create_recheck_serial;
+        let (out, incoming) = bounded(1);
+        let (cancel_tx, cancelled) = bounded(1);
+        self.create_recheck_flight = Some(incoming);
+        self.create_recheck_cancel = Some(cancel_tx);
+        self.create_recheck_submit = Some(pending_submit);
+        if let Some(form) = &mut self.form {
+            form.catalog_rechecking = true;
+            form.error = None;
+        }
+        let backend_clone = backend.clone();
+        let reads = reads.clone();
+        let wake_clone = wake.clone();
+        platform::spawn(async move {
+            let Some(_permit) = reads.preview(&cancelled).await else {
+                return;
+            };
+            let Some(outcome) = crate::platform::reads::cancellable(
+                &cancelled,
+                backend_clone.read_mission_catalog(),
+            )
+            .await
+            else {
+                return;
+            };
+            let _ = out
+                .send(CreateRecheckReply {
+                    serial,
+                    outcome,
+                    backend: backend_clone,
+                })
+                .await;
+            wake_clone();
+        });
+    }
+
     fn cancel_async(&mut self) {
         self.cancel_prefill();
         self.cancel_defaults();
         self.cancel_doc_recheck();
+        self.cancel_create_recheck();
+    }
+
+    fn cancel_create_recheck(&mut self) {
+        self.create_recheck_cancel = None;
+        self.create_recheck_submit = None;
+        self.ready_create_submit = None;
+        if let Some(rx) = self.create_recheck_flight.take()
+            && let Ok(reply) = rx.try_recv()
+            && matches!(reply.outcome, MissionCatalogOutcome::AuthExpired)
+        {
+            self.record_auth_expired(reply.backend);
+        }
+        self.create_recheck_serial = self.create_recheck_serial.saturating_add(1);
     }
 
     fn cancel_defaults(&mut self) {

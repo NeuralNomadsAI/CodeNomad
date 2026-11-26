@@ -243,6 +243,19 @@ impl EditorHolds {
         self.creations.get(key).map(CreationEntry::view)
     }
 
+    pub(crate) fn has_creation_for_workspace(&self, backend: &Backend) -> bool {
+        let server = server_owner(backend);
+        self.creations
+            .keys()
+            .any(|key| key.server == server && key.workspace == backend.workspace)
+    }
+
+    pub(crate) fn retire_creation_workspace(&mut self, backend: &Backend) {
+        let server = server_owner(backend);
+        self.creations
+            .retain(|key, _| !(key.server == server && key.workspace == backend.workspace));
+    }
+
     pub(crate) fn edit(&self, key: &EditHoldKey) -> Option<EditHoldView> {
         self.edits.get(key).map(EditEntry::view)
     }

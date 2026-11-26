@@ -1973,6 +1973,10 @@ fn reopen_ignores_pre_click_inflight_detail_read_and_waits_for_post_click_refres
         start_on_creation: false,
         prefill: PrefillState::Ready,
         has_loaded_draft: true,
+        initial_objective: "Old text".into(),
+        initial_notes: String::new(),
+        has_hold: false,
+        catalog_rechecking: false,
         doc_rechecking: false,
         edit: Some(EditTarget::from_header(&header_v2)),
         reopening: None,
@@ -1980,6 +1984,7 @@ fn reopen_ignores_pre_click_inflight_detail_read_and_waits_for_post_click_refres
         previous_draft: None,
         previous_draft_open: false,
         lock_help_open: false,
+        pending_leave: None,
         request_id: "req-1".into(),
         last_payload: String::new(),
         error: Some("missions.control.revisionConflict"),
@@ -2317,6 +2322,7 @@ fn open_mission_editor_blocks_global_shortcuts_while_allowing_escape() {
     let mut editor_still_open = true;
     rt.update(|s, tx| {
         blocked_ctrl_w = crate::shell::shortcut_blocked(s, &ctrl_w, tx);
+        // With an unsaved draft, Escape prompts before discarding instead of wiping the draft.
         escape_handled = crate::shell::keys(s, &esc, tx);
         editor_still_open = crate::workspace::mission_has_editor(s);
     });
@@ -2324,8 +2330,27 @@ fn open_mission_editor_blocks_global_shortcuts_while_allowing_escape() {
         blocked_ctrl_w,
         "global shortcuts such as Ctrl+W must be blocked while Mission editor is open"
     );
-    assert!(escape_handled, "Escape must still close the Mission editor");
-    assert!(!editor_still_open, "Mission editor must close on Escape");
+    assert!(
+        escape_handled,
+        "Escape must be handled by the Mission editor"
+    );
+    assert!(
+        editor_still_open,
+        "Escape on an unsaved draft must prompt instead of silently wiping the draft"
+    );
+    // Second Escape cancels the discard prompt; clearing the draft lets Escape close immediately.
+    rt.update(|s, tx| {
+        assert!(crate::shell::keys(s, &esc, tx));
+        let (_, panel, _) = crate::workspace::test_mission_entry_mut(s, 0);
+        assert_eq!(panel.editor.form.as_ref().unwrap().pending_leave, None);
+        panel.editor.form.as_mut().unwrap().objective = TextEdit::new("");
+        assert!(crate::shell::keys(s, &esc, tx));
+        editor_still_open = crate::workspace::mission_has_editor(s);
+    });
+    assert!(
+        !editor_still_open,
+        "clean Mission editor must close immediately on Escape"
+    );
 }
 
 #[test]
@@ -2391,11 +2416,17 @@ fn document_lock_via_schedule_blocks_edit_while_preserving_existing_hold() {
                     "document": {
                         "id": "msn_doclock",
                         "kind": "one-time",
+                        "configuration": { "roots": [{ "mode": "directory-only", "directory": "/repo" }] },
                         "preparation": { "pending": true },
                         "edit": { "structural": false, "reason": "uncertain" }
                     }
                 })
                 .to_string(),
+            )
+        } else if raw.starts_with("GET /workspaces/ws-1/instance/api/location") {
+            (
+                "200 OK".into(),
+                json!({ "directory": "/repo", "project": { "id": "prj_1" } }).to_string(),
             )
         } else if raw.starts_with("PATCH /api/workspaces/ws-1/missions/msn_doclock ") {
             patch_calls_bg.fetch_add(1, Ordering::SeqCst);
@@ -2967,12 +2998,18 @@ fn ready_edit_revalidates_schedule_503_before_patch_and_on_resume_without_losing
                         "document": {
                             "id": "msn_doc503",
                             "kind": "one-time",
+                            "configuration": { "roots": [{ "mode": "directory-only", "directory": "/repo" }] },
                             "edit": { "structural": false, "reason": "launched-once" }
                         }
                     })
                     .to_string(),
                 )
             }
+        } else if raw.starts_with("GET /workspaces/ws-1/instance/api/location") {
+            (
+                "200 OK".into(),
+                json!({ "directory": "/repo", "project": { "id": "prj_1" } }).to_string(),
+            )
         } else if raw.contains("/content?") && raw.contains("field=objective") {
             (
                 "200 OK".into(),
@@ -3136,12 +3173,18 @@ fn reopen_hitting_document_lock_retains_reopen_target_and_preserves_draft_on_ret
                         "document": {
                             "id": "msn_reopen_lock",
                             "kind": "one-time",
+                            "configuration": { "roots": [{ "mode": "directory-only", "directory": "/repo" }] },
                             "edit": { "structural": false, "reason": "launched-once" }
                         }
                     })
                     .to_string(),
                 )
             }
+        } else if raw.starts_with("GET /workspaces/ws-1/instance/api/location") {
+            (
+                "200 OK".into(),
+                json!({ "directory": "/repo", "project": { "id": "prj_1" } }).to_string(),
+            )
         } else if raw.contains("/missions/panel-page") && raw.contains("\"mission\"") {
             let rev = rev_served_bg.load(Ordering::SeqCst) as u64;
             let text = if rev >= 4 { obj_v4 } else { obj_v3 };
@@ -3742,10 +3785,16 @@ fn same_tick_panel_401_blocks_pre_edit_doc_recheck_patch_dispatch() {
                                 "document": {
                                     "id": "msn_doc401",
                                     "kind": "one-time",
+                                    "configuration": { "roots": [{ "mode": "directory-only", "directory": "/repo" }] },
                                     "edit": { "structural": false, "reason": "launched-once" }
                                 }
                             })
                             .to_string(),
+                        )
+                    } else if raw.starts_with("GET /workspaces/ws-1/instance/api/location") {
+                        (
+                            "200 OK",
+                            json!({ "directory": "/repo", "project": { "id": "prj_1" } }).to_string(),
                         )
                     } else if raw.contains("/content?") && raw.contains("field=objective") {
                         (
@@ -4599,6 +4648,485 @@ fn create_validates_default_profiles_against_native_catalog_for_removed_models_a
         None
     );
     assert!(panel.editor.form.as_ref().unwrap().can_submit(None, None));
+}
+
+#[test]
+fn create_revalidates_native_catalog_at_submit_so_disabled_model_never_posts() {
+    let include_gpt5 = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let include_gpt5_bg = include_gpt5.clone();
+    let post_calls = Arc::new(AtomicUsize::new(0));
+    let post_calls_bg = post_calls.clone();
+    let (base, _) = start_scripted_server_raw(move |_idx, raw| {
+        if raw.starts_with("GET /api/storage/config/ui") {
+            (
+                "200 OK".into(),
+                json!({
+                    "settings": {
+                        "missionProfileDefaults": [{
+                            "template": "all",
+                            "taskMode": "native",
+                            "profiles": {
+                                "coordinator": {
+                                    "model": { "providerID": "openai", "id": "gpt-5" }
+                                }
+                            }
+                        }]
+                    }
+                })
+                .to_string(),
+            )
+        } else if raw.starts_with("GET /workspaces/ws-1/instance/api/agent") {
+            (
+                "200 OK".into(),
+                json!({ "location": { "directory": "/repo" }, "data": [] }).to_string(),
+            )
+        } else if raw.starts_with("GET /workspaces/ws-1/instance/api/model") {
+            let models = if include_gpt5_bg.load(Ordering::SeqCst) {
+                json!([{
+                    "providerID": "openai",
+                    "id": "gpt-5",
+                    "enabled": true,
+                    "capabilities": { "tools": true },
+                    "variants": []
+                }])
+            } else {
+                json!([])
+            };
+            (
+                "200 OK".into(),
+                json!({ "location": { "directory": "/repo" }, "data": models }).to_string(),
+            )
+        } else if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+            post_calls_bg.fetch_add(1, Ordering::SeqCst);
+            (
+                "200 OK".into(),
+                json!({
+                    "acknowledgement": "fresh",
+                    "mission": mission_json_for("msn_recheck_ok", 1, "prepared")
+                })
+                .to_string(),
+            )
+        } else {
+            ("404 Not Found".into(), "{}".into())
+        }
+    });
+    let backend = attested_backend(base);
+    let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+
+    open_create_ready(&mut panel, &mut holds, &mut lifecycle, None);
+    let scope = panel.creation_scope_key();
+    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Submit after disable");
+    assert!(panel.editor.form.as_ref().unwrap().can_submit(None, None));
+
+    // Model is disabled AFTER the Create form opened and BEFORE clicking Submit.
+    include_gpt5.store(false, Ordering::SeqCst);
+    panel.submit_editor("tab-1", &mut holds);
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        panel
+            .editor
+            .form
+            .as_ref()
+            .is_some_and(|f| !f.catalog_rechecking)
+    });
+    assert_eq!(
+        panel.editor.form.as_ref().unwrap().profile_catalog_error(),
+        Some("missions.control.profiles.error"),
+        "submit-time catalog recheck must surface profile error when model disappeared"
+    );
+    assert_eq!(
+        post_calls.load(Ordering::SeqCst),
+        0,
+        "stale model must be rejected before POST /missions"
+    );
+    assert!(
+        holds.creation(&scope).is_none(),
+        "stale model must never leave an uncertain creation hold"
+    );
+
+    // Re-enable model, retry defaults, and submit cleanly.
+    include_gpt5.store(true, Ordering::SeqCst);
+    panel
+        .editor
+        .retry_defaults(&panel.backend, &panel.reads, &panel.wake);
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        panel
+            .editor
+            .form
+            .as_ref()
+            .is_some_and(|f| f.defaults_state == DefaultsState::Ready)
+    });
+    panel.submit_editor("tab-1", &mut holds);
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        !panel.has_editor()
+    });
+    assert_eq!(post_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(panel.selected.as_deref(), Some("msn_recheck_ok"));
+}
+
+#[test]
+fn sse_connection_lost_immediately_revokes_autostart_before_reconnect() {
+    let control_calls = Arc::new(AtomicUsize::new(0));
+    let control_calls_bg = control_calls.clone();
+    let (post_seen_tx, post_seen_rx) = std::sync::mpsc::channel();
+    let post_seen_tx = Arc::new(std::sync::Mutex::new(Some(post_seen_tx)));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let release_bg = release.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let _ = tx.send(format!("http://{addr}/"));
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let seen = post_seen_tx.clone();
+                let gate = release_bg.clone();
+                let controls = control_calls_bg.clone();
+                tokio::spawn(async move {
+                    let raw = read_http_request(&mut socket).await;
+                    let (status, body) = if raw.starts_with("GET /api/meta ") {
+                        (
+                            "200 OK",
+                            json!({"apiContract": 1, "serverId": "fixture-server"}).to_string(),
+                        )
+                    } else if raw.starts_with("GET /api/storage/config/ui") {
+                        ("200 OK", json!({"settings": {}}).to_string())
+                    } else if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+                        if let Some(tx) = seen.lock().unwrap().take() {
+                            let _ = tx.send(());
+                        }
+                        gate.notified().await;
+                        (
+                            "200 OK",
+                            json!({
+                                "acknowledgement": "fresh",
+                                "mission": mission_json_for("msn_connlost", 1, "prepared")
+                            })
+                            .to_string(),
+                        )
+                    } else if raw.contains("/control ") {
+                        controls.fetch_add(1, Ordering::SeqCst);
+                        ("200 OK", "{}".into())
+                    } else {
+                        ("404 Not Found", "{}".into())
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+    });
+    let base = rx.recv().unwrap();
+    let backend = attested_backend(base);
+    let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+    open_create_ready(&mut panel, &mut holds, &mut lifecycle, None);
+    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Drop before ACK");
+    panel.editor.form.as_mut().unwrap().start_on_creation = true;
+
+    let state = crate::workspace::test_state_with_mission_panel(panel, holds);
+    let mut rt = Runtime::new(
+        state,
+        |_, _| rune::el(),
+        (1200.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    rt.update(|s, _| {
+        let (tab_key, panel, mission_editor) = crate::workspace::test_mission_entry_mut(s, 0);
+        panel.submit_editor(&tab_key, mission_editor);
+    });
+    post_seen_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("POST /missions must reach server");
+
+    // SSE ConnectionLost arrives BEFORE any Reconnect event: must immediately advance generation and revoke auto-start.
+    rt.update(|s, _| {
+        crate::workspace::on_mission_transport_lost(s);
+    });
+    release.notify_one();
+    wait_until(|| {
+        rt.update(|s, tx| {
+            crate::workspace::poll(s, 1.0, tx);
+        });
+        let (_, panel, mission_editor) = crate::workspace::test_mission_entry_mut(&mut rt.state, 0);
+        let scope = panel.creation_scope_key();
+        mission_editor.creation(&scope).is_none()
+    });
+    std::thread::sleep(Duration::from_millis(60));
+    assert_eq!(
+        control_calls.load(Ordering::SeqCst),
+        0,
+        "ConnectionLost must revoke auto-start before any Reconnect event arrives"
+    );
+    assert!(
+        crate::workspace::test_mission_panel(&rt.state, 0).has_editor(),
+        "late ACK after ConnectionLost must not close editor form"
+    );
+}
+
+#[test]
+fn managed_renewal_with_authentication_required_blocks_mission_editor() {
+    let backend = unattested_backend("http://127.0.0.1:9/".into());
+    let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+    panel.open_create_editor(&mut holds, Some("missions-create".into()));
+    assert!(panel.has_editor());
+
+    let mut state = crate::workspace::test_state_with_mission_panel(panel, holds);
+    assert!(crate::workspace::mission_has_editor(&state));
+    if let Some(launcher) = state.screen.launcher_mut() {
+        launcher.authentication_required = true;
+    }
+    assert!(
+        !crate::workspace::mission_has_editor(&state),
+        "authentication_required must block Mission editor even when launcher does not replace project"
+    );
+    assert!(!crate::workspace::mission_has_reader(&state));
+}
+
+#[test]
+fn tab_close_blocks_creation_hold_and_unsaved_draft_and_drains_401_when_closing() {
+    // 1. Uncertain creation hold blocks tab close so workspace receipt is never destroyed.
+    let (base, _) = start_scripted_server(|_idx, raw| {
+        if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+            ("500 Internal Server Error".into(), "{}".into())
+        } else {
+            ("404 Not Found".into(), "{}".into())
+        }
+    });
+    let backend = attested_backend(base);
+    let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+    open_create_ready(&mut panel, &mut holds, &mut lifecycle, None);
+    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Hold tab open");
+    panel.submit_editor("tab-1", &mut holds);
+    let scope = panel.creation_scope_key();
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        holds
+            .creation(&scope)
+            .is_some_and(|h| h.state == HoldState::Uncertain)
+    });
+    panel.close_reader();
+
+    let state = crate::workspace::test_state_with_mission_panel(panel, holds);
+    let mut rt = Runtime::new(
+        state,
+        |_, _| rune::el(),
+        (1200.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let tab_key = crate::workspace::test_mission_entry_mut(&mut rt.state, 0).0;
+    rt.update(|s, tx| {
+        crate::workspace::close(s, &tab_key, tx);
+    });
+    assert_eq!(
+        crate::workspace::test_mission_entry_mut(&mut rt.state, 0).0,
+        tab_key,
+        "tab with uncertain creation hold must refuse close"
+    );
+
+    // 2. Unsaved draft without hold also blocks tab close.
+    let backend2 = unattested_backend("http://127.0.0.1:9/".into());
+    let mut panel2 = Panel::new(
+        backend2,
+        Some("prj_1".into()),
+        Reads::default(),
+        noop_wake(),
+    );
+    let mut holds2 = EditorHolds::default();
+    panel2.open_create_editor(&mut holds2, None);
+    panel2.editor.form.as_mut().unwrap().objective = TextEdit::new("Unsaved work");
+    let state2 = crate::workspace::test_state_with_mission_panel(panel2, holds2);
+    let mut rt2 = Runtime::new(
+        state2,
+        |_, _| rune::el(),
+        (1200.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt2.frame(0.0);
+    let tab_key2 = crate::workspace::test_mission_entry_mut(&mut rt2.state, 0).0;
+    rt2.update(|s, tx| {
+        crate::workspace::close(s, &tab_key2, tx);
+    });
+    assert_eq!(
+        crate::workspace::test_mission_entry_mut(&mut rt2.state, 0).0,
+        tab_key2,
+        "tab with unsaved Mission editor draft must refuse close"
+    );
+
+    // 3. Closing a clean tab with an arrived 401 on its Mission panel drains the 401 into auth recovery.
+    let (obs_seen_tx, obs_seen_rx) = std::sync::mpsc::channel();
+    let obs_seen_tx = Arc::new(std::sync::Mutex::new(Some(obs_seen_tx)));
+    let (base3, _) = start_scripted_server(move |_idx, raw| {
+        if raw.contains("/missions/panel-page") {
+            if let Some(tx) = obs_seen_tx.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+            ("401 Unauthorized".into(), "expired".into())
+        } else {
+            ("404 Not Found".into(), "{}".into())
+        }
+    });
+    let backend3 = attested_backend(base3);
+    let (wake3_tx, wake3_rx) = bounded(8);
+    let wake3: Wake = Arc::new(move || {
+        let _ = wake3_tx.try_send(());
+    });
+    let mut panel3 = Panel::new(
+        backend3.clone(),
+        Some("prj_1".into()),
+        Reads::default(),
+        wake3,
+    );
+    panel3.observation.refresh();
+    assert!(panel3.observation.poll(
+        &backend3,
+        "prj_1",
+        "msn_tab_401",
+        2,
+        &Reads::default(),
+        &panel3.wake,
+    ));
+    obs_seen_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("activity read must reach server");
+    crate::platform::block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), wake3_rx.recv())
+            .await
+            .expect("401 reply must arrive before tab close")
+            .unwrap();
+    });
+    let state3 = crate::workspace::test_state_with_mission_panel(panel3, EditorHolds::default());
+    let mut rt3 = Runtime::new(
+        state3,
+        |_, _| rune::el(),
+        (1200.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt3.frame(0.0);
+    let tab_key3 = crate::workspace::test_mission_entry_mut(&mut rt3.state, 0).0;
+    rt3.update(|s, tx| {
+        crate::workspace::close(s, &tab_key3, tx);
+    });
+    assert!(
+        rt3.state
+            .screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required),
+        "closing a tab must drain pending Mission panel 401s into authentication recovery"
+    );
+}
+
+#[test]
+fn unsaved_editor_draft_prompts_before_navigation_or_close_and_discards_only_on_confirm() {
+    let backend = unattested_backend("http://127.0.0.1:9/".into());
+    let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+    panel.summaries = vec![
+        serde_json::from_value(json!({
+            "id": "msn_one",
+            "title": "One",
+            "objective": "First",
+            "status": "active",
+            "runState": "running",
+            "coordinatorSessionId": "ses_1",
+            "actorCount": 1,
+            "revision": 1,
+            "updatedAt": 1.0
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "id": "msn_two",
+            "title": "Two",
+            "objective": "Second",
+            "status": "active",
+            "runState": "running",
+            "coordinatorSessionId": "ses_2",
+            "actorCount": 1,
+            "revision": 1,
+            "updatedAt": 2.0
+        }))
+        .unwrap(),
+    ];
+    panel.selected = Some("msn_one".into());
+
+    // Open Create and type an unsaved draft.
+    panel.open_create_editor(&mut holds, Some("missions-create".into()));
+    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Unsaved instructions");
+
+    // Clicking another Mission row must NOT wipe the draft; it arms pending_leave instead.
+    panel.select("msn_two");
+    assert!(panel.has_editor());
+    assert_eq!(panel.selected.as_deref(), Some("msn_one"));
+    assert_eq!(
+        panel.editor.form.as_ref().unwrap().objective.text,
+        "Unsaved instructions"
+    );
+    assert_eq!(
+        panel.editor.form.as_ref().unwrap().pending_leave,
+        Some(LeaveIntent::SelectMission("msn_two".into()))
+    );
+
+    // Cancelling the discard prompt keeps the draft intact.
+    panel.editor_gesture("tab-1", &mut holds, EditorGesture::CancelDiscard);
+    assert_eq!(panel.editor.form.as_ref().unwrap().pending_leave, None);
+    assert_eq!(
+        panel.editor.form.as_ref().unwrap().objective.text,
+        "Unsaved instructions"
+    );
+
+    // Requesting close via Close button / Escape prompts instead of destroying the draft.
+    assert_eq!(
+        panel.request_close_surface(&holds, false),
+        CloseSurface::PromptedDiscard
+    );
+    assert!(panel.has_editor());
+    // Escape while prompt is open cancels the prompt and preserves the draft.
+    assert_eq!(
+        panel.request_close_surface(&holds, true),
+        CloseSurface::CancelledPrompt
+    );
+    assert!(panel.has_editor());
+    assert_eq!(
+        panel.editor.form.as_ref().unwrap().objective.text,
+        "Unsaved instructions"
+    );
+
+    // Clicking overview eye on msn_two arms OpenOverview; confirming Discard switches & opens reader.
+    assert!(!panel.toggle_overview("msn_two"));
+    assert!(panel.has_editor());
+    assert_eq!(
+        panel.editor.form.as_ref().unwrap().pending_leave,
+        Some(LeaveIntent::OpenOverview("msn_two".into()))
+    );
+    let confirmed = panel.confirm_discard_editor(&mut holds);
+    assert_eq!(
+        confirmed.map(|(intent, _)| intent),
+        Some(LeaveIntent::OpenOverview("msn_two".into()))
+    );
+    assert!(!panel.has_editor());
+    assert_eq!(panel.selected.as_deref(), Some("msn_two"));
+    assert!(panel.has_reader());
 }
 
 fn sample_doc_header_for(mission_id: &str, revision: u64, objective: &str) -> MapHeader {

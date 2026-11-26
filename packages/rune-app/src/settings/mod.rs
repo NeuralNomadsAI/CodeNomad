@@ -300,6 +300,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let changed = false;
     let revision_changed =
         shared.revision != std::mem::replace(&mut s.settings.last_revision, shared.revision);
+    let mission_disconnected = shared.take_mission_disconnected();
     let (reconnected, missions) = shared.mission_changes();
     let locale = shared.locale().unwrap_or_else(strings::locale);
     let notify_failure = shared.take_notification_failure();
@@ -333,6 +334,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     } else {
         if keep_passage {
             crate::chat::reading::keep_passage(s, tx);
+        }
+        if mission_disconnected {
+            crate::workspace::on_mission_transport_lost(s);
         }
         if reconnected {
             crate::workspace::mission_event(s, None);

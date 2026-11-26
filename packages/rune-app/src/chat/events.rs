@@ -285,6 +285,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     s.conversation_stream_connected = false;
                 }
                 workspace::suspend_mission_briefing(s);
+                workspace::on_mission_transport_lost(s);
                 s.transcript_display.messages.offline();
                 s.transcript_display.tool_clock.pause();
                 s.status_permissions.online(false);

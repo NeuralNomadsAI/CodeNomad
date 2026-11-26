@@ -172,13 +172,14 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
         if workspace::mission_has_reader(s) {
-            let back = workspace::close_mission_reader(s);
-            if s.screen.is_launcher() {
-                tx.instant();
-            } else {
-                crate::chat::reading::restore_position(s, tx);
+            if let Some(back) = workspace::request_close_mission_reader(s, true, tx) {
+                if s.screen.is_launcher() {
+                    tx.instant();
+                } else {
+                    crate::chat::reading::restore_position(s, tx);
+                }
+                workspace::restore_mission_reader_focus(s, back, tx);
             }
-            workspace::restore_mission_reader_focus(s, back, tx);
             return true;
         }
     }

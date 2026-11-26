@@ -483,18 +483,56 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             }
         );
 
-        // Document edit-lock checks via GET /missions/{id}/schedule.
-        let (base, _t) = spawn_http(
+        // Document edit-lock checks via GET /missions/{id}/schedule + GET /instance/api/location.
+        let spawn_doc = |sched_status: &'static str,
+                         sched_body: String,
+                         loc_status: &'static str,
+                         loc_body: String| async move {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                for _ in 0..2 {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let sb = sched_body.clone();
+                    let lb = loc_body.clone();
+                    tokio::spawn(async move {
+                        let raw = read_http_request(&mut socket).await;
+                        let (status, body) = if raw.contains("/schedule") {
+                            (sched_status, sb)
+                        } else if raw.contains("/instance/api/location") {
+                            (loc_status, lb)
+                        } else {
+                            ("404 Not Found", "{}".into())
+                        };
+                        let reply = format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(reply.as_bytes()).await;
+                    });
+                }
+            });
+            format!("http://{addr}/")
+        };
+        let repo_loc = json!({ "directory": "/repo", "project": { "id": "prj_1" } }).to_string();
+        let repo_roots = json!({ "roots": [{ "mode": "directory-only", "directory": "/repo" }] });
+
+        let base = spawn_doc(
             "200 OK",
             json!({
                 "pending": false,
                 "document": {
                     "id": "msn_alpha123",
                     "kind": "one-time",
+                    "configuration": repo_roots,
                     "edit": { "structural": false, "reason": "launched-once" }
                 }
             })
             .to_string(),
+            "200 OK",
+            repo_loc.clone(),
         )
         .await;
         assert_eq!(
@@ -506,18 +544,54 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             }
         );
 
-        let (base, _t) = spawn_http(
+        // Mismatched worktree directory, multi-root, or non-directory-only mode locks with scope.
+        for bad_roots in [
+            json!({ "roots": [{ "mode": "directory-only", "directory": "/repo-wt2" }] }),
+            json!({ "roots": [
+                { "mode": "directory-only", "directory": "/repo" },
+                { "mode": "directory-only", "directory": "/repo-wt2" }
+            ] }),
+            json!({ "roots": [{ "mode": "project", "directory": "/repo" }] }),
+        ] {
+            let base = spawn_doc(
+                "200 OK",
+                json!({
+                    "pending": false,
+                    "document": {
+                        "id": "msn_alpha123",
+                        "kind": "one-time",
+                        "configuration": bad_roots,
+                        "edit": { "structural": true, "reason": null }
+                    }
+                })
+                .to_string(),
+                "200 OK",
+                repo_loc.clone(),
+            )
+            .await;
+            assert_eq!(
+                backend(base)
+                    .read_mission_edit_document("msn_alpha123")
+                    .await,
+                DocumentEditCheck::Locked("missions.scheduling.lock.scope")
+            );
+        }
+
+        let base = spawn_doc(
             "200 OK",
             json!({
                 "pending": false,
                 "document": {
                     "id": "msn_alpha123",
                     "kind": "one-time",
+                    "configuration": repo_roots,
                     "preparation": { "pending": true },
                     "edit": { "structural": false, "reason": "uncertain" }
                 }
             })
             .to_string(),
+            "200 OK",
+            repo_loc.clone(),
         )
         .await;
         assert_eq!(
@@ -527,17 +601,20 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             DocumentEditCheck::Locked("missions.scheduling.lock.uncertain")
         );
 
-        let (base, _t) = spawn_http(
+        let base = spawn_doc(
             "200 OK",
             json!({
                 "pending": false,
                 "document": {
                     "id": "msn_alpha123",
                     "kind": "schedule",
+                    "configuration": repo_roots,
                     "edit": { "structural": true, "reason": null }
                 }
             })
             .to_string(),
+            "200 OK",
+            repo_loc.clone(),
         )
         .await;
         assert_eq!(
@@ -547,7 +624,7 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             DocumentEditCheck::Locked("missions.scheduling.lock.journal")
         );
 
-        let (base, _t) = spawn_http(
+        let base = spawn_doc(
             "503 Service Unavailable",
             json!({
                 "missionID": "msn_alpha123",
@@ -555,6 +632,8 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
                 "code": "schedule-pending"
             })
             .to_string(),
+            "200 OK",
+            repo_loc.clone(),
         )
         .await;
         assert_eq!(
@@ -564,7 +643,7 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             DocumentEditCheck::Locked("missions.scheduling.lock.uncertain")
         );
 
-        let (base, _t) = spawn_http(
+        let base = spawn_doc(
             "409 Conflict",
             json!({
                 "missionID": "msn_alpha123",
@@ -572,6 +651,8 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
                 "code": "mission-deleted"
             })
             .to_string(),
+            "200 OK",
+            repo_loc.clone(),
         )
         .await;
         assert_eq!(
@@ -581,13 +662,14 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             DocumentEditCheck::Locked("missions.scheduling.lock.deleted")
         );
 
-        let (base, _t) = spawn_http(
+        let base = spawn_doc(
             "200 OK",
             json!({
                 "pending": false,
                 "document": {
                     "id": "msn_alpha123",
                     "kind": "one-time",
+                    "configuration": repo_roots,
                     "firstPlay": {
                         "requestID": "play-1",
                         "expectedRevision": 1,
@@ -600,6 +682,8 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
                 }
             })
             .to_string(),
+            "200 OK",
+            repo_loc.clone(),
         )
         .await;
         assert_eq!(
@@ -609,13 +693,14 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             DocumentEditCheck::Locked("missions.scheduling.lock.uncertain")
         );
 
-        let (base, _t) = spawn_http(
+        let base = spawn_doc(
             "200 OK",
             json!({
                 "pending": false,
                 "document": {
                     "id": "msn_alpha123",
                     "kind": "one-time",
+                    "configuration": repo_roots,
                     "firstPlay": {
                         "requestID": "play-1",
                         "expectedRevision": 1,
@@ -628,6 +713,8 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
                 }
             })
             .to_string(),
+            "200 OK",
+            repo_loc.clone(),
         )
         .await;
         assert_eq!(
@@ -661,7 +748,30 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             UpdateMissionOutcome::Rejected(MutationCode::ControlPending)
         );
 
-        let (base, _t) = spawn_http("401 Unauthorized", "{}".into()).await;
+        let base = spawn_doc("401 Unauthorized", "{}".into(), "200 OK", repo_loc.clone()).await;
+        assert_eq!(
+            backend(base)
+                .read_mission_edit_document("msn_alpha123")
+                .await,
+            DocumentEditCheck::AuthExpired
+        );
+
+        let base = spawn_doc(
+            "200 OK",
+            json!({
+                "pending": false,
+                "document": {
+                    "id": "msn_alpha123",
+                    "kind": "one-time",
+                    "configuration": repo_roots,
+                    "edit": { "structural": true, "reason": null }
+                }
+            })
+            .to_string(),
+            "401 Unauthorized",
+            "{}".into(),
+        )
+        .await;
         assert_eq!(
             backend(base)
                 .read_mission_edit_document("msn_alpha123")

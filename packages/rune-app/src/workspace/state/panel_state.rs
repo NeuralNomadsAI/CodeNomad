@@ -130,8 +130,14 @@ fn pairing_required(s: &State) -> bool {
     }
 }
 
+fn authentication_required(s: &State) -> bool {
+    s.screen
+        .launcher()
+        .is_some_and(|l| l.authentication_required)
+}
+
 fn mission_context_blocked(s: &State) -> bool {
-    crate::shell::launcher_replaces_project(s) || pairing_required(s)
+    crate::shell::launcher_replaces_project(s) || authentication_required(s) || pairing_required(s)
 }
 
 pub(crate) fn mission_has_reader(s: &State) -> bool {
@@ -148,10 +154,40 @@ pub(crate) fn close_mission_reader(s: &mut State) -> Option<String> {
         ui.mission_editor
             .revoke_auto_start_for_occurrence(&entry.key);
         if let Some(panel) = &mut entry.missions {
-            return panel.close_reader();
+            return panel.close_reader_preserving_dirty_editor(&ui.mission_editor);
         }
     }
     None
+}
+
+pub(crate) fn request_close_mission_reader(
+    s: &mut State,
+    from_escape: bool,
+    tx: &mut rune::Tx,
+) -> Option<Option<String>> {
+    let outcome = {
+        let ui = s.workspace.as_mut()?;
+        let entry = &mut ui.entries[ui.active];
+        let panel = entry.missions.as_mut()?;
+        let outcome = panel.request_close_surface(&ui.mission_editor, from_escape);
+        if matches!(outcome, missions::CloseSurface::Closed(_)) {
+            ui.mission_editor
+                .revoke_auto_start_for_occurrence(&entry.key);
+        }
+        outcome
+    };
+    match outcome {
+        missions::CloseSurface::Closed(back) => Some(back),
+        missions::CloseSurface::PromptedDiscard => {
+            tx.focus("mission-editor-discard-cancel", tx.focus_visible());
+            tx.instant();
+            None
+        }
+        missions::CloseSurface::CancelledPrompt => {
+            tx.instant();
+            None
+        }
+    }
 }
 
 pub(crate) fn restore_mission_reader_focus(s: &State, back: Option<String>, tx: &mut rune::Tx) {
@@ -193,13 +229,14 @@ pub(crate) fn mission_reader(s: &State) -> El {
         return rune::el();
     };
     let close = |s: &mut State, tx: &mut rune::Tx| {
-        let back = close_mission_reader(s);
-        if s.screen.is_launcher() {
-            tx.instant();
-        } else {
-            crate::chat::reading::restore_position(s, tx);
+        if let Some(back) = request_close_mission_reader(s, false, tx) {
+            if s.screen.is_launcher() {
+                tx.instant();
+            } else {
+                crate::chat::reading::restore_position(s, tx);
+            }
+            restore_mission_reader_focus(s, back, tx);
         }
-        restore_mission_reader_focus(s, back, tx);
     };
     if panel.has_editor() {
         missions::editor_view(
@@ -216,6 +253,33 @@ pub(crate) fn mission_reader(s: &State) -> El {
 
 fn mission_editor_act(s: &mut State, gesture: missions::EditorGesture, tx: &mut rune::Tx) {
     if mission_context_blocked(s) {
+        return;
+    }
+    if matches!(gesture, missions::EditorGesture::ConfirmDiscard) {
+        let discarded = s.workspace.as_mut().and_then(|ui| {
+            let entry = &mut ui.entries[ui.active];
+            entry
+                .missions
+                .as_mut()?
+                .confirm_discard_editor(&mut ui.mission_editor)
+        });
+        if let Some((intent, back)) = discarded {
+            match intent {
+                missions::LeaveIntent::Close => {
+                    if !s.screen.is_launcher() {
+                        crate::chat::reading::restore_position(s, tx);
+                    }
+                    restore_mission_reader_focus(s, back, tx);
+                }
+                missions::LeaveIntent::SelectMission(_) => {}
+                missions::LeaveIntent::OpenOverview(_)
+                | missions::LeaveIntent::OpenTask(_, _, _) => {
+                    on_mission_reader_open(s, tx);
+                    tx.focus("mission-reader-close", tx.focus_visible());
+                }
+            }
+        }
+        tx.instant();
         return;
     }
     let opening = matches!(
@@ -499,7 +563,11 @@ pub(super) fn poll_missions(
                     (!backend.workspace.is_empty()).then_some((backend, project.path.clone()))
                 });
         let Some((backend, folder)) = target else {
-            changed |= entry.missions.take().is_some();
+            if let Some(mut old) = entry.missions.take() {
+                old.suspend();
+                extend_unique_auth(&mut auth_expired, old.drain_auth_expired());
+                changed = true;
+            }
             ui.mission_lifecycle.retain_checks_for(None);
             ui.mission_lifecycle.confirmation = None;
             ui.mission_editor
@@ -524,6 +592,10 @@ pub(super) fn poll_missions(
                 existing.rebind(backend);
                 existing.rebind_editor(&mut ui.mission_editor);
             } else {
+                if let Some(mut old) = entry.missions.take() {
+                    old.suspend();
+                    extend_unique_auth(&mut auth_expired, old.drain_auth_expired());
+                }
                 let mut panel =
                     missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone())
                         .with_owner_scope(folder);
@@ -673,9 +745,65 @@ fn extend_unique_auth(
     }
 }
 
+pub(super) fn deliver_mission_auth_expired(
+    s: &mut State,
+    expired: Vec<crate::backend::Backend>,
+) -> bool {
+    if expired.is_empty() {
+        return false;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut changed = false;
+        for backend in expired {
+            changed |= crate::settings::authentication_required(s, &backend);
+        }
+        changed
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = expired;
+        crate::platform::pairing::observe(s);
+        true
+    }
+}
+
 pub(crate) fn suspend_mission_briefing(s: &mut State) {
     if let Some(ui) = &mut s.workspace {
         ui.mission_briefing.suspend();
+    }
+}
+
+pub(crate) fn on_mission_transport_lost(s: &mut State) {
+    if let Some(ui) = &mut s.workspace {
+        ui.mission_briefing.suspend();
+        let active_backend = ui.entries[ui.active]
+            .missions
+            .as_ref()
+            .map(|panel| panel.briefing_backend().clone())
+            .or_else(|| ui.entries[ui.active].binding.clone());
+        let active_key = ui.entries[ui.active].key.clone();
+        ui.mission_editor
+            .revoke_auto_start_for_occurrence(&active_key);
+        if let Some(backend) = &active_backend {
+            ui.mission_editor.revoke_auto_start_for_connection(backend);
+        }
+        for (idx, entry) in ui.entries.iter_mut().enumerate() {
+            let same_conn = idx == ui.active
+                || active_backend.as_ref().is_some_and(|b| {
+                    entry
+                        .missions
+                        .as_ref()
+                        .is_some_and(|p| p.briefing_backend().client.same_connection(&b.client))
+                });
+            if same_conn {
+                ui.mission_editor
+                    .revoke_auto_start_for_occurrence(&entry.key);
+                if let Some(panel) = entry.missions.as_mut() {
+                    panel.invalidate_editor_generation();
+                }
+            }
+        }
     }
 }
 

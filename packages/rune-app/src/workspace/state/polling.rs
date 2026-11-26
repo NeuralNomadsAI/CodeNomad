@@ -57,17 +57,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if restore_chat_after_save && !s.screen.is_launcher() {
         crate::chat::reading::restore_position(s, tx);
     }
-    if !mission_auth_expired.is_empty() {
-        #[cfg(not(target_arch = "wasm32"))]
-        for expired in mission_auth_expired {
-            changed |= crate::settings::authentication_required(s, &expired);
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = mission_auth_expired;
-            crate::platform::pairing::observe(s);
-        }
-    }
+    changed |= panel_state::deliver_mission_auth_expired(s, mission_auth_expired);
     if became_ready {
         resume(s, tx);
     }

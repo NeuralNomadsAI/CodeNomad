@@ -305,6 +305,81 @@ impl Panel {
                 .is_some_and(|snapshot| snapshot.header.root.editable())
     }
 
+    pub(crate) fn has_unsaved_editor_draft(&self, holds: &EditorHolds) -> bool {
+        let scope = self.creation_scope_key();
+        self.editor.has_unsaved_draft(&scope, &self.backend, holds)
+    }
+
+    pub(crate) fn close_reader_preserving_dirty_editor(
+        &mut self,
+        holds: &EditorHolds,
+    ) -> Option<String> {
+        self.reader_suspended = false;
+        self.detail.cancel_lookup();
+        let reader_back = self.reader.take_return_focus();
+        self.reader.close();
+        if self.editor.is_open() && !self.has_unsaved_editor_draft(holds) {
+            self.editor_suspended = false;
+            self.editor_auto_start_revoked = true;
+            return self.editor.close().or(reader_back);
+        }
+        reader_back
+    }
+
+    pub(crate) fn request_close_surface(
+        &mut self,
+        holds: &EditorHolds,
+        from_escape: bool,
+    ) -> super::editor::CloseSurface {
+        if self.editor.is_open() {
+            if from_escape && self.editor.cancel_pending_leave() {
+                return super::editor::CloseSurface::CancelledPrompt;
+            }
+            if self.has_unsaved_editor_draft(holds) {
+                self.editor.arm_leave(super::editor::LeaveIntent::Close);
+                return super::editor::CloseSurface::PromptedDiscard;
+            }
+            self.editor_suspended = false;
+            self.editor_auto_start_revoked = true;
+            return super::editor::CloseSurface::Closed(self.editor.close());
+        }
+        super::editor::CloseSurface::Closed(self.close_reader())
+    }
+
+    pub(crate) fn confirm_discard_editor(
+        &mut self,
+        holds: &mut EditorHolds,
+    ) -> Option<(super::editor::LeaveIntent, Option<String>)> {
+        let intent = self.editor.take_pending_leave()?;
+        self.editor_suspended = false;
+        self.editor_auto_start_revoked = true;
+        let scope = self.creation_scope_key();
+        holds.revoke_auto_start_for_scope(&scope);
+        let back = self.editor.close();
+        match &intent {
+            super::editor::LeaveIntent::Close => {}
+            super::editor::LeaveIntent::SelectMission(id) => {
+                self.select_unchecked(id);
+            }
+            super::editor::LeaveIntent::OpenOverview(id) => {
+                if self.selected.as_deref() != Some(id.as_str()) {
+                    self.select_unchecked(id);
+                }
+                self.reader.open_overview(id.clone());
+                (self.wake)();
+            }
+            super::editor::LeaveIntent::OpenTask(mission_id, task_id, task_key) => {
+                if self.selected.as_deref() != Some(mission_id.as_str()) {
+                    self.select_unchecked(mission_id);
+                }
+                self.reader
+                    .open_task(mission_id.clone(), task_id.clone(), task_key.clone());
+                (self.wake)();
+            }
+        }
+        Some((intent, back))
+    }
+
     pub(crate) fn editor_gesture(
         &mut self,
         occurrence: &str,
@@ -339,6 +414,14 @@ impl Panel {
             }
             EditorGesture::Reopen => {
                 self.reopen_editor(holds);
+                false
+            }
+            EditorGesture::CancelDiscard => {
+                self.editor.cancel_pending_leave();
+                false
+            }
+            EditorGesture::ConfirmDiscard => {
+                let _ = self.confirm_discard_editor(holds);
                 false
             }
         }
@@ -406,9 +489,10 @@ impl Panel {
 
     pub(crate) fn observe_editor_detail(&mut self, holds: &EditorHolds) -> bool {
         let mut changed = false;
+        let scope = self.creation_scope_key();
+        self.editor.sync_hold_flags(&scope, &self.backend, holds);
         if self.editor_suspended && self.editor.is_open() {
             self.editor_suspended = false;
-            let scope = self.creation_scope_key();
             if self
                 .editor
                 .resume(&scope, &self.backend, holds, &self.reads, &self.wake)
@@ -436,9 +520,14 @@ impl Panel {
         holds: &mut EditorHolds,
         auth_expired: &[Backend],
     ) -> bool {
-        let changed =
-            self.editor
-                .commit_ready_edit_submit(holds, &self.backend, &self.wake, auth_expired);
+        let scope = self.creation_scope_key();
+        let changed = self.editor.commit_ready_submits(
+            &scope,
+            holds,
+            &self.backend,
+            &self.wake,
+            auth_expired,
+        );
         if changed {
             (self.wake)();
         }
@@ -522,6 +611,8 @@ impl Panel {
         self.show(false);
         self.refresh_due = None;
         self.detail.cancel();
+        self.observation.cancel();
+        self.control_fields.cancel();
         self.reader.suspend();
         self.editor.suspend();
         self.cancel_probe();
@@ -593,12 +684,21 @@ impl Panel {
             false
         } else {
             if self.editor.is_open() {
+                if !self
+                    .editor
+                    .request_leave_from_form(super::editor::LeaveIntent::OpenOverview(
+                        id.to_owned(),
+                    ))
+                {
+                    (self.wake)();
+                    return false;
+                }
                 self.editor_suspended = false;
                 self.editor_auto_start_revoked = true;
                 self.editor.close();
             }
             if self.selected.as_deref() != Some(id) {
-                self.select(id);
+                self.select_unchecked(id);
             }
             self.reader.open_overview(id.to_owned());
             (self.wake)();
@@ -613,12 +713,23 @@ impl Panel {
             false
         } else {
             if self.editor.is_open() {
+                if !self
+                    .editor
+                    .request_leave_from_form(super::editor::LeaveIntent::OpenTask(
+                        mission_id.to_owned(),
+                        task_id.to_owned(),
+                        task_key.to_owned(),
+                    ))
+                {
+                    (self.wake)();
+                    return false;
+                }
                 self.editor_suspended = false;
                 self.editor_auto_start_revoked = true;
                 self.editor.close();
             }
             if self.selected.as_deref() != Some(mission_id) {
-                self.select(mission_id);
+                self.select_unchecked(mission_id);
             }
             self.reader.open_task(
                 mission_id.to_owned(),
@@ -1209,10 +1320,25 @@ impl Panel {
     pub(super) fn select(&mut self, id: &str) {
         if self.selected.as_deref() != Some(id) && self.summaries.iter().any(|row| row.id == id) {
             if self.editor.is_open() && self.editor.editing_mission_id() != Some(id) {
+                if !self
+                    .editor
+                    .request_leave_from_form(super::editor::LeaveIntent::SelectMission(
+                        id.to_owned(),
+                    ))
+                {
+                    (self.wake)();
+                    return;
+                }
                 self.editor_suspended = false;
                 self.editor_auto_start_revoked = true;
                 self.editor.close();
             }
+            self.select_unchecked(id);
+        }
+    }
+
+    fn select_unchecked(&mut self, id: &str) {
+        if self.selected.as_deref() != Some(id) && self.summaries.iter().any(|row| row.id == id) {
             self.control_fields.cancel();
             self.detail.clear();
             self.observation.reset();
