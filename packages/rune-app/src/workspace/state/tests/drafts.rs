@@ -2556,17 +2556,326 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         },
     );
     let snap_4 = r12.workspace.as_ref().unwrap().snapshot();
-    let texts_4: Vec<&str> = snap_4
-        .tabs
+    let bytes_4 = crate::workspace::encode(&snap_4).unwrap();
+    let mut hydrated_4 = Ui::new();
+    hydrated_4.hydrate(crate::workspace::decode(&bytes_4).unwrap());
+    let mut texts_4: Vec<&str> = hydrated_4
+        .entries
         .iter()
-        .filter_map(|t| match t {
+        .filter_map(|e| match &e.saved {
             Tab::Workspace(w) => w.drafts.get("ses_r12_three").map(String::as_str),
             _ => None,
         })
         .collect();
+    texts_4.sort_unstable();
     assert_eq!(
-        texts_4.len(),
-        3,
-        "extra reopened tab must not duplicate a closed source in the snapshot"
+        texts_4,
+        vec!["draft one", "draft three", "draft two"],
+        "extra reopened tab must not duplicate or displace any of the 3 distinct drafts across restart"
+    );
+
+    // 20. R13 Bloquant 1: Closing two tabs with distinct restored drafts A then B and reopening
+    // a single tab must project B (newest, matching direct delivery), not A.
+    let mut r13_b1 = draft_state();
+    let mut a13 = closed("ses_r13_order", "restored A");
+    a13.active_session_id = None;
+    let mut b13 = closed("ses_r13_order", "restored B");
+    b13.occurrence = 1;
+    b13.active_session_id = None;
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a13), Tab::Workspace(b13)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    r13_b1.workspace = Some(ui);
+    close(&mut r13_b1, "tab-0", &mut tx);
+    if let Some(l) = r13_b1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    close(&mut r13_b1, "tab-1", &mut tx);
+    if let Some(l) = r13_b1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r13_b1,
+        &Project {
+            id: "proj-r13-b1".into(),
+            path: "/fixture".into(),
+        },
+    );
+    let snap_b1 = r13_b1.workspace.as_ref().unwrap().snapshot();
+    let bytes_b1 = crate::workspace::encode(&snap_b1).unwrap();
+    let mut hydrated_b1 = Ui::new();
+    hydrated_b1.hydrate(crate::workspace::decode(&bytes_b1).unwrap());
+    let Tab::Workspace(reopened_b1) = &hydrated_b1.entries[0].saved else {
+        panic!("expected workspace");
+    };
+    assert_eq!(
+        reopened_b1.drafts.get("ses_r13_order").map(String::as_str),
+        Some("restored B"),
+        "single reopened tab must project newest restored draft B matching direct delivery"
+    );
+
+    // 21. R13 Bloquant 2:
+    // (a) Closing tab E (which never had pending_drafts) with a new draft must immediately
+    // project onto already-open pending tab D so restarting before D binds keeps E's draft.
+    // (b) Clearing a restored copy on open sibling C via capture must immediately promote the
+    // next eligible closed candidate onto pending tab D before restart.
+    let mut r13_b2 = draft_state();
+    let mut b2_res = closed("ses_r13_sync", "stale restored");
+    b2_res.active_session_id = None;
+    let mut c2_clr = closed("ses_r13_sync", "stale restored");
+    c2_clr.occurrence = 1;
+    c2_clr.active_session_id = Some("ses_r13_sync".into());
+    let mut e2_ind = closed("ses_r13_sync", "");
+    e2_ind.drafts.clear();
+    e2_ind.occurrence = 2;
+    e2_ind.active_session_id = Some("ses_r13_sync".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![
+            Tab::Workspace(b2_res),
+            Tab::Workspace(c2_clr),
+            Tab::Workspace(e2_ind),
+        ],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[1].binding = Some(backend("ses_r13_sync"));
+    ui.entries[2].binding = Some(backend("ses_r13_sync"));
+    r13_b2.workspace = Some(ui);
+    r13_b2.show_chat();
+    // Close B (restored), open D (projects B's restored copy initially), then close E with an
+    // independent draft (E has no pending_drafts) -> D must project E's independent draft.
+    close(&mut r13_b2, "tab-0", &mut tx);
+    if let Some(l) = r13_b2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    new_tab(&mut r13_b2, &mut tx);
+    if let Some(l) = r13_b2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r13_b2,
+        &Project {
+            id: "proj-r13-d".into(),
+            path: "/fixture".into(),
+        },
+    );
+    // Switch to E (tab-2), author independent draft, and close E before D binds.
+    select(&mut r13_b2, "tab-2", &mut tx);
+    if let Some(l) = r13_b2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    r13_b2.show_chat();
+    r13_b2.draft = TextEdit::new("from E without pending");
+    capture(&mut r13_b2);
+    close(&mut r13_b2, "tab-2", &mut tx);
+    if let Some(l) = r13_b2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    // Switch to C (tab-1) and clear its restored copy -> D still keeps E's independent draft.
+    select(&mut r13_b2, "tab-1", &mut tx);
+    if let Some(l) = r13_b2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    r13_b2.show_chat();
+    r13_b2.draft = TextEdit::new("");
+    capture(&mut r13_b2);
+    let snap_b2 = r13_b2.workspace.as_ref().unwrap().snapshot();
+    let bytes_b2 = crate::workspace::encode(&snap_b2).unwrap();
+    let mut hydrated_b2 = Ui::new();
+    hydrated_b2.hydrate(crate::workspace::decode(&bytes_b2).unwrap());
+    assert!(
+        hydrated_b2.entries.iter().any(|e| matches!(
+            &e.saved,
+            Tab::Workspace(w) if w.drafts.get("ses_r13_sync").map(String::as_str) == Some("from E without pending")
+        )),
+        "closing E without pending_drafts must project E's draft onto pending tab D before restart"
+    );
+
+    // 21b. R13 Bloquant 2b: Pending tab D initially projects newest closed restored copy while an
+    // older restored copy sits behind it; clearing the projected copy on open sibling C via
+    // capture must immediately shift D's projection to the next candidate before restart.
+    let mut r13_b2c = draft_state();
+    let mut r_old = closed("ses_r13_clrshift", "restored old");
+    r_old.active_session_id = None;
+    let mut r_new = closed("ses_r13_clrshift", "restored new");
+    r_new.occurrence = 1;
+    r_new.active_session_id = None;
+    let mut c_clr2 = closed("ses_r13_clrshift", "restored new");
+    c_clr2.occurrence = 2;
+    c_clr2.active_session_id = Some("ses_r13_clrshift".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![
+            Tab::Workspace(r_old),
+            Tab::Workspace(r_new),
+            Tab::Workspace(c_clr2),
+        ],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[2].binding = Some(backend("ses_r13_clrshift"));
+    r13_b2c.workspace = Some(ui);
+    close(&mut r13_b2c, "tab-0", &mut tx);
+    if let Some(l) = r13_b2c.screen.launcher_mut() {
+        l.pending = false;
+    }
+    close(&mut r13_b2c, "tab-1", &mut tx);
+    if let Some(l) = r13_b2c.screen.launcher_mut() {
+        l.pending = false;
+    }
+    new_tab(&mut r13_b2c, &mut tx);
+    if let Some(l) = r13_b2c.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r13_b2c,
+        &Project {
+            id: "proj-r13-clrshift".into(),
+            path: "/fixture".into(),
+        },
+    );
+    // D initially projects "restored new"; now switch to C (tab-2) and clear "restored new".
+    select(&mut r13_b2c, "tab-2", &mut tx);
+    if let Some(l) = r13_b2c.screen.launcher_mut() {
+        l.pending = false;
+    }
+    r13_b2c.show_chat();
+    r13_b2c.draft = TextEdit::new("");
+    capture(&mut r13_b2c);
+    let snap_b2c = r13_b2c.workspace.as_ref().unwrap().snapshot();
+    let bytes_b2c = crate::workspace::encode(&snap_b2c).unwrap();
+    let mut hydrated_b2c = Ui::new();
+    hydrated_b2c.hydrate(crate::workspace::decode(&bytes_b2c).unwrap());
+    assert!(
+        hydrated_b2c.entries.iter().any(|e| matches!(
+            &e.saved,
+            Tab::Workspace(w) if w.drafts.get("ses_r13_clrshift").map(String::as_str) == Some("restored old")
+        )),
+        "clearing projected restored copy on open sibling C must shift pending tab D to next closed candidate"
+    );
+
+    // 22. R13 Bloquant 3: Active-chat tab A has a pending deletion alongside closed drafts and
+    // eligible sibling tab B. Closing A before the next poll must recover both closed drafts and
+    // A's own draft onto surviving sibling B (not onto closing A in ui.closed), surviving restart.
+    let mut r13_b3 = draft_state();
+    let mut a3 = closed("ses_r13_close", "from closing A");
+    a3.active_session_id = Some("ses_r13_close".into());
+    let mut b3 = closed("ses_r13_close", "");
+    b3.drafts.clear();
+    b3.occurrence = 1;
+    b3.active_session_id = None;
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a3), Tab::Workspace(b3)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_r13_close"));
+    ui.entries[0].pending_deleted.insert("ses_r13_close".into());
+    ui.closed = vec![closed("ses_r13_close", "from closed slot")];
+    ui.closed_restored = vec![Default::default()];
+    ui.closed_derived_from = vec![Default::default()];
+    r13_b3.workspace = Some(ui);
+    r13_b3.show_chat();
+    r13_b3.draft = TextEdit::new("from closing A");
+    close(&mut r13_b3, "tab-0", &mut tx);
+    let snap_b3 = r13_b3.workspace.as_ref().unwrap().snapshot();
+    let bytes_b3 = crate::workspace::encode(&snap_b3).unwrap();
+    let mut hydrated_b3 = Ui::new();
+    hydrated_b3.hydrate(crate::workspace::decode(&bytes_b3).unwrap());
+    let Tab::Workspace(surviving_b) = &hydrated_b3.entries[0].saved else {
+        panic!("expected surviving workspace B");
+    };
+    let mut recovered_b3: Vec<&str> = surviving_b
+        .drafts
+        .iter()
+        .filter(|(k, _)| crate::workspace::is_local_draft_id(k))
+        .map(|(_, v)| v.as_str())
+        .collect();
+    recovered_b3.sort_unstable();
+    assert_eq!(
+        recovered_b3,
+        vec!["from closed slot", "from closing A"],
+        "closing A with pending_deleted must land recovered drafts on surviving sibling B"
+    );
+
+    // 23. R13 Moyen 1: Two tabs restore X; tab A edits X -> Y and closes so tab C projects Y
+    // while tab B still holds untouched restored X. After restart, clearing Y and getting a 404
+    // must NOT resurrect superseded ancestor X from tab B.
+    let mut r13_m1 = draft_state();
+    let mut ma = closed("ses_r13_anc", "ancestor X");
+    ma.active_session_id = Some("ses_r13_anc".into());
+    let mut mb = closed("ses_r13_anc", "ancestor X");
+    mb.occurrence = 1;
+    mb.active_session_id = None;
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(ma), Tab::Workspace(mb)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_r13_anc"));
+    r13_m1.workspace = Some(ui);
+    r13_m1.show_chat();
+    r13_m1.draft = TextEdit::new("edited Y");
+    capture(&mut r13_m1);
+    close(&mut r13_m1, "tab-0", &mut tx);
+    if let Some(l) = r13_m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    new_tab(&mut r13_m1, &mut tx);
+    if let Some(l) = r13_m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r13_m1,
+        &Project {
+            id: "proj-r13-m1".into(),
+            path: "/fixture".into(),
+        },
+    );
+    let snap_m1 = r13_m1.workspace.as_ref().unwrap().snapshot();
+    let bytes_m1 = crate::workspace::encode(&snap_m1).unwrap();
+    let mut restarted_m1 = draft_state();
+    let mut ui_m1 = Ui::new();
+    ui_m1.hydrate(crate::workspace::decode(&bytes_m1).unwrap());
+    ui_m1.ready = true;
+    // Active tab is C (index 1, holding Y); bind, clear Y, and delete session -> X must not return.
+    ui_m1.entries[1].binding = Some(backend("ses_r13_anc"));
+    if let Tab::Workspace(w) = &mut ui_m1.entries[1].saved {
+        w.active_session_id = Some("ses_r13_anc".into());
+    }
+    restarted_m1.workspace = Some(ui_m1);
+    restarted_m1.show_chat();
+    restarted_m1.draft = TextEdit::new("");
+    capture(&mut restarted_m1);
+    restarted_m1.show_launcher();
+    assert!(
+        !crate::workspace::recover_missing_session_draft(&mut restarted_m1, "ses_r13_anc"),
+        "clearing projected edit Y after restart must not resurrect superseded ancestor X"
     );
 }

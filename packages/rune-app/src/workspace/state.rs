@@ -252,6 +252,42 @@ impl Ui {
                 }
             }
         }
+        // Exclude untouched restored sibling copies already superseded by a derived non-restored
+        // draft (edited or projected from an edit) in the same project without changing v1 JSON.
+        for (idx, e) in self.entries.iter().enumerate() {
+            let Tab::Workspace(w) = &e.saved else {
+                continue;
+            };
+            for (id, origin) in &e.derived_from {
+                if e.restored_drafts.contains_key(id) {
+                    continue;
+                }
+                let has_saved_content = w.drafts.get(id).is_some_and(|text| !text.is_empty())
+                    || w.attachment_drafts.contains(id)
+                    || w.attachment_parts.contains_key(id);
+                if !has_saved_content {
+                    continue;
+                }
+                for (other_idx, other) in self.entries.iter().enumerate() {
+                    if other_idx == idx {
+                        continue;
+                    }
+                    let Tab::Workspace(old) = &tabs[other_idx] else {
+                        continue;
+                    };
+                    if !same_project(w, old) {
+                        continue;
+                    }
+                    if other.restored_drafts.get(id) == Some(origin)
+                        && let Tab::Workspace(stale) = &mut tabs[other_idx]
+                    {
+                        stale.drafts.remove(id);
+                        stale.attachment_drafts.remove(id);
+                        stale.attachment_parts.remove(id);
+                    }
+                }
+            }
+        }
         let mut emitted_tombstones: Vec<(usize, String, Vec<usize>)> = Vec::new();
         for (idx, e) in self.entries.iter().enumerate() {
             let Tab::Workspace(w) = &e.saved else {

@@ -285,7 +285,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         })
         .unwrap_or_default();
     for deleted_id in pending_deleted {
-        super::drafts::recover_missing_session_draft_in(s, Some(index), &deleted_id);
+        super::drafts::recover_missing_session_draft_closing_in(s, index, &deleted_id);
     }
     let Some(ui) = &mut s.workspace else {
         return;
@@ -371,6 +371,12 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
                 }
             }
         }
+        let mut sync_keys: std::collections::BTreeSet<String> =
+            removed.pending_drafts.iter().cloned().collect();
+        sync_keys.extend(saved.drafts.keys().cloned());
+        sync_keys.extend(saved.attachment_drafts.iter().cloned());
+        sync_keys.extend(saved.attachment_parts.keys().cloned());
+        sync_keys.extend(removed.clear_authority.keys().cloned());
         let restored_keys: std::collections::HashSet<String> = removed
             .restored_drafts
             .keys()
@@ -385,11 +391,22 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         ui.closed.push(saved);
         ui.closed_restored.push(restored_keys);
         ui.closed_derived_from.push(derived_from);
-        if ui.closed.len() > 16 {
-            ui.closed.remove(0);
+        let evicted = if ui.closed.len() > 16 {
+            let old = ui.closed.remove(0);
             ui.closed_restored.remove(0);
             ui.closed_derived_from.remove(0);
-        }
+            let old_scope = super::ProjectScope::from_workspace(&old);
+            let old_keys: std::collections::BTreeSet<String> = old
+                .drafts
+                .keys()
+                .chain(old.attachment_drafts.iter())
+                .chain(old.attachment_parts.keys())
+                .cloned()
+                .collect();
+            Some((old_scope, old_keys))
+        } else {
+            None
+        };
         let entries = &ui.entries;
         let closed = &ui.closed;
         ui.closed_pending_deleted.retain(|(s, id)| {
@@ -402,8 +419,13 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
                 .iter()
                 .any(|e| matches!(&e.saved, Tab::Workspace(w) if s.matches(w)))
         });
-        for id in &removed.pending_drafts {
+        for id in &sync_keys {
             super::drafts::sync_pending_closed_projections(ui, &scope, id);
+        }
+        if let Some((old_scope, old_keys)) = evicted {
+            for id in &old_keys {
+                super::drafts::sync_pending_closed_projections(ui, &old_scope, id);
+            }
         }
     }
     if let (Some(backend), Some(project)) = (removed.binding, removed.project) {

@@ -10,6 +10,7 @@ pub(super) fn poll_cached(
     let active_has_healthy_stream = active.has_healthy_conversation_stream();
     let mut changed = false;
     let mut drafts_changed = false;
+    let mut projection_sync: Vec<(super::ProjectScope, String)> = Vec::new();
     let mut deleted_by_tab: Vec<(usize, String)> = Vec::new();
     for index in 0..ui.entries.len() {
         let other_healthy_stream = active_has_healthy_stream
@@ -35,13 +36,35 @@ pub(super) fn poll_cached(
             let (hidden_changed, session_deleted) =
                 crate::chat::events::poll_hidden_chat(s, 8, other_healthy_stream);
             changed |= hidden_changed;
+            let mut capture_here = |item: &mut super::Entry, s: &State| {
+                let before = match &item.saved {
+                    super::Tab::Workspace(w) => w.active_session_id.as_ref().map(|id| {
+                        (
+                            super::ProjectScope::from_workspace(w),
+                            id.clone(),
+                            item.clear_authority.get(id).cloned(),
+                        )
+                    }),
+                    super::Tab::Blank => None,
+                };
+                let captured = drafts::capture_draft(item, s);
+                let auth_changed = before
+                    .as_ref()
+                    .is_some_and(|(_, id, prev)| item.clear_authority.get(id) != prev.as_ref());
+                if captured || auth_changed {
+                    drafts_changed = true;
+                    if let Some((scope, id, _)) = before {
+                        projection_sync.push((scope, id));
+                    }
+                }
+            };
             if session_deleted
                 && let Some(id) = match &item.saved {
                     super::Tab::Workspace(saved) => saved.active_session_id.clone(),
                     super::Tab::Blank => None,
                 }
             {
-                drafts_changed |= drafts::capture_draft(item, s);
+                capture_here(item, s);
                 item.pending_deleted.insert(id);
             }
             changed |= crate::files::poll_notices(s);
@@ -49,7 +72,7 @@ pub(super) fn poll_cached(
             if awaiting_prompt && !s.composer.pending()
                 || uncertain_prompt && s.composer.unconfirmed_id().is_none()
             {
-                drafts_changed |= drafts::capture_draft(item, s);
+                capture_here(item, s);
             }
             if let Some(now) = now {
                 changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
@@ -63,6 +86,9 @@ pub(super) fn poll_cached(
         }
     }
     active.apply(s);
+    for (scope, id) in projection_sync {
+        drafts::sync_pending_closed_projections(ui, &scope, &id);
+    }
     if drafts_changed {
         ui.changed();
     }
