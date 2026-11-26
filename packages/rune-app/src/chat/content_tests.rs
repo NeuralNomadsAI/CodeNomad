@@ -803,8 +803,10 @@ fn prose_keeps_literal_html_line_breaks_and_copies_undisplayed_source() {
 fn split_diff_wraps_long_lines_aligns_columns_and_preserves_wrap_across_mode_switches() {
     let long_left =
         "let wrapped_token = compute_side_by_side_alignment(alpha, beta, gamma); ".repeat(4);
+    let long_right =
+        "let wrapped_right = verify_copied_continuation_line(delta, epsilon, zeta); ".repeat(4);
     let patch = format!(
-        "--- a/src/align.rs\n+++ b/src/align.rs\n@@ -1,2 +1,2 @@\n-short_old();\n-{long_left}\n+short_new();\n+short_right();"
+        "--- a/src/align.rs\n+++ b/src/align.rs\n@@ -1,3 +1,3 @@\n-short_old();\n-{long_left}\n-short_left();\n+short_new();\n+short_right();\n+{long_right}"
     );
     let row = history::decode_message(&json!({
         "id": "splitwrap",
@@ -898,8 +900,13 @@ fn split_diff_wraps_long_lines_aligns_columns_and_preserves_wrap_across_mode_swi
         long_old.rect[3],
         short_old.rect[3]
     );
-    // Selecting and copying text from a wrapped split diff copies plain text cleanly.
-    let new_text = find_el(&rt, "/df0.o2/new/code/text").unwrap();
+    // Selecting and copying text from a long wrapped split diff cell copies the full wrapped line.
+    let wrapped_new = find_el(&rt, "/df0.o3/new").unwrap();
+    let wrapped_old = find_el(&rt, "/df0.o3/old").unwrap();
+    assert!((wrapped_old.rect[1] - wrapped_new.rect[1]).abs() < 1.0);
+    assert!((wrapped_old.rect[3] - wrapped_new.rect[3]).abs() < 1.0);
+    assert!(wrapped_new.rect[3] > short_new.rect[3] + 4.0);
+    let new_text = find_el(&rt, "/df0.o3/new/code/text").unwrap();
     let new_text_path = new_text.path.clone();
     rt.update(|_, tx| tx.select_all_text(&new_text_path));
     rt.frame(0.0);
@@ -914,7 +921,7 @@ fn split_diff_wraps_long_lines_aligns_columns_and_preserves_wrap_across_mode_swi
     rt.frame(0.0);
     assert_eq!(
         clipboard.text().as_deref().map(String::as_str),
-        Some("short_right();")
+        Some(long_right.as_str())
     );
     // Copy patch preserves the complete raw patch verbatim.
     let (x, y) = rt.find("tool-splitwrap:4:edit-copy-patch").unwrap();
