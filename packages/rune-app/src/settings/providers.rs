@@ -214,14 +214,10 @@ impl Catalog {
         now: f64,
         wake: Option<&rune::Waker>,
         tx: &mut rune::Tx,
+        visible: bool,
         access: fn(&mut S) -> &mut Catalog,
     ) -> bool {
-        self.manager.poll(target, now, wake, tx, access)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn has_active_connect(&self) -> bool {
-        self.manager.modal_open()
+        self.manager.poll(target, now, wake, tx, visible, access)
     }
 
     pub fn toggle(&mut self) {

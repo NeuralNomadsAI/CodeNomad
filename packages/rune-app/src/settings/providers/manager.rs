@@ -17,7 +17,7 @@ use rune_theme_codenomad::{
 };
 use serde_json::Value;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -108,6 +108,7 @@ pub(super) struct ConnectFlow {
     pub oauth_code: TextEdit,
     pub form_answers: BTreeMap<String, Value>,
     pub form_edits: BTreeMap<String, TextEdit>,
+    pub form_touched: BTreeSet<String>,
     pub oauth: Option<OAuthAttempt>,
     pub command_attempt: Option<String>,
     pub command_status: Option<String>,
@@ -146,6 +147,7 @@ impl ConnectFlow {
             oauth_code: TextEdit::new(""),
             form_answers,
             form_edits,
+            form_touched: BTreeSet::new(),
             oauth: None,
             command_attempt: None,
             command_status: None,
@@ -250,6 +252,7 @@ pub(super) struct Manager {
     pub account_errors: BTreeMap<String, ErrorCopy>,
     renames: BTreeMap<(String, String), RenameDraft>,
     external_link: ExternalLink,
+    external_link_key: Option<String>,
     oauth_link: ExternalLink,
     oauth_launch_tracked: bool,
     op_counter: u64,
@@ -285,6 +288,7 @@ impl Default for Manager {
             account_errors: BTreeMap::new(),
             renames: BTreeMap::new(),
             external_link: ExternalLink::default(),
+            external_link_key: None,
             oauth_link: ExternalLink::default(),
             oauth_launch_tracked: false,
             op_counter: 1,
@@ -339,6 +343,8 @@ impl Manager {
         self.seen = None;
         self.snapshot_rev = None;
         self.load_error = None;
+        self.external_link.clear();
+        self.external_link_key = None;
         self.oauth_link.clear();
         self.oauth_launch_tracked = false;
         true
@@ -421,6 +427,8 @@ impl Manager {
         self.open_picker = None;
         self.auth_flight = None;
         self.poll_flight = None;
+        self.external_link.clear();
+        self.external_link_key = None;
         self.oauth_link.clear();
         self.oauth_launch_tracked = false;
         self.op_counter = self.op_counter.wrapping_add(1);
@@ -439,6 +447,8 @@ impl Manager {
         self.open_picker = None;
         self.auth_flight = None;
         self.poll_flight = None;
+        self.external_link.clear();
+        self.external_link_key = None;
         self.oauth_link.clear();
         self.oauth_launch_tracked = false;
         if let Some(mut flow) = self.connect.take() {
@@ -462,6 +472,7 @@ impl Manager {
         flow.wipe_secrets();
         flow.form_answers = form_answers;
         flow.form_edits = form_edits;
+        flow.form_touched.clear();
         flow.oauth = None;
         flow.command_attempt = None;
         flow.command_status = None;
@@ -470,6 +481,8 @@ impl Manager {
         flow.launch_blocked = false;
         flow.link_copied = false;
         flow.next_poll_at = None;
+        self.external_link.clear();
+        self.external_link_key = None;
     }
 
     pub(super) fn connect_api_key_mut(&mut self) -> &mut TextEdit {
@@ -499,6 +512,7 @@ impl Manager {
 
     pub(super) fn form_text_edit_mut(&mut self, key: &str) -> &mut TextEdit {
         if let Some(flow) = &mut self.connect {
+            flow.form_touched.insert(key.to_owned());
             flow.form_edits
                 .entry(key.to_owned())
                 .or_insert_with(|| TextEdit::new(""))
@@ -556,7 +570,12 @@ impl Manager {
         let Some(method) = flow.selected_method() else {
             return false;
         };
-        let answers = form::effective_answers(method.form(), &flow.form_answers, &flow.form_edits);
+        let answers = form::effective_answers(
+            method.form(),
+            &flow.form_answers,
+            &flow.form_edits,
+            &flow.form_touched,
+        );
         let form_ok = method
             .form()
             .iter()
@@ -617,8 +636,13 @@ impl Manager {
         }
     }
 
+    pub(super) fn external_link_failed(&self, key: &str) -> bool {
+        self.external_link_key.as_deref() == Some(key) && self.external_link.failed()
+    }
+
     pub(super) fn open_external_link<S: 'static>(
         &mut self,
+        key: &str,
         url: &str,
         tx: &mut Tx,
         access: fn(&mut S) -> &mut Catalog,
@@ -626,6 +650,7 @@ impl Manager {
         if !is_http_url(url) {
             return;
         }
+        self.external_link_key = Some(key.to_owned());
         self.external_link.open(url, tx, move |s: &mut S| {
             Some(&mut access(s).manager.external_link)
         });
@@ -773,10 +798,18 @@ impl Manager {
         self.flight.is_some()
     }
 
+    #[cfg(test)]
+    pub(super) fn auth_handover_ready(&self) -> bool {
+        self.auth_flight.as_ref().is_some_and(|(_, _, handover)| {
+            matches!(*handover.lock().unwrap(), AuthHandover::Ready(_))
+        })
+    }
+
     fn cancel_account_flight(&mut self) {
         self.pending_account = None;
-        if let Some((_, _cancel_tx, flag, _rx)) = self.account_flight.take() {
+        if let Some((_, cancel_tx, flag, _rx)) = self.account_flight.take() {
             flag.store(true, Ordering::Release);
+            drop(cancel_tx);
         }
     }
 
@@ -789,7 +822,8 @@ impl Manager {
                 flow.provider_id.clone(),
             ))
         });
-        if let Some((_, _cancel_tx, handover)) = self.auth_flight.take() {
+        if let Some((_, cancel_tx, handover)) = self.auth_flight.take() {
+            drop(cancel_tx);
             let taken = std::mem::replace(&mut *handover.lock().unwrap(), AuthHandover::Cancelled);
             if let (
                 Some((backend, workspace, directory, provider_id)),
@@ -839,6 +873,7 @@ impl Manager {
         now: f64,
         wake: Option<&Waker>,
         tx: &mut Tx,
+        visible: bool,
         access: fn(&mut S) -> &mut Catalog,
     ) -> bool {
         self.clock = now;
@@ -926,7 +961,7 @@ impl Manager {
         changed |= self.poll_attempt_flight(now, tx);
 
         let desired_rev = target.revision().wrapping_add(self.refresh_nonce);
-        if self.flight.is_none() && self.seen != Some(desired_rev) {
+        if visible && self.flight.is_none() && self.seen != Some(desired_rev) {
             let (cancel, cancelled) = bounded(1);
             let (out, reply) = bounded(1);
             let (backend_cl, ws_cl, ses_cl, wake_cl) = (
@@ -953,11 +988,11 @@ impl Manager {
         }
 
         let location_fresh = self.snapshot_rev == Some(desired_rev) && self.flight.is_none();
-        if location_fresh {
+        if visible && location_fresh {
             changed |= self.start_pending_account(backend, workspace, wake);
         }
         changed |=
-            self.drive_connect_flow(backend, workspace, location_fresh, now, wake, tx, access);
+            self.drive_connect_flow(target, visible && location_fresh, now, wake, tx, access);
         changed
     }
 
@@ -1333,14 +1368,15 @@ impl Manager {
 
     fn drive_connect_flow<S: 'static>(
         &mut self,
-        backend: &Backend,
-        workspace: &str,
-        location_fresh: bool,
+        target: &Target,
+        can_start_write: bool,
         now: f64,
         wake: &Waker,
         tx: &mut Tx,
         access: fn(&mut S) -> &mut Catalog,
     ) -> bool {
+        let backend = target.backend();
+        let (workspace, _) = target.location();
         let mut changed = false;
 
         #[cfg(target_arch = "wasm32")]
@@ -1386,7 +1422,7 @@ impl Manager {
             changed = true;
         }
 
-        let want_submit = location_fresh
+        let want_submit = can_start_write
             && self.connect.as_mut().is_some_and(|flow| {
                 let v = flow.pending_submit;
                 flow.pending_submit = false;
@@ -1401,8 +1437,12 @@ impl Manager {
             let flow = self.connect.as_mut().unwrap();
             let provider_id = flow.provider_id.clone();
             let method = flow.selected_method().cloned().unwrap();
-            let effective =
-                form::effective_answers(method.form(), &flow.form_answers, &flow.form_edits);
+            let effective = form::effective_answers(
+                method.form(),
+                &flow.form_answers,
+                &flow.form_edits,
+                &flow.form_touched,
+            );
             flow.form_answers = effective;
             let answer = build_form_answer(method.form(), &flow.form_answers);
             let api_key = flow.api_key.text.trim().to_owned();
@@ -1419,7 +1459,9 @@ impl Manager {
                 (backend.clone(), workspace.to_owned(), wake.clone());
             self.auth_flight = Some((seq, cancel_tx, handover));
             platform::spawn(async move {
-                if matches!(*handover_cl.lock().unwrap(), AuthHandover::Cancelled) {
+                if cancelled.is_closed()
+                    || matches!(*handover_cl.lock().unwrap(), AuthHandover::Cancelled)
+                {
                     return;
                 }
                 let outcome = match method {
@@ -1465,6 +1507,9 @@ impl Manager {
                             Err(err) => AuthFlightOutcome::Failed(err),
                         }
                     }
+                    // OAuth/command POSTs check `cancelled` immediately before `execute`; once
+                    // dispatched, they finish reading the reply so any server-created `attemptID`
+                    // can be cancelled via `DELETE` instead of being leaked by dropping the socket.
                     AuthMethod::OAuth { id, .. } => {
                         match provider_auth::oauth_connect(
                             &backend_cl,
@@ -1473,6 +1518,7 @@ impl Manager {
                             &provider_id,
                             &id,
                             answer,
+                            &cancelled,
                         )
                         .await
                         {
@@ -1486,6 +1532,7 @@ impl Manager {
                         &directory,
                         &provider_id,
                         &id,
+                        &cancelled,
                     )
                     .await
                     {
@@ -1533,7 +1580,7 @@ impl Manager {
             changed = true;
         }
 
-        let want_code = location_fresh
+        let want_code = can_start_write
             && self.connect.as_mut().is_some_and(|flow| {
                 let v = flow.pending_code_submit;
                 flow.pending_code_submit = false;

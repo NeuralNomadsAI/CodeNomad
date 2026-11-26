@@ -800,6 +800,7 @@ pub async fn oauth_connect(
     integration_id: &str,
     method_id: &str,
     answer: Option<Value>,
+    cancelled: &crate::Receiver<()>,
 ) -> std::result::Result<OAuthAttempt, AuthError> {
     let url = instance_url(
         backend,
@@ -811,14 +812,15 @@ pub async fn oauth_connect(
     if let Some(answer) = answer {
         body.insert("answer".into(), answer);
     }
-    let response = backend
+    let request = backend
         .client
         .post(url)
         .query(&[("location[directory]", directory)])
-        .json(&Value::Object(body))
-        .send()
-        .await
-        .map_err(|_| AuthError::Failed)?;
+        .json(&Value::Object(body));
+    if cancelled.is_closed() {
+        return Err(AuthError::Failed);
+    }
+    let response = request.send().await.map_err(|_| AuthError::Failed)?;
     let value = check_json_response(response).await?;
     verify_response_location(&value, directory)?;
     let data = &value["data"];
@@ -828,7 +830,10 @@ pub async fn oauth_connect(
     let mode = match data["mode"].as_str() {
         Some("code") => OAuthMode::Code,
         Some("auto") => OAuthMode::Auto,
-        _ => return Err(AuthError::Failed),
+        _ => {
+            oauth_cancel(backend, workspace, directory, integration_id, &attempt_id).await;
+            return Err(AuthError::Failed);
+        }
     };
     Ok(OAuthAttempt {
         attempt_id,
@@ -933,20 +938,22 @@ pub async fn command_connect(
     directory: &str,
     integration_id: &str,
     method_id: &str,
+    cancelled: &crate::Receiver<()>,
 ) -> std::result::Result<String, AuthError> {
     let url = instance_url(
         backend,
         workspace,
         &["integration", integration_id, "connect", "command"],
     )?;
-    let response = backend
+    let request = backend
         .client
         .post(url)
         .query(&[("location[directory]", directory)])
-        .json(&json!({ "methodID": method_id }))
-        .send()
-        .await
-        .map_err(|_| AuthError::Failed)?;
+        .json(&json!({ "methodID": method_id }));
+    if cancelled.is_closed() {
+        return Err(AuthError::Failed);
+    }
+    let response = request.send().await.map_err(|_| AuthError::Failed)?;
     let value = check_json_response(response).await?;
     verify_response_location(&value, directory)?;
     clean_token(&value["data"]["attemptID"]).ok_or(AuthError::Failed)
@@ -1202,7 +1209,10 @@ fn classify_error_body(status: u16, body: Option<&Value>) -> AuthError {
             .or_else(|| body["message"].as_str())
             .or_else(|| body["error"].as_str());
         if let Some(msg) = message.and_then(|s| sanitize_str(s, MAX_ERROR_LEN)) {
-            if status == 404 && msg.starts_with("Route ") && msg.ends_with(" not found") {
+            if status == 404
+                && (msg.eq_ignore_ascii_case("not found")
+                    || (msg.starts_with("Route ") && msg.ends_with(" not found")))
+            {
                 return AuthError::Unsupported;
             }
             return AuthError::Message(msg);
@@ -1842,6 +1852,10 @@ mod tests {
                 Some(&json!({ "data": { "message": "Attempt expired" } }))
             ),
             AuthError::Message("Attempt expired".into())
+        );
+        assert_eq!(
+            classify_error_body(404, Some(&json!({ "error": "Not found" }))),
+            AuthError::Unsupported
         );
         assert_eq!(
             classify_error_body(404, Some(&json!({ "message": "Route POST:/x not found" }))),

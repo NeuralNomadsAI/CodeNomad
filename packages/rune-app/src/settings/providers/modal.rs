@@ -118,8 +118,12 @@ pub(super) fn view<S: 'static>(
 
         let form_fields = method.form();
         if !form_fields.is_empty() {
-            let effective =
-                form::effective_answers(form_fields, &flow.form_answers, &flow.form_edits);
+            let effective = form::effective_answers(
+                form_fields,
+                &flow.form_answers,
+                &flow.form_edits,
+                &flow.form_touched,
+            );
             body = body.child(form::view(
                 catalog,
                 form_fields,

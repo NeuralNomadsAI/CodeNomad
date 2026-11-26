@@ -72,6 +72,10 @@ fn make_rt(backend: Backend) -> Runtime<Harness> {
 }
 
 fn tick(rt: &mut Runtime<Harness>, now: f64) -> bool {
+    tick_with_visibility(rt, now, true)
+}
+
+fn tick_with_visibility(rt: &mut Runtime<Harness>, now: f64, visible: bool) -> bool {
     let mut changed = false;
     rt.update(|h, tx| {
         changed = h.catalog.poll(
@@ -79,6 +83,7 @@ fn tick(rt: &mut Runtime<Harness>, now: f64) -> bool {
             now,
             Some(&h.wake),
             tx,
+            visible,
             |h: &mut Harness| &mut h.catalog,
         );
     });
@@ -977,6 +982,47 @@ fn command_external_snapshotted_methods_and_absent_optional_fields() {
         assert_eq!(ext.body["answer"], json!({}));
         ext.reply(204, json!({})).await;
         poll_until(&mut rt, 3.0, |h| h.catalog.manager.connect.is_none());
+
+        // Hidden tab cancels an in-flight account mutation immediately on authority revocation.
+        let http2 = Http::new().await;
+        let mut rt2 = make_rt(http2.backend.clone());
+        assert!(tick(&mut rt2, 1.0));
+        let acc_integrations = json!([
+            {
+                "id": "openai",
+                "name": "OpenAI",
+                "methods": [{ "type": "key", "label": "API key" }],
+                "connections": [
+                    { "type": "credential", "id": "cred_1", "label": "Work", "method": "key" }
+                ]
+            }
+        ]);
+        let acc_providers =
+            json!([{ "id": "openai", "integrationID": "openai", "name": "OpenAI" }]);
+        reply_catalog(&http2, acc_integrations, acc_providers, json!([]), None).await;
+        poll_until(&mut rt2, 1.0, |h| h.catalog.manager.snapshot.is_some());
+        click(&mut rt2, "provider-account-remove-openai", 1.0);
+        assert!(tick(&mut rt2, 1.0));
+        assert!(rt2.state.catalog.manager.any_account_busy());
+        let app_state = crate::init();
+        rt2.update(|h, _| {
+            let moves = codenomad_client::stream::ProviderMoves::Sessions(vec![(
+                "ws1".into(),
+                "ses1".into(),
+            )]);
+            let backend = h.target.backend().clone();
+            assert!(h.target.validate(
+                &app_state,
+                Some(&backend),
+                &codenomad_client::stream::CatalogueChanges::None,
+                &moves,
+                &codenomad_client::stream::CatalogueChanges::None,
+                None,
+            ));
+        });
+        assert!(tick_with_visibility(&mut rt2, 1.1, false));
+        assert!(!rt2.state.catalog.manager.any_account_busy());
+        assert!(!rt2.state.catalog.manager.catalog_flight_active());
     });
 }
 
@@ -1053,8 +1099,8 @@ fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_label
             "{save}"
         );
 
-        // Ready-before-cancel interleaving: worker finishes POST and stores Ready(OAuthStarted)
-        // BEFORE UI clicks Close (without polling in between) -> Close must still spawn DELETE!
+        // Ready-before-cancel interleaving: deterministically wait until worker writes
+        // Ready(OAuthStarted) into AuthHandover BEFORE UI clicks Close -> Close must spawn DELETE!
         click(&mut rt, "provider-account-add-openai", 2.0);
         click(&mut rt, "provider-auth-continue", 2.0);
         assert!(tick(&mut rt, 2.0));
@@ -1072,8 +1118,14 @@ fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_label
             }),
         )
         .await;
-        // Let the spawned task finish storing Ready(OAuthStarted) in AuthHandover before clicking Close.
-        tokio::time::sleep(Duration::from_millis(60)).await;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !rt.state.catalog.manager.auth_handover_ready() {
+            assert!(
+                Instant::now() < deadline,
+                "worker never populated AuthHandover::Ready"
+            );
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
         click(&mut rt, "provider-auth-close", 2.0);
         let del = http.accept().await;
         assert!(
@@ -1085,8 +1137,90 @@ fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_label
         );
         del.reply(204, json!({})).await;
 
-        // Catalogue ProviderMoves revokes authority immediately via Target::validate BEFORE reload!
+        // Invalid OAuth mode on a server reply with a valid attemptID cancels the attempt immediately.
+        click(&mut rt, "provider-account-add-openai", 2.5);
+        click(&mut rt, "provider-auth-continue", 2.5);
+        assert!(tick(&mut rt, 2.5));
+        let post_bad = http.accept().await;
+        post_bad
+            .reply(
+                200,
+                json!({
+                    "location": { "directory": "/repo/a" },
+                    "data": {
+                        "attemptID": "att_bad_mode",
+                        "url": "https://auth.example.test/bad",
+                        "instructions": "Bad mode",
+                        "mode": "unknown"
+                    }
+                }),
+            )
+            .await;
+        let del_bad = http.accept().await;
+        assert!(
+            del_bad.header.starts_with(
+                "DELETE /workspaces/ws1/instance/api/integration/openai/connect/oauth/att_bad_mode?"
+            ),
+            "{}",
+            del_bad.header
+        );
+        del_bad.reply(204, json!({})).await;
+        poll_until(&mut rt, 2.5, |h| {
+            h.catalog
+                .manager
+                .connect
+                .as_ref()
+                .is_some_and(|f| f.stage == manager::AuthStage::Error)
+        });
+        click(&mut rt, "provider-auth-close", 2.5);
+
+        // Hidden tab (visible=false) pauses passive catalog refresh while keeping an active OAuth
+        // attempt alive, and Catalogue ProviderMoves revokes authority immediately (sending DELETE
+        // for the active attempt BEFORE reload settles!).
         click(&mut rt, "provider-account-add-openai", 3.0);
+        click(&mut rt, "provider-auth-continue", 3.0);
+        assert!(tick(&mut rt, 3.0));
+        let post_move = http.accept().await;
+        post_move
+            .reply(
+                200,
+                json!({
+                    "location": { "directory": "/repo/a" },
+                    "data": {
+                        "attemptID": "att_move",
+                        "url": "https://auth.example.test/move",
+                        "instructions": "Moving",
+                        "mode": "auto"
+                    }
+                }),
+            )
+            .await;
+        poll_until(&mut rt, 3.0, |h| {
+            h.catalog
+                .manager
+                .connect
+                .as_ref()
+                .is_some_and(|f| f.stage == manager::AuthStage::Waiting)
+        });
+        let st_move = http.accept().await;
+        st_move
+            .reply(
+                200,
+                json!({ "location": { "directory": "/repo/a" }, "data": { "status": "pending" } }),
+            )
+            .await;
+        poll_until(&mut rt, 3.0, |h| !h.catalog.manager.poll_flight_active());
+
+        // Passive invalidation while hidden (visible=false) does NOT launch a catalog GET.
+        rt.update(|h, _| {
+            assert!(h.target.hint("ws1"));
+        });
+        let _ = tick_with_visibility(&mut rt, 3.2, false);
+        assert!(!rt.state.catalog.manager.catalog_flight_active());
+        assert!(rt.state.catalog.manager.connect.is_some());
+        http.quiet().await;
+
+        // Catalogue ProviderMoves while hidden revokes authority immediately and sends DELETE.
         let app_state = crate::init();
         rt.update(|h, _| {
             let moves = codenomad_client::stream::ProviderMoves::Sessions(vec![(
@@ -1103,10 +1237,23 @@ fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_label
                 None,
             ));
         });
-        assert!(tick(&mut rt, 3.0));
+        assert!(tick_with_visibility(&mut rt, 3.3, false));
         assert!(rt.state.catalog.manager.connect.is_none());
+        let del_move = http.accept().await;
+        assert!(
+            del_move.header.starts_with(
+                "DELETE /workspaces/ws1/instance/api/integration/openai/connect/oauth/att_move?"
+            ),
+            "{}",
+            del_move.header
+        );
+        del_move.reply(204, json!({})).await;
+        assert!(!rt.state.catalog.manager.catalog_flight_active());
+        http.quiet().await;
 
-        // 403 on catalog reload surfaces unsupported alert and disables Connect while keeping Refresh active.
+        // Returning to visible resumes reload; paired server-rs 404 {"error":"Not found"}
+        // surfaces the unsupported alert while keeping Refresh enabled.
+        assert!(tick(&mut rt, 4.0));
         let ses = http.accept().await;
         ses.reply(
             200,
@@ -1115,13 +1262,9 @@ fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_label
         .await;
         for _ in 0..4 {
             let req = http.accept().await;
-            req.reply(
-                403,
-                json!({ "error": "Remote access does not allow this endpoint" }),
-            )
-            .await;
+            req.reply(404, json!({ "error": "Not found" })).await;
         }
-        poll_until(&mut rt, 3.0, |h| h.catalog.manager.load_error.is_some());
+        poll_until(&mut rt, 4.0, |h| h.catalog.manager.load_error.is_some());
         let tree = rt.accessibility_json().to_string();
         assert!(
             tree.contains(t("integrations.connection.unsupported")),

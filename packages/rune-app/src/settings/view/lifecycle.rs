@@ -133,6 +133,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                             now,
                             prefs.window_wake.as_ref(),
                             tx,
+                            true,
                             |s: &mut Window| &mut s.providers,
                         )
                     } else {

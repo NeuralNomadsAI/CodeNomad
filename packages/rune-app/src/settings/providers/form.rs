@@ -11,7 +11,7 @@ use rune_theme_codenomad::{
     settings as chrome,
 };
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn view<S: 'static>(
     catalog: &Catalog,
@@ -30,14 +30,22 @@ pub(super) fn view<S: 'static>(
         match &field.kind {
             FormFieldKind::External { url } if is_http_url(url) => {
                 let target_url = url.clone();
+                let fk = field_key.clone();
                 let mut block = col().full_width().separate(Space::Xs).child(
                     layout::button_tx(&field.title, disabled, move |s: &mut S, tx| {
                         access(s)
                             .manager
-                            .open_external_link(&target_url, tx, access);
+                            .open_external_link(&fk, &target_url, tx, access);
                     })
                     .key(format!("provider-form-link-{}", field.key)),
                 );
+                if catalog.manager.external_link_failed(&field.key) {
+                    block = block.child(
+                        text(t("settings.providers.oauth.popupBlocked"))
+                            .wrap()
+                            .role("alert"),
+                    );
+                }
                 if let Some(desc) = &field.description {
                     block = block.child(text(desc).wrap().text_role(TextRole::Small));
                 }
@@ -225,26 +233,29 @@ pub(super) fn effective_answers(
     fields: &[FormField],
     answers: &BTreeMap<String, Value>,
     edits: &BTreeMap<String, rune::TextEdit>,
+    touched: &BTreeSet<String>,
 ) -> BTreeMap<String, Value> {
     let mut merged = answers.clone();
-    sync_text_edits_to_answers(fields, edits, &mut merged);
+    sync_text_edits_to_answers(fields, edits, touched, &mut merged);
     merged
 }
 
 pub(super) fn sync_text_edits_to_answers(
     fields: &[FormField],
     edits: &BTreeMap<String, rune::TextEdit>,
+    touched: &BTreeSet<String>,
     answers: &mut BTreeMap<String, Value>,
 ) {
     for field in fields {
         let Some(edit) = edits.get(&field.key) else {
             continue;
         };
+        let is_touched = touched.contains(&field.key);
         match &field.kind {
             FormFieldKind::String {
                 options, custom, ..
             } if options.is_empty() || *custom => {
-                if edit.text.is_empty() && !answers.contains_key(&field.key) {
+                if edit.text.is_empty() && !is_touched && !answers.contains_key(&field.key) {
                     continue;
                 }
                 answers.insert(field.key.clone(), Value::String(edit.text.clone()));
@@ -291,7 +302,7 @@ pub(super) fn sync_text_edits_to_answers(
                         merged.push(trimmed.to_owned());
                     }
                 }
-                if merged.is_empty() && !had_key {
+                if merged.is_empty() && !is_touched && !had_key {
                     continue;
                 }
                 answers.insert(field.key.clone(), json!(merged));

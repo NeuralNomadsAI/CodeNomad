@@ -159,17 +159,14 @@ impl Panel {
             tx,
         );
         let providers_changed = if self.shown && paired && self.section == Section::Providers {
-            if document_visible() || self.catalog.has_active_connect() {
-                self.catalog.poll(
-                    prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
-                    now,
-                    Some(wake),
-                    tx,
-                    |s: &mut State| &mut s.settings.web.catalog,
-                )
-            } else {
-                false
-            }
+            self.catalog.poll(
+                prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
+                now,
+                Some(wake),
+                tx,
+                document_visible(),
+                |s: &mut State| &mut s.settings.web.catalog,
+            )
         } else {
             self.catalog.cancel_on_hide()
         };
