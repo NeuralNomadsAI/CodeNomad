@@ -18,7 +18,8 @@ import { createAutomationBridgeRegistration, publishAutomationBridge } from "../
 import { registerAutomationPluginRoute } from "../../server/routes/automation-plugin"
 import { registerInstanceProxyRoutes } from "../../server/http-server"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import type { NativeDecisionEvidenceRequest } from "../../missions/native-human-evidence"
+import type { NativeDecisionProvenance } from "../../missions/decision-artifact"
+type NativeDecisionEvidenceRequest = NativeDecisionProvenance & { question: string; answer: string | string[]; projectID: string; directory: string; delegationToolName: string }
 import { acquireNativeHumanAnswers, nativeHumanAnswerGate } from "./native-human-answer"
 import { attachRemoteDevice, markRemoteSocket } from "../../remote-control/request-origin"
 
