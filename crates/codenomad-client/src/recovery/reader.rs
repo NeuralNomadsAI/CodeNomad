@@ -489,12 +489,19 @@ pub struct ReadingLane {
     pub demand: demand::Observer,
     pub events: Sender<(u64, u64, Event)>,
     pub connection: Arc<AtomicU64>,
+    pub on_session_deleted: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl ReadingLane {
     pub(super) fn invalidate_connection(reading: Option<&Self>) {
         if let Some(reading) = reading {
             reading.connection.fetch_add(1, SeqCst);
+        }
+    }
+
+    pub(super) fn notify_session_deleted(&self) {
+        if let Some(hook) = &self.on_session_deleted {
+            hook();
         }
     }
 }

@@ -11,7 +11,8 @@ mod strip;
 
 pub use drafts::{
     adopt_recovered_draft, attachment_draft_admissible, bound, bound_with_adopt, capture,
-    draft_changed, note_session_deleted, recover_missing_session_draft, unconfirmed_drafts_full,
+    draft_changed, note_session_deleted, recover_missing_session_draft, session_deleted_hook,
+    unconfirmed_drafts_full,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
@@ -162,8 +163,12 @@ pub struct Ui {
     touched: bool,
     staged_revision: Option<u64>,
     closed: Vec<Workspace>,
-    closed_clears: Vec<(ProjectScope, String, drafts::ClearAuthority)>,
+    closed_restored: Vec<HashSet<String>>,
     closed_pending_deleted: Vec<(ProjectScope, String)>,
+    deleted_sessions: (
+        codenomad_client::Sender<(ProjectScope, String)>,
+        codenomad_client::Receiver<(ProjectScope, String)>,
+    ),
 }
 impl Ui {
     #[cfg(test)]
@@ -219,8 +224,9 @@ impl Ui {
             touched: false,
             staged_revision: None,
             closed: Vec::new(),
-            closed_clears: Vec::new(),
+            closed_restored: Vec::new(),
             closed_pending_deleted: Vec::new(),
+            deleted_sessions: codenomad_client::bounded(256),
         }
     }
     fn changed(&mut self) {
@@ -231,6 +237,19 @@ impl Ui {
     }
     pub(crate) fn snapshot(&self) -> Snapshot {
         let mut tabs: Vec<Tab> = self.entries.iter().map(|e| e.saved.clone()).collect();
+        // Exclude restored copies already superseded by a closed sibling's clear authority
+        // without changing the v1 snapshot schema.
+        for (idx, e) in self.entries.iter().enumerate() {
+            if let Tab::Workspace(snap_w) = &mut tabs[idx] {
+                for id in &e.superseded_on_delete {
+                    if e.restored_drafts.contains_key(id) {
+                        snap_w.drafts.remove(id);
+                        snap_w.attachment_drafts.remove(id);
+                        snap_w.attachment_parts.remove(id);
+                    }
+                }
+            }
+        }
         for (idx, e) in self.entries.iter().enumerate() {
             let Tab::Workspace(w) = &e.saved else {
                 continue;
@@ -245,7 +264,7 @@ impl Ui {
                     if other_idx == idx {
                         continue;
                     }
-                    let Tab::Workspace(old) = &other.saved else {
+                    let Tab::Workspace(old) = &tabs[other_idx] else {
                         continue;
                     };
                     if !same_project(w, old) {
@@ -447,6 +466,7 @@ pub fn unselect_session(s: &mut State, id: &str) -> bool {
     }
     capture(s);
     let stream_deleted = drafts::drain_incoming_session_deleted(s.incoming.as_ref());
+    drafts::drain_window_deleted_sessions(s);
     let was_pending_deleted = {
         let Some(ui) = &mut s.workspace else {
             return false;
@@ -683,14 +703,8 @@ pub fn opened(s: &mut State, project: &Project) {
             }
         }
         for id in &item.cleared {
-            let auth = ui
-                .closed_clears
-                .iter()
-                .rev()
-                .find(|(scope, existing, _)| scope.matches(&reopened_workspace) && existing == id)
-                .map(|(_, _, auth)| auth.clone())
-                .unwrap_or(drafts::ClearAuthority::Persisted);
-            item.clear_authority.insert(id.clone(), auth);
+            item.clear_authority
+                .insert(id.clone(), drafts::ClearAuthority::Persisted);
         }
         for (scope, id) in &ui.closed_pending_deleted {
             if scope.matches(&reopened_workspace) {

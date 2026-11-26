@@ -302,6 +302,9 @@ pub(crate) async fn run_with_reading(
                     continue;
                 }
                 if kind == "session.deleted" {
+                    if let Some(reading) = reading {
+                        reading.notify_session_deleted();
+                    }
                     publish(&out, &wake, Event::SessionDeleted).await;
                     wire.cancelled.store(true, SeqCst);
                     return Err("session scope changed".into());

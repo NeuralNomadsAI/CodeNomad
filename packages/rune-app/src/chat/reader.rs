@@ -107,6 +107,7 @@ impl Reader {
                 demand,
                 events: out,
                 connection,
+                on_session_deleted: None,
             },
         )
     }

@@ -301,7 +301,7 @@ fn a_queued_prompt_has_one_http_attempt_with_the_reader_and_upstream_events_down
             demand.publish(None);
             let task = tokio::spawn(crate::transport::run_backend_reading(
                 backend, out, input, Arc::new(|| {}), ReadingLane {
-                    demand: observer, events: content, connection: Default::default()
+                    demand: observer, events: content, connection: Default::default(), on_session_deleted: None,
                 },
             ));
             let (socket, _) = listener.accept().await.unwrap();

@@ -64,8 +64,9 @@ fn launch(s: &mut crate::State, startup: Startup, anchor: Option<String>) {
     s.conversation_stream_connected = false;
     s.commands = Some(commands);
     let reading = match &startup {
-        Startup::Bound(_) => {
-            let (mut reader, lane) = super::reader::Reader::open();
+        Startup::Bound(backend) => {
+            let (mut reader, mut lane) = super::reader::Reader::open();
+            lane.on_session_deleted = crate::workspace::session_deleted_hook(s, &backend.session);
             if let Some(id) = anchor {
                 reader.resume(super::reading::Bookmark::Message { id, offset: 0.0 });
             } else if let Some(previous) = &s.reader {

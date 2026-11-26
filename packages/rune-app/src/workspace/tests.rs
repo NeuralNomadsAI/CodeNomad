@@ -827,4 +827,48 @@ fn utf16_budget_sheds_attachment_only_markers_before_priority_text_and_without_l
     };
     assert!(saved.attachment_drafts.contains("ses_keep"));
     assert!(saved.attachment_drafts.len() < 11);
+
+    // 3. Ordinary mixed bundle (100-unit key + 1-unit text + 100-unit attachment key = 201 units)
+    // must be shed as a whole bundle at tier 0 before escalating to sacrifice active_session_id text.
+    let mut mixed_tabs = Vec::new();
+    let mut mixed_tab = workspace();
+    mixed_tab.active_session_id = Some("ses_active_mixed_keep".into());
+    mixed_tab
+        .drafts
+        .insert("ses_active_mixed_keep".into(), "a".repeat(26_000));
+    let long_ord = format!("ses_ord_{}", "x".repeat(92));
+    assert_eq!(long_ord.len(), 100);
+    mixed_tab.drafts.insert(long_ord.clone(), "z".into());
+    mixed_tab.attachment_drafts.insert(long_ord.clone());
+    mixed_tabs.push(Tab::Workspace(mixed_tab));
+    // Fill non-sheddable folders so total exceeds MAX_STRINGS (98_304) by ~150 units:
+    // tab0 = "/repo"(5) + active_id(21) + active_key(21) + 26_000 + 100 + 1 + 100 = 26_248.
+    // 18 * (5 + 4_006) = 72_198 -> total = 98_446 -> excess = 142 (101 < 142 <= 201).
+    for i in 0..18 {
+        let mut filler = workspace();
+        filler.folder = format!("/x{i:02}/{}", "m".repeat(4_006));
+        mixed_tabs.push(Tab::Workspace(filler));
+    }
+    let mixed_snap = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: mixed_tabs,
+        active: Some(0),
+    };
+    assert_eq!(encode(&mixed_snap), Err(Error::Limit));
+    let (bytes, partial) = encode_for_save(&mixed_snap).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let Tab::Workspace(saved) = &decoded.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(
+        saved.drafts.get("ses_active_mixed_keep").map(String::len),
+        Some(26_000),
+        "active text must survive when tier-0 whole mixed bundle covers the UTF-16 overflow"
+    );
+    assert!(!saved.drafts.contains_key(&long_ord));
+    assert!(!saved.attachment_drafts.contains(&long_ord));
 }

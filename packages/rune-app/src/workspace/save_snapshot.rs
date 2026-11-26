@@ -124,109 +124,122 @@ fn fit_text(snapshot: &mut Snapshot) -> Result<(), Error> {
     if excess == 0 {
         return Ok(());
     }
-    let mut candidates = Vec::new();
+    struct TextItem {
+        tab: usize,
+        id: String,
+        priority: u8,
+        text_only_units: usize,
+        whole_units: usize,
+        has_text: bool,
+        has_attachment: bool,
+    }
+    let mut items = Vec::new();
     for (tab, entry) in snapshot.tabs.iter().enumerate() {
         let Tab::Workspace(saved) = entry else {
             continue;
         };
         let active = snapshot.active == Some(tab);
         for (id, text) in &saved.drafts {
-            candidates.push((
-                TextCandidate::Text {
-                    tab,
-                    id: id.clone(),
+            let id_units = id.encode_utf16().count();
+            let text_only_units = id_units + text.encode_utf16().count();
+            let has_attachment = saved.attachment_drafts.contains(id);
+            items.push(TextItem {
+                tab,
+                id: id.clone(),
+                priority: priority(active, saved, id),
+                text_only_units,
+                whole_units: if has_attachment {
+                    text_only_units + id_units
+                } else {
+                    text_only_units
                 },
-                (
-                    priority(active, saved, id),
-                    id.encode_utf16().count() + text.encode_utf16().count(),
-                ),
-            ));
+                has_text: true,
+                has_attachment,
+            });
         }
         for id in &saved.attachment_drafts {
             if saved.drafts.contains_key(id) {
                 continue;
             }
-            candidates.push((
-                TextCandidate::AttachmentMarker {
-                    tab,
-                    id: id.clone(),
-                },
-                (priority(active, saved, id), id.encode_utf16().count()),
-            ));
+            let id_units = id.encode_utf16().count();
+            items.push(TextItem {
+                tab,
+                id: id.clone(),
+                priority: priority(active, saved, id),
+                text_only_units: id_units,
+                whole_units: id_units,
+                has_text: false,
+                has_attachment: true,
+            });
         }
     }
-    let weights = candidates.iter().map(|(_, w)| *w).collect::<Vec<_>>();
-    let selected = if let Some(selected) = choose(&weights, excess) {
-        selected
-    } else {
-        // If shedding text and attachment-only markers cannot cover the UTF-16 overflow,
-        // shed mixed text+attachment bundles atomically so attachment keys also free space
-        // without stripping an attachment marker from a retained text draft.
-        candidates.clear();
-        for (tab, entry) in snapshot.tabs.iter().enumerate() {
-            let Tab::Workspace(saved) = entry else {
+    let max_tier = items.iter().map(|item| item.priority).max().unwrap_or(0);
+    for tier in 0..=max_tier {
+        for whole_mixed in [false, true] {
+            let mut candidates = Vec::with_capacity(items.len());
+            let mut weights = Vec::with_capacity(items.len());
+            for item in &items {
+                let use_whole = whole_mixed || item.priority < tier;
+                let (candidate, units) = if !item.has_text {
+                    (
+                        TextCandidate::AttachmentMarker {
+                            tab: item.tab,
+                            id: item.id.clone(),
+                        },
+                        item.text_only_units,
+                    )
+                } else if item.has_attachment && use_whole {
+                    (
+                        TextCandidate::WholeBundle {
+                            tab: item.tab,
+                            id: item.id.clone(),
+                        },
+                        item.whole_units,
+                    )
+                } else {
+                    (
+                        TextCandidate::Text {
+                            tab: item.tab,
+                            id: item.id.clone(),
+                        },
+                        item.text_only_units,
+                    )
+                };
+                candidates.push(candidate);
+                weights.push((item.priority, if item.priority > tier { 0 } else { units }));
+            }
+            let Some(selected) = choose(&weights, excess) else {
                 continue;
             };
-            let active = snapshot.active == Some(tab);
-            for (id, text) in &saved.drafts {
-                let id_units = id.encode_utf16().count();
-                let mut units = id_units + text.encode_utf16().count();
-                let candidate = if saved.attachment_drafts.contains(id) {
-                    units += id_units;
-                    TextCandidate::WholeBundle {
-                        tab,
-                        id: id.clone(),
+            for index in selected {
+                match &candidates[index] {
+                    TextCandidate::Text { tab, id } => {
+                        if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
+                            saved.drafts.remove(id);
+                            if let Some(parts) = saved.attachment_parts.get_mut(id) {
+                                parts.mark_incomplete();
+                            }
+                        }
                     }
-                } else {
-                    TextCandidate::Text {
-                        tab,
-                        id: id.clone(),
+                    TextCandidate::AttachmentMarker { tab, id } => {
+                        if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
+                            saved.attachment_drafts.remove(id);
+                            saved.attachment_parts.remove(id);
+                        }
                     }
-                };
-                candidates.push((candidate, (priority(active, saved, id), units)));
-            }
-            for id in &saved.attachment_drafts {
-                if saved.drafts.contains_key(id) {
-                    continue;
-                }
-                candidates.push((
-                    TextCandidate::AttachmentMarker {
-                        tab,
-                        id: id.clone(),
-                    },
-                    (priority(active, saved, id), id.encode_utf16().count()),
-                ));
-            }
-        }
-        let weights = candidates.iter().map(|(_, w)| *w).collect::<Vec<_>>();
-        choose(&weights, excess).ok_or(Error::Limit)?
-    };
-    for index in selected {
-        match &candidates[index].0 {
-            TextCandidate::Text { tab, id } => {
-                if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
-                    saved.drafts.remove(id);
-                    if let Some(parts) = saved.attachment_parts.get_mut(id) {
-                        parts.mark_incomplete();
+                    TextCandidate::WholeBundle { tab, id } => {
+                        if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
+                            saved.drafts.remove(id);
+                            saved.attachment_drafts.remove(id);
+                            saved.attachment_parts.remove(id);
+                        }
                     }
                 }
             }
-            TextCandidate::AttachmentMarker { tab, id } => {
-                if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
-                    saved.attachment_drafts.remove(id);
-                    saved.attachment_parts.remove(id);
-                }
-            }
-            TextCandidate::WholeBundle { tab, id } => {
-                if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
-                    saved.drafts.remove(id);
-                    saved.attachment_drafts.remove(id);
-                    saved.attachment_parts.remove(id);
-                }
-            }
+            return Ok(());
         }
     }
-    Ok(())
+    Err(Error::Limit)
 }
 
 fn fit_parts(snapshot: &mut Snapshot) -> Result<Vec<u8>, Error> {

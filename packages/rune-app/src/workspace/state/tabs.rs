@@ -258,6 +258,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     } else {
         capture(s);
     }
+    super::drafts::drain_window_deleted_sessions(s);
     let pending_deleted: Vec<String> = s
         .workspace
         .as_mut()
@@ -302,7 +303,29 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         saved
             .attachment_parts
             .retain(|id, _| !removed.pending_drafts.contains(id));
-        // Clear authority belongs to this occurrence's live lifetime, outside text budgets.
+        // Exclude untouched restored copies already superseded by a previously closed sibling.
+        for id in &removed.superseded_on_delete {
+            if removed.restored_drafts.contains_key(id) {
+                saved.drafts.remove(id);
+                saved.attachment_drafts.remove(id);
+                saved.attachment_parts.remove(id);
+            }
+        }
+        // Apply clear authority against matching restored copies in ui.closed and open siblings
+        // directly instead of writing blanket "" tombstones that could overwrite independent drafts.
+        while ui.closed_restored.len() < ui.closed.len() {
+            let idx = ui.closed_restored.len();
+            let w = &ui.closed[idx];
+            let keys: std::collections::HashSet<String> = w
+                .drafts
+                .iter()
+                .filter_map(|(id, text)| (!text.is_empty()).then_some(id.clone()))
+                .chain(w.attachment_drafts.iter().cloned())
+                .chain(w.attachment_parts.keys().cloned())
+                .collect();
+            ui.closed_restored.push(keys);
+        }
+        ui.closed_restored.truncate(ui.closed.len());
         let scope = super::ProjectScope::from_workspace(&saved);
         for id in removed.pending_deleted {
             if !ui
@@ -315,51 +338,58 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
                 ui.closed_pending_deleted.push((scope.clone(), id));
             }
         }
-        for (id, auth) in removed.clear_authority {
-            if removed.cleared.contains(&id) && !removed.pending_drafts.contains(&id) {
-                ui.closed_clears.retain(|(existing_scope, existing_id, _)| {
-                    !(existing_scope.same_scope(&scope) && existing_id == &id)
-                });
-                ui.closed_clears.push((scope.clone(), id, auth));
+        for (id, auth) in &removed.clear_authority {
+            if !removed.cleared.contains(id) || removed.pending_drafts.contains(id) {
+                continue;
+            }
+            for (idx, closed_w) in ui.closed.iter_mut().enumerate() {
+                if !super::same_project(&saved, closed_w) {
+                    continue;
+                }
+                if !ui.closed_restored[idx].contains(id) {
+                    continue;
+                }
+                let copy = super::drafts::DraftCopy::from_workspace(closed_w, id);
+                if auth.matches_restored(copy.as_ref()) {
+                    closed_w.drafts.remove(id);
+                    closed_w.attachment_drafts.remove(id);
+                    closed_w.attachment_parts.remove(id);
+                    ui.closed_restored[idx].remove(id);
+                }
+            }
+            for other in &mut ui.entries {
+                if !matches!(&other.saved, Tab::Workspace(w) if super::same_project(&saved, w)) {
+                    continue;
+                }
+                if auth.matches_restored(other.restored_drafts.get(id)) {
+                    other.superseded_on_delete.insert(id.clone());
+                }
             }
         }
-        for id in saved
-            .drafts
-            .iter()
-            .filter_map(|(id, text)| (!text.is_empty()).then_some(id))
-            .chain(saved.attachment_drafts.iter())
-        {
-            if !removed.restored_drafts.contains_key(id) {
-                ui.closed_clears.retain(|(existing_scope, existing_id, _)| {
-                    !(existing_scope.same_scope(&scope) && existing_id == id)
-                });
-            }
-        }
-        saved.drafts.extend(
-            removed
-                .cleared
-                .into_iter()
-                .filter(|id| !removed.pending_drafts.contains(id))
-                .map(|id| (id, String::new())),
-        );
+        let restored_keys: std::collections::HashSet<String> = removed
+            .restored_drafts
+            .keys()
+            .filter(|id| !removed.pending_drafts.contains(*id))
+            .cloned()
+            .collect();
         ui.closed.push(saved);
+        ui.closed_restored.push(restored_keys);
         if ui.closed.len() > 16 {
             ui.closed.remove(0);
-            let entries = &ui.entries;
-            let closed = &ui.closed;
-            ui.closed_clears.retain(|(s, _, _)| {
-                closed.iter().any(|w| s.matches(w))
-                    || entries
-                        .iter()
-                        .any(|e| matches!(&e.saved, Tab::Workspace(w) if s.matches(w)))
-            });
-            ui.closed_pending_deleted.retain(|(s, _)| {
-                closed.iter().any(|w| s.matches(w))
-                    || entries
-                        .iter()
-                        .any(|e| matches!(&e.saved, Tab::Workspace(w) if s.matches(w)))
-            });
+            ui.closed_restored.remove(0);
         }
+        let entries = &ui.entries;
+        let closed = &ui.closed;
+        ui.closed_pending_deleted.retain(|(s, id)| {
+            closed.iter().any(|w| {
+                s.matches(w)
+                    && (w.drafts.get(id).is_some_and(|t| !t.is_empty())
+                        || w.attachment_drafts.contains(id)
+                        || w.attachment_parts.contains_key(id))
+            }) || entries
+                .iter()
+                .any(|e| matches!(&e.saved, Tab::Workspace(w) if s.matches(w)))
+        });
     }
     if let (Some(backend), Some(project)) = (removed.binding, removed.project) {
         platform::spawn(async move {

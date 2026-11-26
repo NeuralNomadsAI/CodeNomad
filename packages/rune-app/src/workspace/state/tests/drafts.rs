@@ -1533,3 +1533,177 @@ fn independent_sibling_edit_survives_restart_clear_oversized_attachment_close_de
             .is_empty()
     );
 }
+
+#[test]
+fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_hook_proof() {
+    use crate::workspace::NO_SESSION_DRAFT_ID;
+    let mut tx = rune::Tx::default();
+
+    // 1. R4 Bloquant: Tab A closes with its independent draft, then Tab B closes after clearing
+    // a different copy for the same session. Both reopen and 404 recovery must keep Tab A's draft.
+    for test_404 in [false, true] {
+        let mut s = draft_state();
+        let mut tab_a = closed("ses_close_indep", "");
+        tab_a.drafts.clear();
+        tab_a.active_session_id = Some("ses_close_indep".into());
+        let mut tab_b = closed("ses_close_indep", "older copy in B");
+        tab_b.occurrence = 1;
+        tab_b.active_session_id = Some("ses_close_indep".into());
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(tab_a), Tab::Workspace(tab_b)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.entries[0].binding = Some(backend("ses_close_indep"));
+        ui.entries[1].binding = Some(backend("ses_close_indep"));
+        s.workspace = Some(ui);
+        s.show_chat();
+        s.draft = TextEdit::new("independent draft from A");
+        capture(&mut s);
+        close(&mut s, "tab-0", &mut tx);
+        if let Some(l) = s.screen.launcher_mut() {
+            l.pending = false;
+        }
+        s.draft = TextEdit::new("");
+        capture(&mut s);
+        close(&mut s, "tab-1", &mut tx);
+        if let Some(l) = s.screen.launcher_mut() {
+            l.pending = false;
+        }
+        reopen(&mut s);
+        if test_404 {
+            s.show_launcher();
+            assert!(recover_missing_session_draft(&mut s, "ses_close_indep"));
+            let Tab::Workspace(after) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+                panic!("expected reopened workspace");
+            };
+            assert_eq!(
+                after.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+                Some("independent draft from A")
+            );
+        } else {
+            assert_eq!(
+                bound(&mut s, &backend("ses_close_indep")),
+                "independent draft from A"
+            );
+        }
+    }
+
+    // 2. R4 Moyen 1: B clears a restored copy then closes while A keeps its untouched restored
+    // copy; saving a snapshot and restarting must NOT resurrect the cleared draft on 404.
+    let mut snap_s = draft_state();
+    let mut a_tab = closed("ses_closed_snap", "stale copy");
+    a_tab.active_session_id = Some("ses_closed_snap".into());
+    let mut b_tab = closed("ses_closed_snap", "stale copy");
+    b_tab.occurrence = 1;
+    b_tab.active_session_id = Some("ses_closed_snap".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a_tab), Tab::Workspace(b_tab)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_closed_snap"));
+    ui.entries[1].binding = Some(backend("ses_closed_snap"));
+    snap_s.workspace = Some(ui);
+    snap_s.show_chat();
+    snap_s.draft = TextEdit::new("stale copy");
+    select(&mut snap_s, "tab-1", &mut tx);
+    if let Some(l) = snap_s.screen.launcher_mut() {
+        l.pending = false;
+    }
+    snap_s.draft = TextEdit::new("");
+    capture(&mut snap_s);
+    close(&mut snap_s, "tab-1", &mut tx);
+    let bytes = crate::workspace::encode(&snap_s.workspace.as_ref().unwrap().snapshot()).unwrap();
+    let mut restarted = draft_state();
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::decode(&bytes).unwrap());
+    ui.ready = true;
+    restarted.workspace = Some(ui);
+    restarted.show_launcher();
+    assert!(!recover_missing_session_draft(
+        &mut restarted,
+        "ses_closed_snap"
+    ));
+
+    // 3. R4 Moyen 4: Opening a legacy v1 attachment-only marker without attachmentParts payload
+    // materializes SavedParts::missing() without stripping restored provenance, so a sibling
+    // targeted clear still suppresses that untouched restored copy.
+    let mut legacy_s = draft_state();
+    let mut a_leg = closed("ses_legacy_marker", "with marker");
+    a_leg.attachment_drafts.insert("ses_legacy_marker".into());
+    a_leg.active_session_id = None;
+    let mut b_leg = closed("ses_legacy_marker", "with marker");
+    b_leg.occurrence = 1;
+    b_leg.attachment_drafts.insert("ses_legacy_marker".into());
+    b_leg.active_session_id = Some("ses_legacy_marker".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a_leg), Tab::Workspace(b_leg)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    legacy_s.workspace = Some(ui);
+    // Open `ses_legacy_marker` in Tab A (which runs bound + capture and materializes SavedParts::missing()).
+    legacy_s.draft = TextEdit::new(bound(&mut legacy_s, &backend("ses_legacy_marker")));
+    legacy_s.show_chat();
+    capture(&mut legacy_s);
+    // Switch to Tab B and clear the restored copy completely.
+    select(&mut legacy_s, "tab-1", &mut tx);
+    if let Some(l) = legacy_s.screen.launcher_mut() {
+        l.pending = false;
+    }
+    legacy_s.workspace.as_mut().unwrap().entries[1].binding = Some(backend("ses_legacy_marker"));
+    legacy_s.draft = TextEdit::new("");
+    legacy_s.composer.draft.attachments.clear();
+    legacy_s.composer.attachments_missing = false;
+    capture(&mut legacy_s);
+    // Leave active chat in Tab A and trigger 404: untouched legacy marker copy must stay suppressed.
+    select(&mut legacy_s, "tab-0", &mut tx);
+    legacy_s.show_launcher();
+    assert!(!recover_missing_session_draft(
+        &mut legacy_s,
+        "ses_legacy_marker"
+    ));
+
+    // 4. R4 Moyen 3: session_deleted_hook delivers deletion proof independently of s.incoming
+    // receiver lifetime (even after the conversation receiver is dropped or replaced).
+    let mut hook_s = draft_state();
+    hook_s.draft = TextEdit::new(bound(&mut hook_s, &backend("ses_hook_race")));
+    hook_s.show_chat();
+    hook_s.draft = TextEdit::new("draft during receiver replacement");
+    capture(&mut hook_s);
+    let hook = session_deleted_hook(&hook_s, "ses_hook_race").expect("hook created");
+    // Drop receiver and switch to another session before late hook fires.
+    hook_s.incoming = None;
+    let _ = bound(&mut hook_s, &backend("ses_other_session"));
+    hook();
+    assert!(super::super::drafts::drain_window_deleted_sessions(
+        &mut hook_s
+    ));
+    let Tab::Workspace(after_hook) = &hook_s.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected workspace");
+    };
+    assert_eq!(
+        after_hook
+            .drafts
+            .get(NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("draft during receiver replacement")
+    );
+    assert!(!after_hook.drafts.contains_key("ses_hook_race"));
+}

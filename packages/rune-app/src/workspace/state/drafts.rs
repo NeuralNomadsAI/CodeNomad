@@ -26,7 +26,11 @@ impl DraftCopy {
             .filter(|text| !text.is_empty())
             .cloned();
         let attachment_draft = saved.attachment_drafts.contains(key);
-        let attachment_parts = saved.attachment_parts.get(key).cloned();
+        let attachment_parts = saved
+            .attachment_parts
+            .get(key)
+            .cloned()
+            .or_else(|| attachment_draft.then(SavedParts::missing));
         (text.is_some() || attachment_draft || attachment_parts.is_some()).then_some(Self {
             text,
             attachment_draft,
@@ -57,6 +61,65 @@ impl ClearAuthority {
             Self::LocalOnly => false,
         }
     }
+}
+
+pub fn session_deleted_hook(
+    s: &State,
+    session_id: &str,
+) -> Option<std::sync::Arc<dyn Fn() + Send + Sync>> {
+    if session_id.is_empty() || is_local_draft_id(session_id) {
+        return None;
+    }
+    let ui = s.workspace.as_ref()?;
+    let Tab::Workspace(saved) = &ui.entries.get(ui.active)?.saved else {
+        return None;
+    };
+    let scope = super::ProjectScope::from_workspace(saved);
+    let tx = ui.deleted_sessions.0.clone();
+    let wake = s.wake.clone();
+    let id = session_id.to_owned();
+    Some(std::sync::Arc::new(move || {
+        let _ = tx.try_send((scope.clone(), id.clone()));
+        wake();
+    }))
+}
+
+pub(super) fn drain_window_deleted_sessions(s: &mut State) -> bool {
+    let incoming: Vec<(super::ProjectScope, String)> = {
+        let Some(ui) = &s.workspace else {
+            return false;
+        };
+        let mut items = Vec::new();
+        while let Ok(item) = ui.deleted_sessions.1.try_recv() {
+            items.push(item);
+        }
+        items
+    };
+    let mut changed = false;
+    for (scope, id) in incoming {
+        let open_idx = s.workspace.as_ref().and_then(|ui| {
+            ui.entries
+                .iter()
+                .position(|entry| matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)))
+        });
+        if let Some(idx) = open_idx {
+            changed |= recover_missing_session_draft_in(s, Some(idx), &id);
+        } else if let Some(ui) = &mut s.workspace
+            && ui
+                .closed
+                .iter()
+                .any(|w| scope.matches(w) && workspace_has_draft_content(w, &id))
+            && !ui
+                .closed_pending_deleted
+                .iter()
+                .any(|(existing_scope, existing_id)| {
+                    existing_scope.same_scope(&scope) && existing_id == &id
+                })
+        {
+            ui.closed_pending_deleted.push((scope, id));
+        }
+    }
+    changed
 }
 
 pub(super) fn drain_incoming_session_deleted(
@@ -233,6 +296,7 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
             item.clear_authority.remove(key);
             return false;
         }
+        let restored_before = item.restored_drafts.get(key).cloned();
         let parts = SavedParts::capture(draft, missing, edit);
         let had_parts = parts.is_some();
         let mut parts_changed = false;
@@ -250,10 +314,6 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
             _ => {}
         }
         changed |= parts_changed;
-        if parts_changed || has_device_parts {
-            item.restored_drafts.remove(key);
-            item.superseded_on_delete.remove(key);
-        }
         let text_changed = if text.is_empty() {
             saved.drafts.remove(key).is_some()
         } else if saved.drafts.get(key).is_none_or(|value| value != text) {
@@ -263,7 +323,11 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
             false
         };
         changed |= text_changed;
-        if text_changed {
+        let still_restored = !has_device_parts
+            && restored_before
+                .as_ref()
+                .is_some_and(|orig| DraftCopy::from_workspace(saved, key).as_ref() == Some(orig));
+        if !still_restored && (parts_changed || text_changed || has_device_parts) {
             item.restored_drafts.remove(key);
             item.superseded_on_delete.remove(key);
         }
@@ -277,7 +341,7 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
                 };
                 item.clear_authority.insert(key.into(), auth);
             }
-        } else if text_changed || parts_changed || has_device_parts {
+        } else if !still_restored && (text_changed || parts_changed || has_device_parts) {
             item.cleared.remove(key);
             item.clear_authority.remove(key);
         }
@@ -301,6 +365,7 @@ pub fn bound_with_adopt(s: &mut State, backend: &Backend, adopt_recovered: bool)
         !s.screen.is_launcher() && previous.as_deref() == Some(backend.session.as_str());
     let outgoing_deleted = if !same_session && let Some(prev) = previous.as_deref() {
         let stream_deleted = drain_incoming_session_deleted(s.incoming.as_ref());
+        drain_window_deleted_sessions(s);
         let had_pending = s.workspace.as_mut().is_some_and(|ui| {
             let entry = &mut ui.entries[ui.active];
             let pending = entry.pending_deleted.remove(prev) || stream_deleted;
@@ -383,12 +448,6 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
                 )
             })
         });
-    let closed_clear_auth = ui
-        .closed_clears
-        .iter()
-        .rev()
-        .find(|(s, existing, _)| s.matches(&scope) && existing == id)
-        .map(|(_, _, auth)| auth.clone());
     for (index, item) in ui.entries.iter_mut().enumerate() {
         if !matches!(&item.saved, Tab::Workspace(w) if same_project(&scope, w))
             || !item.pending_drafts.remove(id)
@@ -420,12 +479,8 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
                 }
                 Some(_) => {
                     item.cleared.insert(id.into());
-                    item.clear_authority.insert(
-                        id.into(),
-                        closed_clear_auth
-                            .clone()
-                            .unwrap_or(ClearAuthority::Persisted),
-                    );
+                    item.clear_authority
+                        .insert(id.into(), ClearAuthority::Persisted);
                 }
                 None => {}
             }
@@ -440,8 +495,6 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         w.attachment_drafts.remove(id);
         w.attachment_parts.remove(id);
     }
-    ui.closed_clears
-        .retain(|(s, existing, _)| !(s.matches(&scope) && existing == id));
 }
 
 fn live_has_authored_content(draft: &LiveDraft) -> bool {
@@ -766,14 +819,7 @@ pub(super) fn recover_missing_session_draft_in(
                 entry.clear_authority.get(session_id).cloned()
             })
             .collect();
-        let mut had_closed_authority = false;
-        for (c_scope, c_id, auth) in &ui.closed_clears {
-            if c_scope.matches(&scope) && c_id == session_id {
-                clear_authorities.push(auth.clone());
-                had_closed_authority = true;
-            }
-        }
-        if closed_state.explicitly_cleared && !had_closed_authority {
+        if closed_state.explicitly_cleared {
             clear_authorities.push(ClearAuthority::Persisted);
         }
 
@@ -916,8 +962,6 @@ pub(super) fn recover_missing_session_draft_in(
             .iter()
             .any(|&idx| ui.entries[idx].pending_deleted.contains(session_id));
         if closed_handled && !any_deferred {
-            ui.closed_clears
-                .retain(|(c_scope, c_id, _)| !(c_scope.matches(&scope) && c_id == session_id));
             ui.closed_pending_deleted
                 .retain(|(c_scope, c_id)| !(c_scope.matches(&scope) && c_id == session_id));
         }

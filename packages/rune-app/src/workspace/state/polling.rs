@@ -57,6 +57,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     for (index, id) in deleted_by_tab {
         changed |= super::drafts::recover_missing_session_draft_in(s, Some(index), &id);
     }
+    changed |= super::drafts::drain_window_deleted_sessions(s);
     changed |= super::drafts::poll_pending_deleted(s);
     if !mission_auth_expired.is_empty() {
         #[cfg(not(target_arch = "wasm32"))]
