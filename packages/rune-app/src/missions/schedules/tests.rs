@@ -1741,3 +1741,126 @@ fn point_read_race_cached_retry_and_external_delete_clear_selection() {
         assert_eq!(h.panel.schedules.selection_error, None);
     });
 }
+
+#[test]
+fn stale_pages_cannot_resurrect_deleted_erase_pending_or_reissue_settled_retry() {
+    crate::platform::block_on(async {
+        let mut h = H::new().await;
+        let s1 = row("msn_1", "Page One", "paused", 1, "null");
+        let s2_r2 = row("msn_2", "Page Two", "paused", 2, "null");
+        let s2_r3 = row("msn_2", "Page Two", "paused", 3, "null");
+        let (s, c) = h.panel.schedule_parts();
+        s.show(true);
+        s.refresh(c);
+        h.http
+            .accept()
+            .await
+            .reply(200, list(vec![s1.clone()], Some("msn_1")))
+            .await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.rows.len() == 1)
+            .await;
+
+        // Select msn_2 (off-page) and settle initial read.
+        assert!(h.act(G::Select("msn_2".into())));
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, list(vec![s1.clone()], Some("msn_1"))).await;
+            }
+        }
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.capability.is_some())
+            .await;
+        h.http.accept().await.reply(200, rdoc(s2_r2.clone())).await;
+        h.pump(|p, _| p.schedules.is_fresh("msn_2")).await;
+
+        // 1. Pending preservation (pagination): start More (older), settle newer Retry with rev 3 pending=true,
+        // then deliver older More (rev 2); rev 3 + Pending must be preserved.
+        assert!(h.act(G::More));
+        let stale_more = h.http.accept().await;
+        assert!(h.act(G::RetrySelection));
+        let pt_pend = h.http.accept().await;
+        assert!(pt_pend.header.contains("/missions/msn_2/schedule"));
+        pt_pend
+            .reply(200, json!({"pending": true, "document": s2_r3.clone()}))
+            .await;
+        h.pump(|p, _| p.schedules.selection_error == Some(super::list::SelectionError::Pending))
+            .await;
+        stale_more
+            .reply(200, list(vec![s2_r2.clone()], Some("msn_1")))
+            .await;
+        h.pump(|p, _| !p.schedules.loading()).await;
+        assert_eq!(
+            h.panel.schedules.selection_error,
+            Some(super::list::SelectionError::Pending)
+        );
+        assert!(!h.panel.schedules.is_fresh("msn_2"));
+        assert_eq!(
+            h.panel
+                .schedules
+                .rows
+                .iter()
+                .find(|r| r.id == "msn_2")
+                .map(|r| r.revision),
+            Some(3)
+        );
+
+        // 2. Settled newer RetrySelection prevents redundant point-read on older off-page page-1 refresh.
+        let (s, c) = h.panel.schedule_parts();
+        s.refresh(c);
+        let mut stale_page1 = None;
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                stale_page1 = Some(req);
+            }
+        }
+        let stale_page1 = stale_page1.expect("page 1 request");
+        assert!(h.act(G::RetrySelection));
+        let pt_ok = h.http.accept().await;
+        assert!(pt_ok.header.contains("/missions/msn_2/schedule"));
+        pt_ok.reply(200, rdoc(s2_r3.clone())).await;
+        h.pump(|p, _| p.schedules.is_fresh("msn_2")).await;
+        stale_page1
+            .reply(200, list(vec![s1.clone()], Some("msn_1")))
+            .await;
+        h.pump(|p, _| !p.schedules.loading()).await;
+        h.http.quiet().await;
+        assert!(h.panel.schedules.is_fresh("msn_2"));
+        assert_eq!(h.panel.schedules.selection_error, None);
+
+        // 3. Stale page (page 1) cannot resurrect a schedule confirmed deleted by a newer point-read.
+        let (s, c) = h.panel.schedule_parts();
+        s.refresh(c);
+        let mut stale_page_with_deleted = None;
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                stale_page_with_deleted = Some(req);
+            }
+        }
+        let stale_page_with_deleted = stale_page_with_deleted.expect("stale page request");
+        assert!(h.act(G::RetrySelection));
+        let pt_del = h.http.accept().await;
+        assert!(pt_del.header.contains("/missions/msn_2/schedule"));
+        pt_del
+            .reply(200, json!({"pending": false, "document": null}))
+            .await;
+        h.pump(|p, _| p.schedules.selected.is_none()).await;
+        stale_page_with_deleted
+            .reply(200, list(vec![s1.clone(), s2_r3.clone()], None))
+            .await;
+        h.pump(|p, _| !p.schedules.loading()).await;
+        assert!(
+            !h.panel.schedules.rows.iter().any(|r| r.id == "msn_2"),
+            "stale page must not resurrect externally deleted msn_2"
+        );
+        assert!(!h.panel.schedules.is_fresh("msn_2"));
+        assert_eq!(h.panel.schedules.selected, None);
+    });
+}

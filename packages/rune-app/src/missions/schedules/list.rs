@@ -145,6 +145,13 @@ struct Pre {
 }
 type PreOut = (Option<ReadOut>, Option<Fetch<ScheduleCapability>>);
 
+struct PointSettlement {
+    id: String,
+    generation: u64,
+    seq: u64,
+    deleted: bool,
+}
+
 pub(crate) struct Schedules {
     visible: bool,
     pub(crate) generation: u64,
@@ -162,6 +169,7 @@ pub(crate) struct Schedules {
     list_flight: Option<Flight<Fetch<ScheduleListPage>, (bool, u8, u64, u64)>>,
     list_owed: bool,
     point_flight: Option<Flight<ReadOut, (String, u64, u64)>>,
+    last_point: Option<PointSettlement>,
     pub(crate) capability: Option<Cap>,
     pub(crate) refusal: Option<ActivationRefusal>,
     cap_flight: Option<Flight<Fetch<ScheduleCapability>, u64>>,
@@ -195,6 +203,7 @@ impl Default for Schedules {
             list_flight: None,
             list_owed: false,
             point_flight: None,
+            last_point: None,
             capability: None,
             refusal: None,
             cap_flight: None,
@@ -298,6 +307,11 @@ impl Schedules {
             .iter()
             .fold(0usize, |acc, doc| acc.saturating_add(schedule_bytes(doc)))
             .saturating_add(self.next.as_deref().map_or(0, str::len))
+            .saturating_add(
+                self.last_point
+                    .as_ref()
+                    .map_or(0, |p| p.id.len().saturating_add(32)),
+            )
             .saturating_add(set_bytes(&self.fresh))
             .saturating_add(set_bytes(&self.instructions_open))
             .saturating_add(set_bytes(&self.diagnostics_open))
@@ -319,6 +333,7 @@ impl Schedules {
         self.cancel_flights();
         self.rows = Vec::new();
         self.next = None;
+        self.last_point = None;
         self.fresh = HashSet::new();
         self.instructions_open = HashSet::new();
         self.diagnostics_open = HashSet::new();
@@ -489,6 +504,7 @@ impl Schedules {
         self.page_limit = SCHEDULE_PAGE_LIMIT;
         self.failed_append = false;
         self.cancel_flights();
+        self.last_point = None;
         self.fresh = HashSet::new();
         self.capability = None;
         self.refusal = None;
@@ -510,6 +526,7 @@ impl Schedules {
         self.failed_append = false;
         self.cancel_pre();
         cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
+        self.last_point = None;
         if self.list_flight.is_some() {
             self.list_owed = true;
         }
@@ -557,6 +574,7 @@ impl Schedules {
         self.activatable_info_open = false;
         self.cancel_pre();
         cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
+        self.last_point = None;
     }
 
     pub(crate) fn handle_gesture(
@@ -745,12 +763,12 @@ impl Schedules {
 
     pub(crate) fn poll(&mut self, holds: &mut ScheduleHolds, ctx: ScheduleCtx<'_>) -> bool {
         let mut changed = self.drain_auth_sink();
-        if let Some(((sid, epoch, _seq), b, res)) = ready(&mut self.point_flight) {
+        if let Some(((sid, epoch, seq), b, res)) = ready(&mut self.point_flight) {
             changed = true;
             if matches!(res, Some(ReadOut::AuthExpired)) {
                 push_auth_expired(&mut self.auth_expired, b);
             } else if epoch == self.generation && self.selected.as_deref() == Some(sid.as_str()) {
-                self.finish_point_read(sid, res, holds, ctx);
+                self.finish_point_read(sid, seq, res, holds, ctx);
             }
         }
         if let Some(((append, _limit, epoch, seq), b, res)) = ready(&mut self.list_flight) {
@@ -852,6 +870,7 @@ impl Schedules {
     fn finish_point_read(
         &mut self,
         sid: String,
+        seq: u64,
         res: Option<ReadOut>,
         holds: &mut ScheduleHolds,
         ctx: ScheduleCtx<'_>,
@@ -861,13 +880,19 @@ impl Schedules {
                 Some(doc) => {
                     let id = doc.id.clone();
                     if let Some(s) = self.rows.iter_mut().find(|x| x.id == id) {
-                        if s.revision > doc.revision && self.fresh.contains(&id) {
+                        if s.revision > doc.revision {
                             return;
                         }
                         *s = doc.clone();
                     } else {
                         self.rows.push(doc.clone());
                     }
+                    self.last_point = Some(PointSettlement {
+                        id: id.clone(),
+                        generation: self.generation,
+                        seq,
+                        deleted: false,
+                    });
                     if r.pending {
                         self.fresh.remove(&id);
                         self.selection_error = Some(SelectionError::Pending);
@@ -880,6 +905,12 @@ impl Schedules {
                     }
                 }
                 None if r.pending => {
+                    self.last_point = Some(PointSettlement {
+                        id: sid.clone(),
+                        generation: self.generation,
+                        seq,
+                        deleted: false,
+                    });
                     self.fresh.remove(&sid);
                     self.selection_error = Some(SelectionError::Pending);
                 }
@@ -890,6 +921,12 @@ impl Schedules {
                     if self.selected.as_deref() == Some(sid.as_str())
                         && self.hold_for(holds, ctx, &sid).is_none()
                     {
+                        self.last_point = Some(PointSettlement {
+                            id: sid.clone(),
+                            generation: self.generation,
+                            seq,
+                            deleted: true,
+                        });
                         self.view_epoch = self.view_epoch.wrapping_add(1);
                         self.selected = None;
                         self.selection_error = None;
@@ -907,11 +944,17 @@ impl Schedules {
             },
             Some(ReadOut::Pending(r)) => {
                 self.fresh.remove(&sid);
-                self.selection_error = Some(if r.is_some_and(|(id, _)| id == sid) {
-                    SelectionError::Pending
+                if r.is_some_and(|(id, _)| id == sid) {
+                    self.last_point = Some(PointSettlement {
+                        id: sid,
+                        generation: self.generation,
+                        seq,
+                        deleted: false,
+                    });
+                    self.selection_error = Some(SelectionError::Pending);
                 } else {
-                    SelectionError::Failed
-                });
+                    self.selection_error = Some(SelectionError::Failed);
+                }
             }
             Some(ReadOut::AuthExpired) => {
                 push_auth_expired(&mut self.auth_expired, ctx.backend.clone())
@@ -1128,6 +1171,13 @@ impl Schedules {
         }
     }
 
+    fn newer_point(&self, id: &str, list_seq: u64) -> Option<bool> {
+        self.last_point
+            .as_ref()
+            .filter(|p| p.generation == self.generation && p.id == id && p.seq > list_seq)
+            .map(|p| p.deleted)
+    }
+
     fn accept_page(
         &mut self,
         append: bool,
@@ -1142,17 +1192,30 @@ impl Schedules {
         }
         self.project_id = Some(page.project_id.clone());
         self.error = false;
-        let published = page.schedules.clone();
+        let mut published = Vec::with_capacity(page.schedules.len());
         if append {
             let mut loaded_selected = false;
             for doc in page.schedules {
+                let newer = self.newer_point(&doc.id, list_seq);
+                if newer == Some(true) {
+                    continue;
+                }
+                let existing_rev = self
+                    .rows
+                    .iter()
+                    .find(|r| r.id == doc.id)
+                    .map(|r| r.revision);
+                if existing_rev.is_some_and(|r| r > doc.revision) {
+                    continue;
+                }
+                if newer == Some(false) && !existing_rev.is_some_and(|r| doc.revision > r) {
+                    continue;
+                }
                 if self.selected.as_deref() == Some(doc.id.as_str()) {
                     loaded_selected = true;
                 }
+                published.push(doc.clone());
                 if let Some(slot) = self.rows.iter_mut().find(|r| r.id == doc.id) {
-                    if slot.revision > doc.revision && self.fresh.contains(&doc.id) {
-                        continue;
-                    }
                     *slot = doc.clone();
                 } else {
                     self.rows.push(doc.clone());
@@ -1172,19 +1235,43 @@ impl Schedules {
                 .as_deref()
                 .and_then(|id| self.rows.iter().find(|r| r.id == id).cloned());
             let prev_fresh = sel.as_deref().is_some_and(|id| self.fresh.contains(id));
+            let schedules: Vec<UnifiedSchedule> = page
+                .schedules
+                .into_iter()
+                .filter(|d| self.newer_point(&d.id, list_seq) != Some(true))
+                .collect();
             let in_page = sel
                 .as_deref()
-                .is_some_and(|id| page.schedules.iter().any(|d| d.id == id));
-            self.rows = page.schedules;
-            if in_page
-                && prev_fresh
-                && let Some(p) = prev.as_ref()
-                && let Some(slot) = self.rows.iter_mut().find(|r| r.id == p.id)
-                && p.revision > slot.revision
-            {
-                *slot = p.clone();
+                .is_some_and(|id| schedules.iter().any(|d| d.id == id));
+            let mut preserve_sel_state = false;
+            self.rows = schedules;
+            if in_page && let Some(id) = sel.as_deref() {
+                let newer = self.newer_point(id, list_seq) == Some(false);
+                if let Some(slot) = self.rows.iter_mut().find(|r| r.id == id) {
+                    let prev_higher = prev.as_ref().is_some_and(|p| p.revision > slot.revision);
+                    let newer_not_beaten =
+                        newer && !prev.as_ref().is_some_and(|p| slot.revision > p.revision);
+                    if prev_higher || newer_not_beaten {
+                        if let Some(p) = prev.as_ref() {
+                            *slot = p.clone();
+                        }
+                        preserve_sel_state = true;
+                    }
+                }
             }
             self.fresh = self.rows.iter().map(|d| d.id.clone()).collect();
+            if preserve_sel_state
+                && let Some(id) = sel.as_deref()
+                && !prev_fresh
+            {
+                self.fresh.remove(id);
+            }
+            published.extend(
+                self.rows
+                    .iter()
+                    .filter(|d| self.fresh.contains(&d.id))
+                    .cloned(),
+            );
             self.next = page.next;
             if !in_page && let Some(id) = sel {
                 if let Some(p) = prev {
@@ -1197,10 +1284,11 @@ impl Schedules {
                     .point_flight
                     .as_ref()
                     .is_some_and(|f| f.0.0 == id && f.0.1 == self.generation && f.0.2 > list_seq);
-                if !newer_point_in_flight {
+                let newer_point_settled = self.newer_point(&id, list_seq).is_some();
+                if !newer_point_in_flight && !newer_point_settled {
                     self.start_point(id, ctx);
                 }
-            } else {
+            } else if !preserve_sel_state {
                 if let Some(id) = sel {
                     self.cancel_older_point_flight(&id, list_seq);
                 }
@@ -1208,7 +1296,9 @@ impl Schedules {
             }
             self.prune_disclosures();
         }
-        holds.mark_published(ctx.backend, &page.project_id, ctx.scope, &published);
+        if !published.is_empty() {
+            holds.mark_published(ctx.backend, &page.project_id, ctx.scope, &published);
+        }
     }
 
     fn start_point(&mut self, id: String, ctx: ScheduleCtx<'_>) {
