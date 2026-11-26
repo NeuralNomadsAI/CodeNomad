@@ -114,16 +114,17 @@ impl InboxWire {
     /// Invalidates already-published snapshots without advancing the SSE `applied` watermark past
     /// unapplied frames still queued at the hub or transport channel.
     pub(crate) fn invalidate_published(&self) {
-        let wake = {
-            let mut inner = self.inner.lock().unwrap();
-            inner.local_epoch = inner.local_epoch.wrapping_add(1);
-            std::mem::take(&mut inner.publication_waiting)
-                .then(|| inner.wake.clone())
-                .flatten()
-        };
-        if let Some(wake) = wake {
+        if let Some(wake) = self.invalidate_published_quiet() {
             wake();
         }
+    }
+
+    pub(crate) fn invalidate_published_quiet(&self) -> Option<crate::Wake> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.local_epoch = inner.local_epoch.wrapping_add(1);
+        std::mem::take(&mut inner.publication_waiting)
+            .then(|| inner.wake.clone())
+            .flatten()
     }
 
     pub(crate) fn invalidate_closed(&self) {
@@ -171,7 +172,7 @@ impl InboxWire {
         inner.chunk_active = false;
         inner.in_frame = clean && in_frame;
         if completed_frames > 0 || !inner.in_frame {
-            inner.frame_seq = inner.frame_seq.saturating_add(completed_frames.max(1));
+            inner.frame_seq = inner.frame_seq.saturating_add(1);
         }
         let should_wake = !clean || !inner.in_frame || completed_frames > 0;
         (should_wake && std::mem::take(&mut inner.publication_waiting))
@@ -200,8 +201,17 @@ impl InboxWire {
             return FenceState::Invalid;
         }
         if inner.chunk_active {
+            let _ = wait_until_frame.compare_exchange(
+                0,
+                inner.frame_seq.saturating_add(2),
+                SeqCst,
+                SeqCst,
+            );
             inner.publication_waiting = true;
             return FenceState::Deferred;
+        }
+        if !inner.in_frame {
+            return FenceState::Valid;
         }
         let target = wait_until_frame.load(SeqCst);
         if target > 0 {
@@ -211,12 +221,9 @@ impl InboxWire {
             }
             return FenceState::Valid;
         }
-        if inner.in_frame {
-            wait_until_frame.store(inner.frame_seq.saturating_add(1), SeqCst);
-            inner.publication_waiting = true;
-            return FenceState::Deferred;
-        }
-        FenceState::Valid
+        wait_until_frame.store(inner.frame_seq.saturating_add(1), SeqCst);
+        inner.publication_waiting = true;
+        FenceState::Deferred
     }
 
     pub(crate) fn fence(&self, captured: InboxStamp, sync_epoch: u64) -> InboxFence {

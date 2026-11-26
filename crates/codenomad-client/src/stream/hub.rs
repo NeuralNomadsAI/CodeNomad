@@ -438,6 +438,85 @@ impl SharedStream {
         ChunkGuard { shared: Some(self) }
     }
 
+    /// Pre-classifies a complete `data:` payload buffered at chunk end (missing only the
+    /// terminating blank line) so inbox and quota invalidations apply before chunk release.
+    /// Returns `true` when the payload was valid JSON (or a ping) and needs no partial deferral.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn preview_pending_frame(&self, kind: &str, data: &str) -> bool {
+        if kind == "codenomad.client.ping" {
+            return true;
+        }
+        if data.len() > super::limits::FRAME_LIMIT {
+            self.preview_skipped();
+            return true;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim()) else {
+            return false;
+        };
+        let notify_quota = kind.is_empty() || kind == "message";
+        let mut wakes = Vec::new();
+        let mut inbox_wakes = Vec::new();
+        {
+            let inner = self.inner.lock().unwrap();
+            if matches!(inner.phase, Phase::Closing | Phase::Closed { .. }) {
+                return true;
+            }
+            for sub in &inner.subscribers {
+                if let Some((workspace, session)) = &sub.signals.conversation
+                    && let Some(inbox) = &sub.signals.inbox
+                    && super::sessions::matches_inbox_value(workspace, session, &value)
+                    && let Some(wake) = inbox.invalidate_published_quiet()
+                {
+                    inbox_wakes.push(wake);
+                }
+                if notify_quota
+                    && let Some(quota) = &sub.quota
+                    && quota.frame_quiet(data)
+                {
+                    wakes.push(quota.clone());
+                }
+            }
+        }
+        for wake in inbox_wakes {
+            wake();
+        }
+        for quota in wakes {
+            quota.wake();
+        }
+        true
+    }
+
+    /// Pre-invalidates inbox and quota authority when a chunk ends mid-skip of an oversized frame.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn preview_skipped(&self) {
+        let mut wakes = Vec::new();
+        let mut inbox_wakes = Vec::new();
+        {
+            let inner = self.inner.lock().unwrap();
+            if matches!(inner.phase, Phase::Closing | Phase::Closed { .. }) {
+                return;
+            }
+            for sub in &inner.subscribers {
+                if let Some(inbox) = &sub.signals.inbox
+                    && let Some(wake) = inbox.invalidate_published_quiet()
+                {
+                    inbox_wakes.push(wake);
+                }
+                if let Some(quota) = &sub.quota
+                    && quota.skipped_quiet()
+                {
+                    wakes.push(quota.clone());
+                }
+            }
+        }
+        for wake in inbox_wakes {
+            wake();
+        }
+        for quota in wakes {
+            quota.wake();
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn end_chunk(&self, clean: bool, in_frame: bool, completed_frames: u64) {
         let mut wakes = Vec::new();

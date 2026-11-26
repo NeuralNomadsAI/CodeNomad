@@ -315,7 +315,15 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                 drop(chunk_guard);
                 break;
             }
-            chunk_guard.finish_with(parser.in_frame(), completed_frames);
+            let unclassified_partial = if parser.is_skipping() {
+                shared.preview_skipped();
+                false
+            } else if let Some((kind, data)) = parser.pending_complete_frame() {
+                !shared.preview_pending_frame(kind, data)
+            } else {
+                parser.in_frame()
+            };
+            chunk_guard.finish_with(unclassified_partial, completed_frames);
         }
         drop(pong_cancel_tx);
         drop(read_probe);

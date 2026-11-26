@@ -31,17 +31,12 @@ pub(super) fn note_inbox_frame(
         })
 }
 
-pub(super) fn note_inbox_value(
-    workspace: &str,
-    session: &str,
-    inbox: &InboxWire,
-    value: &Value,
-) -> u64 {
+pub(super) fn matches_inbox_value(workspace: &str, session: &str, value: &Value) -> bool {
     if value["instanceId"] != workspace {
-        return 0;
+        return false;
     }
     let native = &value["event"];
-    let invalidates = value["type"] == "instance.eventStatus"
+    value["type"] == "instance.eventStatus"
         || (value["type"] == "instance.event"
             && (native["type"] == "server.connected"
                 || (native["data"]["sessionID"] == session
@@ -55,8 +50,16 @@ pub(super) fn note_inbox_value(
                                     | "session.revert.cleared"
                                     | "session.revert.committed"
                             )
-                    }))));
-    if invalidates {
+                    }))))
+}
+
+pub(super) fn note_inbox_value(
+    workspace: &str,
+    session: &str,
+    inbox: &InboxWire,
+    value: &Value,
+) -> u64 {
+    if matches_inbox_value(workspace, session, value) {
         inbox.record_ingress()
     } else {
         0

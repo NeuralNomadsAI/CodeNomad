@@ -1401,6 +1401,168 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
 }
 
 #[test]
+fn preview_pending_frame_invalidates_buffered_cancellation_and_quota_disconnect_without_starving() {
+    use crate::inbox::FenceState;
+    use std::sync::atomic::AtomicUsize;
+
+    let hub = Arc::new(Hub::default());
+    let (stop_tx, _stop_rx) = bounded(1);
+    let (_done_tx, done_rx) = bounded(1);
+    let (events, _events_rx) = bounded(4);
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let wake_counter = wakes.clone();
+    let wake: crate::Wake = Arc::new(move || {
+        wake_counter.fetch_add(1, SeqCst);
+    });
+    let quota_watch = crate::provider_usage::Watch::default();
+    let quota = crate::provider_usage::Ingress::new(
+        quota_watch.clone(),
+        wake.clone(),
+        "ws-1".into(),
+        "ses-1".into(),
+    );
+    let state = State::observing_preferences(events, wake);
+    let sub = Subscriber::with_signals(
+        1,
+        Some(quota),
+        None,
+        SubscriberSignals {
+            conversation: Some(("ws-1".into(), "ses-1".into())),
+            inbox: Some(state.inbox.clone()),
+            ..SubscriberSignals::default()
+        },
+    );
+    let shared = Arc::new(SharedStream {
+        base: "http://127.0.0.1:5/".into(),
+        inner: Mutex::new(StreamInner {
+            phase: Phase::Connecting,
+            subscribers: vec![sub.clone()],
+            replays: HashMap::new(),
+            replays_overflowed: false,
+            chunk_active: false,
+            partial_frame: false,
+            stop: Some(stop_tx),
+        }),
+        done: done_rx,
+    });
+    assert!(shared.mark_open());
+    // Establish initial connected quota authority.
+    shared.broadcast_frame(
+        &hub,
+        "message".into(),
+        r#"{"type":"instance.eventStatus","instanceId":"ws-1","status":"connected","generation":1}"#.into(),
+    );
+    let mark0 = state.inbox.ingress();
+    state.inbox.advance_applied(mark0);
+    let quota_stamp = quota_watch.current();
+    assert!(quota_stamp.1, "quota authority must be online");
+
+    // 1. Chunk 1 leaves mid-line unrelated Frame A; fence defers on Frame A.
+    //    Chunk 2 completes Frame A AND buffers cancellation Frame B's complete data: line (missing
+    //    only the terminating blank line). preview_pending_frame must invalidate the fence before
+    //    chunk 2 finishes so stale q1 can never publish.
+    let fence_cancel = state.inbox.fence(state.inbox.capture(), 0);
+    let mut parser = super::super::frames::Parser::default();
+    let g1 = shared.begin_chunk();
+    for byte in b"data: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.del" {
+        assert!(parser.byte(*byte).unwrap().is_none());
+    }
+    assert!(parser.pending_complete_frame().is_none());
+    g1.finish_with(parser.in_frame(), 0);
+    assert_eq!(fence_cancel.check(), FenceState::Deferred);
+
+    let g2 = shared.begin_chunk();
+    let mut completed = 0u64;
+    for byte in b"ta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"x\"}}}\n\ndata: {\"type\":\"instance.event\",\"instanceId\":\"ws-1\",\"event\":{\"type\":\"session.inbox.cancelled\",\"data\":{\"sessionID\":\"ses-1\",\"inboxID\":\"q1\"}}}\n" {
+        if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(*byte).unwrap() {
+            completed += 1;
+            shared.broadcast_frame(&hub, kind, data);
+        }
+    }
+    assert_eq!(completed, 1);
+    let (pkind, pdata) = parser
+        .pending_complete_frame()
+        .expect("complete data line waiting for blank line");
+    assert!(shared.preview_pending_frame(pkind, pdata));
+    g2.finish_with(false, completed);
+    assert_eq!(
+        fence_cancel.check(),
+        FenceState::Invalid,
+        "buffered cancellation data: line must invalidate fence even when prior frame completed"
+    );
+    // Complete frame B's blank line so parser is clean.
+    let g2b = shared.begin_chunk();
+    if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(b'\n').unwrap() {
+        shared.broadcast_frame(&hub, kind, data);
+    }
+    g2b.finish_with(parser.in_frame(), 1);
+    let mark1 = state.inbox.ingress();
+    state.inbox.advance_applied(mark1);
+
+    // 2. Checking while chunk_active == true must latch wait_until_frame immediately so continuous
+    //    unrelated mid-line chunks cannot starve an unaffected conversation forever.
+    let fence_live = state.inbox.fence(state.inbox.capture(), 0);
+    let g3 = shared.begin_chunk();
+    assert_eq!(
+        fence_live.check(),
+        FenceState::Deferred,
+        "check during active chunk defers and latches wait_until_frame"
+    );
+    for byte in b"data: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.del" {
+        assert!(parser.byte(*byte).unwrap().is_none());
+    }
+    g3.finish_with(parser.in_frame(), 0);
+    let g4 = shared.begin_chunk();
+    let mut c4 = 0u64;
+    for byte in b"ta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"1\"}}}\n\ndata: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.del" {
+        if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(*byte).unwrap() {
+            c4 += 1;
+            shared.broadcast_frame(&hub, kind, data);
+        }
+    }
+    g4.finish_with(parser.in_frame(), c4);
+    let g5 = shared.begin_chunk();
+    let mut c5 = 0u64;
+    for byte in b"ta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"2\"}}}\n\ndata: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.del" {
+        if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(*byte).unwrap() {
+            c5 += 1;
+            shared.broadcast_frame(&hub, kind, data);
+        }
+    }
+    g5.finish_with(parser.in_frame(), c5);
+    assert_eq!(
+        fence_live.check(),
+        FenceState::Valid,
+        "latched target must release once awaited frames complete despite ongoing mid-line chunks"
+    );
+    // Drain remaining partial frame cleanly.
+    let g5b = shared.begin_chunk();
+    for byte in b"ta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"3\"}}}\n\n" {
+        if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(*byte).unwrap() {
+            shared.broadcast_frame(&hub, kind, data);
+        }
+    }
+    g5b.finish_with(parser.in_frame(), 1);
+
+    // 3. Buffered workspace disconnect data: line (missing only trailing blank line) must revoke
+    //    provider-quota authority before chunk_guard releases backpressure.
+    let g6 = shared.begin_chunk();
+    for byte in b"data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"ws-1\",\"status\":\"disconnected\",\"generation\":2}\n" {
+        assert!(parser.byte(*byte).unwrap().is_none());
+    }
+    let (qkind, qdata) = parser
+        .pending_complete_frame()
+        .expect("complete disconnect data line");
+    assert!(shared.preview_pending_frame(qkind, qdata));
+    g6.finish_with(false, 0);
+    assert_eq!(
+        quota_watch.publish_if_current(quota_stamp, || 42),
+        None,
+        "buffered disconnect frame must revoke quota authority before chunk backpressure clears"
+    );
+}
+
+#[test]
 fn seed_opened_numbers_replayed_status_monotonically_before_live_inbox_frames() {
     let hub = Arc::new(Hub::default());
     let (stop_tx, _stop_rx) = bounded(1);
