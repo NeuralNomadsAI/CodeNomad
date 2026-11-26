@@ -18,6 +18,41 @@ use std::{
     time::Duration,
 };
 
+pub(super) async fn next_input(
+    rx: &Receiver<Input>,
+    reading: Option<&ReadingLane>,
+    generation: u64,
+    active_reader: bool,
+    deadline: Option<Instant>,
+) -> Option<Input> {
+    if let Ok(input) = rx.try_recv() {
+        return Some(input);
+    }
+    let wait = deadline.map(|at| at.saturating_duration_since(Instant::now()));
+    if wait.is_some_and(|duration| duration.is_zero()) {
+        return None;
+    }
+    let receive = async { Some(rx.recv().await.unwrap_or(Input::Command(Command::Close))) };
+    let demand = async {
+        if let Some(reading) = reading {
+            let changed = reading.demand.changed_after(generation).await;
+            if changed.is_some() || active_reader {
+                return None;
+            }
+        }
+        std::future::pending::<Option<Input>>().await
+    };
+    let timer = async {
+        if let Some(duration) = wait {
+            runtime::sleep(duration).await;
+            None
+        } else {
+            std::future::pending::<Option<Input>>().await
+        }
+    };
+    futures_lite::future::or(receive, futures_lite::future::or(demand, timer)).await
+}
+
 pub(crate) async fn run_with_reading(
     backend: Backend,
     out: Sender<Event>,
@@ -57,36 +92,43 @@ pub(crate) async fn run_with_reading(
     let mut opened = false;
     let mut connection_lost = false;
     let mut connection_closed = false;
-    let mut retry = None;
+    let mut retry: Option<Instant> = None;
     let mut attempts = 0u32;
     let mut reader = Reader::new();
     let (inbox_tx, inbox_rx) = crate::bounded::<InboxReply>(8);
     loop {
-        let upstream = wire.upstream.load(SeqCst);
-        let now = Instant::now();
-        let next_deadline = [
+        reader.demand(reading);
+        let deadline = [
             retry,
-            reader.history_deadline(opened, upstream),
-            reader.inbox_deadline(opened, upstream),
+            reader.next_sync_at(opened, &wire, reading),
+            reader.inbox_deadline(opened, &wire, reading),
         ]
         .into_iter()
         .flatten()
         .min();
-        let wait = next_deadline
-            .map(|at| {
-                at.saturating_duration_since(now)
-                    .min(Duration::from_millis(25))
-            })
-            .unwrap_or(Duration::from_millis(25));
-        let (input, inbox_reply) = if let Ok(reply) = inbox_rx.try_recv() {
+        let (input, inbox_reply) = if let Ok(input) = rx.try_recv() {
+            (Some(input), None)
+        } else if let Ok(reply) = inbox_rx.try_recv() {
             (None, Some(reply))
         } else {
-            futures_lite::future::race(
-                async { (runtime::recv_timeout(&rx, wait).await, None) },
+            futures_lite::future::or(
+                async {
+                    (
+                        next_input(
+                            &rx,
+                            reading,
+                            reader.generation,
+                            reader.active_reader,
+                            deadline,
+                        )
+                        .await,
+                        None,
+                    )
+                },
                 async {
                     match inbox_rx.recv().await {
                         Ok(reply) => (None, Some(reply)),
-                        Err(_) => (runtime::recv_timeout(&rx, wait).await, None),
+                        Err(_) => std::future::pending().await,
                     }
                 },
             )
@@ -102,17 +144,7 @@ pub(crate) async fn run_with_reading(
                 out: &out,
                 wake: &wake,
             };
-            match reader
-                .finish_inbox_read(
-                    &lane,
-                    epoch,
-                    reply.epoch,
-                    reply.generation,
-                    reply.seq,
-                    reply.result,
-                )
-                .await?
-            {
+            match reader.finish_inbox_read(&lane, epoch, reply).await? {
                 Turn::Process => {}
                 Turn::Next => continue,
                 Turn::Stop => return Ok(()),
@@ -131,12 +163,12 @@ pub(crate) async fn run_with_reading(
         match input {
             Some(Input::Workspace(e, event)) if e == epoch => {
                 if !publish(&out, &wake, Event::Workspace(event)).await {
-                    wire.cancelled.store(true, SeqCst);
+                    wire.cancel();
                     return Ok(());
                 }
             }
             Some(Input::Command(Command::Close)) => {
-                wire.cancelled.store(true, SeqCst);
+                wire.cancel();
                 return Ok(());
             }
             Some(Input::Opened(e)) if e == epoch => {
@@ -190,6 +222,8 @@ pub(crate) async fn run_with_reading(
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now() + Duration::from_millis(100);
+                reader.inbox_published = false;
+                reader.schedule_inbox_sync(Duration::from_millis(100));
             }
             Some(Input::Hint(e, v)) if e == epoch && v > reader.fence => {
                 reader.dirty = true;
@@ -204,6 +238,8 @@ pub(crate) async fn run_with_reading(
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now();
+                reader.inbox_published = false;
+                reader.schedule_inbox_sync(Duration::ZERO);
                 if connection_closed {
                     retry = Some(Instant::now());
                 }
@@ -314,7 +350,7 @@ pub(crate) async fn run_with_reading(
                     if native["data"]["sessionID"] != backend.session {
                         continue;
                     }
-                    wire.cancelled.store(true, SeqCst);
+                    wire.cancel();
                     publish(
                         &out,
                         &wake,
@@ -375,7 +411,7 @@ pub(crate) async fn run_with_reading(
                 if matches!(kind, "session.deleted" | "session.revert.committed") {
                     publish(&out, &wake, Event::HistoryInvalidated).await;
                     if kind == "session.deleted" {
-                        wire.cancelled.store(true, SeqCst);
+                        wire.cancel();
                         return Err("session scope changed".into());
                     }
                     reader.clear_window_on_revert();
@@ -411,7 +447,10 @@ pub(crate) async fn run_with_reading(
                                             reader.generation,
                                             &out,
                                             &wake,
-                                            Event::Inbox(reader.inbox.clone()),
+                                            Event::Inbox {
+                                                items: reader.inbox.clone(),
+                                                authoritative: false,
+                                            },
                                         )
                                         .await;
                                     } else if !reader.historical && reader.inbox_overlap_repairs < 2
@@ -441,7 +480,10 @@ pub(crate) async fn run_with_reading(
                                         reader.generation,
                                         &out,
                                         &wake,
-                                        Event::Inbox(reader.inbox.clone()),
+                                        Event::Inbox {
+                                            items: reader.inbox.clone(),
+                                            authoritative: false,
+                                        },
                                     )
                                     .await;
                                 }
@@ -457,7 +499,10 @@ pub(crate) async fn run_with_reading(
                                             reader.generation,
                                             &out,
                                             &wake,
-                                            Event::Inbox(reader.inbox.clone()),
+                                            Event::Inbox {
+                                                items: reader.inbox.clone(),
+                                                authoritative: false,
+                                            },
                                         )
                                         .await;
                                     }
@@ -479,7 +524,10 @@ pub(crate) async fn run_with_reading(
                                             reader.generation,
                                             &out,
                                             &wake,
-                                            Event::Inbox(reader.inbox.clone()),
+                                            Event::Inbox {
+                                                items: reader.inbox.clone(),
+                                                authoritative: false,
+                                            },
                                         )
                                         .await;
                                     }
@@ -890,6 +938,6 @@ pub(crate) async fn run_with_reading(
         ) {
             return Ok(());
         }
-        reader.maybe_start_inbox(epoch, &backend, &wire, opened, &inbox_tx);
+        reader.maybe_start_inbox(epoch, &backend, reading, &wire, opened, &inbox_tx);
     }
 }

@@ -81,14 +81,16 @@ impl Reader {
                             let before_inbox = self.inbox.len();
                             self.inbox.retain(|item| !self.known.contains(&item.id));
                             if self.inbox.len() != before_inbox {
-                                self.inbox_dirty = true;
-                                self.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                                self.schedule_inbox_sync(Duration::from_millis(100));
                                 let _ = reader_event(
                                     reading,
                                     self.generation,
                                     out,
                                     wake,
-                                    Event::Inbox(self.inbox.clone()),
+                                    Event::Inbox {
+                                        items: self.inbox.clone(),
+                                        authoritative: false,
+                                    },
                                 )
                                 .await;
                             }
@@ -184,15 +186,16 @@ impl Reader {
             let before_inbox = self.inbox.len();
             self.inbox.retain(|item| !self.known.contains(&item.id));
             if self.inbox.len() != before_inbox {
-                self.inbox_dirty = true;
-                self.inbox_quiet =
-                    crate::runtime::Instant::now() + std::time::Duration::from_millis(100);
+                self.schedule_inbox_sync(std::time::Duration::from_millis(100));
                 let _ = reader_event(
                     reading,
                     self.generation,
                     out,
                     wake,
-                    Event::Inbox(self.inbox.clone()),
+                    Event::Inbox {
+                        items: self.inbox.clone(),
+                        authoritative: false,
+                    },
                 )
                 .await;
             }

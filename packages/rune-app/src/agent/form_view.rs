@@ -84,7 +84,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                         .label(key)
                         .disabled(a.busy)
                         .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Form(id)))
-                        .build(field_kit(layout::dark()))
+                        .build(&field_kit(layout::dark()))
                         .key(format!("field-{key}")),
                 );
             }
@@ -129,7 +129,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                                 &scope,
                                 crate::screen::Editor::Custom(id),
                             ))
-                            .build(field_kit(layout::dark()))
+                            .build(&field_kit(layout::dark()))
                             .key(format!("custom-{key}")),
                     );
                 }

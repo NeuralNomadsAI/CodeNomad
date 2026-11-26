@@ -32,6 +32,7 @@ struct Job {
     owner: Backend,
     cancel: Sender<()>,
     returned: Receiver<codenomad_client::history::Result<Outcome>>,
+    suspended: bool,
 }
 
 enum Intent {
@@ -74,10 +75,16 @@ impl Queue {
 
     pub(super) fn suspend(&mut self) {
         self.stale = true;
+        if let Some(job) = self.busy.as_mut() {
+            job.suspended = true;
+        }
     }
 
     pub(super) fn offline(&mut self) {
         self.stale = true;
+        if let Some(job) = self.busy.as_mut() {
+            job.suspended = true;
+        }
     }
 
     pub(super) fn clear(&mut self) {
@@ -91,13 +98,20 @@ impl Queue {
         self.announce_error = None;
     }
 
-    pub(super) fn set_items(&mut self, items: Vec<QueuedPrompt>) -> bool {
-        let was_stale = std::mem::replace(&mut self.stale, false);
-        let cleared_read_error = self.error == Some("promptQueue.error.message");
-        if cleared_read_error {
-            self.error = None;
+    pub(super) fn set_items(&mut self, items: Vec<QueuedPrompt>, authoritative: bool) -> bool {
+        if authoritative {
+            let was_stale = std::mem::replace(&mut self.stale, false);
+            let cleared_read_error = self.error == Some("promptQueue.error.message");
+            if cleared_read_error {
+                self.error = None;
+            }
+            if self.items == items && !was_stale && !cleared_read_error {
+                return false;
+            }
+            self.items = items;
+            return true;
         }
-        if self.items == items && !was_stale && !cleared_read_error {
+        if self.items == items {
             return false;
         }
         self.items = items;
@@ -179,6 +193,7 @@ fn start(s: &mut State, intent: Intent) {
     }
     if let Intent::Edit { id, .. } = &intent
         && (!empty_draft(s)
+            || s.transcript_display.queue.has_saved_edit()
             || !s
                 .transcript_display
                 .queue
@@ -200,6 +215,7 @@ fn start(s: &mut State, intent: Intent) {
         owner: backend.clone(),
         cancel,
         returned,
+        suspended: false,
     });
     let wake = s.wake.clone();
     platform::spawn(async move {
@@ -249,6 +265,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         Err(codenomad_client::TryRecvError::Closed) => None,
         Err(codenomad_client::TryRecvError::Empty) => return changed,
     };
+    let job_suspended = job.suspended;
     let same_session = s
         .transcript_display
         .queue
@@ -281,7 +298,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 .items
                 .retain(|item| item.id != id);
             s.revision += 1;
-            if !s.screen.is_launcher() && empty_draft(s) {
+            if !job_suspended && !s.screen.is_launcher() && empty_draft(s) {
                 s.transcript_display.queue.saved_edit = None;
                 restore_draft(s, &text, tx);
             } else {
@@ -351,7 +368,10 @@ pub(super) fn message(s: &State, item: &QueuedPrompt) -> El {
         .child(
             layout::button_tx(
                 t("promptQueue.actions.edit"),
-                !can_act || !item.editable || !empty_draft(s),
+                !can_act
+                    || !item.editable
+                    || !empty_draft(s)
+                    || s.transcript_display.queue.has_saved_edit(),
                 screen::action_tx(&s.input_scope, {
                     let id = id.clone();
                     let text = item.text.clone();

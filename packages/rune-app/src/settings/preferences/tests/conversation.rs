@@ -56,7 +56,7 @@ async fn start(
         "GET /workspaces/project/instance/api/session/session/inbox HTTP/1.1"
     );
     inbox.reply(200, json!({"data":[]})).await;
-    until(&events, |event| matches!(event, Event::Inbox(_))).await;
+    until(&events, |event| matches!(event, Event::Inbox { .. })).await;
     (sse, commands, events)
 }
 

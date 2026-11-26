@@ -114,23 +114,27 @@ impl Reader {
 
     pub(super) fn schedule_inbox_sync(&mut self, delay: Duration) {
         self.invalidate_inbox_flight();
+        self.inbox_published = false;
         self.inbox_dirty = self.active_reader;
         self.inbox_supported = true;
         self.inbox_retries = 0;
         self.inbox_quiet = Instant::now() + delay;
     }
 
-    pub(super) fn history_deadline(&self, opened: bool, upstream: bool) -> Option<Instant> {
-        (self.active_reader && self.dirty && !self.parked && opened && upstream && !self.historical)
-            .then_some(self.quiet)
-    }
-
-    pub(super) fn inbox_deadline(&self, opened: bool, upstream: bool) -> Option<Instant> {
+    pub(super) fn inbox_deadline(
+        &self,
+        opened: bool,
+        wire: &stream::State,
+        reading: Option<&ReadingLane>,
+    ) -> Option<Instant> {
         (self.active_reader
+            && reading.is_none_or(|reading| !reading.demand.is_closed())
             && self.inbox_dirty
             && self.inbox_supported
             && opened
-            && upstream
+            && wire.upstream.load(SeqCst)
+            && !wire.is_stream_closed()
+            && !wire.is_placement_changed()
             && self.inbox_flight.is_none()
             && (!self.dirty || self.historical))
             .then_some(self.inbox_quiet)
@@ -139,10 +143,11 @@ impl Reader {
     pub(super) fn demand(&mut self, reading: Option<&ReadingLane>) {
         if let Some(reading) = reading {
             let want = reading.demand.current();
-            if want.generation != self.generation {
+            let closed = reading.demand.is_closed();
+            if want.generation != self.generation || (closed && self.active_reader) {
                 self.generation = want.generation;
-                self.active_reader = want.target.is_some();
-                self.anchored = want.target;
+                self.active_reader = !closed && want.target.is_some();
+                self.anchored = if closed { None } else { want.target };
                 self.historical = false;
                 self.resident = Vec::new();
                 self.known = HashSet::new();
@@ -205,6 +210,24 @@ impl Reader {
         self.schedule_inbox_sync(Duration::ZERO);
     }
 
+    pub(super) fn next_sync_at(
+        &self,
+        opened: bool,
+        wire: &stream::State,
+        reading: Option<&ReadingLane>,
+    ) -> Option<Instant> {
+        (self.active_reader
+            && reading.is_none_or(|reading| !reading.demand.is_closed())
+            && self.dirty
+            && !self.parked
+            && opened
+            && wire.upstream.load(SeqCst)
+            && !wire.is_stream_closed()
+            && !wire.is_placement_changed()
+            && !self.historical)
+            .then_some(self.quiet)
+    }
+
     pub(super) async fn sync(
         &mut self,
         lane: &Lane<'_>,
@@ -219,13 +242,9 @@ impl Reader {
             out,
             wake,
         } = *lane;
-        if self.active_reader
-            && self.dirty
-            && !self.parked
-            && opened
-            && wire.upstream.load(SeqCst)
-            && !self.historical
-            && Instant::now() >= self.quiet
+        if self
+            .next_sync_at(opened, wire, reading)
+            .is_some_and(|quiet| Instant::now() >= quiet)
             && rx.is_empty()
         {
             let stamp = wire.version.load(SeqCst);
@@ -470,14 +489,16 @@ impl Reader {
                     let before_inbox = self.inbox.len();
                     self.inbox.retain(|item| !self.known.contains(&item.id));
                     if self.inbox.len() != before_inbox {
-                        self.inbox_dirty = true;
-                        self.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                        self.schedule_inbox_sync(Duration::from_millis(100));
                         if !reader_event(
                             reading,
                             self.generation,
                             out,
                             wake,
-                            Event::Inbox(self.inbox.clone()),
+                            Event::Inbox {
+                                items: self.inbox.clone(),
+                                authoritative: false,
+                            },
                         )
                         .await
                         {
@@ -506,7 +527,7 @@ impl Reader {
                             Ok(true)
                         )
                     {
-                        wire.cancelled.store(true, SeqCst);
+                        wire.cancel();
                         publish(out, wake, Event::WorkspaceMissing).await;
                         return Ok(Turn::Stop);
                     }
@@ -524,11 +545,12 @@ impl Reader {
         &mut self,
         epoch: u64,
         backend: &Backend,
+        reading: Option<&ReadingLane>,
         wire: &Arc<stream::State>,
         opened: bool,
         inbox_tx: &Sender<InboxReply>,
     ) {
-        let Some(deadline) = self.inbox_deadline(opened, wire.upstream.load(SeqCst)) else {
+        let Some(deadline) = self.inbox_deadline(opened, wire, reading) else {
             return;
         };
         if Instant::now() < deadline {
@@ -536,6 +558,7 @@ impl Reader {
         }
         let generation = self.generation;
         let seq = self.inbox_version;
+        let wire_inbox = wire.inbox_version.load(SeqCst);
         let (cancel, cancelled) = crate::bounded(1);
         self.inbox_flight = Some((epoch, generation, seq, cancel));
         let backend = backend.clone();
@@ -580,6 +603,7 @@ impl Reader {
                         epoch,
                         generation,
                         seq,
+                        wire_inbox,
                         result,
                     })
                     .await;
@@ -591,11 +615,15 @@ impl Reader {
         &mut self,
         lane: &Lane<'_>,
         epoch: u64,
-        read_epoch: u64,
-        generation: u64,
-        seq: u64,
-        result: Result<Option<Vec<crate::inbox::QueuedPrompt>>, InboxReadError>,
+        reply: InboxReply,
     ) -> history::Result<Turn> {
+        let InboxReply {
+            epoch: read_epoch,
+            generation,
+            seq,
+            wire_inbox,
+            result,
+        } = reply;
         if read_epoch != epoch || generation != self.generation || seq != self.inbox_version {
             return Ok(Turn::Process);
         }
@@ -608,6 +636,15 @@ impl Reader {
             wake,
             ..
         } = *lane;
+        if !matches!(
+            result,
+            Err(InboxReadError::AuthenticationExpired | InboxReadError::StreamClosed)
+        ) && wire.inbox_version.load(SeqCst) != wire_inbox
+        {
+            self.inbox_dirty = self.active_reader;
+            self.inbox_quiet = Instant::now() + Duration::from_millis(100);
+            return Ok(Turn::Process);
+        }
         match result {
             Ok(Some(mut items)) => {
                 let disappeared = self
@@ -618,20 +655,18 @@ impl Reader {
                 items.retain(|item| !self.known.contains(&item.id));
                 self.inbox_dirty = false;
                 self.inbox_retries = 0;
+                let mut need_history = disappeared;
                 if overlaps_resident {
                     if self.inbox_overlap_repairs < 2 {
                         self.inbox_overlap_repairs += 1;
-                        if !self.historical && !self.parked {
-                            self.dirty = true;
-                            self.quiet = Instant::now();
-                        }
+                        need_history = true;
                     }
                 } else {
                     self.inbox_overlap_repairs = 0;
-                    if disappeared && !self.historical && !self.parked {
-                        self.dirty = true;
-                        self.quiet = Instant::now();
-                    }
+                }
+                if need_history && !self.historical && !self.parked {
+                    self.dirty = true;
+                    self.quiet = Instant::now();
                 }
                 if !self.inbox_published || self.inbox != items {
                     self.inbox_published = true;
@@ -641,7 +676,10 @@ impl Reader {
                         self.generation,
                         out,
                         wake,
-                        Event::Inbox(self.inbox.clone()),
+                        Event::Inbox {
+                            items: self.inbox.clone(),
+                            authoritative: true,
+                        },
                     )
                     .await
                     {
@@ -662,7 +700,10 @@ impl Reader {
                         self.generation,
                         out,
                         wake,
-                        Event::Inbox(Vec::new()),
+                        Event::Inbox {
+                            items: Vec::new(),
+                            authoritative: true,
+                        },
                     )
                     .await
                     {
@@ -684,6 +725,7 @@ impl Reader {
                         Instant::now() + Duration::from_millis(200 * u64::from(self.inbox_retries));
                 } else {
                     self.inbox_dirty = false;
+                    self.inbox_published = false;
                     if !reader_event(reading, self.generation, out, wake, Event::InboxFailed).await
                     {
                         return Ok(Turn::Stop);
@@ -752,6 +794,7 @@ pub(super) struct InboxReply {
     pub(super) epoch: u64,
     pub(super) generation: u64,
     pub(super) seq: u64,
+    pub(super) wire_inbox: u64,
     pub(super) result: Result<Option<Vec<crate::inbox::QueuedPrompt>>, InboxReadError>,
 }
 

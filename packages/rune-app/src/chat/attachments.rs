@@ -180,7 +180,11 @@ fn file_chip_inner(s: &State, file: &crate::content::File, downloadable: bool) -
             )
         });
     let chip = attachment::chip(name, Some(icon), button);
-    if let Some(picture) = &file.picture {
+    if let Some(picture) = &file.picture
+        && (downloadable
+            || (file.reference.is_none()
+                && !matches!(picture, crate::content::PictureSource::Attachment(_))))
+    {
         rune::col()
             .full_width()
             .separate(Space::Sm)

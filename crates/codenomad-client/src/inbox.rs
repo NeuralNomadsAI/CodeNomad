@@ -65,31 +65,49 @@ fn delivery_str(delivery: Delivery) -> &'static str {
 }
 
 fn payload_is_plain_text(payload: &Value, display_text: &str) -> bool {
-    let Some(submitted_text) = payload["text"].as_str() else {
+    let Some(map) = payload.as_object() else {
+        return false;
+    };
+    let Some(submitted_text) = map.get("text").and_then(Value::as_str) else {
         return false;
     };
     if submitted_text.trim().is_empty() || submitted_text != display_text {
         return false;
     }
-    let array_empty = |key: &str| {
-        payload
-            .get(key)
-            .is_none_or(|value| value.is_null() || value.as_array().is_some_and(Vec::is_empty))
-    };
-    if !array_empty("files")
-        || !array_empty("attachments")
-        || !array_empty("skills")
-        || !array_empty("agents")
-    {
-        return false;
+    for (key, value) in map {
+        match key.as_str() {
+            "text" => {}
+            "files" | "attachments" | "skills" | "agents" => {
+                if !(value.is_null() || value.as_array().is_some_and(Vec::is_empty)) {
+                    return false;
+                }
+            }
+            "metadata" => match value {
+                Value::Null => {}
+                Value::Object(meta) => {
+                    if !meta
+                        .iter()
+                        .all(|(k, v)| k == "displayText" && v.as_str() == Some(submitted_text))
+                    {
+                        return false;
+                    }
+                }
+                _ => return false,
+            },
+            "resume" => {
+                if !(value.is_null() || value == &Value::Bool(false)) {
+                    return false;
+                }
+            }
+            "delivery" => {
+                if !value.is_null() {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
     }
-    match payload.get("metadata") {
-        None | Some(Value::Null) => true,
-        Some(Value::Object(map)) => map
-            .iter()
-            .all(|(key, value)| key == "displayText" && value.as_str() == Some(submitted_text)),
-        _ => false,
-    }
+    true
 }
 
 fn decode_user_item(id: &str, item: &Value, created: Option<u64>) -> Result<Option<QueuedPrompt>> {

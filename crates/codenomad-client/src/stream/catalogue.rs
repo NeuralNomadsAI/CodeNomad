@@ -356,7 +356,7 @@ impl CatalogueWatch {
                     },
                 )
                 .await;
-                state.cancelled.store(true, SeqCst);
+                state.cancel();
                 observer.disconnected();
                 if expired {
                     observer.authentication_required.store(true, SeqCst);

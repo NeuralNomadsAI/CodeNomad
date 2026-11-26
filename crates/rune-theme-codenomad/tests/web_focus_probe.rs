@@ -35,7 +35,7 @@ fn body(s: &State) -> El {
             s.receipts
                 .push(json!({"keys":tx.by_keys(),"repeat":tx.key_repeat(),"focused":tx.focused()}));
         })
-        .build(rune_theme_codenomad::kit(layout::dark()))
+        .build(&rune_theme_codenomad::kit(layout::dark()))
         .key("action");
     if s.consume_down {
         action = action.on_key(|_: &mut State, _, _| true);

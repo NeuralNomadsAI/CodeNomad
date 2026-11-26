@@ -511,7 +511,10 @@ fn delivery_promotion_and_reconnect_reconcile_authoritative_order_without_duplic
                 Event::ReaderSync { page, .. } => {
                     initial_rows = page.rows.iter().map(|r| r.id.clone()).collect();
                 }
-                Event::Inbox(items) => {
+                Event::Inbox {
+                    items,
+                    authoritative: true,
+                } => {
                     initial_inbox = items;
                 }
                 _ => {}
@@ -542,7 +545,11 @@ fn delivery_promotion_and_reconnect_reconcile_authoritative_order_without_duplic
         }
         let mut promoted_order = Vec::new();
         recv_reader(&reader_rx, |_, event| {
-            if let Event::Inbox(items) = event {
+            if let Event::Inbox {
+                items,
+                authoritative: true,
+            } = event
+            {
                 let ids: Vec<_> = items.iter().map(|i| (i.id.clone(), i.delivery)).collect();
                 if ids
                     == vec![
@@ -614,7 +621,10 @@ fn delivery_promotion_and_reconnect_reconcile_authoritative_order_without_duplic
                 Event::ReaderSync { page, .. } => {
                     reconnected_rows = page.rows.iter().map(|r| r.id.clone()).collect();
                 }
-                Event::Inbox(items) if items.is_empty() => {
+                Event::Inbox {
+                    items,
+                    authoritative: true,
+                } if items.is_empty() => {
                     reconnected_inbox.clear();
                 }
                 _ => {}
@@ -720,20 +730,24 @@ fn pagination_detects_reordered_overlap_and_schedules_authoritative_resync() {
 fn decode_marks_only_lossless_plain_text_prompts_editable_and_accepts_attachment_only() {
     let list = json!({
         "data": [
-            {"id": "plain", "type": "user", "delivery": "queue", "payload": {"text": "Plain follow-up"}},
+            {"id": "plain", "type": "user", "delivery": "queue", "payload": {"text": "Plain follow-up", "resume": false}},
             {"id": "with_display", "type": "user", "delivery": "queue", "payload": {"text": "expanded", "metadata": {"displayText": "[Pasted #1]"}}},
             {"id": "with_agent", "type": "user", "delivery": "queue", "payload": {"text": "@coder check", "agents": [{"name": "coder"}]}},
-            {"id": "att_only", "type": "user", "delivery": "steer", "payload": {"files": [{"name": "a.txt", "mime": "text/plain", "source": {"type": "uri", "uri": "file:///a.txt"}}]}}
+            {"id": "att_only", "type": "user", "delivery": "steer", "payload": {"files": [{"name": "a.txt", "mime": "text/plain", "source": {"type": "uri", "uri": "file:///a.txt"}}]}},
+            {"id": "with_resume", "type": "user", "delivery": "queue", "payload": {"text": "Resume turn", "resume": true}},
+            {"id": "with_extra", "type": "user", "delivery": "queue", "payload": {"text": "Extra metadata", "model": {"id": "m1"}}}
         ]
     });
     let items = inbox::decode_list(&list).unwrap();
-    assert_eq!(items.len(), 4);
+    assert_eq!(items.len(), 6);
     assert!(items[0].editable);
     assert!(!items[1].editable);
     assert!(!items[2].editable);
     assert!(!items[3].editable);
     assert_eq!(items[3].text, "");
     assert_eq!(items[3].parts.len(), 1);
+    assert!(!items[4].editable);
+    assert!(!items[5].editable);
 }
 
 #[test]
@@ -810,7 +824,13 @@ fn background_inbox_read_does_not_block_streaming_or_stall_and_generation_switch
         release.store(true, SeqCst);
         recv_reader(&reader_rx, |seen_gen, event| {
             seen_gen == gen1
-                && matches!(event, Event::Inbox(items) if items.len() == 1 && items[0].id == "q1")
+                && matches!(
+                    event,
+                    Event::Inbox {
+                        items,
+                        authoritative: true
+                    } if items.len() == 1 && items[0].id == "q1"
+                )
         })
         .await;
 
@@ -871,7 +891,10 @@ fn background_inbox_read_does_not_block_streaming_or_stall_and_generation_switch
         let mut saw_gen2_empty = false;
         recv_reader(&reader_rx, |seen_gen, event| {
             if seen_gen == gen2
-                && let Event::Inbox(items) = event
+                && let Event::Inbox {
+                    items,
+                    authoritative: true,
+                } = event
             {
                 assert!(
                     items.is_empty(),
@@ -885,11 +908,25 @@ fn background_inbox_read_does_not_block_streaming_or_stall_and_generation_switch
         .await;
         assert!(saw_gen2_empty);
 
-        // Persistent inbox failure emits Event::InboxFailed after bounded retries.
+        // Persistent inbox failure emits Event::InboxFailed after bounded retries,
+        // and a subsequent successful GET with identical rows still republishes authoritative: true.
         server.state.lock().unwrap().inbox_status = 500;
         cmd_tx.send(Command::SyncInbox).await.unwrap();
         recv_reader(&reader_rx, |seen_gen, event| {
             seen_gen == gen2 && matches!(event, Event::InboxFailed)
+        })
+        .await;
+        server.state.lock().unwrap().inbox_status = 200;
+        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen2
+                && matches!(
+                    event,
+                    Event::Inbox {
+                        items,
+                        authoritative: true
+                    } if items.is_empty()
+                )
         })
         .await;
         drop(out_rx);
@@ -933,20 +970,216 @@ fn persistent_inbox_history_overlap_prefers_committed_and_bounds_repairs() {
         // Published Event::Inbox must suppress committed u1 and retain only q2.
         recv_reader(&reader_rx, |seen_gen, event| {
             seen_gen == gen1
-                && matches!(event, Event::Inbox(items) if items.len() == 1 && items[0].id == "q2")
+                && matches!(
+                    event,
+                    Event::Inbox {
+                        items,
+                        authoritative: true
+                    } if items.len() == 1 && items[0].id == "q2"
+                )
         })
         .await;
 
-        // Even after several SyncInbox triggers with persistent overlap, history repair stays bounded.
-        for _ in 0..4 {
-            cmd_tx.send(Command::SyncInbox).await.unwrap();
-            tokio::time::sleep(Duration::from_millis(60)).await;
-        }
-        let page_calls = server.state.lock().unwrap().page_calls;
-        assert!(
-            page_calls <= 4,
-            "persistent overlap must stay bounded, saw {page_calls} page calls"
+        // Initial overlap schedules repair #1; wait for it to settle before measuring further SyncInbox triggers.
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen1 && matches!(event, Event::ReaderSync { .. })
+        })
+        .await;
+
+        // Next SyncInbox hits repair #2 (the cap); wait for its history repair to settle.
+        let page_calls_before = server.state.lock().unwrap().page_calls;
+        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen1 && matches!(event, Event::ReaderSync { .. })
+        })
+        .await;
+        let page_calls_after_cap = server.state.lock().unwrap().page_calls;
+        assert_eq!(
+            page_calls_after_cap - page_calls_before,
+            1,
+            "second overlap should trigger exactly one bounded repair"
         );
+
+        // Further SyncInbox triggers with persistent overlap must NOT schedule any more history repairs.
+        for _ in 0..3 {
+            cmd_tx.send(Command::SyncInbox).await.unwrap();
+            recv_reader(&reader_rx, |seen_gen, event| {
+                seen_gen == gen1
+                    && matches!(
+                        event,
+                        Event::Inbox {
+                            items,
+                            authoritative: true
+                        } if items.len() == 1 && items[0].id == "q2"
+                    )
+            })
+            .await;
+        }
+        assert_eq!(
+            server.state.lock().unwrap().page_calls,
+            page_calls_after_cap,
+            "once capped, further SyncInbox triggers must not schedule more overlap repairs"
+        );
+
+        // Even with overlap repairs saturated on u1, an unrelated disappearance of q2 still resyncs history.
+        {
+            let mut st = server.state.lock().unwrap();
+            st.inbox = vec![inbox_json("u1", "queue", "stale duplicate")];
+            st.rows = vec![user_json("u1", "committed"), user_json("q2", "real queued")];
+        }
+        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        let mut saw_committed_q2 = false;
+        recv_reader(&reader_rx, |seen_gen, event| {
+            if seen_gen == gen1
+                && let Event::ReaderSync { page, .. } = event
+                && page.rows.iter().any(|r| r.id == "q2")
+            {
+                saw_committed_q2 = true;
+                return true;
+            }
+            false
+        })
+        .await;
+        assert!(saw_committed_q2);
+
+        let _ = cmd_tx.send(Command::Close).await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+    });
+}
+
+#[test]
+fn available_retry_and_queued_sse_cancel_fence_and_resync_inbox() {
+    run(async {
+        let initial = FixtureState::new(
+            vec![user_json("u1", "start")],
+            vec![inbox_json("q1", "queue", "first")],
+        );
+        let server = LoopbackServer::start(initial);
+        let backend = server.backend();
+        let (out_tx, _out_rx) = bounded(64);
+        let (cmd_tx, cmd_rx) = bounded(16);
+        let (demand_tx, demand_rx) = demand::open();
+        let gen1 = demand_tx.publish(Some(demand::Target::Latest));
+        let (reader_tx, reader_rx) = bounded(64);
+        let reading = ReadingLane {
+            demand: demand_rx,
+            events: reader_tx,
+            connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        };
+        let wake: crate::Wake = Arc::new(|| {});
+        let task = tokio::spawn(recovery::run_with_reading(
+            backend,
+            out_tx,
+            cmd_rx,
+            wake,
+            Some(reading),
+        ));
+
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen1
+                && matches!(
+                    event,
+                    Event::Inbox {
+                        items,
+                        authoritative: true
+                    } if items.len() == 1 && items[0].id == "q1"
+                )
+        })
+        .await;
+
+        // 1. Unavailable -> Available without server.connected must still resync inbox authoritatively.
+        {
+            let mut st = server.state.lock().unwrap();
+            st.sse_queue.push_back(format!(
+                "data: {}\n\n",
+                json!({"type":"instance.eventStatus","instanceId":"ws","status":"disconnected"})
+            ));
+            st.sse_queue.push_back(format!(
+                "data: {}\n\n",
+                json!({"type":"instance.eventStatus","instanceId":"ws","status":"connected"})
+            ));
+        }
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen1
+                && matches!(
+                    event,
+                    Event::Inbox {
+                        items,
+                        authoritative: true
+                    } if items.len() == 1 && items[0].id == "q1"
+                )
+        })
+        .await;
+
+        // 2. Command::Retry must also trigger an authoritative inbox refresh even with unchanged rows.
+        cmd_tx.send(Command::Retry).await.unwrap();
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen1
+                && matches!(
+                    event,
+                    Event::Inbox {
+                        items,
+                        authoritative: true
+                    } if items.len() == 1 && items[0].id == "q1"
+                )
+        })
+        .await;
+
+        // 3. In-flight GET /inbox racing a queued session.inbox.cancelled SSE frame must be fenced out.
+        let entered = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        {
+            let mut st = server.state.lock().unwrap();
+            st.hold_inbox = Some((entered.clone(), release.clone()));
+        }
+        cmd_tx.send(Command::SyncInbox).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !entered.load(SeqCst) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("raced GET /inbox must start");
+
+        {
+            let mut st = server.state.lock().unwrap();
+            st.inbox.clear();
+            st.emit_native(json!({
+                "type": "session.inbox.cancelled",
+                "data": { "sessionID": "ses", "inboxID": "q1" }
+            }));
+        }
+        // Wait for the non-authoritative SSE cancellation delta to be observed, then release stale GET.
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen1
+                && matches!(
+                    event,
+                    Event::Inbox {
+                        items,
+                        authoritative: false
+                    } if items.is_empty()
+                )
+        })
+        .await;
+        release.store(true, SeqCst);
+
+        // Authoritative replacement GET must settle with empty []; stale [q1] must NEVER reappear.
+        recv_reader(&reader_rx, |seen_gen, event| {
+            if seen_gen == gen1
+                && let Event::Inbox {
+                    items,
+                    authoritative,
+                } = event
+            {
+                assert!(
+                    items.is_empty(),
+                    "stale in-flight GET must not resurrect cancelled item q1"
+                );
+                return authoritative;
+            }
+            false
+        })
+        .await;
 
         let _ = cmd_tx.send(Command::Close).await;
         let _ = tokio::time::timeout(Duration::from_secs(2), task).await;

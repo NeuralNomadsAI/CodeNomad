@@ -156,7 +156,7 @@ pub fn contract() {
             | Event::FamilyUsage(_)
             | Event::PromptAcknowledged { .. }
             | Event::Tool(..)
-            | Event::Inbox(_)
+            | Event::Inbox { .. }
             | Event::InboxFailed
             | Event::PagingFailed => {}
             Event::Message(message) => {
