@@ -108,16 +108,25 @@ test('validateOwnedWorkerProfile rejects links and createWorkerStdoutTap authent
   const tap = createWorkerStdoutTap('tok-run-1', chunk => forwarded.push(Buffer.from(chunk)))
   tap.push('CODENOMAD_WORKER_')
   tap.push('STARTED=tok-run-1\r\n{"fixture":"launcher"}\n')
+  const nonUtf8 = Buffer.from([0xff, 0xfe, 0x00, 0x80])
+  tap.push(nonUtf8)
   tap.flush()
   assert.equal(tap.hasStarted(), true)
-  assert.equal(Buffer.concat(forwarded).toString('utf8'), '{"fixture":"launcher"}\n')
+  assert.deepEqual(Buffer.concat(forwarded), Buffer.concat([Buffer.from('{"fixture":"launcher"}\n'), nonUtf8]))
+
+  const noNewlineForwarded = []
+  const noNewlineTap = createWorkerStdoutTap('tok-no-nl', chunk => noNewlineForwarded.push(Buffer.from(chunk)))
+  noNewlineTap.push('CODENOMAD_WORKER_STARTED=tok-no-nl')
+  noNewlineTap.flush()
+  assert.equal(noNewlineTap.hasStarted(), false)
+  assert.deepEqual(Buffer.concat(noNewlineForwarded), Buffer.from('CODENOMAD_WORKER_STARTED=tok-no-nl'))
 
   const wrongForwarded = []
   const wrongTap = createWorkerStdoutTap('tok-run-2', chunk => wrongForwarded.push(Buffer.from(chunk)))
   wrongTap.push('CODENOMAD_WORKER_STARTED=tok-other\nhello\n')
   wrongTap.flush()
   assert.equal(wrongTap.hasStarted(), false)
-  assert.equal(Buffer.concat(wrongForwarded).toString('utf8'), 'CODENOMAD_WORKER_STARTED=tok-other\nhello\n')
+  assert.deepEqual(Buffer.concat(wrongForwarded), Buffer.from('CODENOMAD_WORKER_STARTED=tok-other\nhello\n'))
 
   const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'cn-worker-guard-'))
   try {

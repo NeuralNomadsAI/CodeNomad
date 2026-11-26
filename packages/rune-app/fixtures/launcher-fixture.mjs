@@ -128,7 +128,18 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
     process.exit(finalResult)
   }
   worker.stdin?.on('error',()=>{})
-  const stdoutTap=createWorkerStdoutTap(workerToken,chunk=>{process.stdout.write(chunk)})
+  let pendingStdoutWrites=0,stdoutFlushWaiter
+  const checkStdoutFlushed=()=>{if(pendingStdoutWrites===0&&stdoutFlushWaiter){const r=stdoutFlushWaiter;stdoutFlushWaiter=undefined;r()}}
+  const forwardStdout=chunk=>{
+    if(!chunk.length)return
+    pendingStdoutWrites++
+    const ok=process.stdout.write(chunk,()=>{pendingStdoutWrites--;checkStdoutFlushed()})
+    if(!ok&&worker.stdout&&!worker.stdout.destroyed){
+      worker.stdout.pause()
+      process.stdout.once('drain',()=>{worker.stdout?.resume()})
+    }
+  }
+  const stdoutTap=createWorkerStdoutTap(workerToken,forwardStdout)
   worker.stdout?.on('data',chunk=>{stdoutTap.push(chunk)})
   worker.stdout?.once('end',()=>{stdoutTap.flush()})
   const closed=new Promise(resolve=>{
@@ -181,6 +192,11 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   process.off('SIGINT',stop)
   process.off('SIGTERM',stop)
   stdoutTap.flush()
+  if(pendingStdoutWrites>0){
+    let t
+    try{await Promise.race([new Promise(r=>{stdoutFlushWaiter=r;checkStdoutFlushed()}),new Promise(r=>{t=setTimeout(r,5000)})])}
+    finally{clearTimeout(t)}
+  }
   const finalResult=publishWorkerProof({workerProfile,exit,workerStarted:stdoutTap.hasStarted(),unconfirmedStop,stopError,outerSignal})
   process.exit(finalResult)
 }
@@ -710,14 +726,16 @@ async function restartWeb(previous,uiOrigin){
   assert(opened.ok())
   return {http,value:{older,witness:(await opened.json()).id,serverPid:await host.pid()}}
 }
-let clientStopPromise,clientStopError,interruptedSignal,abortClientWait
+const clientStopPromises=new WeakMap()
+let clientStopError,interruptedSignal,abortClientWait
 const stopClientOnce=child=>{
   if(!child)return Promise.resolve()
-  if(!clientStopPromise){
-    const stopped=webState.clientClosed??new Promise(resolve=>child.once('close',resolve))
-    clientStopPromise=(async()=>{
+  let stopPromise=clientStopPromises.get(child)
+  if(!stopPromise){
+    const stopped=child===webState.client&&webState.clientClosed?webState.clientClosed:new Promise(resolve=>child.once('close',resolve))
+    stopPromise=(async()=>{
       try{
-        if(webState.clientUseIpc&&process.platform==='win32'){
+        if(child===webState.client&&webState.clientUseIpc&&process.platform==='win32'){
           if(webSse7Tabs&&child.exitCode===null&&child.signalCode===null&&child.connected){
             try{child.send({type:'shutdown'},()=>{})}catch{}
             let timer
@@ -733,8 +751,9 @@ const stopClientOnce=child=>{
         clientStopError=String(error?.message??error)
       }
     })()
+    clientStopPromises.set(child,stopPromise)
   }
-  return clientStopPromise
+  return stopPromise
 }
 let finalizePromise,proofPublished=false,publishedResult=1,runError
 const teardownErrors=[]
@@ -878,16 +897,26 @@ try{
     await pendingOpenFixture({origin,serverPid,backendPassword,profile,project,env,clientBinary});result=0
   }else if(restoreState){
     if(restoreFileDrafts)await signIn(origin)
+    if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
     clientRelay=await createAttestedRelay(origin,serverPid,{requireClientAttestation:true,substitutePassword:backendPassword,isolateSessionCookie:true})
     for(const stage of ['prepare','resume','verify']){
+      if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
       if(restoreFileDrafts&&stage==='verify')await writeFile(path.join(project,'draft.txt'),'external')
+      if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
       clientLines=''
       client=spawnFixtureChild(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...clientEnv,RUNE_BACKEND:`${clientRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
+      webState.clientStartedBy=new Date()
       const stageClosed=new Promise((resolve,reject)=>{client.on('close',resolve);client.on('error',reject)})
       clientRelay.allowClientPid(fixtureChildPid(client),stageClosed)
       client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
       const timer=setTimeout(()=>client.kill(),120000)
-      try{result=await stageClosed}finally{clearTimeout(timer)}
+      try{
+        result=await Promise.race([
+          stageClosed,
+          new Promise((_,reject)=>{abortClientWait=sig=>reject(Error(`Launcher interrupted by ${sig}`))}),
+        ])
+      }finally{abortClientWait=undefined;clearTimeout(timer)}
+      if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
       assert.equal(result,0,`Restore stage ${stage}`)
       assert.equal(restoreStages.at(-1)?.stage,stage,'Each process publishes its stage proof')
       if(restoreFileDrafts){
@@ -900,7 +929,9 @@ try{
     }
   }else {
     if(gitPanel)await signIn(origin)
+    if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
     clientRelay=await createAttestedRelay(origin,serverPid,{requireClientAttestation:true,substitutePassword:backendPassword,isolateSessionCookie:true})
+    if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
     const args=gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'
     client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...clientEnv,RUNE_BACKEND:`${clientRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
     webState.clientStartedBy=new Date()

@@ -69,12 +69,7 @@ export function createWorkerStdoutTap(token, write) {
         headerPending = false
         chunks = []
         bufferedBytes = 0
-        const end = combined.length > 0 && combined[combined.length - 1] === 0x0d ? combined.length - 1 : combined.length
-        if (combined.subarray(0, end).equals(expected)) {
-          started = true
-        } else {
-          write(combined)
-        }
+        write(combined)
       }
     },
     hasStarted() {
