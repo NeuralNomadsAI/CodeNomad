@@ -1,7 +1,11 @@
 use super::form_view::{actions, fields};
 use crate::{State, agent_api::Form, agent_forms};
 use rune::{Cx, El, Env, Key, KeyEvent, Mods, Runtime, col};
-use rune_theme_codenomad::layout::{self, Layout};
+use rune_theme_codenomad::{
+    TextRole,
+    layout::{self, Layout},
+    tokens,
+};
 use serde_json::{Value, json};
 
 fn state_with_form(form: Form) -> (State, codenomad_client::Receiver<crate::agent::PendingJob>) {
@@ -196,8 +200,8 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
             ));
 
             // String options expose native radio-button role + selection state + description.
-            let staging_key = agent_forms::string_option_key(1, 0);
-            let prod_key = agent_forms::string_option_key(1, 1);
+            let staging_key = agent_forms::string_option_key("raw_env_key", "staging");
+            let prod_key = agent_forms::string_option_key("raw_env_key", "prod");
             let opt_staging = find_node(&tree, &staging_key).unwrap();
             let opt_prod = find_node(&tree, &prod_key).unwrap();
             assert_eq!(opt_staging["role"], "radio-button");
@@ -215,8 +219,8 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
             assert!(has_state(find_node(&tree, &prod_key).unwrap(), "checked"));
 
             // Multiselect options expose native check-box role + checked/unchecked states.
-            let api_key = agent_forms::multi_option_key(2, 0);
-            let web_key = agent_forms::multi_option_key(2, 1);
+            let api_key = agent_forms::multi_option_key("raw_scopes_key", "api");
+            let web_key = agent_forms::multi_option_key("raw_scopes_key", "web");
             let multi_api = find_node(&tree, &api_key).unwrap();
             let multi_web = find_node(&tree, &web_key).unwrap();
             assert_eq!(multi_api["role"], "check-box");
@@ -344,7 +348,7 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
 }
 
 #[test]
-fn option_keys_do_not_alias_across_hyphenated_fields_and_values() {
+fn option_keys_do_not_alias_and_keep_value_identity_across_reorders_and_replacements() {
     crate::strings::with_locale("en", || {
         let form = Form {
             tool: None,
@@ -356,7 +360,10 @@ fn option_keys_do_not_alias_across_hyphenated_fields_and_values() {
                     "key": "a-b",
                     "title": "First",
                     "type": "string",
-                    "options": [{"value": "c", "label": "Alpha C"}]
+                    "options": [
+                        {"value": "c", "label": "Alpha C"},
+                        {"value": "d", "label": "Alpha D"}
+                    ]
                 }),
                 json!({
                     "key": "a",
@@ -367,46 +374,78 @@ fn option_keys_do_not_alias_across_hyphenated_fields_and_values() {
             ],
         };
         let (state, _rx) = state_with_form(form);
-        let mut rt = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+        let mut rt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
         rt.frame(0.0);
 
-        let first_key = agent_forms::string_option_key(0, 0);
-        let second_key = agent_forms::string_option_key(1, 0);
-        assert_ne!(first_key, second_key);
+        let first_c = agent_forms::string_option_key("a-b", "c");
+        let first_d = agent_forms::string_option_key("a-b", "d");
+        let second_bc = agent_forms::string_option_key("a", "b-c");
+        assert_ne!(first_c, second_bc);
 
         let tree = rt.accessibility_json();
-        assert_eq!(find_node(&tree, &first_key).unwrap()["name"], "Alpha C");
-        assert_eq!(find_node(&tree, &second_key).unwrap()["name"], "Beta BC");
+        assert_eq!(find_node(&tree, &first_c).unwrap()["name"], "Alpha C");
+        assert_eq!(find_node(&tree, &second_bc).unwrap()["name"], "Beta BC");
         assert_eq!(
-            crate::agent::focused_control_key(&rt.state, Some(&first_key)),
-            Some((first_key.clone(), Some("pending-content-form-alias".into())))
+            crate::agent::focused_control_key(&rt.state, Some(&first_c)),
+            Some((first_c.clone(), Some("pending-content-form-alias".into())))
         );
         assert_eq!(
-            crate::agent::focused_control_key(&rt.state, Some(&second_key)),
-            Some((
-                second_key.clone(),
-                Some("pending-content-form-alias".into())
-            ))
+            crate::agent::focused_control_key(&rt.state, Some(&second_bc)),
+            Some((second_bc.clone(), Some("pending-content-form-alias".into())))
         );
 
-        tap(&mut rt, &second_key);
+        // Focus "c", then reorder options [c, d] -> [d, c] under the same form ID.
+        rt.update(|_, tx| tx.focus(first_c.clone(), true));
+        rt.frame(1.0 / 60.0);
+        rt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields[0]["options"] = json!([
+                {"value": "d", "label": "Alpha D"},
+                {"value": "c", "label": "Alpha C"}
+            ]);
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        rt.frame(1.0 / 60.0);
+        press_key(&mut rt, Key::Text(" ".into()));
+        // Space activates the originally focused option ("c"), NOT the new occupant at index 0 ("d").
         assert_eq!(
             rt.state.agent.as_ref().unwrap().drafts[&("form-alias".into(), "a-b".into())]
                 .edit
                 .text,
-            ""
+            "c"
+        );
+
+        // Replacing "c" with "e" under the same form ID invalidates the old focused key cleanly.
+        rt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields[0]["options"] = json!([
+                {"value": "e", "label": "Alpha E"},
+                {"value": "d", "label": "Alpha D"}
+            ]);
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        rt.frame(1.0 / 60.0);
+        assert_eq!(
+            crate::agent::focused_control_key(&rt.state, Some(&first_c)),
+            None
         );
         assert_eq!(
-            rt.state.agent.as_ref().unwrap().drafts[&("form-alias".into(), "a".into())]
+            crate::agent::focused_control_key(&rt.state, Some(&first_d)),
+            Some((first_d.clone(), Some("pending-content-form-alias".into())))
+        );
+        press_key(&mut rt, Key::Text(" ".into()));
+        assert_ne!(
+            rt.state.agent.as_ref().unwrap().drafts[&("form-alias".into(), "a-b".into())]
                 .edit
                 .text,
-            "b-c"
+            "e",
+            "Space after option replacement must not activate a different answer"
         );
     });
 }
 
 #[test]
-fn duplicate_empty_and_blank_label_options_are_normalized_consistently() {
+fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_and_validation() {
     crate::strings::with_locale("en", || {
         let form = Form {
             tool: None,
@@ -422,40 +461,101 @@ fn duplicate_empty_and_blank_label_options_are_normalized_consistently() {
                         {"value": "", "label": "Empty"},
                         {"value": "prod", "label": "Production"},
                         {"value": "prod", "label": "Production duplicate"},
-                        {"value": "   ", "label": "   "}
+                        {"value": "internal_choice_key", "label": "   "},
+                        {"value": "internal_unlabeled_key"}
                     ]
                 }),
                 json!({
                     "key": "tags",
                     "title": "Tags",
                     "type": "multiselect",
+                    "default": ["", "alpha", "stale_removed"],
                     "options": [
                         {"value": "", "label": "Empty"},
                         {"value": "alpha", "label": "Alpha"},
                         {"value": "alpha", "label": "Alpha duplicate"}
                     ]
                 }),
+                json!({
+                    "key": "constrained_empty",
+                    "title": "Constrained",
+                    "type": "string",
+                    "options": [
+                        {"value": "", "label": "Only empty"}
+                    ]
+                }),
             ],
         };
-        let (state, _rx) = state_with_form(form);
-        let mut rt = Runtime::new(state, render_form, (420.0, 560.0), Env::new(false, 1.0));
+        let (mut state, _rx) = state_with_form(form);
+        // Simulate a stale retained empty selection before re-seeding on refresh.
+        {
+            let a = state.agent.as_mut().unwrap();
+            a.drafts
+                .get_mut(&("form-norm".into(), "tags".into()))
+                .unwrap()
+                .selected
+                .insert("".into());
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        }
+        let mut rt = Runtime::new(state, render_form, (420.0, 960.0), Env::new(false, 1.0));
         rt.frame(0.0);
 
         let tree = rt.accessibility_json();
-        let radio_group = find_node(&tree, &agent_forms::field_group_key(0)).unwrap();
+        let mut names = Vec::new();
+        collect_names(&tree, &mut names);
+        for leaked in ["internal_choice_key", "internal_unlabeled_key"] {
+            assert!(
+                !names.iter().any(|n| n.contains(leaked)),
+                "raw option value {leaked} leaked into accessible names: {names:?}"
+            );
+            assert!(
+                !rt.elements()
+                    .iter()
+                    .any(|e| e.text.as_deref().is_some_and(|t| t.contains(leaked))),
+                "raw option value {leaked} leaked into visible text"
+            );
+        }
+
+        let radio_group = find_node(&tree, &agent_forms::field_group_key("choice")).unwrap();
         let radios = radio_group["children"].as_array().unwrap();
-        // Empty option dropped, duplicate "prod" collapsed -> 2 distinct radios ("prod" and "   ").
-        assert_eq!(radios.len(), 2, "{radios:?}");
+        // Empty option dropped, duplicate "prod" collapsed -> 3 distinct radios.
+        assert_eq!(radios.len(), 3, "{radios:?}");
         assert_eq!(radios[0]["name"], "Production");
         assert!(has_state(&radios[0], "unchecked"));
-        // Whitespace value with blank label receives a nonblank localized name.
         assert_eq!(radios[1]["name"], "Your answer 2");
-        assert!(has_state(&radios[1], "unchecked"));
+        assert_eq!(radios[2]["name"], "Your answer 3");
 
-        let check_group = find_node(&tree, &agent_forms::field_group_key(1)).unwrap();
-        let checks = check_group["children"].as_array().unwrap();
-        assert_eq!(checks.len(), 1, "{checks:?}");
-        assert_eq!(checks[0]["name"], "Alpha");
+        // Tapping the blank-label option still stores and submits its raw protocol value.
+        let raw_opt_key = agent_forms::string_option_key("choice", "internal_choice_key");
+        tap(&mut rt, &raw_opt_key);
+        assert_eq!(
+            rt.state.agent.as_ref().unwrap().drafts[&("form-norm".into(), "choice".into())]
+                .edit
+                .text,
+            "internal_choice_key"
+        );
+
+        // Multiselect sanitized out "" and "stale_removed" so the form submits cleanly with ["alpha"].
+        let a = rt.state.agent.as_ref().unwrap();
+        let answer = agent_forms::answer(&a.forms[0], &a.drafts).expect("sanitized draft submits");
+        assert_eq!(answer["choice"], json!("internal_choice_key"));
+        assert_eq!(answer["tags"], json!(["alpha"]));
+
+        // Non-custom string whose raw options all normalized away still rejects arbitrary free text.
+        rt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-norm".into(), "constrained_empty".into()))
+                .unwrap()
+                .edit = rune::edit::TextEdit::new("arbitrary free text");
+        });
+        let a = rt.state.agent.as_ref().unwrap();
+        assert!(
+            agent_forms::answer(&a.forms[0], &a.drafts).is_err(),
+            "non-custom string with raw options must never accept arbitrary free text"
+        );
     });
 }
 
@@ -518,11 +618,11 @@ fn multiple_untitled_fields_render_distinct_visible_localized_captions_and_descr
 
             let tree = rt.accessibility_json();
             assert_eq!(
-                find_node(&tree, &agent_forms::field_group_key(0)).unwrap()["name"],
+                find_node(&tree, &agent_forms::field_group_key("raw_first")).unwrap()["name"],
                 first_caption
             );
             assert_eq!(
-                find_node(&tree, &agent_forms::field_group_key(1)).unwrap()["name"],
+                find_node(&tree, &agent_forms::field_group_key("raw_second")).unwrap()["name"],
                 second_caption
             );
             assert_eq!(
@@ -538,13 +638,14 @@ fn multiple_untitled_fields_render_distinct_visible_localized_captions_and_descr
 }
 
 #[test]
-fn single_untitled_field_inherits_form_title_as_accessible_name() {
+fn single_untitled_field_inherits_and_wraps_overlong_form_title_at_narrow_width() {
     crate::strings::with_locale("en", || {
+        let long_title = "https://example.invalid/confirm/rollout/unbroken_identifier_token_that_must_wrap_at_240px";
         let form = Form {
             tool: None,
             infer_websearch: false,
             id: "form-single".into(),
-            title: "Confirm rollout".into(),
+            title: long_title.into(),
             fields: vec![json!({
                 "key": "internal_answer_key",
                 "type": "string",
@@ -552,17 +653,31 @@ fn single_untitled_field_inherits_form_title_as_accessible_name() {
             })],
         };
         let (state, _rx) = state_with_form(form);
-        let mut rt = Runtime::new(state, render_form, (420.0, 320.0), Env::new(false, 1.0));
+        let mut rt = Runtime::new(state, render_form, (240.0, 420.0), Env::new(false, 1.0));
         rt.frame(0.0);
         let tree = rt.accessibility_json();
         let input = find_input(&tree, "field-internal_answer_key");
-        assert_eq!(input["name"], "Confirm rollout");
+        assert_eq!(input["name"], long_title);
         assert_eq!(input["description"], "Explain why");
+
+        let els = rt.elements();
         assert!(
-            rt.elements()
-                .iter()
-                .any(|e| e.text.as_deref() == Some("Explain why")),
+            els.iter().any(|e| e.text.as_deref() == Some("Explain why")),
             "single-field description must be visible"
+        );
+        let title_el = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("form-title"))
+            .expect("form-title element");
+        assert!(
+            title_el.rect[0] + title_el.rect[2] <= 240.5,
+            "inherited unbroken form title overflowed narrow viewport: {:?}",
+            title_el.rect
+        );
+        assert!(
+            title_el.rect[3] > tokens(false).text(TextRole::Body).line_px() * 1.5,
+            "inherited unbroken form title should wrap across multiple lines: {:?}",
+            title_el.rect
         );
     });
 }

@@ -60,24 +60,20 @@ pub fn fields(s: &State, form: &Form) -> El {
         .full_width()
         .separate(Space::Sm)
         .child(text(t("permissionApproval.kind.question")))
-        .child(text(&form.title).wrap());
+        .child(form_controls::form_title(&form.title).key("form-title"));
     if !supported {
         body = body.child(text(t("rune.unsupported_question")))
     }
     let values = agent_forms::values(form, &a.drafts);
-    let visible: Vec<(usize, &serde_json::Value)> = form
+    let visible: Vec<&serde_json::Value> = form
         .fields
         .iter()
-        .enumerate()
-        .filter(|(_, f)| f["hidden"] != true && agent_forms::active(f, &values))
+        .filter(|f| f["hidden"] != true && agent_forms::active(f, &values))
         .collect();
     let visible_count = visible.len();
-    let untitled_count = visible
-        .iter()
-        .filter(|(_, f)| field_title(f).is_none())
-        .count();
+    let untitled_count = visible.iter().filter(|f| field_title(f).is_none()).count();
     let mut untitled_ordinal = 0usize;
-    for (field_index, field) in visible {
+    for field in visible {
         let key = field["key"].as_str().unwrap_or_default();
         let identity = (form.id.clone(), key.to_string());
         let Some(d) = a.drafts.get(&identity) else {
@@ -95,7 +91,7 @@ pub fn fields(s: &State, form: &Form) -> El {
         if let Some(desc) = field_desc {
             body = body.child(form_controls::field_description(desc));
         }
-        let group_key = agent_forms::field_group_key(field_index);
+        let group_key = agent_forms::field_group_key(key);
         match field["type"].as_str() {
             Some("boolean") => {
                 const CHOICES: [(&str, &str); 2] = [("rune.yes", "true"), ("rune.no", "false")];
@@ -149,7 +145,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                                 let value = option.value.to_string();
                                 let id = identity.clone();
                                 form_controls::radio_option(
-                                    &agent_forms::string_option_key(field_index, index),
+                                    &agent_forms::string_option_key(key, &value),
                                     &label,
                                     option.description,
                                     selected,
@@ -209,7 +205,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                             let value = option.value.to_string();
                             let id = identity.clone();
                             form_controls::checkbox_option(
-                                &agent_forms::multi_option_key(field_index, index),
+                                &agent_forms::multi_option_key(key, &value),
                                 &label,
                                 option.description,
                                 checked,

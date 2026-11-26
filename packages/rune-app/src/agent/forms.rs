@@ -13,7 +13,8 @@ pub struct NormalizedOption<'a> {
 
 /// Normalize form options once for rendering, focus resolution, and validation:
 /// enforce the 64-option bound, skip empty values that cannot be submitted as
-/// explicit string choices, and deduplicate by exact value (preserving first).
+/// explicit string choices, deduplicate by exact value (preserving first), and
+/// keep only authored non-blank labels so raw protocol values never leak into copy.
 pub fn normalized_options(field: &Value) -> Vec<NormalizedOption<'_>> {
     let Some(options) = field["options"].as_array() else {
         return Vec::new();
@@ -30,11 +31,7 @@ pub fn normalized_options(field: &Value) -> Vec<NormalizedOption<'_>> {
         let label = option["label"]
             .as_str()
             .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .or_else(|| {
-                let trimmed = value.trim();
-                (!trimmed.is_empty()).then_some(trimmed)
-            });
+            .filter(|s| !s.is_empty());
         let description = option["description"]
             .as_str()
             .map(str::trim)
@@ -52,16 +49,24 @@ pub fn bool_option_key(field_key: &str, value: &str) -> String {
     format!("bool-{field_key}-{value}")
 }
 
-pub fn string_option_key(field_index: usize, option_index: usize) -> String {
-    format!("option-{field_index}-{option_index}")
+pub fn string_option_key(field_key: &str, value: &str) -> String {
+    format!(
+        "option:{}:{field_key}:{}:{value}",
+        field_key.len(),
+        value.len()
+    )
 }
 
-pub fn multi_option_key(field_index: usize, option_index: usize) -> String {
-    format!("multi-{field_index}-{option_index}")
+pub fn multi_option_key(field_key: &str, value: &str) -> String {
+    format!(
+        "multi:{}:{field_key}:{}:{value}",
+        field_key.len(),
+        value.len()
+    )
 }
 
-pub fn field_group_key(field_index: usize) -> String {
-    format!("form-group-{field_index}")
+pub fn field_group_key(field_key: &str) -> String {
+    format!("form-group:{}:{field_key}", field_key.len())
 }
 pub struct Draft {
     pub edit: TextEdit,
@@ -109,13 +114,14 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
     for form in forms {
         for field in &form.fields {
             let key = field["key"].as_str().unwrap_or_default().to_string();
-            drafts.entry((form.id.clone(), key)).or_insert_with(|| {
+            let draft = drafts.entry((form.id.clone(), key)).or_insert_with(|| {
                 let mut d = Draft::default();
                 let value = &field["default"];
                 if let Some(values) = value.as_array() {
                     d.selected = values
                         .iter()
                         .filter_map(Value::as_str)
+                        .filter(|v| !v.is_empty())
                         .map(str::to_string)
                         .collect();
                 } else if !value.is_null() {
@@ -130,6 +136,14 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 }
                 d
             });
+            // Keep seeded and retained multiselect selections aligned with normalized options
+            // so removed or empty-valued entries cannot leave an invisible un-clearable choice.
+            if field["type"] == "multiselect" && field["options"].as_array().is_some() {
+                let allowed = normalized_options(field);
+                draft
+                    .selected
+                    .retain(|selected| allowed.iter().any(|opt| opt.value == selected.as_str()));
+            }
         }
     }
 }
@@ -185,9 +199,13 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
             {
                 return Err(());
             }
-            if field["custom"] != true {
+            if field["custom"] != true
+                && field["options"]
+                    .as_array()
+                    .is_some_and(|raw| !raw.is_empty())
+            {
                 let options = normalized_options(field);
-                if !options.is_empty() && !options.iter().any(|o| o.value == text) {
+                if !options.iter().any(|o| o.value == text) {
                     return Err(());
                 }
             }

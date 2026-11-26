@@ -150,11 +150,10 @@ pub(crate) fn focused_control_key(
     if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
         let values = agent_forms::values(f, &a.drafts);
         let region = format!("pending-content-{}", f.id);
-        for (field_index, field) in f
+        for field in f
             .fields
             .iter()
-            .enumerate()
-            .filter(|(_, field)| field["hidden"] != true && agent_forms::active(field, &values))
+            .filter(|field| field["hidden"] != true && agent_forms::active(field, &values))
         {
             let Some(field_key) = field["key"].as_str() else {
                 continue;
@@ -166,16 +165,10 @@ pub(crate) fn focused_control_key(
                 }
                 Some("string") => agent_forms::normalized_options(field)
                     .iter()
-                    .enumerate()
-                    .any(|(option_index, _)| {
-                        agent_forms::string_option_key(field_index, option_index) == key
-                    }),
+                    .any(|option| agent_forms::string_option_key(field_key, option.value) == key),
                 Some("multiselect") => agent_forms::normalized_options(field)
                     .iter()
-                    .enumerate()
-                    .any(|(option_index, _)| {
-                        agent_forms::multi_option_key(field_index, option_index) == key
-                    }),
+                    .any(|option| agent_forms::multi_option_key(field_key, option.value) == key),
                 _ => false,
             };
             if matched {
