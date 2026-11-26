@@ -60,7 +60,8 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
   const sessions = new Map<string, any>([[rootID, { id: rootID, location: { directory }, projectID: "project",
     metadata: { "codenomad.mission": { missionID: pending.missionID, document: { missionID: doc.id, passageID: pending.id } } } }],
   [childID, { id: childID, parentID: rootID, location: { directory }, projectID: "project" }],
-  ["ses_ordinary", { id: "ses_ordinary", location: { directory }, projectID: "project" }]])
+  ["ses_ordinary", { id: "ses_ordinary", location: { directory }, projectID: "project" }],
+  ["ses_ordinary_child", { id: "ses_ordinary_child", parentID: "ses_ordinary", location: { directory }, projectID: "project" }]])
   const handlers: Record<string, (raw: unknown) => Effect.Effect<unknown, unknown>> = {}
   const calls = { http: 0, discover: 0, acquired: 0, reconcile: 0, environment: 0, method: [] as string[], privateSource: [] as boolean[], originalPrompts: 0 }
   const state = { originalPresent, active: true, promptLock: false, afterDiscover: async () => {}, response: undefined as Response | undefined,
@@ -149,7 +150,8 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
   const invoke = <T>(use: () => Promise<T>) => Effect.runPromiseWith(partial)(invocation.capture(Effect.promise(use)))
   const receive = (method: string, raw: unknown) => Effect.runPromiseWith(full)(handlers[method](raw))
   const binding = { documentID: doc.id, passageID: pending.id, missionID: pending.missionID, rootID }
-  return { bridge, calls, state, invoke, receive, rootID, childID, binding, identity, registrationFile, read, documents, mission, artifacts, savedRuntime, control }
+  const moveSession = (sessionID: string) => { sessions.get(sessionID).location.directory = path.join(directory, "other") }
+  return { bridge, calls, state, invoke, receive, rootID, childID, binding, identity, registrationFile, read, documents, mission, artifacts, savedRuntime, control, moveSession }
 }
 
 test("ordinary callbacks use only public ancestry: zero discovery, HTTP or private acquisition", async t => {
@@ -158,6 +160,22 @@ test("ordinary callbacks use only public ancestry: zero discovery, HTTP or priva
   assert.equal(await f.invoke(() => f.bridge.prepare("ses_ordinary")), false)
   assert.equal(f.calls.http, 0); assert.equal(f.calls.discover, 0); assert.equal(f.calls.acquired, 0)
   assert.ok(f.calls.privateSource.every(value => !value))
+})
+
+test("ordinary callbacks allow linked sessions in different directories", async t => {
+  const f = await fixture(t)
+  f.moveSession("ses_ordinary")
+  assert.equal(await f.invoke(() => f.bridge.prepare("ses_ordinary_child")), false)
+  assert.equal(await f.invoke(() => f.bridge.select("ses_ordinary_child")), undefined)
+  assert.equal(f.calls.http, 0); assert.equal(f.calls.discover, 0); assert.equal(f.calls.acquired, 0)
+})
+
+test("scheduled business rejects a moved family member before discovery", async t => {
+  const f = await fixture(t)
+  f.moveSession(f.childID)
+  await assert.rejects(f.invoke(() => f.bridge.prepare(f.childID)), /Business source moved/)
+  await assert.rejects(f.invoke(() => f.bridge.select(f.childID)), /Scheduled Mission business unavailable/)
+  assert.equal(f.calls.http, 0); assert.equal(f.calls.discover, 0); assert.equal(f.calls.acquired, 0)
 })
 
 test("pure immediate context prepares ENV and reports without technical files or an Automation service", async t => {
