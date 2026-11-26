@@ -803,79 +803,83 @@ fn child_task_deferred_tool_image_uses_verified_child_session() {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[test]
 fn offscreen_images_evict_lru_under_retained_pixel_budget_and_reacquire_when_visible() {
-    let png = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC";
-    // Each decoded PNG is 8x4 = 32 pixels; allow 64 pixels (two images) simultaneously.
-    const TEST_BUDGET: usize = 64;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    // Four distinct 8x4 PNGs (32 pixels each, distinct blake3 ImageIds).
+    // Budget = 96 px, per-dispatch reservation = 40 px:
+    //   - 2 images retained = 64 px; admitting a 3rd requires 64 + 40 = 104 > 96 -> refused
+    //     while both stay visible, proving reservation prevents exceeding the cap.
+    //   - Evicting 1 off-screen image drops retained to 32 px; 32 + 40 = 72 <= 96 -> admitted.
+    const TEST_BUDGET: usize = 96;
+    const TEST_RESERVE: usize = 40;
     let mut photos = Pictures::default();
-    let origin = PictureSource::Inline(png.into());
     let slots: Vec<_> = (0..4)
-        .map(|index| (format!("img-{index}"), Rc::new(())))
+        .map(|index| {
+            let source = PictureSource::Inline(STANDARD.encode(large_valid_png(index + 1)).into());
+            (format!("img-{index}"), source, Rc::new(()))
+        })
         .collect();
     let reads = crate::platform::reads::Reads::default();
     let wake: rune::Waker = Arc::new(|| {});
 
-    // Mount all 4 visible: budget admits 2 decoded images and pauses dispatching the remaining 2.
-    for (key, lease) in &slots {
-        photos.visibility(key, &origin, "image/png", None, lease, true);
+    // Mount img-0, img-1, img-2 visible: reservation admits img-0 and img-1 (64 px) and blocks
+    // img-2 (64 + 40 > 96) without exceeding TEST_BUDGET.
+    for (key, source, lease) in &slots[..3] {
+        photos.visibility(key, source, "image/png", None, lease, true);
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
     loop {
-        photos.poll_with_budget(&reads, &wake, TEST_BUDGET);
-        let ready = photos
-            .images
-            .values()
-            .filter(|e| e.image.as_ref().is_some_and(Image::is_ready))
-            .count();
-        if ready == 2 && photos.retained_pixels() == TEST_BUDGET {
+        photos.poll_with_budget(&reads, &wake, TEST_BUDGET, TEST_RESERVE);
+        if photos.images["img-0"].settled && photos.images["img-1"].settled {
             break;
         }
         assert!(std::time::Instant::now() < deadline);
         std::thread::yield_now();
     }
-    assert_eq!(photos.waiting.len(), 2);
+    let id_0 = photos.images["img-0"].image.as_ref().unwrap().id();
+    let id_1 = photos.images["img-1"].image.as_ref().unwrap().id();
+    assert_ne!(id_0, id_1);
+    assert_eq!(photos.retained_pixels(), 64);
+    assert_eq!(photos.waiting.len(), 1);
     assert!(photos.images["img-2"].image.is_none());
-    assert!(photos.images["img-3"].image.is_none());
+    assert!(photos.images["img-2"].request.is_none());
 
-    // Scroll img-0 and img-1 off-screen: poll must evict them to admit img-2 and img-3.
-    photos.visibility("img-0", &origin, "image/png", None, &slots[0].1, false);
-    photos.visibility("img-1", &origin, "image/png", None, &slots[1].1, false);
+    // Touch img-0 more recently than img-1, then scroll both off-screen: admitting img-2 must
+    // evict ONLY the oldest LRU entry (img-1) and keep img-0 intact.
+    photos.visibility("img-0", &slots[0].1, "image/png", None, &slots[0].2, true);
+    photos.visibility("img-0", &slots[0].1, "image/png", None, &slots[0].2, false);
+    photos.visibility("img-1", &slots[1].1, "image/png", None, &slots[1].2, false);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
     loop {
-        photos.poll_with_budget(&reads, &wake, TEST_BUDGET);
-        if photos.images["img-2"]
-            .image
-            .as_ref()
-            .is_some_and(Image::is_ready)
-            && photos.images["img-3"]
-                .image
-                .as_ref()
-                .is_some_and(Image::is_ready)
-        {
+        photos.poll_with_budget(&reads, &wake, TEST_BUDGET, TEST_RESERVE);
+        if photos.images["img-2"].settled {
             break;
         }
         assert!(std::time::Instant::now() < deadline);
         std::thread::yield_now();
     }
-    assert!(photos.images["img-0"].image.is_none() && !photos.images["img-0"].settled);
     assert!(photos.images["img-1"].image.is_none() && !photos.images["img-1"].settled);
+    assert_eq!(
+        photos.images["img-0"].image.as_ref().map(Image::id),
+        Some(id_0),
+        "more recently used off-screen image must survive LRU eviction"
+    );
+    let id_2 = photos.images["img-2"].image.as_ref().unwrap().id();
+    assert_ne!(id_2, id_0);
+    assert_ne!(id_2, id_1);
     assert!(photos.retained_pixels() <= TEST_BUDGET);
 
-    // Scroll img-0 back into view while img-2 leaves: img-0 must re-acquire cleanly.
-    photos.visibility("img-2", &origin, "image/png", None, &slots[2].1, false);
-    photos.visibility("img-0", &origin, "image/png", None, &slots[0].1, true);
+    // Scroll img-1 back into view while img-2 leaves: img-1 must re-acquire cleanly.
+    photos.visibility("img-2", &slots[2].1, "image/png", None, &slots[2].2, false);
+    photos.visibility("img-1", &slots[1].1, "image/png", None, &slots[1].2, true);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
     loop {
-        photos.poll_with_budget(&reads, &wake, TEST_BUDGET);
-        if photos.images["img-0"]
-            .image
-            .as_ref()
-            .is_some_and(Image::is_ready)
-        {
+        photos.poll_with_budget(&reads, &wake, TEST_BUDGET, TEST_RESERVE);
+        if photos.images["img-1"].settled {
             break;
         }
         assert!(std::time::Instant::now() < deadline);
         std::thread::yield_now();
     }
-    assert!(photos.images["img-2"].image.is_none());
     assert!(photos.retained_pixels() <= TEST_BUDGET);
+    assert_eq!(photos.images["img-1"].image.as_ref().unwrap().id(), id_1);
 }

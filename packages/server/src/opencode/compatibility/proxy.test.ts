@@ -96,3 +96,42 @@ test("a transform falls back to streaming when the upstream JSON exceeds maxTran
     assert.equal(releases, 2)
   } finally { await app.close(); await upstream.close() }
 })
+
+test("transformStream streams large JSON responses through bounded per-message projection", async () => {
+  const { deferToolMediaStream } = await import("../session-media-stream")
+  const { INLINE_MEDIA_LIMIT } = await import("../session-media")
+  const upstream = Fastify()
+  const bigUri = `data:image/png;base64,${"A".repeat(INLINE_MEDIA_LIMIT + 1024)}`
+  const messages = Array.from({ length: 4 }, (_, i) => ({
+    id: `m${i}`,
+    type: "assistant",
+    content: [{
+      type: "tool",
+      id: `t${i}`,
+      name: "read",
+      state: { status: "completed", content: [{ type: "file", mime: "image/png", uri: bigUri }] },
+    }],
+  }))
+  upstream.get("/api/messages", async (_request, reply) =>
+    reply.type("application/json").send(JSON.stringify({ data: messages })),
+  )
+  await upstream.listen({ host: "127.0.0.1", port: 0 })
+  const origin = `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}`
+  const app = Fastify()
+  let releases = 0
+  app.get("/messages", (request, reply) => forwardRuntimeRequest({
+    request, reply, url: `${origin}/api/messages`, body: undefined, headers: {}, fetch,
+    invalidate: () => {}, release: () => { releases++ },
+    transformStream: stream => deferToolMediaStream(stream, { workspaceId: "ws", sessionId: "ses" }, 64 * 1024),
+  }))
+  try {
+    const response = await app.inject("/messages")
+    assert.equal(response.statusCode, 200)
+    const body = response.json() as { data: Array<{ content: Array<{ state: { content: Array<{ uri: string }> } }> }> }
+    assert.equal(body.data.length, 4)
+    for (let i = 0; i < 4; i++) {
+      assert.match(body.data[i]!.content[0]!.state.content[0]!.uri, new RegExp(`^/api/workspaces/ws/session-media/ses/m${i}/0/0/[a-f0-9]{64}$`))
+    }
+    assert.equal(releases, 1)
+  } finally { await app.close(); await upstream.close() }
+})

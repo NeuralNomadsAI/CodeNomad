@@ -16,6 +16,8 @@ use std::{
 };
 
 const CONCURRENT: usize = 2;
+const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
+const MAX_IMAGE_SIDE: f32 = 8192.0;
 const RETAINED_PIXELS: usize = 32 * 1024 * 1024;
 
 #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
@@ -235,7 +237,7 @@ impl Pictures {
         reads: &crate::platform::reads::Reads,
         wake: &rune::Waker,
     ) -> bool {
-        self.poll_with_budget(reads, wake, RETAINED_PIXELS)
+        self.poll_with_budget(reads, wake, RETAINED_PIXELS, MAX_IMAGE_PIXELS)
     }
 
     fn poll_with_budget(
@@ -243,6 +245,7 @@ impl Pictures {
         reads: &crate::platform::reads::Reads,
         wake: &rune::Waker,
         pixel_budget: usize,
+        reserve_pixels: usize,
     ) -> bool {
         self.images
             .retain(|_, entry| entry.lease.strong_count() > 0);
@@ -263,9 +266,11 @@ impl Pictures {
                 entry.settled = bytes.is_none();
                 entry.pixels = 0;
                 entry.image = bytes.map(|bytes| {
+                    // Decode only frame 0 (without upscaling <= MAX_IMAGE_SIDE) so animations
+                    // cannot retain multi-frame RGBA chains beyond the single-frame pixel cap.
                     self.cache
                         .get_or_insert_with(|| ImageCache::new(wake.clone()))
-                        .load(bytes.as_slice())
+                        .load_scaled(bytes.as_slice(), MAX_IMAGE_SIDE, 1.0)
                 });
                 changed = true;
             }
@@ -293,7 +298,7 @@ impl Pictures {
         }
         self.access_seq = seq;
         changed |= self.evict_pixels(pixel_budget);
-        let running = self
+        let mut running = self
             .images
             .values()
             .filter(|entry| {
@@ -303,12 +308,17 @@ impl Pictures {
             .count();
         let mut remaining = CONCURRENT.saturating_sub(running);
         while remaining > 0 && !self.waiting.is_empty() {
-            if self.retained_pixels() >= pixel_budget {
+            let needed = running.saturating_add(1).saturating_mul(reserve_pixels);
+            let mut admitted = true;
+            while self.retained_pixels().saturating_add(needed) > pixel_budget {
                 if !self.evict_one_offscreen() {
+                    admitted = false;
                     break;
                 }
                 changed = true;
-                continue;
+            }
+            if !admitted {
+                break;
             }
             let Some(key) = self.waiting.pop_front() else {
                 break;
@@ -319,6 +329,7 @@ impl Pictures {
                 continue;
             };
             remaining -= 1;
+            running += 1;
             let (cancel, cancelled) = bounded(1);
             let (out, result) = bounded(1);
             entry.request = Some((cancel, result));
@@ -541,7 +552,11 @@ fn view_on_platform(
                     &lease,
                     visible,
                 );
-                if visible || !s.transcript_display.pictures.waiting.is_empty() {
+                let pictures = &s.transcript_display.pictures;
+                if visible
+                    || !pictures.waiting.is_empty()
+                    || pictures.retained_pixels() > RETAINED_PIXELS
+                {
                     tx.wake_after(std::time::Duration::ZERO);
                 }
             }

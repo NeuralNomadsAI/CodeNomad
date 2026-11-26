@@ -16,6 +16,8 @@ export async function forwardRuntimeRequest(args: {
   invalidate: () => void
   /** Rewrites a successful JSON response in place before it is relayed whole. */
   transform?: (body: unknown) => void
+  /** Streams a successful JSON response through a bounded transformer. */
+  transformStream?: (body: ReadableStream<Uint8Array>) => Readable
   maxTransformBytes?: number
 }) {
   const controller = new AbortController()
@@ -81,7 +83,11 @@ export async function forwardRuntimeRequest(args: {
       if (value !== null) args.reply.header(name, value)
     }
     if (!response.body) { confirmed = definitive; release(); return args.reply.send() }
-    if (args.transform && response.ok && /^application\/json\b/i.test(response.headers.get("content-type") ?? "")) {
+    const isJsonOk = response.ok && /^application\/json\b/i.test(response.headers.get("content-type") ?? "")
+    let stream: Readable | undefined
+    if (args.transformStream && isJsonOk) {
+      stream = args.transformStream(response.body)
+    } else if (args.transform && isJsonOk) {
       const limit = args.maxTransformBytes ?? MAX_PROXY_TRANSFORM_BYTES
       const rawLength = response.headers.get("content-length")?.trim() ?? ""
       const declared = /^\d+$/.test(rawLength) ? Number(rawLength) : NaN
@@ -115,7 +121,7 @@ export async function forwardRuntimeRequest(args: {
           args.transform(value)
           return args.reply.send(JSON.stringify(value))
         }
-        const stream = Readable.from((async function* () {
+        stream = Readable.from((async function* () {
           let finished = false
           try {
             while (chunks.length > 0) yield chunks.shift()!
@@ -129,11 +135,9 @@ export async function forwardRuntimeRequest(args: {
             reader.releaseLock()
           }
         })())
-        stream.once("end", () => { confirmed = definitive; release() }).once("close", release).once("error", release)
-        return args.reply.send(stream)
       }
     }
-    const stream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream)
+    stream ??= Readable.fromWeb(response.body as import("node:stream/web").ReadableStream)
     if (args.retainMutation) {
       // Fastify owns only the downstream relay. A closed relay wakes backpressure
       // but cannot destroy the native reader or settle the mutation.

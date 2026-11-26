@@ -130,7 +130,8 @@ import { recordPermissionFork, registerSessionPermissionModeRoutes, sessionPermi
 import { connectSessionPermissionRefresh } from "./routes/session-permission-refresh"
 import { requestAdmission } from "./request-admission"
 import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext, readLocationRef, sameLocation } from "../opencode/compatibility/location"
-import { DEFERRED_MEDIA_HEADER, deferToolMedia, wantsDeferredMedia } from "../opencode/session-media"
+import { DEFERRED_MEDIA_HEADER, wantsDeferredMedia } from "../opencode/session-media"
+import { deferToolMediaStream } from "../opencode/session-media-stream"
 import { SESSION_LOCATED_ELSEWHERE_REASON, SESSION_PLACEMENT_HEADER } from "../opencode/session-access-contract"
 import { decodeSessionListScope, prepareLocationImport, readRequestLocations, type SessionListScope } from "../opencode/compatibility/proxy-locations"
 import type { RemoteProxySessionManager } from "./remote-proxy"
@@ -1671,8 +1672,8 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       const deferMedia = request.method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(pathname)
         && wantsDeferredMedia(request.headers)
       const forward = () => forwardRuntimeRequest({
-        transform: deferMedia && sessionId
-          ? body => deferToolMedia((body as { data?: unknown } | null)?.data, { workspaceId, sessionId })
+        transformStream: deferMedia && sessionId
+          ? stream => deferToolMediaStream(stream, { workspaceId, sessionId })
           : undefined,
         request, reply, url: targetUrl.toString(), body, headers,
         fetch: confirmPermission || confirmDeletion || confirmRoot || forkSource ? async (input, init) => {
