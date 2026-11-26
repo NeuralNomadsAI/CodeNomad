@@ -144,6 +144,7 @@ impl Window {
         }
         self.logging.close();
         self.remote.close();
+        self.providers.suspend();
         if self.memory_editor.has_unsaved() || self.config_files.dirty() {
             self.confirm_close = true;
         } else {
@@ -179,6 +180,7 @@ impl Window {
     }
 
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
+        self.providers.suspend();
         {
             let mut prefs = self.shared.borrow_mut();
             prefs.window_wake = None;
@@ -430,6 +432,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             .provider_target
                             .as_ref()
                             .is_some_and(providers::Target::online),
+                    &mut layers,
                 ),
             ),
             Section::Stats => (

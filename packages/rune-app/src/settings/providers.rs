@@ -1,13 +1,15 @@
+mod accounts;
+mod form;
+mod manager;
+mod modal;
+#[cfg(test)]
+mod tests;
+
 #[cfg(not(target_arch = "wasm32"))]
 use super::view::Window;
-use crate::{State, backend::Backend, platform, strings::t};
-use codenomad_client::{
-    Receiver, Sender, bounded,
-    settings::{Provider, providers},
-    stream::CatalogueChanges,
-};
-use rune::{El, col, text};
-use rune_theme_codenomad::{Space, TextRole, layout::Layout, settings as chrome};
+use crate::{State, backend::Backend};
+use codenomad_client::stream::CatalogueChanges;
+use rune::El;
 
 pub(super) struct Target {
     backend: Backend,
@@ -132,6 +134,14 @@ impl Target {
         }
     }
 
+    pub(super) fn backend(&self) -> &Backend {
+        &self.backend
+    }
+
+    pub(super) fn authority(&self) -> u64 {
+        self.authority
+    }
+
     pub(super) fn location(&self) -> (&str, Option<&str>) {
         (&self.workspace, self.session.as_deref())
     }
@@ -165,187 +175,51 @@ impl Target {
     }
 }
 
-type Flight = (Sender<()>, Receiver<Option<Vec<Provider>>>);
-
+#[derive(Default)]
 pub(super) struct Catalog {
-    pub expanded: bool,
-    scope: Option<(String, String, Option<String>)>,
-    authority: u64,
-    seen: Option<u64>,
-    flight: Option<Flight>,
-    rows: Option<Vec<Provider>>,
-    failed: bool,
-}
-
-impl Default for Catalog {
-    fn default() -> Self {
-        Self {
-            expanded: true,
-            scope: None,
-            authority: 0,
-            seen: None,
-            flight: None,
-            rows: None,
-            failed: false,
-        }
-    }
+    manager: manager::Manager,
 }
 
 impl Catalog {
-    pub fn poll(&mut self, target: Option<&Target>, wake: Option<&rune::Waker>) -> bool {
-        let Some((target, wake)) = target
-            .zip(wake)
-            .filter(|(target, _)| self.expanded && target.online)
-        else {
-            let changed = self.seen.is_some();
-            *self = Self {
-                expanded: self.expanded,
-                ..Self::default()
-            };
-            return changed;
-        };
-        let mut changed = false;
-        if self
-            .scope
-            .as_ref()
-            .is_none_or(|(client, workspace, session)| {
-                client != &target.backend.client_id
-                    || workspace != &target.workspace
-                    || session != &target.session
-            })
-            || self.authority != target.authority
-        {
-            *self = Self {
-                expanded: true,
-                scope: Some((
-                    target.backend.client_id.clone(),
-                    target.workspace.clone(),
-                    target.session.clone(),
-                )),
-                authority: target.authority,
-                ..Self::default()
-            };
-            changed = true;
-        }
-        if let Some(result) = self
-            .flight
-            .as_ref()
-            .and_then(|(_, reply)| reply.try_recv().ok())
-        {
-            self.flight = None;
-            if self.seen == Some(target.revision) {
-                self.failed = result.is_none();
-                if let Some(rows) = result {
-                    self.rows = Some(rows);
-                }
-            }
-            changed = true;
-        }
-        if self.flight.is_none() && self.seen != Some(target.revision) {
-            let (cancel, cancelled) = bounded(1);
-            let (out, reply) = bounded(1);
-            let (backend, workspace, session, wake) = (
-                target.backend.clone(),
-                target.workspace.clone(),
-                target.session.clone(),
-                wake.clone(),
-            );
-            self.seen = Some(target.revision);
-            self.flight = Some((cancel, reply));
-            self.failed = false;
-            platform::spawn(async move {
-                if let Some(result) = platform::reads::cancellable(
-                    &cancelled,
-                    providers(&backend, &workspace, session.as_deref()),
-                )
-                .await
-                    && out.send(result.ok()).await.is_ok()
-                {
-                    wake();
-                }
-            });
-            changed = true;
-        }
-        changed
+    pub fn poll(
+        &mut self,
+        target: Option<&Target>,
+        now: f64,
+        wake: Option<&rune::Waker>,
+        tx: &mut rune::Tx,
+    ) -> bool {
+        self.manager.poll(target, now, wake, tx)
+    }
+
+    pub fn toggle(&mut self) {
+        self.manager.toggle();
+    }
+
+    pub fn suspend(&mut self) {
+        self.manager.suspend();
+    }
+
+    pub fn cancel_on_hide(&mut self) -> bool {
+        self.manager.cancel_on_hide()
+    }
+
+    pub fn dismiss_modal(&mut self, tx: &mut rune::Tx) -> bool {
+        self.manager.dismiss_modal(tx)
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn view(s: &Window, available: bool) -> El {
-    content(&s.providers, available, |s: &mut Window| {
-        s.providers.toggle()
+pub(super) fn view(s: &Window, available: bool, layers: &mut Vec<El>) -> El {
+    content(&s.providers, available, layers, |s: &mut Window| {
+        &mut s.providers
     })
-}
-
-impl Catalog {
-    pub fn toggle(&mut self) {
-        *self = Self {
-            expanded: !self.expanded,
-            ..Self::default()
-        };
-    }
-
-    pub fn suspend(&mut self) {
-        *self = Self {
-            expanded: self.expanded,
-            ..Self::default()
-        };
-    }
 }
 
 pub(super) fn content<S: 'static>(
     catalog: &Catalog,
     available: bool,
-    toggle: impl Fn(&mut S) + Clone + 'static,
+    layers: &mut Vec<El>,
+    access: fn(&mut S) -> &mut Catalog,
 ) -> El {
-    let mut body = col().full_width().separate(Space::Sm);
-    if catalog.expanded {
-        if !available {
-            body = body.child(text(t("settings.providers.empty.noInstance")).role("status"));
-        } else {
-            if catalog.flight.is_some() {
-                body = body.child(text(t("settings.providers.loading")).role("status"));
-            } else if catalog.failed {
-                body = body.child(
-                    text(t("settings.providers.errors.loadFailed"))
-                        .wrap()
-                        .role("alert"),
-                );
-            }
-            if let Some(rows) = &catalog.rows {
-                if rows.is_empty() {
-                    body = body.child(
-                        text(t("settings.providers.empty.noConfiguredProviders")).role("status"),
-                    );
-                }
-                for provider in rows {
-                    let mut row = col().full_width().separate(Space::Sm).child(
-                        text(&provider.name)
-                            .full_width()
-                            .wrap_anywhere()
-                            .text_role(TextRole::Title)
-                            .role("heading"),
-                    );
-                    if let Some(active) = &provider.active {
-                        let label = text(&active.label);
-                        row = row.child(chrome::setting_row(
-                            t("settings.accounts.current"),
-                            if active.environment {
-                                label.help(t("settings.providers.source.env"))
-                            } else {
-                                label
-                            },
-                        ));
-                    }
-                    body = body.child(chrome::card(row).key(format!("provider-{}", provider.id)));
-                }
-            }
-        }
-    }
-    chrome::card(chrome::disclosure(
-        t("settings.providers.models.title"),
-        catalog.expanded,
-        body,
-        toggle,
-    ))
+    manager::Manager::view(catalog, available, layers, access)
 }

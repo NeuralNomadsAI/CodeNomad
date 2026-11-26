@@ -151,13 +151,24 @@ impl Panel {
             self.section = Section::General;
             prefs.memory.show(self.shown && paired);
         }
-        self.stats.poll(
+        let stats_changed = self.stats.poll(
             prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
             self.shown && paired && self.section == Section::Stats,
             wake,
             now,
             tx,
-        ) | leave
+        );
+        let providers_changed = if self.shown && paired && self.section == Section::Providers {
+            self.catalog.poll(
+                prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
+                now,
+                Some(wake),
+                tx,
+            )
+        } else {
+            self.catalog.cancel_on_hide()
+        };
+        stats_changed | providers_changed | leave
     }
 
     pub fn shown(&self) -> bool {
@@ -194,12 +205,6 @@ impl Panel {
             | (self.section == Section::Remote
                 && self.local(prefs)
                 && self.remote.poll(prefs, wake))
-            | (self.shown
-                && self.section == Section::Providers
-                && self.catalog.poll(
-                    prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
-                    Some(wake),
-                ))
     }
 
     fn poll_notification_permission(&self) -> bool {
@@ -477,8 +482,8 @@ pub(super) fn view(
         Section::Providers => {
             let available =
                 prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online);
-            providers::content(&panel.catalog, available, |s: &mut State| {
-                s.settings.web.catalog.toggle()
+            providers::content(&panel.catalog, available, &mut layers, |s: &mut State| {
+                &mut s.settings.web.catalog
             })
         }
         Section::Conversation => col()
