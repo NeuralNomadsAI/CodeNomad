@@ -113,6 +113,8 @@ pub fn command(dir: &Path, args: &[&str]) -> Command {
             "-c",
             "commit.gpgSign=false",
             "-c",
+            "log.showSignature=false",
+            "-c",
             "diff.external=",
             "-c",
             "submodule.recurse=false",
@@ -790,6 +792,7 @@ mod tests {
         let clone_dir = dir.join("shared-clone");
         let included = dir.join("conditional.gitconfig");
         let marker = dir.join("filter-executed");
+        let gpg_marker = dir.join("gpg-executed");
         std::fs::create_dir_all(&origin_dir).unwrap();
 
         raw_git(&origin_dir, &["init", "-q"]);
@@ -800,15 +803,48 @@ mod tests {
         raw_git(&origin_dir, &["add", "."]);
         raw_git(&origin_dir, &["commit", "-q", "-m", "initial"]);
 
+        // Create a commit with a synthetic `gpgsig` header so `log.showSignature=true` would invoke `gpg.program`.
+        let tree_oid =
+            String::from_utf8(raw_git(&origin_dir, &["rev-parse", "HEAD^{tree}"])).unwrap().trim().to_owned();
+        let parent_oid = String::from_utf8(raw_git(&origin_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
+        let signed_commit_raw = format!(
+            "tree {tree_oid}\nparent {parent_oid}\nauthor test <test@example.com> 1700000000 +0000\ncommitter test <test@example.com> 1700000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n fake\n -----END PGP SIGNATURE-----\n\nsigned commit\n"
+        );
+        let mut hash_cmd = std::process::Command::new("git");
+        hash_cmd
+            .arg("-C")
+            .arg(&origin_dir)
+            .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = hash_cmd.spawn().unwrap();
+        std::io::Write::write_all(child.stdin.as_mut().unwrap(), signed_commit_raw.as_bytes()).unwrap();
+        let hash_out = child.wait_with_output().unwrap();
+        assert!(hash_out.status.success(), "{}", String::from_utf8_lossy(&hash_out.stderr));
+        let signed_oid = String::from_utf8(hash_out.stdout).unwrap().trim().to_owned();
+        raw_git(&origin_dir, &["reset", "--hard", "-q", &signed_oid]);
+
         // Clone with `--shared` to create `.git/objects/info/alternates`.
         raw_git(&dir, &["clone", "--quiet", "--shared", origin_dir.to_str().unwrap(), clone_dir.to_str().unwrap()]);
         assert!(clone_dir.join(".git/objects/info/alternates").is_file(), "shared clone must create alternates");
 
-        // Configure `includeIf`, `extensions.worktreeConfig`, `config.worktree` filter, and partial clone promisor.
+        // Add an extra commit ONLY in `origin_dir` after cloning: present in alternates, unreachable from `clone_dir`.
+        std::fs::write(origin_dir.join("secret.txt"), "origin-only\n").unwrap();
+        raw_git(&origin_dir, &["add", "secret.txt"]);
+        raw_git(&origin_dir, &["commit", "-q", "-m", "origin-only"]);
+        let origin_only_oid =
+            String::from_utf8(raw_git(&origin_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
+
+        // Configure `includeIf` (with `filter` + `log.showSignature` + `gpg.program`), `extensions.worktreeConfig`,
+        // `config.worktree` filter, and partial clone promisor.
         let marker_posix = marker.to_string_lossy().replace('\\', "/");
+        let gpg_marker_posix = gpg_marker.to_string_lossy().replace('\\', "/");
         std::fs::write(
             &included,
-            format!("[filter \"cond\"]\n\tclean = sh -c 'touch \"{marker_posix}\" && cat'\n\trequired = true\n"),
+            format!(
+                "[filter \"cond\"]\n\tclean = sh -c 'touch \"{marker_posix}\" && cat'\n\trequired = true\n[log]\n\tshowSignature = true\n[gpg]\n\tprogram = sh -c 'touch \"{gpg_marker_posix}\" && exit 1'\n"
+            ),
         )
         .unwrap();
         let clone_posix = clone_dir.to_string_lossy().replace('\\', "/");
@@ -854,14 +890,43 @@ mod tests {
         assert_eq!(diff["after"], "hello updated\n");
         let hist = history::history(
             State(app.clone()),
-            Route((id_str, "root".into())),
+            Route((id_str.clone(), "root".into())),
             axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
         )
         .await
         .unwrap()
         .0;
-        assert_eq!(hist["commits"].as_array().unwrap().len(), 1);
+        assert_eq!(hist["commits"].as_array().unwrap().len(), 2);
+        let details = history::commit_details(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into(), signed_oid.clone())),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(details["id"], signed_oid);
+
+        // Unreachable commit present only in alternate object store must be rejected on both history routes.
+        let alt_hist = history::history(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({"head": origin_only_oid})).unwrap()),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(alt_hist.0, Status::BAD_REQUEST, "unreachable alternate head must be rejected");
+        let alt_details = history::commit_details(
+            State(app.clone()),
+            Route((id_str, "root".into(), origin_only_oid)),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(alt_details.0, Status::BAD_REQUEST, "unreachable alternate commit must be rejected");
+
         assert!(!marker.exists(), "passive Git reads must never execute included or worktree filter drivers");
+        assert!(!gpg_marker.exists(), "passive Git history reads must never invoke gpg.program via log.showSignature");
     }
 
     #[tokio::test]

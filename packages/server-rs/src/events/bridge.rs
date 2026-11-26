@@ -212,14 +212,15 @@ impl Routes {
         guard.0
     }
 
-    fn pulse_routing_resync(app: &App, workspace_id: Uuid) {
-        let (connected, generation) = {
-            let store = app.inner.lock().unwrap();
-            (store.status == "connected" && store.workspaces.iter().any(|w| w.id == workspace_id), store.generation)
-        };
-        if !connected {
+    fn pulse_routing_resync(app: &App, workspace_id: Uuid, expected_generation: Option<u64>) {
+        let store = app.inner.lock().unwrap();
+        if store.status != "connected"
+            || expected_generation.is_some_and(|g| store.generation != g)
+            || !store.workspaces.iter().any(|w| w.id == workspace_id)
+        {
             return;
         }
+        let generation = store.generation;
         app.emit_status(workspace_id, "error", generation, Some("event routing failed"));
         app.emit_status(workspace_id, "connected", generation, None);
     }
@@ -227,6 +228,7 @@ impl Routes {
     /// Pulses one workspace's status (`error`, then `connected`) so its clients run reconnect
     /// reconciliation for an event that could not be routed (TS `instance-events.ts:448-468`).
     fn request_routing_resync(self: &Arc<Self>, app: &Shared, workspace_id: Uuid) {
+        let app_gen = app.inner.lock().unwrap().generation;
         let now = Instant::now();
         let immediate = {
             let mut resyncs = self.resyncs.lock().unwrap();
@@ -254,7 +256,7 @@ impl Routes {
                                 },
                             );
                         }
-                        Self::pulse_routing_resync(&app, workspace_id);
+                        Self::pulse_routing_resync(&app, workspace_id, Some(app_gen));
                     }));
                     false
                 }
@@ -268,7 +270,7 @@ impl Routes {
             }
         };
         if immediate {
-            Self::pulse_routing_resync(app, workspace_id);
+            Self::pulse_routing_resync(app, workspace_id, Some(app_gen));
         }
     }
 
@@ -279,6 +281,20 @@ impl Routes {
         let open: Vec<Uuid> = app.inner.lock().unwrap().workspaces.iter().map(|w| w.id).collect();
         for id in open {
             if known.as_ref().is_none_or(|set| set.contains(&id)) {
+                self.request_routing_resync(app, id);
+            }
+        }
+    }
+
+    /// Pulses only workspaces that previously held `session_id` (matching TS `instance-events.ts:336`
+    /// when a previously-held session is later observed at a foreign or non-owned location).
+    fn request_held_session_resync(self: &Arc<Self>, app: &Shared, session_id: &str) {
+        let Some(known) = self.held.lock().unwrap().sessions.get(session_id).cloned() else {
+            return;
+        };
+        let open: Vec<Uuid> = app.inner.lock().unwrap().workspaces.iter().map(|w| w.id).collect();
+        for id in open {
+            if known.contains(&id) {
                 self.request_routing_resync(app, id);
             }
         }
@@ -753,8 +769,8 @@ async fn route(
     let kind = event["type"].as_str().unwrap_or_default();
     let session = event["data"]["sessionID"]
         .as_str()
-        .or_else(|| event["data"]["form"]["sessionID"].as_str())
-        .filter(|s| crate::opencode::valid_id(s));
+        .or_else(|| (kind == "form.created").then(|| event["data"]["form"]["sessionID"].as_str()).flatten())
+        .filter(|s| *s != "global" && crate::opencode::valid_id(s));
     let mut resolved = routes.location(generation, kind, session, &event);
     let mut unresolved_session = false;
     if resolved.is_none()
@@ -778,9 +794,7 @@ async fn route(
         Some(CachedLocation::Directory(dir)) => Some(Arc::from(dir)),
         _ => None,
     };
-    let session_id = event["data"]["sessionID"].as_str();
-    let session_id: Option<Arc<str>> =
-        session_id.filter(|s| *s != "global" && crate::opencode::valid_id(s)).map(Arc::from);
+    let session_id: Option<Arc<str>> = session.map(Arc::from);
     crate::sessions::favorites::deleted(app, &event);
     let is_moved = kind == "session.moved"
         && session_id.is_some()
@@ -793,11 +807,14 @@ async fn route(
             && event["location"].get("workspaceID").is_none()
             && (directory.is_some() || GLOBAL.split(' ').any(|g| g == kind) || kind == "session.deleted"));
     if !eligible {
-        if unresolved_session
-            && let Some(sid) = session
+        if let Some(sid) = session_id.as_deref()
             && app.native.current(&endpoint)
         {
-            routes.request_session_resync(app, sid);
+            if unresolved_session {
+                routes.request_session_resync(app, sid);
+            } else if foreign_workspace || event["location"].get("workspaceID").is_some() {
+                routes.request_held_session_resync(app, sid);
+            }
         }
         return;
     }
@@ -1527,28 +1544,109 @@ mod tests {
         assert_eq!(held_resync[0]["status"], "error");
         assert_eq!(held_resync[1]["status"], "connected");
 
-        // 4. Persistent inventory failure (after invalidating cache & clearing resync backoff) -> retries & pulses resync.
-        let _ = routes.reset_locations();
-        crate::worktrees::linked::invalidate_blocking(&app);
-        mode.store(1, Relaxed);
-        loc_calls.store(0, Relaxed);
+        // 4. Persistent inventory failure on a fresh workspace/endpoint -> retries once & pulses resync.
+        let unavail_calls = Arc::new(AtomicUsize::new(0));
+        let unavail_stub = Stub {
+            root: root_dir.to_string_lossy().into_owned(),
+            linked: linked_dir.to_string_lossy().into_owned(),
+            mode: Arc::new(AtomicUsize::new(1)),
+            loc_calls: Arc::clone(&unavail_calls),
+        };
+        let unavail_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let unavail_addr = unavail_listener.local_addr().unwrap();
+        let unavail_http = tokio::spawn(async move {
+            axum::serve(unavail_listener, Router::new().fallback(any(fake_native)).with_state(unavail_stub))
+                .await
+                .unwrap()
+        });
+        let (unavail_app, unavail_ws) = build_bridge_test_app(&dir, &root_dir, unavail_addr);
+        let unavail_endpoint = unavail_app.native.endpoint().unwrap();
+        let unavail_routes = Arc::new(Routes::default());
+        let unavail_sub = unavail_app.events.subscribe();
         deliver(
-            &app,
-            &routes,
-            ws.clone(),
+            &unavail_app,
+            &unavail_routes,
+            unavail_ws.clone(),
             Arc::new(json!({"type": "session.text.delta", "data": {"sessionID": "ses_unavail", "delta": "x"}})),
-            Arc::clone(&endpoint),
+            Arc::clone(&unavail_endpoint),
             (Instant::now(), 4),
             Some(Arc::from(linked_dir.to_string_lossy().into_owned())),
             false,
             Some(Arc::from("ses_unavail")),
         )
         .await;
-        assert_eq!(loc_calls.load(Relaxed), 2, "persistent unavailable inventory must retry once");
-        let unavail_resync = drain_hub(&app, &sub);
+        assert_eq!(unavail_calls.load(Relaxed), 2, "persistent unavailable inventory must retry once");
+        let unavail_resync = drain_hub(&unavail_app, &unavail_sub);
         assert_eq!(unavail_resync.len(), 2, "unavailable inventory must pulse resync: {unavail_resync:?}");
         assert_eq!(unavail_resync[0]["status"], "error");
         assert_eq!(unavail_resync[1]["status"], "connected");
+        let _ = unavail_routes.reset_locations();
+        unavail_http.abort();
+
+        // 5. `form.created` with `data.form.sessionID` tracks held recipient and pulses resync on foreign workspaceID.
+        let _ = routes.reset_locations();
+        let generation = routes.reset_locations();
+        let lanes = Arc::new(Lanes::default());
+        let lease = Arc::new(BytesLease { lanes: Arc::downgrade(&lanes), bytes: 0 });
+        route(
+            &app,
+            &routes,
+            &lanes,
+            "session:ses_form".into(),
+            Arc::new(json!({
+                "type": "form.created",
+                "location": {"directory": root_dir.to_string_lossy()},
+                "data": {"form": {"id": "frm_1", "sessionID": "ses_form"}}
+            })),
+            Arc::clone(&endpoint),
+            (Instant::now(), 5),
+            generation,
+            lease,
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let form_frames = drain_hub(&app, &sub);
+        assert!(
+            form_frames.iter().any(|f| f["type"] == "instance.event" && f["event"]["type"] == "form.created"),
+            "form.created must deliver to owning workspace: {form_frames:?}"
+        );
+        let lease = Arc::new(BytesLease { lanes: Arc::downgrade(&lanes), bytes: 0 });
+        route(
+            &app,
+            &routes,
+            &lanes,
+            "session:ses_form".into(),
+            Arc::new(json!({
+                "type": "session.text.delta",
+                "location": {"directory": root_dir.to_string_lossy(), "workspaceID": "ws_remote"},
+                "data": {"sessionID": "ses_form", "delta": "moved"}
+            })),
+            Arc::clone(&endpoint),
+            (Instant::now(), 6),
+            generation,
+            lease,
+        )
+        .await;
+        let foreign_ws_resync = drain_hub(&app, &sub);
+        assert_eq!(
+            foreign_ws_resync.len(),
+            2,
+            "previously held form session on foreign workspaceID must resync: {foreign_ws_resync:?}"
+        );
+        assert_eq!(foreign_ws_resync[0]["status"], "error");
+        assert_eq!(foreign_ws_resync[1]["status"], "connected");
+
+        // 6. A pending trailing resync timer must NEVER publish `connected` after workspace stop.
+        routes.request_routing_resync(&app, ws.id); // arms trailing timer (within ROUTING_RESYNC_MIN)
+        {
+            let mut store = app.inner.lock().unwrap();
+            let idx = store.workspaces.iter().position(|w| w.id == ws.id).unwrap();
+            app.remove(&mut store, idx, false);
+        }
+        let _ = drain_hub(&app, &sub);
+        // Simulate late timer firing directly against the removed workspace.
+        Routes::pulse_routing_resync(&app, ws.id, None);
+        assert!(drain_hub(&app, &sub).is_empty(), "removed workspace must never receive late resync pulse");
 
         let _ = routes.reset_locations();
         http.abort();

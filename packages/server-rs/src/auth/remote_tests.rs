@@ -109,7 +109,15 @@ async fn fake_native(State(state): State<Arc<NativeState>>, req: Request) -> Res
         (Method::GET, "/api/session/ses_owned/inbox") => {
             Json(json!([{"id": "inb_1", "delivery": "queue"}])).into_response()
         }
-        (Method::PATCH, "/api/session/ses_owned/inbox/inb_1") => Status::NO_CONTENT.into_response(),
+        (Method::PATCH, "/api/session/ses_owned/inbox/inb_1") => {
+            let body = axum::body::to_bytes(req.into_body(), 4096).await.ok();
+            let parsed: Option<Value> = body.and_then(|b| serde_json::from_slice(&b).ok());
+            if parsed == Some(json!({"delivery": "steer"})) {
+                Status::NO_CONTENT.into_response()
+            } else {
+                Status::BAD_REQUEST.into_response()
+            }
+        }
         (Method::DELETE, "/api/session/ses_owned/inbox/inb_1") => Status::NO_CONTENT.into_response(),
         (Method::POST, "/api/session/ses_owned/fork") => Json(json!({
             "data": {
@@ -445,6 +453,8 @@ async fn paired_browser_and_server_device_admit_session_controls_and_reject_out_
         assert_eq!(foreign_perm.status(), Status::FORBIDDEN, "{label} foreign permission reply");
         let foreign_redo = send(Method::DELETE, format!("{foreign_prefix}/revert"), None).await.unwrap();
         assert_eq!(foreign_redo.status(), Status::FORBIDDEN, "{label} foreign delete revert");
+        let foreign_inbox_list = send(Method::GET, format!("{foreign_prefix}/inbox"), None).await.unwrap();
+        assert_eq!(foreign_inbox_list.status(), Status::FORBIDDEN, "{label} foreign inbox list");
         let foreign_inbox_patch =
             send(Method::PATCH, format!("{foreign_prefix}/inbox/inb_1"), Some(json!({"delivery": "steer"})))
                 .await

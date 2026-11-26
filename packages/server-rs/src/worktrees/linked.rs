@@ -101,18 +101,39 @@ async fn native_at(
     body: Option<Value>,
     max: usize,
 ) -> Result<Value, Error> {
+    native_at_deadline(
+        app,
+        endpoint,
+        method,
+        path,
+        query,
+        body,
+        max,
+        tokio::time::Instant::now() + Duration::from_secs(60),
+    )
+    .await
+}
+
+async fn native_at_deadline(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    method: Method,
+    path: &str,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+    deadline: tokio::time::Instant,
+) -> Result<Value, Error> {
     if !app.native.current(endpoint) {
+        return Err(native_error());
+    }
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
         return Err(native_error());
     }
     let url = endpoint.url.join(path).map_err(|_| native_error())?;
     let request = app.native.client.request(method, url).basic_auth("opencode", Some(&endpoint.password));
-    send(request, query, body, max).await
-}
-
-/// `DELETE /api/worktree` without force.
-async fn delete_worktree(app: &App, project: &str, directory: &str) -> Result<(), Error> {
-    let body = json!({"projectID": project, "directory": directory, "force": false});
-    native(app, Method::DELETE, "/api/worktree", &[], Some(body), 16384).await.map(drop)
+    send_with_timeout(request, query, body, max, remaining).await
 }
 fn row_id(row: &Value) -> Result<&str, Error> {
     row["id"].as_str().ok_or_else(native_error)
@@ -443,6 +464,16 @@ pub async fn create(
 }
 
 pub async fn sessions(app: &App, project: &str) -> Result<Vec<Value>, Error> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let endpoint = app.native.acquire(deadline).await.map_err(|_| native_error())?;
+    sessions_at(app, &endpoint, project, deadline).await
+}
+async fn sessions_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    project: &str,
+    deadline: tokio::time::Instant,
+) -> Result<Vec<Value>, Error> {
     let mut result = Vec::new();
     let mut cursor = None::<String>;
     let mut seen = HashSet::new();
@@ -452,7 +483,9 @@ pub async fn sessions(app: &App, project: &str) -> Result<Vec<Value>, Error> {
         let first = [("project", project), ("limit", "100"), ("order", "asc")];
         let next = [("cursor", cursor.as_deref().unwrap_or_default())];
         let query = if cursor.is_some() { &next[..] } else { &first[..] };
-        let page = native(app, Method::GET, "/api/session", query, None, 2 * 1024 * 1024).await?;
+        let page =
+            native_at_deadline(app, endpoint, Method::GET, "/api/session", query, None, 2 * 1024 * 1024, deadline)
+                .await?;
         let rows = page["data"].as_array().filter(|r| r.len() <= 100).ok_or_else(native_error)?;
         for row in rows {
             let id = row["id"].as_str().filter(|s| crate::opencode::valid_id(s)).ok_or_else(native_error)?;
@@ -639,42 +672,61 @@ async fn place_owned(
 }
 
 async fn no_blockers(app: &App, target: &Tree, catalogue: &Catalogue, allow_owned: bool) -> Result<(), Error> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let endpoint = app.native.acquire(deadline).await.map_err(|_| native_error())?;
+    no_blockers_at(app, &endpoint, target, catalogue, allow_owned, deadline).await
+}
+
+async fn no_blockers_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    target: &Tree,
+    catalogue: &Catalogue,
+    allow_owned: bool,
+    deadline: tokio::time::Instant,
+) -> Result<(), Error> {
     // Check every native location and project without artificial daemon-wide count caps,
-    // matching TS `routes/worktrees.ts:309-354`.
-    let locations = native_get(app, "/api/debug/location", 4 * 1024 * 1024).await?;
+    // matching TS `routes/worktrees.ts:309-354`, pinned to one daemon endpoint and one overall deadline.
+    let locations =
+        native_at_deadline(app, endpoint, Method::GET, "/api/debug/location", &[], None, 4 * 1024 * 1024, deadline)
+            .await?;
     let rows = locations.as_array().ok_or_else(native_error)?;
-    let mut seen_locations = HashSet::new();
-    let mut candidates: Vec<(String, Option<String>)> = Vec::with_capacity(rows.len() + 1);
-    if seen_locations.insert((target.service.clone(), None)) {
-        candidates.push((target.service.clone(), None));
+    let mut seen_directories = HashSet::new();
+    let mut directories: Vec<String> = Vec::with_capacity(rows.len() + 1);
+    if seen_directories.insert(target.service.clone()) {
+        directories.push(target.service.clone());
     }
     for row in rows {
+        // Match TS `location.ts:25` (`Unsupported workspace selector`): refuse deletion when
+        // a remote workspace selector is present rather than sending an unqualified query.
+        if matches!(row.get("workspaceID"), Some(v) if !v.is_null()) {
+            return Err(conflict("Unsupported native location"));
+        }
         let dir = row["directory"].as_str().ok_or_else(native_error)?.to_owned();
-        let workspace_id = match row.get("workspaceID") {
-            None | Some(Value::Null) => None,
-            Some(Value::String(id)) if !id.is_empty() => Some(id.clone()),
-            _ => return Err(native_error()),
-        };
-        if seen_locations.insert((dir.clone(), workspace_id.clone())) {
-            candidates.push((dir, workspace_id));
+        if seen_directories.insert(dir.clone()) {
+            directories.push(dir);
         }
     }
-    for (directory, workspace_id) in &candidates {
-        let mut query = vec![("location[directory]", directory.as_str())];
-        if let Some(ws_id) = workspace_id.as_deref() {
-            query.push(("location[workspaceID]", ws_id));
-        }
-        for resource in ["/api/shell", "/api/pty"] {
-            let list = native(app, Method::GET, resource, &query, None, 1024 * 1024).await?;
-            let list = list["data"].as_array().ok_or_else(native_error)?;
-            for row in list {
-                if row["status"] == "running" && within(target, row["cwd"].as_str().ok_or_else(native_error)?) {
-                    return Err(conflict("A running terminal blocks deletion"));
+    for chunk in directories.chunks(16) {
+        let checks = chunk.iter().map(|directory| async move {
+            let query = [("location[directory]", directory.as_str())];
+            for resource in ["/api/shell", "/api/pty"] {
+                let list =
+                    native_at_deadline(app, endpoint, Method::GET, resource, &query, None, 1024 * 1024, deadline)
+                        .await?;
+                let list = list["data"].as_array().ok_or_else(native_error)?;
+                for row in list {
+                    if row["status"] == "running" && within(target, row["cwd"].as_str().ok_or_else(native_error)?) {
+                        return Err(conflict("A running terminal blocks deletion"));
+                    }
                 }
             }
-        }
+            Ok::<(), Error>(())
+        });
+        futures_util::future::try_join_all(checks).await?;
     }
-    let projects = native_get(app, "/api/project", 4 * 1024 * 1024).await?;
+    let projects =
+        native_at_deadline(app, endpoint, Method::GET, "/api/project", &[], None, 4 * 1024 * 1024, deadline).await?;
     let projects = projects.as_array().ok_or_else(native_error)?;
     let mut project_ids = HashSet::from([catalogue.project.as_str()]);
     for row in projects {
@@ -682,12 +734,9 @@ async fn no_blockers(app: &App, target: &Tree, catalogue: &Catalogue, allow_owne
     }
     let mut session_ids = Vec::new();
     for project in project_ids {
-        for row in sessions(app, project).await? {
-            if let Some(dir) =
-                row["location"]["directory"].as_str().filter(|_| row["location"].get("workspaceID").is_none())
-                && within(target, dir)
-                && !(allow_owned && project == catalogue.project)
-            {
+        for row in sessions_at(app, endpoint, project, deadline).await? {
+            let dir = row["location"]["directory"].as_str().ok_or_else(native_error)?;
+            if within(target, dir) && !(allow_owned && project == catalogue.project) {
                 return Err(conflict("A session still owns the checkout"));
             }
             session_ids.push(row_id(&row)?.to_owned());
@@ -695,7 +744,8 @@ async fn no_blockers(app: &App, target: &Tree, catalogue: &Catalogue, allow_owne
     }
     for chunk in session_ids.chunks(16) {
         let checks = chunk.iter().map(|id| async move {
-            let ptys = native_get(app, &format!("/api/experimental/session/{id}/terminal"), 1024 * 1024).await?;
+            let path = format!("/api/experimental/session/{id}/terminal");
+            let ptys = native_at_deadline(app, endpoint, Method::GET, &path, &[], None, 1024 * 1024, deadline).await?;
             for pty in ptys["data"].as_array().ok_or_else(native_error)? {
                 if pty["status"] == "running" && within(target, pty["cwd"].as_str().ok_or_else(native_error)?) {
                     return Err(conflict("A running persistent terminal blocks deletion"));
@@ -866,15 +916,19 @@ async fn remove_owned(
             move_members(&app, &w, &cat, Some(target), members, root, &principal).await?;
             moved.extend(members.iter());
         }
-        no_blockers(&app, target, &cat, false).await?;
-        let now = catalogue(&app, &w, false).await?;
+        let final_deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        let final_endpoint = app.native.acquire(final_deadline).await.map_err(|_| native_error())?;
+        no_blockers_at(&app, &final_endpoint, target, &cat, false, final_deadline).await?;
+        let now_timeout =
+            final_deadline.saturating_duration_since(tokio::time::Instant::now()).max(Duration::from_secs(1));
+        let now = super::inventory::catalogue_at(&app, &w, false, Some(&final_endpoint), now_timeout).await?;
         if now.get(&slug).ok() != Some(target) {
             return Err(conflict("Worktree changed before deletion"));
         }
         clean(target).await?;
         principal.live()?;
         trace("issue native deletion");
-        delete_worktree(&app, &cat.project, &target.service_root).await
+        delete_worktree_at(&app, &final_endpoint, &cat.project, &target.service_root).await
     }
     .await;
     if let Err(err) = removal {
@@ -957,7 +1011,7 @@ fn evacuation_paths(cat: &Catalogue, target: &Tree, families: &[Vec<Value>]) -> 
 async fn clean(target: &Tree) -> Result<(), Error> {
     let filter_flags = crate::git::filter_disables(target.registered()).await?;
     let mut args: Vec<&str> = filter_flags.iter().map(String::as_str).collect();
-    args.extend(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+    args.extend(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=dirty"]);
     let status = git(target.registered(), &args).await?;
     if status.is_empty() { Ok(()) } else { Err(conflict("Worktree has uncommitted changes")) }
 }
@@ -999,9 +1053,10 @@ mod tests {
             let path = req.uri().path();
             match path {
                 "/api/debug/location" => {
+                    let mode = st.mode.load(Ordering::Relaxed);
                     let rows: Vec<Value> = (0..110)
                         .map(|i| {
-                            if i == 109 {
+                            if mode == 4 && i == 109 {
                                 json!({"directory": format!("/remote/loc-{i}"), "workspaceID": "ws_remote"})
                             } else {
                                 json!({"directory": format!("/other/loc-{i}")})
@@ -1027,15 +1082,20 @@ mod tests {
                     let data: Vec<Value> = (0..14)
                         .map(|j| {
                             let sid = format!("ses_{idx:02}_{j:02}");
-                            let dir = if mode == 1 && idx == 39 && j == 13 {
+                            let dir = if matches!(mode, 1 | 3) && idx == 39 && j == 13 {
                                 st.target_dir.clone()
                             } else {
                                 format!("/other/prj-{idx}")
                             };
+                            let location = if mode == 3 && idx == 39 && j == 13 {
+                                json!({"directory": dir, "workspaceID": "ws_remote"})
+                            } else {
+                                json!({"directory": dir})
+                            };
                             json!({
                                 "id": sid,
                                 "projectID": project,
-                                "location": {"directory": dir}
+                                "location": location
                             })
                         })
                         .collect();
@@ -1118,7 +1178,63 @@ mod tests {
         let err = no_blockers(&app, &target, &cat, false).await.unwrap_err();
         assert_eq!(err.0, Status::CONFLICT);
 
+        // 4. Session #560 in project #39 carries workspaceID AND directory in target -> still 409 Conflict
+        mode.store(3, Ordering::Relaxed);
+        let err = no_blockers(&app, &target, &cat, false).await.unwrap_err();
+        assert_eq!(err.0, Status::CONFLICT);
+
+        // 5. Remote location with workspaceID in /api/debug/location -> fails closed (409 Conflict)
+        mode.store(4, Ordering::Relaxed);
+        let err = no_blockers(&app, &target, &cat, false).await.unwrap_err();
+        assert_eq!(err.0, Status::CONFLICT);
+
         http.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn clean_never_runs_submodule_filter_driver() {
+        let _serial = crate::git::test_git_serial().await;
+        let dir = crate::shared::test_dir("linked-m4-submodule-clean");
+        let sub_origin = dir.join("sub-origin");
+        let parent = dir.join("parent");
+        let marker = dir.join("submodule-filter-ran");
+        std::fs::create_dir_all(&sub_origin).unwrap();
+        std::fs::create_dir_all(&parent).unwrap();
+
+        let run_git = |cwd: &Path, args: &[&str]| {
+            let out = std::process::Command::new("git").arg("-C").arg(cwd).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+
+        run_git(&sub_origin, &["init", "-q"]);
+        run_git(&sub_origin, &["config", "user.name", "test"]);
+        run_git(&sub_origin, &["config", "user.email", "test@example.com"]);
+        std::fs::write(sub_origin.join("data.txt"), "v1\n").unwrap();
+        std::fs::write(sub_origin.join(".gitattributes"), "*.txt filter=subf -text\n").unwrap();
+        run_git(&sub_origin, &["add", "."]);
+        run_git(&sub_origin, &["commit", "-q", "-m", "sub init"]);
+
+        run_git(&parent, &["init", "-q"]);
+        run_git(&parent, &["config", "user.name", "test"]);
+        run_git(&parent, &["config", "user.email", "test@example.com"]);
+        run_git(
+            &parent,
+            &["-c", "protocol.file.allow=always", "submodule", "add", "-q", sub_origin.to_str().unwrap(), "sub"],
+        );
+        run_git(&parent, &["commit", "-q", "-m", "add submodule"]);
+
+        // Configure filter ONLY inside the submodule and modify its tracked file.
+        let sub_dir = parent.join("sub");
+        let marker_posix = marker.to_string_lossy().replace('\\', "/");
+        run_git(&sub_dir, &["config", "filter.subf.clean", &format!("sh -c 'touch \"{marker_posix}\" && cat'")]);
+        std::fs::write(sub_dir.join("data.txt"), "v2\n").unwrap();
+
+        let parent_canon = dunce::canonicalize(&parent).unwrap();
+        let target = Tree::test_stub(parent_canon.clone(), parent_canon.join(".git"), "root", Some("main"));
+        clean(&target).await.unwrap();
+        assert!(!marker.exists(), "clean() must never execute a submodule-local filter driver");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

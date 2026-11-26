@@ -15,6 +15,27 @@ use std::path::Path;
 async fn git(dir: &Path, args: &[&str]) -> Result<String, Error> {
     Ok(run(dir, args, TWO_MIB).await?.ok()?.text())
 }
+async fn ensure_commit_reachable(dir: &Path, commit: &str, err_msg: &str) -> Result<String, Error> {
+    let verify = run(dir, &["rev-parse", "--verify", "--quiet", &format!("{commit}^{{commit}}")], 1024).await?;
+    if verify.code != 0 {
+        return Err(bad(err_msg));
+    }
+    let resolved = verify.text().trim().to_owned();
+    if !sha(&resolved) {
+        return Err(bad(err_msg));
+    }
+    let on_head = run(dir, &["merge-base", "--is-ancestor", &resolved, "HEAD"], 1024).await?;
+    if on_head.code == 0 {
+        return Ok(resolved);
+    }
+    let on_ref =
+        run(dir, &["for-each-ref", &format!("--contains={resolved}"), "--count=1", "--format=%(refname)"], 4096)
+            .await?;
+    if on_ref.code == 0 && !on_ref.bytes.is_empty() {
+        return Ok(resolved);
+    }
+    Err(bad(err_msg))
+}
 #[derive(Deserialize)]
 pub struct Page {
     #[serde(default)]
@@ -34,7 +55,7 @@ pub async fn history(
         if !sha(&h) {
             return Err(bad("Invalid commit ID"));
         }
-        Some(h)
+        Some(ensure_commit_reachable(&w.path, &h, "Invalid commit ID").await?)
     } else {
         let h = run(&w.path, &["rev-parse", "--verify", "--quiet", "HEAD"], 1024).await?;
         if h.code == 1 { None } else { Some(h.ok()?.text().trim().to_owned()) }
@@ -48,6 +69,7 @@ pub async fn history(
             &w.path,
             &[
                 "log",
+                "--no-show-signature",
                 "-z",
                 "--format=%H%x00%P%x00%an%x00%aI%x00%s%x00%D",
                 "--max-count=51",
@@ -100,9 +122,13 @@ pub async fn commit_details(
     }
     let w = repo(&app, &id, &slug).await?;
     let _slot = app.file_reader.acquire().await.unwrap();
-    let text = git(&w.path, &["show", "-s", "--format=%P%x00%B", &format!("{commit}^{{commit}}"), "--"])
-        .await
-        .map_err(|_| bad("Object is not a commit"))?;
+    let commit = ensure_commit_reachable(&w.path, &commit, "Object is not a commit").await?;
+    let text = git(
+        &w.path,
+        &["show", "--no-show-signature", "-s", "--format=%P%x00%B", &format!("{commit}^{{commit}}"), "--"],
+    )
+    .await
+    .map_err(|_| bad("Object is not a commit"))?;
     let (parents, message) = text.split_once('\0').ok_or_else(|| bad("Object is not a commit"))?;
     let parent = parents.split_whitespace().next().filter(|p| sha(p));
     let mut args = vec![

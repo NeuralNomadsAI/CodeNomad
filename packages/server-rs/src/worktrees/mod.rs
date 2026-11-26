@@ -224,10 +224,10 @@ pub async fn event_ownership(
 ) -> EventOwnership {
     let scope = app.scope.clone();
     let dir = directory.to_owned();
-    let Some((path, _anchor)) =
-        tokio::task::spawn_blocking(move || ownership::resolve_media_path(&scope, &dir)).await.ok().flatten()
-    else {
-        return EventOwnership::NotOwned;
+    let path = match tokio::task::spawn_blocking(move || ownership::resolve_media_path_checked(&scope, &dir)).await {
+        Ok(Ok(Some((path, _anchor)))) => path,
+        Ok(Ok(None)) => return EventOwnership::NotOwned,
+        Ok(Err(())) | Err(_) => return EventOwnership::Unavailable,
     };
     if path == w.path {
         return EventOwnership::Owned;
