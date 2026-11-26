@@ -178,6 +178,7 @@ try {
   const launchedAt = (await row()).runCount
   const later = await until("a later run", row, info => info.runCount >= launchedAt + 1, 45_000)
   assert.notEqual(later.lastOutcome, "failed", later.lastOutput)
+  assert.deepEqual(JSON.parse(later.state.last), { waiting: first.id }, "the Automation's state tells what the calendar last did")
   assert.deepEqual((await missions(daemon)).map(mission => [mission.id, mission.status]), [[first.id, "active"]], "a run launches nothing while the previous Mission is active")
   console.log("PASS 3 (later runs wait for the active Mission)")
 

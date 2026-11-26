@@ -13,8 +13,8 @@ import type { MissionPanelMap } from "./mission-panel-map"
 /** A Mission calendar is an OpenCode Automation whose program is this one call: its
  * `args` are the Mission to launch, and the tool does everything else. */
 export const MISSION_CALENDAR_TOOL = Object.freeze({ namespace: "codenomad", name: "mission_calendar_run", permission: "codenomad_mission_calendar_run" })
-// OpenCode accepts only nothing or a CodeResult: without `return null` the tool's output would be the result.
-export const MISSION_CALENDAR_CODE = `await tools.${MISSION_CALENDAR_TOOL.namespace}.${MISSION_CALENDAR_TOOL.name}(args); return null`
+// The run's answer becomes the Automation's state, where any client reads what the calendar last did.
+export const MISSION_CALENDAR_CODE = `return { state: { last: await tools.${MISSION_CALENDAR_TOOL.namespace}.${MISSION_CALENDAR_TOOL.name}(args) } }`
 /** Rules of the conversation that carries calendars, so OpenCode runs the program unattended. */
 export const MISSION_CALENDAR_PERMISSIONS = Object.freeze([
   Object.freeze({ action: "execute", resource: "*", effect: "allow" as const }),
