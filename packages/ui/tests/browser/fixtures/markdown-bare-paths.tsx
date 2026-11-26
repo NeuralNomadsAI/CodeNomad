@@ -32,9 +32,11 @@ serverApi.listWorkspaceFiles = (async (_id: string, relativePath = ".", director
   if (holdListing && !released) await new Promise<void>(resolve => { pendingReleases.push(resolve) })
   if (relativePath === "src") return entries([["app.ts", "file"], ["a\tpp.ts", "file"], ["inner", "directory"],
     ...(includeGone ? ([["gone.ts", "file"]] as Array<[string, string]>) : [])])
-  if (relativePath === "docs") return entries([["算法工作台MVP-design.md", "file"], ["issue", "file"]])
+  if (relativePath === "docs") return entries([["算法工作台MVP-design.md", "file"], ["issue", "file"], ["算.md", "file"]])
   if (relativePath === "前端-v2") return entries([["run-测试", "file"]])
-  if (relativePath === ".") return entries([["README.md", "file"], ["src", "directory"], ["docs", "directory"]])
+  if (relativePath === "脚本") return entries([["启动", "file"]])
+  if (relativePath === "项目/v2") return entries([["启动", "file"]])
+  if (relativePath === ".") return entries([["README.md", "file"], ["src", "directory"], ["docs", "directory"], ["设计.md", "file"]])
   if (relativePath === "and") throw new Error("no such directory")
   return []
 }) as typeof serverApi.listWorkspaceFiles
@@ -57,6 +59,14 @@ const initialText = [
   "`前端-v2/run-测试` 存在；`docs/issue#42.md` 與 `docs/%E7%AE%97.md` 保持純文字。",
   "`src/app.ts!` `src/app.ts?` `src/a\tpp.ts` <code>run <em>src/app.ts</em> now</code>",
   "```\nsrc/app.ts\n```",
+  "规格写入 docs/算法工作台MVP-design.md，待确认两项。",
+  "根目录的 设计.md 也是；对比 src/app.ts和README.md 的差异。",
+  "看看README.md.吧。",
+  "跑 脚本/启动 前先读。",
+  "放进 项目/v2/启动 里。",
+  "File:/fixture-root/README.md 也行。",
+  "散文裡的 URL https://example.com/资料README.md 也不連到同名檔案。",
+  "編碼路徑 docs/%E7%AE%97.md 保持純文字。",
 ].join("\n\n")
 
 let renderCount = 0
