@@ -181,21 +181,21 @@ test('assertExactInjectedMultiset rejects stray, duplicate, or misrouted injecte
   assert.throws(() => assertExactInjectedMultiset([
     ...exactFrames,
     {...exactFrames[0], assistantMessageID: ['sse-live-1']},
-  ], 'sse-1', expected), /assistantMessageID must be a string/)
+  ], 'sse-1', expected), {message: "Injected SSE frame assistantMessageID must be a string\n\n'object' !== 'string'\n"})
   assert.throws(() => assertExactInjectedMultiset([
     {...exactFrames[0], assistantMessageID: ['sse-live-1']},
     exactFrames[1],
-  ], 'sse-1', expected), /assistantMessageID must be a string/)
+  ], 'sse-1', expected), {message: "Injected SSE frame assistantMessageID must be a string\n\n'object' !== 'string'\n"})
   assert.throws(() => assertExactInjectedMultiset([
     {...exactFrames[0], instanceId: ['ws-1']},
     exactFrames[1],
-  ], 'sse-1', expected), /instanceId must be a string/)
+  ], 'sse-1', expected), {message: "Injected SSE frame instanceId must be a string\n\n'object' !== 'string'\n"})
   assert.throws(() => assertExactInjectedMultiset([
     {...exactFrames[0], sessionID: ['ses_tab_1']},
     exactFrames[1],
-  ], 'sse-1', expected), /sessionID must be a string/)
+  ], 'sse-1', expected), {message: "Injected SSE frame sessionID must be a string\n\n'object' !== 'string'\n"})
   assert.throws(() => assertExactInjectedMultiset([
     {...exactFrames[0], delta: ['Tab 1']},
     exactFrames[1],
-  ], 'sse-1', expected), /delta must be a string/)
+  ], 'sse-1', expected), {message: "Injected SSE frame delta must be a string\n\n'object' !== 'string'\n"})
 })

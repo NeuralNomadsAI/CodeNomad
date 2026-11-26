@@ -43,7 +43,6 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   await mkdir(workerProfile,{recursive:true})
   const workerEnv={...process.env,CODENOMAD_LAUNCHER_WORKER_PROFILE:workerProfile}
   const graceMs=webAndroid?150000:25000
-  const workerStartedBy=new Date()
   const spawnPosixBridge=()=>{
     const guardsUrl=new URL('../../../scripts/native-fixture-guards.mjs',import.meta.url).href
     const bridgeCode=`
@@ -76,6 +75,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
           }
         })()
       }
+      process.on('SIGTERM',()=>stop('shutdown:SIGTERM\\n'))
       process.stdin.resume()
       process.stdin.on('data',chunk=>{
         const text=String(chunk)
@@ -91,8 +91,8 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
         try{exit=await Promise.race([closed,new Promise(r=>{timer=setTimeout(()=>r(null),500)})])}
         finally{clearTimeout(timer)}
       }
-      if(!exit||stopError||exit.error||exit.code===86)process.exit(exit?.code===86?86:1)
-      process.exit(exit.code??(exit.signal==='SIGINT'?130:exit.signal==='SIGTERM'?143:1))
+      if(!exit||stopError||exit.error||exit.code===86||exit.signal)process.exit(86)
+      process.exit(exit.code??1)
     `
     return spawn(process.execPath,['--input-type=module','-e',bridgeCode],{
       cwd:root,
@@ -115,14 +115,29 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
     worker.once('error',error=>resolve({code:1,signal:null,error}))
   })
   const outerGraceMs=process.platform==='win32'?graceMs:graceMs+15000
-  let stopping,stopError,outerSignal,stopSettled
+  let stopping,stopError,outerSignal,stopSettled,unconfirmedStop=false
   const stopDone=new Promise(resolve=>{stopSettled=resolve})
   const stop=signal=>{
     outerSignal??=signal
-    stopping??=stopFixtureChild(worker,closed,outerGraceMs,2000,{
-      ...(process.platform!=='win32'?{group:true,startedBy:workerStartedBy}:{}),
-      close:()=>{try{worker.stdin?.end(signal==='SIGINT'?'shutdown:SIGINT\n':'shutdown:SIGTERM\n')}catch{}},
-    }).catch(error=>{
+    const shutdownLine=signal==='SIGINT'?'shutdown:SIGINT\n':'shutdown:SIGTERM\n'
+    stopping??=(process.platform==='win32'
+      ?stopFixtureChild(worker,closed,outerGraceMs,2000,{
+          close:()=>{try{worker.stdin?.end(shutdownLine)}catch{}},
+        })
+      :(async()=>{
+          try{worker.stdin?.end(shutdownLine)}catch{}
+          let t
+          let bridgeExited=false
+          try{bridgeExited=await Promise.race([closed.then(()=>true),new Promise(r=>{t=setTimeout(()=>r(false),outerGraceMs)})])}
+          finally{clearTimeout(t)}
+          if(!bridgeExited){
+            unconfirmedStop=true
+            // Terminate only the bridge handle (never the bridge process group) so the inner fixture supervisor stays alive to detect parent death and clean up descendants.
+            await stopFixtureHandle(worker,closed,2000,2000).catch(()=>{})
+            throw Error('Owned POSIX bridge did not confirm worker exit before escalation')
+          }
+        })()
+    ).catch(error=>{
       stopError=error
       console.error(error.message)
     }).finally(()=>{stopSettled({exited:false})})
@@ -149,9 +164,9 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   const proofFile=path.join(workerProfile,'proof.json')
   let proof
   try{proof=JSON.parse(readFileSync(workerProofFile,'utf8'))}catch{}
-  const workerExited=exit!==null
-  const workerCode=workerExited?(exit.code??(exit.signal==='SIGINT'?130:exit.signal==='SIGTERM'?143:1)):null
-  const supervisorFailed=!workerExited||workerCode!==0||Boolean(exit.signal)||Boolean(exit.error)||Boolean(stopError)
+  const workerExited=exit!==null&&!unconfirmedStop&&exit.code!==86&&exit.signal===null&&!stopError
+  const workerCode=exit?(exit.code??(exit.signal==='SIGINT'?130:exit.signal==='SIGTERM'?143:1)):null
+  const supervisorFailed=!workerExited||workerCode!==0||Boolean(exit?.signal)||Boolean(exit?.error)||Boolean(stopError)
   const interrupted=outerSignal??proof?.interruptedSignal??exit?.signal??(workerCode===130?'SIGINT':workerCode===143?'SIGTERM':null)
   const finalResult=proof?.result===0&&!supervisorFailed&&!interrupted?0:1
   const finalProof={
@@ -159,9 +174,9 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
     result:finalResult,
     interruptedSignal:interrupted,
     workerExited,
-    workerExitCode:workerExited?exit.code:null,
-    workerExitSignal:workerExited?exit.signal:null,
-    ...(!workerExited&&!stopError?{workerStopError:'Owned worker exit was not confirmed after stop'}:{}),
+    workerExitCode:exit?exit.code:null,
+    workerExitSignal:exit?exit.signal:null,
+    ...(!workerExited&&!stopError?{workerStopError:exit?.code===86?'Fixture supervisor reported incomplete child tree termination':'Owned worker exit was not confirmed after stop'}:{}),
     ...(stopError?{workerStopError:String(stopError?.message??stopError)}:{}),
     ...(exit?.error?{workerSpawnError:String(exit.error?.message??exit.error)}:{}),
   }
