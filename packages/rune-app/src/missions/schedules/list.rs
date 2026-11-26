@@ -333,8 +333,14 @@ impl Schedules {
         self.fresh.clear();
         self.capability = None;
         self.refusal = None;
+        self.instructions_open.clear();
+        self.diagnostics_open.clear();
+        self.diagnostics_info_open.clear();
         self.refusal_info_open = false;
         self.activatable_info_open = false;
+    }
+    pub(crate) fn revoke_continuation(&mut self) {
+        self.view_epoch = self.view_epoch.wrapping_add(1);
     }
     pub(crate) fn on_transport_lost(&mut self) {
         self.view_epoch = self.view_epoch.wrapping_add(1);
@@ -843,8 +849,8 @@ impl Schedules {
                                 (id, m.rev)
                             }
                         };
-                        holds.dispatch_activation(
-                            m.key,
+                        if !holds.dispatch_activation(
+                            m.key.clone(),
                             m.occ,
                             m.act,
                             self.view_epoch,
@@ -853,7 +859,10 @@ impl Schedules {
                             m.rev,
                             m.doc,
                             ctx,
-                        );
+                        ) {
+                            self.feedback =
+                                Some((m.key.schedule_id, "missions.scheduleList.readFailed"));
+                        }
                         return;
                     }
                 }

@@ -24,6 +24,9 @@ pub fn valid_schedule_id(v: &str) -> bool {
 pub fn valid_schedule_request_id(v: &str) -> bool {
     (1..=128).contains(&v.len()) && v.bytes().all(id_byte)
 }
+pub fn valid_activation_request_id(v: &str) -> bool {
+    (1..=128).contains(&v.encode_utf16().count())
+}
 fn id_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'-'
 }
@@ -480,7 +483,8 @@ pub struct ScheduleActivationRequest {
 }
 impl ScheduleActivationRequest {
     pub fn validate(&self) -> Result<()> {
-        (valid_schedule_request_id(&self.request_id) && self.expected_document_revision <= MAX_REV)
+        (valid_activation_request_id(&self.request_id)
+            && self.expected_document_revision <= MAX_REV)
             .then_some(())
             .ok_or_else(|| "invalid schedule activation request".into())
     }
@@ -954,7 +958,7 @@ impl Backend {
         c: &Receiver<()>,
     ) -> ScheduleActivationOutcome {
         if !valid_schedule_id(mid)
-            || !valid_schedule_request_id(req_id)
+            || !valid_activation_request_id(req_id)
             || proof_expected_rev > MAX_REV
         {
             return ScheduleActivationOutcome::Unconfirmed;
@@ -1237,6 +1241,23 @@ mod tests {
         assert_eq!(
             classify_activation(S::UNAUTHORIZED, &js("{}"), "act_1", 5, 7, true),
             ScheduleActivationOutcome::AuthExpired
+        );
+        // Server accepts any 1..=128 UTF-16 requestID including spaces/slashes.
+        assert!(
+            ScheduleActivationRequest {
+                request_id: "activation request / 1".into(),
+                expected_document_revision: 7,
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            ScheduleActivationRequest {
+                request_id: String::new(),
+                expected_document_revision: 7,
+            }
+            .validate()
+            .is_err()
         );
     }
 }

@@ -141,6 +141,8 @@ enum Reply {
     Read(ScheduleControlRequest, ReadOut),
 }
 
+pub(crate) struct ReadyScheduleReplies(Vec<(ScheduleHoldKey, Backend, Reply)>);
+
 struct Entry {
     phase: ScheduleHoldPhase,
     workspace: String,
@@ -398,12 +400,8 @@ impl ScheduleHolds {
         }
     }
 
-    pub(crate) fn poll(
-        &mut self,
-        active: Option<&ActiveScheduleView<'_>>,
-        exp: &[Backend],
-    ) -> (bool, Vec<ScheduleHoldEvent>) {
-        let (mut changed, mut evs) = (self.drain_auth_sink(), Vec::new());
+    pub(crate) fn collect_ready(&mut self, exp: &mut Vec<Backend>) -> (bool, ReadyScheduleReplies) {
+        let mut changed = self.drain_auth_sink();
         let mut ready = Vec::new();
         for key in self.entries.keys().cloned().collect::<Vec<_>>() {
             let Some(e) = self.entries.get_mut(&key) else {
@@ -427,9 +425,9 @@ impl ScheduleHolds {
                 }
             }
         }
-        let mut all_expired: Vec<Backend> = exp.to_vec();
+        changed |= self.drain_auth_sink();
         for b in &self.auth_expired {
-            push_auth_expired(&mut all_expired, b.clone());
+            push_auth_expired(exp, b.clone());
         }
         for (_, b, reply) in &ready {
             if matches!(
@@ -439,13 +437,41 @@ impl ScheduleHolds {
                     | Reply::Ctrl(_, _, _, _, CtrlOut::AuthExpired)
                     | Reply::Read(_, ReadOut::AuthExpired)
             ) {
-                push_auth_expired(&mut all_expired, b.clone());
+                push_auth_expired(exp, b.clone());
             }
         }
-        for (key, b, reply) in ready {
+        (changed, ReadyScheduleReplies(ready))
+    }
+
+    pub(crate) fn apply_ready(
+        &mut self,
+        ready: ReadyScheduleReplies,
+        active: Option<&ActiveScheduleView<'_>>,
+        exp: &[Backend],
+    ) -> (bool, Vec<ScheduleHoldEvent>) {
+        let mut changed = self.drain_auth_sink();
+        let mut all_expired: Vec<Backend> = exp.to_vec();
+        for b in &self.auth_expired {
+            push_auth_expired(&mut all_expired, b.clone());
+        }
+        let mut evs = Vec::new();
+        for (key, b, reply) in ready.0 {
+            changed = true;
             self.on_reply(key, b, reply, active, &all_expired, &mut evs);
         }
         (changed, evs)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn poll(
+        &mut self,
+        active: Option<&ActiveScheduleView<'_>>,
+        exp: &[Backend],
+    ) -> (bool, Vec<ScheduleHoldEvent>) {
+        let mut all = exp.to_vec();
+        let (c1, ready) = self.collect_ready(&mut all);
+        let (c2, evs) = self.apply_ready(ready, active, &all);
+        (c1 || c2, evs)
     }
 
     fn on_reply(

@@ -45,7 +45,7 @@ impl Editor {
 
     pub fn request_file(&mut self, id: String) {
         self.requested_id = Some(id);
-        if self.files.is_none() && self.read.is_none() && !self.busy() {
+        if self.read.is_none() && !self.busy() && self.confirm.is_none() {
             self.notice = None;
         }
         self.apply_requested();
@@ -56,23 +56,35 @@ impl Editor {
     }
 
     fn apply_requested(&mut self) -> bool {
-        if self.busy() || self.read.is_some() || self.confirm.is_some() {
+        if self.busy()
+            || self.read.is_some()
+            || self.confirm.is_some()
+            || self.goal.is_some()
+            || self.notice.is_some()
+        {
             return false;
         }
         let Some(files) = &self.files else {
             return false;
         };
-        let Some(id) = self.requested_id.take() else {
+        let Some(id) = self.requested_id.as_deref() else {
             return false;
         };
         let Some(index) = files.iter().position(|f| f.id == id) else {
+            self.requested_id = None;
             return false;
         };
-        if self.active != Some(index) {
-            self.choose(index);
-            return true;
+        if self.active == Some(index) {
+            self.requested_id = None;
+            return false;
         }
-        false
+        if self.dirty() {
+            self.requested_id = None;
+            self.confirm = Some(index);
+        } else {
+            self.reload(index);
+        }
+        true
     }
 
     pub fn suspend(&mut self) {
@@ -119,15 +131,27 @@ impl Editor {
             self.read = None;
             match result {
                 Read::List(Some(files)) => {
-                    self.goal = self
+                    let target = self
                         .requested_id
-                        .take()
-                        .and_then(|id| files.iter().position(|f| f.id == id))
-                        .or_else(|| (!files.is_empty()).then_some(0));
+                        .as_deref()
+                        .and_then(|id| files.iter().position(|f| f.id == id));
+                    if self.requested_id.is_some() && target.is_none() {
+                        self.requested_id = None;
+                    }
+                    self.goal = target.or_else(|| (!files.is_empty()).then_some(0));
                     self.files = Some(files);
                 }
                 Read::List(None) => self.notice = Some("settings.configFiles.errors.loadList"),
                 Read::Content(index, Some(content)) => {
+                    if self
+                        .files
+                        .as_ref()
+                        .and_then(|files| files.get(index))
+                        .map(|file| file.id.as_str())
+                        == self.requested_id.as_deref()
+                    {
+                        self.requested_id = None;
+                    }
                     self.active = Some(index);
                     self.exists = content.exists;
                     self.crlf = content.contents.contains("\r\n")
@@ -189,6 +213,7 @@ impl Editor {
         if self.busy() || self.read.is_some() {
             return;
         }
+        self.requested_id = None;
         if self.dirty() {
             self.confirm = Some(index);
         } else {

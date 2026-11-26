@@ -222,6 +222,7 @@ impl Panel {
         self.reader.close();
         self.detail.cancel_lookup();
         self.schedules.cancel_pre();
+        self.schedules.revoke_continuation();
         self.editor_suspended = false;
         let scope = self.creation_scope_key();
         self.editor.open_create(
@@ -265,6 +266,7 @@ impl Panel {
         self.reader.close();
         self.detail.cancel_lookup();
         self.schedules.cancel_pre();
+        self.schedules.revoke_continuation();
         self.editor_suspended = false;
         let scope = self.creation_scope_key();
         if let Some(snapshot) = self.detail.snapshot.as_ref()
@@ -1462,6 +1464,9 @@ impl Panel {
         &'a self,
         occurrence: &'a str,
     ) -> Option<super::schedules::ActiveScheduleView<'a>> {
+        if self.editor.is_open() {
+            return None;
+        }
         Some(super::schedules::ActiveScheduleView {
             occurrence,
             backend: &self.backend,

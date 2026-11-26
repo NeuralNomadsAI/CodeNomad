@@ -1028,8 +1028,12 @@ fn r1_continuation_epoch_same_tick_401_and_retained_proof_revisions() {
         // 1. A -> B -> A round-trip while activation is in flight revokes Play continuation
         assert!(h.act(G::Select("msn_b".into())));
         h.reply_lc(vec![s_a.clone(), s_b.clone()], true).await;
-        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_b"))
-            .await;
+        h.pump(|p, _| {
+            !p.schedules.loading()
+                && p.schedules.is_fresh("msn_b")
+                && p.schedules.capability == Some(Cap::Available)
+        })
+        .await;
         assert!(h.act(G::Action(A::Play)));
         for _ in 0..2 {
             let req = h.http.accept().await;
@@ -1058,12 +1062,20 @@ fn r1_continuation_epoch_same_tick_401_and_retained_proof_revisions() {
         // Switch B -> A -> B before activation returns
         assert!(h.act(G::Select("msn_a".into())));
         h.reply_lc(vec![s_a.clone(), s_b.clone()], true).await;
-        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_a"))
-            .await;
+        h.pump(|p, _| {
+            !p.schedules.loading()
+                && p.schedules.is_fresh("msn_a")
+                && p.schedules.capability == Some(Cap::Available)
+        })
+        .await;
         assert!(h.act(G::Select("msn_b".into())));
         h.reply_lc(vec![s_a.clone(), s_b.clone()], true).await;
-        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_b"))
-            .await;
+        h.pump(|p, _| {
+            !p.schedules.loading()
+                && p.schedules.is_fresh("msn_b")
+                && p.schedules.capability == Some(Cap::Available)
+        })
+        .await;
         act_b
             .reply(
                 200,
@@ -1124,8 +1136,12 @@ fn r1_continuation_epoch_same_tick_401_and_retained_proof_revisions() {
         assert!(h.act(G::Select("msn_a".into())));
         let cap_act = json!({"api":{"available":true},"enabled":false,"activation":{"available":true,"targets":[{"scope":"project","path":"/owned/.opencode/opencode.jsonc"}]}});
         h.reply_lc_body(vec![s_a.clone()], cap_act.clone()).await;
-        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_a"))
-            .await;
+        h.pump(|p, _| {
+            !p.schedules.loading()
+                && p.schedules.is_fresh("msn_a")
+                && p.schedules.capability == Some(Cap::Activatable)
+        })
+        .await;
         assert!(h.act(G::Action(A::Resume)));
         for _ in 0..2 {
             let req = h.http.accept().await;
@@ -1169,8 +1185,12 @@ fn r1_continuation_epoch_same_tick_401_and_retained_proof_revisions() {
         })
         .await;
         h.reply_lc_body(vec![s_a.clone()], cap_act.clone()).await;
-        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_a"))
-            .await;
+        h.pump(|p, _| {
+            !p.schedules.loading()
+                && p.schedules.is_fresh("msn_a")
+                && p.schedules.capability == Some(Cap::Activatable)
+        })
+        .await;
 
         // Uncertain POST on retained R5 proof -> GET /schedule-settings sends expectedDocumentRevision=5
         assert!(h.act(G::Action(A::Resume)));
@@ -1193,7 +1213,8 @@ fn r1_continuation_epoch_same_tick_401_and_retained_proof_revisions() {
         h.pump(|_, hs| matches!(hs.get(&ka), Some((P::Activation { .. }, false))))
             .await;
         h.reply_lc_body(vec![s_a.clone()], cap_act).await;
-        h.pump(|p, _| !p.schedules.loading()).await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.capability == Some(Cap::Activatable))
+            .await;
         assert!(h.act(G::Reconcile));
         let rec_get = h.http.accept().await;
         assert!(
@@ -1211,5 +1232,95 @@ fn r1_continuation_epoch_same_tick_401_and_retained_proof_revisions() {
             .await;
         h.reply_lc(vec![s_a], true).await;
         h.pump(|_, hs| hs.get(&ka).is_none()).await;
+
+        // 4. Opening the Mission editor while activation is in flight revokes Play continuation
+        //    and rebind clears open diagnostics disclosures
+        let mut s_c = row("msn_c", "Schedule C", "paused", 2, "null");
+        s_c["availableActions"] = js(r#"["play","delete"]"#);
+        s_c["scheduleActivation"] = Value::Null;
+        assert!(h.act(G::Select("msn_c".into())));
+        h.reply_lc(vec![s_c.clone()], true).await;
+        h.pump(|p, _| {
+            !p.schedules.loading()
+                && p.schedules.is_fresh("msn_c")
+                && p.schedules.capability == Some(Cap::Available)
+        })
+        .await;
+        assert!(h.act(G::ToggleDiagnostics));
+        assert!(h.act(G::ToggleDiagnosticsInfo));
+        assert!(h.panel.schedules.diagnostics_open.contains("msn_c"));
+        assert!(h.panel.schedules.diagnostics_info_open.contains("msn_c"));
+        assert!(h.act(G::Action(A::Play)));
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, rdoc(s_c.clone())).await;
+            }
+        }
+        let kc = h.key("msn_c");
+        h.pump(|_, hs| {
+            matches!(
+                hs.get(&kc),
+                Some((
+                    P::Activation {
+                        action: A::Play,
+                        ..
+                    },
+                    true
+                ))
+            )
+        })
+        .await;
+        let act_c = h.http.accept().await;
+        let rid_c = act_c.body["requestID"].as_str().unwrap().to_owned();
+        let mut editor_holds = crate::missions::EditorHolds::default();
+        h.panel.open_create_editor(&mut editor_holds, None);
+        assert!(h.panel.active_schedule_view("occ-1").is_none());
+        act_c
+            .reply(
+                200,
+                json!({"document": {"revision": 3, "scheduleActivation": {"requestID": rid_c, "expectedRevision": 2, "state": "ready"}}}),
+            )
+            .await;
+        h.pump(|_, hs| matches!(hs.get(&kc), Some((P::Publication(3), false))))
+            .await;
+        let sc_rev3 = row("msn_c", "Schedule C", "paused", 3, "null");
+        let (mut saw_list, mut saw_cap) = (false, false);
+        for _ in 0..8 {
+            let Ok(req) =
+                tokio::time::timeout(std::time::Duration::from_millis(120), h.http.accept()).await
+            else {
+                if saw_list && saw_cap {
+                    break;
+                }
+                continue;
+            };
+            assert!(
+                !req.header.starts_with("POST "),
+                "unexpected POST after editor opened: {}",
+                req.header
+            );
+            if req.header.contains("/capabilities") {
+                saw_cap = true;
+                req.reply(200, cap_body(true)).await;
+            } else if req.header.contains("/scheduled") {
+                saw_list = true;
+                req.reply(200, list(vec![sc_rev3.clone()], None)).await;
+            } else {
+                req.reply(200, json!({})).await;
+            }
+            if saw_list && saw_cap {
+                break;
+            }
+        }
+        assert!(saw_list && saw_cap);
+        h.pump(|_, hs| hs.get(&kc).is_none()).await;
+
+        h.panel.schedules.rebind();
+        assert!(h.panel.schedules.diagnostics_open.is_empty());
+        assert!(h.panel.schedules.diagnostics_info_open.is_empty());
+        assert!(h.panel.schedules.instructions_open.is_empty());
     });
 }

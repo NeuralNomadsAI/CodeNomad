@@ -740,15 +740,9 @@ pub(super) fn poll_missions(
     extend_unique_auth(&mut auth_expired, ui.mission_briefing.take_auth_expired());
 
     let pairing_pending = pairing_checking(s);
-    let (schedules_changed, schedule_events) = {
-        let e = &ui.entries[ui.active];
-        let v = (active_polled && active_visible && !pairing_pending)
-            .then(|| e.missions.as_ref()?.active_schedule_view(&e.key))
-            .flatten();
-        ui.mission_schedules.poll(v.as_ref(), &auth_expired)
-    };
-    changed |= schedules_changed;
-    extend_unique_auth(&mut auth_expired, ui.mission_schedules.drain_auth_expired());
+    let (schedules_collected, ready_schedules) =
+        ui.mission_schedules.collect_ready(&mut auth_expired);
+    changed |= schedules_collected;
 
     let (editor_changed, editor_events) = {
         let active_entry = &ui.entries[ui.active];
@@ -765,6 +759,17 @@ pub(super) fn poll_missions(
     };
     changed |= editor_changed;
     extend_unique_auth(&mut auth_expired, ui.mission_editor.drain_auth_expired());
+
+    let (schedules_applied, schedule_events) = {
+        let e = &ui.entries[ui.active];
+        let v = (active_polled && active_visible && !pairing_pending)
+            .then(|| e.missions.as_ref()?.active_schedule_view(&e.key))
+            .flatten();
+        ui.mission_schedules
+            .apply_ready(ready_schedules, v.as_ref(), &auth_expired)
+    };
+    changed |= schedules_applied;
+    extend_unique_auth(&mut auth_expired, ui.mission_schedules.drain_auth_expired());
 
     let any_auth_expired = !auth_expired.is_empty();
     let keep_confirm = ui.mission_schedules.confirmation.as_ref().is_some_and(|c| {

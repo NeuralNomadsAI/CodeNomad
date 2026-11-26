@@ -361,6 +361,25 @@ fn append_instructions_and_runs<S: 'static>(
     reg
 }
 
+fn split_wakes_copy(wakes_val: &str) -> (String, String) {
+    let raw = t("missions.scheduleDiagnostics.wakes");
+    match raw.split_once("{count}") {
+        Some((head, tail)) => (
+            format!("{head}{wakes_val}"),
+            tail.trim_start_matches(['.', '。', '।', ' '])
+                .trim()
+                .to_owned(),
+        ),
+        None => (
+            fmt(
+                "missions.scheduleDiagnostics.wakes",
+                &[("count", wakes_val)],
+            ),
+            String::new(),
+        ),
+    }
+}
+
 fn append_diagnostics<S: 'static>(
     mut reg: El,
     ui: &Panel,
@@ -369,11 +388,20 @@ fn append_diagnostics<S: 'static>(
 ) -> El {
     let open = ui.schedules.diagnostics_open.contains(&doc.id);
     let info_open = ui.schedules.diagnostics_info_open.contains(&doc.id);
-    let info_text = format!(
-        "{} {}",
-        t("missions.scheduleDiagnostics.cost"),
-        t("missions.scheduleDiagnostics.retention")
+    let wakes_val = doc.observation.wake_count.map_or_else(
+        || t("missions.scheduleList.unavailable").to_owned(),
+        |n| n.to_string(),
     );
+    let (wakes_line, wakes_note) = split_wakes_copy(&wakes_val);
+    let info_text = [
+        wakes_note.as_str(),
+        t("missions.scheduleDiagnostics.cost"),
+        t("missions.scheduleDiagnostics.retention"),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" ");
     let hdr = layout::action_row()
         .child(
             tbtn(
@@ -396,10 +424,6 @@ fn append_diagnostics<S: 'static>(
     if !open {
         return reg;
     }
-    let wakes_val = doc.observation.wake_count.map_or_else(
-        || t("missions.scheduleList.unavailable").to_owned(),
-        |n| n.to_string(),
-    );
     let cleanup_key = if doc.technical.cleanup_pending {
         "missions.scheduleDiagnostics.cleanupPending"
     } else {
@@ -413,10 +437,7 @@ fn append_diagnostics<S: 'static>(
         .key("mission-schedule-diagnostics")
         .role("region")
         .label(t("missions.scheduleDiagnostics.title"))
-        .child(small(fmt(
-            "missions.scheduleDiagnostics.wakes",
-            &[("count", &wakes_val)],
-        )))
+        .child(small(wakes_line))
         .child(note(cleanup_key, "status"));
     if doc.technical.carriers.is_empty() {
         body = body.child(small(t("missions.scheduleDiagnostics.noCarriers")));
