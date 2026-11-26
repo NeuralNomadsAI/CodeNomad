@@ -346,7 +346,7 @@ impl PreferencesWatch {
                                         connected_state.store(true, SeqCst);
                                         if e > 1 { 11 | 16 | 32 } else { 11 | 32 }
                                     }
-                                    Input::Hint(_, _) => 11 | 16 | 32,
+                                    Input::Hint(_, _, _) => 11 | 16 | 32,
                                     Input::Preferences(Owner::Config) => 1,
                                     Input::Preferences(Owner::State) => 2,
                                     Input::Preferences(Owner::Server) => 32,

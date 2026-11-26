@@ -84,6 +84,7 @@ fn drain_chat(
                 s.transcript_display.pictures.bind(backend.clone());
                 s.transcript_display.receipts.bind(backend.clone());
                 s.transcript_display.messages.bind(backend.clone());
+                s.transcript_display.queue.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -284,6 +285,7 @@ fn drain_chat(
                     chat::reader::suspend(s);
                     s.composer.picker.set_attachments_supported(false);
                     s.attachments.cancel();
+                    s.transcript_display.queue.clear();
                     s.messages.clear();
                     s.history_detached = false;
                     s.can_older = false;
@@ -365,6 +367,7 @@ fn drain_chat(
                 } else {
                     None
                 };
+                let had_sync_undo = sync_undo.is_some();
                 if let Some(reader) = &mut s.reader {
                     reader.clear_sync_undo();
                     if let Some((
@@ -408,7 +411,16 @@ fn drain_chat(
                     s.composer.picker.refresh_commands(&s.reads, &s.wake);
                     a.refresh(false);
                 }
+                let previous_rows = if !had_sync_undo {
+                    std::mem::take(&mut s.messages)
+                } else {
+                    Vec::new()
+                };
+                if !previous_rows.is_empty() {
+                    chat::reader::preserve_anchor_on_displacement(s, &previous_rows, &page.rows);
+                }
                 s.messages = page.rows;
+                s.transcript_display.queue.prune_committed(&s.messages);
                 s.history_detached = s.reader.is_some() && page.newer.is_some();
                 crate::timeline::restore_search(s);
                 if s.history_detached {
@@ -455,6 +467,7 @@ fn drain_chat(
                 }
                 workspace::suspend_mission_briefing(s);
                 s.transcript_display.messages.offline();
+                s.transcript_display.queue.offline();
                 s.transcript_display.tool_clock.pause();
                 s.status_permissions.online(false);
                 s.status_services.online(false);
@@ -505,6 +518,7 @@ fn drain_chat(
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
+                s.transcript_display.queue.clear();
                 s.messages.clear();
                 s.history_detached = false;
                 s.can_older = false;
@@ -523,6 +537,7 @@ fn drain_chat(
                 s.transcript_display.children.clear();
                 s.transcript_display.tool_clock.reset();
                 s.transcript_display.pictures.clear();
+                s.transcript_display.queue.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -549,6 +564,30 @@ fn drain_chat(
                     }
                     s.messages.push(m.into());
                 }
+            }
+            Event::Inbox {
+                items,
+                authoritative,
+                fence,
+            } => {
+                if !authoritative || !chat::queue::receive_authoritative(s, items, fence) {
+                    continue;
+                }
+            }
+            Event::InboxDelta(delta) => {
+                if let codenomad_client::inbox::InboxDelta::Upsert(ref item) = delta
+                    && s.messages.iter().any(|row| row.id == item.id)
+                {
+                    continue;
+                }
+                let Some(next) = s.transcript_display.queue.preview_delta(&delta) else {
+                    continue;
+                };
+                chat::reader::preserve_anchor_on_inbox_change(s, &next);
+                s.transcript_display.queue.apply_preview(next);
+            }
+            Event::InboxFailed => {
+                s.transcript_display.queue.failed();
             }
             Event::PromptAcknowledged { attempted, outcome } => {
                 composer::acknowledge(s, &attempted, outcome);

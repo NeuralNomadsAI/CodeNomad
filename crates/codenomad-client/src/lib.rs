@@ -13,6 +13,7 @@ pub mod files;
 pub mod git;
 pub mod history;
 pub mod http;
+pub mod inbox;
 pub mod interruption_receipts;
 pub mod message_actions;
 pub mod missions;
@@ -62,6 +63,8 @@ mod files_write_tests;
 mod fragment_tests;
 #[cfg(test)]
 mod history_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod inbox_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod prompt_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
