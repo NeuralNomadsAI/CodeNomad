@@ -1012,13 +1012,15 @@ async function runBench() {
         await ipc({type: 'browser-closed', pid: browserPid}).catch(() => {})
       }
       if (pendingProof && !stoppingSignal) {
+        assert(process.connected, 'Fixture IPC disconnected before publishing proof')
         assert(cleanChromiumExit, `Chromium wrapper/process ${browserPid} did not exit cleanly with code 0`)
         pendingProof.teardown.chromiumExited = true
         const tmpProof = path.join(out, 'sse-7tabs-proof.json.tmp')
         const finalProof = path.join(out, 'sse-7tabs-proof.json')
         await writeFile(tmpProof, JSON.stringify(pendingProof, null, 2))
-        if (stoppingSignal) {
+        if (stoppingSignal || !process.connected) {
           try { unlinkSync(tmpProof) } catch {}
+          if (!stoppingSignal) throw Error('Fixture IPC disconnected before publishing proof')
         } else {
           renameSync(tmpProof, finalProof)
           console.log(JSON.stringify(pendingProof))

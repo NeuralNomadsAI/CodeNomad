@@ -72,7 +72,7 @@ export async function launchWeb({
   state.browserPids=new Set()
   state.clientClosed=new Promise(resolve=>{
     client.once('close',code=>resolve(code??1))
-    client.once('error',()=>resolve(1))
+    client.on('error',()=>{if(!client.pid)resolve(1)})
   })
   if(webKeyboard)client.on('message',action=>{
     if(action==='reset-keyboard'){

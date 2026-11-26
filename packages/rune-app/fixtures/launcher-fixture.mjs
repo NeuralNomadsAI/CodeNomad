@@ -519,7 +519,7 @@ const stopClientOnce=child=>{
       try{
         if(webState.clientUseIpc&&process.platform==='win32'){
           if(webSse7Tabs&&child.exitCode===null&&child.signalCode===null&&child.connected){
-            try{child.send({type:'shutdown'})}catch{}
+            try{child.send({type:'shutdown'},()=>{})}catch{}
             let timer
             try{
               await Promise.race([stopped,new Promise(r=>{timer=setTimeout(r,6000)})])
