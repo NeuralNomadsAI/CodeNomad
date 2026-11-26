@@ -275,6 +275,25 @@ pub async fn admit(
         }
         return cors(next.run(req).await, supplied);
     }
+    if !server && !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok {
+        return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
+    }
+    let Ok((_, token)) = crate::auth::cookies(h, app.auth.cookie_name()) else {
+        return cors(reply(Status::BAD_REQUEST, "Invalid cookie"), supplied);
+    };
+    let tunnel_active = app.remote_control.is_tunnel_active();
+    let owner = token.filter(|_| direct).and_then(|token| {
+        app.devices.as_ref()?.lock().unwrap().authenticate(
+            &token,
+            (!channel.ingress).then_some(channel.origin.as_str()),
+            tunnel_active,
+        )
+    });
+    // Direct HTTPS server-device and memory requests authenticate before route-catalog 404s
+    // (TS `gate.ts:133-138, 231-245`).
+    if !channel.ingress && owner.is_none() && (server || memory_path) {
+        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
+    }
     if path.starts_with("/api/auth/") && path != "/api/auth/status" && !remote_logout
         || (path.starts_with("/api/backends/") && !preview_ui)
         || (memory_path && !memory_ui && !server_memory)
@@ -284,9 +303,6 @@ pub async fn admit(
         || path.starts_with("/api/push/")
     {
         return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
-    }
-    if !server && !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok {
-        return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
     if !entry
         && !preview_ui
@@ -301,17 +317,6 @@ pub async fn admit(
     {
         return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
     }
-    let Ok((_, token)) = crate::auth::cookies(h, app.auth.cookie_name()) else {
-        return cors(reply(Status::BAD_REQUEST, "Invalid cookie"), supplied);
-    };
-    let tunnel_active = app.remote_control.is_tunnel_active();
-    let owner = token.filter(|_| direct).and_then(|token| {
-        app.devices.as_ref()?.lock().unwrap().authenticate(
-            &token,
-            (!channel.ingress).then_some(channel.origin.as_str()),
-            tunnel_active,
-        )
-    });
     if path == "/api/auth/status" && owner.is_none() {
         return cors(status(false), supplied);
     }

@@ -66,14 +66,15 @@ pub(crate) async fn root_only_with_slot(
     }
     match crate::git::run(&workspace.path, &["rev-parse", "--show-toplevel"], 16 * 1024).await {
         Ok(output) if output.code == 0 => Ok(None),
+        Ok(output) if output.code == 128 && output.stderr_contains("not a git repository") => Ok(Some(true)),
         Err(err) if crate::git::is_missing_git(&err) => Ok(Some(false)),
         Ok(output) => {
             crate::bench::route_trace(format_args!("root-proof git exited {}", output.code));
-            Ok(Some(true))
+            Err(probe_error())
         }
         Err(_) => {
             crate::bench::route_trace(format_args!("root-proof git failed"));
-            Ok(Some(true))
+            Err(probe_error())
         }
     }
 }
@@ -137,6 +138,7 @@ pub(super) async fn strict_non_git_workspace(workspace: &Workspace) -> Result<bo
 pub async fn exact_root_supported(app: &App, workspace: &Workspace) -> Result<bool, Error> {
     match inventory::probe_root_checkout(workspace).await? {
         inventory::RootCheckout::NonGit | inventory::RootCheckout::MissingGit => Ok(true),
+        inventory::RootCheckout::FallbackNonGit => Err(probe_error()),
         inventory::RootCheckout::Git(Err(_)) => Ok(false),
         inventory::RootCheckout::Git(Ok(local)) => Ok(inventory::root_supported_with(app, workspace, *local).await),
     }

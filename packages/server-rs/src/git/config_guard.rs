@@ -49,6 +49,45 @@ fn check_scoped(listing: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// Collect `-c filter.<name>.{clean,smudge,process,required}` overrides disabling every
+/// filter driver defined in host system/global config so passive working-tree reads never invoke
+/// external filter commands referenced by repository `.gitattributes`.
+pub async fn host_filter_disables(dir: &Path) -> Result<Vec<String>, Error> {
+    let mut names = std::collections::BTreeSet::new();
+    for scope in ["--system", "--global"] {
+        let args = ["config", scope, "--includes", "--name-only", "-z", "--list"];
+        let out = run(dir, &args, 64 * 1024).await?;
+        if out.code == 0 {
+            collect_filter_names(&out.text(), &mut names);
+        }
+    }
+    let mut flags = Vec::with_capacity(names.len() * 8);
+    for name in names {
+        flags.push("-c".into());
+        flags.push(format!("filter.{name}.clean="));
+        flags.push("-c".into());
+        flags.push(format!("filter.{name}.smudge="));
+        flags.push("-c".into());
+        flags.push(format!("filter.{name}.process="));
+        flags.push("-c".into());
+        flags.push(format!("filter.{name}.required=false"));
+    }
+    Ok(flags)
+}
+
+fn collect_filter_names(listing: &str, out: &mut std::collections::BTreeSet<String>) {
+    for raw in listing.split('\0') {
+        let Some((section, rest)) = raw.split_once('.') else { continue };
+        if !section.eq_ignore_ascii_case("filter") {
+            continue;
+        }
+        let Some((name, _var)) = rest.rsplit_once('.') else { continue };
+        if !name.is_empty() && !name.contains(['\0', '\n', '\r']) {
+            out.insert(name.to_owned());
+        }
+    }
+}
+
 pub async fn effective(dir: &Path) -> Result<(), Error> {
     let args = ["config", "--show-scope", "--no-includes", "--name-only", "-z", "--list"];
     check_scoped(&run(dir, &args, 64 * 1024).await?.ok()?.text())
@@ -225,5 +264,9 @@ mod tests {
         ] {
             assert_eq!(check_scoped(bad).unwrap_err().0, Status::FORBIDDEN, "{bad:?}");
         }
+
+        let mut names = std::collections::BTreeSet::new();
+        collect_filter_names("filter.lfs.clean\0filter.My.Custom.smudge\0core.bare\0filter.lfs.process\0", &mut names);
+        assert_eq!(names, ["My.Custom", "lfs"].into_iter().map(str::to_owned).collect());
     }
 }

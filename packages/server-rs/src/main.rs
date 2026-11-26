@@ -89,25 +89,42 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     }
     let listener = launch.http.listen().await?;
     let port = listener.local_addr()?.port();
-    let (identity, data) = (launch.identity.as_path(), launch.data);
+    let (identity, data) = (launch.identity.as_deref(), launch.data);
     fs::create_dir_all(&data)?;
     data_owner::protect(&data)?;
     git::empty_hooks(&data.join("git-empty-hooks"))?;
-    if data_owner::foreign(identity)? {
-        return Err("Identity file is owned by another account".into());
-    }
+    let identity_ok = match identity {
+        Some(path) => match data_owner::foreign(path) {
+            Ok(true) => return Err("Identity file is owned by another account".into()),
+            Ok(false) => true,
+            Err(err) => {
+                eprintln!("Stable server identity unavailable; backend compatibility falls back: {err}");
+                false
+            }
+        },
+        None => {
+            eprintln!(
+                "Stable server identity unavailable; backend compatibility falls back: Settings path could not be resolved"
+            );
+            false
+        }
+    };
     let tls = match launch.https {
         Some(settings) => Some(auth::tls::Listener::open(settings).await?),
         None => None,
     };
     let devices = Some(auth::devices::open(&data, tls.as_ref())?);
     let settings = settings::Settings::new(launch.settings);
-    let server_id = match settings.server_id() {
-        Ok(id) => Some(id),
-        Err(err) => {
-            eprintln!("Stable server identity unavailable; backend compatibility falls back: {err}");
-            None
+    let server_id = if identity_ok {
+        match settings.server_id() {
+            Ok(id) => Some(id),
+            Err(err) => {
+                eprintln!("Stable server identity unavailable; backend compatibility falls back: {err}");
+                None
+            }
         }
+    } else {
+        None
     };
     let meta = meta::document(server_id, port, &root, tls.as_ref(), launch.ui.meta())?;
     let positional = launch.binary.to_string_lossy();

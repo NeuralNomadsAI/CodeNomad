@@ -341,7 +341,10 @@ fn pre_config_stamps(path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigSta
 
 pub(crate) enum RootCheckout {
     Git(Result<Box<Physical>, Error>),
+    /// Confirmed non-Git directory (`git rev-parse` exited 128 with `"not a git repository"`).
     NonGit,
+    /// Non-ENOENT `rev-parse` failure: display falls back to `isGitRepo: false`, while authority checks fail closed.
+    FallbackNonGit,
     MissingGit,
 }
 
@@ -423,14 +426,15 @@ pub(crate) async fn probe_root_checkout(workspace: &Workspace) -> Result<RootChe
         Ok(out) if out.code == 0 => {
             Ok(RootCheckout::Git(parse_checkout(workspace.path.clone(), out.text(), pre).await.map(Box::new)))
         }
+        Ok(out) if out.code == 128 && out.stderr_contains("not a git repository") => Ok(RootCheckout::NonGit),
         Err(err) if crate::git::is_missing_git(&err) => Ok(RootCheckout::MissingGit),
         Ok(out) => {
             crate::bench::route_trace(format_args!("root-proof git exited {}", out.code));
-            Ok(RootCheckout::NonGit)
+            Ok(RootCheckout::FallbackNonGit)
         }
         Err(_) => {
             crate::bench::route_trace(format_args!("root-proof git failed"));
-            Ok(RootCheckout::NonGit)
+            Ok(RootCheckout::FallbackNonGit)
         }
     }
 }
