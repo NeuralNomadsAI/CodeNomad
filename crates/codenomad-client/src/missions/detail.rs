@@ -215,9 +215,18 @@ impl Header {
 
     pub fn document_blocked(&self) -> bool {
         self.extra.get("document").is_some_and(|doc| {
+            let unconfirmed_first_play = doc
+                .get("firstPlay")
+                .and_then(Value::as_object)
+                .is_some_and(|play| {
+                    !play
+                        .get("admittedAt")
+                        .is_some_and(|v| v.as_f64().is_some_and(f64::is_finite))
+                });
             doc.is_object()
                 && (doc["dormant"] == true
                     || doc["deletion"].is_object()
+                    || unconfirmed_first_play
                     || matches!(doc["state"].as_str(), Some("stopped" | "finished")))
         })
     }

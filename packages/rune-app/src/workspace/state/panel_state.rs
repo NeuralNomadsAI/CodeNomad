@@ -558,9 +558,9 @@ pub(super) fn poll_missions(
                 ui.mission_editor
                     .revoke_auto_start_for_occurrence(&entry.key);
             }
-            changed |= panel.observe_editor_detail(&mut ui.mission_editor);
+            changed |= panel.observe_editor_detail(&ui.mission_editor);
             changed |= panel.poll();
-            changed |= panel.observe_editor_detail(&mut ui.mission_editor);
+            changed |= panel.observe_editor_detail(&ui.mission_editor);
             extend_unique_auth(&mut auth_expired, panel.drain_auth_expired());
         }
     }
@@ -587,6 +587,7 @@ pub(super) fn poll_missions(
     if active_polled {
         let entry = &mut ui.entries[ui.active];
         if let (Tab::Workspace(saved), Some(panel)) = (&mut entry.saved, &mut entry.missions) {
+            changed |= panel.commit_editor_submit(&mut ui.mission_editor, &auth_expired);
             changed |= panel.apply_editor_events(&entry.key, &editor_events);
             if let Some(text) = panel.take_reader_copy()
                 && !any_auth_expired
@@ -707,13 +708,20 @@ pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
         };
         if reconnected {
             ui.mission_briefing.suspend();
+            let entry = &mut ui.entries[ui.active];
+            ui.mission_editor
+                .revoke_auto_start_for_occurrence(&entry.key);
+            if let Some(panel) = entry.missions.as_mut() {
+                panel.invalidate_editor_generation();
+            }
         }
     }
     // No observer may grant demand; the real mounted occurrence owns it.
     if mission_context_blocked(s)
         || (!(crate::shell::right_panel_visible(s)
             && right_panel_tab(s) == RightPanelTab::Missions)
-            && !mission_has_reader(s))
+            && !mission_has_reader(s)
+            && !mission_has_editor(s))
     {
         return;
     }

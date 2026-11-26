@@ -428,6 +428,7 @@ pub(crate) struct Editor {
     doc_recheck_cancel: Option<Sender<()>>,
     doc_recheck_serial: u64,
     doc_recheck_submit: Option<(String, u64)>,
+    ready_edit_submit: Option<(String, u64, Backend)>,
     auth_expired: Vec<Backend>,
     focus_initial: Option<&'static str>,
 }
@@ -571,6 +572,13 @@ impl Editor {
         wake: &Wake,
         return_focus: Option<String>,
     ) {
+        if self
+            .form
+            .as_ref()
+            .is_some_and(|form| form.mode == Mode::Create)
+        {
+            return;
+        }
         self.cancel_async();
         holds.revoke_auto_start_for_scope(scope);
         let generation = self.next_generation();
@@ -649,6 +657,18 @@ impl Editor {
         if let Some(form) = &mut self.form {
             form.generation = next;
             form.doc_rechecking = false;
+        }
+    }
+
+    pub(crate) fn invalidate_generation(&mut self) {
+        let next = self.next_generation();
+        self.ready_edit_submit = None;
+        let dropped_submit = self.doc_recheck_submit.take().is_some();
+        if let Some(form) = &mut self.form {
+            form.generation = next;
+            if dropped_submit {
+                form.doc_rechecking = false;
+            }
         }
     }
 
@@ -1083,15 +1103,10 @@ impl Editor {
         holds.reconcile_edit(&key, origin, backend, wake)
     }
 
-    pub(crate) fn poll_async(
-        &mut self,
-        holds: Option<&mut EditorHolds>,
-        backend: &Backend,
-        wake: &Wake,
-    ) -> bool {
+    pub(crate) fn poll_async(&mut self, backend: &Backend) -> bool {
         let mut changed = self.poll_defaults();
         changed |= self.poll_prefill();
-        changed |= self.poll_doc_recheck(holds, backend, wake);
+        changed |= self.poll_doc_recheck(backend);
         changed
     }
 
@@ -1148,15 +1163,7 @@ impl Editor {
         }
     }
 
-    fn poll_doc_recheck(
-        &mut self,
-        holds: Option<&mut EditorHolds>,
-        backend: &Backend,
-        wake: &Wake,
-    ) -> bool {
-        if self.doc_recheck_submit.is_some() && holds.is_none() {
-            return false;
-        }
+    fn poll_doc_recheck(&mut self, backend: &Backend) -> bool {
         let Some(reply) = self
             .doc_recheck_flight
             .as_ref()
@@ -1179,7 +1186,6 @@ impl Editor {
         if form.mode != Mode::Edit {
             return false;
         }
-        form.doc_rechecking = false;
         match reply.check {
             DocumentEditCheck::Editable { lock_help } => {
                 if let Some(edit) = &mut form.edit {
@@ -1191,19 +1197,53 @@ impl Editor {
                 if let Some((occurrence, submit_gen)) = pending_submit
                     && submit_gen == form_gen
                     && reply.backend.client.same_connection(&backend.client)
-                    && let Some(holds) = holds
                 {
-                    let _ = self.dispatch_edit_patch(&occurrence, backend, holds, wake);
+                    self.ready_edit_submit = Some((occurrence, submit_gen, reply.backend));
+                } else {
+                    form.doc_rechecking = false;
                 }
             }
             DocumentEditCheck::Locked(reason) => {
+                form.doc_rechecking = false;
                 form.prefill = PrefillState::DocumentLocked(reason);
                 form.error = None;
             }
             DocumentEditCheck::AuthExpired | DocumentEditCheck::Unavailable => {
+                form.doc_rechecking = false;
                 form.error = Some("missions.control.reader.unavailable");
             }
         }
+        true
+    }
+
+    pub(crate) fn commit_ready_edit_submit(
+        &mut self,
+        holds: &mut EditorHolds,
+        backend: &Backend,
+        wake: &Wake,
+        auth_expired: &[Backend],
+    ) -> bool {
+        let Some((occurrence, submit_gen, reply_backend)) = self.ready_edit_submit.take() else {
+            return false;
+        };
+        let Some(form) = &mut self.form else {
+            return false;
+        };
+        form.doc_rechecking = false;
+        if form.mode != Mode::Edit
+            || form.generation != submit_gen
+            || !reply_backend.client.same_connection(&backend.client)
+        {
+            return true;
+        }
+        if auth_expired
+            .iter()
+            .any(|expired| expired.client.same_connection(&backend.client))
+        {
+            form.error = Some("missions.control.reader.unavailable");
+            return true;
+        }
+        self.dispatch_edit_patch(&occurrence, backend, holds, wake);
         true
     }
 
@@ -1692,6 +1732,7 @@ impl Editor {
     fn cancel_doc_recheck(&mut self) {
         self.doc_recheck_cancel = None;
         self.doc_recheck_submit = None;
+        self.ready_edit_submit = None;
         if let Some(rx) = self.doc_recheck_flight.take()
             && let Ok(reply) = rx.try_recv()
             && matches!(reply.check, DocumentEditCheck::AuthExpired)

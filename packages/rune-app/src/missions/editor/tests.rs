@@ -271,12 +271,17 @@ fn poll_step(
 ) {
     let lc_finished = lifecycle.poll();
     let mut auth = lifecycle.drain_auth_expired();
+    if panel.take_editor_auto_start_revoked() {
+        holds.revoke_auto_start_for_occurrence(occurrence);
+    }
+    panel.observe_editor_detail(holds);
     panel.poll();
     panel.observe_editor_detail(holds);
     auth.extend(panel.drain_auth_expired());
     let active = panel.active_editor(occurrence);
     let (_, events) = holds.poll(active, &auth, lifecycle);
     auth.extend(holds.drain_auth_expired());
+    panel.commit_editor_submit(holds, &auth);
     panel.apply_editor_events(occurrence, &events);
     (auth, lc_finished)
 }
@@ -1088,9 +1093,9 @@ fn auth_401_retains_holds_and_lifecycle_play_as_uncertain_while_409_finished_rel
                 })
                 .to_string(),
             )
-        } else if raw.starts_with("PATCH /api/workspaces/ws-1/missions/msn_alpha123 ") {
-            ("401 Unauthorized".into(), "expired".into())
-        } else if raw.starts_with("POST /api/workspaces/ws-1/missions/msn_alpha123/control ") {
+        } else if raw.starts_with("PATCH /api/workspaces/ws-1/missions/msn_alpha123 ")
+            || raw.starts_with("POST /api/workspaces/ws-1/missions/msn_alpha123/control ")
+        {
             ("401 Unauthorized".into(), "expired".into())
         } else if raw.starts_with("PATCH /api/workspaces/ws-1/missions/msn_finished ") {
             (
@@ -2184,7 +2189,7 @@ fn same_cycle_directory_summary_401_blocks_fresh_create_autostart() {
                         control_c.fetch_add(1, Ordering::SeqCst);
                         ("200 OK", json!({}).to_string())
                     } else {
-                        ("404 Not Found".into(), "{}".into())
+                        ("404 Not Found", "{}".into())
                     };
                     let reply = format!(
                         "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -3531,6 +3536,568 @@ fn create_loads_server_defaults_for_task_mode_and_compare_profiles() {
             .get("variant")
             .is_none(),
         "default variant must be stripped from frozen comparator"
+    );
+}
+
+#[test]
+fn sse_reconnect_invalidates_generation_and_revokes_create_autostart() {
+    let control_calls = Arc::new(AtomicUsize::new(0));
+    let control_calls_bg = control_calls.clone();
+    let (post_seen_tx, post_seen_rx) = std::sync::mpsc::channel();
+    let post_seen_tx = Arc::new(std::sync::Mutex::new(Some(post_seen_tx)));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let release_bg = release.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let _ = tx.send(format!("http://{addr}/"));
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let seen = post_seen_tx.clone();
+                let gate = release_bg.clone();
+                let controls = control_calls_bg.clone();
+                tokio::spawn(async move {
+                    let raw = read_http_request(&mut socket).await;
+                    let (status, body) = if raw.starts_with("GET /api/meta ") {
+                        (
+                            "200 OK",
+                            json!({"apiContract": 1, "serverId": "fixture-server"}).to_string(),
+                        )
+                    } else if raw.starts_with("GET /api/storage/config/ui") {
+                        ("200 OK", json!({"settings": {}}).to_string())
+                    } else if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+                        if let Some(tx) = seen.lock().unwrap().take() {
+                            let _ = tx.send(());
+                        }
+                        gate.notified().await;
+                        (
+                            "200 OK",
+                            json!({
+                                "acknowledgement": "fresh",
+                                "mission": mission_json_for("msn_sse_reconn", 1, "prepared")
+                            })
+                            .to_string(),
+                        )
+                    } else if raw.contains("/control ") {
+                        controls.fetch_add(1, Ordering::SeqCst);
+                        ("200 OK", "{}".into())
+                    } else {
+                        ("404 Not Found", "{}".into())
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+    });
+    let base = rx.recv().unwrap();
+    let backend = attested_backend(base);
+    let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+
+    open_create_ready(
+        &mut panel,
+        &mut holds,
+        &mut lifecycle,
+        Some("missions-create".into()),
+    );
+    let gen_before = panel.editor.form.as_ref().unwrap().generation;
+    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("SSE reconnect test");
+    panel.editor.form.as_mut().unwrap().start_on_creation = true;
+    panel.submit_editor("tab-1", &mut holds);
+    post_seen_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("POST /missions must reach server");
+
+    // SSE reconnect on the same HTTP client invalidates generation and revokes auto-start.
+    panel.invalidate(None, 1.0);
+    assert_ne!(
+        panel.editor.form.as_ref().unwrap().generation,
+        gen_before,
+        "SSE reconnect must advance editor generation"
+    );
+    poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+
+    // Late fresh ACK arrives after SSE reconnect: must not close form, hijack selection, or call /control.
+    release.notify_one();
+    let scope = panel.creation_scope_key();
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        holds.creation(&scope).is_none()
+    });
+    assert!(panel.has_editor());
+    assert_eq!(panel.selected, None);
+    std::thread::sleep(Duration::from_millis(60));
+    assert_eq!(
+        control_calls.load(Ordering::SeqCst),
+        0,
+        "SSE reconnect must prevent pre-disconnect Create ACK from dispatching /control"
+    );
+}
+
+#[test]
+fn same_tick_panel_401_blocks_pre_edit_doc_recheck_patch_dispatch() {
+    let patch_calls = Arc::new(AtomicUsize::new(0));
+    let patch_calls_bg = patch_calls.clone();
+    let (dir_seen_tx, dir_seen_rx) = std::sync::mpsc::channel();
+    let dir_seen_tx = Arc::new(std::sync::Mutex::new(Some(dir_seen_tx)));
+    let schedule_count = Arc::new(AtomicUsize::new(0));
+    let schedule_count_bg = schedule_count.clone();
+    let release_both = Arc::new(tokio::sync::Barrier::new(2));
+    let release_both_bg = release_both.clone();
+    let orig_obj = "Doc objective";
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let _ = tx.send(format!("http://{addr}/"));
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let patches = patch_calls_bg.clone();
+                let seen = dir_seen_tx.clone();
+                let sched_c = schedule_count_bg.clone();
+                let barrier = release_both_bg.clone();
+                tokio::spawn(async move {
+                    let raw = read_http_request(&mut socket).await;
+                    let (status, body): (&str, String) = if raw.starts_with("GET /api/meta ") {
+                        (
+                            "200 OK",
+                            json!({"apiContract": 1, "serverId": "fixture-server"}).to_string(),
+                        )
+                    } else if raw.contains("/missions/panel-page") && raw.contains("\"summaries\"") {
+                        if let Some(tx) = seen.lock().unwrap().take() {
+                            let _ = tx.send(());
+                        }
+                        barrier.wait().await;
+                        ("401 Unauthorized", "expired".into())
+                    } else if raw.contains("/missions/panel-page") {
+                        ("500 Internal Server Error", "{}".into())
+                    } else if raw.starts_with("GET /api/workspaces/ws-1/missions/msn_doc401/schedule ")
+                    {
+                        let n = sched_c.fetch_add(1, Ordering::SeqCst);
+                        if n >= 1 {
+                            barrier.wait().await;
+                        }
+                        (
+                            "200 OK",
+                            json!({
+                                "pending": false,
+                                "document": {
+                                    "id": "msn_doc401",
+                                    "kind": "one-time",
+                                    "edit": { "structural": false, "reason": "launched-once" }
+                                }
+                            })
+                            .to_string(),
+                        )
+                    } else if raw.contains("/content?") && raw.contains("field=objective") {
+                        (
+                            "200 OK",
+                            json!({
+                                "available": true,
+                                "version": 1,
+                                "projectID": "prj_1",
+                                "missionID": "msn_doc401",
+                                "revision": 2,
+                                "content": {
+                                    "kind": "mission",
+                                    "field": "objective",
+                                    "digest": content_digest(orig_obj),
+                                    "offset": 0,
+                                    "characters": utf16_len(orig_obj),
+                                    "text": orig_obj,
+                                    "next": null
+                                }
+                            })
+                            .to_string(),
+                        )
+                    } else if raw.contains("/content?") && raw.contains("field=notes") {
+                        (
+                            "200 OK",
+                            json!({
+                                "available": true,
+                                "version": 1,
+                                "projectID": "prj_1",
+                                "missionID": "msn_doc401",
+                                "revision": 2,
+                                "refused": "content-not-found"
+                            })
+                            .to_string(),
+                        )
+                    } else if raw.starts_with("PATCH /api/workspaces/ws-1/missions/msn_doc401 ") {
+                        patches.fetch_add(1, Ordering::SeqCst);
+                        ("200 OK", "{}".into())
+                    } else {
+                        ("404 Not Found", "{}".into())
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+    });
+    let base = rx.recv().unwrap();
+    let backend = attested_backend(base);
+    let (wake_tx, wake_rx) = bounded(16);
+    let wake: Wake = Arc::new(move || {
+        let _ = wake_tx.try_send(());
+    });
+    let mut panel = Panel::new(
+        backend.clone(),
+        Some("prj_1".into()),
+        Reads::default(),
+        wake,
+    );
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+
+    // Open Edit and finish initial prefill.
+    let header = sample_doc_header_for("msn_doc401", 2, orig_obj);
+    let scope = panel.creation_scope_key();
+    assert!(panel.editor.open_edit(
+        &header,
+        &scope,
+        &backend,
+        &mut holds,
+        &panel.reads,
+        &panel.wake,
+        None,
+    ));
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        panel
+            .editor
+            .form
+            .as_ref()
+            .is_some_and(|f| f.prefill == PrefillState::Ready)
+    });
+    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Draft blocked by 401");
+
+    // Start Summaries read (blocks on barrier to return 401 concurrently with pre-PATCH /schedule 200).
+    panel.show(true);
+    dir_seen_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("summaries read must reach server");
+    wait_until(|| {
+        panel.poll();
+        panel.failed(super::super::directory::Kind::Cleanups)
+    });
+
+    let state = crate::workspace::test_state_with_mission_panel(panel, holds);
+    let mut rt = Runtime::new(
+        state,
+        |_, _| rune::el(),
+        (1200.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    rt.update(|s, _| {
+        let (tab_key, panel, mission_editor) = crate::workspace::test_mission_entry_mut(s, 0);
+        while wake_rx.try_recv().is_ok() {}
+        panel.submit_editor(&tab_key, mission_editor);
+    });
+    // Wait for submit wake + both async replies (Summaries 401 and /schedule 200).
+    crate::platform::block_on(async {
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(3), wake_rx.recv())
+                .await
+                .expect("both Summaries 401 and /schedule 200 must arrive")
+                .unwrap();
+        }
+    });
+    rt.update(|s, tx| {
+        crate::workspace::poll(s, 1.0, tx);
+    });
+    std::thread::sleep(Duration::from_millis(60));
+    assert_eq!(
+        patch_calls.load(Ordering::SeqCst),
+        0,
+        "same-tick panel 401 must block pre-edit /schedule from dispatching PATCH"
+    );
+    assert!(
+        rt.state
+            .screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required),
+        "panel 401 must trigger authentication recovery"
+    );
+    let panel_after = crate::workspace::test_mission_panel(&rt.state, 0);
+    assert_eq!(
+        panel_after.editor.form.as_ref().unwrap().objective.text,
+        "Draft blocked by 401"
+    );
+}
+
+#[test]
+fn create_button_disabled_while_editor_open_and_open_create_preserves_draft() {
+    let backend = unattested_backend("http://127.0.0.1:9/".into());
+    let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+
+    panel.open_create_editor(&mut holds, Some("missions-create".into()));
+    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Keep my unsaved draft");
+
+    // Re-invoking open_create_editor while Create is already open must NOT reset the draft.
+    panel.open_create_editor(&mut holds, Some("missions-create".into()));
+    assert_eq!(
+        panel.editor.form.as_ref().unwrap().objective.text,
+        "Keep my unsaved draft"
+    );
+
+    // The right panel's Create button must render disabled and ignore clicks while the editor is open.
+    struct PanelHost {
+        panel: Panel,
+        holds: EditorHolds,
+        fallback: TextEdit,
+        clicked: usize,
+    }
+    let mut rt = Runtime::new(
+        PanelHost {
+            panel,
+            holds,
+            fallback: TextEdit::new(""),
+            clicked: 0,
+        },
+        |host, _| {
+            super::super::view::panel_body(
+                &host.panel,
+                &host.holds,
+                |h: &mut PanelHost| (Some(&mut h.panel), &mut h.fallback),
+                rune::el(),
+                None,
+                |_, _| {},
+                |h: &mut PanelHost, _, _| {
+                    h.clicked += 1;
+                },
+            )
+        },
+        (400.0, 600.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let create_btn = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("missions-create"))
+        .expect("Create button must be mounted");
+    assert!(
+        !create_btn.focusable,
+        "Create button must be disabled (non-focusable) while Mission editor is open"
+    );
+    let (cx, cy) = rt
+        .find("missions-create")
+        .expect("Create button must be laid out");
+    rt.pointer_down(cx, cy);
+    rt.pointer_up(cx, cy);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.clicked, 0,
+        "clicking disabled Create button must not fire OpenCreate"
+    );
+}
+
+#[test]
+fn pre_creation_summaries_refresh_cannot_clear_newly_created_selection() {
+    let (list_seen_tx, list_seen_rx) = std::sync::mpsc::channel();
+    let list_seen_tx = Arc::new(std::sync::Mutex::new(Some(list_seen_tx)));
+    let release_list = Arc::new(tokio::sync::Notify::new());
+    let release_list_bg = release_list.clone();
+    let list_calls = Arc::new(AtomicUsize::new(0));
+    let list_calls_bg = list_calls.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let _ = tx.send(format!("http://{addr}/"));
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let seen = list_seen_tx.clone();
+                let gate = release_list_bg.clone();
+                let lc = list_calls_bg.clone();
+                tokio::spawn(async move {
+                    let raw = read_http_request(&mut socket).await;
+                    let (status, body) = if raw.starts_with("GET /api/meta ") {
+                        (
+                            "200 OK",
+                            json!({"apiContract": 1, "serverId": "fixture-server"}).to_string(),
+                        )
+                    } else if raw.starts_with("GET /api/storage/config/ui") {
+                        ("200 OK", json!({"settings": {}}).to_string())
+                    } else if raw.contains("/missions/panel-page") && raw.contains("\"summaries\"") {
+                        let call_idx = lc.fetch_add(1, Ordering::SeqCst);
+                        if call_idx == 0 {
+                            if let Some(tx) = seen.lock().unwrap().take() {
+                                let _ = tx.send(());
+                            }
+                            gate.notified().await;
+                            // Pre-creation empty list covering total=0.
+                            let order = "a".repeat(43);
+                            (
+                                "200 OK",
+                                json!({
+                                    "available": true,
+                                    "version": 1,
+                                    "projectID": "prj_1",
+                                    "source": "summaries",
+                                    "discardedEvents": 0,
+                                    "controlUnavailable": false,
+                                    "notificationUnavailable": false,
+                                    "cleanupUnavailable": false,
+                                    "finishHighWater": 0,
+                                    "window": {
+                                        "order": order,
+                                        "offset": 0,
+                                        "end": 0,
+                                        "total": 0
+                                    },
+                                    "page": {
+                                        "digest": content_digest("[]"),
+                                        "total": 0,
+                                        "pieces": []
+                                    }
+                                })
+                                .to_string(),
+                            )
+                        } else {
+                            // Post-creation list containing msn_fresh1.
+                            let order = "b".repeat(43);
+                            let row = json!({
+                                "id": "msn_fresh1",
+                                "title": "Fresh",
+                                "objective": "Fresh",
+                                "status": "active",
+                                "runState": "prepared",
+                                "coordinatorSessionId": "ses_coord1",
+                                "actorCount": 1,
+                                "revision": 1,
+                                "updatedAt": 2.0
+                            })
+                            .to_string();
+                            let digest = content_digest(&format!("[{row}]"));
+                            (
+                                "200 OK",
+                                json!({
+                                    "available": true,
+                                    "version": 1,
+                                    "projectID": "prj_1",
+                                    "source": "summaries",
+                                    "discardedEvents": 0,
+                                    "controlUnavailable": false,
+                                    "notificationUnavailable": false,
+                                    "cleanupUnavailable": false,
+                                    "finishHighWater": 0,
+                                    "window": {
+                                        "order": order,
+                                        "offset": 0,
+                                        "end": 1,
+                                        "total": 1
+                                    },
+                                    "page": {
+                                        "digest": digest,
+                                        "total": 1,
+                                        "pieces": [{
+                                            "index": 0,
+                                            "offset": 0,
+                                            "characters": utf16_len(&row),
+                                            "text": row
+                                        }]
+                                    }
+                                })
+                                .to_string(),
+                            )
+                        }
+                    } else if raw.contains("/missions/panel-page") {
+                        ("500 Internal Server Error", "{}".into())
+                    } else if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+                        (
+                            "200 OK",
+                            json!({
+                                "acknowledgement": "fresh",
+                                "mission": mission_json_for("msn_fresh1", 1, "prepared")
+                            })
+                            .to_string(),
+                        )
+                    } else {
+                        ("404 Not Found", "{}".into())
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+    });
+    let base = rx.recv().unwrap();
+    let backend = attested_backend(base);
+    let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+
+    // Start a pre-creation Summaries read.
+    panel.show(true);
+    list_seen_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("pre-creation summaries read must reach server");
+
+    // Create a new Mission while the stale Summaries read is in flight.
+    open_create_ready(
+        &mut panel,
+        &mut holds,
+        &mut lifecycle,
+        Some("missions-create".into()),
+    );
+    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Fresh");
+    panel.submit_editor("tab-1", &mut holds);
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        !panel.has_editor()
+    });
+    assert_eq!(panel.selected.as_deref(), Some("msn_fresh1"));
+
+    // Release the pre-creation empty list response; it must be ignored and the new refresh must keep selection!
+    release_list.notify_one();
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        panel.summaries.iter().any(|row| row.id == "msn_fresh1")
+    });
+    assert_eq!(
+        panel.selected.as_deref(),
+        Some("msn_fresh1"),
+        "pre-creation Summaries response must not clear newly created Mission selection"
     );
 }
 

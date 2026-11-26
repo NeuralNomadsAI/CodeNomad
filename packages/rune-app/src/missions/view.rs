@@ -252,7 +252,7 @@ pub(crate) fn panel_body<S: 'static>(
                         .child(
                             layout::button_tx(
                                 t("missions.control.create"),
-                                false,
+                                ui.editor.is_open(),
                                 move |s: &mut S, tx| {
                                     let back = tx.focused().unwrap_or("missions-create").to_owned();
                                     editor_act(

@@ -199,6 +199,10 @@ impl Panel {
         self.reader.is_open() || self.editor.is_open()
     }
 
+    pub(crate) fn invalidate_editor_generation(&mut self) {
+        self.editor.invalidate_generation();
+    }
+
     pub(crate) fn open_create_editor(
         &mut self,
         holds: &mut EditorHolds,
@@ -400,7 +404,7 @@ impl Panel {
         }
     }
 
-    pub(crate) fn observe_editor_detail(&mut self, holds: &mut EditorHolds) -> bool {
+    pub(crate) fn observe_editor_detail(&mut self, holds: &EditorHolds) -> bool {
         let mut changed = false;
         if self.editor_suspended && self.editor.is_open() {
             self.editor_suspended = false;
@@ -414,9 +418,7 @@ impl Panel {
             }
             changed = true;
         }
-        changed |= self
-            .editor
-            .poll_async(Some(holds), &self.backend, &self.wake);
+        changed |= self.editor.poll_async(&self.backend);
         changed
             | self.editor.observe_detail(
                 self.detail.snapshot.as_ref(),
@@ -427,6 +429,20 @@ impl Panel {
                 &self.reads,
                 &self.wake,
             )
+    }
+
+    pub(crate) fn commit_editor_submit(
+        &mut self,
+        holds: &mut EditorHolds,
+        auth_expired: &[Backend],
+    ) -> bool {
+        let changed =
+            self.editor
+                .commit_ready_edit_submit(holds, &self.backend, &self.wake, auth_expired);
+        if changed {
+            (self.wake)();
+        }
+        changed
     }
 
     pub(crate) fn take_editor_auto_start_revoked(&mut self) -> bool {
@@ -450,6 +466,10 @@ impl Panel {
                     self.selected = Some(saved.mission_id.clone());
                     self.detail.clear();
                     self.observation.reset();
+                    // Cancel any pre-creation Summaries read so a stale page cannot clear the new selection.
+                    if let Some((_, cancel)) = self.lanes[Kind::Summaries as usize].active.take() {
+                        cancel.close();
+                    }
                 }
                 if self.selected.as_deref() == Some(saved.mission_id.as_str()) {
                     self.detail.observe(&saved.mission_id, saved.revision);
@@ -669,6 +689,8 @@ impl Panel {
             self.detail.cancel();
             self.observation.cancel();
             self.reader.invalidate();
+            self.editor.invalidate_generation();
+            self.editor_auto_start_revoked = true;
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
                     cancel.close();
@@ -1112,7 +1134,7 @@ impl Panel {
             &self.reads,
             &self.wake,
         );
-        changed |= self.editor.poll_async(None, &self.backend, &self.wake);
+        changed |= self.editor.poll_async(&self.backend);
         changed | self.poll_control_fields()
     }
 

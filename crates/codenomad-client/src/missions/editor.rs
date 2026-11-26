@@ -290,6 +290,8 @@ pub enum MutationCode {
     RevisionConflict,
     RequestConflict,
     MissionFinished,
+    DocumentUnavailable,
+    ControlPending,
     CompareModelsRequired,
     CompareModelsIdentical,
     Forbidden,
@@ -309,6 +311,8 @@ impl MutationCode {
             "revision-conflict" => Some(Self::RevisionConflict),
             "request-conflict" => Some(Self::RequestConflict),
             "mission-finished" if !create => Some(Self::MissionFinished),
+            "document-unavailable" if !create => Some(Self::DocumentUnavailable),
+            "control-pending" if !create => Some(Self::ControlPending),
             _ => None,
         }
     }
@@ -329,6 +333,9 @@ impl MutationCode {
             Self::RevisionConflict => "missions.control.mutation.conflict",
             Self::RequestConflict => "missions.control.mutation.requestConflict",
             Self::MissionFinished => "missions.scheduling.lock.terminal",
+            Self::DocumentUnavailable | Self::ControlPending => {
+                "missions.scheduling.lock.uncertain"
+            }
             Self::Forbidden => "missions.control.mutation.forbidden",
             Self::CreationUncertain | Self::CreationConflict | Self::Invalid => {
                 "missions.control.mutation.error"
@@ -568,10 +575,19 @@ impl Backend {
         if !doc.is_object() || doc["id"].as_str() != Some(mission_id) || !doc["edit"].is_object() {
             return DocumentEditCheck::Unavailable;
         }
+        let unconfirmed_first_play =
+            doc.get("firstPlay")
+                .and_then(Value::as_object)
+                .is_some_and(|play| {
+                    !play
+                        .get("admittedAt")
+                        .is_some_and(|v| v.as_f64().is_some_and(f64::is_finite))
+                });
         if body["pending"] == true
             || doc["dormant"] == true
             || doc["dormantJournal"] == true
             || doc["preparation"]["pending"] == true
+            || unconfirmed_first_play
             || doc["observation"]["state"].as_str() == Some("unknown")
         {
             return DocumentEditCheck::Locked("missions.scheduling.lock.uncertain");
@@ -1192,10 +1208,17 @@ fn settle_update_error(status: StatusCode, body: Option<&Value>) -> UpdateMissio
     if status.as_u16() == 409
         && matches!(
             code,
-            Some(MutationCode::RequestConflict | MutationCode::MissionFinished)
+            Some(
+                MutationCode::RequestConflict
+                    | MutationCode::MissionFinished
+                    | MutationCode::DocumentUnavailable
+            )
         )
     {
         return UpdateMissionOutcome::Rejected(code.unwrap());
+    }
+    if status.as_u16() == 503 && code == Some(MutationCode::ControlPending) {
+        return UpdateMissionOutcome::Rejected(MutationCode::ControlPending);
     }
     match status.as_u16() {
         403 => UpdateMissionOutcome::Rejected(MutationCode::Forbidden),

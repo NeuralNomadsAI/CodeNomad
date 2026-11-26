@@ -579,6 +579,86 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             DocumentEditCheck::Locked("missions.scheduling.lock.deleted")
         );
 
+        let (base, _t) = spawn_http(
+            "200 OK",
+            json!({
+                "pending": false,
+                "document": {
+                    "id": "msn_alpha123",
+                    "kind": "one-time",
+                    "firstPlay": {
+                        "requestID": "play-1",
+                        "expectedRevision": 1,
+                        "operationID": "op-1",
+                        "messageID": "msg-1",
+                        "requestedAt": 100.0,
+                        "admittedAt": null
+                    },
+                    "edit": { "structural": false, "reason": "launched-once" }
+                }
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base)
+                .read_mission_edit_document("msn_alpha123")
+                .await,
+            DocumentEditCheck::Locked("missions.scheduling.lock.uncertain")
+        );
+
+        let (base, _t) = spawn_http(
+            "200 OK",
+            json!({
+                "pending": false,
+                "document": {
+                    "id": "msn_alpha123",
+                    "kind": "one-time",
+                    "firstPlay": {
+                        "requestID": "play-1",
+                        "expectedRevision": 1,
+                        "operationID": "op-1",
+                        "messageID": "msg-1",
+                        "requestedAt": 100.0,
+                        "admittedAt": 105.0
+                    },
+                    "edit": { "structural": false, "reason": "launched-once" }
+                }
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base)
+                .read_mission_edit_document("msn_alpha123")
+                .await,
+            DocumentEditCheck::Editable {
+                lock_help: Some("missions.scheduling.lock.launched-once")
+            }
+        );
+
+        let (base, _t) = spawn_http(
+            "409 Conflict",
+            json!({"error": "Unified Mission document unavailable", "code": "document-unavailable"})
+                .to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base).update_mission(&t, &req).await,
+            UpdateMissionOutcome::Rejected(MutationCode::DocumentUnavailable)
+        );
+
+        let (base, _t) = spawn_http(
+            "503 Service Unavailable",
+            json!({"error": "Original Mission preparation is unresolved", "code": "control-pending"})
+                .to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base).update_mission(&t, &req).await,
+            UpdateMissionOutcome::Rejected(MutationCode::ControlPending)
+        );
+
         let (base, _t) = spawn_http("401 Unauthorized", "{}".into()).await;
         assert_eq!(
             backend(base)
