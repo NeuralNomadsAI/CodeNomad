@@ -150,11 +150,23 @@ impl Subscriber {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn end_inbox_chunk_quiet(&self, clean: bool) -> Option<crate::Wake> {
+    fn sync_inbox_chunk(&self, chunk_active: bool, in_frame: bool) {
+        if let Some(inbox) = &self.signals.inbox {
+            inbox.sync_chunk_state(chunk_active, in_frame);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn end_inbox_chunk_quiet(
+        &self,
+        clean: bool,
+        in_frame: bool,
+        completed_frames: u64,
+    ) -> Option<crate::Wake> {
         self.signals
             .inbox
             .as_ref()
-            .and_then(|inbox| inbox.end_chunk_quiet(clean))
+            .and_then(|inbox| inbox.end_chunk_quiet(clean, in_frame, completed_frames))
     }
 
     fn note_inbox_frame(&self, kind: &str, data: &str) -> u64 {
@@ -343,6 +355,8 @@ struct StreamInner {
     replays_overflowed: bool,
     #[cfg(not(target_arch = "wasm32"))]
     chunk_active: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    partial_frame: bool,
     stop: Option<Sender<()>>,
 }
 
@@ -359,9 +373,14 @@ pub(super) struct ChunkGuard<'a> {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ChunkGuard<'_> {
-    pub(super) fn finish(mut self) {
+    #[cfg(test)]
+    pub(super) fn finish(self) {
+        self.finish_with(false, 0);
+    }
+
+    pub(super) fn finish_with(mut self, in_frame: bool, completed_frames: u64) {
         if let Some(shared) = self.shared.take() {
-            shared.end_chunk(true);
+            shared.end_chunk(true, in_frame, completed_frames);
         }
     }
 }
@@ -370,7 +389,7 @@ impl ChunkGuard<'_> {
 impl Drop for ChunkGuard<'_> {
     fn drop(&mut self) {
         if let Some(shared) = self.shared.take() {
-            shared.end_chunk(false);
+            shared.end_chunk(false, false, 0);
         }
     }
 }
@@ -420,14 +439,15 @@ impl SharedStream {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn end_chunk(&self, clean: bool) {
+    fn end_chunk(&self, clean: bool, in_frame: bool, completed_frames: u64) {
         let mut wakes = Vec::new();
         let mut inbox_wakes = Vec::new();
         {
             let mut inner = self.inner.lock().unwrap();
             inner.chunk_active = false;
+            inner.partial_frame = clean && in_frame;
             for sub in &inner.subscribers {
-                if let Some(wake) = sub.end_inbox_chunk_quiet(clean) {
+                if let Some(wake) = sub.end_inbox_chunk_quiet(clean, in_frame, completed_frames) {
                     inbox_wakes.push(wake);
                 }
                 if let Some(quota) = &sub.quota {
@@ -561,6 +581,7 @@ impl SharedStream {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 inner.chunk_active = false;
+                inner.partial_frame = false;
             }
             inner.stop.take();
             if let Some(entry) = streams.get_mut(&self.base)
@@ -599,6 +620,7 @@ impl SharedStream {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 inner.chunk_active = false;
+                inner.partial_frame = false;
             }
             inner.stop.take();
             for sub in std::mem::take(&mut inner.subscribers) {
@@ -728,8 +750,8 @@ impl Hub {
                                 #[cfg(target_arch = "wasm32")]
                                 let chunk_active = false;
                                 #[cfg(not(target_arch = "wasm32"))]
-                                if chunk_active {
-                                    sub.begin_inbox_chunk();
+                                if inner.chunk_active || inner.partial_frame {
+                                    sub.sync_inbox_chunk(inner.chunk_active, inner.partial_frame);
                                 }
                                 if let Some(quota) = &sub.quota
                                     && quota.attach_open_quiet(&replays, skipped, chunk_active)
@@ -766,6 +788,8 @@ impl Hub {
                             replays_overflowed: false,
                             #[cfg(not(target_arch = "wasm32"))]
                             chunk_active: false,
+                            #[cfg(not(target_arch = "wasm32"))]
+                            partial_frame: false,
                             stop: Some(stop_tx),
                         }),
                         done: done_rx,

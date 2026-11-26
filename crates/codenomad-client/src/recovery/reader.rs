@@ -1289,21 +1289,23 @@ mod diagnostic_tests {
             reader.inbox_deadline(true, &wire, None).is_some(),
             "parked dirty history reader must still allow scheduled inbox refresh"
         );
+        // Retry invalidates an already-valid published fence even with zero intervening SSE ingress.
+        let valid_before_retry = wire.inbox.fence(wire.inbox.capture(), 0);
+        assert!(valid_before_retry.is_valid());
+        wire.inbox.invalidate_published();
+        assert!(
+            !valid_before_retry.is_valid(),
+            "Retry invalidation must revoke a valid published fence without SSE ingress"
+        );
         // Unapplied inbox ingress blocks starting a new GET until recovery drains the watermark.
-        let before = wire.inbox.capture();
-        let pre_retry_fence = wire.inbox.fence(before, 0);
         let mark1 = wire.inbox.record_ingress();
         let mark2 = wire.inbox.record_ingress();
         assert!(
             reader.inbox_deadline(true, &wire, None).is_none(),
             "inbox_deadline must wait while applied watermark lags ingress"
         );
-        // Retry invalidates already-published snapshots without jumping applied past buffered SSE frames.
+        // Retry invalidates published state without jumping applied past buffered SSE frames.
         wire.inbox.invalidate_published();
-        assert!(
-            !pre_retry_fence.is_valid(),
-            "Retry invalidation must revoke already-captured published fences"
-        );
         assert!(
             !wire.inbox.applied_caught_up(),
             "Retry invalidation must not mark buffered SSE frames as applied"

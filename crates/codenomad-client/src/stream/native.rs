@@ -229,7 +229,6 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
         let (pong_abort_tx, pong_abort_rx) = crate::bounded::<bool>(1);
         let mut chunks = std::pin::pin!(response.bytes_stream());
         let mut parser = Parser::default();
-        let mut chunk_guard = None;
         loop {
             if let Ok(expired) = pong_abort_rx.try_recv() {
                 auth_expired = expired;
@@ -277,11 +276,13 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                 continue;
             }
             watchdog.activity();
-            chunk_guard.get_or_insert_with(|| shared.begin_chunk());
+            let chunk_guard = shared.begin_chunk();
             let mut parse_failed = false;
+            let mut completed_frames = 0u64;
             for byte in chunk.as_ref() {
                 match parser.byte(*byte) {
                     Ok(Some(Parsed::Data(kind, _))) if kind == "codenomad.client.ping" => {
+                        completed_frames = completed_frames.saturating_add(1);
                         if let Some(done) = spawn_pong(
                             &b,
                             &connection,
@@ -295,9 +296,11 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                         }
                     }
                     Ok(Some(Parsed::Data(kind, data))) => {
+                        completed_frames = completed_frames.saturating_add(1);
                         shared.broadcast_frame(&hub, kind, data);
                     }
                     Ok(Some(Parsed::Skipped)) => {
+                        completed_frames = completed_frames.saturating_add(1);
                         b.client.children().invalidate_all(&b);
                         shared.broadcast_skipped();
                     }
@@ -309,16 +312,11 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                 }
             }
             if parse_failed {
-                drop(chunk_guard.take());
+                drop(chunk_guard);
                 break;
             }
-            if !parser.in_frame()
-                && let Some(guard) = chunk_guard.take()
-            {
-                guard.finish();
-            }
+            chunk_guard.finish_with(parser.in_frame(), completed_frames);
         }
-        drop(chunk_guard);
         drop(pong_cancel_tx);
         drop(read_probe);
     }
@@ -532,9 +530,9 @@ async fn receive_chunk(
     let unobserved = quota.map(crate::provider_usage::Ingress::chunk);
     struct InboxChunk<'a>(Option<&'a crate::inbox::InboxWire>);
     impl InboxChunk<'_> {
-        fn finish(mut self) {
+        fn finish(mut self, in_frame: bool, completed_frames: u64) {
             if let Some(inbox) = self.0.take()
-                && let Some(wake) = inbox.end_chunk_quiet(true)
+                && let Some(wake) = inbox.end_chunk_quiet(true, in_frame, completed_frames)
             {
                 wake();
             }
@@ -543,7 +541,7 @@ async fn receive_chunk(
     impl Drop for InboxChunk<'_> {
         fn drop(&mut self) {
             if let Some(inbox) = self.0.take()
-                && let Some(wake) = inbox.end_chunk_quiet(false)
+                && let Some(wake) = inbox.end_chunk_quiet(false, false, 0)
             {
                 wake();
             }
@@ -553,8 +551,10 @@ async fn receive_chunk(
         state.inbox.begin_chunk();
         InboxChunk(Some(&state.inbox))
     });
+    let mut completed_frames = 0u64;
     for byte in chunk {
         if let Some(frame) = parser.byte(*byte)? {
+            completed_frames = completed_frames.saturating_add(1);
             let mark = match &frame {
                 Parsed::Data(kind, data) if kind != "codenomad.client.ping" => {
                     if (kind.is_empty() || kind == "message")
@@ -589,7 +589,7 @@ async fn receive_chunk(
         }
     }
     if let Some(chunk) = inbox_chunk {
-        chunk.finish();
+        chunk.finish(parser.in_frame(), completed_frames);
     }
     if let Some(chunk) = unobserved {
         chunk.finish();

@@ -315,6 +315,7 @@ fn slow_subscriber_overflow_closes_only_the_slow_subscriber_without_disrupting_s
             replays: HashMap::new(),
             replays_overflowed: false,
             chunk_active: false,
+            partial_frame: false,
             stop: Some(stop_tx),
         }),
         done: done_rx,
@@ -387,6 +388,7 @@ fn late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chun
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
+                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,
@@ -556,6 +558,7 @@ fn physical_close_revokes_attestation_immediately_and_queued_opened_cannot_reins
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
+                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,
@@ -707,6 +710,7 @@ fn shared_stream_staleness_and_hanging_pong_close_all_subscribers_and_unregister
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
+                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,
@@ -858,6 +862,7 @@ fn begin_close_revokes_guards_and_blocks_new_subscribers_before_finish() {
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
+                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,
@@ -950,6 +955,7 @@ fn voluntary_detach_revokes_guard_immediately_without_outage_before_pump_exits()
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
+                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,
@@ -1034,6 +1040,7 @@ fn overflow_preserves_pending_session_moved_and_signals_placement_and_close() {
             replays: HashMap::new(),
             replays_overflowed: false,
             chunk_active: false,
+            partial_frame: false,
             stop: Some(stop_tx),
         }),
         done: done_rx,
@@ -1138,6 +1145,7 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             replays: HashMap::new(),
             replays_overflowed: false,
             chunk_active: false,
+            partial_frame: false,
             stop: Some(stop_tx),
         }),
         done: done_rx,
@@ -1194,6 +1202,7 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             replays: HashMap::new(),
             replays_overflowed: false,
             chunk_active: false,
+            partial_frame: false,
             stop: Some(stop_tx2),
         }),
         done: done_rx2,
@@ -1259,6 +1268,7 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
             replays: HashMap::new(),
             replays_overflowed: false,
             chunk_active: false,
+            partial_frame: false,
             stop: Some(stop_tx),
         }),
         done: done_rx,
@@ -1315,9 +1325,8 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
     // chunk 4) must keep the guard active between chunks until the frame terminates.
     let fence3 = state.inbox.fence(state.inbox.capture(), 0);
     let mut parser = super::super::frames::Parser::default();
-    let mut open_guard: Option<ChunkGuard<'_>> = None;
     let part1 = b"data: {\"type\":\"instance.event\",\"instanceId\":\"ws-1\",\"event\":{\"type\":\"session.inbox.cancelled\",\"data\":{\"sessionID\":\"ses-1\",\"inboxID\":\"q2\"}}}\n";
-    open_guard.get_or_insert_with(|| shared.begin_chunk());
+    let g3 = shared.begin_chunk();
     for byte in part1 {
         assert!(parser.byte(*byte).unwrap().is_none());
     }
@@ -1325,21 +1334,13 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
         parser.in_frame(),
         "parser must report in_frame between data line and terminating blank line"
     );
-    if !parser.in_frame()
-        && let Some(guard) = open_guard.take()
-    {
-        guard.finish();
-    }
-    assert!(
-        open_guard.is_some(),
-        "guard must remain held across chunks while SSE frame is incomplete"
-    );
+    g3.finish_with(parser.in_frame(), 0);
     assert_eq!(
         fence3.check(),
         FenceState::Deferred,
         "stale GET must stay deferred between split cancellation chunks"
     );
-    open_guard.get_or_insert_with(|| shared.begin_chunk());
+    let g4 = shared.begin_chunk();
     let completed = parser
         .byte(b'\n')
         .unwrap()
@@ -1348,17 +1349,55 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
         shared.broadcast_frame(&hub, kind, data);
     }
     assert!(!parser.in_frame());
-    if !parser.in_frame()
-        && let Some(guard) = open_guard.take()
-    {
-        guard.finish();
-    }
+    g4.finish_with(parser.in_frame(), 1);
     assert_eq!(
         fence3.check(),
         FenceState::Invalid,
         "completed cancellation frame in second chunk must invalidate the deferred fence"
     );
     assert_eq!(wakes.load(SeqCst), 3);
+
+    // Chunk 5 + 6: continuous stream where EVERY chunk completes one unrelated frame and immediately
+    // starts the next (parser.in_frame() == true at every chunk boundary) must NOT starve an
+    // unaffected conversation's authoritative inbox fence.
+    let latest_mark = state.inbox.ingress();
+    state.inbox.advance_applied(latest_mark);
+    let fence4 = state.inbox.fence(state.inbox.capture(), 0);
+    let g5 = shared.begin_chunk();
+    for byte in b"data: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.delta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"a\"}}}\n" {
+        assert!(parser.byte(*byte).unwrap().is_none());
+    }
+    assert!(parser.in_frame());
+    g5.finish_with(parser.in_frame(), 0);
+    assert_eq!(
+        fence4.check(),
+        FenceState::Deferred,
+        "snapshot latches wait for the single in-progress partial frame"
+    );
+    let g6 = shared.begin_chunk();
+    let mut completed_in_chunk6 = 0u64;
+    for byte in b"\ndata: {\"type\":\"instance.event\",\"instanceId\":\"ws-other\",\"event\":{\"type\":\"session.text.delta\",\"data\":{\"sessionID\":\"other\",\"delta\":\"b\"}}}\n" {
+        if let Some(super::super::frames::Parsed::Data(kind, data)) = parser.byte(*byte).unwrap() {
+            completed_in_chunk6 += 1;
+            shared.broadcast_frame(&hub, kind, data);
+        }
+    }
+    assert_eq!(completed_in_chunk6, 1);
+    assert!(
+        parser.in_frame(),
+        "next unrelated frame is already mid-parse at chunk 6 boundary"
+    );
+    g6.finish_with(parser.in_frame(), completed_in_chunk6);
+    assert_eq!(
+        wakes.load(SeqCst),
+        4,
+        "completing the awaited partial frame must wake the waiting UI even when a new frame began"
+    );
+    assert_eq!(
+        fence4.check(),
+        FenceState::Valid,
+        "continuous unrelated frames must not starve an unaffected conversation's inbox publication"
+    );
 }
 
 #[test]
@@ -1389,6 +1428,7 @@ fn seed_opened_numbers_replayed_status_monotonically_before_live_inbox_frames() 
             replays: HashMap::from([("ws-1".to_owned(), replay_status.clone())]),
             replays_overflowed: false,
             chunk_active: false,
+            partial_frame: false,
             stop: Some(stop_tx),
         }),
         done: done_rx,
@@ -1437,6 +1477,7 @@ fn read_shared_delivers_session_moved_before_closed_after_overflow() {
                     replays: HashMap::new(),
                     replays_overflowed: false,
                     chunk_active: false,
+                    partial_frame: false,
                     stop: Some(stop_tx),
                 }),
                 done: done_rx,
