@@ -460,7 +460,7 @@ fn empty_alt_loads_per_image_while_heading_and_offscreen_images_do_not_queue() {
                         &PictureSource::Inline(PNG_B.into()),
                         "image/png",
                     )
-                    .2,
+                    .3,
                 LocalImageState::Ready(_)
             ),
             "offscreen or non-liftable image should not be decoded"
@@ -525,7 +525,7 @@ fn replacing_failed_local_image_while_visible_recovers_in_short_and_memoized_pro
                             &PictureSource::Inline(CORRUPT_PNG.into()),
                             "image/png",
                         )
-                        .2,
+                        .3,
                     LocalImageState::Failed
                 );
             });
@@ -557,7 +557,7 @@ fn replacing_failed_local_image_while_visible_recovers_in_short_and_memoized_pro
                             &PictureSource::Inline(CORRUPT_PNG.into()),
                             "image/png",
                         )
-                        .2,
+                        .3,
                     LocalImageState::Failed
                 ),
                 "retained failure lease must keep entry settled (long={long_prose})"
@@ -802,7 +802,7 @@ fn offscreen_failed_image_is_not_requeued_on_reconnect_while_other_prose_stays_v
                 s.transcript_display
                     .pictures
                     .local_slot("fragment-m2:0-local-image-0", &source, "image/png")
-                    .2,
+                    .3,
                 LocalImageState::Failed
             );
         });
@@ -958,7 +958,7 @@ fn clipped_tool_pane_keeps_failed_image_unqueued_across_reconnect() {
                     s.transcript_display
                         .pictures
                         .local_slot("skill-doc-local-image-0", &source, "image/png")
-                        .2,
+                        .3,
                     LocalImageState::Failed
                 );
             });
@@ -971,12 +971,13 @@ fn clipped_tool_pane_keeps_failed_image_unqueued_across_reconnect() {
             );
             std::thread::yield_now();
         }
-        // Scroll the pane back to the top so the failed image moves below the pane clip edge
-        // while staying inside the window, then reconnect -> must NOT be re-queued.
+        // Verify preserved DrawnRect + glide/clip-only geometry checks:
+        // 1. Scroll the pane back to the top (mid-glide, single frame) and reconnect immediately:
+        //    live geometry must refuse retry while the failed image is behind the pane clip edge.
         for _ in 0..8 {
             rt.wheel(200.0, 80.0, 4000.0);
-            rt.frame(1.0 / 60.0);
         }
+        rt.frame(1.0 / 60.0);
         rt.update(|s, _| {
             let bounds = s.tool_diff_preferences.history_bounds.get();
             s.transcript_display
@@ -990,7 +991,35 @@ fn clipped_tool_pane_keeps_failed_image_unqueued_across_reconnect() {
                     &s.transcript_display.tool_clock,
                     bounds,
                 ),
-                "{label}: failed image scrolled back behind pane clip must stay unqueued across reconnect"
+                "{label}: failed image scrolled behind pane clip must stay unqueued across reconnect"
+            );
+        });
+        // 2. Clip-only resize expanding the pane rect to intersect the image (even if cached
+        //    on_visible is false) must make the pending entry eligible on poll_in_view without
+        //    needing a fresh on_visible(true) callback.
+        rt.update(|s, _| {
+            let bounds = s.tool_diff_preferences.history_bounds.get();
+            let (_, _, drawn, _) = s.transcript_display.pictures.local_slot(
+                "skill-doc-local-image-0",
+                &source,
+                "image/png",
+            );
+            let rect = drawn.get();
+            assert!(
+                rect[2] > 0.0 && rect[3] > 0.0,
+                "{label}: preserved local_slot DrawnRect must stay bound to live layout"
+            );
+            let pane_clip = s.transcript_display.tool_clock.clip_rect("skill-pane-clip");
+            pane_clip.set([0.0, 0.0, 800.0, rect[1] + rect[3] + 4.0]);
+            assert!(
+                s.transcript_display.pictures.local_visible_or_queued(
+                    "skill-doc-local-image-0",
+                    &source,
+                    "image/png",
+                    &s.transcript_display.tool_clock,
+                    bounds,
+                ),
+                "{label}: clip-only resize intersecting the image must admit it via live geometry"
             );
         });
     }

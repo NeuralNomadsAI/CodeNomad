@@ -36,6 +36,7 @@ pub(crate) struct Pictures {
     backend: Option<Backend>,
     cache: Option<ImageCache>,
     sentinel: RefCell<Option<Image>>,
+    local_rects: RefCell<HashMap<String, Weak<DrawnRect>>>,
     images: HashMap<String, Entry>,
     waiting: VecDeque<String>,
     preview: Option<(String, String, Image)>,
@@ -54,20 +55,22 @@ struct Entry {
 }
 
 fn entry_in_view(entry: &Entry, view: Option<(&Clock, [f32; 4])>) -> bool {
-    if !entry.visible {
+    if entry.lease.strong_count() == 0 {
         return false;
     }
     let Some((drawn, clip)) = &entry.clip_gate else {
-        return true;
+        return entry.visible;
     };
     let Some((clock, bounds)) = view else {
-        return true;
+        return entry.visible;
     };
     let rect = drawn.get();
-    if clip.is_clipped() {
-        rect[2] > 0.0 && rect[3] > 0.0 && clock.rect_in_view(rect, bounds, clip)
+    if rect[2] > 0.0 && rect[3] > 0.0 {
+        clock.rect_in_view(rect, bounds, clip)
+    } else if clip.is_clipped() {
+        false
     } else {
-        rect[2] <= 0.0 || rect[3] <= 0.0 || clock.rect_in_view(rect, bounds, clip)
+        entry.visible
     }
 }
 
@@ -95,6 +98,7 @@ impl Pictures {
     pub(crate) fn clear(&mut self) {
         self.images.clear();
         self.waiting.clear();
+        self.local_rects.borrow_mut().clear();
         self.cache = None;
         self.preview = None;
         self.hover = None;
@@ -141,12 +145,25 @@ impl Pictures {
         key: &str,
         source: &PictureSource,
         mime: &str,
-    ) -> (String, Rc<()>, LocalImageState) {
+    ) -> (String, Rc<()>, Rc<DrawnRect>, LocalImageState) {
         let key = source_key(key, source, mime);
         let entry = self.images.get(&key).filter(|entry| entry.media == *source);
         let lease = entry
             .and_then(|entry| entry.lease.upgrade())
             .unwrap_or_default();
+        let drawn = {
+            let mut rects = self.local_rects.borrow_mut();
+            rects.retain(|_, rect| rect.strong_count() > 0);
+            if let Some(existing) = rects.get(&key).and_then(Weak::upgrade) {
+                existing
+            } else {
+                let rect = entry
+                    .and_then(|entry| entry.clip_gate.as_ref().map(|(rect, _)| rect.clone()))
+                    .unwrap_or_else(|| Rc::new(DrawnRect::new([0.0; 4])));
+                rects.insert(key.clone(), Rc::downgrade(&rect));
+                rect
+            }
+        };
         let ready = entry
             .and_then(|entry| entry.image.as_ref())
             .filter(|image| {
@@ -169,7 +186,7 @@ impl Pictures {
         } else {
             LocalImageState::Pending
         };
-        (key, lease, state)
+        (key, lease, drawn, state)
     }
 
     #[allow(clippy::too_many_arguments)]

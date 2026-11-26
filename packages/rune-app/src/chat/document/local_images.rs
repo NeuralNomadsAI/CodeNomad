@@ -77,6 +77,7 @@ struct Slot {
     source: PictureSource,
     mime: String,
     lease: Rc<()>,
+    drawn: Rc<DrawnRect>,
     label: String,
     image: Option<Image>,
 }
@@ -242,9 +243,9 @@ impl Plan {
                     source,
                     mime,
                     lease,
+                    drawn,
                     ..
                 } = slot;
-                let drawn = Rc::new(DrawnRect::new([0.0; 4]));
                 let layout_drawn = drawn.clone();
                 let layout_clip = clip.clone();
                 let layout_scope = scope.clone();
@@ -710,7 +711,7 @@ pub(super) fn prepare(
             plan.occurrences.entry(raw_src).or_default().push(None);
             continue;
         };
-        let (key, lease, state) = s.transcript_display.pictures.local_slot(
+        let (key, lease, drawn, state) = s.transcript_display.pictures.local_slot(
             &format!("{group}-local-image-{index}"),
             &matched.source,
             &matched.mime,
@@ -730,6 +731,7 @@ pub(super) fn prepare(
                         source: matched.source.clone(),
                         mime: matched.mime.clone(),
                         lease,
+                        drawn,
                         label,
                         image: Some(image),
                     }));
@@ -754,6 +756,7 @@ pub(super) fn prepare(
                             source: matched.source.clone(),
                             mime: matched.mime.clone(),
                             lease,
+                            drawn,
                             label,
                             image: None,
                         }));
