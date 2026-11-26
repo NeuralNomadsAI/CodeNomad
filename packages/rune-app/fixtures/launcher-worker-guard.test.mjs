@@ -9,6 +9,7 @@ test('Windows Job Object worker wraps mobile, keyboard viewport, and mobile draw
     '--web-mobile-more-actions',
     '--web-keyboard-viewport',
     '--web-mobile-drawers',
+    '--web-sse-7tabs',
   ]) {
     assert.equal(
       needsOwnedWindowsWorker(['node', 'launcher-fixture.mjs', flag], 'win32'),

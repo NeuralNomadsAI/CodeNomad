@@ -11,7 +11,7 @@ import {serverBinary} from './fixture-binaries.mjs'
 
 export async function launchWeb({
   root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog,http,mobile,restart,
-  webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,
+  webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,webSse7Tabs,emitMultiplexSse,
 }, state) {
   if(webTimeline||webSearch||webOutline){
     const config=await http.patch('/api/storage/config/ui',{data:{settings:{showThinkingBlocks:true,systemMessagesVisibility:'expanded',
@@ -20,17 +20,17 @@ export async function launchWeb({
   }
   const storage=path.join(profile,'browser-storage.json')
   let uiOrigin=origin,paired
-  if(webMobile){
+  if(webMobile||webSse7Tabs){
     uiOrigin=ts?.https??runLog.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1]
     assert(uiOrigin,'HTTPS fixture missing')
     if(!webAndroid){
       const issue=await http.post('/api/remote-control/pairings')
       assert.equal(issue.status(),200)
-      paired=await pairFixture({origin:uiOrigin,pairingUrl:(await issue.json()).url,storage,manifest,ui,fromLink:!sameOriginPairing})
+      paired=await pairFixture({origin:uiOrigin,pairingUrl:(await issue.json()).url,storage,manifest,ui,fromLink:webSse7Tabs?false:!sameOriginPairing})
     }
   }else await http.storageState({path:storage})
   let workspace
-  if(!webRestore){
+  if(!webRestore&&!webSse7Tabs){
     const opened=await http.post('/api/workspaces',{data:{path:project}})
     assert(opened.ok(),`Open isolated workspace: ${await opened.text()}`)
     workspace=(await opened.json()).id
@@ -43,8 +43,8 @@ export async function launchWeb({
     manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
   state.staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,backend:ts?'ts':'rust',serverBinary:ts?.args[0]??serverBinary,ui:solid||ui,paired}
 
-  const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
-  const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webMobileDrawers?['--mobile-drawers']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
+  const runner=webAndroid?'web-android.mjs':webSse7Tabs?'web-sse-7tabs.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
+  const args=webAndroid?[uiOrigin,profile,project,ui]:webSse7Tabs?['--url',`${uiOrigin}/`,'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webMobileDrawers?['--mobile-drawers']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
   if(webTimeline)args.push(webTouchHistory?'--touch-history':'--timeline')
   if(webSearch)args.push('--history-search')
   if(webOutline)args.push('--outline')
@@ -59,14 +59,28 @@ export async function launchWeb({
     state.deviceLease=androidLease(androidDevice(androidEnv),uiOrigin)
     await state.deviceLease.open()
   }
-  const launch=(webMobile||webKeyboard)?spawn:spawnFixtureChild
-  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile||webKeyboard?['ipc']:[])]})
+  const useIpc=webMobile||webKeyboard||webSse7Tabs
+  const launch=useIpc?spawn:spawnFixtureChild
+  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(useIpc?['ipc']:[])]})
   state.client=client
   if(webKeyboard)client.on('message',action=>{
     if(action==='reset-keyboard'){
       resetKeyboard()
       if(client.connected)client.send({ok:true},()=>{})
     }
+  })
+  if(webSse7Tabs)client.on('message',action=>{
+    state.mobileAction=(async()=>{
+      try{
+        if(action?.type==='emit-multiplex-sse')return {value:emitMultiplexSse(action.targets)}
+        if(action?.type==='server-workspaces'){
+          const res=await http.get('/api/workspaces')
+          assert.equal(res.status(),200)
+          return {value:await res.json()}
+        }
+        throw Error(`Unsupported 7-tab bench IPC action: ${JSON.stringify(action)}`)
+      }catch(error){return {error:String(error.message)}}
+    })().then(reply=>{if(client.connected)client.send(reply,()=>{})})
   })
   if(webAndroid)state.clientClosed=new Promise(resolve=>client.once('close',resolve))
   if(mobile)client.on('message',action=>{

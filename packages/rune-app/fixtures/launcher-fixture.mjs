@@ -54,10 +54,12 @@ assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only
 const webFileWrap=process.argv.includes('--web-file-wrap')
 const webMobileDrawers=process.argv.includes('--web-mobile-drawers')
 const webKeyboard=process.argv.includes('--web-keyboard-viewport')
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webMobileDrawers||webOutline||webKeyboard,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webGitImages||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
+const webSse7Tabs=process.argv.includes('--web-sse-7tabs')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webMobileDrawers||webOutline||webKeyboard,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webGitImages||webTimeline||webSearch||webSse7Tabs,root=path.resolve(import.meta.dirname,'../../..')
 assert(!webFileWrap||(!webPending&&!webMobile),'File wrap uses the loopback Chromium restoration fixture')
 assert(!webMobileDrawers||(!webPending&&!webFileWrap&&!webMobile&&!webOutline&&!webTimeline&&!webSearch&&!webKeyboard&&!process.argv.includes('--web-restore')),'Mobile drawers uses its own loopback Chromium fixture mode')
 assert(!webKeyboard||(!webPending&&!webFileWrap&&!webMobile&&!webOutline&&!webTimeline&&!webSearch&&!webMobileDrawers&&!process.argv.includes('--web-restore')),'Keyboard viewport uses its own loopback Chromium fixture mode')
+assert(!webSse7Tabs||(!webRestore&&!webMobile&&!webMissions&&!webGitImages&&!webTimeline&&!webSearch&&!process.argv.includes('--web')),'7-tab SSE bench uses its own HTTPS fixture mode')
 assert(!webMissions||!webRestore&&!webMobile)
 assert(!webGitImages||!webRestore&&!webMobile&&!webMissions)
 if(!web)requireTestSupport()
@@ -212,6 +214,12 @@ add('ses_existing','Existing history')
 if(webKeyboard)for(let i=0;i<36;i++)stores.get('ses_existing').append('assistant',`Keyboard passage ${i} — enough prose to wrap across narrow portrait viewports.`)
 add('ses_another','Another session',webSearch?linked:gitPanel&&!placeWorktree?review:project)
 if(webKeyboard)for(let i=0;i<36;i++)stores.get('ses_another').append('assistant',`Question passage ${i} — enough prose to wrap across narrow portrait viewports.`)
+if(webSse7Tabs){
+  for(let i=1;i<=7;i++){
+    add(`ses_tab_${i}`,`Tab ${i} session`)
+    stores.get(`ses_tab_${i}`).append('assistant',`Tab ${i} initial history`)
+  }
+}
 seedHistory({stores,webTimeline:webTimeline||webOutline,webMobile,webAndroid,webSearch})
 if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
 if(placeWorktree){
@@ -272,7 +280,7 @@ const upstream=createServer(async(req,res)=>{
       res.once('close',()=>{clearInterval(heartbeat);streams.delete(res)})
       return
     }
-    if((webMobile||compare||webMobileDrawers)&&req.method==='GET'&&url.pathname==='/api/command')return json({data:[]})
+    if((webMobile||compare||webMobileDrawers||webSse7Tabs)&&req.method==='GET'&&url.pathname==='/api/command')return json({data:[]})
     if(compare){
       if(url.pathname==='/api/session/active')return json({data:{}})
       if(url.pathname==='/api/project')return json([])
@@ -344,6 +352,7 @@ const upstream=createServer(async(req,res)=>{
         assert.equal(url.searchParams.get('limit'),'200')
         const search=url.searchParams.get('search')
         if((webMobile||webMobileDrawers)&&search!==null)return json({data:rows.filter(row=>row.title.toLowerCase().includes(search.toLowerCase())),cursor:{}})
+        if(webSse7Tabs)return json({data:rows,cursor:{}})
         if(rows.length>1)next=Buffer.from(JSON.stringify({directory,anchor:{id:rows[0].id,time:1,direction:'next'}})).toString('base64url')
         rows=rows.slice(0,1)
       }else rows=rows.slice(1)
@@ -461,7 +470,7 @@ const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
-if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
+if(webMobile||webSse7Tabs)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
 let host,server,log='',client,androidCleanup,result=1,http,expired=false
 const webState={diagnostic:''}
@@ -498,8 +507,29 @@ try{
   const origin=await startServer()
   if(web){
     await signIn(origin)
+    const emitMultiplexSse=targets=>{
+      assert(streams.size>0,'Expected active upstream SSE stream to codenomad-rs')
+      assert(Array.isArray(targets)&&targets.length>0&&targets.length<=7,'Expected 1..7 SSE targets')
+      const emitted=[]
+      for(const {sessionID,text} of targets){
+        assert(typeof sessionID==='string'&&/^ses_tab_[1-7]$/.test(sessionID),`Unexpected sessionID: ${sessionID}`)
+        assert(typeof text==='string'&&text.length>0&&text.length<=256,'Invalid SSE payload text')
+        const store=stores.get(sessionID)
+        assert(store,`Unknown session store: ${sessionID}`)
+        const live=store.append('assistant','',false)
+        store.rows.pop() // Live SSE-only reply: absent from HTTP history.
+        const emit=(type,data)=>{
+          const row={id:randomUUID(),type,created:Date.now(),location:{directory:project},data:{sessionID,...data}}
+          for(const stream of streams)stream.write(`data: ${JSON.stringify(row)}\n\n`)
+        }
+        emit('session.step.started',{assistantMessageID:live.id,agent:'fixture',model:{providerID:'fixture',id:'fixture'}})
+        textStream(live,emit).append(text)
+        emitted.push({sessionID,assistantMessageID:live.id,text})
+      }
+      return emitted
+    }
     await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog:host.stdout(),http,mobile,restart:restartWeb,
-      webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard:()=>{keyboardPermissionSettled=false;keyboardFormSettled=false},webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
+      webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard:()=>{keyboardPermissionSettled=false;keyboardFormSettled=false},webRestore,webTimeline,webTouchHistory,webSearch,webOutline,webSse7Tabs,emitMultiplexSse},webState)
     client=webState.client
   }else if(pendingOpen){
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
@@ -536,7 +566,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,webState.diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webMoreActions||webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||mobileSessionSearch||historyReturnOnly||webMoreActions?1:webTouchHistory?4:webMissions||webGitImages?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,webState.diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webMoreActions||webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||mobileSessionSearch||historyReturnOnly||webMoreActions?1:webTouchHistory?4:webMissions||webGitImages?2:webSse7Tabs?7:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
     if(!placeWorktree){
       await removeReview

@@ -5,4 +5,5 @@ export function needsOwnedWindowsWorker(argv, platform = process.platform) {
     || argv.includes('--web-mobile')
     || argv.includes('--web-keyboard-viewport')
     || argv.includes('--web-mobile-drawers')
+    || argv.includes('--web-sse-7tabs')
 }
