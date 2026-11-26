@@ -75,7 +75,59 @@ pub(super) async fn relay(
         .flatten();
     if let Some(event) = catalogues {
         out.send(Input::Workspace(epoch, event)).await?;
-    } else if own && value["type"] == "instance.event" && native["type"] == "vcs.branch.updated" {
+    }
+    if own && value["type"] == "instance.event" {
+        match native["type"].as_str() {
+            Some("plugin.updated") => {
+                let directory = native["location"]["directory"]
+                    .as_str()
+                    .filter(|p| crate::absolute_server_path(p))
+                    .map(str::to_owned);
+                out.send(Input::Workspace(
+                    epoch,
+                    WorkspaceEvent::PluginsChanged {
+                        workspace_id: Some(b.workspace.clone()),
+                        directory,
+                    },
+                ))
+                .await?;
+            }
+            Some("config.updated") => {
+                out.send(Input::Workspace(
+                    epoch,
+                    WorkspaceEvent::PluginsChanged {
+                        workspace_id: Some(b.workspace.clone()),
+                        directory: None,
+                    },
+                ))
+                .await?;
+                out.send(Input::Workspace(
+                    epoch,
+                    WorkspaceEvent::McpStatusChanged {
+                        workspace_id: Some(b.workspace.clone()),
+                    },
+                ))
+                .await?;
+            }
+            Some(
+                "mcp.status.changed"
+                | "mcp.resources.changed"
+                | "integration.updated"
+                | "credential.updated"
+                | "credential.switched",
+            ) => {
+                out.send(Input::Workspace(
+                    epoch,
+                    WorkspaceEvent::McpStatusChanged {
+                        workspace_id: Some(b.workspace.clone()),
+                    },
+                ))
+                .await?;
+            }
+            _ => {}
+        }
+    }
+    if own && value["type"] == "instance.event" && native["type"] == "vcs.branch.updated" {
         out.send(Input::Workspace(
             epoch,
             WorkspaceEvent::WorktreesChanged {
