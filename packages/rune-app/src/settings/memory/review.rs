@@ -89,7 +89,7 @@ pub(super) struct Review {
     expanded: bool,
     key: Option<Key>,
     snapshot: Option<List>,
-    flight: Option<(Sender<()>, Receiver<Result<List, &'static str>>)>,
+    flight: Option<((u64, u64), Sender<()>, Receiver<Result<List, &'static str>>)>,
     refresh: bool,
     failed: Option<&'static str>,
     pending: Option<(Edit, Option<Fields>, u64)>,
@@ -537,20 +537,33 @@ impl Review {
             }
             return changed;
         }
-        if let Some((_, flight)) = &self.flight {
-            let result = match flight.try_recv() {
-                Ok(result) => result,
-                Err(_) if flight.is_closed() => Err(UNAVAILABLE),
-                Err(_) => return changed,
-            };
-            self.flight = None;
-            self.failed = result.as_ref().err().copied();
-            if let Ok(list) = result {
-                self.seen
-                    .observe(key.owner.seen_key(), &list, self.expanded);
-                self.snapshot = Some(list);
+        let current_stamp = (current_auth, backend.client.drop_generation());
+        if let Some((flight_stamp, _, flight)) = &self.flight {
+            if *flight_stamp != current_stamp {
+                self.flight = None;
+                self.refresh = true;
+                changed = true;
+            } else {
+                let result = match flight.try_recv() {
+                    Ok(result) => result,
+                    Err(_) if flight.is_closed() => Err(UNAVAILABLE),
+                    Err(_) => return changed,
+                };
+                self.flight = None;
+                if ServerOwner::backend_verified(backend) && key.owner.same_backend_server(backend)
+                {
+                    self.failed = result.as_ref().err().copied();
+                    if let Ok(list) = result {
+                        self.seen
+                            .observe(key.owner.seen_key(), &list, self.expanded);
+                        self.snapshot = Some(list);
+                    }
+                } else {
+                    self.unverified = true;
+                    self.refresh = true;
+                }
+                changed = true;
             }
-            changed = true;
         }
         if !self.refresh
             && self.flight.is_none()
@@ -579,19 +592,51 @@ impl Review {
         }
         let (hold, cancel) = bounded::<()>(1);
         let (out, input) = bounded(1);
-        self.flight = Some((hold, input));
+        self.flight = Some((current_stamp, hold, input));
         let (backend, key, main, window) =
             (backend.clone(), key.clone(), main.clone(), window.clone());
+        let expected_server = key.owner.server().map(str::to_owned);
+        let prefs_auth = prefs_authority.clone();
+        let (prefs_gen, prepared_gen) = current_stamp;
+        let review_auth = self.authority.clone();
+        let review_gen = review_auth.load(Ordering::SeqCst);
         platform::spawn(async move {
+            let still_ok = || {
+                prefs_auth.load(Ordering::SeqCst) == prefs_gen
+                    && review_auth.load(Ordering::SeqCst) == review_gen
+                    && backend.client.drop_generation() == prepared_gen
+                    && ServerOwner::backend_verified(&backend)
+                    && expected_server
+                        .as_deref()
+                        .is_none_or(|id| backend.client.server_identity() == Some(id))
+            };
             let context = key
                 .context
                 .as_ref()
                 .map(|(workspace, session)| (workspace.as_str(), session.as_deref()));
-            let result =
-                platform::reads::cancellable(&cancel, memory::list(&backend, key.scope, context))
-                    .await;
+            let read = async {
+                if !still_ok() {
+                    return Err(UNAVAILABLE);
+                }
+                if backend.client.tracks_server_attestation()
+                    && backend.attest_server().await.is_err()
+                {
+                    return Err(UNAVAILABLE);
+                }
+                if !still_ok() {
+                    return Err(UNAVAILABLE);
+                }
+                let result = memory::list(&backend, key.scope, context)
+                    .await
+                    .map_err(error_key);
+                if !still_ok() {
+                    return Err(UNAVAILABLE);
+                }
+                result
+            };
+            let result = platform::reads::cancellable(&cancel, read).await;
             if let Some(result) = result {
-                let _ = out.send(result.map_err(error_key)).await;
+                let _ = out.send(result).await;
                 for wake in [main, window].into_iter().flatten() {
                     wake();
                 }

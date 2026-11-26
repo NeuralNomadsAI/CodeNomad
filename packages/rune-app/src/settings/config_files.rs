@@ -35,6 +35,7 @@ pub(super) struct Editor {
 enum Read {
     List(Option<Vec<api::File>>),
     Content(usize, Option<api::Content>),
+    Unverified,
 }
 
 impl Editor {
@@ -126,7 +127,7 @@ impl Editor {
         self.owner
             .get_or_insert_with(|| ServerOwner::from_backend(backend));
         if prefs.transport_lost() || !ServerOwner::backend_verified(backend) {
-            if self.read.take().is_some() {
+            if self.read.take().is_some() || self.goal.take().is_some() {
                 changed = true;
             }
             return changed;
@@ -143,30 +144,41 @@ impl Editor {
                 match inbox.try_recv() {
                     Ok(result) => {
                         self.read = None;
-                        match result {
-                            Read::List(Some(files)) => {
-                                self.goal = (!files.is_empty()).then_some(0);
-                                self.files = Some(files);
-                            }
-                            Read::List(None) => {
-                                self.notice = Some("settings.configFiles.errors.loadList");
-                            }
-                            Read::Content(index, Some(content)) => {
-                                if self.goal == Some(index) {
-                                    self.goal = None;
+                        let still_verified = !prefs.transport_lost()
+                            && ServerOwner::backend_verified(backend)
+                            && self
+                                .owner
+                                .as_ref()
+                                .is_some_and(|owner| owner.same_backend_server(backend));
+                        if !still_verified || matches!(result, Read::Unverified) {
+                            self.goal = None;
+                        } else {
+                            match result {
+                                Read::List(Some(files)) => {
+                                    self.goal = (!files.is_empty()).then_some(0);
+                                    self.files = Some(files);
                                 }
-                                self.active = Some(index);
-                                self.exists = content.exists;
-                                self.crlf = content.contents.contains("\r\n")
-                                    && !content.contents.replace("\r\n", "").contains('\n');
-                                let input = content.contents.replace("\r\n", "\n");
-                                self.draft = TextEdit::new(&input);
-                                self.original = Some(input);
-                                self.diagnose();
-                            }
-                            Read::Content(_, None) => {
-                                self.goal = None;
-                                self.notice = Some("settings.configFiles.errors.loadContent");
+                                Read::List(None) => {
+                                    self.notice = Some("settings.configFiles.errors.loadList");
+                                }
+                                Read::Content(index, Some(content)) => {
+                                    if self.goal == Some(index) {
+                                        self.goal = None;
+                                    }
+                                    self.active = Some(index);
+                                    self.exists = content.exists;
+                                    self.crlf = content.contents.contains("\r\n")
+                                        && !content.contents.replace("\r\n", "").contains('\n');
+                                    let input = content.contents.replace("\r\n", "\n");
+                                    self.draft = TextEdit::new(&input);
+                                    self.original = Some(input);
+                                    self.diagnose();
+                                }
+                                Read::Content(_, None) => {
+                                    self.goal = None;
+                                    self.notice = Some("settings.configFiles.errors.loadContent");
+                                }
+                                Read::Unverified => {}
                             }
                         }
                         changed = true;
@@ -192,7 +204,7 @@ impl Editor {
             && ServerOwner::backend_verified(backend)
         {
             if self.files.is_none() {
-                self.start_read(backend, stamp, wake, None);
+                self.start_read(prefs, backend, stamp, wake, None);
                 changed = true;
             } else if let Some(index) = self.goal.or_else(|| self.active.is_none().then_some(0))
                 && let Some(id) = self
@@ -202,7 +214,7 @@ impl Editor {
                     .map(|file| file.id.clone())
             {
                 self.goal = Some(index);
-                self.start_read(backend, stamp, wake, Some((index, id)));
+                self.start_read(prefs, backend, stamp, wake, Some((index, id)));
                 changed = true;
             }
         }
@@ -211,6 +223,7 @@ impl Editor {
 
     fn start_read(
         &mut self,
+        prefs: &Preferences,
         backend: &Backend,
         stamp: (u64, u64),
         wake: &Waker,
@@ -220,11 +233,44 @@ impl Editor {
         let (out, reply) = bounded(1);
         self.read = Some((stamp, cancel, reply));
         let (backend, wake) = (backend.clone(), wake.clone());
+        let expected_server = self
+            .owner
+            .as_ref()
+            .and_then(|o| o.server().map(str::to_owned));
+        let prefs_auth = prefs.authority_handle();
+        let (prefs_gen, prepared_gen) = stamp;
+        let editor_auth = self.authority.clone();
+        let editor_gen = editor_auth.load(Ordering::SeqCst);
         platform::spawn(async move {
+            let still_ok = || {
+                prefs_auth.load(Ordering::SeqCst) == prefs_gen
+                    && editor_auth.load(Ordering::SeqCst) == editor_gen
+                    && backend.client.drop_generation() == prepared_gen
+                    && ServerOwner::backend_verified(&backend)
+                    && expected_server
+                        .as_deref()
+                        .is_none_or(|id| backend.client.server_identity() == Some(id))
+            };
             let read = async {
-                match content {
+                if !still_ok() {
+                    return Read::Unverified;
+                }
+                if backend.client.tracks_server_attestation()
+                    && backend.attest_server().await.is_err()
+                {
+                    return Read::Unverified;
+                }
+                if !still_ok() {
+                    return Read::Unverified;
+                }
+                let result = match content {
                     Some((index, id)) => Read::Content(index, api::read(&backend, &id).await.ok()),
                     None => Read::List(api::list(&backend).await.ok()),
+                };
+                if !still_ok() {
+                    Read::Unverified
+                } else {
+                    result
                 }
             };
             if let Some(result) = platform::reads::cancellable(&cancelled, read).await
@@ -573,6 +619,14 @@ mod tests {
                                 })
                                 .to_string(),
                             ),
+                            ("GET", "/api/storage/config/ui")
+                            | ("GET", "/api/storage/config/ui?authoritative=1") => {
+                                ("200 OK", json!({"settings": {"locale": "en"}}).to_string())
+                            }
+                            ("GET", "/api/storage/state/ui")
+                            | ("GET", "/api/storage/state/ui?authoritative=1") => {
+                                ("200 OK", json!({}).to_string())
+                            }
                             ("GET", "/api/config-files") => (
                                 "200 OK",
                                 json!([{
@@ -583,15 +637,23 @@ mod tests {
                                 }])
                                 .to_string(),
                             ),
-                            ("GET", "/api/config-files/codenomad/content") => (
-                                "200 OK",
-                                json!({
-                                    "id": "codenomad",
-                                    "exists": true,
-                                    "contents": "locale: en\n"
-                                })
-                                .to_string(),
-                            ),
+                            ("GET", "/api/config-files/codenomad/content") => {
+                                let contents =
+                                    if *server_id_srv.lock().unwrap() == "server-profile-a" {
+                                        "locale: en\n"
+                                    } else {
+                                        "locale: foreign-b\n"
+                                    };
+                                (
+                                    "200 OK",
+                                    json!({
+                                        "id": "codenomad",
+                                        "exists": true,
+                                        "contents": contents
+                                    })
+                                    .to_string(),
+                                )
+                            }
                             ("PUT", "/api/config-files/codenomad/content") => {
                                 let parsed: Value = serde_json::from_str(&body).unwrap();
                                 *saved_srv.lock().unwrap() =
@@ -620,10 +682,23 @@ mod tests {
 
             let mut prefs = Preferences::default();
             prefs.main_wake = Some(wake.clone());
-            prefs.backend = Some(backend_a);
+            prefs.bind(Some(backend_a));
+            for _ in 0..100 {
+                prefs.poll();
+                if !prefs.transport_lost()
+                    && prefs
+                        .saved(codenomad_client::settings::Owner::Config)
+                        .is_some()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!prefs.transport_lost());
 
             let mut editor = Editor::default();
             for _ in 0..100 {
+                prefs.poll();
                 editor.poll(&prefs, &wake, true);
                 if editor.active == Some(0) {
                     break;
@@ -634,16 +709,30 @@ mod tests {
             editor.draft = TextEdit::new("locale: fr\n");
             assert!(editor.dirty());
 
-            // Re-authenticate on the same server (new client_id, same base + server_identity).
+            // Re-authenticate on the same server through full bind() + poll() revalidation:
+            // draft stays read-only while transport_lost, then becomes saveable again.
             let backend_b = Backend::connect(&base, "").await.unwrap();
             backend_b.attest_server().await.unwrap();
             assert_ne!(
                 backend_b.client_id,
                 prefs.backend.as_ref().unwrap().client_id
             );
-            prefs.backend = Some(backend_b);
-
+            prefs.bind(Some(backend_b));
+            assert!(prefs.transport_lost());
             assert!(editor.poll(&prefs, &wake, true));
+            assert!(!editor.can_write(&prefs));
+            assert!(editor.dirty());
+            assert_eq!(editor.draft.text, "locale: fr\n");
+            for _ in 0..100 {
+                prefs.poll();
+                editor.poll(&prefs, &wake, true);
+                if !prefs.transport_lost() && editor.can_write(&prefs) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!prefs.transport_lost());
+            assert!(editor.can_write(&prefs));
             assert!(editor.dirty());
             assert_eq!(editor.draft.text, "locale: fr\n");
 
@@ -693,14 +782,54 @@ mod tests {
                 Some("locale: es\n")
             );
 
-            // Re-bind on the same server, then swap the HTTP target to profile B without
-            // dropping SSE or calling attest_server() beforehand: save() must re-attest live
-            // HTTP routing, revoke attestation, and never send the PUT to profile B.
+            // Re-bind on the same server through full revalidation, then swap HTTP routing to
+            // profile B without dropping SSE: a reload read must re-attest, revoke attestation,
+            // and never overwrite profile A's editor with profile B's file contents.
+            let backend_read_swap = Backend::connect(&base, "").await.unwrap();
+            backend_read_swap.attest_server().await.unwrap();
+            prefs.bind(Some(backend_read_swap.clone()));
+            for _ in 0..100 {
+                prefs.poll();
+                editor.poll(&prefs, &wake, true);
+                if !prefs.transport_lost() && editor.can_write(&prefs) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!prefs.transport_lost());
+            assert!(editor.can_write(&prefs));
+            *server_id.lock().unwrap() = "server-profile-b".to_owned();
+            editor.reload(0);
+            editor.poll(&prefs, &wake, true);
+            for _ in 0..100 {
+                editor.poll(&prefs, &wake, true);
+                if editor.read.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(backend_read_swap.client.attestation_revoked());
+            assert!(!editor.can_write(&prefs));
+            assert_ne!(editor.draft.text, "locale: foreign-b\n");
+            assert_eq!(editor.draft.text, "locale: es\n");
+
+            // Restore profile A, re-bind through full revalidation, then swap HTTP routing to
+            // profile B without dropping SSE before save(): save() must re-attest live HTTP
+            // routing, revoke attestation, and never send the PUT to profile B.
+            *server_id.lock().unwrap() = "server-profile-a".to_owned();
             let backend_reauth = Backend::connect(&base, "").await.unwrap();
             backend_reauth.attest_server().await.unwrap();
             prefs.bind(Some(backend_reauth.clone()));
-            prefs.clear_transport_lost();
-            editor.poll(&prefs, &wake, true);
+            for _ in 0..100 {
+                prefs.poll();
+                editor.poll(&prefs, &wake, true);
+                if !prefs.transport_lost() && editor.can_write(&prefs) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!prefs.transport_lost());
+            assert!(editor.can_write(&prefs));
             editor.draft = TextEdit::new("locale: it\n");
             assert!(editor.dirty());
             *saved_payload.lock().unwrap() = None;

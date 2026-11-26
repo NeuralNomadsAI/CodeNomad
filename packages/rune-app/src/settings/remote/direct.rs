@@ -19,6 +19,7 @@ use std::{cell::RefCell, rc::Rc};
 pub(super) struct DirectAccess {
     owner: Option<String>,
     meta: Option<DirectAccessMeta>,
+    meta_verified: bool,
     auth: Option<AuthStatus>,
     auth_error: Option<ErrorText>,
     auth_gen: u64,
@@ -62,8 +63,12 @@ impl DirectAccess {
         self.confirm = TextEdit::new("");
     }
 
+    fn mutating(&self) -> bool {
+        self.mode_flight.is_some() || self.password_flight.is_some()
+    }
+
     pub fn refresh(&mut self, backend: &Backend, wake: &Waker) {
-        if self.meta_flight.is_some() || self.password_flight.is_some() {
+        if self.meta_flight.is_some() || self.mutating() {
             self.pending_refresh = true;
             return;
         }
@@ -107,10 +112,14 @@ impl DirectAccess {
                     match reply.meta {
                         Ok(meta) => {
                             self.meta = Some(meta);
+                            self.meta_verified =
+                                backend.is_some_and(super::super::ServerOwner::backend_verified);
                             self.meta_error = None;
                             self.show_other_addresses = false;
                         }
                         Err(err) => {
+                            self.meta_verified = false;
+                            self.confirm_mode = None;
                             self.meta_error =
                                 Some(ErrorText::from_remote(err, "rune.connect_error"))
                         }
@@ -134,6 +143,8 @@ impl DirectAccess {
                 }
                 Err(_) if flight.is_closed() => {
                     self.meta_flight = None;
+                    self.meta_verified = false;
+                    self.confirm_mode = None;
                     self.meta_error = Some(ErrorText::Key("rune.connect_error"));
                     changed = true;
                 }
@@ -237,17 +248,20 @@ impl DirectAccess {
     }
 
     fn start_listening_mode(&mut self, backend: &Backend, wake: &Waker, target: ListeningMode) {
-        if self.mode_flight.is_some()
-            || self
+        if self.mutating()
+            || !self.meta_verified
+            || !super::super::ServerOwner::backend_verified(backend)
+            || !self
                 .meta
                 .as_ref()
-                .is_some_and(|m| m.listening_locked || !m.local_request)
+                .is_some_and(|m| !m.listening_locked && m.local_request)
         {
             return;
         }
         self.confirm_mode = None;
         self.mode_error = None;
         self.restart_notice = false;
+        self.meta_flight = None;
         let (out, input) = bounded(1);
         self.mode_flight = Some(input);
         let (backend, wake) = (backend.clone(), wake.clone());
@@ -260,7 +274,11 @@ impl DirectAccess {
     }
 
     fn submit_password(&mut self, backend: &Backend, wake: &Waker) {
-        if self.password_flight.is_some() || !self.meta.as_ref().is_some_and(|m| m.local_request) {
+        if self.mutating()
+            || !self.meta_verified
+            || !super::super::ServerOwner::backend_verified(backend)
+            || !self.meta.as_ref().is_some_and(|m| m.local_request)
+        {
             return;
         }
         self.password_error = None;
@@ -328,14 +346,14 @@ impl DirectAccess {
         access: fn(&mut S) -> Option<&mut Remote>,
     ) -> El {
         let loading = self.meta_flight.is_some();
-        let applying = self.mode_flight.is_some();
+        let applying = self.mutating();
         let locked = self.meta.as_ref().is_some_and(|m| m.listening_locked);
         let local_request = self.meta.as_ref().is_none_or(|m| m.local_request);
         let allow_external = self.allow_external();
         let refresh_shared = shared.clone();
         let refresh = layout::button(
             t("remoteAccess.refresh"),
-            !available || loading || self.password_flight.is_some(),
+            !available || loading || applying,
             move |s: &mut S| {
                 let Some(state) = access(s) else { return };
                 state.direct.password_error = None;
@@ -370,7 +388,13 @@ impl DirectAccess {
         let switch = chrome::setting_switch(
             t("remoteAccess.toggle.title"),
             allow_external,
-            !available || loading || applying || locked || !local_request || self.meta.is_none(),
+            !available
+                || loading
+                || applying
+                || locked
+                || !local_request
+                || !self.meta_verified
+                || self.meta.is_none(),
             move |s: &mut S| {
                 if let Some(state) = access(s) {
                     state.direct.disclosure_override = Some(true);
@@ -427,7 +451,7 @@ impl DirectAccess {
                             .child(
                                 chrome::primary_action(
                                     t("remoteAccess.listeningMode.restartConfirm.confirmLabel"),
-                                    !available || applying,
+                                    !available || applying || !self.meta_verified,
                                     move |s: &mut S| {
                                         let Some(state) = access(s) else { return };
                                         let prefs = confirm_shared.borrow();
@@ -507,6 +531,7 @@ impl DirectAccess {
             "remoteAccess.password.status.unset"
         };
         let saving = self.password_flight.is_some();
+        let mutating = self.mutating();
         let local_request = self.meta.as_ref().is_some_and(|m| m.local_request);
         card = card
             .child(text(t("remoteAccess.username").replace("{username}", username)).wrap())
@@ -521,15 +546,19 @@ impl DirectAccess {
                 "remoteAccess.password.actions.set"
             });
             card = card.child(
-                layout::button(toggle_label, !available || saving, move |s: &mut S| {
-                    if let Some(state) = access(s) {
-                        state.direct.password_form_open = !state.direct.password_form_open;
-                        state.direct.password_error = None;
-                        if !state.direct.password_form_open {
-                            state.direct.wipe_password_fields();
+                layout::button(
+                    toggle_label,
+                    !available || mutating || !self.meta_verified,
+                    move |s: &mut S| {
+                        if let Some(state) = access(s) {
+                            state.direct.password_form_open = !state.direct.password_form_open;
+                            state.direct.password_error = None;
+                            if !state.direct.password_form_open {
+                                state.direct.wipe_password_fields();
+                            }
                         }
-                    }
-                })
+                    },
+                )
                 .key("remote-password-toggle"),
             );
         }
@@ -582,7 +611,7 @@ impl DirectAccess {
                         } else {
                             "remoteAccess.password.save.label"
                         }),
-                        !available || saving,
+                        !available || mutating || !self.meta_verified,
                         move |s: &mut S| {
                             let Some(state) = access(s) else { return };
                             let prefs = save_shared.borrow();

@@ -273,7 +273,9 @@ impl Remote {
                             self.mutation_error = Some((outcome, err_text));
                         }
                     }
-                    if let Some((outcome, _)) = &self.mutation_error
+                    if let Some((outcome, err)) = &self.mutation_error
+                        && !(matches!(outcome, MutationOutcome::Start | MutationOutcome::Stop)
+                            && matches!(err, ErrorText::Raw(_)))
                         && outcome.confirmed(
                             &status,
                             devices.as_deref(),

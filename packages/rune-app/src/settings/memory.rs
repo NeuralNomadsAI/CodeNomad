@@ -279,7 +279,11 @@ impl Setting {
                         }
                     }
                 }
-            } else if !still_ok(current_auth) {
+            } else if !still_ok(current_auth)
+                || (backend.client.tracks_server_attestation()
+                    && backend.attest_server().await.is_err())
+                || !still_ok(current_auth)
+            {
                 (None, true)
             } else {
                 let actual = memory::enabled(&backend)

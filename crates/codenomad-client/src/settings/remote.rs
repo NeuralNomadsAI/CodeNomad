@@ -487,8 +487,12 @@ async fn confirm_listening_mode(
     let Ok(resp) = request.send().await else {
         return Err(fallback);
     };
-    let Ok(resp) = check_response(resp).await else {
-        return Err(fallback);
+    let resp = match check_response(resp).await {
+        Ok(resp) => resp,
+        Err(Error::Server(message)) if !matches!(fallback, Error::Server(_)) => {
+            return Err(Error::Server(message));
+        }
+        Err(_) => return Err(fallback),
     };
     let Ok(doc) = read_json(resp).await else {
         return Err(fallback);

@@ -92,6 +92,21 @@ fn authorized(
         && expected_server.is_none_or(|id| backend.client.server_identity() == Some(id))
 }
 
+async fn attest_and_authorize(
+    backend: &Backend,
+    intent: &Intent,
+    expected_server: Option<&str>,
+    require_token: bool,
+) -> bool {
+    if !authorized(backend, intent, expected_server, require_token) {
+        return false;
+    }
+    if backend.client.tracks_server_attestation() && backend.attest_server().await.is_err() {
+        return false;
+    }
+    authorized(backend, intent, expected_server, require_token)
+}
+
 fn owner(s: &State, intent: &Intent) -> Option<Backend> {
     let launcher = s.screen.launcher()?;
     let backend = launcher.connection.as_ref()?;
@@ -134,7 +149,9 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     run.owner,
                     run.expected_server,
                     async move {
-                        if !authorized(&backend, &check_intent, expected.as_deref(), true) {
+                        if !attest_and_authorize(&backend, &check_intent, expected.as_deref(), true)
+                            .await
+                        {
                             return Reply::Failed;
                         }
                         match memory::create_cleanup_session(
@@ -166,7 +183,14 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     run.owner,
                     run.expected_server,
                     async move {
-                        if !authorized(&backend, &check_intent, expected.as_deref(), false) {
+                        if !attest_and_authorize(
+                            &backend,
+                            &check_intent,
+                            expected.as_deref(),
+                            false,
+                        )
+                        .await
+                        {
                             return Reply::Failed;
                         }
                         let Ok(id) = message_id() else {
@@ -222,13 +246,13 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         s.input_scope.clone(),
         expected_server,
         async move {
-            if !authorized(&backend, &request, expected.as_deref(), true) {
+            if !attest_and_authorize(&backend, &request, expected.as_deref(), true).await {
                 return Reply::Failed;
             }
             if !matches!(memory::enabled(&backend).await, Ok(true)) {
                 return Reply::Failed;
             }
-            if !authorized(&backend, &request, expected.as_deref(), true) {
+            if !attest_and_authorize(&backend, &request, expected.as_deref(), true).await {
                 return Reply::Failed;
             }
             let list = memory::list_at(
