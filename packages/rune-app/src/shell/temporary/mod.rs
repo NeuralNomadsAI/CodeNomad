@@ -52,6 +52,7 @@ struct PendingDiscard {
 
 struct PendingReconcile {
     connection_generation: u64,
+    epoch: u64,
     backend: Backend,
     rx: Receiver<Result<Vec<String>, TemporaryError>>,
 }
@@ -61,6 +62,8 @@ pub(crate) struct Host {
     dialog: Option<CloseDialog>,
     viewport: (f32, f32),
     generation: u64,
+    reconcile_epoch: u64,
+    pending_return_focus: Option<String>,
     creating: Option<PendingCreate>,
     keeping: Option<PendingKeep>,
     discarding: Option<PendingDiscard>,
@@ -91,12 +94,21 @@ impl Host {
 
     pub(crate) fn cancel_for_auth(&mut self) {
         self.dialog = None;
-        self.creating = None;
+        if let Some(pending) = self.creating.take()
+            && let Ok(Ok(created)) = pending.rx.try_recv()
+        {
+            let backend = pending.backend;
+            platform::spawn(async move {
+                let _ = backend.abandon_temporary_folder(&created.path, None).await;
+            });
+        }
         self.keeping = None;
         self.stopped_queue.clear();
         self.pending_temporary_folders = None;
         self.reconcile_folders = None;
+        self.pending_return_focus = None;
         self.generation = self.generation.wrapping_add(1);
+        self.reconcile_epoch = self.reconcile_epoch.wrapping_add(1);
         if let Some(pending) = self.discarding.take() {
             self.pending_restore = Some(pending.stashed);
         }
@@ -213,6 +225,18 @@ pub(crate) fn host_supports_temporary(s: &State) -> bool {
         .is_some_and(|backend| backend.client.supports("temporary-workspaces"))
 }
 
+pub(crate) fn bump_reconcile_epoch(s: &mut State) {
+    s.temporary.reconcile_epoch = s.temporary.reconcile_epoch.wrapping_add(1);
+}
+
+pub(crate) fn set_pending_return_focus(s: &mut State, target: Option<String>) {
+    s.temporary.pending_return_focus = target;
+}
+
+pub(crate) fn clear_pending_return_focus(s: &mut State) {
+    s.temporary.pending_return_focus = None;
+}
+
 pub(crate) fn trigger_reconnect_reconcile(s: &mut State) {
     if !workspace::has_temporary_tabs(s) || !host_supports_temporary(s) {
         return;
@@ -224,6 +248,7 @@ pub(crate) fn trigger_reconnect_reconcile(s: &mut State) {
     }) else {
         return;
     };
+    let epoch = s.temporary.reconcile_epoch;
     let (out, rx) = bounded(1);
     let wake = s.wake.clone();
     let req_backend = backend.clone();
@@ -235,6 +260,7 @@ pub(crate) fn trigger_reconnect_reconcile(s: &mut State) {
     });
     s.temporary.reconcile_folders = Some(PendingReconcile {
         connection_generation,
+        epoch,
         backend,
         rx,
     });
@@ -327,10 +353,16 @@ pub(crate) fn request_close(s: &mut State, tab_key: &str, tx: &mut Tx) {
     }
 }
 
-fn capture_return_focus(tab_key: &str, tx: &Tx) -> Option<String> {
-    tx.focused()
+fn capture_return_focus(s: &mut State, tab_key: &str, tx: &Tx) -> Option<String> {
+    s.temporary
+        .pending_return_focus
+        .take()
         .filter(|key| !key.starts_with("command-palette-"))
-        .map(str::to_owned)
+        .or_else(|| {
+            tx.focused()
+                .filter(|key| !key.starts_with("command-palette-"))
+                .map(str::to_owned)
+        })
         .or_else(|| Some(format!("t-{tab_key}")))
 }
 
@@ -338,7 +370,7 @@ fn open_dialog(s: &mut State, tab_key: &str, captured_focus: Option<String>, tx:
     if is_open(s) || blocked_by_higher_modal(s) {
         return;
     }
-    let return_focus = captured_focus.or_else(|| capture_return_focus(tab_key, tx));
+    let return_focus = captured_focus.or_else(|| capture_return_focus(s, tab_key, tx));
     super::Panels::dismiss_outside(s, tx);
     let scope = s.input_scope.clone();
     s.temporary.dialog = Some(CloseDialog {
@@ -435,7 +467,7 @@ fn start_discard(
     captured_focus: Option<String>,
     tx: &mut Tx,
 ) {
-    let return_focus = captured_focus.or_else(|| capture_return_focus(tab_key, tx));
+    let return_focus = captured_focus.or_else(|| capture_return_focus(s, tab_key, tx));
     let Some(stashed) = workspace::stash_for_discard(s, tab_key, return_focus, tx) else {
         return;
     };
@@ -545,6 +577,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
     }
     if let Some(folders) = s.temporary.pending_temporary_folders.take() {
+        s.temporary.reconcile_epoch = s.temporary.reconcile_epoch.wrapping_add(1);
         changed |= workspace::reconcile_temporary_folders(s, &folders);
     }
     if let Some(result) = s
@@ -559,7 +592,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 && !l.authentication_required
                 && l.connection_generation() == pending.connection_generation
         });
-        if same_connection {
+        if same_connection && pending.epoch == s.temporary.reconcile_epoch {
             match result {
                 Ok(folders) => {
                     changed |= workspace::reconcile_temporary_folders(s, &folders);
@@ -620,6 +653,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             changed = true;
             match result {
                 Ok(()) => {
+                    s.temporary.reconcile_epoch = s.temporary.reconcile_epoch.wrapping_add(1);
                     workspace::clear_temporary_mark(
                         s,
                         &pending.folder,
@@ -634,6 +668,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     let _ = crate::settings::authentication_required(s, &pending.backend);
                 }
                 Err(err) if err.is_not_temporary() => {
+                    s.temporary.reconcile_epoch = s.temporary.reconcile_epoch.wrapping_add(1);
                     workspace::clear_temporary_mark(
                         s,
                         &pending.folder,
@@ -643,6 +678,12 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     if pending.close_after {
                         workspace::close_ordinary(s, &pending.tab_key, tx);
                     }
+                }
+                Err(err) if err.is_not_found() => {
+                    if pending.close_after {
+                        let _ = workspace::detach_dead_temporary(s, &pending.tab_key, tx);
+                    }
+                    emit_temporary_error(s, "temporaryInstance.keep.failedTitle", &err);
                 }
                 Err(err) => {
                     emit_temporary_error(s, "temporaryInstance.keep.failedTitle", &err);
@@ -661,6 +702,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             changed = true;
             match result {
                 Ok(()) => {
+                    s.temporary.reconcile_epoch = s.temporary.reconcile_epoch.wrapping_add(1);
                     workspace::finish_discarded(s, pending.stashed, false, false, tx);
                 }
                 Err(TemporaryError::Unauthorized) => {
@@ -669,6 +711,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     let _ = crate::settings::authentication_required(s, &backend);
                 }
                 Err(err) if err.is_not_temporary() => {
+                    s.temporary.reconcile_epoch = s.temporary.reconcile_epoch.wrapping_add(1);
                     let folder = pending.stashed.folder.clone();
                     let backend_id = pending.stashed.backend_id.clone();
                     let server_id = pending.stashed.server_id.clone();
@@ -682,6 +725,14 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         emit_temporary_error(s, "temporaryInstance.discard.failedTitle", &err);
                     }
                     workspace::finish_discarded(s, pending.stashed, true, true, tx);
+                }
+                Err(err) if err.is_not_found() => {
+                    // The workspace occurrence is gone on the server; detach this stale tab
+                    // locally without sending a duplicate DELETE and without stripping sibling marks.
+                    if !pending.quiet {
+                        emit_temporary_error(s, "temporaryInstance.discard.failedTitle", &err);
+                    }
+                    workspace::finish_discarded(s, pending.stashed, true, false, tx);
                 }
                 Err(err) => {
                     let tab_key = pending.stashed.tab_key.clone();

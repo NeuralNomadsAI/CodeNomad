@@ -77,6 +77,7 @@ pub struct Launcher {
     stopped_during_pending: std::collections::HashMap<String, (bool, bool)>,
     stopped_during_pending_overflow: bool,
     pub(super) pending_temporary_cleanup: Option<(Backend, String, Option<String>)>,
+    pub(crate) pending_restore_intent: Option<String>,
     detached_reconcile: Option<(u64, HashSet<String>, Receiver<Option<Vec<Project>>>)>,
     detached_reconcile_trailing: bool,
     failed_detached_workspaces: HashSet<String>,
@@ -134,33 +135,28 @@ impl Launcher {
     }
 }
 
-pub(crate) fn cancel_pending_open(s: &mut State) {
+pub(crate) fn cancel_pending_restore(s: &mut State) -> bool {
     let intent = s
         .workspace
         .as_ref()
         .map(|ui| ui.active_key().to_owned())
         .unwrap_or_else(|| "launcher".into());
     let Some(l) = s.screen.launcher_mut() else {
-        return;
+        return false;
     };
-    if !l.pending {
-        return;
+    if !l.pending || l.pending_restore_intent.as_deref() != Some(intent.as_str()) {
+        return false;
     }
     l.openings.revoke_intent(&intent);
     l.result = None;
     l.pending = false;
     l.listing = false;
+    l.pending_restore_intent = None;
     l.selection_ticket = None;
     l.resume_after_job = false;
     l.stopped_during_pending.clear();
     l.stopped_during_pending_overflow = false;
-    if let Some((backend, path, req_id)) = l.pending_temporary_cleanup.take() {
-        crate::platform::spawn(async move {
-            let _ = backend
-                .abandon_temporary_folder(&path, req_id.as_deref())
-                .await;
-        });
-    }
+    true
 }
 
 impl Launcher {
@@ -254,6 +250,7 @@ impl Launcher {
             stopped_during_pending: std::collections::HashMap::new(),
             stopped_during_pending_overflow: false,
             pending_temporary_cleanup: None,
+            pending_restore_intent: None,
             detached_reconcile: None,
             detached_reconcile_trailing: false,
             failed_detached_workspaces: HashSet::new(),
@@ -288,6 +285,7 @@ impl Launcher {
             return;
         }
         self.pending = true;
+        self.pending_restore_intent = None;
         self.pending_connection_generation = self.connection_generation;
         self.pending_stream_generation = self.workspace_stream_generation;
         self.stopped_during_pending.clear();
@@ -498,6 +496,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             relayed |= crate::workspace::deliver_detached_events(s, &stopped);
         }
         if let Some(folders) = temporary_folders {
+            crate::shell::temporary::bump_reconcile_epoch(s);
             relayed |= crate::workspace::reconcile_temporary_folders(s, &folders);
         }
         #[cfg(target_arch = "wasm32")]
@@ -694,6 +693,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.result = None;
     l.pending = false;
     l.listing = false;
+    l.pending_restore_intent = None;
     let temporary_cleanup = l.pending_temporary_cleanup.take();
     let stale_connection = l.pending_connection_generation != l.connection_generation;
     let pending_stream_generation = l.pending_stream_generation;
@@ -734,8 +734,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if stale_connection && temporary_cleanup.is_some() {
                 drop(opening);
                 if let Some((backend, path, req_id)) = temporary_cleanup {
+                    let cleanup_backend = l.connection.clone().unwrap_or(backend);
                     crate::platform::spawn(async move {
-                        let _ = backend
+                        let _ = cleanup_backend
                             .abandon_temporary_folder(&path, req_id.as_deref())
                             .await;
                     });
@@ -745,8 +746,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             if opening.adopt().is_err() {
                 if let Some((backend, path, req_id)) = temporary_cleanup {
+                    let cleanup_backend = l.connection.clone().unwrap_or(backend);
                     crate::platform::spawn(async move {
-                        let _ = backend
+                        let _ = cleanup_backend
                             .abandon_temporary_folder(&path, req_id.as_deref())
                             .await;
                     });

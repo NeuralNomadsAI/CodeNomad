@@ -785,9 +785,14 @@ fn discard_refusal_cancels_neighbour_restore_preserves_exit_snapshot_and_handles
         "exit snapshot during in-flight discard must retain stashed temporary tab"
     );
     wait_until(&mut rt, |s| !s.temporary.in_flight());
-    // temporary_not_found must NOT strip sibling ws-sib-2's temporary mark!
+    // temporary_not_found detaches only dead ws-sib-1 (no second DELETE) and keeps sibling ws-sib-2's temporary mark!
     let snap = rt.state.workspace.as_ref().unwrap().snapshot();
-    match &snap.tabs[1] {
+    assert_eq!(
+        snap.tabs.len(),
+        1,
+        "temporary_not_found on discard must detach dead occurrence locally"
+    );
+    match &snap.tabs[0] {
         workspace::Tab::Workspace(w) => {
             assert!(
                 w.temporary,
@@ -796,6 +801,13 @@ fn discard_refusal_cancels_neighbour_restore_preserves_exit_snapshot_and_handles
         }
         other => panic!("unexpected sibling tab: {other:?}"),
     }
+    assert!(
+        server
+            .requests()
+            .iter()
+            .all(|(req, _)| !req.starts_with("DELETE ")),
+        "temporary_not_found detach must not send duplicate DELETE"
+    );
 
     // 2. Discard on ws-sib-2 returns 401 -> restores tab without dialog and flags auth_required
     rt.update(|s, tx| {
@@ -838,14 +850,54 @@ fn discard_refusal_cancels_neighbour_restore_preserves_exit_snapshot_and_handles
 #[test]
 fn retained_stopped_preserves_drafts_and_discard_refusal_cancels_unopened_neighbour_restore() {
     let server = MockServer::start(vec![
-        // Discard returns 409 temporary_running while neighbour restore is pending
+        // 1. Discard returns 409 temporary_running while neighbour restore is pending
         MockReply {
             status: "409 Conflict",
             body: r#"{"error":"temporary_running"}"#.into(),
         },
+        // 2. Selecting neighbour AFTER refusal must still trigger launcher::restore (no empty cache!)
+        MockReply {
+            status: "200 OK",
+            body:
+                r#"{"id":"ws-neigh","location":{"directory":"/repo/neighbour"},"temporary":false}"#
+                    .into(),
+        },
+        MockReply {
+            status: "200 OK",
+            body: r#"{"data":[],"cursor":{}}"#.into(),
+        },
     ]);
     let mut rt = connected_runtime(server.backend.clone());
-    // Seed tab-0 as a restored-but-unopened regular workspace tab (no binding) + tab-1 as active temporary
+    // Seed tab-0 as a genuine restored-but-unopened neighbour (Tab::Workspace with no binding/project/cache)
+    // and tab-1 as the active open temporary workspace!
+    let restored_snap = workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: Default::default(),
+        file_wrap: None,
+        tabs: vec![
+            workspace::Tab::Workspace(workspace::Workspace {
+                backend_id: Some("external".into()),
+                server_id: Some("srv-temp".into()),
+                folder: "/repo/neighbour".into(),
+                project_name: None,
+                temporary: false,
+                occurrence: 1,
+                workspace_id: None,
+                active_session_id: None,
+                drafts: Default::default(),
+                attachment_drafts: Default::default(),
+                attachment_parts: Default::default(),
+                view: Default::default(),
+            }),
+            workspace::Tab::Blank,
+        ],
+        active: Some(1),
+    };
+    let encoded = workspace::encode(&restored_snap).unwrap();
+    let decoded = workspace::decode(&encoded).unwrap();
+    assert_eq!(decoded.tabs.len(), 2);
+    // Open active temporary tab, then switch to test cancel_pending_restore + untouched neighbour
     open_fixture_tab(
         &mut rt,
         "ws-temp-focus",
@@ -857,20 +909,23 @@ fn retained_stopped_preserves_drafts_and_discard_refusal_cancels_unopened_neighb
         }],
     );
     let temp_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
-    // Simulate a pending launcher restore job that would race if restore_stashed didn't cancel it
+    // Simulate a pending restore tagged with the active tab intent; discard refusal must cancel it
+    // without touching unrelated non-restore jobs.
     rt.update(|s, tx| {
         strings::with_locale("en", || {
             open_dialog(s, &temp_key, Some(format!("t-{temp_key}")), tx);
             choose_discard(s, tx);
         });
+        let yield_key = s.workspace.as_ref().unwrap().active_key().to_owned();
         if let Some(l) = s.screen.launcher_mut() {
             l.pending = true;
+            l.pending_restore_intent = Some(yield_key);
         }
     });
     wait_until(&mut rt, |s| !s.temporary.in_flight());
     assert!(
         rt.state.screen.launcher().is_some_and(|l| !l.pending),
-        "restore_stashed must cancel any in-flight neighbour restore job"
+        "restore_stashed must cancel a pending neighbour restore matching active intent"
     );
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_key(), temp_key);
 

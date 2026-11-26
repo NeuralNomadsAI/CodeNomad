@@ -187,4 +187,5 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
         };
         Ok(Reply::Opened(opening, rows, bound))
     });
+    l.pending_restore_intent = Some(intent);
 }

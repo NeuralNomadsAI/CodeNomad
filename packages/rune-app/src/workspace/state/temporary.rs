@@ -29,15 +29,16 @@ pub(crate) struct StashedTemporary {
 }
 
 pub(crate) fn has_temporary_tabs(s: &State) -> bool {
-    s.workspace.as_ref().is_some_and(|ui| {
-        ui.entries
-            .iter()
-            .any(|item| matches!(&item.saved, Tab::Workspace(w) if w.temporary))
-    }) || s
-        .screen
-        .launcher()
-        .and_then(|l| l.project.as_ref())
-        .is_some_and(|p| p.temporary)
+    s.temporary.stashed_for_snapshot().is_some()
+        || s.workspace.as_ref().is_some_and(|ui| {
+            ui.entries
+                .iter()
+                .any(|item| matches!(&item.saved, Tab::Workspace(w) if w.temporary))
+        })
+        || s.screen
+            .launcher()
+            .and_then(|l| l.project.as_ref())
+            .is_some_and(|p| p.temporary)
 }
 
 fn current_backend_identity(s: &State) -> Option<(Option<String>, Option<String>)> {
@@ -224,10 +225,18 @@ pub(crate) fn restore_stashed(
     tx: &mut Tx,
 ) {
     if stashed.was_active {
-        // Cancel any async neighbour restore/open triggered when yielding to the neighbour tab,
-        // so a late Reply::Opened cannot overwrite the restored temporary tab.
-        crate::launcher::cancel_pending_open(s);
-        tabs::stash(s);
+        // Cancel only a neighbour restore triggered when yielding to an unopened neighbour,
+        // and avoid stashing an empty cache onto an unopened neighbour so selecting it later
+        // still runs launcher::restore cleanly.
+        let _ = crate::launcher::cancel_pending_restore(s);
+        let active_opened = s
+            .workspace
+            .as_ref()
+            .and_then(|ui| ui.entries.get(ui.active))
+            .is_some_and(|entry| entry.project.is_some());
+        if active_opened {
+            tabs::stash(s);
+        }
     }
     let focus_target = restore_focus.then(|| {
         stashed
@@ -342,6 +351,7 @@ pub(crate) fn clear_temporary_mark(
                     w.temporary = false;
                     changed = true;
                 }
+                item.unmarked_by_registry = false;
                 if let Some(project) = &mut item.project
                     && project.temporary
                 {
@@ -389,7 +399,10 @@ pub(crate) fn reconcile_temporary_folders(s: &mut State, folders: &[String]) -> 
                 if w.temporary != is_temp {
                     w.temporary = is_temp;
                     if !is_temp {
+                        item.unmarked_by_registry = true;
                         cleared_tabs.push(item.key.clone());
+                    } else {
+                        item.unmarked_by_registry = false;
                     }
                     changed = true;
                 }
@@ -429,6 +442,21 @@ pub(crate) fn reconcile_temporary_folders(s: &mut State, folders: &[String]) -> 
     changed
 }
 
+pub(crate) fn detach_dead_temporary(s: &mut State, tab_key: &str, tx: &mut Tx) -> bool {
+    capture(s);
+    let blocked = s
+        .workspace
+        .as_ref()
+        .and_then(|ui| ui.entries.iter().position(|item| item.key == tab_key))
+        .is_none_or(|index| close_blocked(s, index));
+    if blocked {
+        return false;
+    }
+    crate::shell::temporary::dismiss_for_tab(s, tab_key);
+    tabs::detach_local_without_release(s, tab_key, true, tx);
+    true
+}
+
 pub(crate) fn detach_stopped_temporary(
     s: &mut State,
     workspace_id: &str,
@@ -436,24 +464,40 @@ pub(crate) fn detach_stopped_temporary(
     temporary_retained: bool,
     tx: &mut Tx,
 ) -> bool {
+    capture(s);
+    let keep_drafts = !(deleted && !temporary_retained);
     let keys: Vec<String> = s
         .workspace
         .as_ref()
         .map(|ui| {
             ui.entries
                 .iter()
-                .filter(|item| {
-                    item.project.as_ref().is_some_and(|p| p.id == workspace_id)
-                        && matches!(&item.saved, Tab::Workspace(w) if w.temporary)
+                .enumerate()
+                .filter(|(index, item)| {
+                    let matches_workspace =
+                        item.project.as_ref().is_some_and(|p| p.id == workspace_id);
+                    let matches_temp = matches!(
+                        &item.saved,
+                        Tab::Workspace(w)
+                            if w.temporary || (!keep_drafts && item.unmarked_by_registry)
+                    );
+                    if !matches_workspace || !matches_temp {
+                        return false;
+                    }
+                    // When the server retained the folder on disk, never forcefully drop a tab
+                    // carrying in-memory oversized drafts, unsaved file edits, or pending forms.
+                    if keep_drafts && close_blocked(s, *index) {
+                        return false;
+                    }
+                    true
                 })
-                .map(|item| item.key.clone())
+                .map(|(_, item)| item.key.clone())
                 .collect()
         })
         .unwrap_or_default();
     if keys.is_empty() {
         return false;
     }
-    let keep_drafts = !(deleted && !temporary_retained);
     for tab_key in keys {
         crate::shell::temporary::dismiss_for_tab(s, &tab_key);
         tabs::detach_local_without_release(s, &tab_key, keep_drafts, tx);
@@ -537,5 +581,178 @@ mod tests {
             closed.iter().all(|w| w.folder != "/tmp/cn-del"),
             "deleted non-retained workspace.stopped must purge drafts"
         );
+    }
+
+    #[test]
+    fn retained_stopped_preserves_oversized_live_draft_and_late_deleted_stop_detaches_after_registry()
+     {
+        let mut s = init();
+        let mut l = Launcher::fixture();
+        l.server_id = Some("srv-test".into());
+        s.screen = Screen::Launcher(l);
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+
+        // Tab 0: oversized in-memory live_draft -> retained stop must keep tab open!
+        let w_big = crate::workspace::Workspace {
+            backend_id: Some("external".into()),
+            server_id: Some("srv-test".into()),
+            folder: "/tmp/cn-big".into(),
+            project_name: None,
+            temporary: true,
+            occurrence: 1,
+            workspace_id: Some("ws-big".into()),
+            active_session_id: Some("s-big".into()),
+            drafts: Default::default(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        };
+        let mut e_big = entry("tab-0".into(), Tab::Workspace(w_big));
+        e_big.project = Some(Project {
+            id: "ws-big".into(),
+            path: "/tmp/cn-big".into(),
+            temporary: true,
+        });
+        e_big.live_drafts.insert(
+            "s-big".into(),
+            LiveDraft::fixture_oversized("x".repeat(70_000)),
+        );
+
+        // Tab 1: unmarked by an earlier temporaryChanged poll, then receives late deleted stop!
+        let w_late = crate::workspace::Workspace {
+            backend_id: Some("external".into()),
+            server_id: Some("srv-test".into()),
+            folder: "/tmp/cn-late".into(),
+            project_name: None,
+            temporary: true,
+            occurrence: 1,
+            workspace_id: Some("ws-late".into()),
+            active_session_id: None,
+            drafts: Default::default(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        };
+        let mut e_late = entry("tab-1".into(), Tab::Workspace(w_late));
+        e_late.project = Some(Project {
+            id: "ws-late".into(),
+            path: "/tmp/cn-late".into(),
+            temporary: true,
+        });
+
+        ui.entries = vec![e_big, e_late];
+        ui.active = 0;
+        s.workspace = Some(ui);
+        let mut rt = Runtime::new(s, |_, _| rune::el(), (800.0, 600.0), Env::new(false, 1.0));
+        rt.update(|s, tx| {
+            // 1. Retained stop on tab with oversized live_draft keeps it open (no data loss)
+            assert!(!detach_stopped_temporary(s, "ws-big", true, true, tx));
+            assert_eq!(s.workspace.as_ref().unwrap().entries.len(), 2);
+
+            // 2. Registry update arrives BEFORE workspace.stopped in an earlier poll
+            assert!(reconcile_temporary_folders(s, &["/tmp/cn-big".into()]));
+            // Late deleted non-retained stop still detaches tab-1 cleanly!
+            assert!(detach_stopped_temporary(s, "ws-late", true, false, tx));
+        });
+        assert_eq!(rt.state.workspace.as_ref().unwrap().entries.len(), 1);
+        assert_eq!(rt.state.workspace.as_ref().unwrap().entries[0].key, "tab-0");
+    }
+
+    #[test]
+    fn restore_stashed_leaves_unopened_neighbour_uncached_and_preserves_unrelated_pending_job() {
+        let mut s = init();
+        let mut l = Launcher::fixture();
+        let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        let temp_project = Project {
+            id: "ws-yield".into(),
+            path: "/tmp/cn-yield".into(),
+            temporary: true,
+        };
+        l.connection = Some(backend.clone());
+        l.server_id = Some("srv-neigh".into());
+        l.project = Some(temp_project.clone());
+        s.screen = Screen::Launcher(l);
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+
+        // tab-0: restored-but-unopened neighbour (project: None, binding: None, cache: None)
+        let w_neigh = crate::workspace::Workspace {
+            backend_id: Some("external".into()),
+            server_id: Some("srv-neigh".into()),
+            folder: "/repo/unopened".into(),
+            project_name: None,
+            temporary: false,
+            occurrence: 1,
+            workspace_id: None,
+            active_session_id: None,
+            drafts: Default::default(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        };
+        let e_neigh = entry("tab-0".into(), Tab::Workspace(w_neigh));
+
+        // tab-1: active opened temporary workspace
+        let w_temp = crate::workspace::Workspace {
+            backend_id: Some("external".into()),
+            server_id: Some("srv-neigh".into()),
+            folder: "/tmp/cn-yield".into(),
+            project_name: None,
+            temporary: true,
+            occurrence: 1,
+            workspace_id: Some("ws-yield".into()),
+            active_session_id: None,
+            drafts: Default::default(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        };
+        let mut e_temp = entry("tab-1".into(), Tab::Workspace(w_temp));
+        e_temp.binding = Some(backend);
+        e_temp.project = Some(Project {
+            id: "ws-yield".into(),
+            path: "/tmp/cn-yield".into(),
+            temporary: true,
+        });
+
+        ui.entries = vec![e_neigh, e_temp];
+        ui.active = 1;
+        s.workspace = Some(ui);
+        let mut rt = Runtime::new(s, |_, _| rune::el(), (800.0, 600.0), Env::new(false, 1.0));
+        rt.update(|s, tx| {
+            let stashed = stash_for_discard(s, "tab-1", Some("t-tab-1".into()), tx)
+                .expect("stash active temporary tab");
+            // Yielding to unopened neighbour tab-0 started launcher::restore tagged with "tab-0"
+            assert_eq!(
+                s.screen
+                    .launcher()
+                    .and_then(|l| l.pending_restore_intent.as_deref()),
+                Some("tab-0")
+            );
+            assert!(s.screen.launcher().is_some_and(|l| l.pending));
+            restore_stashed(s, stashed, true, tx);
+            assert!(
+                s.screen.launcher().is_some_and(|l| !l.pending),
+                "restore_stashed must cancel neighbour restore"
+            );
+            assert!(
+                s.workspace.as_ref().unwrap().entries[0].cache.is_none(),
+                "unopened neighbour must not receive an empty cache so later clicks still restore it"
+            );
+
+            // Now verify an unrelated pending job (e.g. CreateSession, pending_restore_intent == None) is NOT cancelled
+            let stashed2 = stash_for_discard(s, "tab-1", Some("t-tab-1".into()), tx)
+                .expect("stash active temporary tab again");
+            if let Some(l) = s.screen.launcher_mut() {
+                l.pending = true;
+                l.pending_restore_intent = None;
+            }
+            restore_stashed(s, stashed2, true, tx);
+            assert!(
+                s.screen.launcher().is_some_and(|l| l.pending),
+                "unrelated non-restore pending job must not be cancelled by restore_stashed"
+            );
+        });
     }
 }

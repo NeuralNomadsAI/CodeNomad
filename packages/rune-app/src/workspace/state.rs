@@ -14,8 +14,8 @@ mod strip;
 mod temporary;
 pub(crate) use temporary::{
     StashedTemporary, TemporaryTabInfo, active_temporary_workspace, clear_temporary_mark,
-    detach_stopped_temporary, finish_discarded, has_temporary_tabs, reconcile_temporary_folders,
-    restore_stashed, stash_for_discard, temporary_tab_info,
+    detach_dead_temporary, detach_stopped_temporary, finish_discarded, has_temporary_tabs,
+    reconcile_temporary_folders, restore_stashed, stash_for_discard, temporary_tab_info,
 };
 
 pub use drafts::{
@@ -79,6 +79,7 @@ pub(super) struct Entry {
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
+    unmarked_by_registry: bool,
 }
 pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
     let ui = s.workspace.as_ref()?;
@@ -243,18 +244,18 @@ impl Ui {
         self.panel_widths = saved.panel_widths;
         self.file_wrap = saved.file_wrap;
     }
-    pub(super) fn release_all(&self) {
-        let records = self
+    pub(super) fn release_all_with_stashed(&self, stashed: Option<&StashedTemporary>) {
+        let mut records: Vec<_> = self
             .entries
             .iter()
             .filter_map(|item| Some((item.binding.clone()?, item.project.as_ref()?.id.clone())))
             .collect();
+        if let Some(stashed) = stashed {
+            records.push((stashed.backend.clone(), stashed.project.id.clone()));
+        }
         platform::release_records_on_exit(records, self.openings.clone());
     }
-    fn stage(&mut self) {
-        self.stage_with_stashed(None);
-    }
-    fn stage_with_stashed(&mut self, stashed: Option<&StashedTemporary>) {
+    pub(super) fn stage_with_stashed(&mut self, stashed: Option<&StashedTemporary>) {
         #[cfg(target_arch = "wasm32")]
         if let Some(store) = &self.persistence.store {
             store.watch_openings(self.openings.clone());
@@ -279,7 +280,7 @@ impl Ui {
                 return;
             }
         };
-        let records: Vec<_> = self
+        let mut records: Vec<_> = self
             .entries
             .iter()
             .filter_map(|e| {
@@ -289,6 +290,9 @@ impl Ui {
                 ))
             })
             .collect();
+        if let Some(stashed) = stashed {
+            records.push((stashed.backend.base.clone(), stashed.project.id.clone()));
+        }
         store.stage(&bytes, &records);
         if stashed.is_none() {
             self.staged_revision = Some(self.revision);
@@ -335,6 +339,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         cleared,
         pending_drafts: HashSet::new(),
         live_drafts: Default::default(),
+        unmarked_by_registry: false,
     }
 }
 fn busy(s: &State) -> bool {
@@ -364,13 +369,14 @@ pub fn unselect_missing(s: &mut State, id: &str) -> bool {
         return false;
     }
     capture(s);
+    let stashed = s.temporary.stashed_for_snapshot();
     let Some(ui) = &mut s.workspace else {
         return false;
     };
     if let Tab::Workspace(saved) = &mut ui.entries[ui.active].saved {
         saved.active_session_id = None;
         ui.changed();
-        ui.stage();
+        ui.stage_with_stashed(stashed);
         return true;
     }
     false

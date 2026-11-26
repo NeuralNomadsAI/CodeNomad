@@ -412,7 +412,8 @@ pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
     super::capture(s);
     if let Some(mut ui) = s.workspace.take() {
         ui.openings.close();
-        let snapshot = ui.snapshot_with_stashed(s.temporary.stashed_for_snapshot());
+        let stashed = s.temporary.stashed_for_snapshot();
+        let snapshot = ui.snapshot_with_stashed(stashed);
         let drafts_saved = ui.persistence.flush_file_drafts(&s.documents);
         #[cfg(not(target_arch = "wasm32"))]
         crate::files::document::recovery::show(
@@ -420,7 +421,7 @@ pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
             !drafts_saved,
         );
         if ui.persistence.flush(&snapshot) && drafts_saved && !ui.has_unsaved_large_drafts() {
-            ui.release_all();
+            ui.release_all_with_stashed(stashed);
         } else {
             crate::platform::release_records_on_exit(Vec::new(), ui.openings.clone());
         }

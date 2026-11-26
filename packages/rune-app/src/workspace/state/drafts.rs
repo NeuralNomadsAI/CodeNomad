@@ -25,6 +25,14 @@ impl LiveDraft {
             || self.unconfirmed.is_some()
             || self.command_unconfirmed.is_some()
     }
+
+    #[cfg(test)]
+    pub(super) fn fixture_oversized(text: String) -> Self {
+        Self {
+            text: Some(text),
+            ..Self::default()
+        }
+    }
 }
 
 impl Ui {
@@ -116,7 +124,7 @@ pub fn capture(s: &mut State) {
     {
         ui.changed();
     }
-    ui.stage();
+    ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
     s.workspace = Some(ui);
 }
 

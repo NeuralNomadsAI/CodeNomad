@@ -228,11 +228,11 @@ impl Backend {
         }
         let mut payload = json!({ "path": path });
         if let Some(raw) = request_id {
+            if raw.chars().any(char::is_control) {
+                return Err(TemporaryError::Other("invalid requestId".into()));
+            }
             let trimmed = raw.trim();
-            if trimmed.is_empty()
-                || trimmed.encode_utf16().nth(128).is_some()
-                || trimmed.chars().any(char::is_control)
-            {
+            if trimmed.is_empty() || trimmed.encode_utf16().nth(128).is_some() {
                 return Err(TemporaryError::Other("invalid requestId".into()));
             }
             payload["requestId"] = Value::String(trimmed.to_owned());
@@ -477,6 +477,10 @@ mod tests {
         let invalid_empty =
             block_on(backend.abandon_temporary_folder("/tmp/cn-temp-3", Some("   "))).unwrap_err();
         assert!(!invalid_empty.is_unavailable());
+        let invalid_ctrl =
+            block_on(backend.abandon_temporary_folder("/tmp/cn-temp-3", Some("\treq-1\n")))
+                .unwrap_err();
+        assert!(!invalid_ctrl.is_unavailable());
         let long_id = "x".repeat(129);
         let invalid_long =
             block_on(backend.abandon_temporary_folder("/tmp/cn-temp-3", Some(&long_id)))

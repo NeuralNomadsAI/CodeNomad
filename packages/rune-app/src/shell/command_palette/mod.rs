@@ -203,6 +203,12 @@ pub(super) fn execute_by_id(s: &mut State, id: &'static str, tx: &mut Tx) -> boo
         if !super::tab_rename::open_active_with_return_focus(s, return_target, tx) {
             restore_focus(target, tx);
         }
+    } else if item.id == "close-instance" {
+        let return_target = target.clone();
+        restore_focus(target, tx);
+        super::temporary::set_pending_return_focus(s, return_target);
+        commands::execute(s, item.id, tx);
+        super::temporary::clear_pending_return_focus(s);
     } else {
         restore_focus(target, tx);
         commands::execute(s, item.id, tx);
@@ -227,6 +233,12 @@ fn execute_selected(s: &mut State, tx: &mut Tx) -> bool {
         if !super::tab_rename::open_active_with_return_focus(s, return_target, tx) {
             restore_focus(target, tx);
         }
+    } else if id == "close-instance" {
+        let return_target = target.clone();
+        restore_focus(target, tx);
+        super::temporary::set_pending_return_focus(s, return_target);
+        commands::execute(s, id, tx);
+        super::temporary::clear_pending_return_focus(s);
     } else {
         restore_focus(target, tx);
         commands::execute(s, id, tx);
