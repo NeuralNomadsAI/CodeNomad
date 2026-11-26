@@ -76,6 +76,7 @@ pub(super) struct Entry {
     clear_authority: std::collections::BTreeMap<String, drafts::ClearAuthority>,
     superseded_on_delete: HashSet<String>,
     pending_deleted: std::collections::BTreeSet<String>,
+    closing_deferred: bool,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
 }
 
@@ -350,6 +351,86 @@ impl Ui {
                 }
             }
         }
+        // Persist closed drafts whose deletion recovery was deferred (e.g. temporary CSPRNG
+        // outage) into available v1 snapshot slots (__no_session_draft__ and unoccupied sibling
+        // session_id slots) without mutating live state or changing v1 JSON.
+        // Limit: if CSPRNG fails and more closed drafts exist than available v1 slots, extra
+        // copies cannot be stored without substituting weak UUIDs or changing the v1 schema.
+        for (scope, id) in &self.closed_pending_deleted {
+            let clear_authorities = drafts::collect_open_clear_authorities(self, scope, id);
+            let (closed_bundles, _) =
+                drafts::collect_closed_bundles_for_recovery(self, scope, id, &clear_authorities);
+            if closed_bundles.is_empty() {
+                continue;
+            }
+            let projected_count = self
+                .entries
+                .iter()
+                .filter(|entry| {
+                    entry.pending_drafts.contains(id)
+                        && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
+                })
+                .count();
+            let mut no_session_free = !tabs.iter().any(|tab| {
+                matches!(tab, Tab::Workspace(w) if scope.matches(w)
+                    && (w.drafts.get(super::NO_SESSION_DRAFT_ID).is_some_and(|t| !t.is_empty())
+                        || w.attachment_drafts.contains(super::NO_SESSION_DRAFT_ID)
+                        || w.attachment_parts.contains_key(super::NO_SESSION_DRAFT_ID)))
+            });
+            let preferred_dest = self
+                .entries
+                .iter()
+                .enumerate()
+                .find_map(|(i, e)| {
+                    (!e.closing_deferred
+                        && matches!(&tabs[i], Tab::Workspace(w) if scope.matches(w)))
+                    .then_some(i)
+                })
+                .or_else(|| {
+                    tabs.iter()
+                        .position(|tab| matches!(tab, Tab::Workspace(w) if scope.matches(w)))
+                });
+            for bundle in closed_bundles.into_iter().skip(projected_count) {
+                let target = if no_session_free && let Some(dest) = preferred_dest {
+                    no_session_free = false;
+                    Some((dest, super::NO_SESSION_DRAFT_ID))
+                } else {
+                    let find_empty = |prefer_surviving: bool| {
+                        tabs.iter().enumerate().find_map(|(i, tab)| {
+                            let Tab::Workspace(w) = tab else {
+                                return None;
+                            };
+                            if (prefer_surviving && self.entries[i].closing_deferred)
+                                || !scope.matches(w)
+                                || self.entries[i].cleared.contains(id)
+                                || w.drafts.contains_key(id)
+                                || w.attachment_drafts.contains(id)
+                                || w.attachment_parts.contains_key(id)
+                            {
+                                return None;
+                            }
+                            Some((i, id.as_str()))
+                        })
+                    };
+                    find_empty(true).or_else(|| find_empty(false))
+                };
+                if let Some((dest, key)) = target
+                    && let Tab::Workspace(w) = &mut tabs[dest]
+                {
+                    if let Some(text) = bundle.text
+                        && !text.is_empty()
+                    {
+                        w.drafts.insert(key.into(), text);
+                    }
+                    if bundle.attachment_draft || bundle.attachment_parts.is_some() {
+                        w.attachment_drafts.insert(key.into());
+                    }
+                    if let Some(parts) = bundle.attachment_parts {
+                        w.attachment_parts.insert(key.into(), parts);
+                    }
+                }
+            }
+        }
         let mut snap = Snapshot {
             revision: self.revision,
             saved_at: self.saved_at,
@@ -510,6 +591,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         clear_authority,
         superseded_on_delete: HashSet::new(),
         pending_deleted: std::collections::BTreeSet::new(),
+        closing_deferred: false,
         live_drafts: Default::default(),
     }
 }

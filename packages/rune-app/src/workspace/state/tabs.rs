@@ -262,19 +262,26 @@ pub(super) fn close_with_uuid(
     }
     let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
     capture(s);
-    let mut deferred = super::drafts::drain_window_deleted_sessions_closing_with_uuid(
+    let _ = super::drafts::drain_window_deleted_sessions_closing_with_uuid(
         s,
         Some(index),
         &mut next_uuid,
-    )
-    .deferred;
-    let active_incoming_deleted =
-        active && super::drafts::drain_incoming_session_deleted(s.incoming.as_ref());
+    );
+    let active_incoming_deleted = active && crate::chat::events::drain_active_incoming_deleted(s);
+    let active_visit_deleted: Vec<String> = if active {
+        s.screen
+            .launcher_mut()
+            .map(|l| l.visits.poll_checks().deleted)
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let pending_deleted: std::collections::BTreeSet<String> = s
         .workspace
         .as_mut()
         .map(|ui| {
-            let mut ids: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            let mut ids: std::collections::BTreeSet<String> =
+                active_visit_deleted.into_iter().collect();
             let scope = ui.entries.get(index).and_then(|entry| match &entry.saved {
                 Tab::Workspace(saved) => Some(super::ProjectScope::from_workspace(saved)),
                 Tab::Blank => None,
@@ -304,6 +311,7 @@ pub(super) fn close_with_uuid(
             ids
         })
         .unwrap_or_default();
+    let mut deferred = false;
     for deleted_id in pending_deleted {
         let outcome = super::drafts::recover_missing_session_draft_closing_with_uuid(
             s,
@@ -321,7 +329,17 @@ pub(super) fn close_with_uuid(
         }
     }
     if deferred {
+        if let Some(ui) = &mut s.workspace
+            && let Some(entry) = ui.entries.get_mut(index)
+        {
+            entry.closing_deferred = true;
+        }
         return;
+    }
+    if let Some(ui) = &mut s.workspace
+        && let Some(entry) = ui.entries.get_mut(index)
+    {
+        entry.closing_deferred = false;
     }
     if active {
         s.notifications.supersede_navigation();

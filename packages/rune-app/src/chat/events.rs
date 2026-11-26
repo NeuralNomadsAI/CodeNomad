@@ -30,6 +30,12 @@ pub(crate) fn poll_chat_for_window(s: &mut State, limit: usize, defer_reader_syn
     changed
 }
 
+/// Applies all queued conversation events on the active tab during tab closure without discarding
+/// non-deletion updates if closure is deferred, returning whether `Event::SessionDeleted` arrived.
+pub(crate) fn drain_active_incoming_deleted(s: &mut State) -> bool {
+    drain_chat(s, 1024, true, true, false).1
+}
+
 fn drain_chat(
     s: &mut State,
     limit: usize,
