@@ -964,7 +964,7 @@ async function runBench() {
       errors,
       forbidden,
       scope: 'browser-stage',
-      overallVerdictFile: 'proof.json',
+      overallVerdictFile: '../proof.json',
       result: 'pass',
     }
   } catch (error) {

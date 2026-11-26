@@ -5,7 +5,7 @@ import {spawn,execFile} from 'node:child_process'
 import {spawnFixtureChild,stopFixtureChild,stopFixtureHandle,fixtureChildPid} from '../../../scripts/native-fixture-guards.mjs'
 import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,createStreamRedactor,stripFixtureServerSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {promisify} from 'node:util'
-import {existsSync,renameSync,writeFileSync} from 'node:fs'
+import {renameSync,writeFileSync} from 'node:fs'
 import {lstat,mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
 import path from 'node:path'
@@ -36,16 +36,20 @@ assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes(
 const root=path.resolve(import.meta.dirname,'../../..')
 const ownedWorker=process.argv.includes('--owned-mobile-worker')
 const workerProfileEnv=process.env.CODENOMAD_LAUNCHER_WORKER_PROFILE
-if(ownedWorker)delete process.env.CODENOMAD_LAUNCHER_WORKER_PROFILE
+const workerTokenEnv=process.env.CODENOMAD_LAUNCHER_WORKER_TOKEN
+if(ownedWorker){
+  delete process.env.CODENOMAD_LAUNCHER_WORKER_PROFILE
+  delete process.env.CODENOMAD_LAUNCHER_WORKER_TOKEN
+}
 const validatedWorkerProfile=ownedWorker&&workerProfileEnv
-  ?await claimOwnedWorkerProfile(workerProfileEnv,(await assertWorktreeTestRoot(root)).testsReal)
+  ?await claimOwnedWorkerProfile(workerProfileEnv,(await assertWorktreeTestRoot(root)).testsReal,workerTokenEnv)
   :undefined
 if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDrawers||webSse7Tabs)&&!ownedWorker)){
   const testsReal=(await assertWorktreeTestRoot(root)).testsReal
   const workerProfile=path.join(testsReal,`launcher-${randomUUID()}`)
-  await mkdir(workerProfile,{recursive:true})
-  const workerEnv={...process.env,CODENOMAD_LAUNCHER_WORKER_PROFILE:workerProfile}
-  const workerStartedFile=path.join(workerProfile,'.worker-started')
+  const workerToken=randomUUID()
+  await mkdir(workerProfile)
+  const workerEnv={...process.env,CODENOMAD_LAUNCHER_WORKER_PROFILE:workerProfile,CODENOMAD_LAUNCHER_WORKER_TOKEN:workerToken}
   const graceMs=webAndroid?150000:25000
   const spawnPosixBridge=()=>{
     const guardsUrl=new URL('../../../scripts/native-fixture-guards.mjs',import.meta.url).href
@@ -118,7 +122,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
       :spawnPosixBridge()
   }catch(spawnError){
     console.error(spawnError?.message??spawnError)
-    const finalResult=publishWorkerProof({workerProfile,exit:{code:null,signal:null,error:spawnError},workerStarted:false})
+    const finalResult=publishWorkerProof({workerProfile,workerToken,exit:{code:null,signal:null,error:spawnError}})
     process.exit(finalResult)
   }
   worker.stdin?.on('error',()=>{})
@@ -171,7 +175,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   }
   process.off('SIGINT',stop)
   process.off('SIGTERM',stop)
-  const finalResult=publishWorkerProof({workerProfile,exit,workerStarted:existsSync(workerStartedFile),unconfirmedStop,stopError,outerSignal})
+  const finalResult=publishWorkerProof({workerProfile,workerToken,exit,unconfirmedStop,stopError,outerSignal})
   process.exit(finalResult)
 }
 const webMissions=process.argv.includes('--web-missions')

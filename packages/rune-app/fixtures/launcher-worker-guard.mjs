@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {readFileSync,renameSync,unlinkSync,writeFileSync} from 'node:fs'
+import {lstatSync,readFileSync,renameSync,unlinkSync,writeFileSync} from 'node:fs'
 import {lstat,realpath} from 'node:fs/promises'
 import path from 'node:path'
 
@@ -13,7 +13,8 @@ export function needsOwnedWindowsWorker(argv, platform = process.platform) {
     || argv.includes('--web-sse-7tabs')
 }
 
-export async function claimOwnedWorkerProfile(workerProfilePath, testsReal, pid = process.pid) {
+export async function claimOwnedWorkerProfile(workerProfilePath, testsReal, token, pid = process.pid) {
+  assert(typeof token === 'string' && token.length > 0, 'Worker start token is required')
   const canonicalRoot = await realpath(testsReal)
   const resolvedProfile = path.resolve(workerProfilePath)
   assert.equal(path.dirname(resolvedProfile), canonicalRoot, `Worker profile must reside under ${canonicalRoot}`)
@@ -22,8 +23,21 @@ export async function claimOwnedWorkerProfile(workerProfilePath, testsReal, pid 
   assert(!stat.isSymbolicLink() && stat.isDirectory(), `Worker profile must be a real directory: ${resolvedProfile}`)
   const profileReal = await realpath(resolvedProfile)
   assert.equal(path.dirname(profileReal), canonicalRoot, `Worker profile canonical path must reside under ${canonicalRoot}`)
-  writeFileSync(path.join(profileReal, '.worker-started'), String(pid), { flag: 'wx' })
+  writeFileSync(path.join(profileReal, '.worker-started'), `${token}\n${pid}\n`, { flag: 'wx' })
   return profileReal
+}
+
+export function readOwnedWorkerStarted(workerProfile, token) {
+  if (typeof token !== 'string' || !token.length) return false
+  const markerPath = path.join(workerProfile, '.worker-started')
+  try {
+    const stat = lstatSync(markerPath)
+    if (!stat.isFile() || stat.isSymbolicLink()) return false
+    const [firstLine] = readFileSync(markerPath, 'utf8').split(/\r?\n/)
+    return firstLine === token
+  } catch {
+    return false
+  }
 }
 
 export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop = false, stopError = null, outerSignal = null, proof = null }) {
@@ -53,14 +67,16 @@ export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop
   }
 }
 
-export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfirmedStop = false, stopError = null, outerSignal = null }) {
+export function publishWorkerProof({ workerProfile, workerToken, exit, workerStarted, unconfirmedStop = false, stopError = null, outerSignal = null }) {
   const workerStartedFile = path.join(workerProfile, '.worker-started')
   const workerProofFile = path.join(workerProfile, 'proof.worker.json.tmp')
   const supervisorProofTmp = path.join(workerProfile, 'proof.supervisor.json.tmp')
   const proofFile = path.join(workerProfile, 'proof.json')
+  const ownedMarkerVerified = workerToken ? readOwnedWorkerStarted(workerProfile, workerToken) : false
+  const effectiveWorkerStarted = workerToken ? ownedMarkerVerified : Boolean(workerStarted)
   let proof
   try { proof = JSON.parse(readFileSync(workerProofFile, 'utf8')) } catch {}
-  const verdict = evaluateWorkerExit({ exit, workerStarted, unconfirmedStop, stopError, outerSignal, proof })
+  const verdict = evaluateWorkerExit({ exit, workerStarted: effectiveWorkerStarted, unconfirmedStop, stopError, outerSignal, proof })
   const { workerExited, interrupted, finalResult, workerExitCode, workerExitSignal, workerStopError, workerSpawnError } = verdict
   const finalProof = {
     ...(proof ?? { profile: workerProfile }),
@@ -76,7 +92,9 @@ export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfi
   renameSync(supervisorProofTmp, proofFile)
   if (workerExited) {
     try { unlinkSync(workerProofFile) } catch {}
-    try { unlinkSync(workerStartedFile) } catch {}
+    if (ownedMarkerVerified) {
+      try { unlinkSync(workerStartedFile) } catch {}
+    }
   }
   return finalResult
 }

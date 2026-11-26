@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import {existsSync,readFileSync} from 'node:fs'
-import {mkdir,mkdtemp,rm,symlink} from 'node:fs/promises'
+import {existsSync,readFileSync,writeFileSync} from 'node:fs'
+import {mkdir,mkdtemp,realpath,rm,symlink} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -103,39 +103,54 @@ test('evaluateWorkerExit marks spawn errors, supervisor code 86, and unconfirmed
   assert.equal(clean.finalResult, 0)
 })
 
-test('claimOwnedWorkerProfile rejects links and preexisting markers, and publishWorkerProof records unstarted bridge failure', async () => {
+test('claimOwnedWorkerProfile rejects links and preexisting markers, and publishWorkerProof verifies per-run token', async () => {
   const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'cn-worker-guard-'))
   try {
-    const testsRoot = path.join(tmpRoot, 'tests')
+    const rawTestsRoot = path.join(tmpRoot, 'tests')
     const outsideDir = path.join(tmpRoot, 'outside')
-    await mkdir(testsRoot, { recursive: true })
+    await mkdir(rawTestsRoot, { recursive: true })
     await mkdir(outsideDir, { recursive: true })
+    const testsRoot = await realpath(rawTestsRoot)
 
     const realProfile = path.join(testsRoot, 'launcher-12345678-1234-1234-1234-123456789abc')
     await mkdir(realProfile)
-    const claimed = await claimOwnedWorkerProfile(realProfile, testsRoot, 4242)
-    assert.equal(readFileSync(path.join(claimed, '.worker-started'), 'utf8'), '4242')
+    const claimed = await claimOwnedWorkerProfile(realProfile, testsRoot, 'tok-run-1', 4242)
+    assert.equal(readFileSync(path.join(claimed, '.worker-started'), 'utf8'), 'tok-run-1\n4242\n')
     await assert.rejects(
-      () => claimOwnedWorkerProfile(realProfile, testsRoot, 4242),
+      () => claimOwnedWorkerProfile(realProfile, testsRoot, 'tok-run-2', 4242),
       { code: 'EEXIST' },
     )
+
+    const foreignResult = publishWorkerProof({
+      workerProfile: realProfile,
+      workerToken: 'tok-run-2',
+      exit: { code: 1, signal: null },
+    })
+    assert.equal(foreignResult, 1)
+    assert.equal(existsSync(path.join(realProfile, '.worker-started')), true)
+    const foreignProof = JSON.parse(readFileSync(path.join(realProfile, 'proof.json'), 'utf8'))
+    assert.equal(foreignProof.workerExited, false)
+    assert.equal(foreignProof.workerExitCode, null)
+    assert.equal(foreignProof.workerSpawnError, 'Owned worker did not start (supervisor exit code=1, signal=null)')
 
     const linkProfile = path.join(testsRoot, 'launcher-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
     await symlink(outsideDir, linkProfile, process.platform === 'win32' ? 'junction' : 'dir')
     await assert.rejects(
-      () => claimOwnedWorkerProfile(linkProfile, testsRoot, 4242),
+      () => claimOwnedWorkerProfile(linkProfile, testsRoot, 'tok-link', 4242),
       /must be a real directory/,
     )
     assert.equal(existsSync(path.join(outsideDir, '.worker-started')), false)
 
     const unstartedProfile = path.join(testsRoot, 'launcher-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
     await mkdir(unstartedProfile)
+    writeFileSync(path.join(unstartedProfile, '.worker-started'), 'foreign-token\n9999\n')
     const result = publishWorkerProof({
       workerProfile: unstartedProfile,
+      workerToken: 'tok-unstarted',
       exit: { code: 1, signal: null },
-      workerStarted: existsSync(path.join(unstartedProfile, '.worker-started')),
     })
     assert.equal(result, 1)
+    assert.equal(existsSync(path.join(unstartedProfile, '.worker-started')), true)
     const proof = JSON.parse(readFileSync(path.join(unstartedProfile, 'proof.json'), 'utf8'))
     assert.equal(proof.result, 1)
     assert.equal(proof.workerExited, false)
