@@ -868,10 +868,12 @@ mod tests {
     #[test]
     fn scroll_rollback_preserves_online_phase_and_reader_send_barrier() {
         let (sender, _receiver) = codenomad_client::bounded(2);
+        let (out, incoming) = codenomad_client::bounded(8);
         let mut s = crate::init();
         s.phase = Phase::StreamDisconnected { running: false };
         s.stream_offline = true;
         s.commands = Some(sender);
+        s.incoming = Some(incoming);
         s.messages = (0..4)
             .map(|i| {
                 Message {
@@ -902,7 +904,7 @@ mod tests {
                 0,
                 crate::transport::Event::ReaderSync {
                     page: crate::history::Page {
-                        rows: trimmed,
+                        rows: trimmed.clone(),
                         older: Some("cursor-older".into()),
                         newer: None,
                         running: false,
@@ -928,6 +930,60 @@ mod tests {
         assert!(rt.state.phase == Phase::Ready);
         assert!(!rt.state.stream_offline);
         assert!(!can_send(&rt.state));
+
+        // Dropping SSE after rollback enters StreamDisconnected (offline send exception applies
+        // because the reader is already installed), then AgentHint(true) announces reconnect and
+        // must end the offline exception before the replacement ReaderSync clears resume_pending.
+        out.try_send(crate::transport::Event::ConnectionLost)
+            .unwrap();
+        assert!(crate::chat::events::poll_chat_for_window(
+            &mut rt.state,
+            64,
+            false
+        ));
+        assert!(matches!(
+            rt.state.phase,
+            Phase::StreamDisconnected { running: false }
+        ));
+        assert!(rt.state.stream_offline);
+        assert!(can_send(&rt.state));
+
+        out.try_send(crate::transport::Event::AgentHint(true))
+            .unwrap();
+        assert!(crate::chat::events::poll_chat_for_window(
+            &mut rt.state,
+            64,
+            false
+        ));
+        assert!(!rt.state.stream_offline);
+        assert!(rt.state.reader.as_ref().unwrap().blocks_send());
+        assert!(!can_send(&rt.state));
+
+        let generation = rt.state.reader.as_ref().unwrap().generation();
+        lane.events
+            .try_send((
+                generation,
+                0,
+                crate::transport::Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: trimmed,
+                        older: Some("cursor-older".into()),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 2,
+                },
+            ))
+            .unwrap();
+        assert!(crate::chat::events::poll_chat_for_window(
+            &mut rt.state,
+            64,
+            false
+        ));
+        assert!(rt.state.phase == Phase::Ready);
+        assert!(!rt.state.stream_offline);
+        assert!(can_send(&rt.state));
     }
 
     #[test]
