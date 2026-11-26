@@ -670,8 +670,8 @@ impl Reader {
                     self.quiet = Instant::now();
                 }
                 if !self.inbox_published || self.inbox != items {
+                    let previous = std::mem::replace(&mut self.inbox, items);
                     self.inbox_published = true;
-                    self.inbox = items;
                     let fence = crate::inbox::InboxFence::from_revision(
                         wire.inbox_version.clone(),
                         wire_inbox,
@@ -692,6 +692,7 @@ impl Reader {
                         return Ok(Turn::Stop);
                     }
                     if wire.inbox_version.load(SeqCst) != wire_inbox {
+                        self.inbox = previous;
                         self.inbox_published = false;
                         self.inbox_dirty = self.active_reader;
                         self.inbox_quiet = Instant::now() + Duration::from_millis(100);
@@ -704,8 +705,8 @@ impl Reader {
                 self.inbox_retries = 0;
                 self.inbox_overlap_repairs = 0;
                 if !self.inbox_published || !self.inbox.is_empty() {
+                    let previous = std::mem::take(&mut self.inbox);
                     self.inbox_published = true;
-                    self.inbox.clear();
                     let fence = crate::inbox::InboxFence::from_revision(
                         wire.inbox_version.clone(),
                         wire_inbox,
@@ -726,6 +727,7 @@ impl Reader {
                         return Ok(Turn::Stop);
                     }
                     if wire.inbox_version.load(SeqCst) != wire_inbox {
+                        self.inbox = previous;
                         self.inbox_supported = true;
                         self.inbox_published = false;
                         self.inbox_dirty = self.active_reader;
@@ -1155,9 +1157,61 @@ mod diagnostic_tests {
                 other => panic!("expected fenced authoritative Event::Inbox, got {other:?}"),
             }
             assert!(
-                reader.inbox_dirty && !reader.inbox_published,
-                "invalidated publication must schedule a replacement inbox GET"
+                reader.inbox_dirty && !reader.inbox_published && reader.inbox.is_empty(),
+                "invalidated publication must restore previous cache and schedule a replacement inbox GET"
             );
+        });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn select_input_bounds_rx_burst_to_eight_before_ready_inbox_reply() {
+        use super::super::{
+            Input,
+            transport::{MAX_RX_BURST_BEFORE_INBOX, select_input},
+        };
+        use super::InboxReply;
+        use crate::bounded;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let (rx_tx, rx) = bounded(32);
+            let (inbox_tx, inbox_rx) = bounded(4);
+            for i in 0..16u64 {
+                rx_tx.send(Input::Hint(1, i + 1)).await.unwrap();
+            }
+            inbox_tx
+                .send(InboxReply {
+                    epoch: 1,
+                    generation: 0,
+                    seq: 0,
+                    wire_inbox: 0,
+                    result: Ok(Some(Vec::new())),
+                })
+                .await
+                .unwrap();
+
+            let mut rx_burst = 0u8;
+            let mut rx_before_inbox = 0u8;
+            loop {
+                let (input, reply) =
+                    select_input(&rx, &inbox_rx, &mut rx_burst, None, 0, true, None).await;
+                if reply.is_some() {
+                    break;
+                }
+                assert!(input.is_some());
+                rx_before_inbox += 1;
+                assert!(
+                    rx_before_inbox <= MAX_RX_BURST_BEFORE_INBOX,
+                    "rx burst exceeded hard bound"
+                );
+            }
+            assert_eq!(rx_before_inbox, MAX_RX_BURST_BEFORE_INBOX);
+            assert_eq!(rx_burst, 0);
+            assert!(!rx.is_empty(), "remaining rx inputs must still be queued");
         });
     }
 }

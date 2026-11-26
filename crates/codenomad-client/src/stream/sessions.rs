@@ -12,6 +12,26 @@ pub(super) async fn relay(
 ) -> Result<()> {
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
+    // Bump inbox_version before any awaited side notification so backpressure never hides invalidations.
+    let invalidates_inbox = own
+        && (value["type"] == "instance.eventStatus"
+            || (value["type"] == "instance.event"
+                && (native["type"] == "server.connected"
+                    || (native["data"]["sessionID"] == b.session
+                        && native["type"].as_str().is_some_and(|kind| {
+                            kind.starts_with("session.inbox.")
+                                || matches!(
+                                    kind,
+                                    "session.moved"
+                                        | "session.deleted"
+                                        | "session.revert.staged"
+                                        | "session.revert.cleared"
+                                        | "session.revert.committed"
+                                )
+                        })))));
+    if invalidates_inbox {
+        state.inbox_version.fetch_add(1, SeqCst);
+    }
     if own && value["type"] == "instance.event" {
         children::observe(b, native);
         if let Some(urgent) = native["type"]
@@ -112,7 +132,6 @@ pub(super) async fn relay(
             .await?;
         }
         let version = state.version.fetch_add(1, SeqCst) + 1;
-        state.inbox_version.fetch_add(1, SeqCst);
         out.send(if ready {
             Input::Available(epoch, version)
         } else {
@@ -162,20 +181,6 @@ pub(super) async fn relay(
             Some("session.moved" | "session.deleted" | "session.revert.committed")
         ) {
             state.history_revision.fetch_add(1, SeqCst);
-        }
-        if native["type"].as_str().is_some_and(|kind| {
-            kind.starts_with("session.inbox.")
-                || matches!(
-                    kind,
-                    "session.moved"
-                        | "session.deleted"
-                        | "session.revert.staged"
-                        | "session.revert.cleared"
-                        | "session.revert.committed"
-                        | "server.connected"
-                )
-        }) {
-            state.inbox_version.fetch_add(1, SeqCst);
         }
         if native["type"] == "session.moved"
             && native["data"]["sessionID"] == b.session

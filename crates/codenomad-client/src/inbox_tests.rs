@@ -1226,7 +1226,7 @@ fn unrelated_sse_text_burst_does_not_starve_completed_inbox_read() {
             backend,
             out_tx,
             cmd_rx,
-            wake,
+            wake.clone(),
             Some(reading),
         ));
 
@@ -1274,5 +1274,64 @@ fn unrelated_sse_text_burst_does_not_starve_completed_inbox_read() {
 
         let _ = cmd_tx.send(Command::Close).await;
         let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+
+        // A historical reader receiving server.connected still schedules and publishes a fresh valid inbox GET.
+        let mut hist = FixtureState::new(
+            vec![user_json("m1", "older")],
+            vec![inbox_json("q-hist", "queue", "pending while historical")],
+        );
+        hist.newer_cursor = Some(json!({"kind": "after", "messageID": "m1"}));
+        let hist_server = LoopbackServer::start(hist);
+        let hist_backend = hist_server.backend();
+        let (out_tx, _out_rx) = bounded(64);
+        let (cmd_tx, cmd_rx) = bounded(16);
+        let (demand_tx, demand_rx) = demand::open();
+        let hgen = demand_tx.publish(Some(demand::Target::Around("m1".into())));
+        let (h_tx, h_rx) = bounded(64);
+        let h_reading = ReadingLane {
+            demand: demand_rx,
+            events: h_tx,
+            connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        };
+        let h_task = tokio::spawn(recovery::run_with_reading(
+            hist_backend,
+            out_tx,
+            cmd_rx,
+            wake,
+            Some(h_reading),
+        ));
+        recv_reader(&h_rx, |seen_gen, event| {
+            seen_gen == hgen
+                && matches!(
+                    event,
+                    Event::Inbox {
+                        items,
+                        authoritative: true,
+                        ..
+                    } if items.len() == 1 && items[0].id == "q-hist"
+                )
+        })
+        .await;
+        let calls_before = hist_server.state.lock().unwrap().inbox_calls;
+        hist_server
+            .state
+            .lock()
+            .unwrap()
+            .emit_native(json!({"type": "server.connected", "data": {}}));
+        recv_reader(&h_rx, |seen_gen, event| {
+            seen_gen == hgen
+                && matches!(
+                    event,
+                    Event::Inbox {
+                        items,
+                        authoritative: true,
+                        fence: Some(ref f),
+                    } if items.len() == 1 && items[0].id == "q-hist" && f.is_valid()
+                )
+        })
+        .await;
+        assert!(hist_server.state.lock().unwrap().inbox_calls > calls_before);
+        let _ = cmd_tx.send(Command::Close).await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), h_task).await;
     });
 }
