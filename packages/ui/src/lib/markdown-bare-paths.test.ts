@@ -3,7 +3,9 @@ import { describe, it } from "node:test"
 
 import { BARE_PATH_MAX_CANDIDATES, barePathCandidates, inlineCodeCandidates } from "./markdown-bare-paths"
 
-const hrefs = (text: string) => barePathCandidates(text).map(candidate => candidate.href)
+const readings = (text: string) => barePathCandidates(text).flatMap(candidate =>
+  candidate.integral ? [candidate.integral, ...candidate.pieces] : candidate.pieces)
+const hrefs = (text: string) => readings(text).map(piece => piece.href)
 
 describe("bare path candidates", () => {
   it("extracts paths embedded in prose", () => {
@@ -16,11 +18,95 @@ describe("bare path candidates", () => {
     assert.deepEqual(hrefs("看看src/app.ts吧，就是那個檔案"), ["src/app.ts"])
   })
 
-  it("keeps paths whose file names contain CJK letters as prose boundaries", () => {
-    // The CJK name splits the path into fragments that stay legal candidates;
-    // existence gating downstream decides they convert nothing.
-    assert.deepEqual(hrefs("已写入 docs/superpowers/specs/2026-11-26-算法工作台MVP-design.md 定稿"),
+  it("extracts a path whose file name contains CJK letters as one integral reading", () => {
+    const [candidate] = barePathCandidates("已写入 docs/superpowers/specs/2026-11-26-算法工作台MVP-design.md 定稿")
+    assert.equal(candidate.integral?.href, "docs/superpowers/specs/2026-11-26-算法工作台MVP-design.md")
+    // The boundary reading stays available when the integral name misses.
+    assert.deepEqual(candidate.pieces.map(piece => piece.href),
       ["docs/superpowers/specs/2026-11-26-", "MVP-design.md"])
+  })
+
+  it("keeps CJK-wrapped tokens from reading as one file name", () => {
+    const [candidate] = barePathCandidates("看看src/app.ts吧，就是那個檔案")
+    assert.equal(candidate.integral, undefined)
+    assert.deepEqual(candidate.pieces.map(piece => piece.href), ["src/app.ts"])
+  })
+
+  it("splits interior letter runs into fallback readings", () => {
+    const [candidate] = barePathCandidates("对比 src/app.ts和docs/x.md 一下")
+    assert.equal(candidate.integral?.href, "src/app.ts和docs/x.md")
+    assert.deepEqual(candidate.pieces.map(piece => piece.href), ["src/app.ts", "docs/x.md"])
+  })
+
+  it("extracts bare CJK file names and Windows paths with CJK segments", () => {
+    assert.equal(barePathCandidates("已写入 算法工作台MVP-design.md 了")[0]?.integral?.href,
+      "算法工作台MVP-design.md")
+    assert.equal(barePathCandidates("open C:\\repo\\中文\\app.ts there")[0]?.integral?.href,
+      "C:\\repo\\中文\\app.ts")
+  })
+
+  it("treats any script's letters as file-name content", () => {
+    assert.equal(barePathCandidates("see docs/результаты.md now")[0]?.integral?.href, "docs/результаты.md")
+  })
+
+  it("keeps CJK punctuation as a token boundary", () => {
+    const [candidate] = barePathCandidates("规格写在 docs/算法.md，两处待确认。")
+    assert.equal(candidate.integral?.href, "docs/算法.md")
+  })
+
+  it("rejects email-shaped text with CJK accounts", () => {
+    assert.deepEqual(hrefs("mail 用户@例子.com now"), [])
+  })
+
+  it("keeps a Windows drive prefix glued to preceding prose", () => {
+    const [candidate] = barePathCandidates("打开C:\\repo\\src\\app.ts")
+    assert.deepEqual(candidate.pieces.map(piece => piece.href), ["C:\\repo\\src\\app.ts"])
+    const [wrapped] = barePathCandidates("看看C:\\repo\\src\\app.ts吧")
+    assert.equal(wrapped.integral, undefined)
+    assert.deepEqual(wrapped.pieces.map(piece => piece.href), ["C:\\repo\\src\\app.ts"])
+  })
+
+  it("caps readings, not tokens", () => {
+    const text = Array.from({ length: BARE_PATH_MAX_CANDIDATES * 3 }, (_, index) => `d${index}/x.md`).join("和")
+    const candidates = barePathCandidates(text)
+    assert.equal(candidates.length, 1)
+    const [token] = candidates
+    assert.equal((token.integral ? 1 : 0) + token.pieces.length, BARE_PATH_MAX_CANDIDATES)
+  })
+
+  it("trims exposed trailing punctuation once edge letter runs are trimmed", () => {
+    const [candidate] = barePathCandidates("看看README.md.吧")
+    assert.deepEqual(candidate.pieces.map(piece => piece.href), ["README.md"])
+  })
+
+  it("probes a both-edges token whose boundary reading is degenerate", () => {
+    const [candidate] = barePathCandidates("脚本/启动")
+    assert.equal(candidate.integral?.href, "脚本/启动")
+  })
+
+  it("offers no readings from a URL whose path contains non-ASCII letters", () => {
+    assert.deepEqual(barePathCandidates("see https://example.com/资料README.md now"), [])
+    assert.deepEqual(barePathCandidates("see //example.com/资料README.md now"), [])
+  })
+
+  it("probes a both-edges token whose edge runs are path segments", () => {
+    const [candidate] = barePathCandidates("放进 项目/v2/启动 里")
+    assert.equal(candidate.integral?.href, "项目/v2/启动")
+  })
+
+  it("splits a single-letter-colon prefix like a scheme, not a drive", () => {
+    const [candidate] = barePathCandidates("see File:/fixture-root/README.md there")
+    assert.deepEqual(candidate.pieces.map(piece => piece.href), ["/fixture-root/README.md"])
+  })
+
+  it("leaves percent-escaped prose plain when the escape could name another file", () => {
+    // A percent escape decodes to a different literal path than the text
+    // shows, so the span's literal text, the verified target and the
+    // generated destination cannot agree — the same rule inline code
+    // follows. A literal percent sign that decodes to nothing still links.
+    assert.deepEqual(hrefs("see docs/%E7%AE%97.md there"), [])
+    assert.deepEqual(hrefs("see 100%25.md there"), [])
+    assert.deepEqual(hrefs("see 100%.md there"), ["100%.md"])
   })
 
   it("extracts Windows drive and backslash paths whole", () => {
@@ -54,16 +140,20 @@ describe("bare path candidates", () => {
   })
 
   it("reports byte-consistent spans of the original text", () => {
-    const text = "one src/app.ts two"
-    const [candidate] = barePathCandidates(text)
-    assert.equal(text.slice(candidate.start, candidate.end), candidate.href)
+    const text = "见 docs/算法工作台.md 和 docs/x.md 吧"
+    for (const candidate of barePathCandidates(text)) {
+      for (const piece of candidate.integral ? [candidate.integral, ...candidate.pieces] : candidate.pieces) {
+        assert.equal(text.slice(piece.start, piece.end), piece.href)
+      }
+    }
   })
 
   it("keeps the match start when trimming the candidate's end", () => {
     const text = "See src/app.ts."
     const [candidate] = barePathCandidates(text)
-    assert.equal(text.slice(candidate.start, candidate.end), candidate.href)
-    assert.equal(candidate.href, "src/app.ts")
+    const [piece] = candidate.pieces
+    assert.equal(text.slice(piece.start, piece.end), piece.href)
+    assert.equal(piece.href, "src/app.ts")
   })
 
   it("keeps a space-truncated suffix as its own candidate", () => {
