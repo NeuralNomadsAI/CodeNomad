@@ -41,6 +41,7 @@ pub(super) struct Window {
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
     missions: super::missions::Missions,
+    speech: super::speech::Speech,
     stats: super::stats::Dashboard,
     remote: remote::Remote,
     info: info::Info,
@@ -65,6 +66,7 @@ enum Section {
     Conversation,
     OpenCode,
     Notifications,
+    Voice,
     Providers,
     Missions,
     Shortcuts,
@@ -143,10 +145,12 @@ impl Window {
             let mut prefs = self.shared.borrow_mut();
             prefs.hide_opencode();
             prefs.show_environment(false);
+            prefs.show_speech(false);
         }
         self.logging.close();
         self.remote.close();
         self.missions.close();
+        self.speech.close();
         if self.memory_editor.has_unsaved() || self.config_files.dirty() {
             self.confirm_close = true;
         } else {
@@ -187,6 +191,7 @@ impl Window {
             prefs.window_wake = None;
             prefs.hide_opencode();
             prefs.show_environment(false);
+            prefs.show_speech(false);
             prefs.memory.show(false);
             prefs.provider_target = None;
             prefs.open_providers = false;
@@ -211,6 +216,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
         let notifications_label = t("settings.nav.notifications");
+        let voice_label = t("settings.nav.voice");
         let providers_label = t("settings.nav.providers");
         let missions_label = t("settings.nav.missions");
         let stats_label = t("settings.usage.title");
@@ -225,6 +231,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::Conversation => conversation_label,
             Section::OpenCode => opencode_label,
             Section::Notifications => notifications_label,
+            Section::Voice => voice_label,
             Section::Providers => providers_label,
             Section::Missions => missions_label,
             Section::Shortcuts => shortcuts_label,
@@ -258,6 +265,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     notifications_label,
                     s.section == Section::Notifications,
                 ),
+                ("settings-voice", voice_label, s.section == Section::Voice),
                 (
                     "settings-providers",
                     providers_label,
@@ -312,6 +320,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-opencode" => Section::OpenCode,
                     "settings-conversation" => Section::Conversation,
                     "settings-notifications" => Section::Notifications,
+                    "settings-voice" => Section::Voice,
                     "settings-providers" => Section::Providers,
                     "settings-missions" => Section::Missions,
                     "settings-hotkeys" => Section::Shortcuts,
@@ -339,6 +348,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 }
                 if s.section != Section::Missions {
                     s.missions.close();
+                }
+                if s.section != Section::Voice {
+                    s.speech.close();
                 }
                 if s.section != Section::Remote {
                     s.remote.close();
@@ -433,6 +445,15 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     &s.shared,
                     s.notification_permission,
                     |_: &mut Window| {},
+                ),
+            ),
+            Section::Voice => (
+                "voice",
+                s.speech.view(
+                    &s.shared,
+                    !s.closing && !s.confirm_close,
+                    &mut layers,
+                    |s: &mut Window| &mut s.speech,
                 ),
             ),
             Section::Providers => (

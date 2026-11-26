@@ -48,6 +48,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     s.remote.close();
                     s.info.close();
                     s.missions.close();
+                    s.speech.close();
                 }
                 let environment = s
                     .environment
@@ -131,6 +132,13 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         s.section == Section::Missions && !s.confirm_close && !s.closing,
                     )
                 });
+                let speech_changed = prefs.window_wake.clone().is_some_and(|wake| {
+                    s.speech.poll(
+                        &mut prefs,
+                        &wake,
+                        s.section == Section::Voice && !s.confirm_close && !s.closing,
+                    )
+                });
                 drop(prefs);
                 let providers_changed = if s.section == Section::Providers {
                     let prefs = s.shared.borrow();
@@ -145,6 +153,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     | info_changed
                     | stats_changed
                     | missions_changed
+                    | speech_changed
                     | providers_changed
                     | editor_changed
                     | environment
@@ -161,6 +170,8 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             } else if s.memory_editor.shown() {
                 s.memory_editor.dismiss();
             } else if s.section == Section::Missions && s.missions.cancel_confirm() {
+                return true;
+            } else if s.section == Section::Voice && s.speech.cancel_overlays() {
                 return true;
             } else {
                 let cancelled = s.shared.borrow_mut().memory.cancel_cleanup_confirmation();

@@ -15,6 +15,7 @@ mod opencode;
 mod preferences;
 mod providers;
 mod remote;
+mod speech;
 mod stats;
 pub(crate) mod transcript_filters;
 mod transcript_preset;

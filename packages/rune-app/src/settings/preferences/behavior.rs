@@ -15,6 +15,7 @@ pub(in crate::settings) enum GeneralToggle {
     AutoExpandActiveSubsessions,
     FollowUpBehavior,
     KeepComputerAwake,
+    PromptVoiceInput,
 }
 
 impl GeneralToggle {
@@ -26,6 +27,7 @@ impl GeneralToggle {
             Self::AutoExpandActiveSubsessions => "autoExpandActiveSubsessions",
             Self::FollowUpBehavior => "followUpBehavior",
             Self::KeepComputerAwake => "keepComputerAwake",
+            Self::PromptVoiceInput => "showPromptVoiceInput",
         }
     }
 
@@ -41,6 +43,7 @@ impl GeneralToggle {
             }
             Self::FollowUpBehavior => "settings.behavior.followUpBehavior.title",
             Self::KeepComputerAwake => "settings.behavior.keepComputerAwake.title",
+            Self::PromptVoiceInput => "settings.behavior.promptVoiceInput.title",
         }
     }
 
@@ -61,14 +64,17 @@ impl GeneralToggle {
     pub(in crate::settings) fn default_value(self) -> bool {
         matches!(
             self,
-            Self::MessageTimeline | Self::DiffViewMode | Self::AutoExpandActiveSubsessions
+            Self::MessageTimeline
+                | Self::DiffViewMode
+                | Self::AutoExpandActiveSubsessions
+                | Self::PromptVoiceInput
         )
     }
 
     pub(in crate::settings) fn read(self, settings: &Value) -> bool {
         let value = &settings[self.key()];
         match self {
-            Self::MessageTimeline | Self::AutoExpandActiveSubsessions => {
+            Self::MessageTimeline | Self::AutoExpandActiveSubsessions | Self::PromptVoiceInput => {
                 value.as_bool().unwrap_or(true)
             }
             Self::ScrollControlsInTimelineCorner | Self::KeepComputerAwake => {

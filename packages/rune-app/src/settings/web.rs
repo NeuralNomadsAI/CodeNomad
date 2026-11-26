@@ -21,6 +21,7 @@ enum Section {
     Conversation,
     OpenCode,
     Notifications,
+    Voice,
     Shortcuts,
     Providers,
     Missions,
@@ -38,6 +39,7 @@ impl Section {
             Self::Conversation => "settings.nav.chat",
             Self::OpenCode => "settings.nav.opencode",
             Self::Notifications => "settings.nav.notifications",
+            Self::Voice => "settings.nav.voice",
             Self::Shortcuts => "settings.nav.hotkeys",
             Self::Providers => "settings.nav.providers",
             Self::Missions => "settings.nav.missions",
@@ -68,6 +70,7 @@ pub(super) struct Panel {
     announced_transcript_error: Option<&'static str>,
     catalog: Catalog,
     missions: super::missions::Missions,
+    speech: super::speech::Speech,
     scope: super::host_support::HostSupport,
     config_files: super::config_files::Editor,
     environment: super::advanced::environment::Editor,
@@ -191,12 +194,18 @@ impl Panel {
             wake,
             self.shown && paired && self.section == Section::Missions,
         );
+        let speech = self.speech.poll(
+            prefs,
+            wake,
+            self.shown && paired && self.section == Section::Voice,
+        );
         picker_closed
             | editor
             | scope_changed
             | environment
             | opencode
             | missions
+            | speech
             | self.poll_notification_permission()
             | (self.shown && paired && self.section == Section::Info && self.info.poll(prefs, wake))
             | (self.section == Section::Remote
@@ -306,11 +315,13 @@ fn close(s: &mut State) {
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.hide_opencode();
     prefs.show_environment(false);
+    prefs.show_speech(false);
     panel.environment = Default::default();
     panel.logging.close();
     panel.remote.close();
     panel.info.close();
     panel.missions.close();
+    panel.speech.close();
     panel.recording_shortcut = false;
     panel.shortcut_capture = Default::default();
     if panel.notification_permission.get() != PermissionRequest::Pending {
@@ -371,6 +382,7 @@ pub(super) fn view(
         Section::Conversation,
         Section::OpenCode,
         Section::Notifications,
+        Section::Voice,
         Section::Shortcuts,
         Section::Providers,
         Section::Missions,
@@ -424,6 +436,9 @@ pub(super) fn view(
             }
             if panel.section != Section::Missions {
                 panel.missions.close();
+            }
+            if panel.section != Section::Voice {
+                panel.speech.close();
             }
             if panel.section != Section::Remote {
                 panel.remote.close();
@@ -543,6 +558,12 @@ pub(super) fn view(
                 let panel = &mut s.settings.web;
                 (panel.shown && panel.section == Section::Missions).then_some(&mut panel.missions)
             },
+        ),
+        Section::Voice => panel.speech.view(
+            &s.settings.shared,
+            panel.shown && panel.section == Section::Voice,
+            &mut layers,
+            |s: &mut State| &mut s.settings.web.speech,
         ),
         Section::Notifications => col()
             .full_width()
@@ -673,7 +694,9 @@ pub(super) fn view(
             )
             .key("close-preferences"),
             |s: &mut State| {
-                if !s.settings.web.missions.cancel_confirm() {
+                if !s.settings.web.missions.cancel_confirm()
+                    && !s.settings.web.speech.cancel_overlays()
+                {
                     close(s);
                 }
             },

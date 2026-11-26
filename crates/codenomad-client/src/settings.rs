@@ -6,6 +6,7 @@ pub mod missions;
 mod opencode_actions;
 mod providers;
 pub mod remote;
+pub mod speech;
 pub mod stats;
 use crate::{
     Wake,
