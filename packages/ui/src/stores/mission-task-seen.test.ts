@@ -14,7 +14,7 @@ Object.assign(globalThis, { window: { localStorage: {
 } } })
 const { initializeClientState } = await import("./client-state")
 await initializeClientState()
-const { markMissionTasksSeen, missionTaskUnseen, seedMissionTasksSeen } = await import("./mission-task-seen")
+const { markMissionTasksSeen, missionTaskUnseen, missionTasksSeenThrough, seedMissionTasksSeen } = await import("./mission-task-seen")
 const task = (updatedAt: number, status = "completed", id = "task") => ({ id, updatedAt, status })
 
 if (restored) {
@@ -42,6 +42,15 @@ if (restored) {
     assert.equal(missionTaskUnseen("initial", "mission", task(101)), true)
     seedMissionTasksSeen("initial", 200)
     assert.equal(missionTaskUnseen("initial", "mission", task(101)), true, "refresh never reseeds")
+  })
+
+  test("the seen-through time is the Mission's watermark once the project has its first observation", () => {
+    assert.equal(missionTasksSeenThrough("through", "mission"), Infinity, "nothing finished asks before the first observation")
+    seedMissionTasksSeen("through", 100)
+    assert.equal(missionTasksSeenThrough("through", "mission"), 100)
+    markMissionTasksSeen("through", "mission", [task(150)], true)
+    assert.equal(missionTasksSeenThrough("through", "mission"), 150)
+    assert.equal(missionTasksSeenThrough("through", "other"), 100)
   })
 
   test("seeding notifies a query mounted before the initial observation", () => {

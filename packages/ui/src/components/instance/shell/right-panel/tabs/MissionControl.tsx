@@ -4,7 +4,7 @@ import { AlertTriangle, Flag, Loader2, RefreshCw, Settings } from "lucide-solid"
 import type { MissionActivityProjection, MissionPanelMap } from "../../../../../../../server/src/api-types"
 import type { MissionUnavailableReason } from "../../../../../../../server/src/missions/model"
 import { missionTaskExecutionEvidence } from "../../../../../../../server/src/missions/execution-evidence"
-import type { MissionTaskMark } from "../../../../../../../server/src/missions/mission-task-marks"
+import { missionTaskMarkLive, missionTaskMarksCover, type MissionTaskMark } from "../../../../../../../server/src/missions/mission-task-marks"
 import { activateMissionDemand, deactivateMissionDemand, missionStore } from "../../../../../stores/missions"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-data"
@@ -14,7 +14,7 @@ import { focusInterruption } from "../../../../../stores/interruption-navigation
 import { applySurface, beginGesture, type SurfaceGesture } from "../../../../../stores/session-surface"
 import { MAX_EXPANDED, forgetMissionView, markMissionsFinishedSeen, missionFinishedSeen, missionProjectView, retargetMissionReader, updateMissionProjectView, navigateMissionProjectView,
   type MissionReaderTarget } from "../../../../../stores/mission-view-state"
-import { markMissionTasksSeen, missionTaskUnseen, seedMissionTasksSeen } from "../../../../../stores/mission-task-seen"
+import { markMissionTasksSeen, missionTaskUnseen, missionTasksSeenThrough, seedMissionTasksSeen } from "../../../../../stores/mission-task-seen"
 import { MissionEditor, type MissionEditorAction } from "../../../../mission-editor"
 import { missionEditor, openMissionEditor, settleMissionEditor } from "../../../../../stores/mission-editor-state"
 import { MissionTracking } from "../../../../mission-tracking"
@@ -187,15 +187,24 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // Task trees are shown, and read, while the panel is active and the creation form is closed.
   const treeShown = () => (props.isActive?.() ?? true) && editor()?.kind !== "create"
   const directoryTaskMarks = createMemo(() => new Map(rows().map(row => [row.id, missionStore.taskMarks(props.instanceId, row.id)])))
+  const tasksSeenThrough = (id: string) => missionTasksSeenThrough(completionScope(), id)
+  // A row's task marks are read while a task of it can still work or ask, or may have
+  // finished unseen: a closed Mission unchanged since it was seen needs none.
+  const taskMarksWanted = (row: { id: string; status: string; updatedAt: number; taskCount?: number }) => row.taskCount !== 0
+    && (row.status === "active" || row.status === "failed" || row.updatedAt > tasksSeenThrough(row.id))
+  // Marks arrive in attention order (live tasks, then the others from the newest change):
+  // past the first seen one nothing can show, and past an unseen one nothing more can.
+  const taskMarksSettled = (id: string, tasks: readonly MissionTaskMark[]) => missionTaskMarksCover(tasks, tasksSeenThrough(id))
+    || tasks.length > 0 && !missionTaskMarkLive(tasks[tasks.length - 1]) && tasks.some(task => missionTaskUnseen(completionScope(), id, task))
   createEffect(() => {
     if (!visible() || !treeShown()) return
     for (const row of rows()) {
-      if (row.taskCount === 0) continue
+      if (!taskMarksWanted(row)) continue
       const marks = directoryTaskMarks().get(row.id)!
       if (marks.loading) return
       if (marks.failure) continue
       const stale = marks.revision === undefined || marks.revision < row.revision
-      if (stale || marks.more) {
+      if (stale || marks.more && !taskMarksSettled(row.id, marks.tasks)) {
         untrack(() => void missionStore.more(props.instanceId, `task-marks:${row.id}`, stale))
         return
       }
@@ -512,7 +521,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const map = mapsById().get(value.id)
     const key = map ?? { ...value, projectID: projectID() ?? "" }
     const observations = currentMissionObservations(missionStore, props.instanceId, value.id)
-    const marks = directoryTaskMarks().get(value.id)
+    const wanted = taskMarksWanted(value), marks = wanted ? directoryTaskMarks().get(value.id) : undefined
     const currentMarks = marks?.revision !== undefined && marks.revision >= value.revision && marks.revision >= (map?.revision ?? 0)
     const facts: readonly MissionTaskMark[] = currentMarks ? marks.tasks : map?.tasks ?? []
     const actors = [...map?.actors ?? observations.flatMap(page => page.context.actors), ...missionStore.observedActors(props.instanceId, value.id)]
@@ -529,12 +538,14 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const wholeOwed = [...map?.actorEvidence?.reportOwed ?? [], ...observations
       .flatMap(page => page.context.actors.filter(actor => actor.reportOwed).map(actor => actor.sessionId))]
     const offPageOwed = new Set(wholeOwed.filter(id => !loadedOwed.has(id)))
-    const partialTasks = currentMarks ? marks.more : !map || (map.taskPage?.total ?? map.tasks.length) > map.tasks.length
+    // Unread marks count only while one of them could still change the row.
+    const partialTasks = wanted && (currentMarks ? marks.more && !taskMarksSettled(value.id, marks.tasks)
+      : !map || (map.taskPage?.total ?? map.tasks.length) > map.tasks.length)
     // Finished tasks this window has not shown yet (green, like an idle subsession).
     const unseen = facts.filter((task, index) => taskStates[index] === "done" && missionTaskUnseen(completionScope(), value.id, task))
     const observeNative = facts.some(task => !task.actorSessionId && !task.replacedByTaskKey && !["completed", "failed", "withdrawn"].includes(task.status))
       && Boolean(family?.state !== "unknown" && family?.members.some(member => member.actorSessionId === value.coordinatorSessionId && member.sessionId !== value.coordinatorSessionId))
-    return [value.id, { ...missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, currentMarks || map ? facts : undefined, conversation),
+    return [value.id, { ...missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, currentMarks || map || !wanted ? facts : undefined, conversation),
       sessionContext, observeNative, facts, taskStates, coveredActors, offPageOwed, partialTasks, unseen }]
   })))
   const missionEntries = createMemo((): MissionPickerEntry[] => rows().map(value => {

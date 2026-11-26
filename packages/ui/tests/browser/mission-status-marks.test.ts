@@ -37,8 +37,12 @@ function mission(id: string, patch: Partial<MissionMap> = {}): MissionMap {
 async function open(missions: () => MissionMap[], activity: () => Array<{ missionId: string; actors: MissionActorActivity[] }>,
   schedules: RecurrenceSchedule[] = []) {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
-  const errors: string[] = [], recoveries: unknown[] = []
+  const errors: string[] = [], recoveries: unknown[] = [], taskMarkReads: string[] = []
   page.on("pageerror", error => errors.push(error.message))
+  page.on("request", request => {
+    const input = request.url().endsWith("/missions/panel-page") ? request.postDataJSON() : undefined
+    if (input?.source === "task-marks") taskMarkReads.push(`${input.missionID}@${input.window.offset}`)
+  })
   await page.addInitScript(`Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: "local", electronAPI: {
     claimClientStateAccess: async () => true,
     loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: JSON.parse(localStorage.getItem("fixture-native") ?? "null") }),
@@ -76,7 +80,7 @@ async function open(missions: () => MissionMap[], activity: () => Array<{ missio
     return route.fulfill({ json: { mission: missions()[0], admitted: true } })
   })
   await page.goto(url)
-  return { page, errors, recoveries }
+  return { page, errors, recoveries, taskMarkReads }
 }
 const fixtureCall = (page: Page, method: string) => page.evaluate(method => (window as any).missionFixture[method](), method)
 async function refresh(page: Page) {
@@ -403,6 +407,36 @@ test("daily waiting, unread passage identities, restoration and paused/warning s
     assert.match(await entry.getAttribute("title") ?? "", /State unconfirmed/)
     schedule.state = "stopped"; schedule.nextDueAt = null; schedule.revision++
     await refreshDaily(); await waitMark("idle")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("the directory reads a row's task marks only while they can change it, and no further than the first seen one", async () => {
+  const tasks = (id: string, live: number, updatedAt = 1) => Array.from({ length: 120 }, (_, index) => ({ id: `task-${id}-${index}`, key: `task-${index}`,
+    title: `Task ${index}`, brief: "Brief", role: "research", status: index >= 120 - live ? "ready" : "completed", blockedBy: [],
+    outstandingExecution: false, createdAt: 1, updatedAt })) as MissionMap["tasks"]
+  // The live tasks close the plan: only the attention order brings them into the first window.
+  let list = [mission("busy", { updatedAt: 3, tasks: tasks("busy", 2) }),
+    mission("closed", { updatedAt: 2, finishSequence: 1, status: "completed", tasks: tasks("closed", 0) })]
+  const { page, errors, taskMarkReads } = await open(() => list, () => [])
+  const settled = () => page.waitForFunction(async () => {
+    const store = (await import("/src/stores/missions.ts")).missionStore, marks = store.taskMarks("fixture", "busy")
+    return !marks.loading && marks.revision === store.state("fixture").summaries.find(row => row.id === "busy")?.revision
+  })
+  try {
+    await (await inlineMissionEntry(page, "Objective busy")).waitFor()
+    await settled()
+    await page.waitForTimeout(300)
+    assert.deepEqual(taskMarkReads, ["busy@0"], "one window of the open Mission, none of the closed one it has seen")
+    assert.equal(await page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.taskMarks("fixture", "busy").tasks.filter(task => task.status === "ready").length), 2)
+
+    // A task finishes after what this window has seen: its Mission is read again, one window.
+    const finished = tasks("busy", 2).map((task, index) => index === 0 ? { ...task, updatedAt: 10 } : task)
+    list = [mission("busy", { updatedAt: 10, revision: 2, tasks: finished }), list[1]]
+    await refresh(page)
+    await settled()
+    await page.waitForTimeout(300)
+    assert.deepEqual(taskMarkReads, ["busy@0", "busy@0"])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
