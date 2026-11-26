@@ -199,7 +199,8 @@ pub(super) fn execute_by_id(s: &mut State, id: &'static str, tx: &mut Tx) -> boo
     }
     let target = take_closed_state(s);
     if item.id == "rename-instance" {
-        if !super::tab_rename::open_active_with_return_focus(s, target.clone(), tx) {
+        let return_target = Some(target.clone().unwrap_or_else(|| theme::TRIGGER.to_owned()));
+        if !super::tab_rename::open_active_with_return_focus(s, return_target, tx) {
             restore_focus(target, tx);
         }
     } else {
@@ -222,7 +223,8 @@ fn execute_selected(s: &mut State, tx: &mut Tx) -> bool {
     let id = item.id;
     let target = take_closed_state(s);
     if id == "rename-instance" {
-        if !super::tab_rename::open_active_with_return_focus(s, target.clone(), tx) {
+        let return_target = Some(target.clone().unwrap_or_else(|| theme::TRIGGER.to_owned()));
+        if !super::tab_rename::open_active_with_return_focus(s, return_target, tx) {
             restore_focus(target, tx);
         }
     } else {

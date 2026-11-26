@@ -44,21 +44,19 @@ pub(crate) fn can_open(s: &State) -> bool {
     if !available() || !shortcuts::has_project(s) {
         return false;
     }
-    let local_launcher = s.screen.launcher().is_some_and(|l| {
-        l.local_connection()
-            && l.connection.is_some()
-            && !l.authentication_required
-            && l.project.is_some()
-    });
-    if !local_launcher {
+    let Some(project) = s.screen.launcher().and_then(|l| {
+        (l.local_connection() && l.connection.is_some() && !l.authentication_required)
+            .then_some(l.project.as_ref())
+            .flatten()
+    }) else {
         return false;
-    }
+    };
     if s.workspace.is_some()
         && workspace::active_workspace(s).is_none_or(|(_, saved)| saved.backend_id.is_some())
     {
         return false;
     }
-    true
+    crate::git::conversation_checkout(s, &project.id, &project.path).is_some()
 }
 
 pub(crate) fn open(s: &mut State, target: WorkspaceTarget) -> bool {
@@ -72,8 +70,12 @@ pub(crate) fn open(s: &mut State, target: WorkspaceTarget) -> bool {
     else {
         return false;
     };
+    let Some((slug, expected_dir)) =
+        crate::git::conversation_checkout(s, &project.id, &project.path)
+    else {
+        return false;
+    };
     backend.workspace = project.id.clone();
-    let (slug, expected_dir) = crate::git::conversation_checkout(s, &project.id, &project.path);
     let owner = Arc::downgrade(&s.workspace_open.owner);
     let generation = s.workspace_open.generation;
     let out = s.workspace_open.out.clone();

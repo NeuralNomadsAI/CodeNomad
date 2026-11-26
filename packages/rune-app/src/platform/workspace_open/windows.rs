@@ -192,7 +192,7 @@ fn chooser_started(
 const OPEN_TARGET_ENV: &str = "CODENOMAD_OPEN_TARGET";
 // Constant scripts read the target path from the process environment so no path
 // characters (including PowerShell 5.1 typographic quotes) are ever parsed as code.
-const POWERSHELL_TERMINAL_SCRIPT: &str = "Set-Location -LiteralPath $env:CODENOMAD_OPEN_TARGET; Remove-Item Env:CODENOMAD_OPEN_TARGET -ErrorAction SilentlyContinue";
+const POWERSHELL_TERMINAL_SCRIPT: &str = "$p=$env:CODENOMAD_OPEN_TARGET; Remove-Item Env:CODENOMAD_OPEN_TARGET -ErrorAction SilentlyContinue; Set-Location -LiteralPath $p";
 const POWERSHELL_EDIT_SCRIPT: &str = "$ErrorActionPreference='Stop'; $p=$env:CODENOMAD_OPEN_TARGET; Remove-Item Env:CODENOMAD_OPEN_TARGET -ErrorAction SilentlyContinue; Start-Process -FilePath $p -Verb Edit";
 
 fn encode_powershell(script: &str) -> String {

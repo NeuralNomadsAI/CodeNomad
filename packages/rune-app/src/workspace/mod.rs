@@ -435,28 +435,35 @@ fn view_state(value: Option<&Value>) -> Result<ViewState, Error> {
 }
 
 pub(super) fn valid_project_name(name: &str) -> bool {
-    let trimmed = name.trim();
-    !trimmed.is_empty()
-        && !trimmed.chars().any(char::is_control)
-        && trimmed.encode_utf16().nth(MAX_PROJECT_NAME).is_none()
+    !name.is_empty()
+        && name == name.trim()
+        && !name.chars().any(char::is_control)
+        && name.encode_utf16().nth(MAX_PROJECT_NAME).is_none()
+}
+
+pub(super) fn normalize_project_name(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    valid_project_name(trimmed).then(|| trimmed.to_owned())
 }
 
 fn decode_project_name(value: Option<&Value>) -> Option<String> {
-    let raw = value?.as_str()?;
-    let trimmed = raw.trim();
-    valid_project_name(trimmed).then(|| trimmed.to_owned())
+    value?.as_str().and_then(normalize_project_name)
+}
+
+pub(super) fn project_name_drop_order(snapshot: &Snapshot) -> Vec<usize> {
+    let tab_count = snapshot.tabs.len();
+    let active = snapshot.active;
+    (0..tab_count)
+        .filter(|&index| Some(index) != active)
+        .chain(active.into_iter().filter(|&index| index < tab_count))
+        .collect()
 }
 
 pub(super) fn drop_excess_project_names(snapshot: &mut Snapshot) -> Result<(), Error> {
     if snapshot_string_units(snapshot)? <= MAX_STRINGS {
         return Ok(());
     }
-    let tab_count = snapshot.tabs.len();
-    let active = snapshot.active;
-    let order = (0..tab_count)
-        .filter(|&index| Some(index) != active)
-        .chain(active.into_iter().filter(|&index| index < tab_count));
-    for index in order {
+    for index in project_name_drop_order(snapshot) {
         let changed = match &mut snapshot.tabs[index] {
             Tab::Workspace(saved) => saved.project_name.take().is_some(),
             Tab::Blank => false,

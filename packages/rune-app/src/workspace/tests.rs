@@ -492,4 +492,63 @@ fn project_names_drop_before_drafts_and_never_block_restore_or_save() {
             .all(|tab| matches!(tab, Tab::Workspace(_))),
         "no workspace tab should be degraded to Tab::Blank"
     );
+
+    // 4. Untrimmed padded projectName (>4096 raw units) normalizes instead of turning tab into Blank.
+    let mut padded = workspace();
+    padded.project_name = Some(format!("{}x", " ".repeat(MAX_PROJECT_NAME)));
+    padded.drafts.insert("ses_pad".into(), "keep draft".into());
+    let (padded_bytes, _) =
+        save_snapshot::encode_for_save(&snapshot(padded)).expect("padded name normalizes");
+    let padded_decoded = decode(&padded_bytes).expect("padded snapshot decodes");
+    match &padded_decoded.tabs[0] {
+        Tab::Workspace(w) => {
+            assert_eq!(w.project_name.as_deref(), Some("x"));
+            assert_eq!(
+                w.drafts.get("ses_pad").map(String::as_str),
+                Some("keep draft")
+            );
+        }
+        other => panic!("padded projectName must never blank tab, got {other:?}"),
+    }
+
+    // 5. Over MAX_BYTES (1 MiB JSON cap), fit_parts drops optional project names before trimming
+    // pasted text from draft attachments.
+    use crate::composer::draft_storage::SavedParts;
+    let mut heavy_tab = workspace();
+    heavy_tab.project_name = Some("p".repeat(MAX_PROJECT_NAME));
+    for (index, size) in [255, 255, 255, 255].into_iter().enumerate() {
+        let id = format!("ses_heavy_{index}");
+        heavy_tab.drafts.insert(id.clone(), "[pasted #1]".into());
+        heavy_tab.attachment_drafts.insert(id.clone());
+        heavy_tab.attachment_parts.insert(
+            id,
+            SavedParts::decode(&json!({
+                "complete": true,
+                "parts": [
+                    {"type":"pasted","id":"1","text":"x".repeat(size * 1024)}
+                ]
+            }))
+            .unwrap(),
+        );
+    }
+    let heavy_snap = snapshot(heavy_tab.clone());
+    // With 4 × 255 KiB pastes (~1020 KiB) + 4 KiB projectName (> 1024 KiB), encode hits Limit.
+    assert_eq!(encode(&heavy_snap).unwrap_err(), Error::Limit);
+    let (heavy_bytes, degraded) =
+        save_snapshot::encode_for_save(&heavy_snap).expect("drops name before paste");
+    assert!(degraded);
+    let heavy_saved = decode(&heavy_bytes).expect("heavy snapshot decodes");
+    match &heavy_saved.tabs[0] {
+        Tab::Workspace(w) => {
+            assert_eq!(
+                w.project_name, None,
+                "optional projectName dropped for byte cap"
+            );
+            assert_eq!(
+                w.attachment_parts, heavy_tab.attachment_parts,
+                "draft pasted text must survive when dropping projectName suffices"
+            );
+        }
+        other => panic!("expected workspace tab, got {other:?}"),
+    }
 }

@@ -379,31 +379,34 @@ pub(crate) fn conversation_checkout(
     s: &State,
     workspace_id: &str,
     project_root: &str,
-) -> (String, Option<String>) {
+) -> Option<(String, Option<String>)> {
     if let Some(owner) = &s.git.owner
         && owner.backend.workspace == workspace_id
-        && !owner.session_checkout_removed()
-        && !owner.session_slug.is_empty()
     {
-        if owner.session_slug == "root" {
-            return ("root".into(), Some(project_root.to_owned()));
+        if owner.session_checkout_removed() {
+            return None;
         }
-        let expected = owner
-            .inventory
-            .as_ref()
-            .and_then(|inv| inv.trees.iter().find(|t| t.slug == owner.session_slug))
-            .map(|t| t.directory.clone())
-            .or_else(|| {
-                owner
-                    .backend
-                    .session_directory
-                    .as_deref()
-                    .filter(|dir| !dir.is_empty())
-                    .map(str::to_owned)
-            });
-        return (owner.session_slug.clone(), expected);
+        if !owner.session_slug.is_empty() {
+            if owner.session_slug == "root" {
+                return Some(("root".into(), Some(project_root.to_owned())));
+            }
+            let expected = owner
+                .inventory
+                .as_ref()
+                .and_then(|inv| inv.trees.iter().find(|t| t.slug == owner.session_slug))
+                .map(|t| t.directory.clone())
+                .or_else(|| {
+                    owner
+                        .backend
+                        .session_directory
+                        .as_deref()
+                        .filter(|dir| !dir.is_empty())
+                        .map(str::to_owned)
+                });
+            return Some((owner.session_slug.clone(), expected));
+        }
     }
-    ("root".into(), Some(project_root.to_owned()))
+    Some(("root".into(), Some(project_root.to_owned())))
 }
 
 #[cfg(test)]
@@ -463,12 +466,15 @@ mod conversation_checkout_tests {
 
         assert_eq!(
             conversation_checkout(&s, "ws-1", "/repo"),
-            ("wt-a".into(), Some("/repo-wt-a".into()))
+            Some(("wt-a".into(), Some("/repo-wt-a".into())))
         );
+        // Removed conversation worktree refuses opening instead of falling back to root.
+        s.git.owner.as_mut().unwrap().session_slug = "wt-gone".into();
+        assert_eq!(conversation_checkout(&s, "ws-1", "/repo"), None);
         // Different workspace falls back to root.
         assert_eq!(
             conversation_checkout(&s, "ws-other", "/other"),
-            ("root".into(), Some("/other".into()))
+            Some(("root".into(), Some("/other".into())))
         );
     }
 }
