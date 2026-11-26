@@ -179,6 +179,17 @@ export default function MessageSection(props: MessageSectionProps) {
     ]
   }, [], { equals: sameTimelineList })
 
+  // Only assistant tool calls anchor per-message permission receipts; user,
+  // queued and non-assistant metadata rows never carry tool permissions.
+  const canHavePermissionReceipts = (messageId: string): boolean => {
+    if (props.pendingPrompts?.has(messageId)) return false
+    const resolvedStore = store()
+    const record = resolvedStore.getMessage(messageId)
+    if (!record || record.role !== "assistant") return false
+    const nativeType = resolvedStore.getMessageInfo(messageId)?.nativeType
+    return !nativeType || nativeType === "assistant"
+  }
+
   const sessionRevision = createMemo(() => store().getSessionRevision(props.sessionId))
   const technicalCleanupTranscript = createMemo<TechnicalCleanupTranscriptItem[]>(() => {
     sessionRevision()
@@ -1678,7 +1689,9 @@ export default function MessageSection(props: MessageSectionProps) {
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
               alignInTranscript={(target, viewportOffset) => listApi()?.alignElement(target, viewportOffset)}
             />
-            <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
+            <Show when={canHavePermissionReceipts(messageId)}>
+              <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
+            </Show>
             </>
           )}
           renderOverlay={() => (
