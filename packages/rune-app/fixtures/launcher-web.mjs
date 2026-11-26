@@ -77,13 +77,23 @@ export async function launchWeb({
       localPort:androidRelay.port,
       closeRelay:()=>androidRelay.close(),
     })
+    state.pendingDeviceLease=lease
+    const opening=lease.open()
+    state.deviceLeaseOpen=opening
     try{
-      await lease.open()
+      await opening
       state.deviceLease=lease
+      state.pendingDeviceLease=undefined
     }catch(error){
-      try{await androidRelay.close()}catch(closeError){console.error(`Failed to close Android relay after open failure: ${closeError.message}`)}
+      state.pendingDeviceLease=undefined
+      try{await androidRelay.close()}catch(closeError){
+        state.androidRelayCloseError=`relay close: ${closeError?.message??closeError}`
+        console.error(`Failed to close Android relay after open failure: ${closeError.message}`)
+      }
       state.androidRelay=undefined
       throw error
+    }finally{
+      if(state.deviceLeaseOpen===opening)state.deviceLeaseOpen=undefined
     }
   }
   const safeClientEnv=stripFixtureServerSecrets(env)

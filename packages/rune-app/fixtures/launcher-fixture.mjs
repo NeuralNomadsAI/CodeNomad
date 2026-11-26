@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
 import {spawnFixtureChild,stopFixtureChild,stopFixtureHandle,fixtureChildPid} from '../../../scripts/native-fixture-guards.mjs'
-import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,stripFixtureServerSecrets} from '../../../scripts/native-fixture-http.mjs'
+import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,createStreamRedactor,stripFixtureServerSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {promisify} from 'node:util'
-import {renameSync,writeFileSync} from 'node:fs'
+import {readFileSync,renameSync,writeFileSync} from 'node:fs'
 import {lstat,mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
 import path from 'node:path'
@@ -20,7 +20,7 @@ import {webLiveFixture} from './web-live-fixture.mjs'
 import {seedGitImages} from '../../../scripts/rune/web-git-images.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
 import {launchWeb} from './launcher-web.mjs'
-import {fixtureShuttingDown,launchFixture,onFixtureSignal,rustOrigin,signInFixture} from './fixture-host.mjs'
+import {rustOrigin,signInFixture,until} from './fixture-host.mjs'
 import {assertWorktreeTestRoot} from '../../../scripts/rune/web-workspace-policy.mjs'
 import {needsOwnedWindowsWorker} from './launcher-worker-guard.mjs'
 const webMoreActions=process.argv.includes('--web-mobile-more-actions')
@@ -33,17 +33,25 @@ const historyReturnOnly=process.argv.includes('--history-return-only')
 assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation requires the Chromium mobile smoke')
 assert(!historyReturnOnly || webMobile&&!webAndroid)
 assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes('--web-mobile'))
-if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDrawers||webSse7Tabs)&&!process.argv.includes('--owned-mobile-worker'))){
-  const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:['pipe','inherit','inherit']})
+const root=path.resolve(import.meta.dirname,'../../..')
+const ownedWorker=process.argv.includes('--owned-mobile-worker')
+const workerProfileArgIndex=process.argv.indexOf('--worker-profile')
+const workerProfileArg=workerProfileArgIndex>=0?process.argv[workerProfileArgIndex+1]:undefined
+if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDrawers||webSse7Tabs)&&!ownedWorker)){
+  const testsReal=(await assertWorktreeTestRoot(root)).testsReal
+  const workerProfile=path.join(testsReal,`launcher-${randomUUID()}`)
+  await mkdir(workerProfile,{recursive:true})
+  const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker','--worker-profile',workerProfile],{windowsHide:true,stdio:['pipe','inherit','inherit']})
   worker.stdin?.on('error',()=>{})
   const closed=new Promise(resolve=>{
     worker.once('close',(code,signal)=>resolve({code,signal}))
-    worker.once('error',()=>resolve({code:1,signal:null}))
+    worker.once('error',error=>resolve({code:1,signal:null,error}))
   })
   const graceMs=webAndroid?70000:12000
-  let stopping,stopError
-  const stop=()=>{
-    stopping??=stopFixtureChild(worker,closed,graceMs,2000,{close:()=>{try{worker.stdin?.end('shutdown\n')}catch{}}}).catch(error=>{stopError=error;console.error(error.message)})
+  let stopping,stopError,outerSignal
+  const stop=signal=>{
+    outerSignal??=signal
+    stopping??=stopFixtureChild(worker,closed,graceMs,2000,{close:()=>{try{worker.stdin?.end(signal==='SIGINT'?'shutdown:SIGINT\n':'shutdown:SIGTERM\n')}catch{}}}).catch(error=>{stopError=error;console.error(error.message)})
   }
   process.on('SIGINT',stop)
   process.on('SIGTERM',stop)
@@ -51,8 +59,26 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   await stopping
   process.off('SIGINT',stop)
   process.off('SIGTERM',stop)
+  const proofTmp=path.join(workerProfile,'proof.json.tmp')
+  const proofFile=path.join(workerProfile,'proof.json')
+  let proof
+  try{proof=JSON.parse(readFileSync(proofTmp,'utf8'))}catch{}
   const workerCode=exit.code??(exit.signal==='SIGINT'?130:exit.signal==='SIGTERM'?143:1)
-  process.exit(stopError?1:workerCode)
+  const supervisorFailed=workerCode!==0||Boolean(exit.signal)||Boolean(exit.error)||Boolean(stopError)
+  const interrupted=proof?.interruptedSignal??outerSignal??exit.signal??(workerCode===130?'SIGINT':workerCode===143?'SIGTERM':null)
+  const finalResult=proof?.result===0&&!supervisorFailed&&!interrupted?0:1
+  const finalProof={
+    ...(proof??{profile:workerProfile}),
+    result:finalResult,
+    interruptedSignal:interrupted,
+    workerExitCode:exit.code,
+    workerExitSignal:exit.signal,
+    ...(stopError?{workerStopError:String(stopError?.message??stopError)}:{}),
+    ...(exit.error?{workerSpawnError:String(exit.error?.message??exit.error)}:{}),
+  }
+  writeFileSync(proofTmp,JSON.stringify(finalProof,null,2))
+  renameSync(proofTmp,proofFile)
+  process.exit(finalResult)
 }
 const webMissions=process.argv.includes('--web-missions')
 const webGitImages=process.argv.includes('--web-git-images')
@@ -69,7 +95,7 @@ const webSearch=process.argv.includes('--web-history-search')
 const webOutline=process.argv.includes('--web-outline-restore')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webFileWrap=process.argv.includes('--web-file-wrap')
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webMobileDrawers||webOutline||webKeyboard,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webGitImages||webTimeline||webSearch||webSse7Tabs,root=path.resolve(import.meta.dirname,'../../..')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webMobileDrawers||webOutline||webKeyboard,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webGitImages||webTimeline||webSearch||webSse7Tabs
 assert(!webFileWrap||(!webPending&&!webMobile),'File wrap uses the loopback Chromium restoration fixture')
 assert(!webMobileDrawers||(!webPending&&!webFileWrap&&!webMobile&&!webOutline&&!webTimeline&&!webSearch&&!webKeyboard&&!process.argv.includes('--web-restore')),'Mobile drawers uses its own loopback Chromium fixture mode')
 assert(!webKeyboard||(!webPending&&!webFileWrap&&!webMobile&&!webOutline&&!webTimeline&&!webSearch&&!webMobileDrawers&&!process.argv.includes('--web-restore')),'Keyboard viewport uses its own loopback Chromium fixture mode')
@@ -101,8 +127,15 @@ if(web&&!draftOutput&&!gitOutput){
   const existing=await lstat(output).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
   assert(!existing||(!existing.isSymbolicLink()&&existing.isDirectory()),`Fixture output root must be a real directory: ${output}`)
 }
-const run=`launcher-${randomUUID()}`
+let run=`launcher-${randomUUID()}`
 let profile=path.join(output,run)
+if(ownedWorker&&workerProfileArg){
+  const resolvedProfile=path.resolve(workerProfileArg)
+  assert.equal(path.dirname(resolvedProfile),output,`Worker profile must reside under ${output}`)
+  assert.match(path.basename(resolvedProfile),/^launcher-[0-9a-f-]+$/i,'Unexpected worker profile directory name')
+  run=path.basename(resolvedProfile)
+  profile=resolvedProfile
+}
 if(webSearch){
   await mkdir(output,{recursive:true})
   profile=path.join(await realpath(output),run)
@@ -499,10 +532,54 @@ if(webMobile||webSse7Tabs)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HT
 const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
 let host,server,log='',client,clientRelay,androidCleanup,result=1,http,expired=false
 const webState={diagnostic:''}
+function launchOwnedServer(binary,args,{cwd,env:childEnv,shutdown,graceMs=3000,redact=[]}){
+  const group=process.platform!=='win32'
+  const child=spawnFixtureChild(binary,args,{cwd,env:withoutFixtureProxy(childEnv),detached:group,graceMs,windowsHide:true,stdio:[shutdown?'pipe':'ignore','pipe','pipe']})
+  const startedBy=new Date()
+  let output='',stdout='',spawnError,stopping
+  const outRedactor=createStreamRedactor(redact)
+  const errRedactor=createStreamRedactor(redact)
+  const appendOut=chunk=>{if(chunk){stdout=(stdout+chunk).slice(-1048576);output=(output+chunk).slice(-1048576)}}
+  const appendErr=chunk=>{if(chunk){output=(output+chunk).slice(-1048576)}}
+  const closed=new Promise(resolve=>{
+    child.once('close',code=>{
+      appendOut(outRedactor.flush())
+      appendErr(errRedactor.flush())
+      resolve(code)
+    })
+    child.once('error',cause=>{spawnError=cause;resolve(1)})
+  })
+  child.stdout.on('data',data=>{appendOut(outRedactor.push(data))})
+  child.stderr.on('data',data=>{appendErr(errRedactor.push(data))})
+  child.stdin?.on('error',()=>{})
+  const currentStdout=()=>stdout+outRedactor.peek()
+  const currentOutput=()=>output+outRedactor.peek()+errRedactor.peek()
+  return {
+    child,
+    pid:()=>fixtureChildPid(child),
+    closed,
+    output:currentOutput,
+    stdout:currentStdout,
+    ready:(match,ms)=>until(()=>{
+      if(spawnError)throw spawnError
+      if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
+      assert(child.exitCode===null&&child.signalCode===null,`Fixture child exited: ${currentOutput().slice(-2000)}`)
+      return match(currentStdout())
+    },'owned listener',ms),
+    stop(close){
+      stopping??=(async()=>{
+        if(child.pid)await stopFixtureChild(child,closed,graceMs,2000,{
+          group,startedBy,close:close??(shutdown?()=>child.stdin.end(shutdown):undefined),
+        })
+      })()
+      return stopping
+    },
+  }
+}
 async function startServer(){
   const blockedCli=path.join(profile,'disabled-opencode-cli.exe')
-  host=launchFixture(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0',blockedCli],
-    {cwd:profile,env,shutdown:ts?'codenomad:shutdown\n':'shutdown\n',graceMs:ts?15000:3000})
+  host=launchOwnedServer(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0',blockedCli],
+    {cwd:profile,env,shutdown:ts?'codenomad:shutdown\n':'shutdown\n',graceMs:ts?15000:3000,redact:[backendPassword,nativePassword]})
   server=host.child
   return host.ready(ts?stdout=>ts.ready(stdout):rustOrigin)
 }
@@ -566,13 +643,18 @@ function finalize(){
   return finalizePromise??=(async()=>{
     try{control?.close()}catch(error){teardownErrors.push(`control close: ${error?.message??error}`)}
     for(const gate of gates.values())gate.reject()
+    let leaseOpenFailed=false
+    if(webState.deviceLeaseOpen){
+      try{await webState.deviceLeaseOpen}catch{leaseOpenFailed=true}
+    }
     client??=webState.client
     if(client&&client.exitCode===null&&client.signalCode===null){
       await stopClientOnce(client)
     }
-    if(webState.deviceLease){
+    const activeLease=webState.deviceLease??(!leaseOpenFailed?webState.pendingDeviceLease:undefined)
+    if(activeLease){
       await stopClientOnce(client)
-      await recordTeardown('android device lease',async()=>{androidCleanup=await webState.deviceLease.close()})
+      await recordTeardown('android device lease',async()=>{androidCleanup=await activeLease.close()})
     }else if(webState.androidRelay){
       await recordTeardown('android relay',async()=>{
         try{await webState.androidRelay.close()}catch(error){
@@ -580,6 +662,10 @@ function finalize(){
           throw error
         }
       })
+    }
+    if(webState.androidRelayCloseError){
+      androidCleanup=[...(androidCleanup??[]),webState.androidRelayCloseError]
+      teardownErrors.push(`android relay rollback: ${webState.androidRelayCloseError}`)
     }
     if(webState.mobileAction)await recordTeardown('mobile action',()=>webState.mobileAction)
     if(clientRelay)await recordTeardown('client relay',()=>clientRelay.close())
@@ -590,35 +676,38 @@ function finalize(){
     await recordTeardown('server log',()=>writeFile(path.join(profile,ts?'ts.log':'rust.log'),log))
     if(!web)await recordTeardown('client log',()=>writeFile(path.join(profile,'client.log'),clientLog))
     if(web)await recordTeardown('browser log',()=>writeFile(path.join(profile,'browser-run.log'),webState.diagnostic))
-    const interrupted=interruptedSignal??(fixtureShuttingDown()?'SIGTERM':null)
+    const interrupted=interruptedSignal??null
     const serverFailed=server?.exitCode!==0
     const finalResult=result===0&&!interrupted&&!serverFailed&&!clientStopError&&!androidCleanup?.length&&teardownErrors.length===0?0:1
     const proofTmp=path.join(profile,'proof.json.tmp')
     const proofFile=path.join(profile,'proof.json')
     writeFileSync(proofTmp,JSON.stringify({result:finalResult,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,interruptedSignal:interrupted,clientStopError,teardownErrors:teardownErrors.length?teardownErrors:undefined,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2))
-    renameSync(proofTmp,proofFile)
+    if(!ownedWorker)renameSync(proofTmp,proofFile)
     proofPublished=true
     publishedResult=finalResult
-    untrackSignal()
+    process.exitCode=finalResult
+    process.off('SIGINT',onLauncherSignal)
+    process.off('SIGTERM',onLauncherSignal)
     return finalResult
   })()
 }
-const triggerShutdown=signal=>{
+const onLauncherSignal=signal=>{
   if(proofPublished||interruptedSignal)return
   interruptedSignal=signal
   const activeClient=client??webState.client
   if(activeClient)void stopClientOnce(activeClient)
   abortClientWait?.(signal)
 }
-const untrackSignal=onFixtureSignal(
-  ()=>finalize(),
-  ()=>triggerShutdown('SIGTERM'),
-  {beforeChildren:true},
-)
-if(process.argv.includes('--owned-mobile-worker')){
+process.on('SIGINT',onLauncherSignal)
+process.on('SIGTERM',onLauncherSignal)
+if(ownedWorker){
   process.stdin.resume()
-  process.stdin.on('data',chunk=>{if(String(chunk).includes('shutdown'))triggerShutdown('SIGTERM')})
-  process.stdin.once('end',()=>triggerShutdown('SIGTERM'))
+  process.stdin.on('data',chunk=>{
+    const text=String(chunk)
+    if(text.includes('shutdown:SIGINT'))onLauncherSignal('SIGINT')
+    else if(text.includes('shutdown'))onLauncherSignal('SIGTERM')
+  })
+  process.stdin.once('end',()=>onLauncherSignal('SIGTERM'))
   process.stdin.unref()
 }
 try{
@@ -758,10 +847,10 @@ try{
 }catch(error){result=1;runError=error;console.error(JSON.stringify({profile,stats}));throw error}finally{
   const finalResult=await finalize()
   result=finalResult
-  if(!runError&&finalResult!==0&&!interruptedSignal&&!fixtureShuttingDown()){
+  if(!runError&&finalResult!==0&&!interruptedSignal){
     if(clientStopError)assert.fail(`Owned client cleanup failed: ${clientStopError}`)
     if(teardownErrors.length)assert.fail(`Fixture teardown failed: ${teardownErrors.join('; ')}`)
-    if(webState.deviceLease&&androidCleanup?.length)assert.deepEqual(androidCleanup,[],'Android fixture cleanup must complete')
+    if(androidCleanup?.length)assert.deepEqual(androidCleanup,[],'Android fixture cleanup must complete')
     assert.equal(server?.exitCode,0,'Owned server must exit cleanly')
   }
 }

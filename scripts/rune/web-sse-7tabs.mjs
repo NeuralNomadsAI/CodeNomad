@@ -111,6 +111,10 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
   )
   for (const frame of actualFrames) {
     assert.equal(frame.requestId, sseRequestId, `Injected SSE frame for ${frame.assistantMessageID} arrived on unexpected requestId ${frame.requestId}`)
+    assert.equal(typeof frame.assistantMessageID, 'string', 'Injected SSE frame assistantMessageID must be a string')
+    assert.equal(typeof frame.instanceId, 'string', 'Injected SSE frame instanceId must be a string')
+    assert.equal(typeof frame.sessionID, 'string', 'Injected SSE frame sessionID must be a string')
+    assert.equal(typeof frame.delta, 'string', 'Injected SSE frame delta must be a string')
   }
   const key = ({assistantMessageID, workspaceId, sessionID, text}) =>
     `${assistantMessageID}\0${workspaceId}\0${sessionID}\0${text}`
