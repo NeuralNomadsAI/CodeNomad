@@ -23,12 +23,13 @@ import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
 import {assertWorktreeTestRoot} from '../../../scripts/rune/web-workspace-policy.mjs'
 const webMoreActions=process.argv.includes('--web-mobile-more-actions')
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||webMoreActions||process.argv.includes('--web-mobile')
+const webKeyboard=process.argv.includes('--web-keyboard-viewport')
 const mobileSessionSearch=process.argv.includes('--mobile-session-search')
 const historyReturnOnly=process.argv.includes('--history-return-only')
 assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation requires the Chromium mobile smoke')
 assert(!historyReturnOnly || webMobile&&!webAndroid)
 assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes('--web-mobile'))
-if(webMobile&&!process.argv.includes('--owned-mobile-worker')){
+if((webMobile||webKeyboard)&&!process.argv.includes('--owned-mobile-worker')){
   const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:'inherit'})
   const closed=new Promise(resolve=>worker.once('close',resolve))
   const stop=()=>void stopFixtureChild(worker,closed).catch(error=>console.error(error.message))
@@ -52,7 +53,6 @@ const webSearch=process.argv.includes('--web-history-search')
 const webOutline=process.argv.includes('--web-outline-restore')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webFileWrap=process.argv.includes('--web-file-wrap')
-const webKeyboard=process.argv.includes('--web-keyboard-viewport')
 const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webOutline||webKeyboard,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webGitImages||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
 assert(!webFileWrap||(!webPending&&!webMobile),'File wrap uses the loopback Chromium restoration fixture')
 assert(!webKeyboard||(!webPending&&!webFileWrap&&!webMobile&&!webOutline&&!webTimeline&&!webSearch&&!process.argv.includes('--web-restore')),'Keyboard viewport uses its own loopback Chromium fixture mode')
