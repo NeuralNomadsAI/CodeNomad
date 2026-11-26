@@ -571,6 +571,197 @@ impl Ui {
                 }
                 chosen
             }
+            // Exact min-cost bipartite slot assignment (Hungarian algorithm, k <= m <= MAX_TABS = 32):
+            // minimizes (deferred_count [when prefer_surviving], exact JSON bytes, slot index).
+            fn assign_slots(
+                chosen: &[usize],
+                slots: &[(usize, bool, TabContainers)],
+                costs: &[BundleCost],
+                ses_json: usize,
+                prefer_surviving: bool,
+            ) -> Option<(Vec<(usize, usize)>, usize, usize)> {
+                let k = chosen.len();
+                let m = slots.len();
+                if k == 0 {
+                    return Some((Vec::new(), 0, 0));
+                }
+                if k > m {
+                    return None;
+                }
+                const DEFERRED_PENALTY: i64 = 1i64 << 42;
+                let mut u = vec![0i64; k + 1];
+                let mut v = vec![0i64; m + 1];
+                let mut p = vec![0usize; m + 1];
+                let mut way = vec![0usize; m + 1];
+                for i in 1..=k {
+                    p[0] = i;
+                    let mut j0 = 0usize;
+                    let mut minv = vec![i64::MAX; m + 1];
+                    let mut used = vec![false; m + 1];
+                    loop {
+                        used[j0] = true;
+                        let i0 = p[j0];
+                        let mut delta = i64::MAX;
+                        let mut j1 = 0usize;
+                        for j in 1..=m {
+                            if !used[j] {
+                                let (_, is_def, c) = slots[j - 1];
+                                let b_cost = costs[chosen[i0 - 1]].bytes(ses_json, c) as i64;
+                                let w = if prefer_surviving && is_def {
+                                    DEFERRED_PENALTY
+                                } else {
+                                    0
+                                } + b_cost * 64
+                                    + (j - 1) as i64;
+                                let cur = w - u[i0] - v[j];
+                                if cur < minv[j] {
+                                    minv[j] = cur;
+                                    way[j] = j0;
+                                }
+                                if minv[j] < delta {
+                                    delta = minv[j];
+                                    j1 = j;
+                                }
+                            }
+                        }
+                        for j in 0..=m {
+                            if used[j] {
+                                u[p[j]] += delta;
+                                v[j] -= delta;
+                            } else {
+                                minv[j] -= delta;
+                            }
+                        }
+                        j0 = j1;
+                        if p[j0] == 0 {
+                            break;
+                        }
+                    }
+                    loop {
+                        let j1 = way[j0];
+                        p[j0] = p[j1];
+                        j0 = j1;
+                        if j0 == 0 {
+                            break;
+                        }
+                    }
+                }
+                let mut assigns = Vec::with_capacity(k);
+                let mut total_bytes = 0usize;
+                let mut surviving = 0usize;
+                for j in 1..=m {
+                    if p[j] != 0 {
+                        let bundle_idx = chosen[p[j] - 1];
+                        let (tab_idx, is_def, c) = slots[j - 1];
+                        total_bytes =
+                            total_bytes.saturating_add(costs[bundle_idx].bytes(ses_json, c));
+                        if !is_def {
+                            surviving += 1;
+                        }
+                        assigns.push((tab_idx, bundle_idx));
+                    }
+                }
+                Some((assigns, total_bytes, surviving))
+            }
+            type BundleSig = (usize, bool, bool, bool, usize, usize);
+            struct Exact2dCtx<'a> {
+                pool: &'a [usize],
+                ses_units: &'a [Option<usize>],
+                costs: &'a [BundleCost],
+                b_lb: &'a [usize],
+                slots: &'a [(usize, bool, TabContainers)],
+                ses_json: usize,
+                rem_u: usize,
+                rem_b: usize,
+                prefer_surviving: bool,
+                min_u: &'a [Vec<usize>],
+                min_b: &'a [Vec<usize>],
+                lb_failed: Vec<Vec<Vec<(usize, usize)>>>,
+            }
+            impl Exact2dCtx<'_> {
+                fn dfs(
+                    &mut self,
+                    pos: usize,
+                    need: usize,
+                    cur_u: usize,
+                    cur_b_lb: usize,
+                    chosen: &mut Vec<usize>,
+                    banned: &mut Vec<BundleSig>,
+                ) -> (
+                    Option<(Vec<usize>, Vec<(usize, usize)>, usize, usize)>,
+                    bool,
+                ) {
+                    if need == 0 {
+                        if let Some((assigns, total_b, surv)) = assign_slots(
+                            chosen,
+                            self.slots,
+                            self.costs,
+                            self.ses_json,
+                            self.prefer_surviving,
+                        ) && total_b <= self.rem_b
+                        {
+                            return (Some((chosen.clone(), assigns, cur_u, surv)), true);
+                        }
+                        return (None, true);
+                    }
+                    let n = self.pool.len();
+                    if n - pos < need
+                        || cur_u.saturating_add(self.min_u[pos][need]) > self.rem_u
+                        || cur_b_lb.saturating_add(self.min_b[pos][need]) > self.rem_b
+                    {
+                        return (None, false);
+                    }
+                    if banned.is_empty()
+                        && self.lb_failed[pos][need]
+                            .iter()
+                            .any(|&(fu, fb)| fu <= cur_u && fb <= cur_b_lb)
+                    {
+                        return (None, false);
+                    }
+                    let b_idx = self.pool[pos];
+                    let u_cost = self.ses_units[b_idx].unwrap_or(usize::MAX);
+                    let bc = &self.costs[b_idx];
+                    let sig: BundleSig = (
+                        u_cost,
+                        bc.has_text,
+                        bc.has_att,
+                        bc.has_parts,
+                        bc.text_json,
+                        bc.parts_json,
+                    );
+                    let mut any_leaf = false;
+                    let mut added_ban = false;
+                    if !banned.contains(&sig) {
+                        let nu = cur_u.saturating_add(u_cost);
+                        let nb = cur_b_lb.saturating_add(self.b_lb[pos]);
+                        if nu <= self.rem_u && nb <= self.rem_b {
+                            chosen.push(b_idx);
+                            let (found, leaf) = self.dfs(pos + 1, need - 1, nu, nb, chosen, banned);
+                            if found.is_some() {
+                                return (found, true);
+                            }
+                            chosen.pop();
+                            any_leaf |= leaf;
+                        }
+                        banned.push(sig);
+                        added_ban = true;
+                    }
+                    let (found, leaf) = self.dfs(pos + 1, need, cur_u, cur_b_lb, chosen, banned);
+                    if added_ban {
+                        banned.pop();
+                    }
+                    if found.is_some() {
+                        return (found, true);
+                    }
+                    any_leaf |= leaf;
+                    if !any_leaf && banned.is_empty() {
+                        let list = &mut self.lb_failed[pos][need];
+                        list.retain(|&(eu, eb)| !(eu >= cur_u && eb >= cur_b_lb));
+                        list.push((cur_u, cur_b_lb));
+                    }
+                    (None, any_leaf)
+                }
+            }
             let apply_bundle =
                 |snap: &mut Snapshot, dest: usize, key: &str, bundle: &drafts::ClosedBundle| {
                     let Tab::Workspace(w) = &mut snap.tabs[dest] else {
@@ -719,7 +910,7 @@ impl Ui {
                         };
                     let rem_u = rem_units - local_u;
                     let rem_b = rem_bytes - local_b;
-                    let mut slots: Vec<(usize, TabContainers)> = Vec::new();
+                    let mut slots: Vec<(usize, bool, TabContainers)> = Vec::new();
                     let mut surviving_slots = 0usize;
                     for prefer_surviving in [true, false] {
                         for i in 0..snap.tabs.len() {
@@ -736,112 +927,131 @@ impl Ui {
                             if is_local_dest && let Some(lb) = local_bundle_idx {
                                 c = costs[lb].apply_containers(c);
                             }
-                            slots.push((i, c));
+                            slots.push((i, !prefer_surviving, c));
                             if prefer_surviving {
                                 surviving_slots += 1;
                             }
                         }
                     }
-                    let pool_u: Vec<(usize, usize)> = (0..unprojected.len())
+                    let pool: Vec<usize> = (0..unprojected.len())
                         .filter(|&b| local_bundle_idx != Some(b))
-                        .filter_map(|b| Some((b, ses_units[b]?)))
-                        .collect();
-                    let exact_fit = |chosen: &[usize]| -> Option<(usize, usize)> {
-                        if chosen.len() > slots.len() {
-                            return None;
-                        }
-                        let mut u = 0usize;
-                        let mut b = 0usize;
-                        for (&bundle_idx, &(_, c)) in chosen.iter().zip(slots.iter()) {
-                            u = u.saturating_add(ses_units[bundle_idx]?);
-                            b = b.saturating_add(costs[bundle_idx].bytes(ses_json, c));
-                        }
-                        (u <= rem_u && b <= rem_b).then_some((u, b))
-                    };
-                    let chosen_ses = {
-                        let cand_u = best_subset_1d(&pool_u, slots.len(), rem_u);
-                        if exact_fit(&cand_u).is_some() {
-                            cand_u
-                        } else {
-                            let mut best_ses: Option<Vec<usize>> = None;
-                            let mut consider = |cand: Vec<usize>| {
-                                if exact_fit(&cand).is_none() {
-                                    return;
-                                }
-                                let better = best_ses.as_ref().is_none_or(|prev| {
-                                    (cand.len(), std::cmp::Reverse(&cand))
-                                        > (prev.len(), std::cmp::Reverse(prev))
-                                });
-                                if better {
-                                    best_ses = Some(cand);
-                                }
-                            };
-                            for empty_meta in [true, false] {
-                                let pool_b: Vec<(usize, usize)> = pool_u
+                        .filter(|&b| {
+                            ses_units[b].is_some_and(|u| u <= rem_u)
+                                && slots
                                     .iter()
-                                    .map(|&(b, _)| {
-                                        let w = costs[b].bytes(
-                                            ses_json,
-                                            TabContainers {
-                                                drafts_empty: !empty_meta,
-                                                att_empty: empty_meta,
-                                                parts_empty: empty_meta,
-                                            },
-                                        );
-                                        (b, w)
-                                    })
-                                    .collect();
-                                consider(best_subset_1d(&pool_b, slots.len(), rem_b));
+                                    .any(|&(_, _, c)| costs[b].bytes(ses_json, c) <= rem_b)
+                        })
+                        .collect();
+                    let pool_u: Vec<(usize, usize)> = pool
+                        .iter()
+                        .filter_map(|&b| Some((b, ses_units[b]?)))
+                        .collect();
+                    let (chosen_ses, ses_assigns, ses_u, ses_surviving) = {
+                        let cand_u = best_subset_1d(&pool_u, slots.len(), rem_u);
+                        if let Some((assigns, total_b, surv)) =
+                            assign_slots(&cand_u, &slots, &costs, ses_json, true)
+                            && total_b <= rem_b
+                        {
+                            let u_sum: usize = cand_u
+                                .iter()
+                                .filter_map(|&b| ses_units[b])
+                                .fold(0usize, usize::saturating_add);
+                            (cand_u, assigns, u_sum, surv)
+                        } else if pool.is_empty() || slots.is_empty() {
+                            (Vec::new(), Vec::new(), 0, 0)
+                        } else {
+                            let b_lb: Vec<usize> = pool
+                                .iter()
+                                .map(|&b| {
+                                    slots
+                                        .iter()
+                                        .map(|&(_, _, c)| costs[b].bytes(ses_json, c))
+                                        .min()
+                                        .unwrap_or(usize::MAX)
+                                })
+                                .collect();
+                            let mut sorted_b = b_lb.clone();
+                            sorted_b.sort_unstable();
+                            let mut k_b_max = 0usize;
+                            let mut b_sum = 0usize;
+                            for w in sorted_b.into_iter().take(slots.len()) {
+                                if b_sum.saturating_add(w) <= rem_b {
+                                    b_sum += w;
+                                    k_b_max += 1;
+                                } else {
+                                    break;
+                                }
                             }
-                            let mut order_by_priority: Vec<usize> =
-                                pool_u.iter().map(|&(b, _)| b).collect();
-                            let mut order_by_u = order_by_priority.clone();
-                            order_by_u.sort_by_key(|&b| (ses_units[b].unwrap_or(usize::MAX), b));
-                            let mut order_by_b = order_by_priority.clone();
-                            order_by_b.sort_by_key(|&b| {
-                                (
-                                    costs[b].bytes(
+                            let k_upper = cand_u.len().min(k_b_max);
+                            let n = pool.len();
+                            let mut min_u = vec![vec![usize::MAX; k_upper + 1]; n + 1];
+                            let mut min_b = vec![vec![usize::MAX; k_upper + 1]; n + 1];
+                            for pos in 0..=n {
+                                min_u[pos][0] = 0;
+                                min_b[pos][0] = 0;
+                                let mut su: Vec<usize> =
+                                    pool[pos..].iter().filter_map(|&b| ses_units[b]).collect();
+                                su.sort_unstable();
+                                let mut sb: Vec<usize> = b_lb[pos..].to_vec();
+                                sb.sort_unstable();
+                                let mut acc_u = 0usize;
+                                let mut acc_b = 0usize;
+                                for need in 1..=k_upper.min(n - pos) {
+                                    acc_u = acc_u.saturating_add(su[need - 1]);
+                                    acc_b = acc_b.saturating_add(sb[need - 1]);
+                                    min_u[pos][need] = acc_u;
+                                    min_b[pos][need] = acc_b;
+                                }
+                            }
+                            let has_deferred = surviving_slots < slots.len();
+                            let mut found_exact = None;
+                            for target_k in (1..=k_upper).rev() {
+                                let modes: &[bool] = if has_deferred {
+                                    &[true, false]
+                                } else {
+                                    &[true]
+                                };
+                                for &prefer_surviving in modes {
+                                    let mut ctx = Exact2dCtx {
+                                        pool: &pool,
+                                        ses_units: &ses_units,
+                                        costs: &costs,
+                                        b_lb: &b_lb,
+                                        slots: &slots,
                                         ses_json,
-                                        TabContainers {
-                                            drafts_empty: false,
-                                            att_empty: true,
-                                            parts_empty: true,
-                                        },
-                                    ),
-                                    b,
-                                )
-                            });
-                            for order in [&mut order_by_priority, &mut order_by_u, &mut order_by_b]
-                            {
-                                let mut picked = Vec::new();
-                                for &b in order.iter() {
-                                    if picked.len() >= slots.len() {
+                                        rem_u,
+                                        rem_b,
+                                        prefer_surviving,
+                                        min_u: &min_u,
+                                        min_b: &min_b,
+                                        lb_failed: vec![vec![Vec::new(); target_k + 1]; n + 1],
+                                    };
+                                    let mut chosen = Vec::with_capacity(target_k);
+                                    let mut banned = Vec::new();
+                                    if let (Some(res), _) =
+                                        ctx.dfs(0, target_k, 0, 0, &mut chosen, &mut banned)
+                                    {
+                                        found_exact = Some(res);
                                         break;
                                     }
-                                    picked.push(b);
-                                    picked.sort_unstable();
-                                    if exact_fit(&picked).is_none() {
-                                        picked.retain(|&x| x != b);
-                                    }
                                 }
-                                consider(picked);
+                                if found_exact.is_some() {
+                                    break;
+                                }
                             }
-                            best_ses.unwrap_or_default()
+                            found_exact.unwrap_or_else(|| (Vec::new(), Vec::new(), 0, 0))
                         }
-                    };
-                    let Some((ses_u, _)) = exact_fit(&chosen_ses) else {
-                        continue;
                     };
                     let kept = usize::from(local_bundle_idx.is_some()) + chosen_ses.len();
                     if kept == 0 {
                         continue;
                     }
-                    let mut kept_indices = chosen_ses.clone();
+                    let mut kept_indices = chosen_ses;
                     if let Some(lb) = local_bundle_idx {
                         kept_indices.push(lb);
                         kept_indices.sort_unstable();
                     }
-                    let surviving = chosen_ses.len().min(surviving_slots)
+                    let surviving = ses_surviving
                         + usize::from(
                             no_session_dest.is_some_and(|i| !self.entries[i].closing_deferred),
                         );
@@ -859,11 +1069,6 @@ impl Ui {
                         .as_ref()
                         .is_none_or(|(best_rank, ..)| rank > *best_rank)
                     {
-                        let ses_assigns: Vec<(usize, usize)> = chosen_ses
-                            .iter()
-                            .zip(slots.iter())
-                            .map(|(&b, &(tab_idx, _))| (tab_idx, b))
-                            .collect();
                         best = Some((
                             rank,
                             no_session_dest.zip(local_bundle_idx),

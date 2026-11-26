@@ -1596,17 +1596,15 @@ fn set_restored_probe_outcome(
     }
 }
 
-pub(super) fn note_sessions_present_in_scope_at<I, S>(
+pub(super) fn note_sessions_present_in_scope_epochs<I>(
     ui: &mut Ui,
     scope: &super::ProjectScope,
-    ids: I,
-    epoch: u64,
+    proofs: I,
 ) where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
+    I: IntoIterator<Item = (String, u64)>,
 {
-    for id in ids {
-        note_session_present_in_scope_at(ui, scope, id.as_ref(), epoch);
+    for (id, epoch) in proofs {
+        note_session_present_in_scope_at(ui, scope, &id, epoch);
     }
 }
 
