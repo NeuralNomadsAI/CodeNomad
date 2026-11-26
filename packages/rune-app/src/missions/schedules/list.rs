@@ -955,16 +955,28 @@ impl Schedules {
             },
             Some(ReadOut::Pending(r)) => {
                 self.fresh.remove(&sid);
-                if r.is_some_and(|(id, _)| id == sid) {
-                    self.last_point = Some(PointSettlement {
-                        id: sid,
-                        generation: self.generation,
-                        seq,
-                        kind: PointKind::Pending,
-                    });
-                    self.selection_error = Some(SelectionError::Pending);
-                } else {
-                    self.selection_error = Some(SelectionError::Failed);
+                match r {
+                    Some((id, _)) if id != sid => {
+                        self.selection_error = Some(SelectionError::Failed);
+                    }
+                    Some(_) => {
+                        self.last_point = Some(PointSettlement {
+                            id: sid,
+                            generation: self.generation,
+                            seq,
+                            kind: PointKind::Pending,
+                        });
+                        self.selection_error = Some(SelectionError::Pending);
+                    }
+                    None => {
+                        self.last_point = Some(PointSettlement {
+                            id: sid,
+                            generation: self.generation,
+                            seq,
+                            kind: PointKind::Pending,
+                        });
+                        self.selection_error = Some(SelectionError::Failed);
+                    }
                 }
             }
             Some(ReadOut::AuthExpired) => {

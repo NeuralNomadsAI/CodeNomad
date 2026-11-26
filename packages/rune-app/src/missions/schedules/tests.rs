@@ -1914,6 +1914,41 @@ fn stale_pages_cannot_resurrect_deleted_erase_pending_or_reissue_settled_retry()
         );
         assert!(!h.panel.schedules.is_fresh("msn_2"));
 
+        // 4b. Document-less 503 schedule-pending (missionID only, no partial receipt) also fences
+        // an older in-flight page from clearing selection_error or marking msn_2 fresh.
+        let (s, c) = h.panel.schedule_parts();
+        s.refresh(c);
+        let mut stale_page_nodoc = None;
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                stale_page_nodoc = Some(req);
+            }
+        }
+        let stale_page_nodoc = stale_page_nodoc.expect("stale page before docless 503");
+        assert!(h.act(G::RetrySelection));
+        let pt_503_nodoc = h.http.accept().await;
+        pt_503_nodoc
+            .reply(
+                503,
+                json!({"code": "schedule-pending", "pending": true, "missionID": "msn_2"}),
+            )
+            .await;
+        h.pump(|p, _| p.schedules.selection_error == Some(super::list::SelectionError::Failed))
+            .await;
+        stale_page_nodoc
+            .reply(200, list(vec![s1.clone(), s2_r3.clone()], None))
+            .await;
+        h.pump(|p, _| !p.schedules.loading()).await;
+        assert_eq!(
+            h.panel.schedules.selection_error,
+            Some(super::list::SelectionError::Failed),
+            "stale page rev 3 must not clear newer document-less 503 schedule-pending"
+        );
+        assert!(!h.panel.schedules.is_fresh("msn_2"));
+
         // 5. Even with an active Publication(3) hold, a newer confirmed deletion prevents an older
         // page containing rev 3 from resurrecting msn_2 or releasing the hold.
         let doc_r2 = UnifiedSchedule::from_value(&s2_r2).unwrap();
