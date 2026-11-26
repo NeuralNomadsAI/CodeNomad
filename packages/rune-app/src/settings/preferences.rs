@@ -1270,6 +1270,22 @@ impl Preferences {
         self.state.palette_mutation_failed()
     }
 
+    pub(super) fn mode_saving(&self) -> bool {
+        self.state.choice_pending(Choice::Mode)
+    }
+
+    pub(super) fn mode_save_failed(&self) -> bool {
+        self.state.choice_failed(Choice::Mode)
+    }
+
+    pub(super) fn builtin_palette_saving(&self, dark: bool) -> bool {
+        self.state.choice_pending(Choice::Palette(dark))
+    }
+
+    pub(super) fn builtin_palette_save_failed(&self, dark: bool) -> bool {
+        self.state.choice_failed(Choice::Palette(dark))
+    }
+
     pub(super) fn clear_palette_save_failed(&mut self) {
         self.state.clear_palette_mutation();
     }
