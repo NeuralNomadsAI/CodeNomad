@@ -43,6 +43,7 @@ struct SubQueue {
     items: VecDeque<HubItem>,
     bytes: usize,
     closed: bool,
+    pending_session_moved: Option<Arc<(String, String)>>,
 }
 
 impl SubQueue {
@@ -68,6 +69,13 @@ impl GuardHook {
     }
 }
 
+#[derive(Default)]
+struct SubscriberSignals {
+    conversation: Option<(String, String)>,
+    closed: Option<Sender<()>>,
+    placement: Option<Sender<()>>,
+}
+
 struct Subscriber {
     id: u64,
     queue: Mutex<SubQueue>,
@@ -75,13 +83,24 @@ struct Subscriber {
     wake_rx: Receiver<()>,
     quota: Option<crate::provider_usage::Ingress>,
     guard_hook: Option<GuardHook>,
+    signals: SubscriberSignals,
 }
 
 impl Subscriber {
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     fn new(
         id: u64,
         quota: Option<crate::provider_usage::Ingress>,
         guard_hook: Option<GuardHook>,
+    ) -> Arc<Self> {
+        Self::with_signals(id, quota, guard_hook, SubscriberSignals::default())
+    }
+
+    fn with_signals(
+        id: u64,
+        quota: Option<crate::provider_usage::Ingress>,
+        guard_hook: Option<GuardHook>,
+        signals: SubscriberSignals,
     ) -> Arc<Self> {
         let (wake_tx, wake_rx) = bounded(1);
         Arc::new(Self {
@@ -91,7 +110,27 @@ impl Subscriber {
             wake_rx,
             quota,
             guard_hook,
+            signals,
         })
+    }
+
+    fn matches_conversation(&self, workspace: &str, session: &str) -> bool {
+        self.signals
+            .conversation
+            .as_ref()
+            .is_some_and(|(w, s)| w == workspace && s == session)
+    }
+
+    fn signal_closed(&self) {
+        if let Some(tx) = &self.signals.closed {
+            tx.close();
+        }
+    }
+
+    fn signal_placement(&self) {
+        if let Some(tx) = &self.signals.placement {
+            tx.close();
+        }
     }
 
     fn seed_opened(&self, replays: &[Arc<(String, String)>], force_skipped: bool) -> bool {
@@ -135,11 +174,14 @@ impl Subscriber {
 
     /// Returns `false` if this subscriber exceeded its local queue budget.
     /// Caller revokes guard and quota before calling `close_overflow()`.
-    fn try_push_frame(&self, frame: Arc<(String, String)>) -> bool {
+    fn try_push_frame(&self, frame: Arc<(String, String)>, session_moved: bool) -> bool {
         let size = frame.0.len().saturating_add(frame.1.len());
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
             return false;
+        }
+        if session_moved {
+            queue.pending_session_moved = Some(frame.clone());
         }
         if queue.items.len() >= queue.max_items()
             || queue.bytes.saturating_add(size) > MAX_SUBSCRIBER_BYTES
@@ -154,6 +196,7 @@ impl Subscriber {
     }
 
     fn close_overflow(&self) {
+        self.signal_closed();
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
             return;
@@ -161,6 +204,9 @@ impl Subscriber {
         queue.closed = true;
         queue.items.clear();
         queue.bytes = 0;
+        if let Some(moved) = queue.pending_session_moved.take() {
+            queue.items.push_back(HubItem::Frame(moved));
+        }
         queue.items.push_back(HubItem::Closed {
             auth_expired: false,
         });
@@ -194,6 +240,13 @@ impl Subscriber {
         if let HubItem::Frame(frame) = &item {
             let size = frame.0.len().saturating_add(frame.1.len());
             queue.bytes = queue.bytes.saturating_sub(size);
+            if queue
+                .pending_session_moved
+                .as_ref()
+                .is_some_and(|moved| Arc::ptr_eq(moved, frame))
+            {
+                queue.pending_session_moved = None;
+            }
         }
         Some(item)
     }
@@ -328,7 +381,7 @@ impl SharedStream {
 
     pub(super) fn broadcast_frame(&self, hub: &Hub, kind: String, data: String) {
         let frame = Arc::new((kind, data));
-        let replay_update = classify_replay(&frame.0, &frame.1);
+        let class = classify_frame(&frame.0, &frame.1);
         let notify_quota = frame.0.is_empty() || frame.0 == "message";
         let mut wakes = Vec::new();
         let became_empty = {
@@ -336,22 +389,29 @@ impl SharedStream {
             if matches!(inner.phase, Phase::Closing | Phase::Closed { .. }) {
                 return;
             }
-            match replay_update {
-                ReplayUpdate::Status(id) => {
-                    if inner.replays.len() < MAX_REPLAY_STATUSES || inner.replays.contains_key(&id)
-                    {
-                        inner.replays.insert(id, frame.clone());
+            match &class {
+                FrameClass::ReplayStatus(id) => {
+                    if inner.replays.len() < MAX_REPLAY_STATUSES || inner.replays.contains_key(id) {
+                        inner.replays.insert(id.clone(), frame.clone());
                     } else {
                         inner.replays_overflowed = true;
                     }
                 }
-                ReplayUpdate::Stopped(id) => {
-                    inner.replays.remove(&id);
+                FrameClass::ReplayStopped(id) => {
+                    inner.replays.remove(id);
                 }
-                ReplayUpdate::None => {}
+                FrameClass::SessionMoved { .. } | FrameClass::None => {}
             }
             inner.subscribers.retain(|sub| {
-                let kept = sub.try_push_frame(frame.clone());
+                let session_moved = matches!(
+                    &class,
+                    FrameClass::SessionMoved { workspace, session }
+                        if sub.matches_conversation(workspace, session)
+                );
+                if session_moved {
+                    sub.signal_placement();
+                }
+                let kept = sub.try_push_frame(frame.clone(), session_moved);
                 if !kept {
                     if let Some(hook) = &sub.guard_hook {
                         hook.revoke(true);
@@ -444,6 +504,7 @@ impl SharedStream {
                 {
                     wakes.push(quota.clone());
                 }
+                sub.signal_closed();
             }
         }
         for quota in wakes {
@@ -476,6 +537,7 @@ impl SharedStream {
                 {
                     wakes.push(quota.clone());
                 }
+                sub.signal_closed();
                 sub.push_closed(auth_expired);
             }
             if streams
@@ -491,23 +553,25 @@ impl SharedStream {
     }
 }
 
-enum ReplayUpdate {
+enum FrameClass {
     None,
-    Status(String),
-    Stopped(String),
+    ReplayStatus(String),
+    ReplayStopped(String),
+    SessionMoved { workspace: String, session: String },
 }
 
-fn classify_replay(kind: &str, data: &str) -> ReplayUpdate {
+fn classify_frame(kind: &str, data: &str) -> FrameClass {
     if !(kind.is_empty() || kind == "message") {
-        return ReplayUpdate::None;
+        return FrameClass::None;
     }
     let is_status = data.contains("\"instance.eventStatus\"");
     let is_stopped = !is_status && data.contains("\"workspace.stopped\"");
-    if !is_status && !is_stopped {
-        return ReplayUpdate::None;
+    let is_moved = !is_status && !is_stopped && data.contains("\"session.moved\"");
+    if !is_status && !is_stopped && !is_moved {
+        return FrameClass::None;
     }
     let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim()) else {
-        return ReplayUpdate::None;
+        return FrameClass::None;
     };
     if value["type"] == "instance.eventStatus"
         && let Some(id) = value["instanceId"].as_str()
@@ -519,17 +583,27 @@ fn classify_replay(kind: &str, data: &str) -> ReplayUpdate {
                 Some("workspace stopped" | "workspace error")
             )
         {
-            return ReplayUpdate::Stopped(id.to_owned());
+            return FrameClass::ReplayStopped(id.to_owned());
         }
-        return ReplayUpdate::Status(id.to_owned());
+        return FrameClass::ReplayStatus(id.to_owned());
     }
     if value["type"] == "workspace.stopped"
         && let Some(id) = value["workspaceId"].as_str()
         && crate::history::valid_id(id)
     {
-        return ReplayUpdate::Stopped(id.to_owned());
+        return FrameClass::ReplayStopped(id.to_owned());
     }
-    ReplayUpdate::None
+    if value["type"] == "instance.event"
+        && value["event"]["type"] == "session.moved"
+        && let Some(workspace) = value["instanceId"].as_str()
+        && let Some(session) = value["event"]["data"]["sessionID"].as_str()
+    {
+        return FrameClass::SessionMoved {
+            workspace: workspace.to_owned(),
+            session: session.to_owned(),
+        };
+    }
+    FrameClass::None
 }
 
 struct StreamEntry {
@@ -550,9 +624,10 @@ impl Hub {
         backend: &Backend,
         quota: Option<crate::provider_usage::Ingress>,
         guard_hook: Option<GuardHook>,
+        signals: SubscriberSignals,
     ) -> Subscription {
         let id = self.next_id.fetch_add(1, SeqCst) + 1;
-        let sub = Subscriber::new(id, quota, guard_hook);
+        let sub = Subscriber::with_signals(id, quota, guard_hook, signals);
         loop {
             let wait_done = {
                 let mut streams = self.streams.lock().unwrap();
@@ -728,6 +803,12 @@ pub(super) async fn read_shared(
         guard: stream_guard,
         count_open_stream,
     });
+    let signals = SubscriberSignals {
+        conversation: (!backend.workspace.is_empty() && !backend.session.is_empty())
+            .then(|| (backend.workspace.clone(), backend.session.clone())),
+        closed: Some(state.closed_signal()),
+        placement: state.placement_signal(),
+    };
     enum SubscribeStep {
         Ready(Subscription),
         Cancelled,
@@ -737,7 +818,7 @@ pub(super) async fn read_shared(
             state.wait_cancelled(out).await;
             SubscribeStep::Cancelled
         },
-        async { SubscribeStep::Ready(hub.subscribe(backend, quota, guard_hook).await) },
+        async { SubscribeStep::Ready(hub.subscribe(backend, quota, guard_hook, signals).await) },
     )
     .await
     {

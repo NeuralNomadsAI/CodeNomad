@@ -150,6 +150,14 @@ impl State {
         self.closed.1.is_closed()
     }
 
+    pub(super) fn closed_signal(&self) -> Sender<()> {
+        self.closed.0.clone()
+    }
+
+    pub(super) fn placement_signal(&self) -> Option<Sender<()>> {
+        self.placement.as_ref().map(|(cancel, _)| cancel.clone())
+    }
+
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn close_stream(&self) {
         self.closed.0.close();

@@ -460,7 +460,7 @@ fn late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chun
             );
             let late = tokio::time::timeout(
                 Duration::from_secs(5),
-                hub.subscribe(&backend, Some(ingress), None),
+                hub.subscribe(&backend, Some(ingress), None, SubscriberSignals::default()),
             )
             .await
             .unwrap_or_else(|_| {
@@ -998,4 +998,174 @@ fn voluntary_detach_revokes_guard_immediately_without_outage_before_pump_exits()
             assert_eq!(client.open_streams_counter().load(SeqCst), 0);
         },
     );
+}
+
+#[test]
+fn overflow_preserves_pending_session_moved_and_signals_placement_and_close() {
+    let hub = Arc::new(Hub::default());
+    let (stop_tx, _stop_rx) = bounded(1);
+    let (_done_tx, done_rx) = bounded(1);
+    let (ev_tx, _ev_rx) = bounded(1);
+    let state_queued = State::observing_preferences(ev_tx.clone(), Arc::new(|| {}));
+    let state_overflow = State::observing_preferences(ev_tx.clone(), Arc::new(|| {}));
+    let state_popped = State::observing_preferences(ev_tx, Arc::new(|| {}));
+
+    let make_sub = |id, session: &str, state: &State| {
+        Subscriber::with_signals(
+            id,
+            None,
+            None,
+            SubscriberSignals {
+                conversation: Some(("ws-1".into(), session.into())),
+                closed: Some(state.closed_signal()),
+                placement: state.placement_signal(),
+            },
+        )
+    };
+    let queued = make_sub(1, "ses-1", &state_queued);
+    let on_overflow = make_sub(2, "ses-2", &state_overflow);
+    let already_popped = make_sub(3, "ses-3", &state_popped);
+    let shared = Arc::new(SharedStream {
+        base: "http://127.0.0.1:1/".into(),
+        inner: Mutex::new(StreamInner {
+            phase: Phase::Connecting,
+            subscribers: vec![queued.clone(), on_overflow.clone(), already_popped.clone()],
+            replays: HashMap::new(),
+            replays_overflowed: false,
+            chunk_active: false,
+            stop: Some(stop_tx),
+        }),
+        done: done_rx,
+    });
+    hub.streams.lock().unwrap().insert(
+        shared.base.clone(),
+        StreamEntry {
+            stream: shared.clone(),
+            active: true,
+        },
+    );
+    assert!(shared.mark_open());
+    // Drain Opened on already_popped and deliver its session.moved before later overflow.
+    assert!(matches!(already_popped.pop(), Some(HubItem::Opened)));
+    let moved_1 = r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.moved","data":{"sessionID":"ses-1"}}}"#;
+    let moved_2 = r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.moved","data":{"sessionID":"ses-2"}}}"#;
+    let moved_3 = r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.moved","data":{"sessionID":"ses-3"}}}"#;
+    shared.broadcast_frame(&hub, "message".into(), moved_3.into());
+    assert!(state_popped.is_placement_changed());
+    assert!(matches!(already_popped.pop(), Some(HubItem::Frame(f)) if f.1 == moved_3));
+
+    // Queue session.moved for ses-1 while it has not popped yet.
+    shared.broadcast_frame(&hub, "message".into(), moved_1.into());
+    assert!(state_queued.is_placement_changed());
+    assert!(!state_overflow.is_placement_changed());
+
+    // Fill queues to capacity (256 frames): already_popped has 1 frame left to capacity,
+    // queued and on_overflow have Opened + 2 frames already -> fill up to MAX_SUBSCRIBER_FRAMES - 1.
+    for i in 0..(MAX_SUBSCRIBER_FRAMES - 2) {
+        shared.broadcast_frame(
+            &hub,
+            "message".into(),
+            format!("{{\"type\":\"memory.changed\",\"seq\":{i}}}"),
+        );
+    }
+    // Now queued & on_overflow are at MAX_SUBSCRIBER_FRAMES; broadcast moved_2 as the overflowing frame.
+    shared.broadcast_frame(&hub, "message".into(), moved_2.into());
+    assert!(state_queued.is_stream_closed());
+    assert!(state_overflow.is_placement_changed());
+    assert!(state_overflow.is_stream_closed());
+
+    // Both queued (earlier session.moved) and on_overflow (overflowing session.moved) retain it before Closed.
+    assert!(matches!(queued.pop(), Some(HubItem::Frame(f)) if f.1 == moved_1));
+    assert!(matches!(
+        queued.pop(),
+        Some(HubItem::Closed {
+            auth_expired: false
+        })
+    ));
+    assert!(queued.pop().is_none());
+
+    assert!(matches!(on_overflow.pop(), Some(HubItem::Frame(f)) if f.1 == moved_2));
+    assert!(matches!(
+        on_overflow.pop(),
+        Some(HubItem::Closed {
+            auth_expired: false
+        })
+    ));
+    assert!(on_overflow.pop().is_none());
+
+    // Overflow already_popped as well: already-delivered session.moved is NOT re-emitted.
+    for i in 0..4 {
+        shared.broadcast_frame(
+            &hub,
+            "message".into(),
+            format!("{{\"type\":\"memory.changed\",\"tail\":{i}}}"),
+        );
+    }
+    assert!(state_popped.is_stream_closed());
+    assert!(matches!(
+        already_popped.pop(),
+        Some(HubItem::Closed {
+            auth_expired: false
+        })
+    ));
+    assert!(already_popped.pop().is_none());
+    shared.finish(&hub, false);
+}
+
+#[test]
+fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
+    let hub = Arc::new(Hub::default());
+    let (stop_tx, _stop_rx) = bounded(1);
+    let (_done_tx, done_rx) = bounded(1);
+    let state = State::default();
+    let sub = Subscriber::with_signals(
+        1,
+        None,
+        None,
+        SubscriberSignals {
+            conversation: None,
+            closed: Some(state.closed_signal()),
+            placement: None,
+        },
+    );
+    let shared = Arc::new(SharedStream {
+        base: "http://127.0.0.1:1/".into(),
+        inner: Mutex::new(StreamInner {
+            phase: Phase::Connecting,
+            subscribers: vec![sub.clone()],
+            replays: HashMap::new(),
+            replays_overflowed: false,
+            chunk_active: false,
+            stop: Some(stop_tx),
+        }),
+        done: done_rx,
+    });
+    hub.streams.lock().unwrap().insert(
+        shared.base.clone(),
+        StreamEntry {
+            stream: shared.clone(),
+            active: true,
+        },
+    );
+    assert!(shared.mark_open());
+    shared.broadcast_frame(
+        &hub,
+        "message".into(),
+        r#"{"type":"memory.changed","seq":1}"#.into(),
+    );
+    assert!(!state.is_stream_closed());
+
+    // Physical EOF signals stream_closed immediately even while pre-EOF items remain queued.
+    shared.begin_close(&hub);
+    assert!(state.is_stream_closed());
+    shared.finish(&hub, false);
+
+    assert!(matches!(sub.pop(), Some(HubItem::Opened)));
+    assert!(matches!(sub.pop(), Some(HubItem::Frame(_))));
+    assert!(matches!(
+        sub.pop(),
+        Some(HubItem::Closed {
+            auth_expired: false
+        })
+    ));
 }
