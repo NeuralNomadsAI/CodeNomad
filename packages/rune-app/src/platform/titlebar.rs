@@ -26,7 +26,10 @@ pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
         })
         .on_ready(move |window| {
             let window = window.clone();
-            handle.update(move |s, _| s.notifications.window = Some(window));
+            handle.update(move |s, _| {
+                s.notifications.window = Some(window.clone());
+                crate::platform::launch::attach(s, window);
+            });
         })
     };
     #[cfg(target_arch = "wasm32")]

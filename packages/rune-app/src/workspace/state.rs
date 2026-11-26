@@ -90,6 +90,22 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
         })
     })
 }
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn has_wake_lock_eligible_work(s: &State) -> bool {
+    if !s.screen.is_launcher()
+        && super::cache::has_wake_lock_eligible_work(&s.phase, s.agent.as_ref())
+    {
+        return true;
+    }
+    s.workspace.as_ref().is_some_and(|ui| {
+        ui.entries.iter().any(|entry| {
+            entry
+                .cache
+                .as_ref()
+                .is_some_and(Cache::has_wake_lock_eligible_work)
+        })
+    })
+}
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
     mission_lifecycle: crate::missions::Lifecycle,

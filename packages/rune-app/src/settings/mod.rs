@@ -386,6 +386,24 @@ pub(crate) fn show_provider_usage_credit_balance(s: &State) -> bool {
         .is_some_and(|config| config["settings"]["showProviderUsageCreditBalance"] == true)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn keep_computer_awake(s: &State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .general_toggle(preferences::behavior::GeneralToggle::KeepComputerAwake)
+        == Some(true)
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn focus_existing_window_on_second_launch(s: &State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .advanced_toggle(advanced::Toggle::SecondLaunch)
+        == Some(true)
+}
+
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn locale(s: &State) -> &'static str {
     s.settings
@@ -398,4 +416,9 @@ pub(crate) fn locale(s: &State) -> &'static str {
 #[cfg(test)]
 pub(crate) fn fixture_shortcuts(s: &State, overrides: serde_json::Value) {
     s.settings.shared.borrow_mut().fixture_shortcuts(overrides);
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn fixture_config(s: &mut State, url: &str, settings: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_config(url, settings);
 }

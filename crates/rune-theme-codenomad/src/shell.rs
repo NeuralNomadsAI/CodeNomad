@@ -142,6 +142,11 @@ pub fn live_caption() -> bool {
     cfg!(target_os = "windows") && !rune::is_headless()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub fn is_headless() -> bool {
+    rune::is_headless()
+}
+
 pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
     let t = tokens(layout::dark());
     let gutter = t.space(Space::Md).px();
