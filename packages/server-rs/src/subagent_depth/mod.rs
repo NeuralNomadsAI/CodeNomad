@@ -6,7 +6,7 @@ pub(crate) mod document;
 pub(crate) mod jsonc;
 mod jsonc_edit;
 mod jsonc_value;
-mod rules;
+pub(crate) mod rules;
 
 use crate::files::node_path::Style;
 use crate::shared::fastify;

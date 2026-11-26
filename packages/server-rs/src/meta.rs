@@ -50,6 +50,8 @@ pub fn document(
         "sidecars",
         "service-usage",
         "provider-usage",
+        "websearch-settings",
+        "image-settings",
         "remote-control",
         "settings-atomic-patches",
         "conversation-permissions",
