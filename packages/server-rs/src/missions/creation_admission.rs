@@ -628,6 +628,7 @@ mod tests {
                     created_at: String::new(),
                     updated_at: String::new(),
                     location: json!({"directory":dir}),
+                    temporary: None,
                 },
                 endpoint: Arc::new(opencode::Endpoint {
                     url: "http://127.0.0.1:1/".parse().unwrap(),

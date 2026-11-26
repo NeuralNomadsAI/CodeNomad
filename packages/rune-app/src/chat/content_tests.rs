@@ -497,7 +497,7 @@ fn compact_view_mode_and_unified_wrap_are_local_to_the_card() {
 
 #[test]
 fn a_larger_history_viewport_retries_an_already_mounted_diff() {
-    let mut rt = Runtime::new(edit_cards(12), view, (960.0, 440.0), Env::new(false, 1.0));
+    let mut rt = Runtime::new(edit_cards(12), view, (960.0, 380.0), Env::new(false, 1.0));
     rt.frame(0.0);
     rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
     for _ in 0..24 {
