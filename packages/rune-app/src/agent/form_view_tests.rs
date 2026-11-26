@@ -225,7 +225,10 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
             let opt_prod = find_node(&tree, &prod_key).unwrap();
             assert_eq!(opt_staging["role"], "radio-button");
             assert_eq!(opt_staging["name"], "Staging");
-            assert_eq!(opt_staging["description"], "Pre-production · Environment");
+            assert_eq!(
+                opt_staging["description"],
+                "Pre-production · Environment · Pick deployment target"
+            );
             assert!(has_state(opt_staging, "unchecked"), "{opt_staging}");
             assert!(has_state(opt_prod, "unchecked"), "{opt_prod}");
 
@@ -515,9 +518,7 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
                     "key": "constrained_empty",
                     "title": "Constrained",
                     "type": "string",
-                    "options": [
-                        {"value": "", "label": "Only empty"}
-                    ]
+                    "options": []
                 }),
             ],
         };
@@ -565,12 +566,14 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
 
         let radio_group = find_node(&tree, &agent_forms::field_group_key("choice")).unwrap();
         let radios = radio_group["children"].as_array().unwrap();
-        // Empty option dropped, duplicate "prod" collapsed -> 3 distinct radios.
-        assert_eq!(radios.len(), 3, "{radios:?}");
-        assert_eq!(radios[0]["name"], "Production");
+        // Optional declared empty option preserved, duplicate "prod" collapsed -> 4 distinct radios.
+        assert_eq!(radios.len(), 4, "{radios:?}");
+        assert_eq!(radios[0]["name"], "Empty");
         assert!(has_state(&radios[0], "unchecked"));
-        assert_eq!(radios[1]["name"], "Your answer 2");
+        assert_eq!(radios[1]["name"], "Production");
+        assert!(has_state(&radios[1], "unchecked"));
         assert_eq!(radios[2]["name"], "Your answer 3");
+        assert_eq!(radios[3]["name"], "Your answer 4");
 
         // Tapping the blank-label option stores its raw protocol value in Draft::choice,
         // submits it, and NEVER leaks it into visible text, accessible names, or accessible values.
@@ -2774,6 +2777,502 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
                     })
             }),
             "second Yes radio web mirror must carry its own question title and requiredness: {radios:?}"
+        );
+    });
+}
+
+#[test]
+fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_blank_custom() {
+    crate::strings::with_locale("en", || {
+        // 1. Close guard (`navigation_blocked`) stays false when merely tabbing into an untouched
+        // pending question textbox, turns true as soon as text is edited on both active and cached
+        // tabs, and stays consistent with `Draft::is_dirty()`.
+        let guard_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r11-guard".into(),
+            title: "Question".into(),
+            fields: vec![json!({
+                "key": "note",
+                "title": "Note",
+                "type": "string",
+                "required": true
+            })],
+        };
+        let (state, _rx) = state_with_form(guard_form);
+        let mut grt = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+        grt.frame(0.0);
+        assert!(
+            !crate::agent::navigation_blocked(&grt.state),
+            "untouched form must not block tab close"
+        );
+        // Focus the textbox without editing text.
+        let note_el = grt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("input") && e.path.contains("field-note"))
+            .expect("field-note inner input");
+        grt.pointer_down(
+            note_el.rect[0] + note_el.rect[2] * 0.5,
+            note_el.rect[1] + note_el.rect[3] * 0.5,
+        );
+        grt.pointer_up(
+            note_el.rect[0] + note_el.rect[2] * 0.5,
+            note_el.rect[1] + note_el.rect[3] * 0.5,
+        );
+        grt.frame(1.0 / 60.0);
+        assert!(
+            !crate::agent::navigation_blocked(&grt.state),
+            "focusing without typing must not block tab close"
+        );
+        // Typing into the textbox trips navigation_blocked on both the active tab and when the tab
+        // is suspended into workspace cache after switching away.
+        press_key(&mut grt, Key::Text("hello".into()));
+        assert!(
+            crate::agent::navigation_blocked(&grt.state),
+            "typing into a pending question textbox must trip active tab close guard"
+        );
+        let mut ws_state = crate::init();
+        crate::gallery::shell::fixture(&mut ws_state);
+        let mut ws_ui = crate::workspace::Ui::new();
+        ws_ui.fixture_ready();
+        ws_state.workspace = Some(ws_ui);
+        let proj0 = ws_state.screen.launcher().unwrap().project.clone().unwrap();
+        crate::workspace::opened(&mut ws_state, &proj0);
+        let mut ws_rt = Runtime::new(
+            ws_state,
+            |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+            (1200.0, 800.0),
+            Env::new(false, 1.0),
+        );
+        ws_rt.update(|s, tx| {
+            crate::workspace::new_tab(s, tx);
+            let proj1 = crate::catalog::Project {
+                id: "project-1".into(),
+                path: "/repo-1".into(),
+            };
+            if let Some(l) = s.screen.launcher_mut() {
+                l.project = Some(proj1.clone());
+                l.sessions = vec![crate::catalog::Session {
+                    id: "session-1".into(),
+                    title: "Session 1".into(),
+                }];
+            }
+            crate::workspace::opened(s, &proj1);
+            crate::workspace::select(s, "tab-0", tx);
+        });
+        ws_rt.state.agent = grt.state.agent.take();
+        // Active tab-0 cannot close while edited pending question textbox is dirty.
+        ws_rt.update(|s, tx| crate::workspace::close(s, "tab-0", tx));
+        assert_eq!(
+            ws_rt.state.workspace.as_ref().unwrap().tab_count(),
+            2,
+            "active tab with edited question textbox must block tab close"
+        );
+        // Switching to tab-1 caches tab-0; closing cached tab-0 must still be blocked.
+        ws_rt.update(|s, tx| {
+            crate::workspace::select(s, "tab-1", tx);
+            crate::workspace::close(s, "tab-0", tx);
+        });
+        assert_eq!(
+            ws_rt.state.workspace.as_ref().unwrap().tab_count(),
+            2,
+            "cached tab with edited question textbox must also block tab close"
+        );
+
+        // 2. Browser focus proxy (`a11y_json`) includes field description on radios (boolean &
+        // string options) and checkboxes (multiselect) so OpenCode's actual question prose is
+        // announced alongside the short header.
+        let desc_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r11-desc".into(),
+            title: "Setup".into(),
+            fields: vec![
+                json!({
+                    "key": "db",
+                    "title": "Database",
+                    "description": "Keep the existing database?",
+                    "type": "boolean",
+                    "required": true
+                }),
+                json!({
+                    "key": "tier",
+                    "title": "Tier",
+                    "description": "Which deployment tier should be used?",
+                    "type": "string",
+                    "options": [{"value": "staging", "label": "Staging"}]
+                }),
+                json!({
+                    "key": "extras",
+                    "title": "Extras",
+                    "description": "Select optional modules to enable.",
+                    "type": "multiselect",
+                    "options": [{"value": "metrics", "label": "Metrics"}]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(desc_form);
+        let mut drt = Runtime::new(state, render_form, (420.0, 820.0), Env::new(false, 1.0));
+        drt.frame(0.0);
+        let web_items: Vec<serde_json::Value> = serde_json::from_str(&drt.a11y_json()).unwrap();
+        assert!(
+            web_items.iter().any(|item| {
+                item["o"] == "radio"
+                    && item["t"] == "Yes"
+                    && item["d"].as_str().is_some_and(|d| {
+                        d.contains("Database") && d.contains("Keep the existing database?")
+                    })
+            }),
+            "boolean radio web mirror must expose both header and field description: {web_items:?}"
+        );
+        assert!(
+            web_items.iter().any(|item| {
+                item["o"] == "radio"
+                    && item["t"] == "Staging"
+                    && item["d"].as_str().is_some_and(|d| {
+                        d.contains("Tier") && d.contains("Which deployment tier should be used?")
+                    })
+            }),
+            "string radio web mirror must expose both header and field description: {web_items:?}"
+        );
+        assert!(
+            web_items.iter().any(|item| {
+                item["o"] == "checkbox"
+                    && item["t"] == "Metrics"
+                    && item["d"].as_str().is_some_and(|d| {
+                        d.contains("Extras") && d.contains("Select optional modules to enable.")
+                    })
+            }),
+            "multiselect checkbox web mirror must expose both header and field description: {web_items:?}"
+        );
+
+        // 3. Refreshing a hidden custom multiselect with `options: []` and `default: ["opaque-token"]`
+        // to `hidden: false` while retaining the same default must never hydrate `"opaque-token"`
+        // into the visible or accessible custom editor.
+        let hidden_opaque_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r11-hidden-opaque".into(),
+            title: "Opaque reveal".into(),
+            fields: vec![json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "custom": true,
+                "hidden": true,
+                "options": [],
+                "default": ["opaque-token"]
+            })],
+        };
+        let (state, _rx) = state_with_form(hidden_opaque_form);
+        let mut hrt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        hrt.frame(0.0);
+        hrt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields[0]["hidden"] = json!(false);
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        hrt.frame(1.0 / 60.0);
+        hrt.frame(1.0);
+        let htree = hrt.accessibility_json();
+        let mut hvals = Vec::new();
+        collect_values(&htree, &mut hvals);
+        assert!(
+            !hvals.iter().any(|v| v.contains("opaque-token"))
+                && !hrt.elements().iter().any(|e| e
+                    .text
+                    .as_deref()
+                    .is_some_and(|t| t.contains("opaque-token"))),
+            "retained hidden default must never leak into visible custom editor on reveal: {hvals:?}"
+        );
+
+        // 4. Cascading `when` resolves in schema order against active answers only, and numeric
+        // `when` rules compare integer/number answers numerically (`1` == `1.0`).
+        let cascade_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r11-cascade".into(),
+            title: "Cascade".into(),
+            fields: vec![
+                json!({"key": "a", "title": "Enable", "type": "boolean", "default": false}),
+                json!({
+                    "key": "b",
+                    "title": "Mode",
+                    "type": "string",
+                    "default": "yes",
+                    "when": [{"key": "a", "op": "eq", "value": true}]
+                }),
+                json!({
+                    "key": "c",
+                    "title": "Detail",
+                    "type": "string",
+                    "required": true,
+                    "when": [{"key": "b", "op": "eq", "value": "yes"}]
+                }),
+                json!({
+                    "key": "count",
+                    "title": "Count",
+                    "type": "integer",
+                    "default": 1
+                }),
+                json!({
+                    "key": "one_extra",
+                    "title": "When one",
+                    "type": "string",
+                    "required": true,
+                    "when": [{"key": "count", "op": "eq", "value": 1}]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(cascade_form);
+        let mut crt = Runtime::new(state, render_form, (420.0, 760.0), Env::new(false, 1.0));
+        crt.frame(0.0);
+        let ctree = crt.accessibility_json();
+        assert!(
+            find_node(&ctree, "field-b").is_none() && find_node(&ctree, "field-c").is_none(),
+            "inactive cascade fields b and c must not render while a=false"
+        );
+        assert!(
+            find_node(&ctree, "field-one_extra").is_some(),
+            "integer answer 1 must activate field with numeric when value 1"
+        );
+        crt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r11-cascade".into(), "one_extra".into()))
+                .unwrap()
+                .editor()
+                .text = "matched".into();
+        });
+        crt.frame(1.0 / 60.0);
+        let a = crt.state.agent.as_ref().unwrap();
+        let cans = agent_forms::answer(&a.forms[0], &a.drafts)
+            .expect("inactive cascade must not require c, and integer 1 must match");
+        assert_eq!(cans["a"], json!(false));
+        assert!(cans.get("b").is_none() && cans.get("c").is_none());
+        assert_eq!(cans["count"], json!(1));
+        assert_eq!(cans["one_extra"], json!("matched"));
+
+        // 5. Native string `pattern` and `format` constraints (`uri`, `email`, `date`, `date-time`)
+        // block Answer and surface inline field errors until valid; invalid regex fails closed.
+        let constraint_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r11-constraints".into(),
+            title: "Constraints".into(),
+            fields: vec![
+                json!({"key": "code", "title": "Code", "type": "string", "required": true, "pattern": "^ok$"}),
+                json!({"key": "site", "title": "Site", "type": "string", "format": "uri"}),
+                json!({"key": "mail", "title": "Mail", "type": "string", "format": "email"}),
+                json!({"key": "day", "title": "Day", "type": "string", "format": "date"}),
+                json!({"key": "stamp", "title": "Stamp", "type": "string", "format": "date-time"}),
+            ],
+        };
+        let (state, _rx) = state_with_form(constraint_form);
+        let mut prt = Runtime::new(state, render_form, (420.0, 960.0), Env::new(false, 1.0));
+        prt.frame(0.0);
+        prt.update(|s, _| {
+            let d = &mut s.agent.as_mut().unwrap().drafts;
+            d.get_mut(&("form-r11-constraints".into(), "code".into()))
+                .unwrap()
+                .editor()
+                .text = "bad".into();
+            d.get_mut(&("form-r11-constraints".into(), "site".into()))
+                .unwrap()
+                .editor()
+                .text = "not-a-uri".into();
+            d.get_mut(&("form-r11-constraints".into(), "mail".into()))
+                .unwrap()
+                .editor()
+                .text = "missing-at".into();
+            d.get_mut(&("form-r11-constraints".into(), "day".into()))
+                .unwrap()
+                .editor()
+                .text = "2026-02-30".into();
+            d.get_mut(&("form-r11-constraints".into(), "stamp".into()))
+                .unwrap()
+                .editor()
+                .text = "2026-11-26 12:00".into();
+        });
+        prt.frame(1.0 / 60.0);
+        let ptree = prt.accessibility_json();
+        assert!(has_state(
+            find_node(&ptree, "answer-question").unwrap(),
+            "disabled"
+        ));
+        for k in ["code", "site", "mail", "day", "stamp"] {
+            let err_key = format!("field-error:{}:{k}", k.len());
+            assert_eq!(
+                find_node(&ptree, &err_key).expect("inline format/pattern error")["name"],
+                "Invalid"
+            );
+        }
+        assert!(
+            agent_forms::answer(
+                &prt.state.agent.as_ref().unwrap().forms[0],
+                &prt.state.agent.as_ref().unwrap().drafts
+            )
+            .is_err()
+        );
+        prt.update(|s, _| {
+            let d = &mut s.agent.as_mut().unwrap().drafts;
+            d.get_mut(&("form-r11-constraints".into(), "code".into()))
+                .unwrap()
+                .editor()
+                .text = "ok".into();
+            d.get_mut(&("form-r11-constraints".into(), "site".into()))
+                .unwrap()
+                .editor()
+                .text = "https://example.com/path?x=1".into();
+            d.get_mut(&("form-r11-constraints".into(), "mail".into()))
+                .unwrap()
+                .editor()
+                .text = "dev@example.com".into();
+            d.get_mut(&("form-r11-constraints".into(), "day".into()))
+                .unwrap()
+                .editor()
+                .text = "2024-02-29".into();
+            d.get_mut(&("form-r11-constraints".into(), "stamp".into()))
+                .unwrap()
+                .editor()
+                .text = "2026-11-26T14:30:00Z".into();
+        });
+        prt.frame(1.0 / 60.0);
+        let ptree_ok = prt.accessibility_json();
+        assert!(!has_state(
+            find_node(&ptree_ok, "answer-question").unwrap(),
+            "disabled"
+        ));
+        let pans = agent_forms::answer(
+            &prt.state.agent.as_ref().unwrap().forms[0],
+            &prt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("valid pattern and formats must submit");
+        assert_eq!(pans["code"], json!("ok"));
+        assert_eq!(pans["day"], json!("2024-02-29"));
+        let bad_regex_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r11-bad-regex".into(),
+            title: "Bad regex".into(),
+            fields: vec![json!({
+                "key": "re",
+                "title": "Regex",
+                "type": "string",
+                "pattern": "[unclosed"
+            })],
+        };
+        assert!(!agent_forms::supported(&bad_regex_form));
+
+        // 6. Optional scalar string choice with `{value: "", label: "Use default"}` renders,
+        // distinguishes `Some("")` from unselected `None`, and submits `""` when selected or omits
+        // the key when cleared.
+        let empty_opt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r11-empty-opt".into(),
+            title: "Optional default".into(),
+            fields: vec![json!({
+                "key": "mode",
+                "title": "Mode",
+                "type": "string",
+                "default": "",
+                "options": [
+                    {"value": "", "label": "Use default"},
+                    {"value": "custom_mode", "label": "Custom mode"}
+                ]
+            })],
+        };
+        let (state, _rx) = state_with_form(empty_opt_form);
+        let mut ert = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        ert.frame(0.0);
+        let etree = ert.accessibility_json();
+        let empty_radio_key = agent_forms::string_option_key("mode", "");
+        let empty_radio =
+            find_node(&etree, &empty_radio_key).expect("optional empty radio must render");
+        assert_eq!(empty_radio["name"], "Use default");
+        assert!(has_state(empty_radio, "checked"));
+        assert_eq!(
+            agent_forms::answer(
+                &ert.state.agent.as_ref().unwrap().forms[0],
+                &ert.state.agent.as_ref().unwrap().drafts
+            )
+            .unwrap()["mode"],
+            json!(""),
+            "explicit empty optional choice must submit empty string"
+        );
+        tap(&mut ert, &agent_forms::clear_option_key("mode"));
+        let cleared = agent_forms::answer(
+            &ert.state.agent.as_ref().unwrap().forms[0],
+            &ert.state.agent.as_ref().unwrap().drafts,
+        )
+        .unwrap();
+        assert!(
+            cleared.get("mode").is_none(),
+            "clearing optional empty choice must omit key from answer"
+        );
+        tap(&mut ert, &empty_radio_key);
+        assert_eq!(
+            agent_forms::answer(
+                &ert.state.agent.as_ref().unwrap().forms[0],
+                &ert.state.agent.as_ref().unwrap().drafts
+            )
+            .unwrap()["mode"],
+            json!("")
+        );
+
+        // 7. Visible custom multiselect with whitespace-only preserved default `[" "]` gets a
+        // localized non-blank label so it stays present in the browser mirror, can be discovered
+        // and unchecked, and keeps the exact `" "` answer value separate from its display label.
+        let blank_custom_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r11-blank-custom".into(),
+            title: "Blank custom".into(),
+            fields: vec![json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "custom": true,
+                "options": [],
+                "default": [" "]
+            })],
+        };
+        let (state, _rx) = state_with_form(blank_custom_form);
+        let mut brt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        brt.frame(0.0);
+        let btree = brt.accessibility_json();
+        let blank_key = agent_forms::multi_option_key("tags", " ");
+        let blank_node =
+            find_node(&btree, &blank_key).expect("preserved blank custom checkbox must render");
+        assert_eq!(blank_node["name"], "Other values 1");
+        assert!(has_state(blank_node, "checked"));
+        let bweb: Vec<serde_json::Value> = serde_json::from_str(&brt.a11y_json()).unwrap();
+        assert!(
+            bweb.iter().any(|item| {
+                item["o"] == "checkbox" && item["t"] == "Other values 1" && item["c"] == "true"
+            }),
+            "preserved blank custom checkbox must stay visible in browser web mirror: {bweb:?}"
+        );
+        assert_eq!(
+            agent_forms::answer(
+                &brt.state.agent.as_ref().unwrap().forms[0],
+                &brt.state.agent.as_ref().unwrap().drafts
+            )
+            .unwrap()["tags"],
+            json!([" "])
+        );
+        tap(&mut brt, &blank_key);
+        assert_eq!(
+            agent_forms::answer(
+                &brt.state.agent.as_ref().unwrap().forms[0],
+                &brt.state.agent.as_ref().unwrap().drafts
+            )
+            .unwrap()["tags"],
+            json!([])
         );
     });
 }

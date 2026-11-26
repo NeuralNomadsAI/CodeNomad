@@ -1,4 +1,5 @@
 //! Editable Form drafts and native conditional answer construction.
+use super::string_constraints;
 use crate::agent_api::Form;
 use rune::edit::TextEdit;
 use serde_json::{Value, json};
@@ -13,15 +14,16 @@ pub struct NormalizedOption<'a> {
 }
 
 /// Normalize form options once for rendering, focus resolution, and validation:
-/// enforce the 64-option bound, skip empty values on scalar string choices (while
-/// preserving explicitly declared empty multiselect values), deduplicate by exact
-/// value (preserving first), and keep only authored non-blank labels so raw protocol
-/// values never leak into copy.
+/// enforce the 64-option bound, skip empty values only on required scalar string
+/// choices (preserving declared empty values on optional scalar choices and
+/// multiselect fields), deduplicate by exact value (preserving first), and keep
+/// only authored non-blank labels so raw protocol values never leak into copy.
 pub fn normalized_options(field: &Value) -> Vec<NormalizedOption<'_>> {
     let Some(options) = field["options"].as_array() else {
         return Vec::new();
     };
-    let allow_empty = field["type"] == "multiselect";
+    let allow_empty =
+        field["type"] == "multiselect" || (field["type"] == "string" && field["required"] != true);
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for option in options.iter().take(64) {
@@ -167,7 +169,10 @@ fn string_value_satisfies_bounds(field: &Value, raw: &str) -> bool {
         return false;
     };
     let n = raw.encode_utf16().count() as u64;
-    n <= 20_000 && min_len.is_none_or(|m| n >= m) && max_len.is_none_or(|m| n <= m)
+    n <= 20_000
+        && min_len.is_none_or(|m| n >= m)
+        && max_len.is_none_or(|m| n <= m)
+        && string_constraints::matches_string_constraints(field, raw).unwrap_or(false)
 }
 
 /// Whether an active field requires a non-empty answer before submission.
@@ -185,7 +190,10 @@ pub fn field_required(field: &Value) -> bool {
 /// choices, contradictory `minItems`/`maxItems` or `minLength`/`maxLength`, or closed options
 /// exceeding the 20,000 UTF-16 code-unit limit).
 pub fn field_unanswerable(field: &Value) -> bool {
-    if !valid_options_shape(field) || !valid_bounds(field) {
+    if !valid_options_shape(field)
+        || !valid_bounds(field)
+        || !string_constraints::valid_string_constraints(field)
+    {
         return true;
     }
     match field["type"].as_str() {
@@ -260,6 +268,7 @@ pub enum ValidationError {
     Required,
     SelectDeclaredOption,
     DuplicateCustomOption,
+    InvalidFormat,
     TooShort { min: u64 },
     TooLong { max: u64 },
     NotNumber,
@@ -351,14 +360,31 @@ fn remove_promoted_lines(edit: &mut TextEdit, mut should_remove: impl FnMut(&str
     true
 }
 
-fn strip_leaked_choice_default(field: &Value, next: &mut Draft, provenance: &BTreeSet<String>) {
-    if field["hidden"] == true || provenance.is_empty() {
+fn strip_leaked_defaults(
+    field: &Value,
+    next: &mut Draft,
+    choice_provenance: &BTreeSet<String>,
+    hidden_provenance: &BTreeSet<String>,
+) {
+    if field["hidden"] == true || (choice_provenance.is_empty() && hidden_provenance.is_empty()) {
         return;
     }
-    if let Some(raw) = field["default"].as_str()
-        && provenance.contains(raw)
+    let blocked = |s: &str| choice_provenance.contains(s) || hidden_provenance.contains(s);
+    let scalar_default: Option<String> =
+        field["default"].as_str().map(str::to_string).or_else(|| {
+            matches!(field["type"].as_str(), Some("number" | "integer"))
+                .then(|| {
+                    field["default"]
+                        .as_f64()
+                        .filter(|n| n.is_finite())
+                        .map(|_| field["default"].to_string())
+                })
+                .flatten()
+        });
+    if let Some(raw) = scalar_default.as_deref()
+        && blocked(raw)
     {
-        if next.edit.text == raw {
+        if field["type"] != "boolean" && next.edit.text == raw {
             next.edit = TextEdit::new("");
             next.edit_baseline.clear();
         }
@@ -368,12 +394,10 @@ fn strip_leaked_choice_default(field: &Value, next: &mut Draft, provenance: &BTr
         }
     }
     if field["type"] == "multiselect" {
-        next.preserved_custom
-            .retain(|item| !provenance.contains(item));
-        next.preserved_custom_selected
-            .retain(|item| !provenance.contains(item));
+        next.preserved_custom.retain(|item| !blocked(item));
+        next.preserved_custom_selected.retain(|item| !blocked(item));
         if !next.custom.text.is_empty()
-            && remove_promoted_lines(&mut next.custom, |trimmed| provenance.contains(trimmed))
+            && remove_promoted_lines(&mut next.custom, |trimmed| blocked(trimmed))
         {
             next.custom_baseline = next.custom.text.clone();
         }
@@ -397,6 +421,20 @@ fn collect_choice_provenance(draft: &mut Draft) -> BTreeSet<String> {
     provenance
 }
 
+fn collect_hidden_provenance(draft: &mut Draft) -> BTreeSet<String> {
+    let mut provenance = std::mem::take(&mut draft.prior_hidden_values);
+    if draft.hidden_only {
+        provenance.extend(draft.hidden_multiselect.iter().cloned());
+        if let Some(val) = draft.hidden_value.as_ref() {
+            provenance.insert(val.clone());
+        }
+        if let Some(choice) = draft.choice.as_ref() {
+            provenance.insert(choice.clone());
+        }
+    }
+    provenance
+}
+
 pub struct Draft {
     pub edit: TextEdit,
     pub custom: TextEdit,
@@ -410,6 +448,7 @@ pub struct Draft {
     pub hidden_multiselect_invalid: bool,
     pub declared_options: Option<BTreeSet<String>>,
     pub prior_choice_values: BTreeSet<String>,
+    pub prior_hidden_values: BTreeSet<String>,
     pub hidden_value: Option<String>,
     pub hidden_only: bool,
     pub kind: Option<FieldKind>,
@@ -483,6 +522,7 @@ impl Default for Draft {
             hidden_multiselect_invalid: false,
             declared_options: None,
             prior_choice_values: BTreeSet::new(),
+            prior_hidden_values: BTreeSet::new(),
             hidden_value: None,
             hidden_only: false,
             kind: None,
@@ -524,6 +564,7 @@ fn fresh_draft(field: &Value) -> Draft {
                         if allowed.iter().any(|opt| opt.value == raw) {
                             d.prior_choice_values.insert(raw.to_string());
                         }
+                        d.prior_hidden_values.insert(raw.to_string());
                         d.hidden_multiselect.push(raw.to_string());
                     } else {
                         d.hidden_multiselect_invalid = true;
@@ -559,21 +600,27 @@ fn fresh_draft(field: &Value) -> Draft {
         if let Some(opts) = &declared {
             d.prior_choice_values.extend(opts.iter().cloned());
         }
-        if let Some(raw) = value.as_str().filter(|v| !v.is_empty()) {
+        if let Some(raw) = value.as_str() {
+            if hidden {
+                d.prior_hidden_values.insert(raw.to_string());
+            }
             let allowed = normalized_options(field);
             if allowed.iter().any(|opt| opt.value == raw) {
                 d.choice = Some(raw.to_string());
                 d.prior_choice_values.insert(raw.to_string());
-            } else if hidden {
-                d.hidden_value = Some(raw.to_string());
-            } else if field["custom"] == true {
-                d.custom = TextEdit::new(raw);
+            } else if !raw.is_empty() {
+                if hidden {
+                    d.hidden_value = Some(raw.to_string());
+                } else if field["custom"] == true {
+                    d.custom = TextEdit::new(raw);
+                }
             }
         }
     } else if matches!(field["type"].as_str(), Some("number" | "integer")) {
         if let Some(n) = value.as_f64().filter(|n| n.is_finite()) {
             let formatted = value.to_string();
             if hidden {
+                d.prior_hidden_values.insert(formatted.clone());
                 d.hidden_value = Some(formatted);
             } else {
                 let _ = n;
@@ -583,6 +630,7 @@ fn fresh_draft(field: &Value) -> Draft {
     } else if field["type"] == "string" {
         if let Some(raw) = value.as_str() {
             if hidden {
+                d.prior_hidden_values.insert(raw.to_string());
                 d.hidden_value = Some(raw.to_string());
             } else {
                 d.edit = TextEdit::new(raw);
@@ -631,10 +679,12 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
             // reseed cleanly from the current schema while preserving lifetime choice provenance
             // and never leaking hidden defaults into visible editors.
             if draft.hidden_only || (hidden && (!draft.is_dirty() || draft_empty)) {
+                let hidden_provenance = collect_hidden_provenance(draft);
                 let choice_provenance = collect_choice_provenance(draft);
                 let mut next = fresh_draft(field);
-                strip_leaked_choice_default(field, &mut next, &choice_provenance);
+                strip_leaked_defaults(field, &mut next, &choice_provenance, &hidden_provenance);
                 next.prior_choice_values.extend(choice_provenance);
+                next.prior_hidden_values.extend(hidden_provenance);
                 *draft = next;
                 continue;
             }
@@ -643,6 +693,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
             if let Some(prev) = draft.kind
                 && prev != kind
             {
+                let hidden_provenance = collect_hidden_provenance(draft);
                 let choice_provenance = collect_choice_provenance(draft);
                 match (prev, kind) {
                     (FieldKind::StringOptions, FieldKind::StringFree) => {
@@ -659,39 +710,51 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             draft.hidden_multiselect_invalid = false;
                             draft.hidden_value = None;
                             draft.prior_choice_values = choice_provenance;
+                            draft.prior_hidden_values = hidden_provenance;
                             draft.kind = Some(kind);
                             continue;
                         }
                         let mut next = fresh_draft(field);
-                        if let Some(raw) = field["default"].as_str()
-                            && choice_provenance.contains(raw)
-                        {
-                            next.edit = TextEdit::new("");
-                            next.edit_baseline.clear();
-                            if hidden {
-                                next.hidden_value = Some(raw.to_string());
-                            }
-                        }
+                        strip_leaked_defaults(
+                            field,
+                            &mut next,
+                            &choice_provenance,
+                            &hidden_provenance,
+                        );
                         next.prior_choice_values.extend(choice_provenance);
+                        next.prior_hidden_values.extend(hidden_provenance);
                         *draft = next;
                         continue;
                     }
                     (FieldKind::StringFree, FieldKind::StringOptions) => {
                         if !draft.is_dirty() && draft.edit.text.is_empty() {
                             let mut next = fresh_draft(field);
-                            strip_leaked_choice_default(field, &mut next, &choice_provenance);
+                            strip_leaked_defaults(
+                                field,
+                                &mut next,
+                                &choice_provenance,
+                                &hidden_provenance,
+                            );
                             next.prior_choice_values.extend(choice_provenance);
+                            next.prior_hidden_values.extend(hidden_provenance);
                             *draft = next;
                             continue;
                         }
                         draft.hidden_value = None;
                         draft.prior_choice_values = choice_provenance;
+                        draft.prior_hidden_values = hidden_provenance;
                         draft.kind = Some(kind);
                     }
                     _ => {
                         let mut next = fresh_draft(field);
-                        strip_leaked_choice_default(field, &mut next, &choice_provenance);
+                        strip_leaked_defaults(
+                            field,
+                            &mut next,
+                            &choice_provenance,
+                            &hidden_provenance,
+                        );
                         next.prior_choice_values.extend(choice_provenance);
+                        next.prior_hidden_values.extend(hidden_provenance);
                         *draft = next;
                         continue;
                     }
@@ -847,6 +910,15 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
         }
     }
 }
+fn json_value_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => {
+            x == y || matches!((x.as_f64(), y.as_f64()), (Some(xf), Some(yf)) if xf == yf)
+        }
+        _ => a == b,
+    }
+}
+
 pub fn active(field: &Value, values: &serde_json::Map<String, Value>) -> bool {
     field["when"].as_array().is_none_or(|rules| {
         rules.iter().all(|rule| {
@@ -854,9 +926,9 @@ pub fn active(field: &Value, values: &serde_json::Map<String, Value>) -> bool {
                 return false;
             };
             let equal = if let Some(items) = value.as_array() {
-                items.contains(&rule["value"])
+                items.iter().any(|item| json_value_eq(item, &rule["value"]))
             } else {
-                *value == rule["value"]
+                json_value_eq(value, &rule["value"])
             };
             if rule["op"] == "eq" {
                 equal
@@ -881,11 +953,15 @@ pub fn supported(form: &Form) -> bool {
             Some("string" | "number" | "integer" | "boolean" | "multiselect")
         ) && valid_options_shape(f)
             && valid_bounds(f)
+            && string_constraints::valid_string_constraints(f)
             && !(f["when"].as_array().is_none() && field_unanswerable(f))
     })
 }
 pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationError> {
-    if !valid_options_shape(field) || !valid_bounds(field) {
+    if !valid_options_shape(field)
+        || !valid_bounds(field)
+        || !string_constraints::valid_string_constraints(field)
+    {
         return Err(ValidationError::Unsupported);
     }
     let text = d.edit.text.as_str();
@@ -920,16 +996,19 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                     return Err(ValidationError::Unsupported);
                 }
                 let (selected_text, from_custom) = if allow_custom && !custom_text.is_empty() {
-                    (custom_text, true)
+                    (Some(custom_text), true)
                 } else {
-                    (d.choice.as_deref().unwrap_or(""), false)
+                    (d.choice.as_deref(), false)
                 };
-                if selected_text.is_empty() {
+                let Some(selected_text) = selected_text else {
                     return if field["required"] == true {
                         Err(ValidationError::Required)
                     } else {
                         Ok(None)
                     };
+                };
+                if field["required"] == true && selected_text.is_empty() {
+                    return Err(ValidationError::Required);
                 }
                 let options = normalized_options(field);
                 let is_declared = options.iter().any(|o| o.value == selected_text);
@@ -946,6 +1025,11 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                     && n > m
                 {
                     return Err(ValidationError::TooLong { max: m });
+                }
+                if !string_constraints::matches_string_constraints(field, selected_text)
+                    .map_err(|()| ValidationError::Unsupported)?
+                {
+                    return Err(ValidationError::InvalidFormat);
                 }
                 return Ok(Some(json!(selected_text)));
             }
@@ -971,6 +1055,11 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                 && n > m
             {
                 return Err(ValidationError::TooLong { max: m });
+            }
+            if !string_constraints::matches_string_constraints(field, effective)
+                .map_err(|()| ValidationError::Unsupported)?
+            {
+                return Err(ValidationError::InvalidFormat);
             }
             Ok(Some(json!(effective)))
         }
@@ -1009,6 +1098,12 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                 && n > m
             {
                 return Err(ValidationError::AboveMax { max: m });
+            }
+            if field["type"] == "integer" && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
+                let i = n as i64;
+                if (i as f64) == n {
+                    return Ok(Some(json!(i)));
+                }
             }
             Ok(Some(json!(n)))
         }
@@ -1139,24 +1234,36 @@ pub fn visible_validation_error(field: &Value, d: &Draft) -> Option<ValidationEr
 pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
     validate(field, d).map_err(|_| ())
 }
-pub fn values(form: &Form, drafts: &Drafts) -> serde_json::Map<String, Value> {
-    form.fields
-        .iter()
-        .filter_map(|f| {
-            let key = f["key"].as_str()?;
-            let d = drafts.get(&(form.id.clone(), key.into()))?;
-            value(f, d).ok().flatten().map(|v| (key.into(), v))
-        })
-        .collect()
+pub fn active_fields<'a>(
+    form: &'a Form,
+    drafts: &Drafts,
+) -> (Vec<&'a Value>, serde_json::Map<String, Value>) {
+    let mut active_list = Vec::new();
+    let mut out = serde_json::Map::new();
+    for field in &form.fields {
+        if !active(field, &out) {
+            continue;
+        }
+        active_list.push(field);
+        let Some(key) = field["key"].as_str() else {
+            continue;
+        };
+        let Some(d) = drafts.get(&(form.id.clone(), key.into())) else {
+            continue;
+        };
+        if let Ok(Some(v)) = value(field, d) {
+            out.insert(key.into(), v);
+        }
+    }
+    (active_list, out)
 }
 pub fn answer(form: &Form, drafts: &Drafts) -> Result<Value, ()> {
     if !supported(form) {
         return Err(());
     }
-    let all = values(form, drafts);
     let mut out = serde_json::Map::new();
     for field in &form.fields {
-        if !active(field, &all) {
+        if !active(field, &out) {
             continue;
         }
         let key = field["key"].as_str().ok_or(())?;

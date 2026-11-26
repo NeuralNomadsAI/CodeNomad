@@ -82,7 +82,9 @@ fn validation_message(err: &agent_forms::ValidationError) -> String {
         }
         agent_forms::ValidationError::TooFewItems { min } => format_items_limit("≥", *min),
         agent_forms::ValidationError::TooManyItems { max } => format_items_limit("≤", *max),
-        agent_forms::ValidationError::NotNumber | agent_forms::ValidationError::NotInteger => {
+        agent_forms::ValidationError::NotNumber
+        | agent_forms::ValidationError::NotInteger
+        | agent_forms::ValidationError::InvalidFormat => {
             t("toolCall.renderer.toolName.invalid").to_string()
         }
     }
@@ -149,23 +151,20 @@ pub fn fields(s: &State, form: &Form) -> El {
     let scope = s.input_scope.clone();
     let locked = a.forms_mutating();
     let supported = agent_forms::supported(form);
-    let values = agent_forms::values(form, &a.drafts);
-    let has_unanswerable_active = form
-        .fields
+    let (active_fields, _) = agent_forms::active_fields(form, &a.drafts);
+    let has_unanswerable_active = active_fields
         .iter()
-        .any(|f| agent_forms::active(f, &values) && agent_forms::field_unanswerable(f));
-    let has_invalid_hidden_active = form.fields.iter().any(|f| {
+        .any(|f| agent_forms::field_unanswerable(f));
+    let has_invalid_hidden_active = active_fields.iter().any(|f| {
         f["hidden"] == true
-            && agent_forms::active(f, &values)
             && f["key"]
                 .as_str()
                 .and_then(|k| a.drafts.get(&(form.id.clone(), k.to_string())))
                 .is_none_or(|d| agent_forms::validate(f, d).is_err())
     });
-    let visible: Vec<&serde_json::Value> = form
-        .fields
-        .iter()
-        .filter(|f| f["hidden"] != true && agent_forms::active(f, &values))
+    let visible: Vec<&serde_json::Value> = active_fields
+        .into_iter()
+        .filter(|f| f["hidden"] != true)
         .collect();
     let visible_count = visible.len();
     let header_required = visible_count == 1
@@ -215,8 +214,12 @@ pub fn fields(s: &State, form: &Form) -> El {
                 const CHOICES: [(&str, &str); 2] = [("rune.yes", "true"), ("rune.no", "false")];
                 let req_note = required.then(|| t("toolCall.question.status.required"));
                 let group_desc = join_notes(&[field_desc, error_text.as_deref()]);
-                let option_note =
-                    join_notes(&[Some(field_name.as_str()), req_note, error_text.as_deref()]);
+                let option_note = join_notes(&[
+                    Some(field_name.as_str()),
+                    field_desc,
+                    req_note,
+                    error_text.as_deref(),
+                ]);
                 let items = CHOICES
                     .iter()
                     .enumerate()
@@ -274,6 +277,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                     !valid.is_empty() && is_invalid && !custom_conflict && !custom_active;
                 let radio_note = join_notes(&[
                     Some(field_name.as_str()),
+                    field_desc,
                     req_note,
                     radio_invalid.then_some(error_text.as_deref()).flatten(),
                 ]);
@@ -415,6 +419,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                     (required && has_choices).then(|| t("toolCall.question.status.required"));
                 let choice_note = join_notes(&[
                     Some(field_name.as_str()),
+                    field_desc,
                     req_note,
                     checkbox_invalid.then_some(error_text.as_deref()).flatten(),
                 ]);
@@ -449,13 +454,18 @@ pub fn fields(s: &State, form: &Form) -> El {
                     })
                     .collect();
                 if allow_custom {
-                    for raw in &d.preserved_custom {
+                    for (index, raw) in d.preserved_custom.iter().enumerate() {
                         let checked = d.preserved_custom_selected.contains(raw);
                         let value = raw.clone();
+                        let label = if raw.trim().is_empty() {
+                            format!("{} {}", t("rune.other_values"), index + 1)
+                        } else {
+                            raw.clone()
+                        };
                         let id = identity.clone();
                         items.push(form_controls::checkbox_option(
                             &agent_forms::multi_option_key(key, raw),
-                            raw,
+                            &label,
                             None,
                             choice_note.as_deref(),
                             checked,

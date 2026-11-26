@@ -3,6 +3,7 @@ pub(crate) mod form_view;
 #[cfg(test)]
 mod form_view_tests;
 pub(crate) mod forms;
+mod string_constraints;
 #[cfg(test)]
 mod tests;
 pub(crate) mod view;
@@ -92,12 +93,11 @@ pub(crate) fn focused_field_key(s: &crate::State) -> Option<(String, Option<Stri
         ));
     }
     if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
-        let values = agent_forms::values(f, &a.drafts);
+        let (active_fields, _) = agent_forms::active_fields(f, &a.drafts);
         let region = format!("pending-content-{}", f.id);
-        for field in f
-            .fields
-            .iter()
-            .filter(|field| field["hidden"] != true && agent_forms::active(field, &values))
+        for field in active_fields
+            .into_iter()
+            .filter(|field| field["hidden"] != true)
         {
             let Some(key) = field["key"].as_str() else {
                 continue;
@@ -148,15 +148,14 @@ pub(crate) fn focused_control_key(
         return Some((key.to_string(), Some("model-list".into())));
     }
     if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
-        let values = agent_forms::values(f, &a.drafts);
+        let (active_fields, _) = agent_forms::active_fields(f, &a.drafts);
         let region = format!("pending-content-{}", f.id);
         if key == rune_theme_codenomad::form_controls::FORM_FOCUS_ANCHOR {
             return Some((key.to_string(), Some(region)));
         }
-        for field in f
-            .fields
-            .iter()
-            .filter(|field| field["hidden"] != true && agent_forms::active(field, &values))
+        for field in active_fields
+            .into_iter()
+            .filter(|field| field["hidden"] != true)
         {
             let Some(field_key) = field["key"].as_str() else {
                 continue;
@@ -208,11 +207,10 @@ pub(crate) fn focused_field_edit(s: &crate::State) -> Option<&rune::TextEdit> {
         return Some(edit);
     }
     if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
-        let values = agent_forms::values(f, &a.drafts);
-        for field in f
-            .fields
-            .iter()
-            .filter(|field| field["hidden"] != true && agent_forms::active(field, &values))
+        let (active_fields, _) = agent_forms::active_fields(f, &a.drafts);
+        for field in active_fields
+            .into_iter()
+            .filter(|field| field["hidden"] != true)
         {
             let Some(key) = field["key"].as_str() else {
                 continue;
@@ -548,7 +546,7 @@ impl Ui {
             || self.permissions_lane.mutation_pending()
             || self.forms_lane.mutation_pending()
             || self.stopping
-            || self.drafts.values().any(|d| d.dirty)
+            || self.drafts.values().any(agent_forms::Draft::is_dirty)
             || self.reasons.values().any(|d| !d.text.is_empty())
     }
     pub fn toggle_picker(&mut self) {
