@@ -288,6 +288,14 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         held_save_req
             .reply(200, json!({"id": "entry-1", "revision": "c".repeat(64)}))
             .await;
+        // Pump polling after the late profile-A reply settles so we prove it is ignored on profile B.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        prefs.poll();
+        assert!(
+            !prefs
+                .memory
+                .poll_editor(prefs.backend.as_ref(), &mut inflight_editor)
+        );
         assert!(!prefs.memory.review_is_current(&updated_edit));
         assert!(!inflight_editor.shown());
     });

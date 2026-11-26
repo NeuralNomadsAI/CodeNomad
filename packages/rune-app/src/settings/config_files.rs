@@ -25,7 +25,7 @@ pub(super) struct Editor {
     exists: bool,
     crlf: bool,
     syntax_line: Option<usize>,
-    read: Option<(Sender<()>, Receiver<Read>)>,
+    read: Option<((u64, u64), Sender<()>, Receiver<Read>)>,
     write: Option<Receiver<(String, bool)>>,
     goal: Option<usize>,
     confirm: Option<usize>,
@@ -72,7 +72,8 @@ impl Editor {
             if owner.same_backend_server(backend) {
                 if owner.adopt_same_server(backend) {
                     // Re-authenticated to the same server: preserve loaded files and unsaved edits,
-                    // cancelling only reads started on the previous connection.
+                    // cancelling reads and fencing unsent writes from the previous connection.
+                    self.authority.fetch_add(1, Ordering::SeqCst);
                     self.read = None;
                     changed = true;
                 }
@@ -126,49 +127,58 @@ impl Editor {
             }
             return changed;
         }
-        if let Some((_, inbox)) = self.read.as_ref() {
-            match inbox.try_recv() {
-                Ok(result) => {
-                    self.read = None;
-                    match result {
-                        Read::List(Some(files)) => {
-                            self.goal = (!files.is_empty()).then_some(0);
-                            self.files = Some(files);
-                        }
-                        Read::List(None) => {
-                            self.notice = Some("settings.configFiles.errors.loadList");
-                        }
-                        Read::Content(index, Some(content)) => {
-                            if self.goal == Some(index) {
-                                self.goal = None;
+        let stamp = (
+            prefs.authority_handle().load(Ordering::SeqCst),
+            backend.client.drop_generation(),
+        );
+        if let Some((read_stamp, _, inbox)) = self.read.as_ref() {
+            if *read_stamp != stamp {
+                self.read = None;
+                changed = true;
+            } else {
+                match inbox.try_recv() {
+                    Ok(result) => {
+                        self.read = None;
+                        match result {
+                            Read::List(Some(files)) => {
+                                self.goal = (!files.is_empty()).then_some(0);
+                                self.files = Some(files);
                             }
-                            self.active = Some(index);
-                            self.exists = content.exists;
-                            self.crlf = content.contents.contains("\r\n")
-                                && !content.contents.replace("\r\n", "").contains('\n');
-                            let input = content.contents.replace("\r\n", "\n");
-                            self.draft = TextEdit::new(&input);
-                            self.original = Some(input);
-                            self.diagnose();
+                            Read::List(None) => {
+                                self.notice = Some("settings.configFiles.errors.loadList");
+                            }
+                            Read::Content(index, Some(content)) => {
+                                if self.goal == Some(index) {
+                                    self.goal = None;
+                                }
+                                self.active = Some(index);
+                                self.exists = content.exists;
+                                self.crlf = content.contents.contains("\r\n")
+                                    && !content.contents.replace("\r\n", "").contains('\n');
+                                let input = content.contents.replace("\r\n", "\n");
+                                self.draft = TextEdit::new(&input);
+                                self.original = Some(input);
+                                self.diagnose();
+                            }
+                            Read::Content(_, None) => {
+                                self.goal = None;
+                                self.notice = Some("settings.configFiles.errors.loadContent");
+                            }
                         }
-                        Read::Content(_, None) => {
-                            self.goal = None;
-                            self.notice = Some("settings.configFiles.errors.loadContent");
-                        }
+                        changed = true;
                     }
-                    changed = true;
+                    Err(_) if inbox.is_closed() => {
+                        self.read = None;
+                        self.goal = None;
+                        self.notice = Some(if self.files.is_none() {
+                            "settings.configFiles.errors.loadList"
+                        } else {
+                            "settings.configFiles.errors.loadContent"
+                        });
+                        changed = true;
+                    }
+                    Err(_) => {}
                 }
-                Err(_) if inbox.is_closed() => {
-                    self.read = None;
-                    self.goal = None;
-                    self.notice = Some(if self.files.is_none() {
-                        "settings.configFiles.errors.loadList"
-                    } else {
-                        "settings.configFiles.errors.loadContent"
-                    });
-                    changed = true;
-                }
-                Err(_) => {}
             }
         }
         if self.read.is_none()
@@ -178,7 +188,7 @@ impl Editor {
             && ServerOwner::backend_verified(backend)
         {
             if self.files.is_none() {
-                self.start_read(backend, wake, None);
+                self.start_read(backend, stamp, wake, None);
                 changed = true;
             } else if let Some(index) = self.goal.or_else(|| self.active.is_none().then_some(0))
                 && let Some(id) = self
@@ -188,17 +198,23 @@ impl Editor {
                     .map(|file| file.id.clone())
             {
                 self.goal = Some(index);
-                self.start_read(backend, wake, Some((index, id)));
+                self.start_read(backend, stamp, wake, Some((index, id)));
                 changed = true;
             }
         }
         changed
     }
 
-    fn start_read(&mut self, backend: &Backend, wake: &Waker, content: Option<(usize, String)>) {
+    fn start_read(
+        &mut self,
+        backend: &Backend,
+        stamp: (u64, u64),
+        wake: &Waker,
+        content: Option<(usize, String)>,
+    ) {
         let (cancel, cancelled) = bounded(1);
         let (out, reply) = bounded(1);
-        self.read = Some((cancel, reply));
+        self.read = Some((stamp, cancel, reply));
         let (backend, wake) = (backend.clone(), wake.clone());
         platform::spawn(async move {
             let read = async {
@@ -485,12 +501,21 @@ mod tests {
             let saved_srv = saved_payload.clone();
             let server_id = Arc::new(Mutex::new("server-profile-a".to_owned()));
             let server_id_srv = server_id.clone();
+            let hold_put = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let hold_put_srv = hold_put.clone();
+            let put_arrived = Arc::new(tokio::sync::Notify::new());
+            let put_arrived_srv = put_arrived.clone();
+            let put_release = Arc::new(tokio::sync::Notify::new());
+            let put_release_srv = put_release.clone();
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}/", listener.local_addr().unwrap());
             tokio::spawn(async move {
                 while let Ok((mut stream, _)) = listener.accept().await {
                     let saved_srv = saved_srv.clone();
                     let server_id_srv = server_id_srv.clone();
+                    let hold_put_srv = hold_put_srv.clone();
+                    let put_arrived_srv = put_arrived_srv.clone();
+                    let put_release_srv = put_release_srv.clone();
                     tokio::spawn(async move {
                         let mut raw = Vec::new();
                         let mut tmp = [0u8; 4096];
@@ -564,6 +589,10 @@ mod tests {
                                 let parsed: Value = serde_json::from_str(&body).unwrap();
                                 *saved_srv.lock().unwrap() =
                                     parsed["contents"].as_str().map(str::to_owned);
+                                if hold_put_srv.swap(false, Ordering::SeqCst) {
+                                    put_arrived_srv.notify_one();
+                                    put_release_srv.notified().await;
+                                }
                                 ("204 No Content", String::new())
                             }
                             _ => ("404 Not Found", json!({"error": "not found"}).to_string()),
@@ -630,14 +659,19 @@ mod tests {
                 Some("locale: fr\n")
             );
 
-            // An in-flight save that completes while authentication is required must still drain
-            // so busy() does not lock Preferences open.
+            // An in-flight save whose PUT already arrived before authentication expires must
+            // still drain when its reply arrives so busy() does not lock Preferences open.
             editor.draft = TextEdit::new("locale: es\n");
             assert!(editor.dirty());
+            hold_put.store(true, Ordering::SeqCst);
             editor.save(&prefs);
             assert!(editor.busy());
+            tokio::time::timeout(Duration::from_secs(2), put_arrived.notified())
+                .await
+                .expect("PUT should reach mock server before auth expires");
             prefs.require_authentication();
             assert!(!prefs.can_retry());
+            put_release.notify_one();
             for _ in 0..100 {
                 editor.poll(&prefs, &wake, true);
                 if !editor.busy() {

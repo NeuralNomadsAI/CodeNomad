@@ -83,12 +83,16 @@ pub(super) struct Review {
     writing: Option<Edit>,
     tidy: Option<cleanup::Intent>,
     cleanup: Option<cleanup::Intent>,
-    tidy_attempted: bool,
-    tidy_failed: bool,
+    tidy_attempted: [bool; 2],
+    tidy_failed: [bool; 2],
     unverified: bool,
     authority: Arc<AtomicU64>,
     epoch: u64,
     seen: super::seen::Seen,
+}
+
+fn scope_slot(scope: Scope) -> usize {
+    usize::from(scope == Scope::Project)
 }
 
 #[derive(Clone)]
@@ -113,8 +117,23 @@ impl Review {
 
     pub fn begin_visit(&mut self) {
         self.seen.begin_visit();
-        self.tidy_attempted = false;
-        self.tidy_failed = false;
+        self.tidy_attempted = [false; 2];
+        self.tidy_failed = [false; 2];
+    }
+
+    pub fn on_authentication_required(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        self.flight = None;
+        if let Some((edit, _)) = self.pending.take() {
+            self.write_result = Some((edit, Err(UNAVAILABLE)));
+        }
+        self.tidy = None;
+        self.cleanup = None;
+        for slot in 0..2 {
+            if self.tidy_attempted[slot] {
+                self.tidy_failed[slot] = true;
+            }
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -140,8 +159,10 @@ impl Review {
         }
         self.tidy = None;
         self.cleanup = None;
-        if self.tidy_attempted {
-            self.tidy_failed = true;
+        for slot in 0..2 {
+            if self.tidy_attempted[slot] {
+                self.tidy_failed[slot] = true;
+            }
         }
     }
 
@@ -162,8 +183,6 @@ impl Review {
                     && (scope != Scope::Project || project.is_some()) =>
             {
                 self.suspend();
-                self.tidy_attempted = false;
-                self.tidy_failed = false;
                 self.scope = Some(scope);
             }
             Action::Retry => self.invalidate(),
@@ -175,8 +194,10 @@ impl Review {
                 let intent = self.tidy.take();
                 // Consume consent before publishing; a second activation cannot start this run.
                 if accept && intent == self.cleanup_intent(project) {
+                    if let Some(ref confirmed) = intent {
+                        self.tidy_attempted[scope_slot(confirmed.scope)] = true;
+                    }
                     self.cleanup = intent;
-                    self.tidy_attempted = true;
                 }
             }
             _ => {}
@@ -187,7 +208,9 @@ impl Review {
         let list = self.snapshot.as_ref()?;
         let key = self.key.as_ref()?;
         let (workspace, session) = project.filter(|p| p.online())?.location();
-        if self.tidy_attempted
+        if self.unverified
+            || self.refresh
+            || self.tidy_attempted[scope_slot(key.scope)]
             || self.writing()
             || self.flight.is_some()
             || self.failed.is_some()
@@ -211,7 +234,8 @@ impl Review {
         self.cleanup.take()
     }
     pub fn cleanup_current(&self, intent: &cleanup::Intent) -> bool {
-        self.tidy_attempted
+        !self.unverified
+            && self.tidy_attempted[scope_slot(intent.scope)]
             && self.epoch == intent.epoch
             && self.key.as_ref().is_some_and(|key| {
                 key.owner.client_id() == intent.connection
@@ -227,7 +251,7 @@ impl Review {
                 key.owner.client_id() == intent.connection && key.scope == intent.scope
             })
         {
-            self.tidy_failed = true;
+            self.tidy_failed[scope_slot(intent.scope)] = true;
         }
     }
 
@@ -343,18 +367,20 @@ impl Review {
             self.scope.get_or_insert(scope);
         }
         let next_key = backend
-            .filter(|_| scope == Scope::Global || project.is_some_and(Target::online))
+            .filter(|_| scope == Scope::Global || project.is_some())
             .map(|backend| Key {
                 owner: ServerOwner::from_backend(backend),
                 scope,
-                context: project.filter(|target| target.online()).map(|target| {
+                context: project.map(|target| {
                     let (workspace, session) = target.location();
                     (workspace.to_owned(), session.map(str::to_owned))
                 }),
             });
+        let target_offline = scope == Scope::Project && !project.is_some_and(Target::online);
         let was_unverified = self.unverified;
-        self.unverified =
-            transport_lost || backend.is_some_and(|b| !ServerOwner::backend_verified(b));
+        self.unverified = transport_lost
+            || target_offline
+            || backend.is_some_and(|b| !ServerOwner::backend_verified(b));
         let mut changed = was_unverified != self.unverified;
         match (&mut self.key, next_key) {
             (Some(current), Some(next)) if current.same_target(&next) => {
@@ -368,8 +394,10 @@ impl Review {
                     self.failed = None;
                     self.tidy = None;
                     self.cleanup = None;
-                    if self.tidy_attempted {
-                        self.tidy_failed = true;
+                    for slot in 0..2 {
+                        if self.tidy_attempted[slot] {
+                            self.tidy_failed[slot] = true;
+                        }
                     }
                     self.invalidate();
                     changed = true;
@@ -400,11 +428,15 @@ impl Review {
         let (Some(key), Some(backend)) = (&self.key, backend) else {
             return changed;
         };
-        // Never publish or start list reads while transport or attestation is unverified: keep
-        // the last attested snapshot so open drafts stay visible read-only until re-attested.
+        // Never publish or start list reads or cleanup while transport, target, or attestation is
+        // unverified: keep the last attested snapshot so open drafts stay visible read-only.
         if self.unverified {
             if self.flight.take().is_some() {
                 self.invalidate();
+                changed = true;
+            }
+            if self.tidy.take().is_some() || self.cleanup.take().is_some() {
+                self.epoch = self.epoch.wrapping_add(1);
                 changed = true;
             }
             if !was_unverified {
@@ -599,7 +631,7 @@ impl Review {
                     })),
             )
             .children(
-                self.tidy_failed
+                self.tidy_failed[scope_slot(scope)]
                     .then(|| text(t("settings.memory.tidyFailed")).role("alert").wrap()),
             );
         if scope == Scope::Project {

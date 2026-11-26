@@ -19,7 +19,7 @@ mod tests;
 
 const CONNECTING_POLL_DELAY: Duration = Duration::from_secs(3);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(super) enum ErrorText {
     Key(&'static str),
     Raw(String),
@@ -88,7 +88,7 @@ enum Mutation {
     Stop,
     SetPreviews,
     Pair,
-    Revoke(String),
+    Revoke(String, Option<ErrorText>),
 }
 
 enum Reply {
@@ -179,6 +179,11 @@ impl Remote {
         self.flight = None;
         match result {
             Reply::Snapshot(Ok(read), revoke_err) => {
+                if let Some(Mutation::Revoke(_, stored)) = self.unconfirmed.as_mut()
+                    && let Some(err) = revoke_err
+                {
+                    *stored = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
+                }
                 let status = read.status;
                 let keep_direct = self.pairing.as_ref().is_some_and(|p| p.direct);
                 if !status.manageable
@@ -194,26 +199,37 @@ impl Remote {
                 } else {
                     read.devices
                 };
-                self.needs_read = matches!(self.unconfirmed, Some(Mutation::Revoke(_)))
+                self.needs_read = matches!(self.unconfirmed, Some(Mutation::Revoke(_, _)))
                     && (read.devices_error.is_some() || devices.is_none());
                 if self.needs_read {
-                    self.error = revoke_err
-                        .filter(|err| matches!(err, remote::Error::Server(_)))
-                        .or(read.devices_error)
-                        .map(|err| ErrorText::from_remote(err, "remoteControl.state.error"))
+                    let stored = match &self.unconfirmed {
+                        Some(Mutation::Revoke(_, err)) => err.clone(),
+                        _ => None,
+                    };
+                    self.error = stored
+                        .clone()
+                        .filter(|err| matches!(err, ErrorText::Raw(_)))
+                        .or_else(|| {
+                            read.devices_error
+                                .map(|err| ErrorText::from_remote(err, "remoteControl.state.error"))
+                        })
+                        .or(stored)
                         .or(Some(ErrorText::Key("remoteControl.state.error")));
                 } else {
-                    let failed = match self.unconfirmed.take() {
-                        Some(Mutation::Revoke(id)) => devices
-                            .as_ref()
-                            .is_some_and(|devices| devices.iter().any(|device| device.id == id)),
+                    let (failed, stored_revoke_err) = match self.unconfirmed.take() {
+                        Some(Mutation::Revoke(id, err)) => (
+                            devices.as_ref().is_some_and(|devices| {
+                                devices.iter().any(|device| device.id == id)
+                            }),
+                            err,
+                        ),
                         Some(
                             Mutation::Start
                             | Mutation::Stop
                             | Mutation::SetPreviews
                             | Mutation::Pair,
-                        ) => true,
-                        None => false,
+                        ) => (true, None),
+                        None => (false, None),
                     };
                     if let Some(err) = read.devices_error {
                         if !failed || self.error.is_none() {
@@ -222,8 +238,8 @@ impl Remote {
                         }
                     } else if !failed {
                         self.error = None;
-                    } else if let Some(err) = revoke_err {
-                        self.error = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
+                    } else if let Some(err) = stored_revoke_err {
+                        self.error = Some(err);
                     } else if self.error.is_none() {
                         self.error = Some(ErrorText::Key("remoteControl.state.error"));
                     }
@@ -232,11 +248,18 @@ impl Remote {
             }
             Reply::Snapshot(Err(err), revoke_err) => {
                 self.needs_read = true;
-                let chosen = match revoke_err {
-                    Some(server @ remote::Error::Server(_)) => server,
-                    _ => err,
+                if let Some(Mutation::Revoke(_, stored)) = self.unconfirmed.as_mut()
+                    && let Some(err) = revoke_err
+                {
+                    *stored = Some(ErrorText::from_remote(err, "remoteControl.state.error"));
+                }
+                let stored = match &self.unconfirmed {
+                    Some(Mutation::Revoke(_, err)) => err.clone(),
+                    _ => None,
                 };
-                self.error = Some(ErrorText::from_remote(chosen, "remoteControl.state.error"));
+                self.error = stored
+                    .filter(|err| matches!(err, ErrorText::Raw(_)))
+                    .or_else(|| Some(ErrorText::from_remote(err, "remoteControl.state.error")));
             }
             Reply::Started(Ok((status, pairing, devices))) => {
                 self.unconfirmed = None;
@@ -402,7 +425,7 @@ impl Remote {
                 self.clear_pairing();
                 self.unconfirmed = Some(Mutation::Pair);
             }
-            Action::Revoke(id) => self.unconfirmed = Some(Mutation::Revoke(id.clone())),
+            Action::Revoke(id) => self.unconfirmed = Some(Mutation::Revoke(id.clone(), None)),
             Action::Refresh => {}
         }
         platform::spawn(async move {
@@ -648,7 +671,7 @@ impl Remote {
                     );
                     let uncertain = device.revocation_pending
                         || (self.needs_read
-                            && matches!(&self.unconfirmed, Some(Mutation::Revoke(id)) if *id == device.id));
+                            && matches!(&self.unconfirmed, Some(Mutation::Revoke(id, _)) if *id == device.id));
                     let detail = if uncertain {
                         t("remoteControl.devices.revocationPending").to_owned()
                     } else {

@@ -546,18 +546,26 @@ async fn read_error_message(response: reqwest::Response) -> Option<String> {
                 .trim()
                 .to_ascii_lowercase()
         });
+    if !is_supported_error_mime(content_type.as_deref()) {
+        return None;
+    }
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.ok()?;
-        let take = chunk.len().min(MAX_ERROR_BYTES.saturating_sub(bytes.len()));
-        bytes.extend_from_slice(&chunk[..take]);
-        if bytes.len() >= MAX_ERROR_BYTES {
-            break;
+        if bytes.len().saturating_add(chunk.len()) > MAX_ERROR_BYTES {
+            return None;
         }
+        bytes.extend_from_slice(&chunk);
     }
     let text = std::str::from_utf8(&bytes).ok()?;
     parse_error_message(content_type.as_deref(), text)
+}
+
+fn is_supported_error_mime(content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|mime| {
+        mime == "application/json" || mime.ends_with("+json") || mime == "text/plain"
+    })
 }
 
 fn parse_error_message(content_type: Option<&str>, text: &str) -> Option<String> {
@@ -766,5 +774,57 @@ mod tests {
             parse_error_message(Some("text/plain"), "Plain server error"),
             Some("Plain server error".into())
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn error_stream_enforces_complete_body_and_exact_size_limit() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                let cases = [
+                    // Exact MAX_ERROR_BYTES text/plain body succeeds.
+                    format!(
+                        "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {MAX_ERROR_BYTES}\r\nConnection: close\r\n\r\n{}",
+                        "x".repeat(MAX_ERROR_BYTES)
+                    ),
+                    // One byte over MAX_ERROR_BYTES is rejected.
+                    format!(
+                        "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        MAX_ERROR_BYTES + 1,
+                        "y".repeat(MAX_ERROR_BYTES + 1)
+                    ),
+                    // Truncated HTTP stream (declared Content-Length larger than sent bytes) is rejected.
+                    "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"error\":\"ok\"}".to_owned(),
+                ];
+                for response in cases {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut req = [0u8; 1024];
+                    let _ = stream.read(&mut req).await;
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                }
+            });
+
+            let client = reqwest::Client::new();
+            let url = format!("http://{addr}/");
+            let exact = check_response(client.get(&url).send().await.unwrap()).await;
+            assert!(matches!(exact, Err(Error::Server(ref msg)) if msg.len() == MAX_ERROR_CHARS));
+
+            let oversized = check_response(client.get(&url).send().await.unwrap()).await;
+            assert!(matches!(oversized, Err(Error::Transport)));
+
+            let truncated = check_response(client.get(&url).send().await.unwrap()).await;
+            assert!(matches!(truncated, Err(Error::Transport)));
+        });
     }
 }

@@ -68,6 +68,10 @@ impl Setting {
         self.review.poll_write()
     }
 
+    pub fn on_authentication_required(&mut self) {
+        self.review.on_authentication_required();
+    }
+
     pub fn poll_review(
         &mut self,
         backend: &Backend,

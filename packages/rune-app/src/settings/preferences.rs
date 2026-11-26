@@ -390,6 +390,7 @@ impl Preferences {
         if !dropped {
             return false;
         }
+        self.authority.fetch_add(1, Ordering::SeqCst);
         self.config.mark_transport_lost();
         self.state.mark_transport_lost();
         self.server.mark_transport_lost();
@@ -616,11 +617,11 @@ impl Preferences {
                     && old.client.server_identity() == new.client.server_identity()
             });
         self.unwatch();
+        self.authority.fetch_add(1, Ordering::SeqCst);
         if !same_address {
             self.seen_drops.clear();
             self.closing_stream_client_id = None;
             self.binding_epoch = self.binding_epoch.wrapping_add(1);
-            self.authority.fetch_add(1, Ordering::SeqCst);
             self.palette_preview = None;
         }
         self.config.rebind(same_address);
@@ -815,6 +816,8 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        self.authority.fetch_add(1, Ordering::SeqCst);
+        self.memory.on_authentication_required();
         self.state.settle_palette_mutation_on_auth_expired();
         self.opencode_install.cancel_check();
         if let Some(target) = &mut self.provider_target {
