@@ -230,12 +230,14 @@ async function runBench() {
         if (browserProc) {
           if (process.platform === 'win32') {
             if (!isProcExited()) await withTimeout(browserExited, 2500)
-            const cleanExit = browserProc.exitCode === 0 && browserProc.signalCode === null
-            if (!cleanExit) {
-              // Forced Job Object termination is cleanup only, never proof of clean pass.
+            // codenomad-fixture-job exits 0 only when the Chromium browser process exited 0 and
+            // child.family_is_empty() confirmed zero surviving descendants in the Job Object.
+            const exitedCleanly = browserProc.exitCode === 0 && browserProc.signalCode === null
+            if (!exitedCleanly) {
+              // Forced runner-side Job Object kill is cleanup only, never proof of a clean pass.
               await stopFixtureChild(browserProc, browserExited, 1000, 1500).catch(() => {})
             }
-            return cleanExit
+            return exitedCleanly
           }
           if (!isProcExited() || !isPosixGroupEmpty()) {
             const deadline = Date.now() + 2000
@@ -296,6 +298,8 @@ async function runBench() {
     const chromiumPath = values.executable || chromium.executablePath()
     const chromiumProfile = path.join(out, 'chromium-profile')
     await mkdir(chromiumProfile, {recursive: true})
+    if (stoppingSignal) throw Error(`Interrupted before Chromium launch (${stoppingSignal})`)
+    assert(process.connected, 'Fixture IPC disconnected before Chromium launch')
     const launchChromium = process.platform === 'win32' ? spawnFixtureChild : spawn
     browserProc = launchChromium(chromiumPath, [
       '--headless=new',
