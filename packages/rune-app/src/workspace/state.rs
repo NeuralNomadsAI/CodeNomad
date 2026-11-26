@@ -234,10 +234,6 @@ impl Ui {
         removed
     }
     #[cfg(test)]
-    pub(crate) fn mark_ready(&mut self) {
-        self.ready = true;
-    }
-    #[cfg(test)]
     pub(crate) fn with_cached_git(&mut self, key: &str, f: impl FnOnce(&mut crate::git::Binding)) {
         if let Some(entry) = self.entries.iter_mut().find(|entry| entry.key == key)
             && let Some(cache) = entry.cache.as_mut()

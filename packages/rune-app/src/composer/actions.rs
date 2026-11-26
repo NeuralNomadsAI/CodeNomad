@@ -65,6 +65,9 @@ impl Owner {
         }
         (files, bytes)
     }
+    pub(crate) fn optimistic_id(&self) -> Option<&str> {
+        self.optimistic_id.as_deref()
+    }
     pub(crate) fn clear_optimistic(&mut self, id: Option<&str>) {
         if id.is_none() || self.optimistic_id.as_deref() == id {
             self.optimistic_id = None;
@@ -312,7 +315,8 @@ pub fn can_send(s: &State) -> bool {
     if crate::platform::pairing::required(s) {
         return false;
     }
-    let stream_disconnected = matches!(s.phase, Phase::StreamDisconnected { .. });
+    let stream_disconnected =
+        s.stream_offline && matches!(s.phase, Phase::StreamDisconnected { .. });
     (stream_disconnected || matches!(s.phase, Phase::Ready | Phase::Streaming))
         && !s
             .screen
@@ -784,6 +788,146 @@ mod tests {
         assert!(rt.state.composer.unconfirmed.is_none());
         assert!(!rt.state.composer.announce_unconfirmed);
         assert_eq!(rt.state.draft.text, "new draft");
+    }
+
+    #[test]
+    fn scroll_rollback_after_trimmed_sync_never_confirms_unconfirmed_optimistic_prompt() {
+        let (sender, receiver) = codenomad_client::bounded(2);
+        let mut s = crate::init();
+        s.phase = Phase::Ready;
+        s.commands = Some(sender);
+        s.messages = (0..4)
+            .map(|i| {
+                Message {
+                    id: format!("auth-{i}"),
+                    role: "assistant".into(),
+                    body: format!("history {i}"),
+                    completed: true,
+                    usage: None,
+                    parts: vec![],
+                }
+                .into()
+            })
+            .collect();
+        s.draft = TextEdit::new("attempt");
+        let (reader, lane) = crate::chat::reader::Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (640.0, 480.0), Env::new(false, 1.0));
+        rt.update(|s, tx| send(s, tx, false));
+        let Command::Prompt(prompt) = receiver.try_recv().unwrap() else {
+            panic!("expected prompt")
+        };
+        let id = prompt.id.unwrap();
+        acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
+        assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
+        assert_eq!(rt.state.composer.optimistic_id(), Some(id.as_str()));
+        assert_eq!(rt.state.draft.text, "attempt");
+
+        // Suspend + resume so ReaderSync enters the resuming path, then deliver a trimmed
+        // authoritative page that omits both older history and the unconfirmed optimistic prompt.
+        rt.update(|s, tx| {
+            crate::chat::reader::suspend(s);
+            crate::chat::reader::resume(s, tx);
+        });
+        let kept_rows: Vec<_> = rt.state.messages[2..4].to_vec();
+        let generation = rt.state.reader.as_ref().unwrap().generation();
+        lane.events
+            .try_send((
+                generation,
+                0,
+                crate::transport::Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: kept_rows,
+                        older: Some("cursor-older".into()),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        assert!(crate::chat::events::poll_chat_for_window(
+            &mut rt.state,
+            64,
+            false
+        ));
+        assert_eq!(rt.state.composer.optimistic_id(), None);
+        assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
+
+        // A manual scroll rollback must restore only authoritative rows and keep the prompt locked.
+        rt.update(|s, tx| {
+            assert!(crate::chat::reader::undo_sync_for_manual_scroll(s, 0, tx));
+        });
+        assert!(!rt.state.messages.iter().any(|row| row.id == id));
+        assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
+        assert_eq!(rt.state.draft.text, "attempt");
+        assert!(!can_send(&rt.state));
+    }
+
+    #[test]
+    fn scroll_rollback_preserves_online_phase_and_reader_send_barrier() {
+        let (sender, _receiver) = codenomad_client::bounded(2);
+        let mut s = crate::init();
+        s.phase = Phase::StreamDisconnected { running: false };
+        s.stream_offline = true;
+        s.commands = Some(sender);
+        s.messages = (0..4)
+            .map(|i| {
+                Message {
+                    id: format!("row-{i}"),
+                    role: "assistant".into(),
+                    body: format!("message {i}"),
+                    completed: true,
+                    usage: None,
+                    parts: vec![],
+                }
+                .into()
+            })
+            .collect();
+        s.draft = TextEdit::new("send after reconnect");
+        let (reader, lane) = crate::chat::reader::Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (640.0, 480.0), Env::new(false, 1.0));
+
+        rt.update(|s, tx| {
+            crate::chat::reader::suspend(s);
+            crate::chat::reader::resume(s, tx);
+        });
+        let trimmed: Vec<_> = rt.state.messages[2..4].to_vec();
+        let generation = rt.state.reader.as_ref().unwrap().generation();
+        lane.events
+            .try_send((
+                generation,
+                0,
+                crate::transport::Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: trimmed,
+                        older: Some("cursor-older".into()),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        assert!(crate::chat::events::poll_chat_for_window(
+            &mut rt.state,
+            64,
+            false
+        ));
+        assert!(rt.state.phase == Phase::Ready);
+        assert!(!rt.state.stream_offline);
+
+        // Rolling back the trimmed sync re-arms resume_pending, so sending must remain blocked
+        // rather than reviving Phase::StreamDisconnected to bypass the online reader barrier.
+        rt.update(|s, tx| {
+            assert!(crate::chat::reader::undo_sync_for_manual_scroll(s, 0, tx));
+        });
+        assert!(rt.state.phase == Phase::Ready);
+        assert!(!rt.state.stream_offline);
+        assert!(!can_send(&rt.state));
     }
 
     #[test]

@@ -29,7 +29,6 @@ struct SyncUndo {
     messages: Vec<crate::history::Row>,
     can_older: bool,
     history_detached: bool,
-    phase: crate::Phase,
     trimmed_older: bool,
     trimmed_newer: bool,
     age: u8,
@@ -165,7 +164,6 @@ impl Reader {
         messages: Vec<crate::history::Row>,
         can_older: bool,
         history_detached: bool,
-        phase: crate::Phase,
         trimmed_older: bool,
         trimmed_newer: bool,
     ) {
@@ -188,7 +186,6 @@ impl Reader {
             messages,
             can_older,
             history_detached,
-            phase,
             trimmed_older,
             trimmed_newer,
             age: 0,
@@ -569,7 +566,6 @@ pub(crate) fn undo_sync_for_manual_scroll(s: &mut State, min_scroll_seq: u64, tx
     s.messages = undo.messages;
     s.can_older = undo.can_older;
     s.history_detached = undo.history_detached;
-    s.phase = undo.phase;
     crate::composer::reconcile(s);
     if let Some(reader) = &mut s.reader {
         reader.bookmark = undo.bookmark;

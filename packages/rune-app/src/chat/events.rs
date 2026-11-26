@@ -276,28 +276,38 @@ fn drain_chat(
                     changed = true;
                     continue;
                 }
+                let optimistic_id = s.composer.optimistic_id().map(str::to_owned);
                 let sync_undo = if let Some(version) = reader_version
                     && !s.messages.is_empty()
                     && s.reader
                         .as_ref()
                         .is_some_and(chat::reader::Reader::is_resuming)
                 {
+                    let authoritative_first = s
+                        .messages
+                        .iter()
+                        .find(|r| optimistic_id.as_deref() != Some(r.id.as_str()));
+                    let authoritative_last = s
+                        .messages
+                        .iter()
+                        .rfind(|r| optimistic_id.as_deref() != Some(r.id.as_str()));
                     let trimmed_older = page.older.is_some()
-                        && s.messages
-                            .first()
+                        && authoritative_first
                             .is_some_and(|first| !page.rows.iter().any(|r| r.id == first.id));
                     let trimmed_newer = page.newer.is_some()
-                        && s.messages
-                            .last()
+                        && authoritative_last
                             .is_some_and(|last| !page.rows.iter().any(|r| r.id == last.id));
                     (trimmed_older || trimmed_newer).then(|| {
+                        let mut prev_rows = std::mem::take(&mut s.messages);
+                        if let Some(id) = optimistic_id.as_deref() {
+                            prev_rows.retain(|r| r.id != id);
+                        }
                         (
                             version,
                             page.clone(),
-                            std::mem::take(&mut s.messages),
+                            prev_rows,
                             s.can_older,
                             s.history_detached,
-                            s.phase,
                             trimmed_older,
                             trimmed_newer,
                         )
@@ -313,7 +323,6 @@ fn drain_chat(
                         prev_rows,
                         prev_can_older,
                         prev_detached,
-                        prev_phase,
                         trimmed_older,
                         trimmed_newer,
                     )) = sync_undo
@@ -324,7 +333,6 @@ fn drain_chat(
                             prev_rows,
                             prev_can_older,
                             prev_detached,
-                            prev_phase,
                             trimmed_older,
                             trimmed_newer,
                         );
