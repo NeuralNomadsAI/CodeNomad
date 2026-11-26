@@ -2,6 +2,7 @@
 use crate::agent_api::Form;
 use rune::edit::TextEdit;
 use serde_json::{Value, json};
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -258,6 +259,7 @@ pub enum ValidationError {
     Unsupported,
     Required,
     SelectDeclaredOption,
+    DuplicateCustomOption,
     TooShort { min: u64 },
     TooLong { max: u64 },
     NotNumber,
@@ -350,7 +352,7 @@ fn remove_promoted_lines(edit: &mut TextEdit, mut should_remove: impl FnMut(&str
 }
 
 fn strip_leaked_choice_default(field: &Value, next: &mut Draft, provenance: &BTreeSet<String>) {
-    if field["hidden"] == true {
+    if field["hidden"] == true || provenance.is_empty() {
         return;
     }
     if let Some(raw) = field["default"].as_str()
@@ -358,27 +360,61 @@ fn strip_leaked_choice_default(field: &Value, next: &mut Draft, provenance: &BTr
     {
         if next.edit.text == raw {
             next.edit = TextEdit::new("");
+            next.edit_baseline.clear();
         }
         if next.custom.text == raw {
             next.custom = TextEdit::new("");
+            next.custom_baseline.clear();
         }
     }
+    if field["type"] == "multiselect" {
+        next.preserved_custom
+            .retain(|item| !provenance.contains(item));
+        next.preserved_custom_selected
+            .retain(|item| !provenance.contains(item));
+        if !next.custom.text.is_empty()
+            && remove_promoted_lines(&mut next.custom, |trimmed| provenance.contains(trimmed))
+        {
+            next.custom_baseline = next.custom.text.clone();
+        }
+    }
+}
+
+fn collect_choice_provenance(draft: &mut Draft) -> BTreeSet<String> {
+    let mut provenance = std::mem::take(&mut draft.prior_choice_values);
+    if matches!(
+        draft.kind,
+        Some(FieldKind::StringOptions | FieldKind::Multiselect)
+    ) {
+        if let Some(prev_opts) = draft.declared_options.take() {
+            provenance.extend(prev_opts);
+        }
+        if let Some(prev_choice) = draft.choice.take() {
+            provenance.insert(prev_choice);
+        }
+        provenance.extend(draft.selected.iter().cloned());
+    }
+    provenance
 }
 
 pub struct Draft {
     pub edit: TextEdit,
     pub custom: TextEdit,
+    pub edit_baseline: String,
+    pub custom_baseline: String,
     pub choice: Option<String>,
     pub selected: BTreeSet<String>,
     pub preserved_custom: Vec<String>,
     pub preserved_custom_selected: BTreeSet<String>,
     pub hidden_multiselect: Vec<String>,
+    pub hidden_multiselect_invalid: bool,
     pub declared_options: Option<BTreeSet<String>>,
     pub prior_choice_values: BTreeSet<String>,
     pub hidden_value: Option<String>,
     pub hidden_only: bool,
     pub kind: Option<FieldKind>,
     pub dirty: bool,
+    pub text_dirty: Cell<bool>,
 }
 impl Draft {
     pub fn choose(&mut self, value: &str) {
@@ -389,6 +425,7 @@ impl Draft {
         self.choice = Some(value.into());
         if !self.custom.text.is_empty() {
             self.custom = TextEdit::new("");
+            self.custom_baseline.clear();
         }
         self.dirty = true;
     }
@@ -410,15 +447,25 @@ impl Draft {
         self.dirty = true;
     }
     pub fn editor(&mut self) -> &mut TextEdit {
-        self.dirty = true;
+        if self.edit.text != self.edit_baseline {
+            self.text_dirty.set(true);
+        }
         &mut self.edit
     }
     pub fn custom_editor(&mut self) -> &mut TextEdit {
+        if self.custom.text != self.custom_baseline {
+            self.text_dirty.set(true);
+        }
         if !self.custom.text.is_empty() {
             self.choice = None;
         }
-        self.dirty = true;
         &mut self.custom
+    }
+    pub fn is_dirty(&self) -> bool {
+        if self.edit.text != self.edit_baseline || self.custom.text != self.custom_baseline {
+            self.text_dirty.set(true);
+        }
+        self.dirty || self.text_dirty.get()
     }
 }
 impl Default for Draft {
@@ -426,17 +473,21 @@ impl Default for Draft {
         Self {
             edit: TextEdit::new(""),
             custom: TextEdit::new(""),
+            edit_baseline: String::new(),
+            custom_baseline: String::new(),
             choice: None,
             selected: BTreeSet::new(),
             preserved_custom: Vec::new(),
             preserved_custom_selected: BTreeSet::new(),
             hidden_multiselect: Vec::new(),
+            hidden_multiselect_invalid: false,
             declared_options: None,
             prior_choice_values: BTreeSet::new(),
             hidden_value: None,
             hidden_only: false,
             kind: None,
             dirty: false,
+            text_dirty: Cell::new(false),
         }
     }
 }
@@ -462,23 +513,35 @@ fn fresh_draft(field: &Value) -> Draft {
     };
     let value = &field["default"];
     if field["type"] == "multiselect" {
-        if let Some(values) = value.as_array() {
+        if let Some(opts) = &declared {
+            d.prior_choice_values.extend(opts.iter().cloned());
+        }
+        if hidden {
+            if let Some(values) = value.as_array() {
+                let allowed = normalized_options(field);
+                for entry in values {
+                    if let Some(raw) = entry.as_str() {
+                        if allowed.iter().any(|opt| opt.value == raw) {
+                            d.prior_choice_values.insert(raw.to_string());
+                        }
+                        d.hidden_multiselect.push(raw.to_string());
+                    } else {
+                        d.hidden_multiselect_invalid = true;
+                    }
+                }
+            } else if !value.is_null() {
+                d.hidden_multiselect_invalid = true;
+            }
+        } else if let Some(values) = value.as_array() {
             let allowed = normalized_options(field);
             let allow_custom = field["custom"] == true;
             let mut seen = HashSet::new();
             let mut editable_custom = Vec::new();
             for raw in values.iter().filter_map(Value::as_str) {
                 let is_declared = allowed.iter().any(|opt| opt.value == raw);
-                if hidden {
-                    if (is_declared || (allow_custom && !raw.is_empty()))
-                        && seen.insert(raw.to_string())
-                    {
-                        d.hidden_multiselect.push(raw.to_string());
-                    }
-                    continue;
-                }
                 if is_declared {
                     d.selected.insert(raw.to_string());
+                    d.prior_choice_values.insert(raw.to_string());
                 } else if allow_custom && !raw.is_empty() && seen.insert(raw.to_string()) {
                     if !is_line_editable_custom(raw) {
                         d.preserved_custom.push(raw.to_string());
@@ -501,12 +564,10 @@ fn fresh_draft(field: &Value) -> Draft {
             if allowed.iter().any(|opt| opt.value == raw) {
                 d.choice = Some(raw.to_string());
                 d.prior_choice_values.insert(raw.to_string());
+            } else if hidden {
+                d.hidden_value = Some(raw.to_string());
             } else if field["custom"] == true {
-                if hidden {
-                    d.hidden_value = Some(raw.to_string());
-                } else {
-                    d.custom = TextEdit::new(raw);
-                }
+                d.custom = TextEdit::new(raw);
             }
         }
     } else if matches!(field["type"].as_str(), Some("number" | "integer")) {
@@ -540,6 +601,8 @@ fn fresh_draft(field: &Value) -> Draft {
     } else if field["type"] == "boolean" && !hidden {
         d.edit = TextEdit::new("false");
     }
+    d.edit_baseline = d.edit.text.clone();
+    d.custom_baseline = d.custom.text.clone();
     d
 }
 
@@ -559,19 +622,16 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 continue;
             };
             let hidden = field["hidden"] == true;
-            // Fields seeded while hidden keep their protocol defaults isolated from visible
-            // editable drafts: refreshing while still hidden or revealing them reseeds cleanly
-            // from the current schema while preserving lifetime choice provenance.
-            if draft.hidden_only {
-                let mut choice_provenance = std::mem::take(&mut draft.prior_choice_values);
-                if draft.kind == Some(FieldKind::StringOptions) {
-                    if let Some(prev_opts) = draft.declared_options.take() {
-                        choice_provenance.extend(prev_opts);
-                    }
-                    if let Some(prev_choice) = draft.choice.take() {
-                        choice_provenance.insert(prev_choice);
-                    }
-                }
+            let draft_empty = draft.edit.text.is_empty()
+                && draft.custom.text.is_empty()
+                && draft.choice.is_none()
+                && draft.selected.is_empty()
+                && draft.preserved_custom_selected.is_empty();
+            // Fields seeded while hidden, or untouched/empty visible fields that become hidden,
+            // reseed cleanly from the current schema while preserving lifetime choice provenance
+            // and never leaking hidden defaults into visible editors.
+            if draft.hidden_only || (hidden && (!draft.is_dirty() || draft_empty)) {
+                let choice_provenance = collect_choice_provenance(draft);
                 let mut next = fresh_draft(field);
                 strip_leaked_choice_default(field, &mut next, &choice_provenance);
                 next.prior_choice_values.extend(choice_provenance);
@@ -583,25 +643,20 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
             if let Some(prev) = draft.kind
                 && prev != kind
             {
-                let mut choice_provenance = std::mem::take(&mut draft.prior_choice_values);
-                if prev == FieldKind::StringOptions {
-                    if let Some(prev_opts) = draft.declared_options.take() {
-                        choice_provenance.extend(prev_opts);
-                    }
-                    if let Some(prev_choice) = draft.choice.take() {
-                        choice_provenance.insert(prev_choice);
-                    }
-                }
+                let choice_provenance = collect_choice_provenance(draft);
                 match (prev, kind) {
                     (FieldKind::StringOptions, FieldKind::StringFree) => {
                         let authored = std::mem::take(&mut draft.custom.text);
                         if !authored.is_empty() {
                             draft.edit = TextEdit::new(authored);
+                            draft.edit_baseline = draft.edit.text.clone();
                             draft.custom = TextEdit::new("");
+                            draft.custom_baseline.clear();
                             draft.selected.clear();
                             draft.preserved_custom.clear();
                             draft.preserved_custom_selected.clear();
                             draft.hidden_multiselect.clear();
+                            draft.hidden_multiselect_invalid = false;
                             draft.hidden_value = None;
                             draft.prior_choice_values = choice_provenance;
                             draft.kind = Some(kind);
@@ -612,6 +667,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             && choice_provenance.contains(raw)
                         {
                             next.edit = TextEdit::new("");
+                            next.edit_baseline.clear();
                             if hidden {
                                 next.hidden_value = Some(raw.to_string());
                             }
@@ -621,7 +677,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                         continue;
                     }
                     (FieldKind::StringFree, FieldKind::StringOptions) => {
-                        if !draft.dirty && draft.edit.text.is_empty() {
+                        if !draft.is_dirty() && draft.edit.text.is_empty() {
                             let mut next = fresh_draft(field);
                             strip_leaked_choice_default(field, &mut next, &choice_provenance);
                             next.prior_choice_values.extend(choice_provenance);
@@ -648,8 +704,12 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
             // untouched editors or selecting options that were already declared before refresh.
             let current_options = declared_option_set(field);
             if kind == FieldKind::Multiselect {
+                if let Some(opts) = &current_options {
+                    draft.prior_choice_values.extend(opts.iter().cloned());
+                }
                 if !draft.edit.text.is_empty() {
                     draft.edit = TextEdit::new("");
+                    draft.edit_baseline.clear();
                 }
                 draft.choice = None;
                 let allowed = normalized_options(field);
@@ -684,19 +744,27 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.preserved_custom = remaining_preserved;
                 draft.preserved_custom_selected = remaining_preserved_selected;
                 if !draft.custom.text.is_empty() {
-                    if !allow_custom {
+                    // Promote newly declared custom lines first, then discard any remaining
+                    // custom text when custom input is disabled.
+                    let mut newly_selected = Vec::new();
+                    let was_dirty = draft.is_dirty();
+                    if remove_promoted_lines(&mut draft.custom, |trimmed| {
+                        if is_newly_declared(trimmed) {
+                            newly_selected.push(trimmed.to_string());
+                            true
+                        } else {
+                            false
+                        }
+                    }) {
+                        draft.custom_baseline = draft.custom.text.clone();
+                        if was_dirty {
+                            draft.text_dirty.set(true);
+                        }
+                    }
+                    draft.selected.extend(newly_selected);
+                    if !allow_custom && !draft.custom.text.is_empty() {
                         draft.custom = TextEdit::new("");
-                    } else {
-                        let mut newly_selected = Vec::new();
-                        remove_promoted_lines(&mut draft.custom, |trimmed| {
-                            if is_newly_declared(trimmed) {
-                                newly_selected.push(trimmed.to_string());
-                                true
-                            } else {
-                                false
-                            }
-                        });
-                        draft.selected.extend(newly_selected);
+                        draft.custom_baseline.clear();
                     }
                 }
             } else if kind == FieldKind::StringOptions {
@@ -704,6 +772,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.preserved_custom.clear();
                 draft.preserved_custom_selected.clear();
                 draft.hidden_multiselect.clear();
+                draft.hidden_multiselect_invalid = false;
                 let allowed = normalized_options(field);
                 let allow_custom = field["custom"] == true;
                 let prev_options = draft.declared_options.as_ref();
@@ -724,21 +793,26 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 if !draft.edit.text.is_empty() {
                     let prior = std::mem::take(&mut draft.edit.text);
                     draft.edit = TextEdit::new("");
+                    draft.edit_baseline.clear();
                     if allowed.iter().any(|opt| opt.value == prior.as_str()) {
                         draft.choice = Some(prior);
                         if !draft.custom.text.is_empty() {
                             draft.custom = TextEdit::new("");
+                            draft.custom_baseline.clear();
                         }
                     } else if allow_custom && draft.custom.text.is_empty() {
                         draft.custom = TextEdit::new(prior);
+                        draft.custom_baseline = draft.custom.text.clone();
                     }
                 }
                 if !draft.custom.text.is_empty() {
                     if is_newly_declared(draft.custom.text.as_str()) {
                         draft.choice = Some(draft.custom.text.clone());
                         draft.custom = TextEdit::new("");
+                        draft.custom_baseline.clear();
                     } else if !allow_custom {
                         draft.custom = TextEdit::new("");
+                        draft.custom_baseline.clear();
                     }
                 }
             } else {
@@ -746,30 +820,27 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.preserved_custom.clear();
                 draft.preserved_custom_selected.clear();
                 draft.hidden_multiselect.clear();
+                draft.hidden_multiselect_invalid = false;
                 draft.choice = None;
                 if kind == FieldKind::StringFree {
                     if !hidden {
-                        if let Some(hidden_val) = draft.hidden_value.take()
-                            && draft.edit.text.is_empty()
-                            && !draft.prior_choice_values.contains(&hidden_val)
-                        {
-                            draft.edit = TextEdit::new(hidden_val);
-                        }
-                    } else if draft.hidden_value.is_none()
-                        && draft.edit.text.is_empty()
-                        && let Some(raw) = field["default"].as_str()
-                        && draft.prior_choice_values.contains(raw)
-                    {
-                        draft.hidden_value = Some(raw.to_string());
+                        draft.hidden_value = None;
+                    } else if draft.edit.text.is_empty() {
+                        draft.hidden_value = field["default"].as_str().map(str::to_string);
                     }
                     if draft.edit.text.is_empty() && !draft.custom.text.is_empty() {
                         draft.edit = TextEdit::new(&draft.custom.text);
+                        draft.edit_baseline = draft.edit.text.clone();
                     }
+                } else if hidden && draft.edit.text.is_empty() {
+                    let seeded = fresh_draft(field);
+                    draft.hidden_value = seeded.hidden_value;
                 } else {
                     draft.hidden_value = None;
                 }
                 if !draft.custom.text.is_empty() {
                     draft.custom = TextEdit::new("");
+                    draft.custom_baseline.clear();
                 }
             }
             draft.declared_options = current_options;
@@ -969,12 +1040,21 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
             let allow_custom = field["custom"] == true;
             let mut values = BTreeSet::new();
             if field["hidden"] == true && d.hidden_only {
+                if d.hidden_multiselect_invalid {
+                    return Err(ValidationError::Unsupported);
+                }
                 for item in &d.hidden_multiselect {
                     if item.encode_utf16().count() > 20_000 {
                         return Err(ValidationError::TooLong { max: 20_000 });
                     }
-                    if is_declared(item) || (allow_custom && !item.is_empty()) {
+                    if is_declared(item) {
                         values.insert(item.clone());
+                    } else if allow_custom {
+                        if !item.is_empty() {
+                            values.insert(item.clone());
+                        }
+                    } else {
+                        return Err(ValidationError::SelectDeclaredOption);
                     }
                 }
             } else {
@@ -997,7 +1077,7 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                             continue;
                         }
                         if is_declared(trimmed) {
-                            return Err(ValidationError::SelectDeclaredOption);
+                            return Err(ValidationError::DuplicateCustomOption);
                         }
                         values.insert(trimmed.to_string());
                     }
@@ -1041,7 +1121,7 @@ pub fn visible_validation_error(field: &Value, d: &Draft) -> Option<ValidationEr
     let Err(err) = validate(field, d) else {
         return None;
     };
-    if !d.dirty {
+    if !d.is_dirty() {
         if err == ValidationError::Required {
             return None;
         }

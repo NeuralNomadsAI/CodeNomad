@@ -41,6 +41,13 @@ fn validation_message(err: &agent_forms::ValidationError) -> String {
         agent_forms::ValidationError::SelectDeclaredOption => {
             t("formRequest.selectPlaceholder").to_string()
         }
+        agent_forms::ValidationError::DuplicateCustomOption => {
+            format!(
+                "{} — {}",
+                t("sessionList.selection.clearLabel"),
+                t("rune.other_values")
+            )
+        }
         agent_forms::ValidationError::TooShort { min } => {
             let limit = format!("≥ {min}");
             catalogue::format(
@@ -206,7 +213,10 @@ pub fn fields(s: &State, form: &Form) -> El {
         match field["type"].as_str() {
             Some("boolean") => {
                 const CHOICES: [(&str, &str); 2] = [("rune.yes", "true"), ("rune.no", "false")];
+                let req_note = required.then(|| t("toolCall.question.status.required"));
                 let group_desc = join_notes(&[field_desc, error_text.as_deref()]);
+                let option_note =
+                    join_notes(&[Some(field_name.as_str()), req_note, error_text.as_deref()]);
                 let items = CHOICES
                     .iter()
                     .enumerate()
@@ -216,7 +226,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                             &agent_forms::bool_option_key(key, value),
                             t(label_key),
                             None,
-                            error_text.as_deref(),
+                            option_note.as_deref(),
                             d.edit.text == value,
                             locked,
                             false,
@@ -255,18 +265,21 @@ pub fn fields(s: &State, form: &Form) -> El {
                     validation_error == Some(agent_forms::ValidationError::SelectDeclaredOption);
                 let has_choice = !custom_active && d.choice.is_some();
                 let shared_required = required && !valid.is_empty() && allow_custom;
-                let req_note = shared_required.then(|| t("toolCall.question.status.required"));
+                let req_note = required.then(|| t("toolCall.question.status.required"));
+                let shared_req_note =
+                    shared_required.then(|| t("toolCall.question.status.required"));
                 let custom_invalid = custom_conflict
                     || (allow_custom && (valid.is_empty() || custom_active) && is_invalid);
                 let radio_invalid =
                     !valid.is_empty() && is_invalid && !custom_conflict && !custom_active;
                 let radio_note = join_notes(&[
+                    Some(field_name.as_str()),
                     req_note,
                     radio_invalid.then_some(error_text.as_deref()).flatten(),
                 ]);
                 let radio_group_desc = join_notes(&[
                     field_desc,
-                    req_note,
+                    shared_req_note,
                     radio_invalid.then_some(error_text.as_deref()).flatten(),
                 ]);
                 let mut children = Vec::new();
@@ -345,7 +358,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                     };
                     let custom_desc = join_notes(&[
                         field_desc,
-                        req_note,
+                        shared_req_note,
                         custom_invalid.then_some(error_text.as_deref()).flatten(),
                     ]);
                     children.push(form_controls::form_textarea(
@@ -362,7 +375,8 @@ pub fn fields(s: &State, form: &Form) -> El {
                 if let Some(msg) = &error_text {
                     children.push(form_controls::field_error(&error_key, msg));
                 }
-                let container_desc = join_notes(&[field_desc, req_note, error_text.as_deref()]);
+                let container_desc =
+                    join_notes(&[field_desc, shared_req_note, error_text.as_deref()]);
                 body = body.child(form_controls::field_container(
                     &container_key,
                     &field_name,
@@ -395,11 +409,12 @@ pub fn fields(s: &State, form: &Form) -> El {
                     !valid.is_empty() || (allow_custom && !d.preserved_custom.is_empty());
                 let shared_required = required && has_choices && allow_custom;
                 let custom_conflict =
-                    validation_error == Some(agent_forms::ValidationError::SelectDeclaredOption);
+                    validation_error == Some(agent_forms::ValidationError::DuplicateCustomOption);
                 let checkbox_invalid = is_invalid && !custom_conflict;
                 let req_note =
                     (required && has_choices).then(|| t("toolCall.question.status.required"));
                 let choice_note = join_notes(&[
+                    Some(field_name.as_str()),
                     req_note,
                     checkbox_invalid.then_some(error_text.as_deref()).flatten(),
                 ]);

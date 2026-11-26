@@ -225,7 +225,7 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
             let opt_prod = find_node(&tree, &prod_key).unwrap();
             assert_eq!(opt_staging["role"], "radio-button");
             assert_eq!(opt_staging["name"], "Staging");
-            assert_eq!(opt_staging["description"], "Pre-production");
+            assert_eq!(opt_staging["description"], "Pre-production · Environment");
             assert!(has_state(opt_staging, "unchecked"), "{opt_staging}");
             assert!(has_state(opt_prod, "unchecked"), "{opt_prod}");
 
@@ -1170,7 +1170,7 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
             let td = &a.drafts[&("form-multi-edges".into(), "targets".into())];
             assert_eq!(
                 agent_forms::validate(&a.forms[0].fields[0], td),
-                Err(agent_forms::ValidationError::SelectDeclaredOption)
+                Err(agent_forms::ValidationError::DuplicateCustomOption)
             );
             assert!(agent_forms::answer(&a.forms[0], &a.drafts).is_err());
         }
@@ -1181,7 +1181,7 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
         ));
         assert_eq!(
             find_node(&conflict_tree, "field-error:7:targets").unwrap()["name"],
-            "Select an option"
+            "Clear — Other values"
         );
         assert!(has_state(
             find_node(&conflict_tree, "answer-question").unwrap(),
@@ -1477,7 +1477,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             assert_eq!((md.custom.anchor, md.custom.focus), (0, 4));
             assert_eq!(
                 agent_forms::validate(&a.forms[0].fields[0], md),
-                Err(agent_forms::ValidationError::SelectDeclaredOption)
+                Err(agent_forms::ValidationError::DuplicateCustomOption)
             );
             let rd = &a.drafts[&("form-r6-ident".into(), "radio_env".into())];
             assert_eq!(rd.choice, None);
@@ -1499,7 +1499,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         ));
         assert_eq!(
             find_node(&id_tree, "field-error:9:multi_env").unwrap()["name"],
-            "Select an option"
+            "Clear — Other values"
         );
         assert!(has_state(
             find_input(&id_tree, "custom-radio_env"),
@@ -2528,6 +2528,252 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             focused_key(&mut crt).as_deref(),
             Some(last_z.as_str()),
             "Tab after Clear must advance forward to the next field instead of revisiting earlier fields"
+        );
+
+        // 9a. Hidden multiselect wire provenance must never leak into either a visible free-text
+        // editor or a visible custom multiselect editor on reveal.
+        for reveal_field in [
+            json!({
+                "key": "secret_m",
+                "title": "Secret",
+                "type": "string",
+                "default": "internal-id"
+            }),
+            json!({
+                "key": "secret_m",
+                "title": "Secret",
+                "type": "multiselect",
+                "custom": true,
+                "options": [],
+                "default": ["internal-id"]
+            }),
+        ] {
+            let hm_form = Form {
+                tool: None,
+                infer_websearch: false,
+                id: "form-r10-multi-prov".into(),
+                title: "Multiselect wire provenance".into(),
+                fields: vec![json!({
+                    "key": "secret_m",
+                    "title": "Secret",
+                    "type": "multiselect",
+                    "hidden": true,
+                    "options": [{"value": "internal-id", "label": "Internal"}],
+                    "default": ["internal-id"]
+                })],
+            };
+            let (state, _rx) = state_with_form(hm_form);
+            let mut hrt = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+            hrt.frame(0.0);
+            hrt.update(|s, _| {
+                let a = s.agent.as_mut().unwrap();
+                a.forms[0].fields[0] = reveal_field.clone();
+                agent_forms::seed(&a.forms, &mut a.drafts);
+            });
+            hrt.frame(1.0 / 60.0);
+            let htree = hrt.accessibility_json();
+            let input_key = if reveal_field["type"] == "string" {
+                "field-secret_m"
+            } else {
+                "custom-secret_m"
+            };
+            assert_eq!(
+                find_input(&htree, input_key)["value"]
+                    .as_str()
+                    .unwrap_or(""),
+                "",
+                "hidden multiselect wire value must not leak into {input_key}"
+            );
+            assert!(
+                !hrt.elements()
+                    .iter()
+                    .any(|e| e.text.as_deref().is_some_and(|t| t.contains("internal-id"))),
+                "hidden multiselect wire value must not appear visibly"
+            );
+        }
+
+        // 9b. Untouched visible required free-text field becoming hidden with a valid default
+        // adopts that hidden default and enables Answer cleanly.
+        let vis_to_hidden = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r10-hide".into(),
+            title: "Visibility transition".into(),
+            fields: vec![json!({
+                "key": "token",
+                "title": "Token",
+                "type": "string",
+                "required": true
+            })],
+        };
+        let (state, _rx) = state_with_form(vis_to_hidden);
+        let mut vrt = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+        vrt.frame(0.0);
+        // Tab into untouched required editor without typing -> must stay clean and not mark dirty.
+        press_key(&mut vrt, Key::Tab);
+        let focused_tree = vrt.accessibility_json();
+        assert!(
+            !has_state(find_input(&focused_tree, "field-token"), "invalid"),
+            "tabbing into untouched required textbox must not mark it invalid"
+        );
+        assert!(
+            find_node(&focused_tree, "field-error:5:token").is_none(),
+            "tabbing into untouched required textbox must not emit an assertive alert"
+        );
+        // Refresh the same untouched field as hidden with default "fixed" -> Answer enables with "fixed".
+        vrt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields[0] = json!({
+                "key": "token",
+                "title": "Token",
+                "type": "string",
+                "hidden": true,
+                "required": true,
+                "default": "fixed"
+            });
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        vrt.frame(2.0 / 60.0);
+        let hidden_tree = vrt.accessibility_json();
+        assert!(find_node(&hidden_tree, "form-unsupported").is_none());
+        assert!(!has_state(
+            find_node(&hidden_tree, "answer-question").unwrap(),
+            "disabled"
+        ));
+        {
+            let a = vrt.state.agent.as_ref().unwrap();
+            assert_eq!(
+                agent_forms::answer(&a.forms[0], &a.drafts).unwrap()["token"],
+                json!("fixed")
+            );
+        }
+
+        // 9c. Invalid hidden non-custom multiselect default (["allowed", "unknown"]) is rejected
+        // instead of silently stripped, disabling Answer and surfacing the hidden-field alert.
+        let invalid_hidden_multi = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r10-bad-hidden-multi".into(),
+            title: "Invalid hidden default".into(),
+            fields: vec![json!({
+                "key": "hidden_tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "hidden": true,
+                "required": true,
+                "options": [{"value": "allowed", "label": "Allowed"}],
+                "default": ["allowed", "unknown"]
+            })],
+        };
+        let (state, _rx) = state_with_form(invalid_hidden_multi);
+        let mut bmrt = Runtime::new(state, render_form, (420.0, 480.0), Env::new(false, 1.0));
+        bmrt.frame(0.0);
+        {
+            let a = bmrt.state.agent.as_ref().unwrap();
+            assert!(
+                agent_forms::answer(&a.forms[0], &a.drafts).is_err(),
+                "disallowed entry in hidden multiselect default must be rejected"
+            );
+        }
+        let bm_tree = bmrt.accessibility_json();
+        assert!(has_state(
+            find_node(&bm_tree, "answer-question").unwrap(),
+            "disabled"
+        ));
+        assert_eq!(
+            find_node(&bm_tree, "form-unsupported").unwrap()["name"],
+            "Unsupported form"
+        );
+
+        // 9d. Refresh adding a custom multiselect entry to `options` while disabling `custom`
+        // promotes the newly declared option first instead of discarding it.
+        let promo_disable_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r10-promo-disable".into(),
+            title: "Promote on custom=false".into(),
+            fields: vec![json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "custom": true,
+                "options": []
+            })],
+        };
+        let mut pdrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&promo_disable_form), &mut pdrafts);
+        pdrafts
+            .get_mut(&("form-r10-promo-disable".into(), "tags".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "target\nleftover".into();
+        let mut promo_closed = promo_disable_form.clone();
+        promo_closed.fields[0] = json!({
+            "key": "tags",
+            "title": "Tags",
+            "type": "multiselect",
+            "custom": false,
+            "options": [{"value": "target", "label": "Target"}]
+        });
+        agent_forms::seed(std::slice::from_ref(&promo_closed), &mut pdrafts);
+        assert_eq!(
+            agent_forms::answer(&promo_closed, &pdrafts).unwrap()["tags"],
+            json!(["target"])
+        );
+
+        // 9e. Browser web-mirror / aria-activedescendant focus proxy for two required Yes/No
+        // fields exposes each field's distinct question title and requiredness on the focused
+        // radio itself without setting invalid aria-required on individual radios.
+        let two_bools_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r10-web-radios".into(),
+            title: "Confirmations".into(),
+            fields: vec![
+                json!({
+                    "key": "proceed",
+                    "title": "Proceed now?",
+                    "type": "boolean",
+                    "required": true
+                }),
+                json!({
+                    "key": "notify",
+                    "title": "Notify team?",
+                    "type": "boolean",
+                    "required": true
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(two_bools_form);
+        let mut wrt = Runtime::new(state, render_form, (420.0, 640.0), Env::new(false, 1.0));
+        wrt.frame(0.0);
+        let web_items: Vec<serde_json::Value> = serde_json::from_str(&wrt.a11y_json()).unwrap();
+        let radios: Vec<&serde_json::Value> = web_items
+            .iter()
+            .filter(|item| item["o"] == "radio")
+            .collect();
+        assert_eq!(radios.len(), 4);
+        assert!(
+            radios.iter().all(|r| r.get("rq").is_none()),
+            "individual radios in web mirror must not set aria-required: {radios:?}"
+        );
+        assert!(
+            radios.iter().any(|r| {
+                r["t"] == "Yes"
+                    && r["d"].as_str().is_some_and(|d| {
+                        d.contains("Proceed now?") && d.contains("Question Required")
+                    })
+            }),
+            "first Yes radio web mirror must carry its own question title and requiredness: {radios:?}"
+        );
+        assert!(
+            radios.iter().any(|r| {
+                r["t"] == "Yes"
+                    && r["d"].as_str().is_some_and(|d| {
+                        d.contains("Notify team?") && d.contains("Question Required")
+                    })
+            }),
+            "second Yes radio web mirror must carry its own question title and requiredness: {radios:?}"
         );
     });
 }
