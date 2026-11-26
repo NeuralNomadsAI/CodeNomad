@@ -12,7 +12,7 @@ import {serverBinary} from './fixture-binaries.mjs'
 
 export async function launchWeb({
   root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,serverPid,runLog,http,mobile,restart,
-  webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webKeyboard,resetKeyboard,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,
+  webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,
 }, state) {
   if(webTimeline||webSearch||webOutline){
     const config=await http.patch('/api/storage/config/ui',{data:{settings:{showThinkingBlocks:true,systemMessagesVisibility:'expanded',
@@ -50,7 +50,7 @@ export async function launchWeb({
   const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
   const args=webAndroid
     ?[uiOrigin,profile,project,ui,String(serverPid),String(process.pid)]
-    :['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),'--launcher-pid',String(process.pid),...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
+    :['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),'--launcher-pid',String(process.pid),...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webMobileDrawers?['--mobile-drawers']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
   if(webTimeline)args.push(webTouchHistory?'--touch-history':'--timeline')
   if(webSearch)args.push('--history-search')
   if(webOutline)args.push('--outline')

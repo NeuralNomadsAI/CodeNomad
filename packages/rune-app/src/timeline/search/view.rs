@@ -174,7 +174,7 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
             }
             super::keys(s, event, tx)
         })
-        .build(field_kit(layout::dark()))
+        .build(&field_kit(layout::dark()))
         .key(super::FIELD);
     let header = layout::action_row()
         .child(input.remaining())

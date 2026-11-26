@@ -3,6 +3,7 @@ mod advanced;
 mod appearance;
 mod behavior;
 mod conversation;
+mod custom_palettes;
 mod events;
 mod info;
 mod memory;
