@@ -232,7 +232,7 @@ impl Drop for Prepared {
 }
 
 impl Prepared {
-    fn verify(&self) -> R<()> {
+    pub(crate) fn verify(&self) -> R<()> {
         assert_unchanged(&self.source)?;
         if !self.lock.as_ref().is_some_and(Lock::verify) {
             return Err(DocError::Conflict("OpenCode configuration is being updated by another process"));

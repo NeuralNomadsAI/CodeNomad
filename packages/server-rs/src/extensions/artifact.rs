@@ -103,6 +103,49 @@ fn single_file(identity: &Identity, meta: &fs::Metadata) -> bool {
     meta.file_type().is_file() && !meta.file_type().is_symlink() && identity.nlink == 1
 }
 
+/// Bounded, existing-only read with the same single-file nofollow identity rules as publication
+/// (`readDesktopPluginFile` in `desktop-plugin-artifact.ts`).
+pub(crate) fn read_regular_nofollow(path: &Path, max_bytes: usize) -> Option<Vec<u8>> {
+    let (before_named, meta) = named_identity(path).ok()??;
+    if !single_file(&before_named, &meta) || before_named.size > max_bytes as u64 {
+        return None;
+    }
+    let mut file = open_nofollow(path).ok()?;
+    let (held, regular) = handle_identity(&file).ok()?;
+    let before_mtime = file.metadata().ok()?.modified().ok();
+    if !regular
+        || held.nlink != 1
+        || held.ino == 0
+        || held.dev != before_named.dev
+        || held.ino != before_named.ino
+        || held.size != before_named.size
+    {
+        return None;
+    }
+    let mut bytes = vec![0u8; held.size as usize];
+    file.read_exact(&mut bytes).ok()?;
+    let mut trailing = [0u8; 1];
+    if file.read(&mut trailing).ok()? != 0 {
+        return None;
+    }
+    let (after_held, after_regular) = handle_identity(&file).ok()?;
+    let after_mtime = file.metadata().ok()?.modified().ok();
+    let (after_named, after_meta) = named_identity(path).ok()??;
+    if !after_regular
+        || !single_file(&after_named, &after_meta)
+        || after_held.dev != held.dev
+        || after_held.ino != held.ino
+        || after_held.size != held.size
+        || after_named.dev != held.dev
+        || after_named.ino != held.ino
+        || after_named.size != held.size
+        || after_mtime != before_mtime
+    {
+        return None;
+    }
+    Some(bytes)
+}
+
 /// The identity of one regular file holding exactly `bundle`, or the reason it is not.
 fn verified(plugin: &Path, bundle: &[u8], hash: &str) -> io::Result<Result<Identity, &'static str>> {
     let Some((before, meta)) = named_identity(plugin)? else {

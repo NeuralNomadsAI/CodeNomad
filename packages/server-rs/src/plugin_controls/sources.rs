@@ -1,0 +1,358 @@
+//! Plugin source declarations (`opencode/plugin-sources.ts`):
+//! - `POST /api/workspaces/:id/plugin-sources` (server-wide serialized add with deadline + duplicate/selector checks)
+//! - `DELETE /api/workspaces/:id/plugin-sources` (confirmed source removal with dependent rule cleanup, or orphan rule removal)
+
+use std::{
+    collections::{HashMap, HashSet},
+    sync::LazyLock,
+    time::Duration,
+};
+
+use axum::http::StatusCode as Status;
+use serde::Serialize;
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+
+use crate::{Shared, opencode_settings::Scope, subagent_depth::Fail};
+
+use super::{
+    doc::{append_plugin_control_rule, document_plugins, remove_plugin_source_entry, replace_plugin_control_rules},
+    engine,
+    order::defined_before,
+    snapshot::{ControlLocation, Snapshot},
+    spec::{plugin_package_identities, validate_plugin_source_spec},
+};
+
+pub(super) const PLUGIN_SOURCE_ADD_TIMEOUT: Duration = Duration::from_secs(20);
+const PLUGIN_SOURCE_ABORT_GRACE: Duration = Duration::from_secs(5);
+
+/// Server-wide queue: the Global document is shared across every workspace.
+static ADD_QUEUE: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+#[derive(Clone, Debug)]
+pub(super) struct SourceError {
+    pub(super) status: Status,
+    pub(super) code: Option<&'static str>,
+}
+
+impl SourceError {
+    pub(super) const fn with_code(status: Status, code: &'static str) -> Self {
+        Self { status, code: Some(code) }
+    }
+
+    pub(super) fn from_fail(err: Fail) -> Self {
+        match err {
+            Fail::Status(status, _) => Self { status, code: None },
+            Fail::Generic => Self { status: Status::SERVICE_UNAVAILABLE, code: None },
+        }
+    }
+}
+
+pub(super) struct SourceAddRequest {
+    pub(super) location: ControlLocation,
+    pub(super) scope: Scope,
+    pub(super) spec: String,
+}
+
+pub(super) enum SourceRemoveTarget {
+    Entry { target: String, entry_index: usize },
+    Orphan { plugin_id: String },
+}
+
+pub(super) struct SourceRemoveRequest {
+    pub(super) location: ControlLocation,
+    pub(super) scope: Scope,
+    pub(super) expected_revision: String,
+    pub(super) kind: SourceRemoveTarget,
+}
+
+#[derive(Serialize)]
+pub(super) struct SourceMutationResponse {
+    pub(super) scope: &'static str,
+    pub(super) spec: String,
+    #[serde(rename = "reloadPending")]
+    pub(super) reload_pending: bool,
+}
+
+pub(super) async fn add(
+    app: &Shared,
+    workspace_id: &str,
+    req: SourceAddRequest,
+    principal: Option<CancellationToken>,
+) -> Result<SourceMutationResponse, SourceError> {
+    add_with_timeouts(app, workspace_id, req, principal, PLUGIN_SOURCE_ADD_TIMEOUT, PLUGIN_SOURCE_ABORT_GRACE).await
+}
+
+pub(super) async fn add_with_timeouts(
+    app: &Shared,
+    workspace_id: &str,
+    req: SourceAddRequest,
+    principal: Option<CancellationToken>,
+    add_timeout: Duration,
+    abort_grace: Duration,
+) -> Result<SourceMutationResponse, SourceError> {
+    if let Err((code, _)) = validate_plugin_source_spec(&req.spec) {
+        return Err(SourceError::with_code(Status::UNPROCESSABLE_ENTITY, code.as_str()));
+    }
+    let _turn = ADD_QUEUE.lock().await;
+    let cancel = CancellationToken::new();
+    let cancel_timer = cancel.clone();
+    let timer = tokio::spawn(async move {
+        tokio::time::sleep(add_timeout).await;
+        cancel_timer.cancel();
+    });
+    let op = add_serialized(app, workspace_id, &req, principal, cancel.clone());
+    let outcome = match tokio::time::timeout(add_timeout + abort_grace, op).await {
+        Ok(Ok(res)) => Ok(res),
+        Ok(Err(err)) => {
+            if cancel.is_cancelled() {
+                Err(SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout"))
+            } else {
+                Err(err)
+            }
+        }
+        Err(_) => {
+            cancel.cancel();
+            Err(SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout"))
+        }
+    };
+    timer.abort();
+    outcome
+}
+
+async fn add_serialized(
+    app: &Shared,
+    workspace_id: &str,
+    req: &SourceAddRequest,
+    principal: Option<CancellationToken>,
+    cancel: CancellationToken,
+) -> Result<SourceMutationResponse, SourceError> {
+    let timeout_err = || SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout");
+    let (snap_res, raw_res) = tokio::join!(
+        engine::read(app, workspace_id, &req.location, principal.as_ref(), Some(&cancel)),
+        engine::read_config_documents(app, workspace_id, &req.location, principal.as_ref(), Some(&cancel)),
+    );
+    if cancel.is_cancelled() {
+        return Err(timeout_err());
+    }
+    let snapshot = snap_res.map_err(SourceError::from_fail)?;
+    let raw_docs = raw_res.map_err(SourceError::from_fail)?;
+
+    let identities: HashSet<String> = plugin_package_identities(&req.spec).into_iter().collect();
+    let ids = known_plugin_ids(&snapshot);
+
+    let configured_targets: Vec<&str> = snapshot.configured.sources.iter().map(|s| s.target.as_str()).collect();
+    assert_not_declared(&configured_targets, &identities, &HashSet::new())?;
+
+    let mut raw_targets: Vec<String> = Vec::new();
+    for (_, doc) in &raw_docs {
+        let entries = document_plugins(doc).map_err(|e| SourceError::from_fail(crate::opencode_settings::mapped(e)))?;
+        raw_targets.extend(entries.into_iter().map(|e| e.target().to_owned()));
+    }
+    let raw_refs: Vec<&str> = raw_targets.iter().map(String::as_str).collect();
+    assert_not_declared(&raw_refs, &identities, &ids)?;
+
+    if ids.contains(&req.spec) {
+        return Err(SourceError::with_code(Status::UNPROCESSABLE_ENTITY, "plugin-id"));
+    }
+
+    let spec = req.spec.clone();
+    let cancel_edit = cancel.clone();
+    engine::edit_config_document_cancellable(
+        app,
+        engine::EditTarget { workspace_id, location: &req.location, scope: req.scope, principal },
+        cancel,
+        SourceError::from_fail,
+        timeout_err,
+        move |doc, plugins| {
+            if cancel_edit.is_cancelled() {
+                return Err(timeout_err());
+            }
+            let targets: Vec<&str> = plugins.iter().map(|e| e.target()).collect();
+            assert_not_declared(&targets, &identities, &ids)?;
+            append_plugin_control_rule(doc, &spec)
+                .map_err(|e| SourceError::from_fail(crate::opencode_settings::mapped(e)))
+        },
+    )
+    .await?;
+
+    Ok(SourceMutationResponse { scope: req.scope.as_str(), spec: req.spec.clone(), reload_pending: true })
+}
+
+pub(super) async fn remove(
+    app: &Shared,
+    workspace_id: &str,
+    req: SourceRemoveRequest,
+    principal: Option<CancellationToken>,
+) -> Result<SourceMutationResponse, SourceError> {
+    let stale = || SourceError::with_code(Status::CONFLICT, "stale");
+    if !is_expected_revision(&req.expected_revision) {
+        return Err(stale());
+    }
+    let scope = req.scope;
+    let spec_out = match &req.kind {
+        SourceRemoveTarget::Entry { target, .. } => target.clone(),
+        SourceRemoveTarget::Orphan { plugin_id } => plugin_id.clone(),
+    };
+
+    let result = engine::edit_plugin_documents(
+        app,
+        engine::EditTarget { workspace_id, location: &req.location, scope, principal },
+        &req.expected_revision,
+        SourceError::from_fail,
+        |view| {
+            let own = view.targets.iter().find(|t| t.scope == scope).ok_or_else(stale)?;
+            let own_order = own.order.ok_or_else(stale)?;
+            if !own.consistent {
+                return Err(stale());
+            }
+            let own_source_indexes: HashSet<usize> = own.sources.iter().map(|s| s.entry_index).collect();
+            let rules_of = |id: &str, keep: &dyn Fn(&super::snapshot::ConfiguredRule) -> bool| -> Vec<usize> {
+                own.rules
+                    .iter()
+                    .filter(|r| r.selector == id && !own_source_indexes.contains(&r.entry_index) && !keep(r))
+                    .map(|r| r.entry_index)
+                    .collect()
+            };
+
+            match &req.kind {
+                SourceRemoveTarget::Orphan { plugin_id } => {
+                    let is_orphan = view.controls.iter().any(|c| c.id == *plugin_id && c.orphan == Some(true));
+                    let indexes = rules_of(plugin_id, &|_| false);
+                    if !is_orphan || indexes.is_empty() {
+                        return Err(stale());
+                    }
+                    let disable_rule = format!("-{plugin_id}");
+                    let updated =
+                        replace_plugin_control_rules(&own.document, &indexes, &[plugin_id, &disable_rule], None)
+                            .map_err(map_doc_remove_error)?;
+                    Ok(vec![(scope, updated)])
+                }
+                SourceRemoveTarget::Entry { target, entry_index } => {
+                    let source_pos = own
+                        .sources
+                        .iter()
+                        .position(|s| s.entry_index == *entry_index && s.target == *target)
+                        .ok_or_else(stale)?;
+                    let source = &own.sources[source_pos];
+                    let Some(ref id) = source.plugin_id else {
+                        let updated = remove_plugin_source_entry(&own.document, *entry_index, target, &[], &[])
+                            .map_err(map_doc_remove_error)?;
+                        return Ok(vec![(scope, updated)]);
+                    };
+
+                    // Locate the matching source index in `view.all_sources` for `other_loader`.
+                    let global_idx = view
+                        .all_sources
+                        .iter()
+                        .position(|s| {
+                            s.entry_index == source.entry_index && s.target == source.target && s.path == source.path
+                        })
+                        .ok_or_else(stale)?;
+                    let remains = view.other_loader(global_idx);
+                    let removed_pos = view
+                        .sequence
+                        .entries
+                        .iter()
+                        .find(|e| e.document == own_order && e.entry_index == *entry_index)
+                        .map(|e| (e.document, e.entry_index));
+
+                    let rule_indexes = rules_of(id, &|rule| {
+                        if rule.enabled {
+                            defined_before(&view.sequence, id, own_order, rule.entry_index, removed_pos)
+                        } else {
+                            remains
+                        }
+                    });
+                    let disable_rule = format!("-{id}");
+                    let own_updated = remove_plugin_source_entry(
+                        &own.document,
+                        *entry_index,
+                        target,
+                        &rule_indexes,
+                        &[id.as_str(), disable_rule.as_str()],
+                    )
+                    .map_err(map_doc_remove_error)?;
+
+                    let mut updates = vec![(scope, own_updated)];
+                    let mut losing_by_doc: HashMap<usize, Vec<usize>> = HashMap::new();
+                    for entry in &view.sequence.entries {
+                        if entry.document != own_order
+                            && !entry.remove
+                            && entry.plugin_id.is_none()
+                            && entry.target == *id
+                            && defined_before(&view.sequence, id, entry.document, entry.entry_index, None)
+                            && !defined_before(&view.sequence, id, entry.document, entry.entry_index, removed_pos)
+                        {
+                            losing_by_doc.entry(entry.document).or_default().push(entry.entry_index);
+                        }
+                    }
+                    for (doc_order, indexes) in losing_by_doc {
+                        let Some(other_target) = view.targets.iter().find(|t| t.order == Some(doc_order)) else {
+                            return Err(SourceError::with_code(Status::UNPROCESSABLE_ENTITY, "dependent-rule"));
+                        };
+                        if !other_target.consistent {
+                            return Err(stale());
+                        }
+                        let other_updated =
+                            replace_plugin_control_rules(&other_target.document, &indexes, &[id.as_str()], None)
+                                .map_err(map_doc_remove_error)?;
+                        updates.push((other_target.scope, other_updated));
+                    }
+                    Ok(updates)
+                }
+            }
+        },
+    )
+    .await;
+
+    match result {
+        Ok(()) => Ok(SourceMutationResponse { scope: scope.as_str(), spec: spec_out, reload_pending: true }),
+        Err(err) if err.status == Status::CONFLICT && err.code.is_none() => Err(stale()),
+        Err(err) => Err(err),
+    }
+}
+
+fn map_doc_remove_error(err: crate::subagent_depth::document::DocError) -> SourceError {
+    if matches!(err, crate::subagent_depth::document::DocError::Conflict(_)) {
+        SourceError::with_code(Status::CONFLICT, "stale")
+    } else {
+        SourceError::from_fail(crate::opencode_settings::mapped(err))
+    }
+}
+
+pub(super) fn is_expected_revision(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn known_plugin_ids(snapshot: &Snapshot) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    for control in &snapshot.controls {
+        ids.insert(control.id.clone());
+    }
+    for entry in &snapshot.runtime {
+        if let Some(ref id) = entry.id {
+            ids.insert(id.clone());
+        }
+    }
+    for rule in &snapshot.configured.rules {
+        ids.insert(rule.selector.clone());
+    }
+    ids
+}
+
+fn assert_not_declared(
+    targets: &[&str],
+    identities: &HashSet<String>,
+    ids: &HashSet<String>,
+) -> Result<(), SourceError> {
+    for &target in targets {
+        if target.starts_with('-') || target.contains('*') || ids.contains(target) {
+            continue;
+        }
+        if plugin_package_identities(target).iter().any(|k| identities.contains(k)) {
+            return Err(SourceError::with_code(Status::CONFLICT, "duplicate"));
+        }
+    }
+    Ok(())
+}

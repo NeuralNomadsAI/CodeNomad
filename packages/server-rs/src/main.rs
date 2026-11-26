@@ -17,6 +17,7 @@ mod meta;
 mod missions;
 mod opencode;
 mod opencode_settings;
+mod plugin_controls;
 mod previews;
 mod provider_usage;
 mod remote_control;
@@ -144,6 +145,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(memory::routes())
         .merge(subagent_depth::routes())
         .merge(opencode_settings::routes())
+        .merge(plugin_controls::routes())
         .merge(sessions::routes(shutdown.clone()))
         .merge(events::routes())
         .merge(extensions::routes())
