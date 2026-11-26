@@ -141,7 +141,7 @@ test("transcript frames and compaction buffers never merge or publish across att
   const owner = lifetime(), frames: Array<() => void> = []
   let projected = 0, usage = 0
   const projection = production("./opencode-projection-frame.ts", {
-    ...owner, getLogger: () => ({ error: assert.fail }),
+    ...owner, batch: <T>(run: () => T) => run(), getLogger: () => ({ error: assert.fail }),
     requestAnimationFrame: (run: () => void) => { frames.push(run); return frames.length }, cancelAnimationFrame: () => {},
   })
   projection.setTranscriptProjectionGates({ isActiveSession: () => true, isLatestMessageWindow: () => true,
