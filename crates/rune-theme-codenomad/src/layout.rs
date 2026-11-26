@@ -173,7 +173,46 @@ pub fn editor_menu<S: 'static>(
     }
     tx.popup_menu(menu, point, pick);
 }
+pub fn shell_send_button_tx<S: 'static>(
+    label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    let t = tokens(dark());
+    let mut theme = kit(dark()).clone();
+    let fill = t.color("status-success");
+    let ink = t.color("text-inverted");
+    theme.c.bg_contrast = fill;
+    theme.c.contrast_hover = fill;
+    theme.c.contrast_pressed = fill;
+    theme.c.bg_accent = fill;
+    theme.c.submit_hover = fill;
+    theme.c.submit_fg = ink;
+    theme.c.submit_icon = ink;
+    theme.c.text_contrast = ink;
+    theme.c.icon_contrast = ink;
+    let action = Rc::new(press);
+    let press = action.clone();
+    let button = rune_kit::Button::new(label)
+        .variant(rune_kit::ButtonVariant::Submit)
+        .disabled(disabled)
+        .on_press_tx(move |s, tx| press(s, tx))
+        .build(&theme);
+    if disabled {
+        button
+    } else {
+        button.on_key(enter_action(action))
+    }
+}
 pub fn composer_field(editor: El, compact: bool, focused: bool) -> El {
+    composer_field_with_status(editor, compact, focused, None)
+}
+pub fn composer_field_with_status(
+    editor: El,
+    compact: bool,
+    focused: bool,
+    shell_status: Option<&str>,
+) -> El {
     let t = tokens(dark());
     let minimum = if compact {
         t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0
@@ -183,14 +222,29 @@ pub fn composer_field(editor: El, compact: bool, focused: bool) -> El {
     let field = rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
         .min_h(minimum)
         .max_h(320.0);
-    let field = rune::col()
+    let mut box_el = rune::col()
         .w_full()
         .child(field)
         .fill(t.color("surface-field"));
-    if focused {
-        field.outline(1.0, -1.0, t.color("focus-ring-color"))
+    if let Some(status) = shell_status {
+        box_el = box_el.child(
+            rune::row()
+                .key("composer-shell-status")
+                .role("note")
+                .w_full()
+                .px(t.space(Space::Sm).px())
+                .pb(t.space(Space::Xs).px())
+                .child(
+                    rune::text(status)
+                        .font(t.text(TextRole::Small))
+                        .color(t.color("status-success")),
+                ),
+        );
+        box_el.outline(1.0, -1.0, t.color("status-success-ring"))
+    } else if focused {
+        box_el.outline(1.0, -1.0, t.color("focus-ring-color"))
     } else {
-        field
+        box_el
     }
 }
 pub fn announce_polite(tx: &mut rune::Tx, text: impl Into<String>) {

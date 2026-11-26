@@ -5,6 +5,7 @@ use serde_json::Value;
 #[derive(Clone, Copy)]
 pub(super) enum Action {
     Alternate,
+    ExitShell,
     PreviousUser,
     NextUser,
     PreviousPrompt,
@@ -16,6 +17,7 @@ impl Action {
     pub(super) fn id(self) -> &'static str {
         match self {
             Self::Alternate => "prompt-alternate-send",
+            Self::ExitShell => "prompt-exit-shell",
             Self::PreviousUser => "user-message-prev",
             Self::NextUser => "user-message-next",
             Self::PreviousPrompt => "prompt-history-prev",
@@ -34,7 +36,7 @@ impl Action {
     }
 
     fn defaults(self, platform: KeyPlatform) -> Vec<Chord> {
-        use ChordKey::{Char, Down, Enter, Up};
+        use ChordKey::{Char, Down, Enter, Escape, Up};
         use ChordMod::{Alt, Primary, Shift};
         let mac = platform == KeyPlatform::Mac;
         match self {
@@ -46,6 +48,7 @@ impl Action {
                     vec![Chord::new(Enter).with(Alt), primary]
                 }
             }
+            Self::ExitShell => vec![Chord::new(Escape)],
             Self::PreviousUser | Self::NextUser => {
                 let key = if matches!(self, Self::PreviousUser) {
                     Up
@@ -73,6 +76,9 @@ impl Action {
     }
 
     pub(super) fn matches(self, s: &State, event: &KeyEvent, tx: &Tx) -> bool {
+        if matches!(self, Self::ExitShell) {
+            return crate::settings::matches_shortcut(s, self.id(), event, tx);
+        }
         self.bindings(s)
             .iter()
             .any(|chord| chord.matches_tx(event, tx))

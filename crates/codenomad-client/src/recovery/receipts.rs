@@ -46,6 +46,34 @@ pub(super) async fn slash(
     true
 }
 
+pub(super) async fn shell(
+    backend: &Backend,
+    out: &Sender<Event>,
+    wake: &Wake,
+    wire: &stream::State,
+    admitted: bool,
+    attempt: &str,
+    command: &str,
+) -> Option<PromptOutcome> {
+    use crate::prompt::PromptError;
+    let outcome = if admitted {
+        match backend.prompt_shell(command).await {
+            Ok(()) => PromptOutcome::Confirmed(attempt.into()),
+            Err(PromptError::Rejected) => PromptOutcome::Rejected,
+            Err(PromptError::Unconfirmed) => PromptOutcome::Unconfirmed,
+            Err(PromptError::AuthenticationRequired) => {
+                if rejected_by_authentication(backend, attempt, out, wake, wire).await {
+                    return None;
+                }
+                PromptOutcome::Unconfirmed
+            }
+        }
+    } else {
+        PromptOutcome::Rejected
+    };
+    Some(outcome)
+}
+
 pub(super) async fn prompt(
     backend: &Backend,
     out: &Sender<Event>,

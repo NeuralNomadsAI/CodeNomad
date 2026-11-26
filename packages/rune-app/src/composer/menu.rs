@@ -20,7 +20,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
 }
 
 fn can_queue(s: &State) -> bool {
-    s.phase == Phase::Streaming
+    !s.composer.shell_mode
+        && s.phase == Phase::Streaming
         && s.composer.picker.selected_command(&s.draft.text).is_none()
         && can_send(s)
 }

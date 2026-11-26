@@ -11,6 +11,8 @@ mod long_paste;
 pub(crate) mod menu;
 mod picker;
 pub(crate) mod recall;
+#[cfg(test)]
+mod shell_mode_tests;
 mod shortcuts;
 mod tokens;
 pub(crate) mod view;

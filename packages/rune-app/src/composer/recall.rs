@@ -255,7 +255,7 @@ pub(crate) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> boo
             || !forced
                 && (!s.draft.text.trim().is_empty()
                     || s.draft.range() != (0, 0)
-                    || !s.composer.draft.attachments.is_empty()
+                    || (!s.composer.shell_mode && !s.composer.draft.attachments.is_empty())
                     || s.composer.attachments_missing))
     {
         return false;
@@ -275,7 +275,7 @@ pub(crate) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> boo
         _ => None,
     };
     if let Some(entry) = next {
-        let (mut edit, draft) = if entry.originates_in(&tab, &session) {
+        let (mut edit, draft) = if !s.composer.shell_mode && entry.originates_in(&tab, &session) {
             (entry.edit.clone(), entry.draft.clone())
         } else {
             let mut edit = TextEdit::default();

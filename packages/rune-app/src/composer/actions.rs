@@ -1,4 +1,8 @@
-use super::{command_receipts, command_receipts::CommandAttempt, draft::Draft};
+use super::{
+    command_receipts,
+    command_receipts::{CommandAttempt, CommandKind},
+    draft::Draft,
+};
 use crate::{
     Message, Phase, State,
     transport::{Command, PromptOutcome},
@@ -13,6 +17,7 @@ pub struct Owner {
     pub draft: Draft,
     pub picker: super::picker::Picker,
     pub menu: rune_theme_codenomad::action_menu::State<State>,
+    pub shell_mode: bool,
     sending: Option<Send>,
     pub send_error: bool,
     unconfirmed: Option<UnconfirmedPrompt>,
@@ -30,6 +35,12 @@ impl Owner {
     }
     pub(crate) fn editing_locked(&self) -> bool {
         self.sending.as_ref().is_some_and(|send| !send.recallable)
+    }
+    pub(crate) fn exit_shell_mode(&mut self) {
+        if self.shell_mode {
+            self.shell_mode = false;
+            self.mark_edited();
+        }
     }
     pub fn unconfirmed_id(&self) -> Option<&str> {
         self.unconfirmed.as_ref().map(|send| send.id.as_str())
@@ -154,26 +165,57 @@ fn hash_attachments(edit: &TextEdit, attachments: &[super::draft::Attachment]) -
     (count, hasher.finish())
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct UnconfirmedCommand {
-    name_len: usize,
-    name_hash: u64,
-    args_len: usize,
-    args_hash: u64,
+pub(crate) enum UnconfirmedCommand {
+    Slash {
+        name_len: usize,
+        name_hash: u64,
+        args_len: usize,
+        args_hash: u64,
+    },
+    Shell {
+        command_len: usize,
+        command_hash: u64,
+    },
 }
 impl UnconfirmedCommand {
     pub(crate) fn new(name: &str, args: &str) -> Self {
         let (name_len, name_hash) = hash_text(name);
         let (args_len, args_hash) = hash_text(args);
-        Self {
+        Self::Slash {
             name_len,
             name_hash,
             args_len,
             args_hash,
         }
     }
-    fn matches(&self, name: &str, args: &str) -> bool {
-        (self.name_len, self.name_hash) == hash_text(name)
-            && (self.args_len, self.args_hash) == hash_text(args)
+    #[cfg(test)]
+    pub(crate) fn shell(command: &str) -> Self {
+        let (command_len, command_hash) = hash_text(command);
+        Self::Shell {
+            command_len,
+            command_hash,
+        }
+    }
+    fn matches_slash(&self, name: &str, args: &str) -> bool {
+        matches!(
+            self,
+            Self::Slash {
+                name_len,
+                name_hash,
+                args_len,
+                args_hash,
+            } if (*name_len, *name_hash) == hash_text(name)
+                && (*args_len, *args_hash) == hash_text(args)
+        )
+    }
+    fn matches_shell(&self, command: &str) -> bool {
+        matches!(
+            self,
+            Self::Shell {
+                command_len,
+                command_hash,
+            } if (*command_len, *command_hash) == hash_text(command)
+        )
     }
 }
 struct Send {
@@ -181,7 +223,7 @@ struct Send {
     edit: TextEdit,
     draft: Draft,
     was_running: bool,
-    slash: Option<CommandAttempt>,
+    command: Option<CommandAttempt>,
     edited: bool,
     recallable: bool,
 }
@@ -191,22 +233,39 @@ fn repeats_uncertain_command(s: &State) -> bool {
         .command_unconfirmed
         .as_ref()
         .is_some_and(|unconfirmed| {
-            super::picker::command_parts(&s.draft.text).is_some_and(|(candidate, args)| {
+            if s.composer.shell_mode {
                 s.composer
                     .draft
-                    .resolve_args(&s.draft, args)
-                    .is_some_and(|resolved| unconfirmed.matches(candidate, &resolved))
-            })
+                    .resolve_shell(&s.draft)
+                    .is_some_and(|command| unconfirmed.matches_shell(&command))
+            } else {
+                super::picker::command_parts(&s.draft.text).is_some_and(|(candidate, args)| {
+                    s.composer
+                        .draft
+                        .resolve_args(&s.draft, args)
+                        .is_some_and(|resolved| unconfirmed.matches_slash(candidate, &resolved))
+                })
+            }
         })
 }
 
 pub(crate) fn command_held(s: &State) -> bool {
     command_receipts::repeats(s)
         || repeats_uncertain_command(s)
-        || s.command_receipts.full() && s.composer.picker.selected_command(&s.draft.text).is_some()
+        || s.command_receipts.full()
+            && (s.composer.shell_mode
+                || s.composer.picker.selected_command(&s.draft.text).is_some())
 }
 
 pub fn can_send(s: &State) -> bool {
+    let payload_ready = if s.composer.shell_mode {
+        s.composer.draft.can_send_shell(&s.draft)
+    } else {
+        !s.composer.picker.command_pending(&s.draft.text)
+            && (s.composer.picker.attachments_supported()
+                || !s.composer.draft.requires_attachment_support())
+            && s.composer.draft.can_send(&s.draft)
+    };
     matches!(s.phase, Phase::Ready | Phase::Streaming)
         && !s
             .screen
@@ -220,13 +279,10 @@ pub fn can_send(s: &State) -> bool {
         && !s.transcript_display.messages.pending()
         && !s.composer.picker.open()
         && !s.composer.device.busy()
-        && !s.composer.picker.command_pending(&s.draft.text)
         && !s.composer.attachments_missing
-        && (s.composer.picker.attachments_supported()
-            || !s.composer.draft.requires_attachment_support())
         && s.composer.unconfirmed.is_none()
         && !command_held(s)
-        && s.composer.draft.can_send(&s.draft)
+        && payload_ready
         && s.commands.as_ref().is_some_and(|tx| !tx.is_closed())
         && s.agent.as_ref().is_none_or(|a| !a.blocked())
 }
@@ -239,7 +295,53 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         s.composer.send_error = true;
         return;
     };
+    if s.composer.shell_mode {
+        let Some(command_text) = s.composer.draft.resolve_shell(&s.draft) else {
+            s.composer.send_error = true;
+            return;
+        };
+        let Some(target) = super::recall::command_target(s) else {
+            s.composer.send_error = true;
+            return;
+        };
+        let attempt = CommandAttempt {
+            target,
+            kind: CommandKind::Shell {
+                command: command_text.clone(),
+            },
+        };
+        let command = Command::Shell {
+            attempt: id.clone(),
+            command: command_text.clone(),
+        };
+        if s.commands
+            .as_ref()
+            .is_some_and(|pipe| pipe.try_send(command).is_ok())
+        {
+            let recallable = super::recall::record(s, command_text, true);
+            s.composer.sending = Some(Send {
+                id,
+                edit: s.draft.clone(),
+                draft: std::mem::take(&mut s.composer.draft),
+                was_running: s.phase == Phase::Streaming,
+                command: Some(attempt),
+                edited: s.composer.recall.is_some(),
+                recallable,
+            });
+            s.composer.shell_mode = false;
+            s.draft.clear();
+            super::recall::restore(s);
+            s.composer.picker.reset();
+            renew_editor(s, tx);
+            workspace::capture(s);
+            s.composer.send_error = false;
+        } else {
+            s.composer.send_error = true;
+        }
+        return;
+    }
     if let Some((name, text)) = s.composer.picker.selected_command(&s.draft.text) {
+        let name = name.to_owned();
         let Some(text) = s.composer.draft.resolve_args(&s.draft, text) else {
             s.composer.send_error = true;
             return;
@@ -250,27 +352,28 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         };
         let slash = CommandAttempt {
             target,
-            name: name.to_owned(),
-            args: text,
+            kind: CommandKind::Slash {
+                name: name.clone(),
+                args: text.clone(),
+            },
         };
         let command = Command::Slash {
             attempt: id.clone(),
-            name: slash.name.clone(),
-            text: slash.args.clone(),
+            name: name.clone(),
+            text: text.clone(),
         };
         if s.commands
             .as_ref()
             .is_some_and(|pipe| pipe.try_send(command).is_ok())
         {
-            let recallable =
-                super::recall::record(s, format!("/{} {}", slash.name, slash.args), true);
-            s.composer.picker.remember_command(&slash.name);
+            let recallable = super::recall::record(s, format!("/{name} {text}"), true);
+            s.composer.picker.remember_command(&name);
             s.composer.sending = Some(Send {
                 id,
                 edit: s.draft.clone(),
                 draft: s.composer.draft.clone(),
                 was_running: true,
-                slash: Some(slash),
+                command: Some(slash),
                 edited: s.composer.recall.is_some(),
                 recallable,
             });
@@ -316,7 +419,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         edit: s.draft.clone(),
         draft: std::mem::take(&mut s.composer.draft),
         was_running,
-        slash: None,
+        command: None,
         edited: s.composer.recall.is_some(),
         recallable,
     });
@@ -384,18 +487,23 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         && s.composer.recall.is_none()
         && s.draft.text.is_empty()
         && !s.composer.device.busy();
-    if let Some(slash) = send.slash {
+    if let Some(command) = send.command {
+        let is_shell = matches!(command.kind, CommandKind::Shell { .. });
         if matches!(
             outcome,
             PromptOutcome::Rejected | PromptOutcome::Unconfirmed
         ) && may_restore
+            && (!is_shell || s.composer.draft.attachments.is_empty())
         {
             super::recall::replace_edit(s, send.edit);
             s.composer.draft = send.draft;
+            if is_shell {
+                s.composer.shell_mode = true;
+            }
             s.composer.restored = true;
         }
         if matches!(outcome, PromptOutcome::Unconfirmed) {
-            s.command_receipts.hold(send.id, slash);
+            s.command_receipts.hold(send.id, command);
         }
         s.composer.send_error = matches!(outcome, PromptOutcome::Rejected);
         return;

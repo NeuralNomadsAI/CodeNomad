@@ -199,6 +199,29 @@ pub(crate) async fn run_with_reading(
                     return Ok(());
                 }
             }
+            Some(Input::Command(Command::Shell { attempt, command })) => {
+                let admitted = reading.is_some()
+                    || opened && !reader.parked && !reader.historical && wire.upstream.load(SeqCst);
+                let Some(outcome) =
+                    receipts::shell(&backend, &out, &wake, &wire, admitted, &attempt, &command)
+                        .await
+                else {
+                    return Ok(());
+                };
+                if matches!(outcome, PromptOutcome::Unconfirmed) {
+                    reader.dirty = true;
+                    reader.quiet = Instant::now();
+                }
+                publish(
+                    &out,
+                    &wake,
+                    Event::PromptAcknowledged {
+                        attempted: attempt,
+                        outcome,
+                    },
+                )
+                .await;
+            }
             Some(Input::Command(Command::Prompt(prompt))) => {
                 let Some(id) = &prompt.id else { continue };
                 // The compose gesture owns one attempt even if its tab suspends before dispatch.

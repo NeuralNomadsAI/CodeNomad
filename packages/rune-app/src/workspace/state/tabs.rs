@@ -4,6 +4,7 @@ use crate::platform;
 fn stash(s: &mut State) {
     // History browsing is temporary; inactive tabs retain only their fresh draft.
     crate::composer::recall::restore(s);
+    s.composer.shell_mode = false;
     capture_files_mode(s);
     capture(s);
     s.attachments.cancel();
