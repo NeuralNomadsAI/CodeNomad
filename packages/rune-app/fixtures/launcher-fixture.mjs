@@ -29,9 +29,9 @@ assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation re
 assert(!historyReturnOnly || webMobile&&!webAndroid)
 assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes('--web-mobile'))
 if(needsOwnedWindowsWorker(process.argv)){
-  const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:'inherit'})
+  const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:['pipe','inherit','inherit']})
   const closed=new Promise(resolve=>worker.once('close',resolve))
-  const stop=()=>void stopFixtureChild(worker,closed).catch(error=>console.error(error.message))
+  const stop=()=>void stopFixtureChild(worker,closed,8000,2000,{close:()=>{try{worker.stdin?.end('shutdown\n')}catch{}}}).catch(error=>console.error(error.message))
   process.once('SIGINT',stop)
   process.once('SIGTERM',stop)
   const code=await closed
@@ -511,9 +511,9 @@ const stopClientOnce=child=>{
     clientStopPromise=(async()=>{
       try{
         if(webState.clientUseIpc&&process.platform==='win32'){
-          await stopFixtureHandle(child,stopped,3000,2000)
+          await stopFixtureHandle(child,stopped,8000,2000)
         }else{
-          await stopFixtureChild(child,stopped,3000,2000,{group:Boolean(webState.clientGroup),startedBy:webState.clientStartedBy})
+          await stopFixtureChild(child,stopped,8000,2000,{startedBy:webState.clientStartedBy})
         }
       }catch(error){
         clientStopError=String(error?.message??error)
@@ -538,11 +538,18 @@ const onLauncherSignal=signal=>{
 }
 process.on('SIGINT',onLauncherSignal)
 process.on('SIGTERM',onLauncherSignal)
+if(process.argv.includes('--owned-mobile-worker')){
+  process.stdin.resume()
+  process.stdin.on('data',chunk=>{if(String(chunk).includes('shutdown'))onLauncherSignal('SIGTERM')})
+  process.stdin.once('end',()=>onLauncherSignal('SIGTERM'))
+  process.stdin.unref()
+}
 try{
   const origin=await startServer()
   if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
   if(web){
     await signIn(origin)
+    let liveSseSeq=0
     const emitMultiplexSse=targets=>{
       assert(streams.size>0,'Expected active upstream SSE stream to codenomad-rs')
       assert(Array.isArray(targets)&&targets.length>0&&targets.length<=7,'Expected 1..7 SSE targets')
@@ -550,10 +557,8 @@ try{
       for(const {sessionID,text} of targets){
         assert(typeof sessionID==='string'&&/^ses_tab_[1-7]$/.test(sessionID),`Unexpected sessionID: ${sessionID}`)
         assert(typeof text==='string'&&text.length>0&&text.length<=256,'Invalid SSE payload text')
-        const store=stores.get(sessionID)
-        assert(store,`Unknown session store: ${sessionID}`)
-        const live=store.append('assistant','',false)
-        store.rows.pop() // Live SSE-only reply: absent from HTTP history.
+        assert(stores.has(sessionID),`Unknown session store: ${sessionID}`)
+        const live={id:`sse-live-${++liveSseSeq}-${randomUUID().slice(0,8)}`,content:[]}
         const emit=(type,data)=>{
           const row={id:randomUUID(),type,created:Date.now(),location:{directory:project},data:{sessionID,...data}}
           for(const stream of streams)stream.write(`data: ${JSON.stringify(row)}\n\n`)
@@ -665,29 +670,32 @@ try{
   if(restoreState){assert.deepEqual(restoreStages.map(s=>s.stage),['prepare','resume','verify']);assert.deepEqual(restorePrompts.map(p=>p.sessionID),['ses_created_2','ses_created_1']);for(const id of ['ses_created_1','ses_created_2']){const rows=stores.get(id).rows;assert.deepEqual(rows.map(r=>r.type),['user','assistant']);assert(rows[1].time.completed)}}
   console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,workspaceClaims,restoreState,webRestore,filesState,documentState,...stats,profile}))
 }catch(error){result=1;console.error(JSON.stringify({profile,stats}));throw error}finally{
-  process.off('SIGINT',onLauncherSignal)
-  process.off('SIGTERM',onLauncherSignal)
-  control?.close()
-  for(const gate of gates.values())gate.reject()
-  client??=webState.client
-  if(client&&(client.exitCode===null&&client.signalCode===null||webState.clientGroup||webState.browserPids?.size)){
-    await stopClientOnce(client)
-  }
-  if(webState.deviceLease){
-    await stopClientOnce(client)
-    androidCleanup=await webState.deviceLease.close()
-  }
-  await webState.mobileAction
-  await http?.dispose()
-  await stopServer()
-  for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result:androidCleanup?.length||clientStopError?1:result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,clientStopError,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2));await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
-  if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
-  if(web)await writeFile(path.join(profile,'browser-run.log'),webState.diagnostic)
-  if(result===0){
-    assert(!clientStopError,`Owned client cleanup failed: ${clientStopError}`)
-    if(webState.deviceLease)assert.deepEqual(androidCleanup,[],'Android fixture cleanup must complete')
-    assert.equal(server.exitCode,0,'Owned server must exit cleanly')
+  try{
+    control?.close()
+    for(const gate of gates.values())gate.reject()
+    client??=webState.client
+    if(client&&(client.exitCode===null&&client.signalCode===null||webState.browserPids?.size)){
+      await stopClientOnce(client)
+    }
+    if(webState.deviceLease){
+      await stopClientOnce(client)
+      androidCleanup=await webState.deviceLease.close()
+    }
+    await webState.mobileAction
+    await http?.dispose()
+    await stopServer()
+    for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
+    await writeFile(path.join(profile,'proof.json'),JSON.stringify({result:androidCleanup?.length||clientStopError?1:result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,clientStopError,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2));await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
+    if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
+    if(web)await writeFile(path.join(profile,'browser-run.log'),webState.diagnostic)
+    if(result===0){
+      assert(!clientStopError,`Owned client cleanup failed: ${clientStopError}`)
+      if(webState.deviceLease)assert.deepEqual(androidCleanup,[],'Android fixture cleanup must complete')
+      assert.equal(server.exitCode,0,'Owned server must exit cleanly')
+    }
+  }finally{
+    process.off('SIGINT',onLauncherSignal)
+    process.off('SIGTERM',onLauncherSignal)
   }
 }
 process.exitCode=result??1

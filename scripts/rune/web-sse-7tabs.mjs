@@ -176,35 +176,35 @@ async function runBench() {
   let browserExited = Promise.resolve(true)
   let stopping = false
   let stopPromise = null
+  const withTimeout = (promise, ms) => Promise.race([
+    Promise.resolve(promise).catch(() => {}),
+    new Promise(resolve => setTimeout(resolve, ms)),
+  ])
+  const isProcExited = () => {
+    const proc = browserServer?.process()
+    return Boolean(!proc || proc.exitCode !== null || proc.signalCode !== null)
+  }
   const killBrowserGroup = () => {
     if (process.platform !== 'win32' && Number.isInteger(browserPid) && browserPid > 0) {
       try { process.kill(-browserPid, 'SIGKILL') } catch {}
+    } else {
+      try { browserServer?.process()?.kill('SIGKILL') } catch {}
     }
   }
   const stopBrowserBounded = () => {
     if (!stopPromise) {
       stopPromise = (async () => {
-        await context?.close().catch(() => {})
-        await browser?.close().catch(() => {})
-        if (browserServer) {
-          await Promise.race([
-            browserServer.close().catch(() => {}),
-            new Promise(resolve => setTimeout(resolve, 3000)),
-          ])
+        if (context) await withTimeout(context.close(), 1000)
+        if (browser) await withTimeout(browser.close(), 1000)
+        if (browserServer) await withTimeout(browserServer.close(), 2000)
+        if (!isProcExited()) {
+          await withTimeout(browserExited, 1000)
         }
-        let exited = await Promise.race([
-          browserExited,
-          new Promise(resolve => setTimeout(() => resolve(false), 1500)),
-        ])
-        if (!exited) {
+        if (!isProcExited()) {
           killBrowserGroup()
-          exited = await Promise.race([
-            browserExited,
-            new Promise(resolve => setTimeout(() => resolve(false), 1500)),
-          ])
+          await withTimeout(browserExited, 500)
         }
-        const proc = browserServer?.process()
-        return Boolean(exited || !proc || proc.exitCode !== null || proc.signalCode !== null)
+        return isProcExited()
       })()
     }
     return stopPromise
@@ -224,11 +224,15 @@ async function runBench() {
   const cdpBatchRequests = new Map()
   const cdpRequestIdToBenchId = new Map()
   const openedWorkspaces = []
+  let pendingProof = null
 
   try {
     if (stopping) throw Error('Interrupted before Chromium launch')
     browserServer = await chromium.launchServer({
       headless: true,
+      handleSIGINT: false,
+      handleSIGTERM: false,
+      handleSIGHUP: false,
       ...(values.executable ? {executablePath: values.executable} : {}),
       args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader'],
     })
@@ -238,8 +242,9 @@ async function runBench() {
       browserExited = new Promise(resolve => {
         if (browserProc.exitCode !== null || browserProc.signalCode !== null) return resolve(true)
         browserProc.once('exit', () => resolve(true))
-        browserProc.once('close', () => resolve(true))
-        browserProc.once('error', () => resolve(true))
+        browserProc.once('close', () => {
+          if (browserProc.exitCode !== null || browserProc.signalCode !== null) resolve(true)
+        })
       })
     }
     if (stopping) throw Error('Interrupted while launching Chromium')
@@ -619,10 +624,15 @@ async function runBench() {
       {tabIndex: 0, workspaceId: openedWorkspaces[0], sessionID: 'ses_tab_1', text: 'Multiplex live Tab 1'},
       {tabIndex: 3, workspaceId: openedWorkspaces[3], sessionID: 'ses_tab_4', text: 'Multiplex live Tab 4'},
     ]
-    await ipc({
+    const initialEmitted = await ipc({
       type: 'emit-multiplex-sse',
       targets: initialTargets.map(({sessionID, text}) => ({sessionID, text})),
     })
+    const initialMessageIds = new Map(initialEmitted.map(item => [item.sessionID, item.assistantMessageID]))
+    for (const target of initialTargets) {
+      const msgId = initialMessageIds.get(target.sessionID)
+      assert(typeof msgId === 'string' && msgId.startsWith('sse-live-'), `Expected distinct sse-live-* message ID for ${target.sessionID}, got ${msgId}`)
+    }
     await page.waitForFunction(() => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes('Multiplex live Tab 7'))
 
     const waitMultiplexFrames = async (targets, workspaces) => {
@@ -645,6 +655,11 @@ async function runBench() {
             && expectedTriples.some(t =>
               t.workspaceId === f.instanceId && t.sessionID === f.sessionID && t.text === f.delta,
             ),
+          )
+          assert.equal(
+            observedFrames.length,
+            expectedTriples.length,
+            `Expected exactly ${expectedTriples.length} multiplexed SSE frames without duplicates, got ${observedFrames.length}`,
           )
           return {
             frameCount: observedFrames.length,
@@ -678,13 +693,18 @@ async function runBench() {
 
     // Inactive tabs intentionally suspend live transcript readers (`chat::suspend` -> `stop_content()`)
     // and resume on activation (`chat::resume`) over the same shared EventHub without opening a new
-    // EventSource. Append a fresh HTTP-only history marker while each tab is still suspended, correlate
-    // the resumed POST /session-history/window to its sessionID, wait for that fresh marker to render
-    // in the transcript, confirm the suspended live-only delta is absent, then emit a fresh SSE-only
-    // delta and verify exact delivery on `sseRequestId` plus live UI rendering.
+    // EventSource. Append a fresh HTTP-only history marker with a distinct messageID while each tab is
+    // still suspended, correlate the resumed POST /session-history/window to its sessionID, wait for
+    // that fresh marker to render in the transcript, confirm the suspended live-only delta is absent,
+    // then emit a fresh SSE-only delta and verify exact delivery on `sseRequestId` plus live rendering.
     const tabsLocator = projectTabs()
     const verifyActivatedTab = async ({tabIndex, workspaceId, sessionID, heading, resumedHistoryMarker, suspendedText, activeText}) => {
-      await ipc({type: 'append-history', sessionID, text: resumedHistoryMarker})
+      const historyAppended = await ipc({type: 'append-history', sessionID, text: resumedHistoryMarker})
+      const suspendedSseMessageId = initialMessageIds.get(sessionID)
+      assert(
+        historyAppended?.messageID && historyAppended.messageID !== suspendedSseMessageId,
+        `Resumed history messageID (${historyAppended?.messageID}) must differ from suspended SSE ID (${suspendedSseMessageId})`,
+      )
       const resumeResponse = page.waitForResponse(res => {
         if (res.request().method() !== 'POST' || res.status() !== 200) return false
         if (new URL(res.url()).pathname !== `/api/workspaces/${workspaceId}/session-history/window`) return false
@@ -703,13 +723,26 @@ async function runBench() {
       )
       const beforeActive = await page.evaluate(() => document.querySelector('[data-rune-a11y]')?.textContent ?? '')
       assert(!beforeActive.includes(suspendedText), `Suspended tab ${sessionID} must not retain live-only delta "${suspendedText}" after chat::resume`)
-      await ipc({type: 'emit-multiplex-sse', targets: [{sessionID, text: activeText}]})
+      const activeEmitted = await ipc({type: 'emit-multiplex-sse', targets: [{sessionID, text: activeText}]})
+      assert(
+        activeEmitted[0]?.assistantMessageID && activeEmitted[0].assistantMessageID !== historyAppended.messageID,
+        `Active SSE messageID (${activeEmitted[0]?.assistantMessageID}) must differ from history messageID (${historyAppended.messageID})`,
+      )
       await waitExactFrame({workspaceId, sessionID, text: activeText})
       await page.waitForFunction(
         expected => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes(expected),
         activeText,
       )
-      return {workspaceId, sessionID, resumedHistoryMarker, text: activeText, suspendedDeltaAbsentAfterResume: true}
+      return {
+        workspaceId,
+        sessionID,
+        suspendedSseMessageId,
+        resumedHistoryMessageId: historyAppended.messageID,
+        activeSseMessageId: activeEmitted[0].assistantMessageID,
+        resumedHistoryMarker,
+        text: activeText,
+        suspendedDeltaAbsentAfterResume: true,
+      }
     }
 
     const tab1Active = await verifyActivatedTab({
@@ -799,7 +832,7 @@ async function runBench() {
     assert.deepEqual(errors, [], `Unexpected page errors: ${JSON.stringify(errors)}`)
     assert.deepEqual(forbidden, [], `Unexpected forbidden requests: ${JSON.stringify(forbidden)}`)
 
-    const proof = {
+    pendingProof = {
       runner: 'web-sse-7tabs',
       origin: url.origin,
       tabCount: TAB_COUNT,
@@ -824,8 +857,6 @@ async function runBench() {
       forbidden,
       result: 'pass',
     }
-    await writeFile(path.join(out, 'sse-7tabs-proof.json'), JSON.stringify(proof, null, 2))
-    console.log(JSON.stringify(proof))
   } catch (error) {
     await writeFile(path.join(out, 'sse-7tabs-failure.json'), JSON.stringify({
       error: String(error?.stack ?? error),
@@ -836,11 +867,20 @@ async function runBench() {
     }, null, 2)).catch(() => {})
     throw error
   } finally {
-    process.off('SIGTERM', onStopSignal)
-    process.off('SIGINT', onStopSignal)
-    const confirmedExited = await stopBrowserBounded()
-    if (confirmedExited && Number.isInteger(browserPid) && browserPid > 0 && process.connected) {
-      await ipc({type: 'browser-closed', pid: browserPid}).catch(() => {})
+    try {
+      const confirmedExited = await stopBrowserBounded()
+      if (confirmedExited && Number.isInteger(browserPid) && browserPid > 0 && process.connected) {
+        await ipc({type: 'browser-closed', pid: browserPid}).catch(() => {})
+      }
+      if (pendingProof) {
+        assert(confirmedExited, `Chromium server process ${browserPid} did not exit cleanly before pass`)
+        pendingProof.teardown.chromiumExited = true
+        await writeFile(path.join(out, 'sse-7tabs-proof.json'), JSON.stringify(pendingProof, null, 2))
+        console.log(JSON.stringify(pendingProof))
+      }
+    } finally {
+      process.off('SIGTERM', onStopSignal)
+      process.off('SIGINT', onStopSignal)
     }
   }
 }

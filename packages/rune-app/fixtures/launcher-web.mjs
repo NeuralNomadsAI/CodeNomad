@@ -60,12 +60,10 @@ export async function launchWeb({
     await state.deviceLease.open()
   }
   const useIpc=webMobile||webKeyboard||webSse7Tabs
-  const clientGroup=process.platform!=='win32'
   const launch=useIpc?spawn:spawnFixtureChild
-  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},detached:clientGroup,windowsHide:true,stdio:['ignore','pipe','pipe',...(useIpc?['ipc']:[])]})
+  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(useIpc?['ipc']:[])]})
   state.client=client
   state.clientUseIpc=useIpc
-  state.clientGroup=clientGroup
   state.clientStartedBy=new Date()
   state.browserPids=new Set()
   state.clientClosed=new Promise(resolve=>{
