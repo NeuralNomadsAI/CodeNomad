@@ -145,11 +145,18 @@ struct Pre {
 }
 type PreOut = (Option<ReadOut>, Option<Fetch<ScheduleCapability>>);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PointKind {
+    Ready,
+    Pending,
+    Deleted,
+}
+
 struct PointSettlement {
     id: String,
     generation: u64,
     seq: u64,
-    deleted: bool,
+    kind: PointKind,
 }
 
 pub(crate) struct Schedules {
@@ -891,7 +898,11 @@ impl Schedules {
                         id: id.clone(),
                         generation: self.generation,
                         seq,
-                        deleted: false,
+                        kind: if r.pending {
+                            PointKind::Pending
+                        } else {
+                            PointKind::Ready
+                        },
                     });
                     if r.pending {
                         self.fresh.remove(&id);
@@ -909,7 +920,7 @@ impl Schedules {
                         id: sid.clone(),
                         generation: self.generation,
                         seq,
-                        deleted: false,
+                        kind: PointKind::Pending,
                     });
                     self.fresh.remove(&sid);
                     self.selection_error = Some(SelectionError::Pending);
@@ -918,15 +929,15 @@ impl Schedules {
                     self.rows.retain(|x| x.id != sid);
                     self.fresh.remove(&sid);
                     self.forget_disclosures(&sid);
+                    self.last_point = Some(PointSettlement {
+                        id: sid.clone(),
+                        generation: self.generation,
+                        seq,
+                        kind: PointKind::Deleted,
+                    });
                     if self.selected.as_deref() == Some(sid.as_str())
                         && self.hold_for(holds, ctx, &sid).is_none()
                     {
-                        self.last_point = Some(PointSettlement {
-                            id: sid.clone(),
-                            generation: self.generation,
-                            seq,
-                            deleted: true,
-                        });
                         self.view_epoch = self.view_epoch.wrapping_add(1);
                         self.selected = None;
                         self.selection_error = None;
@@ -949,7 +960,7 @@ impl Schedules {
                         id: sid,
                         generation: self.generation,
                         seq,
-                        deleted: false,
+                        kind: PointKind::Pending,
                     });
                     self.selection_error = Some(SelectionError::Pending);
                 } else {
@@ -1171,11 +1182,11 @@ impl Schedules {
         }
     }
 
-    fn newer_point(&self, id: &str, list_seq: u64) -> Option<bool> {
+    fn newer_point(&self, id: &str, list_seq: u64) -> Option<PointKind> {
         self.last_point
             .as_ref()
             .filter(|p| p.generation == self.generation && p.id == id && p.seq > list_seq)
-            .map(|p| p.deleted)
+            .map(|p| p.kind)
     }
 
     fn accept_page(
@@ -1197,7 +1208,7 @@ impl Schedules {
             let mut loaded_selected = false;
             for doc in page.schedules {
                 let newer = self.newer_point(&doc.id, list_seq);
-                if newer == Some(true) {
+                if matches!(newer, Some(PointKind::Deleted | PointKind::Pending)) {
                     continue;
                 }
                 let existing_rev = self
@@ -1208,7 +1219,9 @@ impl Schedules {
                 if existing_rev.is_some_and(|r| r > doc.revision) {
                     continue;
                 }
-                if newer == Some(false) && !existing_rev.is_some_and(|r| doc.revision > r) {
+                if newer == Some(PointKind::Ready)
+                    && !existing_rev.is_some_and(|r| doc.revision > r)
+                {
                     continue;
                 }
                 if self.selected.as_deref() == Some(doc.id.as_str()) {
@@ -1238,7 +1251,12 @@ impl Schedules {
             let schedules: Vec<UnifiedSchedule> = page
                 .schedules
                 .into_iter()
-                .filter(|d| self.newer_point(&d.id, list_seq) != Some(true))
+                .filter(|d| {
+                    !matches!(
+                        self.newer_point(&d.id, list_seq),
+                        Some(PointKind::Deleted | PointKind::Pending)
+                    )
+                })
                 .collect();
             let in_page = sel
                 .as_deref()
@@ -1246,7 +1264,7 @@ impl Schedules {
             let mut preserve_sel_state = false;
             self.rows = schedules;
             if in_page && let Some(id) = sel.as_deref() {
-                let newer = self.newer_point(id, list_seq) == Some(false);
+                let newer = self.newer_point(id, list_seq) == Some(PointKind::Ready);
                 if let Some(slot) = self.rows.iter_mut().find(|r| r.id == id) {
                     let prev_higher = prev.as_ref().is_some_and(|p| p.revision > slot.revision);
                     let newer_not_beaten =

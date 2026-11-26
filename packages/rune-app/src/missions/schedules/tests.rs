@@ -1862,5 +1862,112 @@ fn stale_pages_cannot_resurrect_deleted_erase_pending_or_reissue_settled_retry()
         );
         assert!(!h.panel.schedules.is_fresh("msn_2"));
         assert_eq!(h.panel.schedules.selected, None);
+
+        // 4. Older page with rev 3 cannot erase a newer 503 schedule-pending (which carries no doc)
+        // when cache still holds rev 2.
+        assert!(h.act(G::Select("msn_2".into())));
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, list(vec![s1.clone()], Some("msn_1"))).await;
+            }
+        }
+        h.pump(|p, _| !p.schedules.loading()).await;
+        h.http.accept().await.reply(200, rdoc(s2_r2.clone())).await;
+        h.pump(|p, _| p.schedules.is_fresh("msn_2")).await;
+
+        assert!(h.act(G::More));
+        let stale_more_r3 = h.http.accept().await;
+        assert!(h.act(G::RetrySelection));
+        let pt_503_pending = h.http.accept().await;
+        pt_503_pending
+            .reply(
+                503,
+                json!({
+                    "code": "schedule-pending",
+                    "pending": true,
+                    "document": {
+                        "id": "msn_2",
+                        "revision": 4,
+                        "control": {
+                            "requestID": "req_pend_1",
+                            "expectedRevision": 3,
+                            "action": "pause",
+                            "pending": true
+                        }
+                    }
+                }),
+            )
+            .await;
+        h.pump(|p, _| p.schedules.selection_error == Some(super::list::SelectionError::Pending))
+            .await;
+        stale_more_r3
+            .reply(200, list(vec![s2_r3.clone()], None))
+            .await;
+        h.pump(|p, _| !p.schedules.loading()).await;
+        assert_eq!(
+            h.panel.schedules.selection_error,
+            Some(super::list::SelectionError::Pending),
+            "stale page rev 3 must not clear newer 503 schedule-pending"
+        );
+        assert!(!h.panel.schedules.is_fresh("msn_2"));
+
+        // 5. Even with an active Publication(3) hold, a newer confirmed deletion prevents an older
+        // page containing rev 3 from resurrecting msn_2 or releasing the hold.
+        let doc_r2 = UnifiedSchedule::from_value(&s2_r2).unwrap();
+        let key2 = h.key("msn_2");
+        let req_pause =
+            codenomad_client::missions::ScheduleControlRequest::new(A::Pause, 2, None).unwrap();
+        let rid = req_pause.request_id.clone();
+        let ctx = h.panel.schedule_ctx();
+        assert!(
+            h.holds
+                .dispatch_control(key2.clone(), "occ-1".into(), 0, req_pause, doc_r2, ctx)
+        );
+        let ctrl_req = h.http.accept().await;
+        let ctrl_json = format!(
+            r#"{{"requestID":"{rid}","expectedRevision":2,"action":"pause","pending":false}}"#
+        );
+        let s2_r3_ctrl = row("msn_2", "Page Two", "paused", 3, &ctrl_json);
+        ctrl_req.reply(200, rdoc(s2_r3_ctrl)).await;
+        h.pump(|_, holds| holds.get(&key2).is_some_and(|(ph, _)| ph.is_publication()))
+            .await;
+
+        // Entering Publication(3) triggered a refresh; hold its list request while RetrySelection
+        // confirms external deletion.
+        let mut stale_page_hold = None;
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                stale_page_hold = Some(req);
+            }
+        }
+        let stale_page_hold = stale_page_hold.expect("stale page under hold");
+        assert!(h.act(G::RetrySelection));
+        let pt_del_hold = h.http.accept().await;
+        pt_del_hold
+            .reply(200, json!({"pending": false, "document": null}))
+            .await;
+        h.pump(|p, _| !p.schedules.rows.iter().any(|r| r.id == "msn_2"))
+            .await;
+        stale_page_hold
+            .reply(200, list(vec![s1.clone(), s2_r3.clone()], None))
+            .await;
+        h.pump(|p, _| !p.schedules.loading()).await;
+        assert!(
+            !h.panel.schedules.rows.iter().any(|r| r.id == "msn_2"),
+            "stale page must not resurrect deleted msn_2 even under Publication hold"
+        );
+        assert!(!h.panel.schedules.is_fresh("msn_2"));
+        assert!(
+            h.holds
+                .get(&key2)
+                .is_some_and(|(ph, _)| ph.is_publication()),
+            "stale page must not release Publication hold after confirmed deletion"
+        );
     });
 }
