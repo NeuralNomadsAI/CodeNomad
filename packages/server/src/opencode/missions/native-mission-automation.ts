@@ -79,7 +79,7 @@ export function matchMissionAutomation(info: MissionAutomationInfo, slot: Missio
     ? info.directory.replaceAll("/", "\\") === owner.directory.replaceAll("/", "\\") : info.directory === owner.directory
   const action = info.action
   const wakes = action.type === "prompt" ? action.prompt === signal && action.to.session === slot.sessionID
-    : action.code === MISSION_WAKE_CODE && action.args === undefined
+    : action.type === "code" && action.code === MISSION_WAKE_CODE && action.args === undefined
   if (!directory || info.projectID !== owner.projectID || info.sessionID !== slot.sessionID
     || info.name !== slot.name || !wakes || info.trigger.type === "event"
     || (info.expires === undefined ? null : DateTime.toEpochMillis(info.expires)) !== slot.endsAt

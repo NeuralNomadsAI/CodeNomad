@@ -28,7 +28,7 @@ serving the pinned client contract. Test runtime versions come from
 range, so changing the minimum edits only `runtime-support.ts`. Version-refusal
 scenarios supply their explicit incompatible identity.
 
-Minimum runtime **2.4.0** and recommended **2.4.1** (`runtime-support.ts`), with **2.3.2**
+Minimum runtime **2.4.0** and recommended **2.4.1** (`runtime-support.ts`), with **2.4.1**
 client/schema/plugin pins and the matching `effect` **4.1.0**. The minimum carries the
 browser tools' permission hook: 2.3 accepts the same `experimental.browser` attachment
 (`BROWSER_AUTOMATION.md`), but its blanket session grant overrides a configured
