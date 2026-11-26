@@ -53,13 +53,7 @@ enum SavedTarget {
         dark: bool,
         colors: Box<ColorSchemeColors>,
     },
-    SelectBuiltIn {
-        key: String,
-        name: String,
-        dark: bool,
-        colors: Box<ColorSchemeColors>,
-    },
-    Mode(&'static str),
+    Mode,
     Delete,
 }
 
@@ -273,65 +267,42 @@ impl Controls {
             prefs.set_palette_preview(None);
             settled = true;
         }
-        if let Some(target) = draft.awaiting_save.clone() {
-            let still_saving = match &target {
-                SavedTarget::Mode(_) => prefs.mode_saving(),
-                SavedTarget::SelectBuiltIn { dark, .. } => prefs.builtin_palette_saving(*dark),
-                _ => prefs.palette_saving(),
-            };
-            if !still_saving {
-                draft.awaiting_save = None;
-                settled = true;
-                let succeeded = match &target {
-                    SavedTarget::Mode(mode) => !prefs.mode_save_failed() && prefs.mode() == *mode,
-                    SavedTarget::SelectBuiltIn { dark, key, .. } => {
-                        !prefs.builtin_palette_save_failed(*dark)
-                            && prefs
-                                .palette_slot(*dark)
-                                .is_some_and(|slot| slot.key == *key)
+        if let Some(target) = draft.awaiting_save.clone()
+            && !prefs.palette_saving()
+        {
+            draft.awaiting_save = None;
+            settled = true;
+            if !prefs.palette_save_failed() {
+                draft.dirty = false;
+                draft.creating = false;
+                draft.pending_create_id = None;
+                draft.active_swatch = None;
+                draft.local_error = false;
+                prefs.set_palette_preview(None);
+                match target {
+                    SavedTarget::Preset { key, name } => {
+                        draft.editing_key = key;
+                        draft.source_name = name;
                     }
-                    _ => !prefs.palette_save_failed(),
-                };
-                if succeeded {
-                    draft.dirty = false;
-                    draft.creating = false;
-                    draft.pending_create_id = None;
-                    draft.active_swatch = None;
-                    draft.local_error = false;
-                    prefs.set_palette_preview(None);
-                    match target {
-                        SavedTarget::Preset { key, name } => {
-                            draft.editing_key = key;
-                            draft.source_name = name;
-                        }
-                        SavedTarget::Reset {
-                            key,
-                            default_colors,
-                        } => {
-                            draft.editing_key = key;
-                            draft.colors = default_colors;
-                        }
-                        SavedTarget::Select {
-                            key,
-                            name,
-                            dark,
-                            colors,
-                        }
-                        | SavedTarget::SelectBuiltIn {
-                            key,
-                            name,
-                            dark,
-                            colors,
-                        } => {
-                            draft.editing_key = key;
-                            draft.source_name = name;
-                            draft.dark = dark;
-                            draft.colors = *colors;
-                        }
-                        SavedTarget::BuiltInOrCustom
-                        | SavedTarget::Mode(_)
-                        | SavedTarget::Delete => {}
+                    SavedTarget::Reset {
+                        key,
+                        default_colors,
+                    } => {
+                        draft.editing_key = key;
+                        draft.colors = default_colors;
                     }
+                    SavedTarget::Select {
+                        key,
+                        name,
+                        dark,
+                        colors,
+                    } => {
+                        draft.editing_key = key;
+                        draft.source_name = name;
+                        draft.dark = dark;
+                        draft.colors = *colors;
+                    }
+                    SavedTarget::BuiltInOrCustom | SavedTarget::Mode | SavedTarget::Delete => {}
                 }
             }
         }
@@ -377,7 +348,8 @@ impl Controls {
     }
 
     fn apply_option_selection(&self, prefs: &mut Preferences, option: &PaletteOption) {
-        if !prefs.select_palette_option(option) {
+        let was_dirty = self.draft.borrow().dirty;
+        if !prefs.select_palette_option(option, was_dirty) {
             return;
         }
         if prefs.palette_saving() {
@@ -394,20 +366,6 @@ impl Controls {
             return;
         }
         let mut draft = self.draft.borrow_mut();
-        if draft.dirty {
-            if prefs.builtin_palette_saving(option.dark) {
-                draft.binding_epoch = prefs.binding_epoch();
-                draft.local_error = false;
-                draft.awaiting_save = Some(SavedTarget::SelectBuiltIn {
-                    key: option.key.clone(),
-                    name: option.name.clone(),
-                    dark: option.dark,
-                    colors: Box::new(option.colors.clone()),
-                });
-                wake_all(prefs);
-            }
-            return;
-        }
         draft.editing_key = option.key.clone();
         draft.source_name = option.name.clone();
         draft.dark = option.dark;
@@ -998,15 +956,11 @@ impl Controls {
                     }
                     match &target {
                         PendingDiscard::Mode(mode) => {
-                            if !prefs.mode_ready() || prefs.mode_display() == *mode {
-                                return;
-                            }
-                            prefs.set_mode(mode);
-                            if prefs.mode_saving() {
+                            if prefs.set_mode_confirmed(mode) {
                                 let mut draft = controls.draft.borrow_mut();
                                 draft.binding_epoch = prefs.binding_epoch();
                                 draft.local_error = false;
-                                draft.awaiting_save = Some(SavedTarget::Mode(mode));
+                                draft.awaiting_save = Some(SavedTarget::Mode);
                                 wake_all(&prefs);
                             }
                         }

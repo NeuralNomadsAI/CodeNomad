@@ -139,6 +139,9 @@ pub(super) enum PaletteOp {
     DeletePreset {
         preset_id: String,
     },
+    SetMode {
+        mode: &'static str,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -157,7 +160,7 @@ impl PaletteOp {
             | Self::ResetOverride { dark, .. }
             | Self::SaveCustom { dark, .. }
             | Self::SavePreset { dark, .. } => Some(*dark),
-            Self::DeletePreset { .. } => None,
+            Self::DeletePreset { .. } | Self::SetMode { .. } => None,
         }
     }
 }
@@ -206,6 +209,10 @@ impl PaletteMutation {
     }
 
     pub(super) fn put(&self, patch: &mut Value, snapshot: &Value) {
+        if let PaletteOp::SetMode { mode } = &self.op {
+            patch["appearancePreferences"]["mode"] = json!(mode);
+            return;
+        }
         let legacy = legacy_scheme(snapshot, &self.legacy_config);
         if !is_valid_mode(&snapshot["appearancePreferences"]["mode"])
             && !is_valid_mode(&patch["appearancePreferences"]["mode"])
@@ -407,6 +414,7 @@ impl PaletteMutation {
                     patch["activeColorSchemePresetId"] = Value::Null;
                 }
             }
+            PaletteOp::SetMode { .. } => {}
         }
     }
 
@@ -507,6 +515,7 @@ impl PaletteMutation {
                     snapshot["activeColorSchemePresetId"].as_str() != Some(preset_id.as_str());
                 deleted && light_ok && dark_ok && active_ok
             }
+            PaletteOp::SetMode { mode } => appearance["mode"] == *mode,
         }
     }
 }

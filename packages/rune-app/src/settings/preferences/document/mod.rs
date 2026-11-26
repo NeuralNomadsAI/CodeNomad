@@ -227,7 +227,15 @@ impl Document {
         &mut self,
         mutation: crate::settings::palettes::PaletteMutation,
     ) {
-        if let Some(dark) = mutation.target_dark() {
+        if matches!(
+            mutation.op,
+            crate::settings::palettes::PaletteOp::SetMode { .. }
+        ) {
+            self.write.requested.remove(&Choice::Mode);
+            self.write.pending.remove(&Choice::Mode);
+            self.write.failed.remove(&Choice::Mode);
+            self.write.retry.remove(&Choice::Mode);
+        } else if let Some(dark) = mutation.target_dark() {
             self.write.requested.remove(&Choice::Palette(dark));
             self.write.pending.remove(&Choice::Palette(dark));
             self.write.failed.remove(&Choice::Palette(dark));

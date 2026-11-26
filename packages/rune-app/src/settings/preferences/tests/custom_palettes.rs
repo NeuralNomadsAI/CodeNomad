@@ -557,7 +557,7 @@ fn legacy_inline_custom_scheme_is_materialized_and_edit_never_resurrects_deleted
             .find(|opt| opt.preset_id.as_deref() == Some("p1"))
             .unwrap()
             .clone();
-        assert!(prefs.select_palette_option(&preset_opt));
+        assert!(prefs.select_palette_option(&preset_opt, false));
         let pre_select_get = poll_next_request(&mut prefs, &listener).await;
         assert!(pre_select_get.first.starts_with("GET "));
         pre_select_get.reply(200, initial_state).await;
@@ -719,7 +719,7 @@ fn switching_from_slot_only_custom_builtin_migrates_override_and_deleted_preset_
             .into_iter()
             .find(|o| o.preset_id.as_deref() == Some("p1"))
             .unwrap();
-        assert!(prefs.select_palette_option(&p1));
+        assert!(prefs.select_palette_option(&p1, false));
         let pre_get = poll_next_request(&mut prefs, &listener).await;
         assert!(pre_get.first.starts_with("GET "));
         pre_get

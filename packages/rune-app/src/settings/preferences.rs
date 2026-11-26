@@ -1270,20 +1270,13 @@ impl Preferences {
         self.state.palette_mutation_failed()
     }
 
-    pub(super) fn mode_saving(&self) -> bool {
-        self.state.choice_pending(Choice::Mode)
-    }
-
-    pub(super) fn mode_save_failed(&self) -> bool {
-        self.state.choice_failed(Choice::Mode)
-    }
-
-    pub(super) fn builtin_palette_saving(&self, dark: bool) -> bool {
-        self.state.choice_pending(Choice::Palette(dark))
-    }
-
-    pub(super) fn builtin_palette_save_failed(&self, dark: bool) -> bool {
-        self.state.choice_failed(Choice::Palette(dark))
+    pub(super) fn set_mode_confirmed(&mut self, mode: &'static str) -> bool {
+        if !self.mode_ready() || self.backend.is_none() || self.mode_display() == mode {
+            return false;
+        }
+        let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SetMode { mode });
+        self.state.stage_palette_mutation(mutation);
+        true
     }
 
     pub(super) fn clear_palette_save_failed(&mut self) {
@@ -1304,6 +1297,7 @@ impl Preferences {
     pub(super) fn select_palette_option(
         &mut self,
         option: &super::palettes::PaletteOption,
+        force_mutation: bool,
     ) -> bool {
         if !self.palette_ready() || self.backend.is_none() {
             return false;
@@ -1333,6 +1327,15 @@ impl Preferences {
                 id,
                 dark: option.dark,
                 colors: Some(option.colors.clone()),
+            });
+            self.state.stage_palette_mutation(mutation);
+            return true;
+        }
+        if force_mutation {
+            let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SelectBuiltIn {
+                id,
+                dark: option.dark,
+                colors: None,
             });
             self.state.stage_palette_mutation(mutation);
             return true;
