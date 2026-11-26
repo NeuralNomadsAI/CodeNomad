@@ -263,30 +263,37 @@ fn select_mixed_tier(
         .collect();
     if remaining > 0 && !text_rows.is_empty() {
         const MAX_LEFTOVER_DP_CELLS: usize = 262_144;
-        if text_rows.len().saturating_mul(remaining + 1) <= MAX_LEFTOVER_DP_CELLS {
+        let stride = remaining + 1;
+        if text_rows.len().saturating_mul(stride) <= MAX_LEFTOVER_DP_CELLS {
             text_rows.sort_by_key(|&(prio, _, cost)| (Reverse(prio), Reverse(cost)));
-            let mut parent: Vec<Option<usize>> = vec![None; remaining + 1];
-            let mut reachable = vec![false; remaining + 1];
-            reachable[0] = true;
-            for (idx, &(_, _, cost)) in text_rows.iter().enumerate() {
+            // Priority ranks are 0..=6 and MAX_STRINGS < 2^17, so 18 bits per tier pack exact
+            // lexicographic retained text units per priority tier into one u128.
+            let mut best: Vec<Option<u128>> = vec![None; stride];
+            best[0] = Some(0);
+            let mut take = vec![false; text_rows.len() * stride];
+            for (idx, &(prio, _, cost)) in text_rows.iter().enumerate() {
+                let tier_bonus = (u128::try_from(cost).unwrap_or(0).min((1u128 << 18) - 1))
+                    << (usize::from(prio.min(6)) * 18);
+                let row_offset = idx * stride;
                 for w in (cost..=remaining).rev() {
-                    if !reachable[w] && reachable[w - cost] {
-                        reachable[w] = true;
-                        parent[w] = Some(idx);
+                    if let Some(prev) = best[w - cost] {
+                        let candidate = prev.saturating_add(tier_bonus);
+                        if best[w].is_none_or(|cur| candidate > cur) {
+                            best[w] = Some(candidate);
+                            take[row_offset + w] = true;
+                        }
                     }
                 }
             }
             let mut w = (1..=remaining)
                 .rev()
-                .find(|&weight| reachable[weight])
+                .find(|&weight| best[weight].is_some())
                 .unwrap_or(0);
-            while w > 0 {
-                let Some(idx) = parent[w] else {
-                    break;
-                };
-                let (_, row, cost) = text_rows[idx];
-                actions[row] = MixedAction::Keep;
-                w -= cost;
+            for (idx, &(_, row, cost)) in text_rows.iter().enumerate().rev() {
+                if w >= cost && take[idx * stride + w] {
+                    actions[row] = MixedAction::Keep;
+                    w -= cost;
+                }
             }
         } else {
             text_rows.sort_by_key(|&(prio, _, cost)| (Reverse(cost), Reverse(prio)));
@@ -610,5 +617,40 @@ mod tests {
         assert_eq!(retained_units, 10_099);
         assert_eq!(actions[0], MixedAction::Keep);
         assert_eq!(actions[3], MixedAction::Keep);
+
+        // R10 Moyen 3: At equal leftover max weight (99), a priority-1 text of 80 plus an
+        // ordinary text of 19 must beat ordinary 61 + 38.
+        let tie_items: Vec<TextItem> = (0..300)
+            .map(|i| {
+                let (priority, text_cost) = match i {
+                    0 => (1, 80),
+                    1 => (0, 61),
+                    2 => (0, 38),
+                    3 => (0, 19),
+                    _ => (0, 200),
+                };
+                TextItem {
+                    tab: i / 24,
+                    id: format!("ses_tie_{i:03}"),
+                    priority,
+                    text_only_units: text_cost,
+                    whole_units: 100 + text_cost,
+                    has_text: true,
+                    has_attachment: true,
+                }
+            })
+            .collect();
+        let sum_whole: usize = tie_items.iter().map(|it| it.whole_units).sum();
+        let eligible: Vec<usize> = (0..tie_items.len()).collect();
+        let actions =
+            select_mixed_tier(&tie_items, &eligible, sum_whole - 10_099, 0).expect("must fit");
+        assert_eq!(actions[0], MixedAction::Keep, "priority-1 80 must be kept");
+        assert_eq!(
+            actions[3],
+            MixedAction::Keep,
+            "ordinary 19 pairs with 80 to reach 99"
+        );
+        assert_eq!(actions[1], MixedAction::TextOnly);
+        assert_eq!(actions[2], MixedAction::TextOnly);
     }
 }

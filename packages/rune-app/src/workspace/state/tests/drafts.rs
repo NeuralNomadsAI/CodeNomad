@@ -2320,4 +2320,132 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         !recover_missing_session_draft(&mut r9_b2, "ses_r9_deriv"),
         "clearing C must carry derived_from = X and suppress D's untouched copy on 404"
     );
+
+    // 17. R10 Bloquant: Restore X in two tabs with attachment_drafts marker and NO attachment_parts.
+    // Edit X -> Y in Tab 0, close both tabs, reopen and hit 404 -> must recover ONLY Y and never
+    // resurrect X despite None vs Some(SavedParts::missing()) representation difference.
+    let mut r10_b = draft_state();
+    let mut a10 = closed("ses_r10_norm", "draft X");
+    a10.active_session_id = Some("ses_r10_norm".into());
+    a10.attachment_drafts.insert("ses_r10_norm".into());
+    let mut b10 = closed("ses_r10_norm", "draft X");
+    b10.occurrence = 1;
+    b10.active_session_id = None;
+    b10.attachment_drafts.insert("ses_r10_norm".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a10), Tab::Workspace(b10)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_r10_norm"));
+    r10_b.workspace = Some(ui);
+    r10_b.show_chat();
+    r10_b.draft = TextEdit::new("draft Y");
+    r10_b.composer.attachments_missing = true;
+    capture(&mut r10_b);
+    close(&mut r10_b, "tab-0", &mut tx);
+    if let Some(l) = r10_b.screen.launcher_mut() {
+        l.pending = false;
+    }
+    close(&mut r10_b, "tab-1", &mut tx);
+    if let Some(l) = r10_b.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r10_b,
+        &Project {
+            id: "proj-r10b".into(),
+            path: "/fixture".into(),
+        },
+    );
+    assert!(recover_missing_session_draft(&mut r10_b, "ses_r10_norm"));
+    let Tab::Workspace(after_r10) = &r10_b.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected reopened tab");
+    };
+    assert_eq!(
+        after_r10
+            .drafts
+            .get(NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("draft Y")
+    );
+    assert!(
+        !after_r10.drafts.values().any(|v| v == "draft X"),
+        "normalized provenance must suppress superseded X instead of resurrecting it"
+    );
+
+    // 18. R10 Moyen 1: Close two tabs with distinct drafts for the same session, then open C and D
+    // before binding. Binding in C delivers the first draft while rearming D's pending_drafts so
+    // binding in D delivers the second remaining closed draft.
+    let mut r10_m1 = draft_state();
+    let mut a10_1 = closed("ses_r10_order", "");
+    a10_1.drafts.clear();
+    a10_1.active_session_id = Some("ses_r10_order".into());
+    let mut b10_1 = closed("ses_r10_order", "");
+    b10_1.drafts.clear();
+    b10_1.occurrence = 1;
+    b10_1.active_session_id = Some("ses_r10_order".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(a10_1), Tab::Workspace(b10_1)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_r10_order"));
+    ui.entries[1].binding = Some(backend("ses_r10_order"));
+    r10_m1.workspace = Some(ui);
+    r10_m1.show_chat();
+    r10_m1.draft = TextEdit::new("distinct first");
+    capture(&mut r10_m1);
+    close(&mut r10_m1, "tab-0", &mut tx);
+    if let Some(l) = r10_m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    r10_m1.show_chat();
+    r10_m1.draft = TextEdit::new("distinct second");
+    capture(&mut r10_m1);
+    close(&mut r10_m1, "tab-1", &mut tx);
+    if let Some(l) = r10_m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    // Open C (tab-2) and D (tab-3) before binding the session in either tab.
+    opened(
+        &mut r10_m1,
+        &Project {
+            id: "proj-r10-c".into(),
+            path: "/fixture".into(),
+        },
+    );
+    new_tab(&mut r10_m1, &mut tx);
+    if let Some(l) = r10_m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r10_m1,
+        &Project {
+            id: "proj-r10-d".into(),
+            path: "/fixture".into(),
+        },
+    );
+    select(&mut r10_m1, "tab-2", &mut tx);
+    if let Some(l) = r10_m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    let first_delivered = bound(&mut r10_m1, &backend("ses_r10_order"));
+    assert_eq!(first_delivered, "distinct second");
+    select(&mut r10_m1, "tab-3", &mut tx);
+    if let Some(l) = r10_m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    let second_delivered = bound(&mut r10_m1, &backend("ses_r10_order"));
+    assert_eq!(second_delivered, "distinct first");
 }

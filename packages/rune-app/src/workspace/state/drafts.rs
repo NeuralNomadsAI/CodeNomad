@@ -19,23 +19,28 @@ pub(super) struct DraftCopy {
 }
 
 impl DraftCopy {
-    pub(super) fn from_workspace(saved: &crate::workspace::Workspace, key: &str) -> Option<Self> {
-        let text = saved
-            .drafts
-            .get(key)
-            .filter(|text| !text.is_empty())
-            .cloned();
-        let attachment_draft = saved.attachment_drafts.contains(key);
-        let attachment_parts = saved
-            .attachment_parts
-            .get(key)
-            .cloned()
-            .or_else(|| attachment_draft.then(SavedParts::missing));
+    pub(super) fn from_parts(
+        text: Option<String>,
+        attachment_draft: bool,
+        attachment_parts: Option<SavedParts>,
+    ) -> Option<Self> {
+        let text = text.filter(|text| !text.is_empty());
+        let attachment_draft = attachment_draft || attachment_parts.is_some();
+        let attachment_parts =
+            attachment_parts.or_else(|| attachment_draft.then(SavedParts::missing));
         (text.is_some() || attachment_draft || attachment_parts.is_some()).then_some(Self {
             text,
             attachment_draft,
             attachment_parts,
         })
+    }
+
+    pub(super) fn from_workspace(saved: &crate::workspace::Workspace, key: &str) -> Option<Self> {
+        Self::from_parts(
+            saved.drafts.get(key).cloned(),
+            saved.attachment_drafts.contains(key),
+            saved.attachment_parts.get(key).cloned(),
+        )
     }
 }
 
@@ -456,11 +461,15 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
     let mut delivered_copy = None;
     let mut delivered_origin = None;
     let mut delivered_closed_idx = None;
+    let mut retired_siblings = Vec::new();
     for (index, item) in ui.entries.iter_mut().enumerate() {
         if !matches!(&item.saved, Tab::Workspace(w) if same_project(&scope, w))
             || !item.pending_drafts.remove(id)
         {
             continue;
+        }
+        if index != ui.active {
+            retired_siblings.push(index);
         }
         let Tab::Workspace(saved) = &mut item.saved else {
             continue;
@@ -544,6 +553,15 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
             if let Some(derived) = ui.closed_derived_from.get_mut(idx) {
                 derived.remove(id);
             }
+        }
+    }
+    if !retired_siblings.is_empty()
+        && peek_closed_state_for_scope(ui, &project_scope, id, &clear_authorities)
+            .bundle
+            .is_some()
+    {
+        for idx in retired_siblings {
+            ui.entries[idx].pending_drafts.insert(id.into());
         }
     }
 }
@@ -701,11 +719,11 @@ impl ClosedBundle {
     }
 
     fn as_copy(&self) -> Option<DraftCopy> {
-        self.has_content().then(|| DraftCopy {
-            text: self.text.clone().filter(|t| !t.is_empty()),
-            attachment_draft: self.attachment_draft,
-            attachment_parts: self.attachment_parts.clone(),
-        })
+        DraftCopy::from_parts(
+            self.text.clone(),
+            self.attachment_draft,
+            self.attachment_parts.clone(),
+        )
     }
 }
 
@@ -954,6 +972,38 @@ fn occurrence_in_active_chat_on(
     }
 }
 
+fn reserve_recovery_keys_with(
+    ui: &Ui,
+    scope: &crate::workspace::Workspace,
+    count: usize,
+    mut next_uuid: impl FnMut() -> Option<String>,
+) -> Option<Vec<String>> {
+    let mut keys = Vec::with_capacity(count);
+    let mut no_session_free = !project_has_draft_content(ui, scope, NO_SESSION_DRAFT_ID);
+    for _ in 0..count {
+        if no_session_free {
+            keys.push(NO_SESSION_DRAFT_ID.into());
+            no_session_free = false;
+            continue;
+        }
+        let mut allocated = None;
+        for _ in 0..8 {
+            if let Some(uuid) = next_uuid() {
+                let candidate = format!("{RECOVERED_DRAFT_PREFIX}{uuid}");
+                if is_uuid_recovered_draft_id(&candidate)
+                    && !project_has_any_draft_key(ui, scope, &candidate)
+                    && !keys.contains(&candidate)
+                {
+                    allocated = Some(candidate);
+                    break;
+                }
+            }
+        }
+        keys.push(allocated?);
+    }
+    Some(keys)
+}
+
 fn recover_target_key(ui: &Ui, scope: &crate::workspace::Workspace) -> Option<String> {
     if project_has_draft_content(ui, scope, NO_SESSION_DRAFT_ID) {
         next_recovered_draft_id(ui, scope)
@@ -993,6 +1043,17 @@ pub(super) fn recover_missing_session_draft_in(
     origin_tab: Option<usize>,
     session_id: &str,
 ) -> bool {
+    recover_missing_session_draft_with_uuid(s, origin_tab, session_id, || {
+        codenomad_client::http::random_uuid_v4().ok()
+    })
+}
+
+fn recover_missing_session_draft_with_uuid(
+    s: &mut State,
+    origin_tab: Option<usize>,
+    session_id: &str,
+    mut next_uuid: impl FnMut() -> Option<String>,
+) -> bool {
     if session_id.is_empty() || is_local_draft_id(session_id) {
         return false;
     }
@@ -1026,49 +1087,54 @@ pub(super) fn recover_missing_session_draft_in(
             clear_authorities.push(ClearAuthority::Persisted);
         }
 
-        // Recover every distinct surviving closed-tab draft into the originating tab before purging.
-        let mut closed_handled = true;
-        for bundle in closed_bundles {
-            let Some(target) = recover_target_key(ui, &scope) else {
-                ui.entries[origin].pending_deleted.insert(session_id.into());
-                closed_handled = false;
-                break;
-            };
-            if let Some(entry) = ui.entries.get_mut(origin)
-                && let Tab::Workspace(saved) = &mut entry.saved
-            {
-                if let Some(text) = bundle.text
-                    && !text.is_empty()
+        // Reserve every recovery slot atomically before moving closed-tab drafts so a partial
+        // UUID allocation failure never strands remaining drafts or drops pending_deleted.
+        let closed_handled = if closed_bundles.is_empty() {
+            true
+        } else if let Some(targets) =
+            reserve_recovery_keys_with(ui, &scope, closed_bundles.len(), &mut next_uuid)
+        {
+            for (bundle, target) in closed_bundles.into_iter().zip(targets) {
+                if let Some(entry) = ui.entries.get_mut(origin)
+                    && let Tab::Workspace(saved) = &mut entry.saved
                 {
-                    saved.drafts.insert(target.clone(), text);
+                    if let Some(text) = bundle.text
+                        && !text.is_empty()
+                    {
+                        saved.drafts.insert(target.clone(), text);
+                    }
+                    if bundle.attachment_draft || bundle.attachment_parts.is_some() {
+                        saved.attachment_drafts.insert(target.clone());
+                    }
+                    if let Some(parts) = bundle.attachment_parts {
+                        saved.attachment_parts.insert(target.clone(), parts);
+                    }
+                    entry.cleared.remove(&target);
+                    entry.clear_authority.remove(&target);
+                    entry.pending_drafts.remove(&target);
+                    entry.restored_drafts.remove(&target);
+                    entry.derived_from.remove(&target);
+                    entry.superseded_on_delete.remove(&target);
+                    recovered = true;
+                    mutated = true;
                 }
-                if bundle.attachment_draft || bundle.attachment_parts.is_some() {
-                    saved.attachment_drafts.insert(target.clone());
+                if let Some(w) = ui.closed.get_mut(bundle.closed_idx) {
+                    w.drafts.remove(session_id);
+                    w.attachment_drafts.remove(session_id);
+                    w.attachment_parts.remove(session_id);
                 }
-                if let Some(parts) = bundle.attachment_parts {
-                    saved.attachment_parts.insert(target.clone(), parts);
+                if let Some(restored) = ui.closed_restored.get_mut(bundle.closed_idx) {
+                    restored.remove(session_id);
                 }
-                entry.cleared.remove(&target);
-                entry.clear_authority.remove(&target);
-                entry.pending_drafts.remove(&target);
-                entry.restored_drafts.remove(&target);
-                entry.derived_from.remove(&target);
-                entry.superseded_on_delete.remove(&target);
-                recovered = true;
-                mutated = true;
+                if let Some(derived) = ui.closed_derived_from.get_mut(bundle.closed_idx) {
+                    derived.remove(session_id);
+                }
             }
-            if let Some(w) = ui.closed.get_mut(bundle.closed_idx) {
-                w.drafts.remove(session_id);
-                w.attachment_drafts.remove(session_id);
-                w.attachment_parts.remove(session_id);
-            }
-            if let Some(restored) = ui.closed_restored.get_mut(bundle.closed_idx) {
-                restored.remove(session_id);
-            }
-            if let Some(derived) = ui.closed_derived_from.get_mut(bundle.closed_idx) {
-                derived.remove(session_id);
-            }
-        }
+            true
+        } else {
+            ui.entries[origin].pending_deleted.insert(session_id.into());
+            false
+        };
 
         if closed_handled {
             mutated |= purge_closed_session(ui, &scope, session_id);
@@ -1107,6 +1173,9 @@ pub(super) fn recover_missing_session_draft_in(
                 }
                 continue;
             }
+            if !closed_handled && ui.entries[idx].pending_drafts.contains(session_id) {
+                continue;
+            }
             let restored = ui.entries[idx].restored_drafts.get(session_id);
             let superseded_restored = (ui.entries[idx].superseded_on_delete.contains(session_id)
                 && restored.is_some())
@@ -1129,7 +1198,9 @@ pub(super) fn recover_missing_session_draft_in(
             } else {
                 None
             };
-            ui.entries[idx].pending_deleted.remove(session_id);
+            if closed_handled || idx != origin {
+                ui.entries[idx].pending_deleted.remove(session_id);
+            }
             let entry = &mut ui.entries[idx];
             let Tab::Workspace(mut saved) = std::mem::replace(&mut entry.saved, Tab::Blank) else {
                 continue;
@@ -1388,5 +1459,71 @@ mod tests {
         b.session = "kept-edited".into();
         assert_eq!(bound(&mut s, &b), "edited user draft");
         assert!(s.composer.command_unconfirmed.is_some());
+    }
+
+    #[test]
+    fn failed_closed_recovery_reservation_is_atomic_and_preserves_pending_deleted() {
+        let mut s = crate::init();
+        s.show_launcher();
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        let make_ws = |occ: u64, text: Option<&str>| crate::workspace::Workspace {
+            backend_id: None,
+            server_id: None,
+            folder: "/repo".into(),
+            occurrence: occ,
+            workspace_id: Some("ws".into()),
+            active_session_id: None,
+            drafts: text
+                .map(|t| [("ses_fail_res".to_string(), t.to_string())].into())
+                .unwrap_or_default(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        };
+        ui.entries[0].saved = Tab::Workspace(make_ws(0, None));
+        ui.closed = vec![
+            make_ws(1, Some("closed first")),
+            make_ws(2, Some("closed second")),
+        ];
+        ui.closed_restored = vec![Default::default(), Default::default()];
+        ui.closed_derived_from = vec![Default::default(), Default::default()];
+        s.workspace = Some(ui);
+
+        // Failing UUID allocation on the second slot must move neither closed draft AND preserve
+        // pending_deleted on the origin tab even though origin holds no draft under ses_fail_res.
+        assert!(!recover_missing_session_draft_with_uuid(
+            &mut s,
+            Some(0),
+            "ses_fail_res",
+            || None,
+        ));
+        let ui = s.workspace.as_ref().unwrap();
+        assert!(ui.entries[0].pending_deleted.contains("ses_fail_res"));
+        assert_eq!(
+            ui.closed[0].drafts.get("ses_fail_res").map(String::as_str),
+            Some("closed first")
+        );
+        assert_eq!(
+            ui.closed[1].drafts.get("ses_fail_res").map(String::as_str),
+            Some("closed second")
+        );
+        let Tab::Workspace(origin) = &ui.entries[0].saved else {
+            panic!("expected workspace");
+        };
+        assert!(origin.drafts.is_empty());
+
+        // Subsequent retry with working UUID recovers BOTH closed drafts and clears pending_deleted.
+        assert!(poll_pending_deleted(&mut s));
+        let ui = s.workspace.as_ref().unwrap();
+        assert!(!ui.entries[0].pending_deleted.contains("ses_fail_res"));
+        let Tab::Workspace(origin) = &ui.entries[0].saved else {
+            panic!("expected workspace");
+        };
+        assert_eq!(
+            origin.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+            Some("closed second")
+        );
+        assert!(origin.drafts.values().any(|v| v == "closed first"));
     }
 }
