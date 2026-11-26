@@ -551,7 +551,7 @@ export function MissionEditor(props: {
       <input type="checkbox" checked={startOnCreation()} disabled={structuralLocked()}
         onChange={event => setStartOnCreation(event.currentTarget.checked)} />{t("missions.scheduling.startOnCreation")}
     </label></Show>
-    <Show when={mode() === "once" && (kind === "create" || !structuralLocked())}><label class="mission-create-autostart">
+    <Show when={mode() === "once" && (kind === "create" || !structuralLocked())}><label class="mission-create-coordinator-goal">
       <input type="checkbox" checked={coordinatorGoal()} disabled={structuralLocked()}
         onChange={event => setCoordinatorGoal(event.currentTarget.checked)} />
       <span>{t("missions.scheduling.coordinatorGoal")}<SettingsInfoTip text={t("missions.scheduling.coordinatorGoalHint")} /></span>
