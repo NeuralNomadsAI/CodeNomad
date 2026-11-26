@@ -6,7 +6,7 @@ const file='wrap.txt', key='opencode-session-right-panel-files-word-wrap-v1'
 const windowKey='codenomad.rune.alpha.client-state.v1'
 const wrapKey=on=>`instanceShell.filesShell.${on?'disable':'enable'}WordWrap`
 
-export async function fileWrapBrowser({values,m,out,browser,storageState,fulfillWorkspaceCreation,writeOutput,url,root}) {
+export async function fileWrapBrowser({values,m,out,browser,storageState,fulfillWorkspaceCreation,writeOutput,recordCleanupError,url,root}) {
   assert(browser&&typeof fulfillWorkspaceCreation==='function'&&typeof writeOutput==='function','Attested browser, fulfillWorkspaceCreation, and writeOutput required for fileWrapBrowser')
   const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected'))
   const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
@@ -135,13 +135,13 @@ export async function fileWrapBrowser({values,m,out,browser,storageState,fulfill
   }finally{
     let cleanupError=null
     try{await context?.close()}catch(closeError){
-      console.error(`Failed to close file-wrap context: ${closeError.message}`)
+      recordCleanupError?.('file-wrap context.close',closeError)
       ;(proof.cleanupErrors??=[]).push(`context.close: ${closeError.message}`)
       if(proof.result==='pass'){proof.result='fail';proof.failure=closeError.message}
       cleanupError??=closeError
     }
     try{await writeOutput('file-wrap-proof.json',JSON.stringify(proof,null,2))}catch(writeError){
-      console.error(`Failed to write file-wrap proof: ${writeError.message}`)
+      recordCleanupError?.('file-wrap proof write',writeError)
       cleanupError??=writeError
     }
     if(!primaryError&&cleanupError)throw cleanupError

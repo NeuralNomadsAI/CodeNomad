@@ -1,7 +1,7 @@
 // Real product DOM bridge + sessionStorage, on a runner-owned loopback fixture only.
 import assert from 'node:assert/strict'
 import {constants as fsConstants} from 'node:fs'
-import {mkdir,open,readFile,realpath,unlink,writeFile} from 'node:fs/promises'
+import {lstat,open,readFile,realpath} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
@@ -29,27 +29,51 @@ const {profile,storage,inside}=await privateWebFixture({root,project:values.proj
 await verifyLoopbackListenerOwner(Number(url.port),targetPid)
 const targetStartId=(await verifyPrivateFixtureServer({targetPid,launcherPid,profile,root})).targetStartId
 url.search='?locale=fr'
+const sizes=values['keyboard-viewport']
+  ? [[320,720],[360,760],[390,844]].flatMap(([shortSide,longSide])=>[false,true].map(landscape=>({
+      name:`keyboard-${shortSide}-${landscape?'landscape':'portrait'}`,width:landscape?longSide:shortSide,
+      height:landscape?shortSide:longSide,colorScheme:'light',touch:true,
+    })))
+  : [{name:'desktop-light',width:values.outline?1400:1100,height:900,colorScheme:'light',touch:false},{name:'phone-dark',width:390,height:844,colorScheme:'dark',touch:true}]
+const specNames=new Set(sizes.map(spec=>spec.name))
+const DELEGATED_OUTPUT_NAME=/^(?:mobile-drawers-proof\.json|mobile-drawers-fail-\d+\.aria\.yml|file-wrap-proof\.json|file-wrap-tab-\d+\.aria\.yml|pending-open-proof\.json|pending-(?:post|ack|quota|corrupt)-(?:stage\.json|failure\.yml|errors\.log))$/
+const SPEC_OUTPUT_SUFFIX=/^-(?:(?:before-reload|restored|quota-refused|retry-restored|failure)\.(?:aria\.yml|png)|snapshot\.json|proof\.json)$/
+const isAllowedOutputName=name=>{
+  if(typeof name!=='string')return false
+  if(DELEGATED_OUTPUT_NAME.test(name))return true
+  for(const specName of specNames){
+    if(name.startsWith(specName)&&SPEC_OUTPUT_SUFFIX.test(name.slice(specName.length)))return true
+  }
+  return false
+}
 const outReal=await createPrivateOutputDir(out,profile)
-const anchorPath=path.join(outReal,'.output-anchor')
-let outputAnchor=null
+let summaryHandle=null
+let outIdentity=null
 let outputAuthorized=false
-const ALLOWED_OUTPUT_NAME=/^(?:summary\.json|mobile-drawers-proof\.json|mobile-drawers-fail-\d+\.aria\.yml|file-wrap-proof\.json|file-wrap-tab-\d+\.aria\.yml|pending-open-proof\.json|pending-(?:post|ack|quota|corrupt)-(?:stage\.json|failure\.yml|errors\.log)|(?:desktop-light|phone-dark|keyboard-phone-dark)-(?:[a-z0-9-]+\.(?:aria\.yml|png)|snapshot\.json|proof\.json))$/
+const inflightOutputs=new Set()
 const verifyOutputTarget=async name=>{
-  assert(outputAnchor&&outputAuthorized,'Output directory anchor is not active')
-  assert(typeof name==='string'&&ALLOWED_OUTPUT_NAME.test(name),`Invalid output artifact name: ${name}`)
+  assert(summaryHandle&&outputAuthorized&&outIdentity,'Output directory anchor is not active')
+  assert(isAllowedOutputName(name),`Invalid output artifact name: ${name}`)
+  const curStat=await lstat(outReal,{bigint:true})
+  assert(!curStat.isSymbolicLink()&&curStat.isDirectory()&&curStat.dev===outIdentity.dev&&curStat.ino===outIdentity.ino,`Output directory identity changed: ${outReal}`)
   const currentOut=await realpath(outReal)
   assert(currentOut===outReal&&inside(profile,currentOut),`Output directory shifted outside fixture profile: ${currentOut}`)
   return path.join(outReal,name)
 }
-const writeOutput=async(name,content,{overwrite=false}={})=>{
-  const target=await verifyOutputTarget(name)
-  if(overwrite)await writePrivateFile(target,content,profile)
-  else await writeExclusivePrivateFile(target,content,profile)
+const trackOutput=task=>{
+  inflightOutputs.add(task)
+  task.finally(()=>inflightOutputs.delete(task))
+  return task
 }
-const appendOutput=async(name,content)=>{
+const writeOutput=(name,content,{overwrite=false}={})=>trackOutput((async()=>{
   const target=await verifyOutputTarget(name)
-  await appendPrivateFile(target,content,profile)
-}
+  if(overwrite)await writePrivateFile(target,content,profile,outIdentity)
+  else await writeExclusivePrivateFile(target,content,profile,outIdentity)
+})())
+const appendOutput=(name,content)=>trackOutput((async()=>{
+  const target=await verifyOutputTarget(name)
+  await appendPrivateFile(target,content,profile,outIdentity)
+})())
 const rawStorage=JSON.parse(await readFile(storage,'utf8'))
 const realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
 const realCookieMap=parseCookiePairs(realCookieHeader)
@@ -58,7 +82,14 @@ const browserStorageState=url.protocol==='http:'
   :rawStorage
 const m=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/catalogues/fr.json'),'utf8'))
 assert(!values['keyboard-viewport']||(!values['pending-open']&&!values['file-wrap']&&!values['mobile-drawers']&&!values.outline),'Keyboard viewport mode cannot combine with --pending-open, --file-wrap, --mobile-drawers or --outline')
-let attestedFetch,ownedBrowser,primaryError=null
+let attestedFetch,ownedBrowser,primaryError=null,cleanupError=null
+const cleanupErrors=[]
+const recordCleanupError=(label,error)=>{
+  const message=error?.message??String(error)
+  console.error(`Failed during ${label}: ${message}`)
+  cleanupErrors.push(`${label}: ${message}`)
+  cleanupError??=error
+}
 const results=[]
 const runMode=values['pending-open']?'pending-open':values['file-wrap']?'file-wrap':values['mobile-drawers']?'mobile-drawers':'restore'
 const attestedFulfillWorkspaceCreation=async(route,policy)=>{
@@ -85,11 +116,20 @@ const attestedFulfillWorkspaceCreation=async(route,policy)=>{
   return {status:res.status,admitted:res.ok}
 }
 try {
-  // Hold an open handle inside outReal so NTFS cannot rename or replace outReal or any ancestor during writes.
-  outputAnchor=await open(anchorPath,fsConstants.O_WRONLY|fsConstants.O_CREAT|fsConstants.O_EXCL|(fsConstants.O_NOFOLLOW??0),0o600)
-  const anchorStat=await outputAnchor.stat()
+  // Open summary.json exclusively at startup: pins outReal and its ancestry on NTFS and binds summary writes directly to this fd.
+  outIdentity=await lstat(outReal,{bigint:true})
+  assert(!outIdentity.isSymbolicLink()&&outIdentity.isDirectory(),`Output path must be a non-symlink directory: ${outReal}`)
+  summaryHandle=await open(path.join(outReal,'summary.json'),fsConstants.O_WRONLY|fsConstants.O_CREAT|fsConstants.O_EXCL|(fsConstants.O_NOFOLLOW??0),0o600)
+  const summaryStat=await summaryHandle.stat()
+  const verifiedOut=await lstat(outReal,{bigint:true})
   const anchoredOut=await realpath(outReal)
-  assert(anchorStat.isFile()&&anchorStat.nlink===1&&anchoredOut===outReal&&inside(profile,anchoredOut),`Output anchor failed containment verification: ${anchoredOut}`)
+  assert(
+    summaryStat.isFile()&&summaryStat.nlink===1
+      &&!verifiedOut.isSymbolicLink()&&verifiedOut.isDirectory()
+      &&verifiedOut.dev===outIdentity.dev&&verifiedOut.ino===outIdentity.ino
+      &&anchoredOut===outReal&&inside(profile,anchoredOut),
+    `Output summary anchor failed containment verification: ${anchoredOut}`,
+  )
   outputAuthorized=true
   const chromiumEnv=await privateChromiumEnv(profile)
   attestedFetch=createAttestedFetch(url.origin,Number(url.port),targetPid,{allowSelfSigned:url.protocol==='https:',targetStartId})
@@ -98,9 +138,9 @@ try {
     ...(url.protocol==='http:'?{injectCookie:realCookieHeader}:{}),
   })
   const browser=ownedBrowser.browser
-  if(values['pending-open']){await pendingBrowser({values,m,out,profile,browser,ownedBrowser,storageState:browserStorageState,realCookieHeader,attestedFetch,writeOutput,appendOutput})}
-  else if(values['file-wrap']){await fileWrapBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,writeOutput,url,root})}
-  else if(values['mobile-drawers']){await mobileDrawersBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,writeOutput,url,root})}
+  if(values['pending-open']){await pendingBrowser({values,m,out,profile,browser,ownedBrowser,storageState:browserStorageState,realCookieHeader,attestedFetch,writeOutput,appendOutput,recordCleanupError})}
+  else if(values['file-wrap']){await fileWrapBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,writeOutput,recordCleanupError,url,root})}
+  else if(values['mobile-drawers']){await mobileDrawersBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,writeOutput,recordCleanupError,url,root})}
   else {
 const KEY='codenomad.rune.alpha.client-state.v1',RELEASED='codenomad.rune.alpha.records-released'
 const PROOF='codenomad.fixture.rune.web-restore-proof.v1'
@@ -117,12 +157,6 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
   process.once('message',onReply);process.once('disconnect',onExit)
   process.send('reset-keyboard')
 })
-  const sizes=values['keyboard-viewport']
-    ? [[320,720],[360,760],[390,844]].flatMap(([shortSide,longSide])=>[false,true].map(landscape=>({
-        name:`keyboard-${shortSide}-${landscape?'landscape':'portrait'}`,width:landscape?longSide:shortSide,
-        height:landscape?shortSide:longSide,colorScheme:'light',touch:true,
-      })))
-    : [{name:'desktop-light',width:values.outline?1400:1100,height:900,colorScheme:'light',touch:false},{name:'phone-dark',width:390,height:844,colorScheme:'dark',touch:true}]
   for(const spec of sizes) {
     if(values.outline&&spec.touch)continue
     if(values['keyboard-viewport'])await resetKeyboard()
@@ -392,6 +426,7 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
           holdNext:gate=>{outlineGate=gate}})
         assert.deepEqual(record.errors,[])
         assert.deepEqual(record.forbidden,[])
+        record.result='pass'
         continue
       }
       await press(button(m['instanceTabs.new.ariaLabel']))
@@ -480,13 +515,13 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
       let specCleanupError=null
       try{await localProof(await page.evaluate(()=>globalThis.__runeRestoreProofDocumentId))}catch{}
       try{await context.close()}catch(closeError){
-        console.error(`Failed to close restore context: ${closeError.message}`)
+        recordCleanupError(`${spec.name} context.close`,closeError)
         ;(record.cleanupErrors??=[]).push(`context.close: ${closeError.message}`)
         if(record.result==='pass'){record.result='fail';record.failure=closeError.message}
         specCleanupError??=closeError
       }
       try{await writeOutput(`${spec.name}-proof.json`,JSON.stringify(record,null,2))}catch(writeError){
-        console.error(`Failed to write restore proof: ${writeError.message}`)
+        recordCleanupError(`${spec.name} proof write`,writeError)
         ;(record.cleanupErrors??=[]).push(`proof write: ${writeError.message}`)
         if(record.result==='pass'){record.result='fail';record.failure=writeError.message}
         specCleanupError??=writeError
@@ -499,26 +534,26 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
   primaryError=error
   throw error
 }finally{
-  let cleanupError=null
-  const cleanupErrors=[]
   if(attestedFetch){
     try{await attestedFetch.close()}catch(closeError){
-      console.error(`Failed to close attested fetch: ${closeError.message}`)
-      cleanupErrors.push(`attestedFetch.close: ${closeError.message}`)
-      cleanupError??=closeError
+      recordCleanupError('attestedFetch.close',closeError)
     }
   }
   if(ownedBrowser){
     try{await ownedBrowser.close()}catch(closeError){
-      console.error(`Failed to close browser: ${closeError.message}`)
-      cleanupErrors.push(`ownedBrowser.close: ${closeError.message}`)
-      cleanupError??=closeError
+      recordCleanupError('ownedBrowser.close',closeError)
     }
   }
-  if(outputAuthorized){
+  while(inflightOutputs.size){
+    await Promise.allSettled([...inflightOutputs])
+  }
+  if(summaryHandle){
+    const handle=summaryHandle
+    summaryHandle=null
+    outputAuthorized=false
     try{
-      const summaryResult=primaryError||cleanupError||results.some(r=>r.result!=='pass')?'fail':'pass'
-      await writeOutput('summary.json',JSON.stringify({
+      const summaryResult=primaryError||cleanupError||cleanupErrors.length||results.some(r=>r.result!=='pass')?'fail':'pass'
+      const body=JSON.stringify({
         runner:'web-restore',
         mode:runMode,
         result:summaryResult,
@@ -527,27 +562,14 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
         ...(cleanupErrors.length?{cleanupErrors}:{}),
         contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure,...(r.cleanupErrors?.length?{cleanupErrors:r.cleanupErrors}:{})})),
         scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions',
-      },null,2))
+      },null,2)
+      await handle.truncate(0)
+      await handle.writeFile(body)
     }catch(writeError){
-      console.error(`Failed to write web-restore summary: ${writeError.message}`)
-      cleanupErrors.push(`summary write: ${writeError.message}`)
-      cleanupError??=writeError
-    }
-  }
-  if(outputAnchor){
-    const handle=outputAnchor
-    outputAnchor=null
-    outputAuthorized=false
-    try{await handle.close()}catch(closeError){
-      console.error(`Failed to close output anchor: ${closeError.message}`)
-      cleanupErrors.push(`output-anchor close: ${closeError.message}`)
-      cleanupError??=closeError
-    }
-    try{await unlink(anchorPath)}catch(unlinkError){
-      if(unlinkError?.code!=='ENOENT'){
-        console.error(`Failed to remove output anchor: ${unlinkError.message}`)
-        cleanupErrors.push(`output-anchor unlink: ${unlinkError.message}`)
-        cleanupError??=unlinkError
+      recordCleanupError('summary write',writeError)
+    }finally{
+      try{await handle.close()}catch(closeError){
+        recordCleanupError('summary close',closeError)
       }
     }
   }

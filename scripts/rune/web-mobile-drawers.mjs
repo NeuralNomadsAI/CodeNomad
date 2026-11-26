@@ -9,7 +9,7 @@ function samePath(a, b) {
     : a === b
 }
 
-export async function mobileDrawersBrowser({values, m, out, browser, storageState, fulfillWorkspaceCreation, writeOutput, url, root}) {
+export async function mobileDrawersBrowser({values, m, out, browser, storageState, fulfillWorkspaceCreation, writeOutput, recordCleanupError, url, root}) {
   assert(
     browser && typeof fulfillWorkspaceCreation === 'function' && typeof writeOutput === 'function',
     'Attested browser, fulfillWorkspaceCreation, and writeOutput required for mobileDrawersBrowser',
@@ -423,7 +423,8 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
       const settled = await Promise.allSettled([...pendingContexts])
       for (const outcome of settled) {
         if (outcome.status === 'rejected') {
-          console.error(`Failed to settle pending mobile-drawers context: ${outcome.reason?.message ?? outcome.reason}`)
+          recordCleanupError?.('mobile-drawers pending context', outcome.reason)
+          ;(proof.cleanupErrors ??= []).push(`pending context: ${outcome.reason?.message ?? outcome.reason}`)
           closeError ??= outcome.reason
         }
       }
@@ -432,7 +433,8 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
     const closed = await Promise.allSettled(toClose.map(ctx => ctx.close()))
     for (const outcome of closed) {
       if (outcome.status === 'rejected') {
-        console.error(`Failed to close mobile-drawers context: ${outcome.reason?.message ?? outcome.reason}`)
+        recordCleanupError?.('mobile-drawers context.close', outcome.reason)
+        ;(proof.cleanupErrors ??= []).push(`context.close: ${outcome.reason?.message ?? outcome.reason}`)
         closeError ??= outcome.reason
       }
     }
@@ -470,7 +472,7 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
     try {
       await writeOutput('mobile-drawers-proof.json', JSON.stringify(proof, null, 2))
     } catch (writeError) {
-      console.error(`Failed to write mobile-drawers proof: ${writeError.message}`)
+      recordCleanupError?.('mobile-drawers proof write', writeError)
       cleanupError ??= writeError
     }
     if (!primaryError && cleanupError) throw cleanupError

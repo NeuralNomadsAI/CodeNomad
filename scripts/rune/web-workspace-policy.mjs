@@ -56,11 +56,16 @@ export async function createPrivateOutputDir(out,allowedRoot){
   return outReal
 }
 
-async function openVerifiedPrivateFile(filePath,allowedRoot,extraFlags=0){
+async function openVerifiedPrivateFile(filePath,allowedRoot,extraFlags=0,expectedDirIdentity=null){
   const rootReal=await realpath(allowedRoot)
   const resolved=path.resolve(filePath)
-  const dirReal=await realpath(path.dirname(resolved))
+  const parentPath=path.dirname(resolved)
+  const dirReal=await realpath(parentPath)
   assert(dirReal===rootReal||inside(rootReal,dirReal),`Output directory escapes allowed fixture root: ${dirReal}`)
+  if(expectedDirIdentity){
+    const dirStat=await lstat(parentPath,{bigint:true})
+    assert(!dirStat.isSymbolicLink()&&dirStat.isDirectory()&&dirStat.dev===expectedDirIdentity.dev&&dirStat.ino===expectedDirIdentity.ino,`Output directory identity changed before open: ${parentPath}`)
+  }
   const existing=await lstat(resolved).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
   assert(!existing||(!existing.isSymbolicLink()&&existing.isFile()&&existing.nlink===1),`Refusing to overwrite symlink, hardlink, or non-file output: ${resolved}`)
   const flags=fsConstants.O_WRONLY|fsConstants.O_CREAT|extraFlags|(fsConstants.O_NOFOLLOW??0)
@@ -68,8 +73,12 @@ async function openVerifiedPrivateFile(filePath,allowedRoot,extraFlags=0){
   try{
     const fdStat=await handle.stat()
     assert(fdStat.isFile()&&fdStat.nlink===1,`Opened output file failed link/type verification: ${resolved}`)
-    const recheckDir=await realpath(path.dirname(resolved))
+    const recheckDir=await realpath(parentPath)
     assert(recheckDir===dirReal&&(recheckDir===rootReal||inside(rootReal,recheckDir)),`Output parent shifted during open: ${resolved}`)
+    if(expectedDirIdentity){
+      const afterDirStat=await lstat(parentPath,{bigint:true})
+      assert(!afterDirStat.isSymbolicLink()&&afterDirStat.isDirectory()&&afterDirStat.dev===expectedDirIdentity.dev&&afterDirStat.ino===expectedDirIdentity.ino,`Output directory identity shifted during open: ${parentPath}`)
+    }
     return handle
   }catch(error){
     await handle.close().catch(()=>{})
@@ -77,23 +86,23 @@ async function openVerifiedPrivateFile(filePath,allowedRoot,extraFlags=0){
   }
 }
 
-export async function writePrivateFile(filePath,content,allowedRoot){
-  const handle=await openVerifiedPrivateFile(filePath,allowedRoot)
+export async function writePrivateFile(filePath,content,allowedRoot,expectedDirIdentity=null){
+  const handle=await openVerifiedPrivateFile(filePath,allowedRoot,0,expectedDirIdentity)
   try{
     await handle.truncate(0)
     await handle.writeFile(content)
   }finally{await handle.close()}
 }
 
-export async function writeExclusivePrivateFile(filePath,content,allowedRoot){
-  const handle=await openVerifiedPrivateFile(filePath,allowedRoot,fsConstants.O_EXCL)
+export async function writeExclusivePrivateFile(filePath,content,allowedRoot,expectedDirIdentity=null){
+  const handle=await openVerifiedPrivateFile(filePath,allowedRoot,fsConstants.O_EXCL,expectedDirIdentity)
   try{
     await handle.writeFile(content)
   }finally{await handle.close()}
 }
 
-export async function appendPrivateFile(filePath,content,allowedRoot){
-  const handle=await openVerifiedPrivateFile(filePath,allowedRoot,fsConstants.O_APPEND)
+export async function appendPrivateFile(filePath,content,allowedRoot,expectedDirIdentity=null){
+  const handle=await openVerifiedPrivateFile(filePath,allowedRoot,fsConstants.O_APPEND,expectedDirIdentity)
   try{
     await handle.writeFile(content)
   }finally{await handle.close()}
