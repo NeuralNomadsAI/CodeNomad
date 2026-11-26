@@ -720,6 +720,16 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     crate::workspace::restore_files_mode(s);
                 }
             }
+            let restored_draft_ids = crate::workspace::restored_draft_session_ids(s);
+            if !restored_draft_ids.is_empty()
+                && let Some(l) = s.screen.launcher_mut()
+            {
+                l.visits.seed_draft_checks(restored_draft_ids);
+                l.visits.observe_listing(&l.listed_sessions);
+                if !auth_required && !stopped_in_flight && l.next.is_none() {
+                    l.check_omitted_visits();
+                }
+            }
             if stopped_in_flight {
                 crate::workspace::deliver_detached_events(
                     s,

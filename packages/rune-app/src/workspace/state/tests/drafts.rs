@@ -3127,11 +3127,43 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
     };
     assert_eq!(a15_after.active_session_id.as_deref(), Some("ses_r15_atom"));
     assert_eq!(
+        a15_after.drafts.get("ses_r15_atom").map(String::as_str),
+        Some("from A")
+    );
+    let Tab::Workspace(b15_after) = &ui_after_b2.entries[1].saved else {
+        panic!("expected workspace B");
+    };
+    assert_eq!(
+        b15_after.drafts.get("ses_r15_atom").map(String::as_str),
+        Some("from B"),
+        "failed reservation must also leave sibling B untouched"
+    );
+    assert_eq!(
         ui_after_b2.entries[0]
             .binding
             .as_ref()
             .map(|b| b.session.as_str()),
         Some("ses_r15_atom")
+    );
+    // R16 Bloquant 4: while A stays open in active chat after a deferred close, background
+    // poll_pending_deleted must NOT detach A's active_session_id / binding.
+    let _ = crate::workspace::state::drafts::poll_pending_deleted(&mut r15_b2);
+    let ui_after_poll = r15_b2.workspace.as_ref().unwrap();
+    let Tab::Workspace(a15_polled) = &ui_after_poll.entries[0].saved else {
+        panic!("expected workspace A");
+    };
+    assert_eq!(
+        a15_polled.active_session_id.as_deref(),
+        Some("ses_r15_atom"),
+        "background poll must not detach active_session_id on open active-chat tab"
+    );
+    assert_eq!(
+        ui_after_poll.entries[0]
+            .binding
+            .as_ref()
+            .map(|b| b.session.as_str()),
+        Some("ses_r15_atom"),
+        "background poll must not clear binding.session on open active-chat tab"
     );
     // Subsequent edits on A must still be captured while A stays open.
     r15_b2.draft = TextEdit::new("from A edited");
@@ -3144,10 +3176,11 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         Some("from A edited")
     );
 
-    // 28. R15 Bloquant 3: Tab A (index 0, launcher) defers close due to UUID failure alongside
-    // 2 closed drafts and sibling B (no projection). When UUIDs recover and poll_pending_deleted
-    // runs BEFORE the second close click, drafts must route onto surviving B (not A) so the
-    // second close click leaves them persisted on B across restart.
+    // 28. R15 Bloquant 3 + R16 Bloquant 1 + Mineur 1: Tab A (index 0, launcher) defers close due
+    // to UUID failure alongside 2 closed drafts and sibling B (no projection).
+    // (a) Deferring close advances ui.revision so persistence saves the fallback projection.
+    // (b) When UUIDs recover and poll_pending_deleted runs BEFORE the second close click, drafts
+    // route onto surviving B (not A), and after the second close click only B (occurrence 1) remains.
     let mut r15_b3 = draft_state();
     let mut a15_3 = closed("ses_r15_poll", "");
     a15_3.drafts.clear();
@@ -3173,10 +3206,15 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
     ];
     ui.closed_restored = vec![Default::default(), Default::default()];
     ui.closed_derived_from = vec![Default::default(), Default::default()];
+    let rev_before_defer = ui.revision;
     r15_b3.workspace = Some(ui);
     r15_b3.show_launcher();
     crate::workspace::state::tabs::close_with_uuid(&mut r15_b3, "tab-0", &mut tx, || None);
     assert_eq!(r15_b3.workspace.as_ref().unwrap().entries.len(), 2);
+    assert!(
+        r15_b3.workspace.as_ref().unwrap().revision > rev_before_defer,
+        "R16 Bloquant 1: activating deferred snapshot projection must advance revision for persistence"
+    );
     // Poll runs before second close click: must deposit drafts onto B, not deferred-closing A.
     assert!(crate::workspace::state::drafts::poll_pending_deleted(
         &mut r15_b3
@@ -3186,9 +3224,18 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
     let bytes_b3 = crate::workspace::encode(&snap_b3).unwrap();
     let mut hydrated_b3 = Ui::new();
     hydrated_b3.hydrate(crate::workspace::decode(&bytes_b3).unwrap());
+    assert_eq!(
+        hydrated_b3.entries.len(),
+        1,
+        "A must be closed leaving only surviving sibling B"
+    );
     let Tab::Workspace(surviving_b3) = &hydrated_b3.entries[0].saved else {
         panic!("expected surviving workspace B");
     };
+    assert_eq!(
+        surviving_b3.occurrence, 1,
+        "surviving tab must be B (occurrence 1), not closed tab A"
+    );
     let mut texts_b3: Vec<&str> = surviving_b3
         .drafts
         .iter()
@@ -3239,5 +3286,189 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         r15_m3.workspace.as_ref().unwrap().entries.len(),
         1,
         "deferred deletion on unrelated project must not block closing tab-1"
+    );
+
+    // 30. R16 Bloquant 3: Fallback snapshot projection must skip a full 24-draft surviving tab
+    // when another sibling has room, and must never write into a cleared __no_session_draft__ slot.
+    let mut r16_b3 = draft_state();
+    let mut full_tab = closed("ses_r16_cap", "");
+    full_tab.drafts.clear();
+    full_tab.active_session_id = None;
+    for i in 0..crate::workspace::MAX_DRAFTS {
+        full_tab
+            .drafts
+            .insert(format!("ses_fill_{i:02}"), format!("fill {i}"));
+    }
+    let mut room_tab = closed("ses_r16_cap", "");
+    room_tab.drafts.clear();
+    room_tab.occurrence = 1;
+    room_tab.active_session_id = None;
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(full_tab.clone()), Tab::Workspace(room_tab)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.closed = vec![
+        closed("ses_r16_cap", "fallback 1"),
+        closed("ses_r16_cap", "fallback 2"),
+    ];
+    ui.closed_restored = vec![Default::default(), Default::default()];
+    ui.closed_derived_from = vec![Default::default(), Default::default()];
+    ui.closed_pending_deleted.push((
+        crate::workspace::state::ProjectScope::from_workspace(&full_tab),
+        "ses_r16_cap".into(),
+    ));
+    r16_b3.workspace = Some(ui);
+    let snap_r16_b3 = r16_b3.workspace.as_ref().unwrap().snapshot();
+    let bytes_r16_b3 = crate::workspace::encode(&snap_r16_b3).unwrap();
+    let decoded_r16_b3 = crate::workspace::decode(&bytes_r16_b3).unwrap();
+    let Tab::Workspace(dec_full) = &decoded_r16_b3.tabs[0] else {
+        panic!("expected full tab");
+    };
+    let Tab::Workspace(dec_room) = &decoded_r16_b3.tabs[1] else {
+        panic!("expected room tab");
+    };
+    assert_eq!(
+        dec_full.drafts.len(),
+        crate::workspace::MAX_DRAFTS,
+        "full 24-draft tab must not lose any draft to fallback projection"
+    );
+    assert_eq!(
+        dec_room
+            .drafts
+            .get(crate::workspace::NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("fallback 2"),
+        "fallback __no_session_draft__ must land on sibling with room"
+    );
+    assert_eq!(
+        dec_room.drafts.get("ses_r16_cap").map(String::as_str),
+        Some("fallback 1"),
+        "second fallback draft must land on sibling with room"
+    );
+
+    // 31. R16 Bloquant 2: Hydrated non-local draft session IDs (such as fallback "ses_r16_cap"
+    // restored on a tab with no active_session_id) are surfaced by restored_draft_session_ids
+    // and checked once by Visits::seed_draft_checks + poll_checks -> confirmed 404 recovers them.
+    let mut r16_b2 = draft_state();
+    let mut ui_b2 = Ui::new();
+    ui_b2.hydrate(decoded_r16_b3);
+    ui_b2.ready = true;
+    r16_b2.workspace = Some(ui_b2);
+    let ids = crate::workspace::restored_draft_session_ids(&r16_b2);
+    assert!(
+        ids.iter().any(|id| id == "ses_r16_cap"),
+        "restored_draft_session_ids must include hydrated fallback session key"
+    );
+    let mut visits = crate::launcher::Visits::default();
+    visits.seed_draft_checks(ids);
+    let listed = std::collections::HashSet::new();
+    assert!(
+        visits
+            .pending_draft_checks(&listed)
+            .any(|id| id == "ses_r16_cap")
+    );
+    let (check_tx, check_rx) = codenomad_client::bounded(2);
+    visits.start_checks(&["ses_r16_cap".into()], check_rx);
+    let _ = check_tx.try_send((
+        "ses_r16_cap".into(),
+        codenomad_client::runtime::Instant::now(),
+        codenomad_client::catalog::SessionAbsence::NotFound,
+    ));
+    drop(check_tx);
+    let polled = visits.poll_checks();
+    assert_eq!(polled.deleted, vec!["ses_r16_cap"]);
+    assert!(
+        !visits
+            .pending_draft_checks(&listed)
+            .any(|id| id == "ses_r16_cap"),
+        "completed draft check must be retired after batch finishes"
+    );
+    assert!(crate::workspace::recover_missing_session_draft(
+        &mut r16_b2,
+        "ses_r16_cap"
+    ));
+    let Tab::Workspace(rec_room) = &r16_b2.workspace.as_ref().unwrap().entries[1].saved else {
+        panic!("expected room tab");
+    };
+    assert!(
+        rec_room
+            .drafts
+            .iter()
+            .any(|(k, v)| crate::workspace::is_recovered_draft_id(k) && v == "fallback 1"),
+        "confirmed 404 on restored fallback key must promote it into a local recovered draft"
+    );
+
+    // 32. R16 Moyen 1: When two tabs A and B both have deferred closes while C stays open,
+    // neither A nor B is selected as a recovery destination across consecutive polls -> both
+    // route drafts exclusively onto surviving tab C.
+    let mut r16_m1 = draft_state();
+    let mut ma16 = closed("ses_r16_multi_a", "from A multi");
+    ma16.active_session_id = None;
+    let mut mb16 = closed("ses_r16_multi_b", "from B multi");
+    mb16.occurrence = 1;
+    mb16.active_session_id = None;
+    let mut mc16 = closed("ses_r16_multi_c", "");
+    mc16.drafts.clear();
+    mc16.occurrence = 2;
+    mc16.active_session_id = None;
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![
+            Tab::Workspace(ma16),
+            Tab::Workspace(mb16),
+            Tab::Workspace(mc16),
+        ],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0]
+        .pending_deleted
+        .insert("ses_r16_multi_a".into());
+    ui.entries[1]
+        .pending_deleted
+        .insert("ses_r16_multi_b".into());
+    ui.closed = vec![
+        closed("ses_r16_multi_a", "closed multi a"),
+        closed("ses_r16_multi_b", "closed multi b"),
+    ];
+    ui.closed_restored = vec![Default::default(), Default::default()];
+    ui.closed_derived_from = vec![Default::default(), Default::default()];
+    r16_m1.workspace = Some(ui);
+    r16_m1.show_launcher();
+    crate::workspace::state::tabs::close_with_uuid(&mut r16_m1, "tab-0", &mut tx, || None);
+    crate::workspace::state::tabs::close_with_uuid(&mut r16_m1, "tab-1", &mut tx, || None);
+    assert_eq!(r16_m1.workspace.as_ref().unwrap().entries.len(), 3);
+    assert!(crate::workspace::state::drafts::poll_pending_deleted(
+        &mut r16_m1
+    ));
+    let Tab::Workspace(surviving_c) = &r16_m1.workspace.as_ref().unwrap().entries[2].saved else {
+        panic!("expected surviving workspace C");
+    };
+    let mut c_texts: Vec<&str> = surviving_c
+        .drafts
+        .iter()
+        .filter(|(k, _)| crate::workspace::is_local_draft_id(k))
+        .map(|(_, v)| v.as_str())
+        .collect();
+    c_texts.sort_unstable();
+    assert_eq!(
+        c_texts,
+        vec![
+            "closed multi a",
+            "closed multi b",
+            "from A multi",
+            "from B multi"
+        ],
+        "consecutive recoveries with two deferred-closing tabs must route every draft onto surviving C"
     );
 }

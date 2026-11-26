@@ -1222,12 +1222,10 @@ fn recover_missing_session_draft_with_uuid_impl(
                     && !occurrence_in_active_chat_on(on_launcher, ui, idx, session_id)
             })
             .or_else(|| {
-                closing_tab.and_then(|closing| {
-                    matching_tabs
-                        .iter()
-                        .copied()
-                        .find(|&idx| idx != closing && !ui.entries[idx].closing_deferred)
-                })
+                matching_tabs
+                    .iter()
+                    .copied()
+                    .find(|&idx| Some(idx) != closing_tab && !ui.entries[idx].closing_deferred)
             })
             .or_else(|| {
                 closing_tab
@@ -1284,15 +1282,19 @@ fn recover_missing_session_draft_with_uuid_impl(
             for &idx in &open_to_recover {
                 ui.entries[idx].pending_deleted.insert(session_id.into());
             }
-            if !ui
-                .closed_pending_deleted
-                .iter()
-                .any(|(existing_scope, existing_id)| {
-                    existing_scope.same_scope(&project_scope) && existing_id == session_id
-                })
-            {
+            let added_closed =
+                !ui.closed_pending_deleted
+                    .iter()
+                    .any(|(existing_scope, existing_id)| {
+                        existing_scope.same_scope(&project_scope) && existing_id == session_id
+                    });
+            if added_closed {
                 ui.closed_pending_deleted
                     .push((project_scope.clone(), session_id.into()));
+                if !closed_bundles.is_empty() {
+                    ui.changed();
+                    ui.stage();
+                }
             }
             return RecoveryOutcome {
                 recovered: false,
@@ -1468,15 +1470,6 @@ fn recover_missing_session_draft_with_uuid_impl(
             ui.closed_pending_deleted
                 .retain(|(c_scope, c_id)| !(c_scope.matches(&scope) && c_id == session_id));
         }
-        let still_pending_closed = ui
-            .closed_pending_deleted
-            .iter()
-            .any(|(c_scope, _)| c_scope.same_scope(&project_scope));
-        for &idx in &matching_tabs {
-            if ui.entries[idx].pending_deleted.is_empty() && !still_pending_closed {
-                ui.entries[idx].closing_deferred = false;
-            }
-        }
 
         if mutated {
             ui.changed();
@@ -1502,40 +1495,59 @@ fn recover_missing_session_draft_with_uuid_impl(
     }
 }
 
+/// Returns bounded distinct non-local session IDs that hold hydrated drafts in the active
+/// tab's project so startup listing reconciliation can confirm whether any were deleted while
+/// the app was closed (including fallback projections under a dead session key).
+pub fn restored_draft_session_ids(s: &State) -> Vec<String> {
+    let Some(ui) = &s.workspace else {
+        return Vec::new();
+    };
+    let Some(Tab::Workspace(scope)) = ui.entries.get(ui.active).map(|e| &e.saved) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    let order = std::iter::once(ui.active).chain((0..ui.entries.len()).filter(|&i| i != ui.active));
+    for idx in order {
+        let entry = &ui.entries[idx];
+        if !matches!(&entry.saved, Tab::Workspace(w) if same_project(scope, w)) {
+            continue;
+        }
+        for id in entry.restored_drafts.keys() {
+            if is_local_draft_id(id) || ids.iter().any(|existing| existing == id) {
+                continue;
+            }
+            ids.push(id.clone());
+            if ids.len() >= super::super::MAX_DRAFTS * 2 {
+                return ids;
+            }
+        }
+    }
+    ids
+}
+
 /// Retries any deferred deletion recoveries (e.g. after temporary UUID entropy failure or
 /// reopening a project whose closed occurrence carried pending deletion proof) once eligible.
 pub(super) fn poll_pending_deleted(s: &mut State) -> bool {
     let on_launcher = s.screen.is_launcher();
-    let eligible: Vec<(usize, Option<usize>, String)> = {
+    let eligible: Vec<(usize, String)> = {
         let Some(ui) = &s.workspace else {
             return false;
         };
-        let mut work: Vec<(usize, Option<usize>, String)> = Vec::new();
-        let seen = |work: &[(usize, Option<usize>, String)], idx: usize, id: &str| {
+        let mut work: Vec<(usize, String)> = Vec::new();
+        let seen = |work: &[(usize, String)], idx: usize, id: &str| {
             let Tab::Workspace(scope) = &ui.entries[idx].saved else {
                 return true;
             };
-            work.iter().any(|(other_idx, _, existing)| {
+            work.iter().any(|(other_idx, existing)| {
                 existing == id
                     && matches!(&ui.entries[*other_idx].saved, Tab::Workspace(w) if same_project(scope, w))
             })
         };
-        let closing_for = |idx: usize| -> Option<usize> {
-            let Tab::Workspace(scope) = &ui.entries[idx].saved else {
-                return None;
-            };
-            ui.entries.iter().position(|entry| {
-                entry.closing_deferred
-                    && matches!(&entry.saved, Tab::Workspace(w) if same_project(scope, w))
-            })
-        };
         for (idx, entry) in ui.entries.iter().enumerate() {
             for id in &entry.pending_deleted {
-                if (entry.closing_deferred
-                    || !occurrence_in_active_chat_on(on_launcher, ui, idx, id))
-                    && !seen(&work, idx, id)
+                if !occurrence_in_active_chat_on(on_launcher, ui, idx, id) && !seen(&work, idx, id)
                 {
-                    work.push((idx, closing_for(idx), id.clone()));
+                    work.push((idx, id.clone()));
                 }
             }
         }
@@ -1553,25 +1565,23 @@ pub(super) fn poll_pending_deleted(s: &mut State) -> bool {
                 .or_else(|| {
                     ui.entries.iter().enumerate().find_map(|(idx, entry)| {
                         (matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
-                            && (entry.closing_deferred
-                                || !occurrence_in_active_chat_on(on_launcher, ui, idx, id)))
+                            && !occurrence_in_active_chat_on(on_launcher, ui, idx, id))
                         .then_some(idx)
                     })
                 })
                 && !seen(&work, idx, id)
             {
-                work.push((idx, closing_for(idx), id.clone()));
+                work.push((idx, id.clone()));
             }
         }
         work
     };
     let mut changed = false;
-    for (idx, closing_tab, id) in eligible {
-        changed |=
-            recover_missing_session_draft_with_uuid_impl(s, Some(idx), closing_tab, &id, || {
-                codenomad_client::http::random_uuid_v4().ok()
-            })
-            .recovered;
+    for (idx, id) in eligible {
+        changed |= recover_missing_session_draft_with_uuid_impl(s, Some(idx), None, &id, || {
+            codenomad_client::http::random_uuid_v4().ok()
+        })
+        .recovered;
     }
     changed
 }

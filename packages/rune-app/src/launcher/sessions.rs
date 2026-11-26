@@ -145,7 +145,12 @@ impl Launcher {
         let (Some(backend), Some(project)) = (self.connection.clone(), self.project.clone()) else {
             return;
         };
-        let ids = self.listed_visits_not_seen();
+        let mut ids = self.listed_visits_not_seen();
+        for id in self.visits.pending_draft_checks(&self.listed_sessions) {
+            if !ids.iter().any(|existing| existing == id) {
+                ids.push(id.to_owned());
+            }
+        }
         if ids.is_empty() {
             return;
         }

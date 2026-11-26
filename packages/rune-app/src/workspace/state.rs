@@ -11,8 +11,8 @@ mod strip;
 
 pub use drafts::{
     adopt_recovered_draft, attachment_draft_admissible, bound, bound_with_adopt, capture,
-    draft_changed, note_session_deleted, recover_missing_session_draft, session_deleted_hook,
-    unconfirmed_drafts_full,
+    draft_changed, note_session_deleted, recover_missing_session_draft, restored_draft_session_ids,
+    session_deleted_hook, unconfirmed_drafts_full,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
@@ -377,21 +377,40 @@ impl Ui {
                         || w.attachment_drafts.contains(super::NO_SESSION_DRAFT_ID)
                         || w.attachment_parts.contains_key(super::NO_SESSION_DRAFT_ID)))
             });
-            let preferred_dest = self
-                .entries
-                .iter()
-                .enumerate()
-                .find_map(|(i, e)| {
-                    (!e.closing_deferred
-                        && matches!(&tabs[i], Tab::Workspace(w) if scope.matches(w)))
-                    .then_some(i)
-                })
-                .or_else(|| {
-                    tabs.iter()
-                        .position(|tab| matches!(tab, Tab::Workspace(w) if scope.matches(w)))
-                });
+            let tab_has_room = |w: &Workspace, key: &str| -> bool {
+                let mut keys: HashSet<&str> = w
+                    .drafts
+                    .keys()
+                    .chain(w.attachment_drafts.iter())
+                    .chain(w.attachment_parts.keys())
+                    .map(String::as_str)
+                    .collect();
+                keys.insert(key);
+                keys.len() <= super::MAX_DRAFTS
+            };
+            let pick_no_session_dest = |tabs: &[Tab]| -> Option<usize> {
+                let find = |prefer_surviving: bool, require_room: bool| {
+                    tabs.iter().enumerate().find_map(|(i, tab)| {
+                        let Tab::Workspace(w) = tab else {
+                            return None;
+                        };
+                        if (prefer_surviving && self.entries[i].closing_deferred)
+                            || !scope.matches(w)
+                            || self.entries[i].cleared.contains(super::NO_SESSION_DRAFT_ID)
+                            || (require_room && !tab_has_room(w, super::NO_SESSION_DRAFT_ID))
+                        {
+                            return None;
+                        }
+                        Some(i)
+                    })
+                };
+                find(true, true)
+                    .or_else(|| find(false, true))
+                    .or_else(|| find(true, false))
+                    .or_else(|| find(false, false))
+            };
             for bundle in closed_bundles.into_iter().skip(projected_count) {
-                let target = if no_session_free && let Some(dest) = preferred_dest {
+                let target = if no_session_free && let Some(dest) = pick_no_session_dest(&tabs) {
                     no_session_free = false;
                     Some((dest, super::NO_SESSION_DRAFT_ID))
                 } else {
@@ -406,6 +425,7 @@ impl Ui {
                                 || w.drafts.contains_key(id)
                                 || w.attachment_drafts.contains(id)
                                 || w.attachment_parts.contains_key(id)
+                                || !tab_has_room(w, id)
                             {
                                 return None;
                             }

@@ -29,10 +29,10 @@ pub(crate) use state::{
     capture_files_mode, close, connected, conversation_stream_clients, draft_changed,
     file_draft_status, file_wrap, files_tab, has_conversation_stream, input_ready, new_tab,
     note_session_deleted, opened, panel_width, poll, poll_file_drafts, prepare_open,
-    recover_missing_session_draft, renew_connection, restore_files_mode, resume, retry,
-    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative,
-    session_deleted_hook, status, strip, toggle_file_wrap, unconfirmed_drafts_full,
-    unselect_missing, unselect_session,
+    recover_missing_session_draft, renew_connection, restore_files_mode,
+    restored_draft_session_ids, resume, retry, schedule_catalogue, schedule_catalogue_refresh,
+    select, select_index, select_relative, session_deleted_hook, status, strip, toggle_file_wrap,
+    unconfirmed_drafts_full, unselect_missing, unselect_session,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
@@ -50,7 +50,7 @@ use serde_json::{Map, Value, json};
 pub(crate) const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SAFE: u64 = 9_007_199_254_740_991;
 const MAX_TABS: usize = 32;
-const MAX_DRAFTS: usize = 24;
+pub(crate) const MAX_DRAFTS: usize = 24;
 const MAX_DRAFT: usize = 32 * 1024;
 const MAX_STRINGS: usize = 96 * 1024;
 pub(crate) const MAX_PANEL_WIDTH: u16 = 16_384;

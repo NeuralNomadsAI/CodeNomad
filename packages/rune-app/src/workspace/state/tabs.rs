@@ -331,8 +331,11 @@ pub(super) fn close_with_uuid(
     if deferred {
         if let Some(ui) = &mut s.workspace
             && let Some(entry) = ui.entries.get_mut(index)
+            && !entry.closing_deferred
         {
             entry.closing_deferred = true;
+            ui.changed();
+            ui.stage();
         }
         return;
     }
