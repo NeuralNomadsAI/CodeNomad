@@ -105,7 +105,12 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                         .children(super::receipts::session(s))
                         .child(transcript::rows(s)),
                 );
-                crate::timeline::view(s, chat::reading::viewport(s, history, scroll_stack), layout)
+                crate::timeline::view(
+                    s,
+                    cx,
+                    chat::reading::viewport(s, history, scroll_stack),
+                    layout,
+                )
             }))
             .child(
                 agent_view::view(s, cx, layout_viewport_height).on_layout_tx(

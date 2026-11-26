@@ -33,6 +33,7 @@ struct SyncUndo {
     trimmed_older: bool,
     trimmed_newer: bool,
     age: u8,
+    defer_age: u8,
     last_clock: Option<f64>,
 }
 
@@ -208,6 +209,7 @@ impl Reader {
             trimmed_older,
             trimmed_newer,
             age: 0,
+            defer_age: 0,
             last_clock: clock,
         });
     }
@@ -656,14 +658,20 @@ pub(crate) fn take_manual_probe_wait(s: &mut State, tx: &Tx) -> bool {
 }
 
 pub(crate) fn expire_sync_undo(s: &mut State, clock: f64) {
-    let keep = s.transcript_display.reading().has_pending_restore_probe();
+    let keep_probe = s.transcript_display.reading().has_pending_restore_probe();
+    let conversation_visible = crate::timeline::conversation_shown(s);
     if let Some(reader) = &mut s.reader
         && let Some(undo) = &mut reader.sync_undo
     {
         if undo.last_clock == Some(clock) {
             return;
         }
-        if !keep || undo.age >= 1 {
+        if conversation_visible && reader.pending_scroll && undo.defer_age < 4 {
+            undo.defer_age += 1;
+            undo.last_clock = Some(clock);
+            return;
+        }
+        if !keep_probe || undo.age >= 1 {
             reader.sync_undo = None;
         } else {
             undo.age += 1;
@@ -3711,6 +3719,473 @@ mod resume_tests {
         assert!(
             s.reader.as_ref().unwrap().sync_undo.is_none(),
             "SyncUndo saved without a frame clock clears on the first frame without a probe"
+        );
+    }
+
+    #[test]
+    fn rail_threshold_dpr2_growth_without_height_change_unblocks_pending_scroll() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("dpr2-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!(
+                            "{prefix} {i:02} line one.\nRow {i:02} line two.\nRow {i:02} line three."
+                        ),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Base", 0..32);
+        let rows = s.messages.clone();
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        // Start just below the 420 px rail threshold at DPR 2 (839 physical px -> 419.5 logical px).
+        let mut rt = Runtime::new(s, crate::view, (419.5, 480.0), Env::new(false, 2.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        assert!(
+            rt.presented("timeline").is_none(),
+            "rail must stay hidden at 419.5 px"
+        );
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("dpr2-18", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let top_key = |rt: &Runtime<State>| -> Option<String> {
+            let hist = rt
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("history"))?
+                .rect;
+            rt.elements()
+                .into_iter()
+                .filter_map(|e| {
+                    let k = e.key?;
+                    k.starts_with("dpr2-").then_some((k, e.rect))
+                })
+                .find(|(_, r)| r[3] > 0.0 && r[1] <= hist[1] + 0.5 && r[1] + r[3] > hist[1] + 0.5)
+                .map(|(k, _)| k)
+        };
+        assert_eq!(top_key(&rt).as_deref(), Some("dpr2-18"));
+
+        // Suspend and resume while growing width 419.5 -> 420.0 px at DPR 2 with NO height change
+        // (0.5 pt delta stays at Rune's on_layout MOVED deadband).
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        rt.set_viewport((420.0, 480.0), 2.0);
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows,
+                        older: None,
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert!(
+            rt.presented("timeline").is_some(),
+            "419.5 -> 420.0 px growth at DPR 2 without height change must mount the timeline rail"
+        );
+        assert!(
+            !rt.state.reader.as_ref().unwrap().has_pending_scroll(),
+            "pending_scroll must not stay stuck blocked by rail_layout_pending after 419.5 -> 420.0 px growth"
+        );
+        assert!(
+            !crate::timeline::rail_layout_pending(
+                &rt.state,
+                rt.state.tool_diff_preferences.history_width()
+            ),
+            "rail_layout_pending must settle once the rail mounts at 420.0 px"
+        );
+        assert_eq!(
+            top_key(&rt).as_deref(),
+            Some("dpr2-18"),
+            "resumed bookmark must restore cleanly after 419.5 -> 420.0 px growth"
+        );
+
+        // Shrinking back 420.0 -> 419.5 px at DPR 2 with NO height change (and NO suspend)
+        // must unmount the rail, and growing back 419.5 -> 420.0 px with NO height change and
+        // NO suspend must remount it via the threshold probe.
+        rt.set_viewport((419.5, 480.0), 2.0);
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        assert!(
+            rt.presented("timeline").is_none(),
+            "420.0 -> 419.5 px shrink at DPR 2 without height change must unmount the timeline rail"
+        );
+        rt.set_viewport((420.0, 480.0), 2.0);
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        assert!(
+            rt.presented("timeline").is_some(),
+            "419.5 -> 420.0 px growth at DPR 2 without height change or suspend must remount the timeline rail"
+        );
+    }
+
+    #[test]
+    fn consumption_frame_off_page_wheel_with_mounted_rail_at_844px() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rail844-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!(
+                            "{prefix} {i:02} line one.\nRow {i:02} line two.\nRow {i:02} line three."
+                        ),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full40", 0..40);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (844.0, 390.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..25 {
+            rt.frame(0.02);
+        }
+        assert!(
+            rt.presented("timeline").is_some(),
+            "precondition: timeline rail must be mounted at 844 px"
+        );
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rail844-20", 0.0);
+        });
+        for _ in 0..25 {
+            rt.frame(0.02);
+        }
+        let top_key = |rt: &Runtime<State>| -> Option<String> {
+            let hist = rt
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("history"))?
+                .rect;
+            rt.elements()
+                .into_iter()
+                .filter_map(|e| {
+                    let k = e.key?;
+                    k.starts_with("rail844-").then_some((k, e.rect))
+                })
+                .find(|(_, r)| r[3] > 0.0 && r[1] <= hist[1] + 0.5 && r[1] + r[3] > hist[1] + 0.5)
+                .map(|(k, _)| k)
+        };
+        assert_eq!(top_key(&rt).as_deref(), Some("rail844-20"));
+
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g_trim = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        assert!(
+            rt.presented("timeline").is_some(),
+            "rail must stay mounted after tab resume at 844 px"
+        );
+        lane.events
+            .try_send((
+                g_trim,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim16_26", 16..26),
+                        older: Some(serde_json::json!("older-844")),
+                        newer: Some(serde_json::json!("newer-844")),
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.frame(0.02);
+        assert!(
+            rt.state.reader.as_ref().unwrap().has_deferred_sync(),
+            "trimmed ReaderSync must defer on first poll at 844 px"
+        );
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        rt.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
+        rt.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let dest = top_key(&rt).expect("visible row after consumption-frame wheel at 844 px");
+        let dest_idx: usize = dest.strip_prefix("rail844-").unwrap().parse().unwrap();
+        assert!(
+            dest_idx < 16,
+            "consumption-frame wheel with mounted rail at 844 px must roll back trimmed [16..26] and reach < rail844-16: got {dest}"
+        );
+        let g_retry = rt.state.reader.as_ref().unwrap().generation;
+        assert!(
+            g_retry > g_trim && rt.state.reader.as_ref().unwrap().blocks_send(),
+            "off-page wheel at 844 px must bump generation and re-request around {dest}"
+        );
+        assert_eq!(
+            lane.demand.current().target,
+            Some(Target::Around(dest.clone())),
+            "reader must request Target::Around({dest})"
+        );
+        lane.events
+            .try_send((
+                g_retry,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("AroundDest844", 0..24),
+                        older: None,
+                        newer: Some(serde_json::json!("newer-844-2")),
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 2,
+                },
+            ))
+            .unwrap();
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert!(
+            !rt.state.reader.as_ref().unwrap().resume_pending
+                && rt.state.messages[0].body.starts_with("AroundDest844"),
+            "re-requested page around {dest} must install cleanly at 844 px"
+        );
+        assert_eq!(
+            top_key(&rt).as_deref(),
+            Some(dest.as_str()),
+            "re-requested page must remain anchored on {dest}"
+        );
+    }
+
+    #[test]
+    fn sync_undo_survives_deferred_renderer_ready_until_probe_settles() {
+        let msg = |id: &str| -> crate::history::Row {
+            crate::Message {
+                usage: None,
+                id: id.into(),
+                role: "assistant".into(),
+                completed: true,
+                body: format!("Row {id}"),
+                parts: vec![],
+            }
+            .into()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = vec![msg("m-0"), msg("m-1")];
+        let (mut reader, _lane) = Reader::open();
+        let generation = reader.generation;
+        let conn = reader.connection.load(SeqCst);
+        let page = crate::history::Page {
+            rows: vec![msg("m-1")],
+            older: Some(serde_json::json!("older")),
+            newer: None,
+            running: false,
+            user_file_references: false,
+        };
+        reader.last_taken = Some((generation, conn));
+        reader.save_sync_undo(
+            page,
+            1,
+            vec![msg("m-0"), msg("m-1")],
+            false,
+            false,
+            crate::Phase::Ready,
+            true,
+            false,
+            Some(1.0),
+        );
+        reader.pending_scroll = true;
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (844.0, 390.0), Env::new(false, 1.0));
+        rt.frame(0.02);
+        let s = &mut rt.state;
+        assert!(!s.transcript_display.reading().has_pending_restore_probe());
+
+        // While renderer_ready is legitimately deferred (pending_scroll == true), distinct frames
+        // must keep SyncUndo alive rather than expiring it before renderer_ready arms frame_restore.
+        expire_sync_undo(s, 1.016);
+        assert!(
+            s.reader.as_ref().unwrap().sync_undo.is_some(),
+            "first deferred frame while pending_scroll is true must keep SyncUndo"
+        );
+        expire_sync_undo(s, 1.032);
+        assert!(
+            s.reader.as_ref().unwrap().sync_undo.is_some(),
+            "second deferred frame while pending_scroll is true must keep SyncUndo"
+        );
+
+        // Once renderer_ready consumes pending_scroll and arms frame_restore, SyncUndo ages once
+        // across the probe frame and clears on the following frame.
+        s.reader.as_mut().unwrap().pending_scroll = false;
+        s.transcript_display
+            .reading_mut()
+            .arm_frame_restore_for(&Bookmark::Latest, false);
+        expire_sync_undo(s, 1.032);
+        assert_eq!(
+            s.reader.as_ref().unwrap().sync_undo.as_ref().unwrap().age,
+            0,
+            "same-frame poll after renderer_ready must not age SyncUndo"
+        );
+        expire_sync_undo(s, 1.048);
+        assert_eq!(
+            s.reader.as_ref().unwrap().sync_undo.as_ref().unwrap().age,
+            1,
+            "probe frame must keep SyncUndo alive at age 1"
+        );
+        expire_sync_undo(s, 1.064);
+        assert!(
+            s.reader.as_ref().unwrap().sync_undo.is_none(),
+            "frame after probe must clear SyncUndo"
+        );
+
+        // Even when renderer_ready IS legitimately deferred (e.g. rail mounting on a 320 -> 844 px
+        // rotation during the same frame as trimmed ReaderSync), a consumption-frame wheel aiming
+        // outside the trimmed page must roll back before renderer_ready runs and accumulate
+        // multiple same-frame wheel events.
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("defer-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!(
+                            "{prefix} {i:02} line one.\nRow {i:02} line two.\nRow {i:02} line three."
+                        ),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s2 = init();
+        s2.phase = Phase::Ready;
+        s2.messages = make_rows("Full40", 0..40);
+        let (reader2, lane2) = Reader::open();
+        s2.reader = Some(reader2);
+        let mut rt2 = Runtime::new(s2, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt2.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt2.frame(0.02);
+        }
+        rt2.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("defer-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt2.frame(0.02);
+        }
+        rt2.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g2 = rt2.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt2.frame(0.02);
+        }
+        lane2
+            .events
+            .try_send((
+                g2,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim16_26", 16..26),
+                        older: Some(serde_json::json!("older-defer")),
+                        newer: Some(serde_json::json!("newer-defer")),
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt2.frame(0.02);
+        assert!(rt2.state.reader.as_ref().unwrap().has_deferred_sync());
+        // Grow from 320 -> 844 px so rail_layout_pending legitimately defers renderer_ready on
+        // the consumption frame while two upward wheel events arrive on the same frame.
+        rt2.set_viewport((844.0, 390.0), 1.0);
+        let h_rect = rt2
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        rt2.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
+        rt2.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
+        for _ in 0..30 {
+            rt2.frame(0.02);
+        }
+        let hist = rt2
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let dest = rt2
+            .elements()
+            .into_iter()
+            .filter_map(|e| {
+                let k = e.key?;
+                k.starts_with("defer-").then_some((k, e.rect))
+            })
+            .find(|(_, r)| r[3] > 0.0 && r[1] <= hist[1] + 0.5 && r[1] + r[3] > hist[1] + 0.5)
+            .map(|(k, _)| k)
+            .expect("visible row after deferred consumption-frame wheel");
+        let dest_idx: usize = dest.strip_prefix("defer-").unwrap().parse().unwrap();
+        assert!(
+            dest_idx < 16,
+            "wheel during legitimately deferred renderer_ready must still roll back trimmed [16..26] and reach < defer-16: got {dest}"
+        );
+        assert_eq!(
+            lane2.demand.current().target,
+            Some(Target::Around(dest)),
+            "rolled-back deferred wheel must re-request Target::Around(dest)"
         );
     }
 }

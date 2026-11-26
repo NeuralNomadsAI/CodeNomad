@@ -373,11 +373,40 @@ fn project_root(s: &State) -> Option<&str> {
     Some(s.screen.launcher()?.project.as_ref()?.path.as_str())
 }
 
-pub(super) fn conversation_shown(s: &State) -> bool {
+pub(crate) fn conversation_shown(s: &State) -> bool {
     !s.screen.is_launcher()
         && !crate::files::has_preview(s)
         && !crate::git::has_preview(s)
         && !crate::workspace::mission_has_reader(s)
+}
+
+pub(super) fn apply_width(s: &mut State, width: f32, tx: &mut rune::Tx) -> bool {
+    if !width.is_finite() || width <= 0.0 {
+        return false;
+    }
+    let t = owner(s);
+    if t.width == width {
+        return false;
+    }
+    let was_shown = t.rail_shown;
+    t.width = width;
+    let shown = demanded(s) && (owner(s).has_raw_markers || !owner(s).markers.is_empty());
+    if shown != was_shown {
+        owner(s).rail_shown = shown;
+        if owner(s).jump.align.is_none() {
+            if owner(s).poll_input_waiting
+                || tx.input_waiting()
+                || owner(s).scroll.get().wheel_last_rail == Some(false)
+            {
+                defer_keep_passage(s, tx);
+            } else {
+                tx.instant();
+                crate::chat::reading::keep_passage(s, tx);
+            }
+        }
+    }
+    (s.wake)();
+    true
 }
 
 pub(crate) fn demanded(s: &State) -> bool {
@@ -404,7 +433,7 @@ pub(crate) fn rail_layout_pending(s: &State, history_w: f32) -> bool {
     if enabled
         && rune_theme_codenomad::timeline::fits(history_w)
         && (!rune_theme_codenomad::timeline::fits(t.width)
-            || ((!t.visible || t.changed) && !s.messages.is_empty()))
+            || (!rail_should_mount && (!t.visible || t.changed) && !s.messages.is_empty()))
     {
         return true;
     }

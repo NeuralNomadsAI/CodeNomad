@@ -1075,6 +1075,38 @@ fn handle_reading_wheel(
     let cur = reading.scroll_state.get();
     let target = (cur.offset - ev.dy).clamp(0.0, cur.max);
     if cur.seq > 0 && (target - cur.offset).abs() > 0.5 {
+        let wants_older = ev.dy > 0.0;
+        let wants_newer = ev.dy < 0.0;
+        if s.reader.as_ref().is_some_and(|reader| {
+            reader.has_pending_scroll() && reader.can_undo_sync(wants_older, wants_newer)
+        }) && crate::chat::reader::undo_sync_for_manual_scroll(s, cur.seq + 1, tx)
+        {
+            let reading = s.transcript_display.reading_mut();
+            reading.frame_restore_epoch += 1;
+            reading.frame_restore = Some(FrameRestore {
+                epoch: reading.frame_restore_epoch,
+                obs_offset: target,
+                obs_max: cur.max,
+                obs_seq: cur.seq,
+                target: FrameRestoreTarget::Offset,
+                probe_live: false,
+                handled: true,
+                checked: Cell::new(Some(None)),
+            });
+            reading.resize_anchor = None;
+            reading.bump_manual_scroll();
+            let at_bottom = cur.max <= 0.5 || target >= cur.max - 0.5;
+            reading.at_bottom = at_bottom;
+            reading.following = at_bottom;
+            s.revision += 1;
+            s.transcript_display
+                .reading_mut()
+                .advance_row_guard(s.revision);
+            tx.instant();
+            tx.scroll_to_y("history", target);
+            return true;
+        }
+        let reading = s.transcript_display.reading_mut();
         reading.note_pending_manual_scroll();
         reading.resize_anchor = None;
         reading.frame_restore = None;

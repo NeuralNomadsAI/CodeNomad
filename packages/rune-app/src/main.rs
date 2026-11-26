@@ -255,10 +255,7 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     chat::reader::expire_sync_undo(s, tx.clock());
     let gesture = timeline::poll_edge(s, tx);
-    let conversation_visible = !s.screen.is_launcher()
-        && !git::has_preview(s)
-        && !files::has_preview(s)
-        && !workspace::mission_has_reader(s);
+    let conversation_visible = timeline::conversation_shown(s);
     let defer_reader_sync = conversation_visible && !s.messages.is_empty();
     let chat = !timeline::input_precedes_admission(s, tx)
         && chat::events::poll_chat_for_window(s, 64, defer_reader_sync, tx.clock());
