@@ -178,13 +178,49 @@ fn is_busy_or_permission(err: &std::io::Error) -> bool {
     err.kind() == ErrorKind::PermissionDenied || matches!(err.raw_os_error(), Some(5 | 16 | 32 | 33))
 }
 
-fn companion_legacy_shim(path: &Path) -> bool {
+fn companion_legacy_shim(path: &Path, expected_binary: &Path) -> bool {
+    let Some(parent) = path.parent() else { return false };
     let Ok(bytes) = fs::read(path) else { return false };
     if bytes.len() > 64 * 1024 {
         return false;
     }
-    let text = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
-    text.contains("node_modules/opencode-ai/") || text.contains("node_modules\\opencode-ai\\")
+    let Ok(script) = String::from_utf8(bytes) else { return false };
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if name.eq_ignore_ascii_case("opencode.ps1") {
+        if !script.starts_with("#!/usr/bin/env pwsh") || !script.contains("$basedir=Split-Path") {
+            return false;
+        }
+        static PS1_TARGET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r#"(?m)^\s*(?:\$input\s*\|\s*)?&\s+"\$basedir/([^"\r\n]+)"\s+\$args\s*$"#).unwrap()
+        });
+        let mut matched = false;
+        for caps in PS1_TARGET.captures_iter(&script) {
+            let Some(target) = caps.get(1).map(|m| m.as_str()) else { return false };
+            if !same_path(&resolve_from(Some(parent), Path::new(target)), expected_binary) {
+                return false;
+            }
+            matched = true;
+        }
+        return matched;
+    }
+    if name.eq_ignore_ascii_case("opencode") {
+        if !script.starts_with("#!/bin/sh\n") && !script.starts_with("#!/bin/sh\r\n") {
+            return false;
+        }
+        static SH_TARGET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r#"(?m)^exec\s+"\$basedir/([^"\r\n]+)"\s+"\$@"\s*$"#).unwrap()
+        });
+        let mut matched = false;
+        for caps in SH_TARGET.captures_iter(&script) {
+            let Some(target) = caps.get(1).map(|m| m.as_str()) else { return false };
+            if !same_path(&resolve_from(Some(parent), Path::new(target)), expected_binary) {
+                return false;
+            }
+            matched = true;
+        }
+        return matched;
+    }
+    false
 }
 
 /// Preflights every native image of the verified `opencode-ai` installation, then removes its
@@ -220,7 +256,7 @@ pub fn remove_legacy(prefix: &Prefix, legacy: &Legacy) -> Result<(), Error> {
     if cfg!(windows) {
         for companion in ["opencode.ps1", "opencode"] {
             let candidate = prefix.commands().join(companion);
-            if candidate.is_file() && companion_legacy_shim(&candidate) {
+            if candidate.is_file() && companion_legacy_shim(&candidate, &legacy.binary) {
                 shims.push(candidate);
             }
         }

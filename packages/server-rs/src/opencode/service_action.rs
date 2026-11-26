@@ -11,7 +11,7 @@ use std::{
 use axum::{
     Json,
     body::Bytes,
-    extract::State,
+    extract::{Request, State},
     http::{HeaderMap, StatusCode as Status},
     response::{IntoResponse, Response},
 };
@@ -23,6 +23,7 @@ use super::{admission, daemon, launch, update};
 use crate::{Shared, shared::fastify};
 
 const RELOAD_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_BODY: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
@@ -141,6 +142,8 @@ async fn activate(app: &Shared, binary: &str, action: Action) -> Result<Value, S
     let installed_version = update::read_current_version(binary).await?;
     let lifecycle =
         app.native.lifecycle_for(binary).ok_or_else(|| "OpenCode service lifecycle unavailable".to_owned())?;
+    // Match TS `setupServiceOptions`: validate profile startup environment before any mutation.
+    let _ = launch::daemon_environment_from_config(lifecycle.config_path.as_deref())?;
     let previous = lifecycle.discover(Instant::now() + daemon::TIMEOUT).await?;
     if (previous.is_none() || restart) && admission::below_minimum(&installed_version) {
         return Err(
@@ -172,18 +175,30 @@ async fn activate(app: &Shared, binary: &str, action: Action) -> Result<Value, S
         if !app.native.current(&endpoint) {
             return Err("OpenCode connection changed during reload".into());
         }
+        if *endpoint != prev {
+            let reconnected_caps =
+                admission::inspect(&app.native.client, &endpoint).await.map_err(|e| e.to_string())?;
+            if !reconnected_caps.reload {
+                return Err("OpenCode does not expose configuration reload".into());
+            }
+            if !app.native.current(&endpoint) {
+                return Err("OpenCode connection changed during reload".into());
+            }
+        }
         let mut reload_url = endpoint.url.clone();
         reload_url.set_path("/api/location/reload");
-        app.native
+        let response = app
+            .native
             .client
             .post(reload_url)
             .basic_auth("opencode", Some(&endpoint.password))
             .timeout(RELOAD_TIMEOUT)
             .send()
             .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
             .map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("OpenCode configuration reload failed (HTTP {})", response.status().as_u16()));
+        }
         if !app.native.current(&endpoint) {
             return Err("OpenCode connection changed during reload".into());
         }
@@ -208,8 +223,20 @@ async fn activate(app: &Shared, binary: &str, action: Action) -> Result<Value, S
 }
 
 /// `POST /api/opencode/service` `{ restart?: boolean, reload?: boolean }`.
-pub async fn handle(State(app): State<Shared>, headers: HeaderMap, bytes: Bytes) -> Response {
-    let action = match parse_action(&headers, &bytes) {
+pub async fn handle(State(app): State<Shared>, request: Request) -> Response {
+    let (head, body) = request.into_parts();
+    let bytes = match axum::body::to_bytes(body, MAX_BODY).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return fastify::error(
+                Status::PAYLOAD_TOO_LARGE,
+                "FST_ERR_CTP_BODY_TOO_LARGE",
+                "Request body is too large",
+            )
+            .into_response();
+        }
+    };
+    let action = match parse_action(&head.headers, &bytes) {
         Ok(action) => action,
         Err(response) => return response,
     };

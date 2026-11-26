@@ -348,12 +348,12 @@ async fn restart_stops_running_daemon_and_passes_profile_env_on_start() {
         fs::write(
             &script,
             "@echo off\r\n\
-             if \"%1 %2\"==\"service stop\" (echo stop)>>\"%~dp0stop.log\" & (echo stopped)>\"%~dp0status.txt\" & exit /b 0\r\n\
-             if \"%1 %2\"==\"service status\" type \"%~dp0status.txt\" & exit /b 0\r\n\
-             if \"%1 %2 %3\"==\"service get password\" type \"%~dp0password.txt\" & exit /b 0\r\n\
-             if \"%1 %2\"==\"service start\" (echo %CN_PROFILE_ENV_TEST%^|%OPENCODE_DB%)>\"%~dp0start-env.txt\" & copy /y \"%~dp0start.txt\" \"%~dp0status.txt\" >nul & type \"%~dp0start.txt\" & exit /b 0\r\n\
-             if \"%1 %2 %3\"==\"debug paths state\" echo %~dp0state& exit /b 0\r\n\
-             if \"%1 %2 %3\"==\"debug paths config\" echo %~dp0config& exit /b 0\r\n\
+             if \"%1 %2\"==\"service stop\" ((echo stop)>>\"%~dp0stop.log\" & (echo stopped)>\"%~dp0status.txt\" & exit /b 0)\r\n\
+             if \"%1 %2\"==\"service status\" (type \"%~dp0status.txt\" & exit /b 0)\r\n\
+             if \"%1 %2 %3\"==\"service get password\" (type \"%~dp0password.txt\" & exit /b 0)\r\n\
+             if \"%1 %2\"==\"service start\" ((echo %CN_PROFILE_ENV_TEST%^|%OPENCODE_DB%)>\"%~dp0start-env.txt\" & copy /y \"%~dp0start.txt\" \"%~dp0status.txt\" >nul & type \"%~dp0start.txt\" & exit /b 0)\r\n\
+             if \"%1 %2 %3\"==\"debug paths state\" (echo %~dp0state& exit /b 0)\r\n\
+             if \"%1 %2 %3\"==\"debug paths config\" (echo %~dp0config& exit /b 0)\r\n\
              exit /b 3\r\n",
         )
         .unwrap();
@@ -381,10 +381,16 @@ async fn restart_stops_running_daemon_and_passes_profile_env_on_start() {
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
         script.to_string_lossy().into_owned()
     };
-    let lifecycle = Lifecycle::with_config(cli, client(), Some(config));
+    let lifecycle = Lifecycle::with_config(cli.clone(), client(), Some(config.clone()));
     let restarted = lifecycle.restart(soon()).await.unwrap();
     assert_eq!(restarted.pid, 77);
     assert_eq!(fs::read_to_string(dir.join("stop.log")).unwrap().lines().count(), 1);
     assert_eq!(fs::read_to_string(dir.join("start-env.txt")).unwrap().trim(), "from-profile|");
+
+    // Invalid profile environment must fail BEFORE calling `service stop`.
+    fs::write(&config, "server:\n  environmentVariables:\n    \"BAD=KEY\": nope\n").unwrap();
+    let err = lifecycle.restart(soon()).await.unwrap_err();
+    assert!(err.contains("Invalid OpenCode service environment variable name"));
+    assert_eq!(fs::read_to_string(dir.join("stop.log")).unwrap().lines().count(), 1);
     fs::remove_dir_all(dir).unwrap();
 }

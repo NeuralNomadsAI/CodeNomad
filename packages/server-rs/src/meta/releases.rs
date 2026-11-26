@@ -218,24 +218,51 @@ fn release_url(repo: &str, release: &Value, release_tag: &str) -> String {
     url.to_string()
 }
 
+fn stable_release(release: &Value, repo: &str) -> Option<(String, String)> {
+    if !listed(release) || release["prerelease"] == true {
+        return None;
+    }
+    let release_tag = tag(release);
+    let ver = version(release_tag);
+    if ver.is_empty() {
+        return None;
+    }
+    Some((ver.to_owned(), release_url(repo, release, release_tag)))
+}
+
 fn stable_from_list(list: &[Value], repo: &str) -> Option<(String, String)> {
     let best = list.iter().filter(|r| listed(r) && r["prerelease"] != true).reduce(|best, r| {
         let ordering =
             timestamp(r).cmp(&timestamp(best)).then_with(|| compare_versions(version(tag(r)), version(tag(best))));
         if ordering.is_gt() { r } else { best }
     })?;
-    let release_tag = tag(best);
-    let ver = version(release_tag);
-    if ver.is_empty() {
-        return None;
-    }
-    Some((ver.to_owned(), release_url(repo, best, release_tag)))
+    stable_release(best, repo)
 }
 
-async fn latest_stable_only(client: &Client, mut base: Url, repo: &str) -> Result<Option<(String, String)>, ()> {
-    base.path_segments_mut().map_err(|_| ())?.clear().push("repos").extend(repo.split('/')).push("releases");
-    base.query_pairs_mut().append_pair("per_page", "30");
-    let page = get(client, base, 16 << 20).await?;
+async fn latest_stable_endpoint(client: &Client, mut base: Url, repo: &str) -> Result<Option<(String, String)>, ()> {
+    base.path_segments_mut()
+        .map_err(|_| ())?
+        .clear()
+        .push("repos")
+        .extend(repo.split('/'))
+        .extend(["releases", "latest"]);
+    let response = client.get(base).header("accept", "application/vnd.github+json").send().await.map_err(|_| ())?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let response = response.error_for_status().map_err(|_| ())?;
+    let release = crate::opencode::read_json(response, 2 << 20).await?;
+    Ok(stable_release(&release, repo))
+}
+
+async fn latest_stable_only(client: &Client, base: Url, repo: &str) -> Result<Option<(String, String)>, ()> {
+    if let Ok(Some(stable)) = latest_stable_endpoint(client, base.clone(), repo).await {
+        return Ok(Some(stable));
+    }
+    let mut list_url = base;
+    list_url.path_segments_mut().map_err(|_| ())?.clear().push("repos").extend(repo.split('/')).push("releases");
+    list_url.query_pairs_mut().append_pair("per_page", "30");
+    let page = get(client, list_url, 16 << 20).await?;
     let list = page.as_array().map(Vec::as_slice).unwrap_or_default();
     Ok(stable_from_list(list, repo))
 }
@@ -246,12 +273,16 @@ async fn latest(
     repo: &str,
     installed: &str,
 ) -> Result<(Option<Value>, Option<(String, String)>), ()> {
+    let origin = base.clone();
     base.path_segments_mut().map_err(|_| ())?.clear().push("repos").extend(repo.split('/')).push("releases");
     let mut list_url = base.clone();
     list_url.query_pairs_mut().append_pair("per_page", "30");
     let page = get(client, list_url, 16 << 20).await?;
     let list = page.as_array().map(Vec::as_slice).unwrap_or_default();
-    let stable = stable_from_list(list, repo);
+    let mut stable = stable_from_list(list, repo);
+    if stable.is_none() && crate::bench::releases_fixture().is_none() {
+        stable = latest_stable_endpoint(client, origin, repo).await.ok().flatten();
+    }
     let Some(latest) = list
         .iter()
         .filter(|r| {

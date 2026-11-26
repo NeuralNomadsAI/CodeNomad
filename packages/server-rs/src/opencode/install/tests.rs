@@ -142,7 +142,13 @@ fn legacy_npm_verification_preflight_and_removal_match_reference() {
         std::fs::write(&cmd, "@ECHO off\r\n\"%dp0%\\node_modules\\opencode-ai\\bin\\opencode.exe\" %*\r\n").unwrap();
         std::fs::write(
             prefix.commands().join("opencode.ps1"),
-            "& \"$basedir/node_modules/opencode-ai/bin/opencode.exe\" $args\n",
+            "#!/usr/bin/env pwsh\n$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent\n  & \"$basedir/node_modules/opencode-ai/bin/opencode.exe\" $args\n",
+        )
+        .unwrap();
+        // Custom script merely mentioning `node_modules/opencode-ai/` in a comment must NOT be removed.
+        std::fs::write(
+            prefix.commands().join("opencode"),
+            "#!/bin/sh\n# note: replaced node_modules/opencode-ai/bin/opencode.exe manually\nexec /usr/local/bin/custom \"$@\"\n",
         )
         .unwrap();
         cmd.to_string_lossy().into_owned()
@@ -192,12 +198,15 @@ fn legacy_npm_verification_preflight_and_removal_match_reference() {
         assert!(pkg.exists() && std::path::Path::new(&command).exists());
     }
 
-    // With no lock, removal deletes the legacy package root and shims cleanly.
+    // With no lock, removal deletes the legacy package root and verified shims while preserving custom scripts.
     legacy::remove_legacy(&prefix, &detected).unwrap();
     assert!(!pkg.exists());
     assert!(!std::path::Path::new(&command).exists());
     #[cfg(windows)]
-    assert!(!prefix.commands().join("opencode.ps1").exists());
+    {
+        assert!(!prefix.commands().join("opencode.ps1").exists());
+        assert!(prefix.commands().join("opencode").exists(), "custom script must not be deleted by comment mention");
+    }
     let _ = std::fs::remove_dir_all(root);
 }
 

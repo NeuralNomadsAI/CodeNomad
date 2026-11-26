@@ -99,13 +99,13 @@ fn write_fake_cli(dir: &Path, name: &str, version: &str) -> String {
             &script,
             format!(
                 "@echo off\r\n\
-                 if \"%1\"==\"--version\" echo {version}& exit /b 0\r\n\
-                 if \"%1 %2\"==\"service stop\" (echo stop)>>\"%~dp0stop.log\" & (echo stopped)>\"%~dp0status.txt\" & exit /b 0\r\n\
-                 if \"%1 %2\"==\"service status\" type \"%~dp0status.txt\" & exit /b 0\r\n\
-                 if \"%1 %2 %3\"==\"service get password\" type \"%~dp0password.txt\" & exit /b 0\r\n\
-                 if \"%1 %2\"==\"service start\" (echo start)>>\"%~dp0start.log\" & copy /y \"%~dp0start.txt\" \"%~dp0status.txt\" >nul & type \"%~dp0start.txt\" & exit /b 0\r\n\
-                 if \"%1 %2 %3\"==\"debug paths state\" echo %~dp0state& exit /b 0\r\n\
-                 if \"%1 %2 %3\"==\"debug paths config\" echo %~dp0config& exit /b 0\r\n\
+                 if \"%1\"==\"--version\" (echo {version}& exit /b 0)\r\n\
+                 if \"%1 %2\"==\"service stop\" ((echo stop)>>\"%~dp0stop.log\" & (echo stopped)>\"%~dp0status.txt\" & exit /b 0)\r\n\
+                 if \"%1 %2\"==\"service status\" (type \"%~dp0status.txt\" & exit /b 0)\r\n\
+                 if \"%1 %2 %3\"==\"service get password\" (type \"%~dp0password.txt\" & exit /b 0)\r\n\
+                 if \"%1 %2\"==\"service start\" ((echo start)>>\"%~dp0start.log\" & copy /y \"%~dp0start.txt\" \"%~dp0status.txt\" >nul & type \"%~dp0start.txt\" & exit /b 0)\r\n\
+                 if \"%1 %2 %3\"==\"debug paths state\" (echo %~dp0state& exit /b 0)\r\n\
+                 if \"%1 %2 %3\"==\"debug paths config\" (echo %~dp0config& exit /b 0)\r\n\
                  exit /b 3\r\n"
             ),
         )
@@ -170,8 +170,12 @@ fn test_app(dir: &Path, binary: &str) -> (Arc<App>, Router) {
         files::watch::Watches::new(tx),
         None,
     ));
-    let router =
-        Router::new().merge(opencode::routes()).merge(settings::routes()).merge(meta::routes()).with_state(app.clone());
+    let router = Router::new()
+        .merge(opencode::routes())
+        .merge(opencode::install::routes())
+        .merge(settings::routes())
+        .merge(meta::routes())
+        .with_state(app.clone());
     (app, router)
 }
 
@@ -350,20 +354,29 @@ async fn meta_exposes_latest_stable_server_version_on_stable_feed() {
     let origin = format!("http://127.0.0.1:{}/", listener.local_addr().unwrap().port());
     let hits = Arc::new(AtomicUsize::new(0));
     let hit_counter = hits.clone();
-    let payload = json!([
-        {"tag_name": "v9.9.9-dev.1", "prerelease": true, "draft": false, "published_at": "2026-11-25T00:00:00Z"},
-        {"tag_name": "v2.5.0", "prerelease": false, "draft": false, "published_at": "2026-11-24T00:00:00Z", "html_url": "https://example.invalid/v2.5.0"},
-        {"tag_name": "v2.4.0", "prerelease": false, "draft": false, "published_at": "2026-11-20T00:00:00Z"}
+    let latest_payload = json!({
+        "tag_name": "v2.5.0",
+        "prerelease": false,
+        "draft": false,
+        "published_at": "2026-11-24T00:00:00Z",
+        "html_url": "https://example.invalid/v2.5.0"
+    })
+    .to_string();
+    // Simulate a repository whose first 30 releases are all prereleases; `/releases/latest` still resolves v2.5.0.
+    let list_payload = json!([
+        {"tag_name": "v9.9.9-dev.1", "prerelease": true, "draft": false, "published_at": "2026-11-25T00:00:00Z"}
     ])
     .to_string();
     let server = tokio::spawn(async move {
         while let Ok((mut socket, _)) = listener.accept().await {
             let mut buf = [0u8; 2048];
-            let _ = socket.read(&mut buf).await;
+            let n = socket.read(&mut buf).await.unwrap_or(0);
+            let head = String::from_utf8_lossy(&buf[..n]);
             hit_counter.fetch_add(1, Ordering::SeqCst);
+            let body = if head.contains("/releases/latest ") { &latest_payload } else { &list_payload };
             let reply = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
-                payload.len()
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
             );
             let _ = socket.write_all(reply.as_bytes()).await;
         }
@@ -517,6 +530,109 @@ async fn service_route_coalesces_identical_actions_and_rejects_conflicting_concu
     assert_eq!(b1["serviceState"], "ready");
     assert_eq!(b2["serviceState"], "ready");
     assert_eq!(reloads.load(Ordering::SeqCst), 1);
+
+    server.abort();
+    daemon.abort();
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn service_and_update_enforce_fastify_1mib_limit_reject_3xx_reload_and_honor_pinned_binary() {
+    let dir = scratch("service-guards");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let redirect_url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let auth =
+        format!("basic {}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "opencode:secret"));
+    let body = |field: &str| json!({"requestBody": {"content": {"application/json": {"schema": {"properties": {field: {}}}}}}});
+    let openapi = json!({
+        "paths": {
+            "/api/session/{sessionID}": {"patch": {}},
+            "/api/form": {"get": {}},
+            "/api/session/{sessionID}/form/{formID}": {"delete": {}},
+            "/api/experimental/session/{sessionID}/wait": {"post": {}},
+            "/api/session/{sessionID}/fork": {"post": body("before")},
+            "/api/session/{sessionID}/command": {"post": body("name")},
+            "/api/session/{sessionID}/permission/{requestID}/reply": {"post": body("decision")},
+            "/api/session/{sessionID}/environment": {"put": {"requestBody": {"content": {"application/json":
+                {"schema": {"$ref": "#/components/schemas/Env"}}}}}},
+            "/api/location/reload": {"post": {}},
+        },
+        "components": {"schemas": {
+            "Env": {"properties": {"variables": {}}},
+            "Session.Inbox.User": {"properties": {"time": {}}},
+            "Session.Message.Assistant.Text": {"properties": {"native": {}}},
+            "Session.Message.Compaction.Completed": {"properties": {"metadata": {}}},
+        }},
+    })
+    .to_string();
+    let daemon = tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") && socket.read(&mut byte).await.is_ok_and(|n| n == 1) {
+                head.push(byte[0]);
+            }
+            let head = String::from_utf8_lossy(&head).to_ascii_lowercase();
+            let reply = if !head.contains(&auth.to_ascii_lowercase()) {
+                "HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_owned()
+            } else if head.starts_with("get /api/info ") {
+                let body = json!({"version": "2.4.0", "pid": 888, "urls": []}).to_string();
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            } else if head.starts_with("get /openapi.json ") {
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{openapi}",
+                    openapi.len()
+                )
+            } else if head.starts_with("post /api/location/reload ") {
+                "HTTP/1.1 302 Found\r\nlocation: /elsewhere\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    .to_owned()
+            } else {
+                "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_owned()
+            };
+            let _ = socket.write_all(reply.as_bytes()).await;
+        }
+    });
+
+    let pinned_cli = write_fake_cli(&dir, "opencode-pinned", "2.4.0");
+    let other_cli = write_fake_cli(&dir, "opencode-other", "2.3.2");
+    fs::write(dir.join("password.txt"), "secret\n").unwrap();
+    fs::write(dir.join("status.txt"), format!("{redirect_url}\n")).unwrap();
+    let (app, router) = test_app(&dir, &pinned_cli);
+    app.native.pin_binary();
+    let (base, server) = start_server(router).await;
+
+    // 1. Over-1-MiB JSON body returns Fastify's 413 FST_ERR_CTP_BODY_TOO_LARGE on both POST routes.
+    let huge = format!("{{{}}}", " ".repeat(1024 * 1024 + 16));
+    let client = Client::builder().no_proxy().build().unwrap();
+    for route in ["/api/opencode/service", "/api/opencode/update"] {
+        let resp = client
+            .post(format!("{base}{route}"))
+            .header("content-type", "application/json")
+            .body(huge.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 413, "{route}");
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["code"], "FST_ERR_CTP_BODY_TOO_LARGE", "{route}");
+    }
+
+    // 2. 302 redirect on /api/location/reload fails activation with 502.
+    let (status, body) = send_json(&base, Method::POST, "/api/opencode/service", Some(json!({"reload": true}))).await;
+    assert_eq!(status, Status::BAD_GATEWAY);
+    assert_eq!(body, json!({"error": "service_activation_failed"}));
+
+    // 3. Pinned binary stays authoritative even when settings pick a different opencodeBinary.
+    let (status, _) =
+        send_json(&base, Method::PATCH, "/api/storage/config/server", Some(json!({"opencodeBinary": other_cli}))).await;
+    assert_eq!(status, Status::OK);
+    let (status, body) = send_json(&base, Method::GET, "/api/opencode/update", None).await;
+    assert_eq!(status, Status::OK);
+    assert_eq!(body["binaryPath"], pinned_cli);
+    assert_eq!(body["currentVersion"], "2.4.0");
 
     server.abort();
     daemon.abort();

@@ -13,9 +13,8 @@ use std::{path::Path, time::Duration};
 
 use axum::{
     Json, Router,
-    body::Bytes,
-    extract::State,
-    http::{HeaderMap, StatusCode as Status},
+    extract::{Request, State},
+    http::StatusCode as Status,
     response::IntoResponse,
     routing::post,
 };
@@ -475,8 +474,20 @@ pub async fn upgrade(app: &Shared, replace_legacy: Option<LegacyConsent>) -> Res
     Ok(installed)
 }
 
-async fn update(State(app): State<Shared>, headers: HeaderMap, bytes: Bytes) -> axum::response::Response {
-    let body = match fastify::body(&headers, &bytes) {
+async fn update(State(app): State<Shared>, request: Request) -> axum::response::Response {
+    let (head, body) = request.into_parts();
+    let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return fastify::error(
+                Status::PAYLOAD_TOO_LARGE,
+                "FST_ERR_CTP_BODY_TOO_LARGE",
+                "Request body is too large",
+            )
+            .into_response();
+        }
+    };
+    let body = match fastify::body(&head.headers, &bytes) {
         Ok(Some(fastify::Body::Json(value))) => value,
         Ok(_) => Value::Null,
         Err(err) => return err.into_response(),

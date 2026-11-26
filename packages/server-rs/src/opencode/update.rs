@@ -199,6 +199,11 @@ pub(crate) fn can_replace_daemon(installed: Option<&str>, running: Option<&str>)
 
 /// Resolves the currently selected OpenCode executable `(resolved_path, source, is_default_selection)`.
 pub(crate) async fn selected_binary(app: &crate::App) -> (String, Option<&'static str>, bool) {
+    if app.native.is_pinned()
+        && let Some(pinned) = app.native.binary()
+    {
+        return (pinned, None, false);
+    }
     let user = install::plan::user_prefix();
     match launch::custom_binary(&app.settings) {
         Some(path) => (path, None, false),

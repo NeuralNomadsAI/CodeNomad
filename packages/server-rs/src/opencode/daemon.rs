@@ -233,9 +233,11 @@ impl Lifecycle {
         self.endpoint(&url, deadline).await
     }
 
-    /// Explicit user restart only (`opencode-cli-service.ts:74-79`): stop the shared service,
-    /// then start it through the same containment/environment path as normal startup.
+    /// Explicit user restart only (`opencode-cli-service.ts:74-79`): validate the startup
+    /// environment before any mutation, stop the shared service, then start it through the same
+    /// containment/environment path as normal startup.
     pub async fn restart(&self, deadline: Instant) -> Result<Endpoint, String> {
+        let _ = launch::daemon_environment_from_config(self.config_path.as_deref())?;
         let _ = self.run(&["service", "stop"], false, deadline).await?;
         self.ensure(deadline).await
     }

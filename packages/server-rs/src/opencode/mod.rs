@@ -53,6 +53,9 @@ struct NativeInner {
     lifecycle: RwLock<Option<daemon::Lifecycle>>,
     config_path: RwLock<Option<PathBuf>>,
     pinned_binary: AtomicBool,
+    /// Serializes async binary resolution + hot-adoption so concurrent config PATCHes
+    /// always converge to the latest committed setting.
+    binary_adopt: tokio::sync::Mutex<()>,
     /// Incremented on invalidation, retirement or binary hot-adoption so stale acquires retry.
     generation: AtomicU64,
     /// When the current endpoint was last confirmed; `None` once invalidated.
@@ -86,6 +89,7 @@ impl Native {
             lifecycle: RwLock::new(None),
             config_path: RwLock::new(None),
             pinned_binary: AtomicBool::new(false),
+            binary_adopt: tokio::sync::Mutex::new(()),
             generation: AtomicU64::new(0),
             validated: Mutex::new(Some(Instant::now())),
             inflight: Mutex::new(None),
@@ -126,6 +130,7 @@ impl Native {
             lifecycle: RwLock::new(lifecycle),
             config_path: RwLock::new(None),
             pinned_binary: AtomicBool::new(false),
+            binary_adopt: tokio::sync::Mutex::new(()),
             generation: AtomicU64::new(0),
             validated,
             inflight: Mutex::new(None),
@@ -182,8 +187,9 @@ impl Native {
             return;
         }
         lifecycle.binary = binary.to_owned();
+        let mut validated = self.inner.validated.lock().unwrap();
         self.inner.generation.fetch_add(1, Ordering::SeqCst);
-        *self.inner.validated.lock().unwrap() = None;
+        *validated = None;
     }
 
     /// Retires client authority for the current shared connection without stopping the daemon,
@@ -197,11 +203,12 @@ impl Native {
         {
             lifecycle.binary = binary.to_owned();
         }
-        self.inner.generation.fetch_add(1, Ordering::SeqCst);
         {
             let mut endpoint = self.inner.endpoint.write().unwrap();
+            let mut validated = self.inner.validated.lock().unwrap();
+            self.inner.generation.fetch_add(1, Ordering::SeqCst);
             *endpoint = None;
-            *self.inner.validated.lock().unwrap() = None;
+            *validated = None;
             *self.inner.inflight.lock().unwrap() = None;
         }
         self.inner.retired.notify_waiters();
@@ -302,10 +309,16 @@ impl Native {
     /// The event stream of `endpoint` ended or failed: the next acquisition discovers again
     /// (and starts the daemon when it is gone). Requests keep it until then.
     pub fn invalidate(&self, endpoint: &Arc<Endpoint>) {
+        let has_lifecycle = self.inner.lifecycle.read().unwrap().is_some();
+        if !has_lifecycle {
+            return;
+        }
         let live = self.inner.endpoint.read().unwrap();
-        if self.inner.lifecycle.read().unwrap().is_some() && live.as_ref().is_some_and(|e| Arc::ptr_eq(e, endpoint)) {
+        if live.as_ref().is_some_and(|e| Arc::ptr_eq(e, endpoint)) {
+            let mut validated = self.inner.validated.lock().unwrap();
             self.inner.generation.fetch_add(1, Ordering::SeqCst);
-            *self.inner.validated.lock().unwrap() = None;
+            *validated = None;
+            drop(validated);
             drop(live);
             self.inner.retired.notify_waiters();
         }
@@ -355,7 +368,12 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
             },
             _ => match lifecycle.discover(deadline).await? {
                 Some(found) => found,
-                None => lifecycle.ensure(deadline).await?,
+                None => {
+                    if inner.generation.load(Ordering::SeqCst) != generation {
+                        continue;
+                    }
+                    lifecycle.ensure(deadline).await?
+                }
             },
         };
         if inner.generation.load(Ordering::SeqCst) != generation {
@@ -364,19 +382,25 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
         if current.as_ref().is_some_and(|old| **old != found) {
             // Retire the replaced daemon immediately upon discovering a different endpoint
             // (TS `opencode-service.ts:196-200, 333-343`), even if admitting the replacement fails.
-            *inner.endpoint.write().unwrap() = None;
-            *inner.validated.lock().unwrap() = None;
+            let mut endpoint = inner.endpoint.write().unwrap();
+            let mut validated = inner.validated.lock().unwrap();
+            *endpoint = None;
+            *validated = None;
+            drop(validated);
+            drop(endpoint);
             inner.retired.notify_waiters();
         }
         admission::admit(&inner.client, &found).await?;
         let found = Arc::new(found);
-        let mut endpoint = inner.endpoint.write().unwrap();
-        if inner.generation.load(Ordering::SeqCst) != generation {
-            continue;
+        {
+            let mut endpoint = inner.endpoint.write().unwrap();
+            let mut validated = inner.validated.lock().unwrap();
+            if inner.generation.load(Ordering::SeqCst) != generation {
+                continue;
+            }
+            *endpoint = Some(found.clone());
+            *validated = Some(Instant::now());
         }
-        *endpoint = Some(found.clone());
-        *inner.validated.lock().unwrap() = Some(Instant::now());
-        drop(endpoint);
         inner.retired.notify_waiters();
         return Ok(found);
     }
@@ -384,11 +408,13 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
 }
 
 /// Resolves the currently configured OpenCode executable and hot-adopts it on `app.native`
-/// without restarting any running daemon.
+/// without restarting any running daemon. Serialized so concurrent PATCHes always converge to the
+/// latest committed `opencodeBinary`.
 pub async fn adopt_configured_binary(app: &App) {
     if app.native.is_pinned() {
         return;
     }
+    let _guard = app.native.inner.binary_adopt.lock().await;
     let (binary, _, _) = update::selected_binary(app).await;
     app.native.adopt_binary(&binary);
 }

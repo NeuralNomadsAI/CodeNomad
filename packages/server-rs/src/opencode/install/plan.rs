@@ -99,6 +99,17 @@ fn command_in(prefix: &Prefix) -> Option<String> {
 }
 
 fn writable(path: &Path, allow_missing: bool) -> bool {
+    #[cfg(unix)]
+    {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let Ok(cstr) = CString::new(path.as_os_str().as_bytes()) else { return false };
+        // SAFETY: `cstr` is a valid NUL-terminated path passed to POSIX `access(2)`.
+        if unsafe { libc::access(cstr.as_ptr(), libc::W_OK) } == 0 {
+            return true;
+        }
+        allow_missing && std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT)
+    }
+    #[cfg(not(unix))]
     match std::fs::metadata(path) {
         Ok(meta) => !meta.permissions().readonly(),
         Err(e) => allow_missing && e.kind() == std::io::ErrorKind::NotFound,
