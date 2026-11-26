@@ -12,18 +12,37 @@ use rune_kit::{
 };
 use std::{ops::Deref, rc::Rc, sync::OnceLock};
 
-pub enum KitRef {
+pub(crate) enum DynamicKit {
+    Base,
+    Field,
+    Code,
+}
+
+enum KitRefInner {
     Static(&'static Kit),
-    Dynamic(Rc<CustomPalette>, bool),
+    Dynamic(Rc<CustomPalette>, DynamicKit),
+}
+
+pub struct KitRef(KitRefInner);
+
+impl KitRef {
+    pub(crate) fn static_kit(kit: &'static Kit) -> Self {
+        Self(KitRefInner::Static(kit))
+    }
+
+    pub(crate) fn dynamic(palette: Rc<CustomPalette>, variant: DynamicKit) -> Self {
+        Self(KitRefInner::Dynamic(palette, variant))
+    }
 }
 
 impl Deref for KitRef {
     type Target = Kit;
     fn deref(&self) -> &Kit {
-        match self {
-            Self::Static(kit) => kit,
-            Self::Dynamic(palette, false) => palette.kit(),
-            Self::Dynamic(palette, true) => palette.field_kit(),
+        match &self.0 {
+            KitRefInner::Static(kit) => kit,
+            KitRefInner::Dynamic(palette, DynamicKit::Base) => palette.kit(),
+            KitRefInner::Dynamic(palette, DynamicKit::Field) => palette.field_kit(),
+            KitRefInner::Dynamic(palette, DynamicKit::Code) => palette.code_kit(),
         }
     }
 }
@@ -38,27 +57,29 @@ pub fn kit(dark: bool) -> KitRef {
     if let Some(palette) = crate::palettes::active(dark) {
         return match palette {
             ResolvedPalette::BuiltIn(palette) => {
-                KitRef::Static(palette.kit.get_or_init(|| build(dark)))
+                KitRef::static_kit(palette.kit.get_or_init(|| build(dark)))
             }
-            ResolvedPalette::Custom(palette) => KitRef::Dynamic(palette, false),
+            ResolvedPalette::Custom(palette) => KitRef::dynamic(palette, DynamicKit::Base),
         };
     }
     static KITS: [OnceLock<Kit>; 4] = [const { OnceLock::new() }; 4];
-    KitRef::Static(KITS[crate::palette_index(dark)].get_or_init(|| build(dark)))
+    KitRef::static_kit(KITS[crate::palette_index(dark)].get_or_init(|| build(dark)))
 }
 pub fn field_kit(dark: bool) -> KitRef {
     if let Some(palette) = crate::palettes::active(dark) {
         return match palette {
-            ResolvedPalette::BuiltIn(palette) => KitRef::Static(palette.field.get_or_init(|| {
-                let mut kit = kit(dark).clone();
-                kit.c.bg_base = kit.c.surface_base;
-                kit
-            })),
-            ResolvedPalette::Custom(palette) => KitRef::Dynamic(palette, true),
+            ResolvedPalette::BuiltIn(palette) => {
+                KitRef::static_kit(palette.field.get_or_init(|| {
+                    let mut kit = kit(dark).clone();
+                    kit.c.bg_base = kit.c.surface_base;
+                    kit
+                }))
+            }
+            ResolvedPalette::Custom(palette) => KitRef::dynamic(palette, DynamicKit::Field),
         };
     }
     static FIELDS: [OnceLock<Kit>; 4] = [const { OnceLock::new() }; 4];
-    KitRef::Static(FIELDS[crate::palette_index(dark)].get_or_init(|| {
+    KitRef::static_kit(FIELDS[crate::palette_index(dark)].get_or_init(|| {
         let mut kit = kit(dark).clone();
         kit.c.bg_base = kit.c.surface_base;
         kit

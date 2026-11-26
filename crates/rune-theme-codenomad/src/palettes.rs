@@ -23,6 +23,7 @@ pub struct Palette {
     theme: OnceLock<Theme>,
     pub(crate) kit: OnceLock<Kit>,
     pub(crate) field: OnceLock<Kit>,
+    pub(crate) code: OnceLock<Kit>,
 }
 impl Palette {
     pub(super) fn source(&self) -> &'static Value {
@@ -75,6 +76,7 @@ pub struct CustomPalette {
     theme: Theme,
     kit: OnceCell<Kit>,
     field: OnceCell<Kit>,
+    code: OnceCell<Kit>,
 }
 
 impl CustomPalette {
@@ -112,6 +114,7 @@ impl CustomPalette {
             theme,
             kit: OnceCell::new(),
             field: OnceCell::new(),
+            code: OnceCell::new(),
         }
     }
 
@@ -134,6 +137,16 @@ impl CustomPalette {
             let mut kit = self.kit().clone();
             kit.c.bg_base = kit.c.surface_base;
             kit
+        })
+    }
+
+    pub(crate) fn code_kit(&self) -> &Kit {
+        self.code.get_or_init(|| {
+            crate::document_reader::editor::build_code_kit(
+                self.dark,
+                self.kit(),
+                self.theme.color("surface-inset"),
+            )
         })
     }
 
@@ -267,6 +280,7 @@ fn variants(high_contrast: bool) -> &'static [Palette] {
                 theme: OnceLock::new(),
                 kit: OnceLock::new(),
                 field: OnceLock::new(),
+                code: OnceLock::new(),
             })
             .collect()
     })

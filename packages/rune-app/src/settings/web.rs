@@ -204,12 +204,16 @@ impl Panel {
                 palette_settled = true;
             }
         }
+        if self.confirm_config_close && !self.config_files.dirty() {
+            self.confirm_config_close = false;
+            palette_settled = true;
+        }
         if !self.general.busy(prefs)
             && let Some(after) = self.after_palette_save.take()
         {
             if !self.general.dirty() && !prefs.palette_save_failed() {
                 match after {
-                    AfterPaletteSave::Close => close_panel(self, prefs),
+                    AfterPaletteSave::Close => request_close_panel(self, prefs),
                     AfterPaletteSave::Section(section) => apply_web_section(self, prefs, section),
                 }
                 palette_settled = true;
@@ -330,7 +334,15 @@ fn close(s: &mut State) {
     if panel.general.dismiss_overlay() {
         return;
     }
-    if panel.general.busy(&s.settings.shared.borrow()) {
+    let mut prefs = s.settings.shared.borrow_mut();
+    request_close_panel(panel, &mut prefs);
+}
+
+fn request_close_panel(panel: &mut Panel, prefs: &mut Preferences) {
+    if panel.config_files.busy() {
+        return;
+    }
+    if panel.general.busy(prefs) {
         panel.after_palette_save = Some(AfterPaletteSave::Close);
         return;
     }
@@ -342,12 +354,12 @@ fn close(s: &mut State) {
         panel.confirm_palette_close = true;
         return;
     }
-    let mut prefs = s.settings.shared.borrow_mut();
-    close_panel(panel, &mut prefs);
+    close_panel(panel, prefs);
 }
 
 fn close_panel(panel: &mut Panel, prefs: &mut Preferences) {
     panel.shown = false;
+    panel.confirm_config_close = false;
     panel.confirm_palette_close = false;
     panel.pending_section = None;
     panel.after_palette_save = None;

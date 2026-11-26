@@ -222,6 +222,12 @@ fn wrapped_rows(line: &str, style: TextStyle, width: Option<f32>) -> usize {
         rune::text::measure_with(line.trim_end_matches('\r'), &[], style, width, options);
     ((height / style.line_px()).round() as usize).max(1)
 }
+fn gutter_palette_key(dark: bool) -> (usize, Option<crate::palettes::PaletteKey>) {
+    (
+        crate::palette_index(dark),
+        crate::palettes::active(dark).map(|palette| palette.cache_key()),
+    )
+}
 fn gutter_style(
     dark: bool,
     contents: &str,
@@ -238,7 +244,7 @@ fn gutter_style(
     rune::memo(
         "file-line-numbers",
         (
-            crate::palette_index(dark),
+            gutter_palette_key(dark),
             wrap.map(f32::to_bits),
             style.line_px().to_bits(),
             gap.to_bits(),
@@ -450,5 +456,35 @@ mod mermaid_tests {
                 .any(|el| el.label.as_deref() == Some("Mermaid diagram")),
             "markdown file reader must render a 500-edge mermaid fence"
         );
+    }
+
+    #[test]
+    fn gutter_memo_key_invalidates_when_palette_changes_at_same_luminance() {
+        use crate::palettes::{
+            ColorField, built_in, custom, increased_contrast, with_palette, with_resolved,
+        };
+
+        let first = built_in().iter().find(|p| p.dark).expect("dark palette");
+        let second = built_in()
+            .iter()
+            .find(|p| p.dark && p.id != first.id)
+            .expect("second dark palette");
+        let contrast = increased_contrast(Some(first), true).expect("high-contrast variant");
+
+        let key_first = with_palette(Some(first), || gutter_palette_key(true));
+        let key_second = with_palette(Some(second), || gutter_palette_key(true));
+        let key_contrast = with_palette(Some(contrast), || gutter_palette_key(true));
+        assert_ne!(key_first, key_second);
+        assert_ne!(key_first, key_contrast);
+
+        let base_colors = first.colors();
+        let muted_colors = base_colors
+            .with(ColorField::TextMuted, "#C8A0FF")
+            .expect("valid muted color");
+        let custom_a = custom(Some("custom-gutter"), true, false, base_colors);
+        let custom_b = custom(Some("custom-gutter"), true, false, muted_colors);
+        let key_a = with_resolved(Some(custom_a), || gutter_palette_key(true));
+        let key_b = with_resolved(Some(custom_b), || gutter_palette_key(true));
+        assert_ne!(key_a, key_b);
     }
 }
