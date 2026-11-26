@@ -72,7 +72,6 @@ pub(crate) enum ScheduleHoldPhase {
         action: Act,
         request_id: String,
         proof_expected_revision: u64,
-        expected_document_revision: u64,
     },
     Control(ScheduleControlRequest, bool),
     Publication(u64),
@@ -131,13 +130,14 @@ pub(crate) struct ActiveScheduleView<'a> {
     pub project: &'a str,
     pub scope: &'a str,
     pub selected: Option<&'a str>,
+    pub view_epoch: u64,
     pub wake: &'a Wake,
 }
 
 enum Reply {
-    ActApply(String, Option<String>, Act, ActOut),
+    ActApply(String, Option<String>, Act, u64, ActOut),
     ActRead(ActOut),
-    Ctrl(String, Option<String>, ScheduleControlRequest, CtrlOut),
+    Ctrl(String, Option<String>, ScheduleControlRequest, u64, CtrlOut),
     Read(ScheduleControlRequest, ReadOut),
 }
 
@@ -197,9 +197,9 @@ impl ScheduleHolds {
             if k.server == srv && e.workspace == b.workspace {
                 if let Some((fb, rx)) = e.flight.take()
                     && let Ok(
-                        Reply::Ctrl(_, _, _, CtrlOut::AuthExpired)
+                        Reply::Ctrl(_, _, _, _, CtrlOut::AuthExpired)
                         | Reply::Read(_, ReadOut::AuthExpired)
-                        | Reply::ActApply(_, _, _, ActOut::AuthExpired)
+                        | Reply::ActApply(_, _, _, _, ActOut::AuthExpired)
                         | Reply::ActRead(ActOut::AuthExpired),
                     ) = rx.try_recv()
                 {
@@ -252,6 +252,7 @@ impl ScheduleHolds {
         key: ScheduleHoldKey,
         occ: String,
         action: Act,
+        view_epoch: u64,
         request_id: String,
         proof_expected_revision: u64,
         expected_document_revision: u64,
@@ -280,7 +281,7 @@ impl ScheduleHolds {
                 .mission_schedule_settings_apply(&id, &req, proof_expected_revision)
                 .await;
             if out_tx
-                .send(Reply::ActApply(occ, dir, action, out))
+                .send(Reply::ActApply(occ, dir, action, view_epoch, out))
                 .await
                 .is_ok()
             {
@@ -293,7 +294,6 @@ impl ScheduleHolds {
                 action,
                 request_id,
                 proof_expected_revision,
-                expected_document_revision,
             },
             workspace: ctx.backend.workspace.clone(),
             doc,
@@ -309,6 +309,7 @@ impl ScheduleHolds {
         &mut self,
         key: ScheduleHoldKey,
         occ: String,
+        view_epoch: u64,
         req: ScheduleControlRequest,
         doc: UnifiedSchedule,
         ctx: ScheduleCtx<'_>,
@@ -326,7 +327,11 @@ impl ScheduleHolds {
         let (out_tx, rx) = bounded(1);
         platform::spawn(async move {
             let out = b.control_mission_schedule(&id, &r).await;
-            if out_tx.send(Reply::Ctrl(occ, dir, r, out)).await.is_ok() {
+            if out_tx
+                .send(Reply::Ctrl(occ, dir, r, view_epoch, out))
+                .await
+                .is_ok()
+            {
                 wake();
             }
         });
@@ -356,13 +361,9 @@ impl ScheduleHolds {
             ScheduleHoldPhase::Activation {
                 request_id,
                 proof_expected_revision,
-                expected_document_revision,
                 ..
             } => {
-                let req = ScheduleActivationRequest {
-                    request_id: request_id.clone(),
-                    expected_document_revision: *expected_document_revision,
-                };
+                let req_id = request_id.clone();
                 let proof_rev = *proof_expected_revision;
                 let (b, id, wake) = (
                     ctx.backend.clone(),
@@ -373,7 +374,7 @@ impl ScheduleHolds {
                 platform::spawn(async move {
                     let (_keep, c) = bounded(1);
                     let out = b
-                        .mission_schedule_settings_read(&id, &req, proof_rev, &c)
+                        .mission_schedule_settings_read(&id, &req_id, proof_rev, &c)
                         .await;
                     if out_tx.send(Reply::ActRead(out)).await.is_ok() {
                         wake();
@@ -403,6 +404,7 @@ impl ScheduleHolds {
         exp: &[Backend],
     ) -> (bool, Vec<ScheduleHoldEvent>) {
         let (mut changed, mut evs) = (self.drain_auth_sink(), Vec::new());
+        let mut ready = Vec::new();
         for key in self.entries.keys().cloned().collect::<Vec<_>>() {
             let Some(e) = self.entries.get_mut(&key) else {
                 continue;
@@ -410,21 +412,38 @@ impl ScheduleHolds {
             let Some((b, rx)) = e.flight.take() else {
                 continue;
             };
-            let reply = match rx.try_recv() {
-                Ok(r) => r,
+            match rx.try_recv() {
+                Ok(reply) => {
+                    changed = true;
+                    e.checking = false;
+                    ready.push((key, b, reply));
+                }
                 Err(TryRecvError::Empty) => {
                     e.flight = Some((b, rx));
-                    continue;
                 }
                 Err(TryRecvError::Closed) => {
                     changed = true;
                     e.checking = false;
-                    continue;
                 }
-            };
-            changed = true;
-            e.checking = false;
-            self.on_reply(key, b, reply, active, exp, &mut evs);
+            }
+        }
+        let mut all_expired: Vec<Backend> = exp.to_vec();
+        for b in &self.auth_expired {
+            push_auth_expired(&mut all_expired, b.clone());
+        }
+        for (_, b, reply) in &ready {
+            if matches!(
+                reply,
+                Reply::ActApply(_, _, _, _, ActOut::AuthExpired)
+                    | Reply::ActRead(ActOut::AuthExpired)
+                    | Reply::Ctrl(_, _, _, _, CtrlOut::AuthExpired)
+                    | Reply::Read(_, ReadOut::AuthExpired)
+            ) {
+                push_auth_expired(&mut all_expired, b.clone());
+            }
+        }
+        for (key, b, reply) in ready {
+            self.on_reply(key, b, reply, active, &all_expired, &mut evs);
         }
         (changed, evs)
     }
@@ -440,13 +459,13 @@ impl ScheduleHolds {
     ) {
         use ScheduleHoldEvent as Ev;
         match reply {
-            Reply::ActApply(occ, dir, action, out) => match out {
+            Reply::ActApply(occ, dir, action, view_epoch, out) => match out {
                 ActOut::Ready { revision } => {
                     if let Some(e) = self.entries.get_mut(&key) {
                         e.min_rev = Some(e.min_rev.unwrap_or(0).max(revision));
                     }
-                    if let Some(v) =
-                        active.filter(|v| view_ok(v, &key, &occ, &b) && !expired(&b, exp))
+                    if let Some(v) = active
+                        .filter(|v| view_ok(v, &key, &occ, view_epoch, &b) && !expired(&b, exp))
                         && let Ok(ctrl_req) =
                             ScheduleControlRequest::new(action, revision, dir.clone())
                         && let Some(e) = self.entries.get_mut(&key)
@@ -460,7 +479,11 @@ impl ScheduleHolds {
                         let (out_tx, rx) = bounded(1);
                         platform::spawn(async move {
                             let out = bc.control_mission_schedule(&id, &r).await;
-                            if out_tx.send(Reply::Ctrl(occ, dir, r, out)).await.is_ok() {
+                            if out_tx
+                                .send(Reply::Ctrl(occ, dir, r, view_epoch, out))
+                                .await
+                                .is_ok()
+                            {
                                 wake();
                             }
                         });
@@ -489,24 +512,13 @@ impl ScheduleHolds {
             },
             Reply::ActRead(out) => match out {
                 ActOut::Ready { revision } => self.settle(&key, Some(revision), evs),
-                ActOut::Refused {
-                    refusal,
-                    not_applied,
-                } => {
-                    if not_applied {
-                        self.entries.remove(&key);
-                    }
-                    evs.push(Ev::ActivationRefused(key, refusal));
-                }
-                ActOut::Conflict => {
-                    self.entries.remove(&key);
-                    evs.push(Ev::Refused(key, "missions.scheduleList.conflict"));
-                }
                 ActOut::AuthExpired => push_auth_expired(&mut self.auth_expired, b),
-                ActOut::Unconfirmed => evs.push(Ev::NeedsRefresh(key)),
+                ActOut::Refused { .. } | ActOut::Conflict | ActOut::Unconfirmed => {
+                    evs.push(Ev::NeedsRefresh(key));
+                }
             },
-            Reply::Ctrl(_, _, _, CtrlOut::Settled(rev)) => self.settle(&key, rev, evs),
-            Reply::Ctrl(_, _, _, CtrlOut::Refused) => {
+            Reply::Ctrl(_, _, _, _, CtrlOut::Settled(rev)) => self.settle(&key, rev, evs),
+            Reply::Ctrl(_, _, _, _, CtrlOut::Refused) => {
                 if let Some(m) = self.entries.get(&key).and_then(|e| e.min_rev) {
                     self.settle(&key, Some(m), evs);
                 } else {
@@ -514,11 +526,11 @@ impl ScheduleHolds {
                 }
                 evs.push(Ev::Refused(key, "missions.scheduleList.conflict"));
             }
-            Reply::Ctrl(occ, dir, req, CtrlOut::Pending(partial)) => {
+            Reply::Ctrl(occ, dir, req, view_epoch, CtrlOut::Pending(partial)) => {
                 if let Some(e) = self.entries.get_mut(&key) {
                     set_partial(Some(e), partial);
-                    if let Some(v) =
-                        active.filter(|v| view_ok(v, &key, &occ, &b) && !expired(&b, exp))
+                    if let Some(v) = active
+                        .filter(|v| view_ok(v, &key, &occ, view_epoch, &b) && !expired(&b, exp))
                     {
                         spawn_receipt(&key, e, b, dir, req, v.wake.clone());
                     } else {
@@ -526,7 +538,8 @@ impl ScheduleHolds {
                     }
                 }
             }
-            Reply::Ctrl(_, _, _, CtrlOut::AuthExpired) | Reply::Read(_, ReadOut::AuthExpired) => {
+            Reply::Ctrl(_, _, _, _, CtrlOut::AuthExpired)
+            | Reply::Read(_, ReadOut::AuthExpired) => {
                 push_auth_expired(&mut self.auth_expired, b);
             }
             Reply::Read(req, ReadOut::Ready(read)) => {
@@ -603,9 +616,16 @@ fn set_partial(e: Option<&mut Entry>, val: bool) {
         *p = val;
     }
 }
-fn view_ok(v: &ActiveScheduleView<'_>, k: &ScheduleHoldKey, occ: &str, b: &Backend) -> bool {
+fn view_ok(
+    v: &ActiveScheduleView<'_>,
+    k: &ScheduleHoldKey,
+    occ: &str,
+    view_epoch: u64,
+    b: &Backend,
+) -> bool {
     v.occurrence == occ
         && v.selected == Some(k.schedule_id.as_str())
+        && v.view_epoch == view_epoch
         && k.matches_scope(v.backend, v.project, v.scope)
         && v.backend.client.same_connection(&b.client)
 }

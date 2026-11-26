@@ -44,18 +44,35 @@ impl Editor {
     }
 
     pub fn request_file(&mut self, id: String) {
-        if let Some(files) = &self.files {
-            if let Some(index) = files.iter().position(|f| f.id == id) {
-                self.requested_id = None;
-                if self.active != Some(index) {
-                    self.choose(index);
-                }
-            } else {
-                self.requested_id = Some(id);
-            }
-        } else {
-            self.requested_id = Some(id);
+        self.requested_id = Some(id);
+        if self.files.is_none() && self.read.is_none() && !self.busy() {
+            self.notice = None;
         }
+        self.apply_requested();
+    }
+
+    pub fn clear_requested(&mut self) {
+        self.requested_id = None;
+    }
+
+    fn apply_requested(&mut self) -> bool {
+        if self.busy() || self.read.is_some() || self.confirm.is_some() {
+            return false;
+        }
+        let Some(files) = &self.files else {
+            return false;
+        };
+        let Some(id) = self.requested_id.take() else {
+            return false;
+        };
+        let Some(index) = files.iter().position(|f| f.id == id) else {
+            return false;
+        };
+        if self.active != Some(index) {
+            self.choose(index);
+            return true;
+        }
+        false
     }
 
     pub fn suspend(&mut self) {
@@ -126,6 +143,7 @@ impl Editor {
             }
             changed = true;
         }
+        changed |= self.apply_requested();
         if self.read.is_none() && !self.busy() && self.notice.is_none() {
             if self.files.is_none() {
                 self.start_read(backend, wake, None);

@@ -78,7 +78,6 @@ impl HostSupport {
         self.current(prefs) && self.capabilities.config_files
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn pending(&self, prefs: &Preferences) -> bool {
         self.current(prefs) && self.flight.is_some()
     }

@@ -148,6 +148,7 @@ type PreOut = (Option<ReadOut>, Option<Fetch<ScheduleCapability>>);
 pub(crate) struct Schedules {
     visible: bool,
     pub(crate) generation: u64,
+    view_epoch: u64,
     page_limit: u8,
     pub(crate) project_id: Option<String>,
     pub(crate) rows: Vec<UnifiedSchedule>,
@@ -179,6 +180,7 @@ impl Default for Schedules {
         Self {
             visible: false,
             generation: 0,
+            view_epoch: 0,
             page_limit: SCHEDULE_PAGE_LIMIT,
             project_id: None,
             rows: Vec::new(),
@@ -214,6 +216,9 @@ impl Schedules {
     }
     pub(crate) fn visible(&self) -> bool {
         self.visible
+    }
+    pub(crate) fn view_epoch(&self) -> u64 {
+        self.view_epoch
     }
     pub(crate) fn loading(&self) -> bool {
         self.list_flight.is_some()
@@ -309,16 +314,19 @@ impl Schedules {
         self.visible = show;
         if !show {
             self.generation = self.generation.wrapping_add(1);
+            self.view_epoch = self.view_epoch.wrapping_add(1);
             self.cancel_flights();
         }
     }
     pub(crate) fn suspend(&mut self) {
         self.visible = false;
         self.generation = self.generation.wrapping_add(1);
+        self.view_epoch = self.view_epoch.wrapping_add(1);
         self.cancel_flights();
     }
     pub(crate) fn rebind(&mut self) {
         self.generation = self.generation.wrapping_add(1);
+        self.view_epoch = self.view_epoch.wrapping_add(1);
         self.page_limit = SCHEDULE_PAGE_LIMIT;
         self.failed_append = false;
         self.cancel_flights();
@@ -327,6 +335,10 @@ impl Schedules {
         self.refusal = None;
         self.refusal_info_open = false;
         self.activatable_info_open = false;
+    }
+    pub(crate) fn on_transport_lost(&mut self) {
+        self.view_epoch = self.view_epoch.wrapping_add(1);
+        self.invalidate();
     }
     pub(crate) fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
@@ -371,6 +383,7 @@ impl Schedules {
     }
     pub(crate) fn clear_selection(&mut self) {
         self.generation = self.generation.wrapping_add(1);
+        self.view_epoch = self.view_epoch.wrapping_add(1);
         self.selected = None;
         self.selection_error = None;
         self.feedback = None;
@@ -831,7 +844,15 @@ impl Schedules {
                             }
                         };
                         holds.dispatch_activation(
-                            m.key, m.occ, m.act, req_id, proof_rev, m.rev, m.doc, ctx,
+                            m.key,
+                            m.occ,
+                            m.act,
+                            self.view_epoch,
+                            req_id,
+                            proof_rev,
+                            m.rev,
+                            m.doc,
+                            ctx,
                         );
                         return;
                     }
@@ -1022,7 +1043,7 @@ impl Schedules {
             self.feedback = Some((m.key.schedule_id, "missions.scheduleList.readFailed"));
             return;
         };
-        holds.dispatch_control(m.key, m.occ, req, m.doc, ctx);
+        holds.dispatch_control(m.key, m.occ, self.view_epoch, req, m.doc, ctx);
     }
     fn cancel_flights(&mut self) {
         cancel(&mut self.list_flight, &mut self.auth_expired, is_fetch_auth);

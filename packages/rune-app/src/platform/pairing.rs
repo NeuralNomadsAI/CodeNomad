@@ -106,6 +106,10 @@ pub fn required(s: &State) -> bool {
     s.pairing.required
 }
 
+pub fn checking(s: &State) -> bool {
+    s.pairing.result.is_some()
+}
+
 pub fn view(s: &State) -> El {
     col()
         .key("pairing-recovery")

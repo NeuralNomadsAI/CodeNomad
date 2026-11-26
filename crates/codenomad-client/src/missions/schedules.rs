@@ -720,25 +720,28 @@ fn classify_activation(
     b: &Value,
     req_id: &str,
     proof_expected_rev: u64,
-    min_doc_rev: u64,
+    post_expected_rev: u64,
+    allow_release: bool,
 ) -> ScheduleActivationOutcome {
     use ScheduleActivationOutcome as O;
     if st == StatusCode::UNAUTHORIZED {
         return O::AuthExpired;
     }
     let code = b["code"].as_str();
-    if code == Some("schedule-activation-refused") {
+    if allow_release && code == Some("schedule-activation-refused") {
         let not_applied = b["notApplied"]["requestID"].as_str() == Some(req_id)
-            && b["notApplied"]["expectedRevision"].as_u64() == Some(proof_expected_rev);
+            && b["notApplied"]["expectedRevision"].as_u64() == Some(post_expected_rev);
         return O::Refused {
             refusal: parse_refusal(&b["refusal"]),
             not_applied,
         };
     }
-    if matches!(
-        code,
-        Some("schedule-activation-conflict" | "schedule-activation-unavailable")
-    ) {
+    if allow_release
+        && matches!(
+            code,
+            Some("schedule-activation-conflict" | "schedule-activation-unavailable")
+        )
+    {
         return O::Conflict;
     }
     if st.is_success() {
@@ -746,7 +749,7 @@ fn classify_activation(
         let proof = &doc["scheduleActivation"];
         if let Some(rev) = doc["revision"]
             .as_u64()
-            .filter(|&r| r <= MAX_REV && r >= min_doc_rev)
+            .filter(|&r| r <= MAX_REV && r >= post_expected_rev)
             && proof["requestID"].as_str() == Some(req_id)
             && proof["expectedRevision"].as_u64() == Some(proof_expected_rev)
             && proof["state"].as_str() == Some("ready")
@@ -946,19 +949,22 @@ impl Backend {
     pub async fn mission_schedule_settings_read(
         &self,
         mid: &str,
-        req: &ScheduleActivationRequest,
+        req_id: &str,
         proof_expected_rev: u64,
         c: &Receiver<()>,
     ) -> ScheduleActivationOutcome {
-        if !valid_schedule_id(mid) || req.validate().is_err() || proof_expected_rev > MAX_REV {
+        if !valid_schedule_id(mid)
+            || !valid_schedule_request_id(req_id)
+            || proof_expected_rev > MAX_REV
+        {
             return ScheduleActivationOutcome::Unconfirmed;
         }
-        let rev = req.expected_document_revision.to_string();
+        let rev = proof_expected_rev.to_string();
         match self
             .send_sched(
                 &["missions", mid, "schedule-settings"],
                 &[
-                    ("requestID", Some(req.request_id.as_str())),
+                    ("requestID", Some(req_id)),
                     ("expectedDocumentRevision", Some(rev.as_str())),
                 ],
                 None::<&()>,
@@ -968,13 +974,9 @@ impl Backend {
             .await
         {
             Some((StatusCode::UNAUTHORIZED, _)) => ScheduleActivationOutcome::AuthExpired,
-            Some((s, Some(b))) => classify_activation(
-                s,
-                &b,
-                &req.request_id,
-                proof_expected_rev,
-                req.expected_document_revision,
-            ),
+            Some((s, Some(b))) => {
+                classify_activation(s, &b, req_id, proof_expected_rev, proof_expected_rev, false)
+            }
             _ => ScheduleActivationOutcome::Unconfirmed,
         }
     }
@@ -1004,6 +1006,7 @@ impl Backend {
                 &req.request_id,
                 proof_expected_rev,
                 req.expected_document_revision,
+                true,
             ),
             _ => ScheduleActivationOutcome::Unconfirmed,
         }
@@ -1191,24 +1194,30 @@ mod tests {
         );
 
         let act_ready = js(
-            r#"{"document":{"revision":8,"scheduleActivation":{"requestID":"act_1","expectedRevision":7,"state":"ready"}}}"#,
+            r#"{"document":{"revision":8,"scheduleActivation":{"requestID":"act_1","expectedRevision":5,"state":"ready"}}}"#,
         );
         assert_eq!(
-            classify_activation(S::OK, &act_ready, "act_1", 7, 7),
+            classify_activation(S::OK, &act_ready, "act_1", 5, 7, true),
             ScheduleActivationOutcome::Ready { revision: 8 }
         );
+        // R5 saved proof + R7 POST: 403 notApplied echoes the POST revision (7) and releases.
         let act_ref = js(
             r#"{"code":"schedule-activation-refused","refusal":{"reason":"explicit-off","layer":"global","openable":true,"configFileID":"opencode-global-config"},"notApplied":{"requestID":"act_1","expectedRevision":7}}"#,
         );
         assert!(matches!(
-            classify_activation(S::FORBIDDEN, &act_ref, "act_1", 7, 7),
+            classify_activation(S::FORBIDDEN, &act_ref, "act_1", 5, 7, true),
             ScheduleActivationOutcome::Refused { not_applied: true, refusal: Some(r) } if r.openable_config_id() == Some("opencode-global-config")
         ));
+        // Read-only reconcile never releases on 403/409.
+        assert_eq!(
+            classify_activation(S::FORBIDDEN, &act_ref, "act_1", 5, 5, false),
+            ScheduleActivationOutcome::Unconfirmed
+        );
         let act_ref_unproven = js(
             r#"{"code":"schedule-activation-refused","refusal":{"reason":"explicit-off","layer":"global"}}"#,
         );
         assert!(matches!(
-            classify_activation(S::FORBIDDEN, &act_ref_unproven, "act_1", 7, 7),
+            classify_activation(S::FORBIDDEN, &act_ref_unproven, "act_1", 5, 7, true),
             ScheduleActivationOutcome::Refused {
                 not_applied: false,
                 ..
@@ -1219,13 +1228,14 @@ mod tests {
                 S::CONFLICT,
                 &js(r#"{"code":"schedule-activation-conflict"}"#),
                 "act_1",
+                5,
                 7,
-                7
+                true
             ),
             ScheduleActivationOutcome::Conflict
         );
         assert_eq!(
-            classify_activation(S::UNAUTHORIZED, &js("{}"), "act_1", 7, 7),
+            classify_activation(S::UNAUTHORIZED, &js("{}"), "act_1", 5, 7, true),
             ScheduleActivationOutcome::AuthExpired
         );
     }

@@ -227,8 +227,14 @@ impl Panel {
             changed = true;
         }
         let capable = self.scope.config_files(prefs);
-        if self.section == Section::ConfigFiles && !capable {
+        if shown
+            && self.section == Section::ConfigFiles
+            && !capable
+            && !self.scope.pending(prefs)
+            && !self.config_files.dirty()
+        {
             self.section = Section::General;
+            self.config_files.clear_requested();
             prefs.memory.show(true);
             changed = true;
         }
@@ -281,6 +287,8 @@ pub(super) fn open_providers(s: &mut State) {
 pub(super) fn open_config_file(s: &mut State, id: String) {
     let panel = &mut s.settings.web;
     if panel.config_files.busy() {
+        panel.config_files.request_file(id);
+        open(s);
         return;
     }
     panel.section = Section::ConfigFiles;

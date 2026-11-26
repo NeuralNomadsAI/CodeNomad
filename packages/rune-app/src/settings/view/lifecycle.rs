@@ -34,13 +34,17 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     return true;
                 }
                 let mut prefs = s.shared.borrow_mut();
-                let jump = std::mem::take(&mut prefs.open_providers);
-                let jump_config = prefs.open_config_file.take();
-                if (jump || jump_config.is_some())
+                let mut jump = false;
+                if s.closing {
+                    prefs.open_providers = false;
+                    prefs.open_config_file = None;
+                } else if (prefs.open_providers || prefs.open_config_file.is_some())
                     && !s.config_files.busy()
                     && !s.confirm_close
-                    && !s.closing
                 {
+                    jump = true;
+                    let _jump = std::mem::take(&mut prefs.open_providers);
+                    let jump_config = prefs.open_config_file.take();
                     if let Some(id) = jump_config {
                         s.section = Section::ConfigFiles;
                         s.config_files.request_file(id);
@@ -87,6 +91,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         && !s.config_files.dirty()
                     {
                         s.section = Section::General;
+                        s.config_files.clear_requested();
                         prefs.memory.show(true);
                         config_changed = true;
                     }

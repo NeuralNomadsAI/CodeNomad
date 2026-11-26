@@ -1468,6 +1468,7 @@ impl Panel {
             project: self.schedule_project()?,
             scope: &self.owner_scope,
             selected: self.schedules.selected.as_deref(),
+            view_epoch: self.schedules.view_epoch(),
             wake: &self.wake,
         })
     }

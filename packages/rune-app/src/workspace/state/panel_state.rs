@@ -132,6 +132,18 @@ fn pairing_required(s: &State) -> bool {
     }
 }
 
+fn pairing_checking(s: &State) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::platform::pairing::checking(s)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = s;
+        false
+    }
+}
+
 fn authentication_required(s: &State) -> bool {
     s.screen
         .launcher()
@@ -727,9 +739,10 @@ pub(super) fn poll_missions(
     changed |= ui.mission_briefing.poll();
     extend_unique_auth(&mut auth_expired, ui.mission_briefing.take_auth_expired());
 
+    let pairing_pending = pairing_checking(s);
     let (schedules_changed, schedule_events) = {
         let e = &ui.entries[ui.active];
-        let v = (active_polled && active_visible)
+        let v = (active_polled && active_visible && !pairing_pending)
             .then(|| e.missions.as_ref()?.active_schedule_view(&e.key))
             .flatten();
         ui.mission_schedules.poll(v.as_ref(), &auth_expired)
@@ -778,7 +791,7 @@ pub(super) fn poll_missions(
             changed |= panel.apply_editor_events(&entry.key, &editor_events);
             if panel.commit_schedule_pre(
                 &mut ui.mission_schedules,
-                active_visible && !blocked && panel.supported(),
+                active_visible && !blocked && !pairing_pending && panel.supported(),
                 &auth_expired,
             ) {
                 changed = true;
@@ -928,7 +941,7 @@ pub(crate) fn on_mission_transport_lost(s: &mut State) {
                     .revoke_auto_start_for_occurrence(&entry.key);
                 if let Some(panel) = entry.missions.as_mut() {
                     panel.invalidate_editor_generation();
-                    panel.schedules.invalidate();
+                    panel.schedules.on_transport_lost();
                 }
             }
         }
@@ -970,6 +983,7 @@ pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
                 .revoke_auto_start_for_occurrence(&entry.key);
             if let Some(panel) = entry.missions.as_mut() {
                 panel.invalidate_editor_generation();
+                panel.schedules.on_transport_lost();
             }
         }
     }

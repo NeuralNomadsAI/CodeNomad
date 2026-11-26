@@ -1001,3 +1001,215 @@ fn capability_missing_blocks_calendar_launch_and_view_renders_controls() {
             .contains("Nightly build")
     );
 }
+
+#[test]
+fn r1_continuation_epoch_same_tick_401_and_retained_proof_revisions() {
+    crate::platform::block_on(async {
+        let mut h = H::new().await;
+        let mut s_a = row("msn_a", "Schedule A", "paused", 7, "null");
+        s_a["availableActions"] = js(r#"["resume","delete"]"#);
+        s_a["scheduleActivation"] =
+            json!({"requestID": "act_prev_5", "expectedRevision": 5, "state": "ready"});
+        let mut s_b = row("msn_b", "Schedule B", "paused", 3, "null");
+        s_b["availableActions"] = js(r#"["play","delete"]"#);
+        s_b["scheduleActivation"] = Value::Null;
+
+        let (s, c) = h.panel.schedule_parts();
+        s.show(true);
+        s.refresh(c);
+        h.http
+            .accept()
+            .await
+            .reply(200, list(vec![s_a.clone(), s_b.clone()], None))
+            .await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.rows.len() == 2)
+            .await;
+
+        // 1. A -> B -> A round-trip while activation is in flight revokes Play continuation
+        assert!(h.act(G::Select("msn_b".into())));
+        h.reply_lc(vec![s_a.clone(), s_b.clone()], true).await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_b"))
+            .await;
+        assert!(h.act(G::Action(A::Play)));
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, rdoc(s_b.clone())).await;
+            }
+        }
+        let kb = h.key("msn_b");
+        h.pump(|_, hs| {
+            matches!(
+                hs.get(&kb),
+                Some((
+                    P::Activation {
+                        action: A::Play,
+                        ..
+                    },
+                    true
+                ))
+            )
+        })
+        .await;
+        let act_b = h.http.accept().await;
+        let rid_b = act_b.body["requestID"].as_str().unwrap().to_owned();
+        // Switch B -> A -> B before activation returns
+        assert!(h.act(G::Select("msn_a".into())));
+        h.reply_lc(vec![s_a.clone(), s_b.clone()], true).await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_a"))
+            .await;
+        assert!(h.act(G::Select("msn_b".into())));
+        h.reply_lc(vec![s_a.clone(), s_b.clone()], true).await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_b"))
+            .await;
+        act_b
+            .reply(
+                200,
+                json!({"document": {"revision": 4, "scheduleActivation": {"requestID": rid_b, "expectedRevision": 3, "state": "ready"}}}),
+            )
+            .await;
+        // Settles directly to Publication(4) without dispatching POST /missions/msn_b/schedule
+        h.pump(|_, hs| matches!(hs.get(&kb), Some((P::Publication(4), false))))
+            .await;
+        let mut sb_rev4 = row("msn_b", "Schedule B", "paused", 4, "null");
+        sb_rev4["availableActions"] = js(r#"["play","delete"]"#);
+        sb_rev4["scheduleActivation"] = Value::Null;
+        h.reply_lc(vec![s_a.clone(), sb_rev4.clone()], true).await;
+        h.pump(|_, hs| hs.get(&kb).is_none()).await;
+        h.http.quiet().await;
+
+        // 2. Same-tick 401 in auth_sink blocks activation -> Play continuation
+        let s_b2 = sb_rev4;
+        assert!(h.act(G::Action(A::Play)));
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, rdoc(s_b2.clone())).await;
+            }
+        }
+        h.pump(|_, hs| matches!(hs.get(&kb), Some((P::Activation { .. }, true))))
+            .await;
+        let act_b2 = h.http.accept().await;
+        let rid_b2 = act_b2.body["requestID"].as_str().unwrap().to_owned();
+        act_b2
+            .reply(
+                200,
+                json!({"document": {"revision": 5, "scheduleActivation": {"requestID": rid_b2, "expectedRevision": 4, "state": "ready"}}}),
+            )
+            .await;
+        // Deposit a same-connection 401 into auth_sink in the exact poll tick that receives Ready
+        for _ in 0..40 {
+            super::push_auth_sink(&h.holds.auth_sink(), h.panel.backend.clone());
+            let av = h.panel.active_schedule_view("occ-1");
+            let (_, evs) = h.holds.poll(av.as_ref(), &[]);
+            h.panel.apply_schedule_hold_events(&evs);
+            if matches!(h.holds.get(&kb), Some((P::Publication(5), false))) {
+                break;
+            }
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(25), h.done.recv()).await;
+        }
+        assert!(matches!(h.holds.get(&kb), Some((P::Publication(5), false))));
+        assert!(!h.holds.drain_auth_expired().is_empty());
+        let sb_rev5 = row("msn_b", "Schedule B", "paused", 5, "null");
+        h.reply_lc(vec![s_a.clone(), sb_rev5], true).await;
+        h.pump(|_, hs| hs.get(&kb).is_none()).await;
+        h.http.quiet().await;
+
+        // 3. Retained R5 ready proof on R7 doc: POST sends rev 7, 403 notApplied rev 7 releases,
+        //    and uncertain reconcile sends GET expectedDocumentRevision=5
+        assert!(h.act(G::Select("msn_a".into())));
+        let cap_act = json!({"api":{"available":true},"enabled":false,"activation":{"available":true,"targets":[{"scope":"project","path":"/owned/.opencode/opencode.jsonc"}]}});
+        h.reply_lc_body(vec![s_a.clone()], cap_act.clone()).await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_a"))
+            .await;
+        assert!(h.act(G::Action(A::Resume)));
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_act.clone()).await;
+            } else {
+                req.reply(200, rdoc(s_a.clone())).await;
+            }
+        }
+        let ka = h.key("msn_a");
+        h.pump(|_, hs| {
+            matches!(
+                hs.get(&ka),
+                Some((
+                    P::Activation {
+                        proof_expected_revision: 5,
+                        ..
+                    },
+                    true
+                ))
+            )
+        })
+        .await;
+        let act_a = h.http.accept().await;
+        assert_eq!(act_a.body["requestID"], "act_prev_5");
+        assert_eq!(act_a.body["expectedDocumentRevision"], 7);
+        act_a
+            .reply(
+                403,
+                json!({
+                    "code": "schedule-activation-refused",
+                    "refusal": {"reason": "explicit-off", "layer": "global", "openable": true, "configFileID": "opencode-global-config"},
+                    "notApplied": {"requestID": "act_prev_5", "expectedRevision": 7}
+                }),
+            )
+            .await;
+        h.pump(|p, hs| {
+            hs.get(&ka).is_none()
+                && p.schedules.feedback_for("msn_a")
+                    == Some("missions.scheduleList.activationRefused")
+        })
+        .await;
+        h.reply_lc_body(vec![s_a.clone()], cap_act.clone()).await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_a"))
+            .await;
+
+        // Uncertain POST on retained R5 proof -> GET /schedule-settings sends expectedDocumentRevision=5
+        assert!(h.act(G::Action(A::Resume)));
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_act.clone()).await;
+            } else {
+                req.reply(200, rdoc(s_a.clone())).await;
+            }
+        }
+        h.pump(|_, hs| matches!(hs.get(&ka), Some((P::Activation { .. }, true))))
+            .await;
+        let act_a2 = h.http.accept().await;
+        assert_eq!(act_a2.body["requestID"], "act_prev_5");
+        assert_eq!(act_a2.body["expectedDocumentRevision"], 7);
+        act_a2
+            .reply(503, json!({"code": "schedule-activation-pending"}))
+            .await;
+        h.pump(|_, hs| matches!(hs.get(&ka), Some((P::Activation { .. }, false))))
+            .await;
+        h.reply_lc_body(vec![s_a.clone()], cap_act).await;
+        h.pump(|p, _| !p.schedules.loading()).await;
+        assert!(h.act(G::Reconcile));
+        let rec_get = h.http.accept().await;
+        assert!(
+            rec_get.header.starts_with("GET ")
+                && rec_get.header.contains("requestID=act_prev_5")
+                && rec_get.header.contains("expectedDocumentRevision=5")
+        );
+        rec_get
+            .reply(
+                200,
+                json!({"document": {"revision": 7, "scheduleActivation": {"requestID": "act_prev_5", "expectedRevision": 5, "state": "ready"}}}),
+            )
+            .await;
+        h.pump(|_, hs| matches!(hs.get(&ka), Some((P::Publication(7), false))))
+            .await;
+        h.reply_lc(vec![s_a], true).await;
+        h.pump(|_, hs| hs.get(&ka).is_none()).await;
+    });
+}
