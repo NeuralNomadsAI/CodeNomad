@@ -66,6 +66,7 @@ pub(in crate::settings) struct Run {
     intent: Intent,
     owner: Rc<()>,
     expected_server: Option<String>,
+    expected_drop_gen: u64,
     prompt_guard: Option<(String, Arc<AtomicBool>)>,
     receiver: Receiver<Reply>,
 }
@@ -81,6 +82,7 @@ fn authorized(
     backend: &Backend,
     intent: &Intent,
     expected_server: Option<&str>,
+    expected_drop_gen: u64,
     require_token: bool,
 ) -> bool {
     let valid = if require_token {
@@ -89,6 +91,7 @@ fn authorized(
         intent.authority_valid()
     };
     valid
+        && backend.client.drop_generation() == expected_drop_gen
         && ServerOwner::backend_verified(backend)
         && expected_server.is_none_or(|id| backend.client.server_identity() == Some(id))
 }
@@ -97,15 +100,28 @@ async fn attest_and_authorize(
     backend: &Backend,
     intent: &Intent,
     expected_server: Option<&str>,
+    expected_drop_gen: u64,
     require_token: bool,
 ) -> bool {
-    if !authorized(backend, intent, expected_server, require_token) {
+    if !authorized(
+        backend,
+        intent,
+        expected_server,
+        expected_drop_gen,
+        require_token,
+    ) {
         return false;
     }
     if backend.client.tracks_server_attestation() && backend.attest_server().await.is_err() {
         return false;
     }
-    authorized(backend, intent, expected_server, require_token)
+    authorized(
+        backend,
+        intent,
+        expected_server,
+        expected_drop_gen,
+        require_token,
+    )
 }
 
 fn owner(s: &State, intent: &Intent) -> Option<Backend> {
@@ -125,7 +141,12 @@ fn owner(s: &State, intent: &Intent) -> Option<Backend> {
     .then(|| backend.clone())
 }
 
-fn prompt_owner_current(s: &State, intent: &Intent, created_session: &str) -> bool {
+fn prompt_owner_current(
+    s: &State,
+    intent: &Intent,
+    created_session: &str,
+    expected_drop_gen: u64,
+) -> bool {
     let Some(launcher) = s.screen.launcher() else {
         return false;
     };
@@ -141,6 +162,7 @@ fn prompt_owner_current(s: &State, intent: &Intent, created_session: &str) -> bo
         && prefs.memory.visible
         && prefs.memory.active_scope(prefs.provider_target.as_ref()) == intent.scope
         && backend.client_id == intent.connection
+        && backend.client.drop_generation() == expected_drop_gen
         && project.id == intent.workspace
         && !launcher.authentication_required
         && !prefs.transport_lost()
@@ -157,7 +179,7 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             Err(_) if run.receiver.is_closed() => Reply::Failed,
             Err(_) => {
                 if let Some((created_session, guard)) = &run.prompt_guard
-                    && !prompt_owner_current(s, &run.intent, created_session)
+                    && !prompt_owner_current(s, &run.intent, created_session, run.expected_drop_gen)
                 {
                     guard.store(false, Ordering::SeqCst);
                 }
@@ -166,22 +188,35 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         };
         let intent = &run.intent;
-        let current = s.current_scope(&run.owner) && owner(s, intent).is_some();
+        let current = s.current_scope(&run.owner)
+            && owner(s, intent)
+                .is_some_and(|b| b.client.drop_generation() == run.expected_drop_gen);
         match reply {
             Reply::Checked(backend)
                 if current && s.settings.shared.borrow().memory.cleanup_current(intent) =>
             {
                 let (workspace, directory) = (intent.workspace.clone(), intent.directory.clone());
                 let title = strings::t("settings.memory.tidy");
-                let (check_intent, expected) = (run.intent.clone(), run.expected_server.clone());
+                let (check_intent, expected, drop_gen) = (
+                    run.intent.clone(),
+                    run.expected_server.clone(),
+                    run.expected_drop_gen,
+                );
                 s.settings.memory_cleanup = Some(advance(
                     s,
                     run.intent,
                     run.owner,
                     run.expected_server,
+                    drop_gen,
                     async move {
-                        if !attest_and_authorize(&backend, &check_intent, expected.as_deref(), true)
-                            .await
+                        if !attest_and_authorize(
+                            &backend,
+                            &check_intent,
+                            expected.as_deref(),
+                            drop_gen,
+                            true,
+                        )
+                        .await
                         {
                             return Reply::Failed;
                         }
@@ -190,14 +225,27 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         )
                         .await
                         {
-                            Ok(created) => Reply::Created(created),
-                            Err(_) => Reply::Failed,
+                            Ok(created)
+                                if attest_and_authorize(
+                                    &created,
+                                    &check_intent,
+                                    expected.as_deref(),
+                                    drop_gen,
+                                    true,
+                                )
+                                .await =>
+                            {
+                                Reply::Created(created)
+                            }
+                            _ => Reply::Failed,
                         }
                     },
                 ));
             }
             Reply::Created(backend)
-                if current && s.settings.shared.borrow().memory.cleanup_current(intent) =>
+                if current
+                    && backend.client.drop_generation() == run.expected_drop_gen
+                    && s.settings.shared.borrow().memory.cleanup_current(intent) =>
             {
                 let scope = intent.scope;
                 let id = backend.session.clone();
@@ -211,12 +259,17 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     s.settings.shared.borrow().memory.prompt_token();
                 let prompt_valid = Arc::new(AtomicBool::new(true));
                 let prompt_valid_task = prompt_valid.clone();
-                let (check_intent, expected) = (run.intent.clone(), run.expected_server.clone());
+                let (check_intent, expected, drop_gen) = (
+                    run.intent.clone(),
+                    run.expected_server.clone(),
+                    run.expected_drop_gen,
+                );
                 s.settings.memory_cleanup = Some(advance_with_guard(
                     s,
                     run.intent,
                     run.owner,
                     run.expected_server,
+                    drop_gen,
                     Some((id, prompt_valid)),
                     async move {
                         let prompt_ok = || {
@@ -228,6 +281,7 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                                 &backend,
                                 &check_intent,
                                 expected.as_deref(),
+                                drop_gen,
                                 false,
                             )
                             .await
@@ -246,18 +300,38 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                             })
                             .await
                         {
-                            Ok(_) => Reply::Sent,
-                            Err(_) => Reply::Failed,
+                            Ok(_)
+                                if prompt_ok()
+                                    && attest_and_authorize(
+                                        &backend,
+                                        &check_intent,
+                                        expected.as_deref(),
+                                        drop_gen,
+                                        false,
+                                    )
+                                    .await
+                                    && prompt_ok() =>
+                            {
+                                Reply::Sent
+                            }
+                            _ => Reply::Failed,
                         }
                     },
                 ));
             }
-            Reply::Sent => s
-                .settings
-                .shared
-                .borrow_mut()
-                .memory
-                .cleanup_succeeded(intent),
+            Reply::Sent
+                if s.current_scope(&run.owner)
+                    && run.prompt_guard.as_ref().is_some_and(|(session, guard)| {
+                        guard.load(Ordering::SeqCst)
+                            && prompt_owner_current(s, intent, session, run.expected_drop_gen)
+                    }) =>
+            {
+                s.settings
+                    .shared
+                    .borrow_mut()
+                    .memory
+                    .cleanup_succeeded(intent);
+            }
             _ => s.settings.shared.borrow_mut().memory.cleanup_failed(intent),
         }
         if let Some(wake) = &s.settings.shared.borrow().window_wake {
@@ -281,20 +355,24 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     };
     let expected_server = backend.client.server_identity().map(str::to_owned);
     let expected = expected_server.clone();
+    let drop_gen = backend.client.drop_generation();
     let request = intent.clone();
     s.settings.memory_cleanup = Some(advance(
         s,
         intent,
         s.input_scope.clone(),
         expected_server,
+        drop_gen,
         async move {
-            if !attest_and_authorize(&backend, &request, expected.as_deref(), true).await {
+            if !attest_and_authorize(&backend, &request, expected.as_deref(), drop_gen, true).await
+            {
                 return Reply::Failed;
             }
             if !matches!(memory::enabled(&backend).await, Ok(true)) {
                 return Reply::Failed;
             }
-            if !attest_and_authorize(&backend, &request, expected.as_deref(), true).await {
+            if !attest_and_authorize(&backend, &request, expected.as_deref(), drop_gen, true).await
+            {
                 return Reply::Failed;
             }
             let list = memory::list_at(
@@ -303,7 +381,7 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 Some((&request.workspace, Some(&request.directory))),
             )
             .await;
-            if !authorized(&backend, &request, expected.as_deref(), true) {
+            if !authorized(&backend, &request, expected.as_deref(), drop_gen, true) {
                 return Reply::Failed;
             }
             if list.is_ok_and(|list| {
@@ -325,9 +403,18 @@ fn advance(
     intent: Intent,
     owner: Rc<()>,
     expected_server: Option<String>,
+    expected_drop_gen: u64,
     task: impl std::future::Future<Output = Reply> + platform::TaskBound + 'static,
 ) -> Run {
-    advance_with_guard(s, intent, owner, expected_server, None, task)
+    advance_with_guard(
+        s,
+        intent,
+        owner,
+        expected_server,
+        expected_drop_gen,
+        None,
+        task,
+    )
 }
 
 fn advance_with_guard(
@@ -335,6 +422,7 @@ fn advance_with_guard(
     intent: Intent,
     owner: Rc<()>,
     expected_server: Option<String>,
+    expected_drop_gen: u64,
     prompt_guard: Option<(String, Arc<AtomicBool>)>,
     task: impl std::future::Future<Output = Reply> + platform::TaskBound + 'static,
 ) -> Run {
@@ -348,6 +436,7 @@ fn advance_with_guard(
         intent,
         owner,
         expected_server,
+        expected_drop_gen,
         prompt_guard,
         receiver,
     }

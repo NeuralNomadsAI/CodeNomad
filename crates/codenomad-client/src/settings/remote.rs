@@ -434,7 +434,9 @@ pub async fn set_password(backend: &Backend, password: &str) -> Result<PasswordS
 
 /// Persists `server.listeningMode` through the Server config owner.
 /// On an uncertain write, re-reads the authoritative server config instead of replaying.
-pub async fn set_listening_mode(backend: &Backend, mode: ListeningMode) -> Result<()> {
+/// Returns `Ok(Some(message))` when the server replied with an explicit 5xx message even though
+/// the authoritative readback confirmed the target mode.
+pub async fn set_listening_mode(backend: &Backend, mode: ListeningMode) -> Result<Option<String>> {
     let target = mode.as_str();
     let url = format!("{}api/storage/config/server", backend.base);
     let response = backend
@@ -449,7 +451,7 @@ pub async fn set_listening_mode(backend: &Backend, mode: ListeningMode) -> Resul
                 && doc.is_object()
             {
                 return if matches_listening_mode(&doc, target) {
-                    Ok(())
+                    Ok(None)
                 } else {
                     Err(Error::SaveFailed)
                 };
@@ -476,7 +478,7 @@ async fn confirm_listening_mode(
     url: &str,
     target: &str,
     fallback: Error,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let request = backend
         .client
         .get(url)
@@ -498,7 +500,11 @@ async fn confirm_listening_mode(
         return Err(fallback);
     };
     if doc.is_object() && matches_listening_mode(&doc, target) {
-        Ok(())
+        let warning = match fallback {
+            Error::Server(message) => Some(message),
+            _ => None,
+        };
+        Ok(warning)
     } else {
         Err(fallback)
     }

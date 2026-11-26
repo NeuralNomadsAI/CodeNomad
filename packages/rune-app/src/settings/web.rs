@@ -684,20 +684,29 @@ pub(super) fn view(
         Section::OpenCode
             if local || (prefs.backend.is_some() && !panel.scope.local_unsupported(prefs)) =>
         {
+            let transport_issue = prefs.transport_lost()
+                || !prefs.can_retry()
+                || prefs
+                    .backend
+                    .as_ref()
+                    .is_some_and(|b| !super::ServerOwner::backend_verified(b));
             col()
                 .full_width()
-                .children((!local && panel.scope.local_failed(prefs)).then(|| {
-                    layout::action_row()
-                        .child(text(t("rune.connect_error")).role("alert").wrap())
-                        .child(layout::button(
-                            t("sessionList.loadError.retry"),
-                            false,
-                            |s: &mut State| {
-                                s.settings.web.scope.retry();
-                                (s.wake)();
-                            },
-                        ))
-                }))
+                .children(
+                    (!local && (transport_issue || panel.scope.local_failed(prefs))).then(|| {
+                        layout::action_row()
+                            .child(text(t("rune.connect_error")).role("alert").wrap())
+                            .child(layout::button(
+                                t("sessionList.loadError.retry"),
+                                !prefs.can_retry(),
+                                |s: &mut State| {
+                                    s.settings.shared.borrow_mut().retry_general();
+                                    s.settings.web.scope.retry();
+                                    (s.wake)();
+                                },
+                            ))
+                    }),
+                )
                 .child(opencode::view(
                     &panel.opencode,
                     prefs,
@@ -730,21 +739,30 @@ pub(super) fn view(
         Section::Remote
             if local || (prefs.backend.is_some() && !panel.scope.local_unsupported(prefs)) =>
         {
+            let transport_issue = prefs.transport_lost()
+                || !prefs.can_retry()
+                || prefs
+                    .backend
+                    .as_ref()
+                    .is_some_and(|b| !super::ServerOwner::backend_verified(b));
             col()
                 .full_width()
                 .separate(Space::Sm)
-                .children((!local && panel.scope.local_failed(prefs)).then(|| {
-                    layout::action_row()
-                        .child(text(t("rune.connect_error")).role("alert").wrap())
-                        .child(layout::button(
-                            t("sessionList.loadError.retry"),
-                            false,
-                            |s: &mut State| {
-                                s.settings.web.scope.retry();
-                                (s.wake)();
-                            },
-                        ))
-                }))
+                .children(
+                    (!local && (transport_issue || panel.scope.local_failed(prefs))).then(|| {
+                        layout::action_row()
+                            .child(text(t("rune.connect_error")).role("alert").wrap())
+                            .child(layout::button(
+                                t("sessionList.loadError.retry"),
+                                !prefs.can_retry(),
+                                |s: &mut State| {
+                                    s.settings.shared.borrow_mut().retry_general();
+                                    s.settings.web.scope.retry();
+                                    (s.wake)();
+                                },
+                            ))
+                    }),
+                )
                 .child(panel.remote.view_gated(
                     &s.settings.shared,
                     local,

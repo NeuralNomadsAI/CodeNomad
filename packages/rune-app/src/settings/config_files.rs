@@ -30,6 +30,8 @@ pub(super) struct Editor {
     goal: Option<usize>,
     confirm: Option<usize>,
     notice: Option<&'static str>,
+    saved_notice: bool,
+    last_stamp: Option<(u64, u64)>,
     verified_stamp: Option<(u64, u64)>,
     reverify: bool,
     conflict: bool,
@@ -103,6 +105,8 @@ impl Editor {
                     self.authority.fetch_add(1, Ordering::SeqCst);
                     self.read = None;
                     self.verified_stamp = None;
+                    self.last_stamp = None;
+                    self.saved_notice = false;
                     if let Some(index) = self.active {
                         self.conflict = false;
                         self.notice = None;
@@ -135,14 +139,17 @@ impl Editor {
                     if saved {
                         self.original = Some(draft);
                         self.exists = true;
-                        self.notice = Some("settings.configFiles.toast.saveSuccess");
+                        self.notice = None;
+                        self.saved_notice = true;
                     } else {
+                        self.saved_notice = false;
                         self.notice = Some("settings.configFiles.errors.save");
                     }
                     changed = true;
                 }
                 Err(_) if inbox.is_closed() => {
                     self.write = None;
+                    self.saved_notice = false;
                     self.notice = Some("settings.configFiles.errors.save");
                     changed = true;
                 }
@@ -166,7 +173,26 @@ impl Editor {
             return changed;
         }
         let stamp = Self::current_stamp(prefs, backend);
-        if let Some(index) = self.active
+        let stamp_changed = self.last_stamp != Some(stamp);
+        if stamp_changed {
+            self.last_stamp = Some(stamp);
+            self.saved_notice = false;
+            if let Some(index) = self.active
+                && self.verified_stamp != Some(stamp)
+                && !self.busy()
+            {
+                self.notice = None;
+                if self.dirty() {
+                    self.reverify = true;
+                    self.conflict = false;
+                } else {
+                    self.reverify = false;
+                    self.conflict = false;
+                    self.goal = Some(index);
+                }
+                changed = true;
+            }
+        } else if let Some(index) = self.active
             && self.verified_stamp != Some(stamp)
             && !self.busy()
         {
@@ -402,6 +428,7 @@ impl Editor {
 
     fn reload(&mut self, index: usize) {
         self.notice = None;
+        self.saved_notice = false;
         self.goal = Some(index);
     }
 
@@ -463,6 +490,7 @@ impl Editor {
         };
         self.write = Some(inbox);
         self.notice = None;
+        self.saved_notice = false;
         platform::spawn(async move {
             let same_server = || {
                 backend.client.drop_generation() == prepared_gen
@@ -566,7 +594,11 @@ impl Editor {
                         .label(t("settings.configFiles.title"))
                         .disabled(waiting || !writable || self.confirm.is_some())
                         .on_edit(move |s| &mut edit(s).draft)
-                        .on_change(move |s, _| edit(s).diagnose())
+                        .on_change(move |s, _| {
+                            let editor = edit(s);
+                            editor.saved_notice = false;
+                            editor.diagnose();
+                        })
                         .build(&field_kit(layout::dark())),
                 )
                 .children(self.syntax_line.map(|line| {
@@ -626,6 +658,8 @@ impl Editor {
                     },
                 ));
             }
+        } else if self.saved_notice {
+            view = view.child(text(t("settings.configFiles.toast.saveSuccess")).role("status"));
         }
         if let Some(index) = self.confirm {
             layers.push(confirm_discard(move |s, accept, _| {
@@ -920,14 +954,28 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             assert!(!editor.dirty());
-            assert_eq!(
-                editor.notice,
-                Some("settings.configFiles.toast.saveSuccess")
-            );
+            assert!(editor.saved_notice);
+            assert_eq!(editor.notice, None);
             assert_eq!(
                 saved_payload.lock().unwrap().as_deref(),
                 Some("locale: fr\n")
             );
+
+            // Advancing the authority stamp right after a save (while saved_notice is set) must
+            // clear the toast and automatically reload a clean file rather than staying locked.
+            *saved_payload.lock().unwrap() = Some("locale: it\n".to_owned());
+            prefs.authority_handle().fetch_add(1, Ordering::SeqCst);
+            assert!(!editor.can_write(&prefs));
+            for _ in 0..100 {
+                editor.poll(&prefs, &wake, true);
+                if editor.can_write(&prefs) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(editor.can_write(&prefs));
+            assert!(!editor.saved_notice);
+            assert_eq!(editor.draft.text, "locale: it\n");
 
             // An in-flight save whose PUT already arrived before authentication expires must
             // still drain when its reply arrives so busy() does not lock Preferences open.

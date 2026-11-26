@@ -50,9 +50,10 @@ pub(super) struct Remote {
     owner_drop_gen: Option<u64>,
     owner_auth_gen: u64,
     snapshot_verified: bool,
+    devices_verified: bool,
     snapshot: Option<Snapshot>,
     pairing: Option<ActivePairing>,
-    flight: Option<(Option<Sender<()>>, Receiver<Reply>)>,
+    flight: Option<(FlightStamp, Option<Sender<()>>, Receiver<Reply>)>,
     recheck: Option<(Sender<()>, Receiver<()>)>,
     error: Option<ErrorText>,
     mutation_error: Option<(MutationOutcome, ErrorText)>,
@@ -64,6 +65,8 @@ pub(super) struct Remote {
     copy: pairing_view::Copy,
     direct: direct::DirectAccess,
 }
+
+type FlightStamp = (String, Option<String>, u64, u64);
 
 type Snapshot = (Status, Option<Vec<Device>>);
 
@@ -168,6 +171,29 @@ impl Remote {
         };
     }
 
+    fn current_stamp(prefs: &Preferences, backend: &Backend) -> FlightStamp {
+        (
+            backend.client_id.clone(),
+            backend.client.server_identity().map(str::to_owned),
+            backend.client.drop_generation(),
+            prefs
+                .authority_handle()
+                .load(std::sync::atomic::Ordering::SeqCst),
+        )
+    }
+
+    fn stamp_matches(prefs: &Preferences, backend: &Backend, stamp: &FlightStamp) -> bool {
+        !prefs.transport_lost()
+            && super::ServerOwner::backend_verified(backend)
+            && stamp.0 == backend.client_id
+            && stamp.1.as_deref() == backend.client.server_identity()
+            && stamp.2 == backend.client.drop_generation()
+            && stamp.3
+                == prefs
+                    .authority_handle()
+                    .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn matches_backend(&self, prefs: &Preferences, backend: &Backend) -> bool {
         !prefs.transport_lost()
             && super::ServerOwner::backend_verified(backend)
@@ -211,6 +237,10 @@ impl Remote {
             self.flight = None;
             self.recheck = None;
             self.snapshot_verified = false;
+            self.devices_verified = false;
+            if let Some((_, devices)) = &mut self.snapshot {
+                *devices = None;
+            }
             self.needs_read = true;
             self.clear_pairing();
             self.owner_server = server.map(str::to_owned);
@@ -246,7 +276,7 @@ impl Remote {
                 changed = true;
             }
         }
-        let Some((_, flight)) = &self.flight else {
+        let Some((flight_stamp, _, flight)) = &self.flight else {
             return changed;
         };
         let result = match flight.try_recv() {
@@ -254,6 +284,7 @@ impl Remote {
             Err(_) if flight.is_closed() => {
                 self.flight = None;
                 self.snapshot_verified = false;
+                self.devices_verified = false;
                 self.needs_read = true;
                 self.error = Some(ErrorText::Key("remoteControl.state.error"));
                 self.sync_connecting_poll(wake);
@@ -261,11 +292,16 @@ impl Remote {
             }
             Err(_) => return changed,
         };
+        let flight_stamp = flight_stamp.clone();
         self.flight = None;
+        let current_flight = backend.is_some_and(|b| {
+            self.matches_backend(prefs, b) && Self::stamp_matches(prefs, b, &flight_stamp)
+        });
         match result {
             Reply::Snapshot(Ok(read), revoke_err) => {
-                if !read.verified || !backend.is_some_and(|b| self.matches_backend(prefs, b)) {
+                if !read.verified || !current_flight {
                     self.snapshot_verified = false;
+                    self.devices_verified = false;
                     self.needs_read = true;
                     self.clear_pairing();
                     self.error = Some(ErrorText::Key("remoteControl.state.error"));
@@ -290,10 +326,14 @@ impl Remote {
                 let devices = if !status.manageable {
                     None
                 } else if read.devices_error.is_some() {
-                    self.snapshot.as_ref().and_then(|(_, d)| d.clone())
+                    self.devices_verified
+                        .then(|| self.snapshot.as_ref().and_then(|(_, d)| d.clone()))
+                        .flatten()
                 } else {
                     read.devices
                 };
+                self.devices_verified =
+                    !status.manageable || (read.devices_error.is_none() && devices.is_some());
                 self.needs_read = matches!(self.unconfirmed, Some(Mutation::Revoke(_, _)))
                     && (read.devices_error.is_some() || devices.is_none());
                 self.snapshot_verified = !self.needs_read;
@@ -358,6 +398,7 @@ impl Remote {
             }
             Reply::Snapshot(Err(err), revoke_err) => {
                 self.snapshot_verified = false;
+                self.devices_verified = false;
                 self.needs_read = true;
                 if let Some(Mutation::Revoke(id, stored)) = self.unconfirmed.as_mut()
                     && let Some(err) = revoke_err
@@ -374,43 +415,77 @@ impl Remote {
             Reply::Started(Ok((status, pairing, devices, devices_error))) => {
                 self.unconfirmed = None;
                 self.mutation_error = None;
-                self.needs_read = !backend.is_some_and(|b| self.matches_backend(prefs, b));
-                self.snapshot_verified = !self.needs_read;
-                self.error = devices_error
-                    .map(|err| ErrorText::from_remote(err, "remoteControl.state.error"));
-                let existing_devices = self.snapshot.as_ref().and_then(|(_, d)| d.clone());
-                self.snapshot = Some((status, devices.or(existing_devices)));
-                self.set_pairing(pairing, false);
+                if !current_flight {
+                    self.snapshot_verified = false;
+                    self.devices_verified = false;
+                    self.needs_read = true;
+                    self.clear_pairing();
+                    self.error = Some(ErrorText::Key("remoteControl.state.error"));
+                } else {
+                    self.needs_read = false;
+                    self.snapshot_verified = true;
+                    self.error = devices_error.as_ref().map(|err| {
+                        ErrorText::from_remote(err.clone(), "remoteControl.state.error")
+                    });
+                    let existing_devices = self
+                        .devices_verified
+                        .then(|| self.snapshot.as_ref().and_then(|(_, d)| d.clone()))
+                        .flatten();
+                    let next_devices = if devices_error.is_none() {
+                        devices
+                    } else {
+                        existing_devices
+                    };
+                    self.devices_verified =
+                        !status.manageable || (devices_error.is_none() && next_devices.is_some());
+                    self.snapshot = Some((status, next_devices));
+                    self.set_pairing(pairing, false);
+                }
             }
             Reply::Started(Err(err)) => {
                 let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
                 self.mutation_error = Some((MutationOutcome::Start, err_text.clone()));
                 self.error = Some(err_text);
-                if let Some(backend) = backend {
+                if let Some(backend) = backend.filter(|b| self.matches_backend(prefs, b)) {
                     self.start(prefs, backend, wake, Action::Refresh { explicit: false });
                 } else {
                     self.unconfirmed = None;
                     self.snapshot_verified = false;
+                    self.devices_verified = false;
                     self.needs_read = true;
+                    self.clear_pairing();
                 }
             }
             Reply::Status(Ok(status)) => {
                 let mutation = self.unconfirmed.take();
                 self.mutation_error = None;
-                self.needs_read = !backend.is_some_and(|b| self.matches_backend(prefs, b));
-                self.snapshot_verified = !self.needs_read;
-                self.error = None;
-                let keep_direct = self.pairing.as_ref().is_some_and(|p| p.direct);
-                if matches!(mutation, Some(Mutation::Stop)) && !keep_direct {
+                if !current_flight {
+                    self.snapshot_verified = false;
+                    self.devices_verified = false;
+                    self.needs_read = true;
                     self.clear_pairing();
-                } else if !status.manageable
-                    || status.disabled_by_administrator
-                    || (!status.enabled && !keep_direct)
-                {
-                    self.clear_pairing();
+                    self.error = Some(ErrorText::Key("remoteControl.state.error"));
+                } else {
+                    self.needs_read = false;
+                    self.snapshot_verified = true;
+                    self.error = None;
+                    let keep_direct = self.pairing.as_ref().is_some_and(|p| p.direct);
+                    if matches!(mutation, Some(Mutation::Stop)) && !keep_direct {
+                        self.clear_pairing();
+                    } else if !status.manageable
+                        || status.disabled_by_administrator
+                        || (!status.enabled && !keep_direct)
+                    {
+                        self.clear_pairing();
+                    }
+                    let devices = if status.manageable {
+                        self.snapshot.as_ref().and_then(|(_, d)| d.clone())
+                    } else {
+                        self.devices_verified = true;
+                        None
+                    };
+                    self.snapshot = Some((status, devices));
                 }
-                let devices = self.snapshot.as_ref().and_then(|(_, d)| d.clone());
-                self.snapshot = Some((status, devices));
             }
             Reply::Status(Err(err)) => {
                 let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
@@ -418,32 +493,44 @@ impl Remote {
                     self.mutation_error = Some((outcome, err_text.clone()));
                 }
                 self.error = Some(err_text);
-                if let Some(backend) = backend {
+                if let Some(backend) = backend.filter(|b| self.matches_backend(prefs, b)) {
                     self.start(prefs, backend, wake, Action::Refresh { explicit: false });
                 } else {
                     self.unconfirmed = None;
                     self.snapshot_verified = false;
+                    self.devices_verified = false;
                     self.needs_read = true;
+                    self.clear_pairing();
                 }
             }
             Reply::Pairing(Ok((pairing, direct))) => {
                 self.unconfirmed = None;
                 self.mutation_error = None;
-                self.needs_read = !backend.is_some_and(|b| self.matches_backend(prefs, b));
-                self.snapshot_verified = !self.needs_read;
-                self.error = None;
-                self.set_pairing(pairing, direct);
+                if !current_flight {
+                    self.snapshot_verified = false;
+                    self.devices_verified = false;
+                    self.needs_read = true;
+                    self.clear_pairing();
+                    self.error = Some(ErrorText::Key("remoteControl.state.error"));
+                } else {
+                    self.needs_read = false;
+                    self.snapshot_verified = true;
+                    self.error = None;
+                    self.set_pairing(pairing, direct);
+                }
             }
             Reply::Pairing(Err(err)) => {
                 let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
                 self.mutation_error = Some((MutationOutcome::Pair, err_text.clone()));
                 self.error = Some(err_text);
-                if let Some(backend) = backend {
+                if let Some(backend) = backend.filter(|b| self.matches_backend(prefs, b)) {
                     self.start(prefs, backend, wake, Action::Refresh { explicit: false });
                 } else {
                     self.unconfirmed = None;
                     self.snapshot_verified = false;
+                    self.devices_verified = false;
                     self.needs_read = true;
+                    self.clear_pairing();
                 }
             }
         }
@@ -527,12 +614,15 @@ impl Remote {
                     && !status.disabled_by_administrator
                     && status.direct_origins.contains(origin)
             }),
-            Action::Revoke(id) => self.snapshot.as_ref().is_some_and(|(status, devices)| {
-                status.manageable
-                    && devices
-                        .as_ref()
-                        .is_some_and(|devices| devices.iter().any(|device| device.id == *id))
-            }),
+            Action::Revoke(id) => {
+                self.devices_verified
+                    && self.snapshot.as_ref().is_some_and(|(status, devices)| {
+                        status.manageable
+                            && devices.as_ref().is_some_and(|devices| {
+                                devices.iter().any(|device| device.id == *id)
+                            })
+                    })
+            }
         };
         if !eligible || (self.needs_read && !is_refresh) {
             return;
@@ -543,17 +633,18 @@ impl Remote {
             self.error = None;
         }
         self.explicit_refresh = matches!(action, Action::Refresh { explicit: true });
-        let expected_server = backend.client.server_identity().map(str::to_owned);
-        let prepared_gen = backend.client.drop_generation();
+        let flight_stamp = Self::current_stamp(prefs, backend);
+        let expected_server = flight_stamp.1.clone();
+        let prepared_gen = flight_stamp.2;
         let prefs_auth = prefs.authority_handle();
-        let prefs_gen = prefs_auth.load(std::sync::atomic::Ordering::SeqCst);
+        let prefs_gen = flight_stamp.3;
         let tunnel_origin = self
             .snapshot
             .as_ref()
             .and_then(|(status, _)| status.remote_url.clone());
         let (cancel, cancelled) = bounded(1);
         let (out, input) = bounded(1);
-        self.flight = Some((is_refresh.then_some(cancel), input));
+        self.flight = Some((flight_stamp, is_refresh.then_some(cancel), input));
         let (backend, wake) = (backend.clone(), wake.clone());
         match &action {
             Action::Start => self.unconfirmed = Some(Mutation::Start),
@@ -603,15 +694,12 @@ impl Remote {
                         Reply::Started(Err(remote::Error::Transport))
                     } else {
                         match remote::start(&backend).await {
-                            Ok(started) => {
-                                let (devices, devices_error) = if attest().await {
-                                    match remote::devices(&backend).await {
-                                        Ok(devices) if attest().await => (devices, None),
-                                        Ok(_) => (None, Some(remote::Error::Transport)),
-                                        Err(err) => (None, Some(err)),
-                                    }
-                                } else {
-                                    (None, Some(remote::Error::Transport))
+                            Ok(started) if attest().await => {
+                                let (devices, devices_error) = match remote::devices(&backend).await
+                                {
+                                    Ok(devices) if attest().await => (devices, None),
+                                    Ok(_) => (None, Some(remote::Error::Transport)),
+                                    Err(err) => (None, Some(err)),
                                 };
                                 Reply::Started(Ok((
                                     started.status,
@@ -620,6 +708,7 @@ impl Remote {
                                     devices_error,
                                 )))
                             }
+                            Ok(_) => Reply::Started(Err(remote::Error::Transport)),
                             Err(err) => Reply::Started(Err(err)),
                         }
                     }
@@ -628,14 +717,22 @@ impl Remote {
                     if !attest().await {
                         Reply::Status(Err(remote::Error::Transport))
                     } else {
-                        Reply::Status(remote::stop(&backend).await)
+                        match remote::stop(&backend).await {
+                            Ok(status) if attest().await => Reply::Status(Ok(status)),
+                            Ok(_) => Reply::Status(Err(remote::Error::Transport)),
+                            Err(err) => Reply::Status(Err(err)),
+                        }
                     }
                 }
                 Action::SetPreviews(enabled) => {
                     if !attest().await {
                         Reply::Status(Err(remote::Error::Transport))
                     } else {
-                        Reply::Status(remote::set_previews(&backend, enabled).await)
+                        match remote::set_previews(&backend, enabled).await {
+                            Ok(status) if attest().await => Reply::Status(Ok(status)),
+                            Ok(_) => Reply::Status(Err(remote::Error::Transport)),
+                            Err(err) => Reply::Status(Err(err)),
+                        }
                     }
                 }
                 Action::PairTunnel => {
@@ -643,11 +740,11 @@ impl Remote {
                         Reply::Pairing(Err(remote::Error::Transport))
                     } else {
                         match tunnel_origin {
-                            Some(origin) => Reply::Pairing(
-                                remote::pairing(&backend, None, &origin)
-                                    .await
-                                    .map(|p| (p, false)),
-                            ),
+                            Some(origin) => match remote::pairing(&backend, None, &origin).await {
+                                Ok(p) if attest().await => Reply::Pairing(Ok((p, false))),
+                                Ok(_) => Reply::Pairing(Err(remote::Error::Transport)),
+                                Err(err) => Reply::Pairing(Err(err)),
+                            },
                             None => Reply::Pairing(Err(remote::Error::InvalidResponse)),
                         }
                     }
@@ -656,11 +753,11 @@ impl Remote {
                     if !attest().await {
                         Reply::Pairing(Err(remote::Error::Transport))
                     } else {
-                        Reply::Pairing(
-                            remote::pairing(&backend, Some(&origin), &origin)
-                                .await
-                                .map(|p| (p, true)),
-                        )
+                        match remote::pairing(&backend, Some(&origin), &origin).await {
+                            Ok(p) if attest().await => Reply::Pairing(Ok((p, true))),
+                            Ok(_) => Reply::Pairing(Err(remote::Error::Transport)),
+                            Err(err) => Reply::Pairing(Err(err)),
+                        }
                     }
                 }
                 Action::Revoke(id) => {
@@ -727,10 +824,14 @@ impl Remote {
         let control = |label: &str, primary: bool, extra_disabled: bool, action: Action| {
             let shared = shared.clone();
             let is_refresh = matches!(action, Action::Refresh { .. });
+            let needs_devices = matches!(action, Action::Revoke(_));
             let disabled = !available
                 || busy
                 || extra_disabled
-                || (!is_refresh && (self.needs_read || !self.snapshot_verified));
+                || (!is_refresh
+                    && (self.needs_read
+                        || !self.snapshot_verified
+                        || (needs_devices && !self.devices_verified)));
             let press = move |s: &mut S| {
                 let Some(state) = access(s) else {
                     return;

@@ -27,9 +27,9 @@ pub(super) struct DirectAccess {
     auth_error: Option<ErrorText>,
     auth_gen: u64,
     pending_refresh: bool,
-    meta_flight: Option<(u64, Sender<()>, Receiver<MetaReply>)>,
-    mode_flight: Option<Receiver<Result<(), remote::Error>>>,
-    password_flight: Option<Receiver<Result<PasswordSaved, remote::Error>>>,
+    meta_flight: Option<(u64, FlightStamp, Sender<()>, Receiver<MetaReply>)>,
+    mode_flight: Option<(FlightStamp, Receiver<Result<Option<String>, remote::Error>>)>,
+    password_flight: Option<(FlightStamp, Receiver<Result<PasswordSaved, remote::Error>>)>,
     meta_error: Option<ErrorText>,
     disclosure_override: Option<bool>,
     locked_info_open: bool,
@@ -46,6 +46,8 @@ pub(super) struct DirectAccess {
     open_seq: u64,
 }
 
+type FlightStamp = (String, Option<String>, u64, u64);
+
 struct MetaReply {
     meta: Result<DirectAccessMeta, remote::Error>,
     auth: Result<AuthStatus, remote::Error>,
@@ -53,6 +55,29 @@ struct MetaReply {
 }
 
 impl DirectAccess {
+    fn current_stamp(prefs: &Preferences, backend: &Backend) -> FlightStamp {
+        (
+            backend.client_id.clone(),
+            backend.client.server_identity().map(str::to_owned),
+            backend.client.drop_generation(),
+            prefs
+                .authority_handle()
+                .load(std::sync::atomic::Ordering::SeqCst),
+        )
+    }
+
+    fn stamp_matches(prefs: &Preferences, backend: &Backend, stamp: &FlightStamp) -> bool {
+        !prefs.transport_lost()
+            && super::super::ServerOwner::backend_verified(backend)
+            && stamp.0 == backend.client_id
+            && stamp.1.as_deref() == backend.client.server_identity()
+            && stamp.2 == backend.client.drop_generation()
+            && stamp.3
+                == prefs
+                    .authority_handle()
+                    .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn close(&mut self) {
         let open_seq = self.open_seq.wrapping_add(1);
         self.wipe_password_fields();
@@ -67,6 +92,7 @@ impl DirectAccess {
         self.meta_verified = false;
         self.meta_drop_gen = None;
         self.confirm_mode = None;
+        self.auth = None;
     }
 
     fn form_matches_backend(&self, prefs: &Preferences, backend: &Backend) -> bool {
@@ -102,13 +128,14 @@ impl DirectAccess {
         self.owner = Some(backend.client_id.clone());
         self.meta_error = None;
         let auth_gen = self.auth_gen;
-        let expected_server = backend.client.server_identity().map(str::to_owned);
-        let prepared_gen = backend.client.drop_generation();
+        let flight_stamp = Self::current_stamp(prefs, backend);
+        let expected_server = flight_stamp.1.clone();
+        let prepared_gen = flight_stamp.2;
         let prefs_auth = prefs.authority_handle();
-        let prefs_gen = prefs_auth.load(std::sync::atomic::Ordering::SeqCst);
+        let prefs_gen = flight_stamp.3;
         let (cancel, cancelled) = bounded(1);
         let (out, input) = bounded(1);
-        self.meta_flight = Some((auth_gen, cancel, input));
+        self.meta_flight = Some((auth_gen, flight_stamp, cancel, input));
         let (backend, wake) = (backend.clone(), wake.clone());
         platform::spawn(async move {
             let still_ok = || {
@@ -177,14 +204,14 @@ impl DirectAccess {
             self.pending_refresh = true;
             changed = true;
         }
-        if let Some((flight_auth_gen, _, flight)) = &self.meta_flight {
+        if let Some((flight_auth_gen, flight_stamp, _, flight)) = &self.meta_flight {
             let flight_auth_gen = *flight_auth_gen;
             match flight.try_recv() {
                 Ok(reply) => {
+                    let flight_stamp = flight_stamp.clone();
                     self.meta_flight = None;
                     let verified = reply.verified
-                        && !prefs.transport_lost()
-                        && backend.is_some_and(super::super::ServerOwner::backend_verified);
+                        && backend.is_some_and(|b| Self::stamp_matches(prefs, b, &flight_stamp));
                     match reply.meta {
                         Ok(meta) if verified => {
                             self.meta = Some(meta);
@@ -233,24 +260,31 @@ impl DirectAccess {
                 Err(_) => {}
             }
         }
-        if let Some(flight) = &self.mode_flight {
+        if let Some((flight_stamp, flight)) = &self.mode_flight {
             match flight.try_recv() {
                 Ok(result) => {
+                    let flight_stamp = flight_stamp.clone();
                     self.mode_flight = None;
                     prefs.clear_direct_access_lock();
+                    let current =
+                        backend.is_some_and(|b| Self::stamp_matches(prefs, b, &flight_stamp));
                     match result {
-                        Ok(()) => {
+                        Ok(warning) if current => {
                             self.restart_notice = true;
-                            self.mode_error = None;
+                            self.mode_error = warning.map(ErrorText::Raw);
                             if let Some(backend) = backend {
                                 self.refresh(prefs, backend, wake);
                             }
                         }
+                        Ok(_) => {
+                            self.on_unverified();
+                            self.restart_notice = false;
+                            self.mode_error = Some(ErrorText::Key("settings.preferenceSaveFailed"));
+                        }
                         Err(err) => {
                             self.restart_notice = false;
-                            if !backend.is_some_and(super::super::ServerOwner::backend_verified) {
-                                self.meta_verified = false;
-                                self.confirm_mode = None;
+                            if !current {
+                                self.on_unverified();
                             }
                             self.mode_error =
                                 Some(ErrorText::from_remote(err, "settings.preferenceSaveFailed"));
@@ -267,13 +301,16 @@ impl DirectAccess {
                 Err(_) => {}
             }
         }
-        if let Some(flight) = &self.password_flight {
+        if let Some((flight_stamp, flight)) = &self.password_flight {
             match flight.try_recv() {
                 Ok(result) => {
+                    let flight_stamp = flight_stamp.clone();
                     self.password_flight = None;
                     prefs.clear_direct_access_lock();
+                    let current =
+                        backend.is_some_and(|b| Self::stamp_matches(prefs, b, &flight_stamp));
                     match result {
-                        Ok(saved) => {
+                        Ok(saved) if current => {
                             self.auth_gen = self.auth_gen.wrapping_add(1);
                             self.wipe_password_fields();
                             self.password_form_open = false;
@@ -292,10 +329,17 @@ impl DirectAccess {
                                 }
                             }
                         }
+                        Ok(_) => {
+                            self.on_unverified();
+                            self.password_error =
+                                Some(ErrorText::Key("settings.preferenceSaveFailed"));
+                            if let Some(backend) = backend {
+                                self.refresh(prefs, backend, wake);
+                            }
+                        }
                         Err(err) => {
-                            if !backend.is_some_and(super::super::ServerOwner::backend_verified) {
-                                self.meta_verified = false;
-                                self.confirm_mode = None;
+                            if !current {
+                                self.on_unverified();
                             }
                             self.password_error =
                                 Some(ErrorText::from_remote(err, "settings.preferenceSaveFailed"));
@@ -360,13 +404,14 @@ impl DirectAccess {
         self.confirm_mode = None;
         self.mode_error = None;
         self.restart_notice = false;
-        let expected_server = backend.client.server_identity().map(str::to_owned);
-        let prepared_gen = backend.client.drop_generation();
+        let flight_stamp = Self::current_stamp(prefs, backend);
+        let expected_server = flight_stamp.1.clone();
+        let prepared_gen = flight_stamp.2;
         let prefs_auth = prefs.authority_handle();
-        let prefs_gen = prefs_auth.load(std::sync::atomic::Ordering::SeqCst);
+        let prefs_gen = flight_stamp.3;
         let (out, input) = bounded(1);
         let (lock_tx, lock_rx) = bounded::<()>(1);
-        self.mode_flight = Some(input);
+        self.mode_flight = Some((flight_stamp, input));
         prefs.set_direct_access_lock(backend.client_id.clone(), lock_rx);
         let (backend, wake) = (backend.clone(), wake.clone());
         platform::spawn(async move {
@@ -378,12 +423,18 @@ impl DirectAccess {
                         .as_deref()
                         .is_none_or(|id| backend.client.server_identity() == Some(id))
             };
-            let attested = still_ok()
-                && (!backend.client.tracks_server_attestation()
-                    || backend.attest_server().await.is_ok())
-                && still_ok();
-            let result = if attested {
-                remote::set_listening_mode(&backend, target).await
+            let attest = || async {
+                still_ok()
+                    && (!backend.client.tracks_server_attestation()
+                        || backend.attest_server().await.is_ok())
+                    && still_ok()
+            };
+            let result = if attest().await {
+                match remote::set_listening_mode(&backend, target).await {
+                    Ok(warning) if attest().await => Ok(warning),
+                    Ok(_) => Err(remote::Error::Transport),
+                    Err(err) => Err(err),
+                }
             } else {
                 Err(remote::Error::Transport)
             };
@@ -412,13 +463,14 @@ impl DirectAccess {
             return;
         }
         self.auth_gen = self.auth_gen.wrapping_add(1);
-        let expected_server = backend.client.server_identity().map(str::to_owned);
-        let prepared_gen = backend.client.drop_generation();
+        let flight_stamp = Self::current_stamp(prefs, backend);
+        let expected_server = flight_stamp.1.clone();
+        let prepared_gen = flight_stamp.2;
         let prefs_auth = prefs.authority_handle();
-        let prefs_gen = prefs_auth.load(std::sync::atomic::Ordering::SeqCst);
+        let prefs_gen = flight_stamp.3;
         let (out, input) = bounded(1);
         let (lock_tx, lock_rx) = bounded::<()>(1);
-        self.password_flight = Some(input);
+        self.password_flight = Some((flight_stamp, input));
         prefs.set_direct_access_lock(backend.client_id.clone(), lock_rx);
         let (backend, wake) = (backend.clone(), wake.clone());
         platform::spawn(async move {
@@ -430,12 +482,18 @@ impl DirectAccess {
                         .as_deref()
                         .is_none_or(|id| backend.client.server_identity() == Some(id))
             };
-            let attested = still_ok()
-                && (!backend.client.tracks_server_attestation()
-                    || backend.attest_server().await.is_ok())
-                && still_ok();
-            let result = if attested {
-                remote::set_password(&backend, &next).await
+            let attest = || async {
+                still_ok()
+                    && (!backend.client.tracks_server_attestation()
+                        || backend.attest_server().await.is_ok())
+                    && still_ok()
+            };
+            let result = if attest().await {
+                match remote::set_password(&backend, &next).await {
+                    Ok(saved) if attest().await => Ok(saved),
+                    Ok(_) => Err(remote::Error::Transport),
+                    Err(err) => Err(err),
+                }
             } else {
                 Err(remote::Error::Transport)
             };
@@ -787,7 +845,10 @@ impl DirectAccess {
                 .role("heading"),
         );
 
-        if self.meta_flight.is_some() && self.meta.is_none() {
+        if let Some(err) = &self.meta_error {
+            return chrome::card(card.child(text(err.as_str()).role("alert").wrap()));
+        }
+        if !self.meta_verified {
             return chrome::card(
                 card.child(
                     text(t("remoteAccess.addresses.loading"))
@@ -795,9 +856,6 @@ impl DirectAccess {
                         .wrap(),
                 ),
             );
-        }
-        if let Some(err) = &self.meta_error {
-            return chrome::card(card.child(text(err.as_str()).role("alert").wrap()));
         }
 
         let local_url = self.meta.as_ref().and_then(|m| m.local_url.as_deref());
@@ -899,31 +957,45 @@ impl DirectAccess {
             .child(
                 layout::action_row()
                     .child(
-                        layout::button_tx(open_label, !available, move |s: &mut S, tx| {
-                            let Some(state) = access(s) else { return };
-                            state.direct.open_seq = state.direct.open_seq.wrapping_add(1);
-                            state.direct.open_failed = false;
-                            let seq = state.direct.open_seq;
-                            let launch =
-                                tx.open_url_then(&open_url, move |s: &mut S, result, _| {
-                                    if let Some(state) = access(s)
-                                        && state.direct.open_seq == seq
-                                    {
-                                        state.direct.open_failed = result.is_err();
-                                    }
-                                });
-                            if launch.is_err() {
-                                state.direct.open_failed = true;
-                            }
-                        })
+                        layout::button_tx(
+                            open_label,
+                            !available || !self.meta_verified,
+                            move |s: &mut S, tx| {
+                                let Some(state) = access(s) else { return };
+                                if !state.direct.meta_verified {
+                                    return;
+                                }
+                                state.direct.open_seq = state.direct.open_seq.wrapping_add(1);
+                                state.direct.open_failed = false;
+                                let seq = state.direct.open_seq;
+                                let launch =
+                                    tx.open_url_then(&open_url, move |s: &mut S, result, _| {
+                                        if let Some(state) = access(s)
+                                            && state.direct.open_seq == seq
+                                        {
+                                            state.direct.open_failed = result.is_err();
+                                        }
+                                    });
+                                if launch.is_err() {
+                                    state.direct.open_failed = true;
+                                }
+                            },
+                        )
                         .label(&format!("{open_label} · {url}")),
                     )
                     .child(
-                        layout::button_tx(copy_label, !available, move |s: &mut S, tx| {
-                            let Some(state) = access(s) else { return };
-                            let prefs = copy_shared.borrow();
-                            state.direct.address_copy.write(&copy_url, &prefs, tx);
-                        })
+                        layout::button_tx(
+                            copy_label,
+                            !available || !self.meta_verified,
+                            move |s: &mut S, tx| {
+                                let Some(state) = access(s) else { return };
+                                if !state.direct.meta_verified {
+                                    return;
+                                }
+                                let prefs = copy_shared.borrow();
+                                state.direct.address_copy.write(&copy_url, &prefs, tx);
+                            },
+                        )
                         .label(&format!("{copy_label} · {url}")),
                     ),
             )
