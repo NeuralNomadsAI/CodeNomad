@@ -393,6 +393,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.transcript_display.receipts.clear();
                 s.status_permissions.online(false);
                 s.status_usage.disconnect();
+                if let Some(a) = s.agent.as_mut() {
+                    a.mark_scope_missing();
+                }
                 s.transcript_display.children.clear();
                 s.transcript_display.tool_clock.reset();
                 s.transcript_display.pictures.clear();

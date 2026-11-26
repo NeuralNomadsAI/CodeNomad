@@ -25,7 +25,6 @@ pub(crate) struct PairingState {
     pub(crate) auth_retries: u8,
     pub(crate) retry_waiting: bool,
     pub(crate) seen_auth: [Option<u64>; 2],
-    pub(crate) auth_episode_armed: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -52,7 +51,6 @@ impl PairingState {
         }
         self.retry_waiting = false;
         self.seen_auth = [None, None];
-        self.auth_episode_armed = false;
         self.in_flight = true;
         Action::StartCheck
     }
@@ -75,7 +73,8 @@ impl PairingState {
     /// Authenticated traffic arrived on a specific connection generation: if pairing
     /// recovery is visible or an initial failure probe is already in flight, trigger
     /// one bounded verification episode per connection generation so repeated syncs
-    /// on the same connection cannot bypass the transient-failure retry bound.
+    /// on the same connection cannot bypass the transient-failure retry bound, while
+    /// each genuinely new reconnection receives its full retry budget.
     pub(crate) fn on_authenticated_signal(&mut self, signal: AuthSignal) -> Action {
         if !(self.required || self.in_flight) {
             return Action::None;
@@ -85,19 +84,6 @@ impl PairingState {
             return Action::None;
         }
         self.seen_auth[slot] = Some(generation);
-        if self.auth_episode_armed {
-            if self.in_flight {
-                // A genuinely new connection generation arrived while an earlier probe was
-                // still in flight: queue one follow-up verification without resetting the
-                // retry budget so a stale `pairingRequired=true` cannot strand the dialog.
-                self.recheck = true;
-                return Action::None;
-            }
-            if self.retry_waiting {
-                return Action::None;
-            }
-        }
-        self.auth_episode_armed = true;
         self.auth_retries = AUTH_SIGNAL_RETRIES;
         self.request_recheck()
     }
@@ -128,7 +114,6 @@ impl PairingState {
             Some(false) => {
                 self.recheck = false;
                 self.auth_retries = 0;
-                self.auth_episode_armed = false;
                 self.seen_auth = [None, None];
                 if self.required {
                     self.required = false;
@@ -152,7 +137,6 @@ impl PairingState {
                     };
                 }
                 self.auth_retries = 0;
-                self.auth_episode_armed = false;
                 if became_required {
                     Settled::Required
                 } else {
@@ -171,7 +155,6 @@ impl PairingState {
                     Settled::RetryAfter(1_000u64 << attempt)
                 } else {
                     self.auth_retries = 0;
-                    self.auth_episode_armed = false;
                     if !self.required {
                         self.seen_auth = [None, None];
                     }
@@ -408,14 +391,10 @@ mod tests {
         assert!(!state.recheck);
         assert_eq!(state.settle(None), Settled::RetryAfter(1_000));
 
-        // Repeated signals (or an overlapping launcher signal) during backoff must not cancel
+        // Repeated signals for the same generation during backoff must not cancel
         // backoff or reset auth_retries.
         assert_eq!(
             state.on_authenticated_signal(AuthSignal::Conversation(1)),
-            Action::None
-        );
-        assert_eq!(
-            state.on_authenticated_signal(AuthSignal::Launcher(1)),
             Action::None
         );
         assert!(state.retry_waiting);
@@ -424,40 +403,31 @@ mod tests {
         assert_eq!(state.on_retry_timer(), Action::StartCheck);
         assert_eq!(state.settle(None), Settled::RetryAfter(2_000));
         assert_eq!(state.on_retry_timer(), Action::StartCheck);
-        assert_eq!(state.settle(None), Settled::Unchanged);
+        // On the LAST attempt (auth_retries == 0, in_flight == true), a genuinely NEW
+        // SSE reconnection arrives -> must queue one follow-up check WITH a fresh retry budget.
         assert_eq!(state.auth_retries, 0);
-
-        // After the episode exhausts, repeating the already-seen generations stays silent.
+        assert_eq!(
+            state.on_authenticated_signal(AuthSignal::Launcher(2)),
+            Action::None
+        );
+        assert!(state.recheck);
+        assert_eq!(state.auth_retries, AUTH_SIGNAL_RETRIES);
+        // Duplicates of both generations stay silent.
         assert_eq!(
             state.on_authenticated_signal(AuthSignal::Conversation(1)),
             Action::None
         );
         assert_eq!(
-            state.on_authenticated_signal(AuthSignal::Launcher(1)),
+            state.on_authenticated_signal(AuthSignal::Launcher(2)),
             Action::None
         );
-
-        // A genuinely new connection generation starts a fresh check; if ANOTHER new generation
-        // arrives while that check is still in flight (before stale pairingRequired=true returns),
-        // it queues one follow-up check without resetting retries on its own duplicates.
-        assert_eq!(
-            state.on_authenticated_signal(AuthSignal::Launcher(3)),
-            Action::StartCheck
-        );
-        assert_eq!(
-            state.on_authenticated_signal(AuthSignal::Conversation(2)),
-            Action::None
-        );
-        assert!(state.recheck);
-        // Duplicate of Conversation(2) stays silent.
-        assert_eq!(
-            state.on_authenticated_signal(AuthSignal::Conversation(2)),
-            Action::None
-        );
-        // Stale probe from Launcher(3) settles pairingRequired=true -> immediately runs the
-        // queued follow-up probe for Conversation(2) and recovers cleanly.
-        assert_eq!(state.settle(Some(true)), Settled::Recheck);
+        // The exhausted attempt settles None -> immediately runs Launcher(2)'s follow-up check.
+        assert_eq!(state.settle(None), Settled::Recheck);
         assert!(state.in_flight);
+        // A transient failure on Launcher(2)'s follow-up check still gets its bounded retry
+        // budget and recovers cleanly without stranding the dialog.
+        assert_eq!(state.settle(None), Settled::RetryAfter(1_000));
+        assert_eq!(state.on_retry_timer(), Action::StartCheck);
         assert_eq!(state.settle(Some(false)), Settled::Recovered);
         assert!(!state.required);
     }

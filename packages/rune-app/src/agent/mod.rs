@@ -48,7 +48,7 @@ struct RequestLane {
 }
 impl RequestLane {
     fn locked(&self, online: bool) -> bool {
-        self.busy || self.reading || !self.known || !online
+        self.busy || self.reading || self.reconciling || !self.known || !online
     }
     fn mutation_pending(&self) -> bool {
         self.busy || self.reconciling
@@ -69,10 +69,15 @@ impl RequestLane {
     }
 }
 pub fn navigation_blocked(s: &crate::State) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    if s.phase == crate::Phase::RestoreFailed {
+        return false;
+    }
     s.agent.as_ref().is_some_and(Ui::navigation_blocked)
 }
 pub struct Handle {
     connection: Option<codenomad_client::http::Http>,
+    workspace_id: Option<String>,
     jobs: Sender<Job>,
     permissions: Sender<PendingJob>,
     forms: Sender<PendingJob>,
@@ -88,6 +93,7 @@ impl Handle {
         let (catalog, _) = bounded(1);
         Self {
             connection: None,
+            workspace_id: None,
             jobs,
             permissions,
             forms,
@@ -127,6 +133,7 @@ pub struct Ui {
     pub running: bool,
     pub pending_known: bool,
     pub online: bool,
+    scope_missing: bool,
     pub(crate) attention: crate::shell::notifications::Attention,
     reading: bool,
     catalog_reading: bool,
@@ -148,6 +155,7 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     let (stop, srx) = bounded(1);
     let (out, results) = bounded(16);
     let connection = Some(backend.client.clone());
+    let workspace_id = Some(backend.workspace.clone());
     let b = backend.clone();
     let w = wake.clone();
     let o = out.clone();
@@ -250,6 +258,7 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     });
     Handle {
         connection,
+        workspace_id,
         jobs,
         permissions,
         forms,
@@ -286,6 +295,27 @@ impl Ui {
         self.sync_pending_known();
     }
 
+    pub(crate) fn mark_scope_missing(&mut self) {
+        self.scope_missing = true;
+        self.online = false;
+        self.permissions_lane.known = false;
+        self.permissions_lane.reconciling = false;
+        self.permissions_lane.trailing = false;
+        self.forms_lane.known = false;
+        self.forms_lane.reconciling = false;
+        self.forms_lane.trailing = false;
+        self.sync_pending_known();
+    }
+
+    pub(crate) fn workspace_stopped(&mut self, workspace_id: &str) -> bool {
+        if self.handle.workspace_id.as_deref() == Some(workspace_id) {
+            self.mark_scope_missing();
+            true
+        } else {
+            false
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn mark_pending_known(&mut self) {
         self.permissions_lane.known = true;
@@ -319,6 +349,7 @@ impl Ui {
         self.known = false;
         self.sync_pending_known();
         self.online = false;
+        self.scope_missing = false;
         self.refresh(true);
     }
     pub(crate) fn uses_connection(&self, backend: &Backend) -> bool {
@@ -430,6 +461,7 @@ impl Ui {
             running: false,
             pending_known: false,
             online: false,
+            scope_missing: false,
             attention: Default::default(),
             reading: false,
             catalog_reading: false,
@@ -853,12 +885,10 @@ impl Ui {
                     let fresh = generation == self.permissions_lane.generation;
                     self.permissions_lane.error = !ok || (fresh && permissions.is_none());
                     self.sync_error();
-                    if fresh {
-                        if permissions.is_some() {
-                            self.permissions_lane.reconciling = false;
-                        } else if ok {
-                            self.permissions_lane.reconciling = true;
-                        }
+                    if self.scope_missing {
+                        self.permissions_lane.reconciling = false;
+                    } else if fresh {
+                        self.permissions_lane.reconciling = permissions.is_none();
                         self.apply_permissions(permissions);
                     } else {
                         self.permissions_lane.reconciling = true;
@@ -870,12 +900,10 @@ impl Ui {
                     let fresh = generation == self.forms_lane.generation;
                     self.forms_lane.error = !ok || (fresh && forms.is_none());
                     self.sync_error();
-                    if fresh {
-                        if forms.is_some() {
-                            self.forms_lane.reconciling = false;
-                        } else if ok {
-                            self.forms_lane.reconciling = true;
-                        }
+                    if self.scope_missing {
+                        self.forms_lane.reconciling = false;
+                    } else if fresh {
+                        self.forms_lane.reconciling = forms.is_none();
                         self.apply_forms(forms);
                     } else {
                         self.forms_lane.reconciling = true;

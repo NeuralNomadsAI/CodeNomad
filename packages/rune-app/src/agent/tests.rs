@@ -189,6 +189,7 @@ fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
     let (_, results) = super::bounded(1);
     let mut ui = super::Ui::new(super::Handle {
         connection: None,
+        workspace_id: None,
         jobs,
         permissions,
         forms,
@@ -434,6 +435,7 @@ fn notification_qualification_is_order_independent_and_never_replays_cached_requ
         let (out, results) = super::bounded(8);
         let mut ui = super::Ui::new(super::Handle {
             connection: None,
+            workspace_id: None,
             jobs,
             permissions,
             forms,
@@ -1233,6 +1235,7 @@ fn permission_events_never_invalidate_or_starve_in_flight_forms_read() {
     let (out, results) = super::bounded(8);
     let mut agent = super::Ui::new(super::Handle {
         connection: None,
+        workspace_id: None,
         jobs,
         permissions,
         forms,
@@ -1335,6 +1338,7 @@ fn same_tick_http_result_and_sse_resolution_cancels_notification_before_delivery
     let (out, results) = super::bounded(8);
     let mut agent = super::Ui::new(super::Handle {
         connection: None,
+        workspace_id: None,
         jobs,
         permissions,
         forms,
@@ -1437,6 +1441,7 @@ fn stale_catalog_response_for_previous_directory_or_generation_is_discarded() {
     let (out, results) = super::bounded(8);
     let mut ui = super::Ui::new(super::Handle {
         connection: None,
+        workspace_id: None,
         jobs,
         permissions,
         forms,
@@ -1495,6 +1500,7 @@ fn directory_change_via_session_or_action_clears_old_models_and_fetches_new_cata
     let (out, results) = super::bounded(8);
     let mut ui = super::Ui::new(super::Handle {
         connection: None,
+        workspace_id: None,
         jobs,
         permissions,
         forms,
@@ -1625,6 +1631,7 @@ fn composer_stays_blocked_until_reconciliation_read_after_superseded_pending_rep
     let (out, results) = super::bounded(8);
     let mut ui = super::Ui::new(super::Handle {
         connection: None,
+        workspace_id: None,
         jobs,
         permissions,
         forms,
@@ -1730,4 +1737,132 @@ fn composer_stays_blocked_until_reconciliation_read_after_superseded_pending_rep
     assert!(ui.permissions.is_empty());
     assert!(!ui.blocked());
     assert!(!ui.navigation_blocked());
+}
+
+#[test]
+fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_missing_scope() {
+    use crate::agent_api::{Form, Permission};
+    let (jobs, _jobs_rx) = super::bounded(4);
+    let (permissions, perm_rx) = super::bounded(4);
+    let (forms, form_rx) = super::bounded(4);
+    let (catalog, _catalog_rx) = super::bounded(4);
+    let (stop, _) = super::bounded(1);
+    let (out, results) = super::bounded(8);
+    let mut ui = super::Ui::new(super::Handle {
+        connection: None,
+        workspace_id: Some("ws_dead".into()),
+        jobs,
+        permissions,
+        forms,
+        catalog,
+        stop,
+        results,
+    });
+    ui.online = true;
+    ui.known = true;
+    ui.reading = false;
+    let _ = perm_rx.try_recv();
+    let _ = form_rx.try_recv();
+    let perm_gen = ui.permissions_lane.generation;
+    let form_gen = ui.forms_lane.generation;
+    out.try_send(super::Result::Permissions(
+        Some(vec![Permission {
+            id: "perm_1".into(),
+            action: "bash".into(),
+            resources: vec![],
+            message: String::new(),
+            supported: true,
+            tool: None,
+        }]),
+        perm_gen,
+    ))
+    .unwrap();
+    out.try_send(super::Result::Forms(
+        Some(vec![Form {
+            id: "form_1".into(),
+            title: String::new(),
+            fields: vec![],
+            tool: None,
+            infer_websearch: false,
+        }]),
+        form_gen,
+    ))
+    .unwrap();
+    assert!(ui.poll());
+    assert!(!ui.blocked());
+    assert!(!ui.navigation_blocked());
+
+    // 1. Uncertain permission POST timeout (ok=false) + failed follow-up GET (None), no SSE:
+    //    must keep composer blocked, reply locked, and navigation blocked until a valid read.
+    ui.reply_permission("perm_1".into(), "once");
+    let act_gen = match perm_rx.try_recv().unwrap() {
+        super::PendingJob::Act(_, generation) => generation,
+        _ => panic!("expected permission act"),
+    };
+    out.try_send(super::Result::ActPermission(false, None, act_gen))
+        .unwrap();
+    assert!(ui.poll());
+    assert!(ui.error);
+    assert!(ui.blocked());
+    assert!(ui.navigation_blocked());
+    assert!(ui.permissions_locked());
+
+    ui.refresh_controls();
+    let retry_perm_gen = match perm_rx.try_recv().unwrap() {
+        super::PendingJob::Read(generation) => generation,
+        _ => panic!("expected read-only retry on permission lane"),
+    };
+    let retry_form_gen = match form_rx.try_recv().unwrap() {
+        super::PendingJob::Read(generation) => generation,
+        _ => panic!("expected read-only retry on form lane"),
+    };
+    out.try_send(super::Result::Permissions(Some(vec![]), retry_perm_gen))
+        .unwrap();
+    out.try_send(super::Result::Forms(
+        Some(vec![Form {
+            id: "form_1".into(),
+            title: String::new(),
+            fields: vec![],
+            tool: None,
+            infer_websearch: false,
+        }]),
+        retry_form_gen,
+    ))
+    .unwrap();
+    assert!(ui.poll());
+    assert!(!ui.blocked());
+    assert!(!ui.navigation_blocked());
+
+    // 2. Uncertain form cancel (ok=false, None), then workspace disappears: navigation must
+    //    unblock (including after any late ActForm result) so the dead tab can close, while
+    //    composer and form replies remain locked.
+    ui.cancel_form("form_1".into());
+    let form_act_gen = match form_rx.try_recv().unwrap() {
+        super::PendingJob::Act(_, generation) => generation,
+        _ => panic!("expected form cancel act"),
+    };
+    out.try_send(super::Result::ActForm(false, None, form_act_gen))
+        .unwrap();
+    assert!(ui.poll());
+    assert!(ui.blocked());
+    assert!(ui.navigation_blocked());
+    assert!(ui.forms_locked());
+
+    assert!(!ui.workspace_stopped("ws_other"));
+    assert!(ui.navigation_blocked());
+    assert!(ui.workspace_stopped("ws_dead"));
+    assert!(
+        !ui.navigation_blocked(),
+        "missing workspace must release tab-close/navigation lock"
+    );
+    assert!(ui.blocked());
+    assert!(ui.forms_locked());
+
+    // A late post-mutation failure arriving after workspace_stopped must not re-arm the lock.
+    out.try_send(super::Result::ActForm(true, None, form_act_gen))
+        .unwrap();
+    assert!(ui.poll());
+    assert!(!ui.navigation_blocked());
+    assert!(ui.blocked());
+    assert!(ui.forms_locked());
 }

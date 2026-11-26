@@ -925,6 +925,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     reopen::apply(s, opening, backend, title, &slug);
                 } else {
                     s.phase = Phase::RestoreFailed;
+                    if let Some(agent) = s.agent.as_mut() {
+                        agent.mark_scope_missing();
+                    }
                 }
                 if stopped_in_flight {
                     crate::workspace::deliver_detached_events(
@@ -1021,6 +1024,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 {
                     if key == "rune.restore_error" && !s.screen.is_launcher() {
                         s.phase = Phase::RestoreFailed;
+                        if let Some(agent) = s.agent.as_mut() {
+                            agent.mark_scope_missing();
+                        }
                     }
                     if !crate::platform::pairing::required(s) {
                         crate::platform::pairing::observe(s);
