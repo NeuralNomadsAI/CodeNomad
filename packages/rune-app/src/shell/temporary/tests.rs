@@ -946,3 +946,150 @@ fn retained_stopped_preserves_drafts_and_discard_refusal_cancels_unopened_neighb
             .all(|(req, _)| !req.starts_with("DELETE "))
     );
 }
+
+#[test]
+fn palette_toggle_focus_stashed_reconcile_device_attachment_404_and_auth_abandon() {
+    let server = MockServer::start(vec![
+        // 1. Discard 404 temporary_not_found on tab with device attachment -> restores tab!
+        MockReply {
+            status: "404 Not Found",
+            body: r#"{"error":"temporary_not_found"}"#.into(),
+        },
+        // 2. Quiet discard 409 after reconcile_temporary_folders cleared stashed mark -> restores with temporary=false & no dialog!
+        MockReply {
+            status: "409 Conflict",
+            body: r#"{"error":"temporary_not_empty"}"#.into(),
+        },
+        // 3. Create temporary folder succeeds AFTER cancel_for_auth -> queued until auth recovers, then abandoned!
+        MockReply {
+            status: "200 OK",
+            body: r#"{"path":"/tmp/cn-auth-orphan","supportsCancelAndAbandon":true}"#.into(),
+        },
+        // 4. Abandon on renewed connection
+        MockReply {
+            status: "204 No Content",
+            body: String::new(),
+        },
+    ]);
+    let mut rt = connected_runtime(server.backend.clone());
+    open_fixture_tab(&mut rt, "ws-base", "/repo/base", false, vec![]);
+
+    // 1. Focus return preserves command-palette-toggle when cancelling dialog opened via palette
+    rt.update(workspace::new_tab);
+    open_fixture_tab(
+        &mut rt,
+        "ws-temp-att",
+        "/tmp/cn-att",
+        true,
+        vec![Session {
+            id: "s-att".into(),
+            title: "Attach".into(),
+        }],
+    );
+    let att_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+    rt.update(|s, tx| {
+        set_pending_return_focus(s, Some("command-palette-toggle".into()));
+        strings::with_locale("en", || open_dialog(s, &att_key, None, tx));
+    });
+    assert!(is_open(&rt.state));
+    assert_eq!(
+        rt.state
+            .temporary
+            .dialog
+            .as_ref()
+            .and_then(|d| d.return_focus.as_deref()),
+        Some("command-palette-toggle"),
+        "command-palette-toggle must be preserved as return focus target"
+    );
+    rt.update(|s, tx| cancel(s, tx));
+    assert!(!is_open(&rt.state));
+
+    // 2. Attach a device file in composer draft; discard returning 404 must restore the tab instead of dropping it
+    rt.update(|s, tx| {
+        let bound_backend = s
+            .screen
+            .launcher()
+            .and_then(|l| l.connection.clone())
+            .map(|mut b| {
+                b.workspace = "ws-temp-att".into();
+                b.session = "s-att".into();
+                b
+            })
+            .unwrap();
+        let _ = workspace::bound(s, &bound_backend);
+        assert!(
+            s.composer
+                .draft
+                .attach(crate::composer::draft::Attachment::Device {
+                    name: "local.bin".into(),
+                    mime: "application/octet-stream".into(),
+                    bytes: std::sync::Arc::from(&b"hello-device"[..]),
+                    token: None,
+                })
+        );
+        workspace::capture(s);
+        strings::with_locale("en", || {
+            open_dialog(s, &att_key, Some(format!("t-{att_key}")), tx);
+            choose_discard(s, tx);
+        });
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().active_key(),
+        att_key,
+        "404 temporary_not_found must restore a tab carrying in-memory device attachments"
+    );
+    assert_eq!(
+        rt.state.composer.draft.inline_usage().0,
+        1,
+        "device attachment bytes must survive a 404 temporary_not_found discard"
+    );
+
+    // 3. Quiet discard + reconcile_temporary_folders during flight -> restored with temporary=false & no dialog
+    rt.update(workspace::new_tab);
+    open_fixture_tab(&mut rt, "ws-temp-rec", "/tmp/cn-rec", true, vec![]);
+    let rec_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+    rt.update(|s, tx| {
+        strings::with_locale("en", || workspace::close(s, &rec_key, tx));
+        assert!(s.temporary.stashed_for_snapshot().is_some());
+        assert!(workspace::reconcile_temporary_folders(
+            s,
+            &["/tmp/cn-att".into()]
+        ));
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    assert!(!is_open(&rt.state));
+    assert!(
+        !workspace::active_workspace(&rt.state).unwrap().1.temporary,
+        "stashed tab reconciled during discard must restore as ordinary non-temporary workspace"
+    );
+
+    // 4. cancel_for_auth while create is in flight -> drains into pending_abandons and abandons on renewed auth
+    rt.update(|s, tx| {
+        assert!(create(s, tx));
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = true;
+        }
+        s.temporary.cancel_for_auth();
+    });
+    wait_until(&mut rt, |s| !s.temporary.pending_abandons.is_empty());
+    assert!(
+        server
+            .requests()
+            .iter()
+            .all(|(req, _)| req != "POST /api/workspaces/temporary/abandon HTTP/1.1"),
+        "abandon must wait for renewed authentication instead of firing with expired cookie"
+    );
+    rt.update(|s, tx| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = false;
+        }
+        assert!(poll(s, tx));
+    });
+    wait_until(&mut rt, |_| {
+        server
+            .requests()
+            .iter()
+            .any(|(req, _)| req == "POST /api/workspaces/temporary/abandon HTTP/1.1")
+    });
+}

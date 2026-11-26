@@ -704,18 +704,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         .take()
         .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
     {
-        if let Some((backend, path, req_id)) = temporary_cleanup {
-            crate::platform::spawn(async move {
-                let _ = backend
-                    .abandon_temporary_folder(&path, req_id.as_deref())
-                    .await;
-            });
-        }
         if std::mem::take(&mut l.resume_after_job)
             && !l.authentication_required
             && l.project.is_none()
         {
             crate::workspace::resume(s, tx);
+        }
+        if let Some((backend, path, req_id)) = temporary_cleanup {
+            crate::shell::temporary::queue_abandon(s, backend, path, req_id);
         }
         tx.instant();
         return true;
@@ -734,26 +730,16 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if stale_connection && temporary_cleanup.is_some() {
                 drop(opening);
                 if let Some((backend, path, req_id)) = temporary_cleanup {
-                    let cleanup_backend = l.connection.clone().unwrap_or(backend);
-                    crate::platform::spawn(async move {
-                        let _ = cleanup_backend
-                            .abandon_temporary_folder(&path, req_id.as_deref())
-                            .await;
-                    });
+                    crate::shell::temporary::queue_abandon(s, backend, path, req_id);
                 }
                 tx.instant();
                 return true;
             }
             if opening.adopt().is_err() {
-                if let Some((backend, path, req_id)) = temporary_cleanup {
-                    let cleanup_backend = l.connection.clone().unwrap_or(backend);
-                    crate::platform::spawn(async move {
-                        let _ = cleanup_backend
-                            .abandon_temporary_folder(&path, req_id.as_deref())
-                            .await;
-                    });
-                }
                 l.error = Some("rune.open_error");
+                if let Some((backend, path, req_id)) = temporary_cleanup {
+                    crate::shell::temporary::queue_abandon(s, backend, path, req_id);
+                }
                 tx.instant();
                 return true;
             }

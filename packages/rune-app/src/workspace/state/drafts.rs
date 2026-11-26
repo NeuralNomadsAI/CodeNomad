@@ -33,6 +33,21 @@ impl LiveDraft {
             ..Self::default()
         }
     }
+
+    #[cfg(test)]
+    pub(super) fn fixture_device_attachment(name: &str, bytes: &[u8]) -> Self {
+        let mut draft = Draft::default();
+        let _ = draft.attach(crate::composer::draft::Attachment::Device {
+            name: name.into(),
+            mime: "application/octet-stream".into(),
+            bytes: std::sync::Arc::from(bytes),
+            token: None,
+        });
+        Self {
+            parts: Some((draft, false)),
+            ..Self::default()
+        }
+    }
 }
 
 impl Ui {
@@ -46,6 +61,18 @@ impl Ui {
 impl super::Entry {
     pub(super) fn has_unsaved_large_drafts(&self) -> bool {
         self.live_drafts.values().any(|draft| draft.text.is_some())
+    }
+
+    pub(super) fn has_in_memory_only_drafts(&self) -> bool {
+        self.live_drafts.values().any(|draft| {
+            draft.text.is_some()
+                || draft
+                    .parts
+                    .as_ref()
+                    .is_some_and(|(d, _)| d.inline_usage().0 != 0)
+                || draft.unconfirmed.is_some()
+                || draft.command_unconfirmed.is_some()
+        })
     }
 }
 

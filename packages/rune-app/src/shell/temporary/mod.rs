@@ -65,6 +65,8 @@ pub(crate) struct Host {
     reconcile_epoch: u64,
     pending_return_focus: Option<String>,
     creating: Option<PendingCreate>,
+    stale_creates: Vec<PendingCreate>,
+    pending_abandons: Vec<(Backend, String, Option<String>)>,
     keeping: Option<PendingKeep>,
     discarding: Option<PendingDiscard>,
     pending_restore: Option<StashedTemporary>,
@@ -92,15 +94,19 @@ impl Host {
             .or(self.pending_restore.as_ref())
     }
 
+    pub(crate) fn stashed_for_snapshot_mut(&mut self) -> Option<&mut StashedTemporary> {
+        self.discarding
+            .as_mut()
+            .map(|pending| &mut pending.stashed)
+            .or(self.pending_restore.as_mut())
+    }
+
     pub(crate) fn cancel_for_auth(&mut self) {
         self.dialog = None;
         if let Some(pending) = self.creating.take()
-            && let Ok(Ok(created)) = pending.rx.try_recv()
+            && self.stale_creates.len() < 8
         {
-            let backend = pending.backend;
-            platform::spawn(async move {
-                let _ = backend.abandon_temporary_folder(&created.path, None).await;
-            });
+            self.stale_creates.push(pending);
         }
         self.keeping = None;
         self.stopped_queue.clear();
@@ -353,17 +359,54 @@ pub(crate) fn request_close(s: &mut State, tab_key: &str, tx: &mut Tx) {
     }
 }
 
+fn is_palette_internal_focus(key: &str) -> bool {
+    key.starts_with("command-palette-")
+        && key != rune_theme_codenomad::shell::command_palette::TRIGGER
+}
+
 fn capture_return_focus(s: &mut State, tab_key: &str, tx: &Tx) -> Option<String> {
     s.temporary
         .pending_return_focus
         .take()
-        .filter(|key| !key.starts_with("command-palette-"))
+        .filter(|key| !is_palette_internal_focus(key))
         .or_else(|| {
             tx.focused()
-                .filter(|key| !key.starts_with("command-palette-"))
+                .filter(|key| !is_palette_internal_focus(key))
                 .map(str::to_owned)
         })
         .or_else(|| Some(format!("t-{tab_key}")))
+}
+
+pub(crate) fn queue_abandon(
+    s: &mut State,
+    backend: Backend,
+    path: String,
+    request_id: Option<String>,
+) {
+    if let Some(l) = s.screen.launcher() {
+        if l.authentication_required {
+            if s.temporary.pending_abandons.len() < 16 {
+                s.temporary
+                    .pending_abandons
+                    .push((backend, path, request_id));
+            }
+            return;
+        }
+        if let Some(conn) = l.connection.as_ref().filter(|c| c.base == backend.base) {
+            let cleanup = conn.clone();
+            platform::spawn(async move {
+                let _ = cleanup
+                    .abandon_temporary_folder(&path, request_id.as_deref())
+                    .await;
+            });
+            return;
+        }
+    }
+    platform::spawn(async move {
+        let _ = backend
+            .abandon_temporary_folder(&path, request_id.as_deref())
+            .await;
+    });
 }
 
 fn open_dialog(s: &mut State, tab_key: &str, captured_focus: Option<String>, tx: &mut Tx) {
@@ -560,6 +603,39 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
 
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let mut changed = false;
+    if !s.temporary.stale_creates.is_empty() {
+        let mut remaining = Vec::new();
+        for pending in std::mem::take(&mut s.temporary.stale_creates) {
+            match pending.rx.try_recv() {
+                Ok(Ok(created)) => {
+                    queue_abandon(s, pending.backend, created.path, None);
+                    changed = true;
+                }
+                Ok(Err(_)) | Err(codenomad_client::TryRecvError::Closed) => {}
+                Err(codenomad_client::TryRecvError::Empty) => remaining.push(pending),
+            }
+        }
+        s.temporary.stale_creates = remaining;
+    }
+    if !s.temporary.pending_abandons.is_empty()
+        && let Some(conn) = s
+            .screen
+            .launcher()
+            .filter(|l| !l.authentication_required)
+            .and_then(|l| l.connection.clone())
+    {
+        for (orig, path, req_id) in std::mem::take(&mut s.temporary.pending_abandons) {
+            if conn.base == orig.base {
+                let cleanup = conn.clone();
+                platform::spawn(async move {
+                    let _ = cleanup
+                        .abandon_temporary_folder(&path, req_id.as_deref())
+                        .await;
+                });
+            }
+        }
+        changed = true;
+    }
     if let Some(stashed) = s.temporary.pending_restore.take() {
         workspace::restore_stashed(s, stashed, false, tx);
         changed = true;
@@ -622,10 +698,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     });
                     if !same_connection || !launcher::open_temporary_folder(s, created.clone(), tx)
                     {
-                        let backend = pending.backend;
-                        platform::spawn(async move {
-                            let _ = backend.abandon_temporary_folder(&created.path, None).await;
-                        });
+                        queue_abandon(s, pending.backend, created.path, None);
                     }
                 }
                 Err(TemporaryError::Unauthorized) => {
@@ -636,10 +709,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
             }
         } else if let Ok(created) = result {
-            let backend = pending.backend;
-            platform::spawn(async move {
-                let _ = backend.abandon_temporary_folder(&created.path, None).await;
-            });
+            queue_abandon(s, pending.backend, created.path, None);
         }
     }
     if let Some(result) = s
@@ -724,21 +794,40 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     if !pending.quiet {
                         emit_temporary_error(s, "temporaryInstance.discard.failedTitle", &err);
                     }
-                    workspace::finish_discarded(s, pending.stashed, true, true, tx);
+                    let mut stashed = pending.stashed;
+                    stashed.clear_temporary();
+                    if workspace::stashed_has_in_memory_state(s, &stashed) {
+                        workspace::restore_stashed(s, stashed, !pending.quiet, tx);
+                    } else {
+                        workspace::finish_discarded(s, stashed, true, true, tx);
+                    }
                 }
                 Err(err) if err.is_not_found() => {
-                    // The workspace occurrence is gone on the server; detach this stale tab
-                    // locally without sending a duplicate DELETE and without stripping sibling marks.
-                    if !pending.quiet {
+                    // The workspace occurrence is gone on the server (404 proves the occurrence is
+                    // absent, not the folder). Preserve any in-memory-only drafts/attachments or
+                    // unsaved file edits by restoring the tab; otherwise detach locally without
+                    // sending a duplicate DELETE or stripping sibling marks.
+                    if !pending.quiet || workspace::stashed_has_in_memory_state(s, &pending.stashed)
+                    {
                         emit_temporary_error(s, "temporaryInstance.discard.failedTitle", &err);
                     }
-                    workspace::finish_discarded(s, pending.stashed, true, false, tx);
+                    if workspace::stashed_has_in_memory_state(s, &pending.stashed) {
+                        workspace::restore_stashed(s, pending.stashed, !pending.quiet, tx);
+                    } else {
+                        workspace::finish_discarded(s, pending.stashed, true, false, tx);
+                    }
                 }
                 Err(err) => {
                     let tab_key = pending.stashed.tab_key.clone();
                     let return_focus = pending.stashed.return_focus.clone();
-                    workspace::restore_stashed(s, pending.stashed, !pending.quiet, tx);
-                    if pending.quiet {
+                    let still_temporary = pending.stashed.is_temporary();
+                    workspace::restore_stashed(
+                        s,
+                        pending.stashed,
+                        !pending.quiet || !still_temporary,
+                        tx,
+                    );
+                    if pending.quiet && still_temporary {
                         open_dialog(s, &tab_key, return_focus, tx);
                     } else {
                         emit_temporary_error(s, "temporaryInstance.discard.failedTitle", &err);
