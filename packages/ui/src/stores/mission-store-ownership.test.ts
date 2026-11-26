@@ -1,22 +1,21 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createMemo, createRoot, createSignal } from "solid-js"
-import { createMissionStore, type MissionDisplayResponse } from "./mission-store"
+import { createMissionStore, type MissionRowsResponse } from "./mission-store"
 import { createMissionPanelInventory } from "./mission-panel-inventory"
 
 const deferred = <T>() => {
   let resolve!: (value: T) => void
   return { promise: new Promise<T>(done => { resolve = done }), resolve }
 }
-const response = (projectID: string): MissionDisplayResponse => ({ available: true, version: 1, projectID,
-  generatedAt: 1, discardedEvents: 0, missions: [], activity: { generatedAt: 1, missions: [] } })
+const response = (projectID: string): MissionRowsResponse => ({ available: true, projectID, generatedAt: 1, discardedEvents: 0, summaries: [] })
 
 for (const retire of ["clear", "invalidateTasks"] as const)
 test(`${retire} admits a new same-attachment read and old settlement preserves its busy owner`, async () => {
-  const reads = [deferred<MissionDisplayResponse>(), deferred<MissionDisplayResponse>()]
+  const reads = [deferred<MissionRowsResponse>(), deferred<MissionRowsResponse>()]
   const attachment = new AbortController()
   let calls = 0
-  const store = createMissionStore(() => reads[calls++].promise, undefined, false, () => attachment.signal)
+  const store = createMissionStore(() => reads[calls++].promise, undefined, () => attachment.signal)
   const old = store.refresh("east~workspace")
   store[retire]("east~workspace")
   const replacement = store.refresh("east~workspace")

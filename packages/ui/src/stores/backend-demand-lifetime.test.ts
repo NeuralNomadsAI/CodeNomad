@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { test, type TestContext } from "node:test"
-import type { MissionListResponse, MissionPanelMap, PluginControlsSnapshot } from "../../../server/src/api-types"
+import type { MissionPanelMap, PluginControlsSnapshot } from "../../../server/src/api-types"
 import type { MissionContentResponse } from "../../../server/src/missions/mission-content-wire"
 import { backendEvents, type ServerEvents } from "../lib/server-events"
 import { captureBackendOperation } from "../lib/backend-operation"
@@ -9,7 +9,7 @@ import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
 import { serverApi } from "../lib/api-client"
 import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 import { receiptReads } from "../lib/background-read-queue"
-import { createMissionStore } from "./mission-store"
+import { createMissionStore, type MissionRowsResponse } from "./mission-store"
 import { createMissionPanelInventory } from "./mission-panel-inventory"
 import { createMissionTaskSessions } from "./mission-task-session-reads"
 import { createMissionContentStore, type MissionBodyRef } from "./mission-content-store"
@@ -37,17 +37,16 @@ const snapshot = (id: string): PluginControlsSnapshot => ({
   location, runtime: [], configured: { rules: [], sources: [] }, targets: [],
   controls: [{ id }],
 } as unknown as PluginControlsSnapshot)
-const missions = (time: number): MissionListResponse => ({ available: true, version: 1, projectID: "project", generatedAt: time,
-  discardedEvents: 0, missions: [], activity: { generatedAt: time, missions: [] } })
+const missions = (time: number): MissionRowsResponse => ({ available: true, projectID: "project", generatedAt: time, discardedEvents: 0, summaries: [] })
 
 test("Mission demand survives attachment replacement, without joining late IO or replaying its trailing read", async t => {
   const backend = attachment(t, "demand_mission")
-  const old = deferred<MissionListResponse>(), fresh = deferred<MissionListResponse>()
+  const old = deferred<MissionRowsResponse>(), fresh = deferred<MissionRowsResponse>()
   const sent: AbortSignal[] = []
-  const store = createMissionStore(async (_id, _request, captured) => {
+  const store = createMissionStore(async (_id, captured) => {
     sent.push(captured!)
     return sent.length === 1 ? old.promise : fresh.promise
-  }, undefined, false, signal)
+  }, undefined, signal)
   store.setDemand(backend.instance, true)
   const first = store.refresh(backend.instance)
   void store.refresh(backend.instance)
@@ -141,7 +140,7 @@ test("captured Mission timers are cancelled before dispatch and fresh open recon
   t.mock.timers.enable({ apis: ["setTimeout"] })
   const backend = attachment(t, "demand_timer")
   let calls = 0
-  const store = createMissionStore(async () => { calls++; return missions(calls) }, undefined, false, signal)
+  const store = createMissionStore(async () => { calls++; return missions(calls) }, undefined, signal)
   store.setDemand(backend.instance, true)
   const scheduler = createEventRefreshScheduler((id, captured) => store.refresh(id, captured))
   scheduler.schedule(backend.instance, "urgent", signal(backend.instance))
