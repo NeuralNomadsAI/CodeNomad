@@ -355,16 +355,21 @@ async fn patch_controls(
             {
                 return bad_request(INVALID_ACTIVATION);
             }
-            if !workspace_exists(&app, &workspace_id) {
-                return (Status::NOT_FOUND, Json(json!({ "error": "Workspace not found" }))).into_response();
-            }
-            let (Ok(directory), None) = (dir, ws) else {
-                return (Status::FORBIDDEN, Json(json!({ "error": "Location is not owned by this workspace" })))
-                    .into_response();
+            let location = match (dir, ws) {
+                (Ok(directory), None) => ControlLocation { directory, workspace_id: None },
+                (Ok(directory), Some(Ok(workspace_id))) => {
+                    ControlLocation { directory, workspace_id: Some(workspace_id) }
+                }
+                _ => {
+                    if !workspace_exists(&app, &workspace_id) {
+                        return (Status::NOT_FOUND, Json(json!({ "error": "Workspace not found" }))).into_response();
+                    }
+                    return (Status::FORBIDDEN, Json(json!({ "error": "Location is not owned by this workspace" })))
+                        .into_response();
+                }
             };
             // `pluginId` contains an unpaired UTF-16 surrogate: never substitute it for `\u{FFFD}`
-            // (which could target another plugin). Verify location/daemon readiness, then refuse as unavailable.
-            let location = ControlLocation { directory, workspace_id: None };
+            // (which could target another plugin). Verify daemon/location readiness, then refuse as unavailable.
             let token = principal_token(principal);
             match engine::read(&app, &workspace_id, &location, token.as_ref(), None).await {
                 Ok(_) => (
@@ -506,16 +511,22 @@ async fn delete_source(
             } else {
                 return bad_request(INVALID_SOURCE);
             }
-            let (Ok(directory), None) = (dir, ws) else {
-                if !workspace_exists(&app, &workspace_id) {
-                    return sources_error(SourceError::Refused { status: Status::NOT_FOUND, code: None });
+            let location = match (dir, ws) {
+                (Ok(directory), None) => ControlLocation { directory, workspace_id: None },
+                (Ok(directory), Some(Ok(workspace_id))) => {
+                    ControlLocation { directory, workspace_id: Some(workspace_id) }
                 }
-                return sources_error(SourceError::Refused { status: Status::FORBIDDEN, code: None });
+                _ => {
+                    if !workspace_exists(&app, &workspace_id) {
+                        return sources_error(SourceError::Refused { status: Status::NOT_FOUND, code: None });
+                    }
+                    return sources_error(SourceError::Refused { status: Status::FORBIDDEN, code: None });
+                }
             };
-            // Reuse the full ordinary DELETE pipeline (queues, scope availability, ownership,
+            // Reuse the full ordinary DELETE pipeline (queues, daemon availability, scope, ownership,
             // worktree fence, revision confirmation) and fail as `409 stale` at comparison time.
             let req = SourceRemoveRequest {
-                location: ControlLocation { directory, workspace_id: None },
+                location,
                 scope,
                 expected_revision: rev,
                 kind: SourceRemoveTarget::Unrepresentable,

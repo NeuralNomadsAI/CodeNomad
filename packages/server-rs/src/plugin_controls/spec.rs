@@ -384,7 +384,8 @@ fn is_valid_build_meta(build: &str) -> bool {
 }
 
 fn is_valid_semver_version(spec: &str) -> bool {
-    let s = spec.strip_prefix('v').or_else(|| spec.strip_prefix('=')).unwrap_or(spec);
+    // `node-semver` `LOOSEPLAIN`: `[v=\s]*` (lowercase `v` and `=` only, never uppercase `V`).
+    let s = spec.trim_start_matches(['v', '=']);
     let core = match s.split_once('+') {
         Some((c, build)) => {
             if !is_valid_build_meta(build) {
@@ -466,7 +467,8 @@ fn is_comparator(tok: &str) -> bool {
 }
 
 fn is_partial_version(s: &str) -> bool {
-    let s = s.strip_prefix('v').or_else(|| s.strip_prefix('V')).unwrap_or(s);
+    // `node-semver` `XRANGEPLAINLOOSE`: `[v=\s]*` (lowercase `v` and `=` only, never uppercase `V`).
+    let s = s.trim_start_matches(['v', '=']);
     let core = match s.split_once('+') {
         Some((c, build)) => {
             if !is_valid_build_meta(build) {

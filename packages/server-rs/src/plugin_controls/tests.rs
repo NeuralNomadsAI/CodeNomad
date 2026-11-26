@@ -81,6 +81,7 @@ fn spec_validation_and_identities_match_typescript() {
         ("foo@a/b/c", SpecErrorCode::LocalPath),
         ("plugin@tag%", SpecErrorCode::InvalidSpec),
         ("pkg@1.2.3+%", SpecErrorCode::InvalidSpec),
+        ("pkg@V1.2.3 garbage", SpecErrorCode::InvalidSpec),
         ("github:org/repo#main::other", SpecErrorCode::InvalidSpec),
         ("github:org/repo#main::semver:^1.0.0", SpecErrorCode::InvalidSpec),
         ("github:org/repo#path:/a::path:/b", SpecErrorCode::InvalidSpec),
