@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {bundleAssetPaths, workspacePolicy} from './web-workspace-policy.mjs'
 
@@ -10,11 +9,27 @@ function samePath(a, b) {
     : a === b
 }
 
-export async function mobileDrawersBrowser({values, m, out, browser, storageState, fulfillWorkspaceCreation, url, root}) {
-  assert(browser && typeof fulfillWorkspaceCreation === 'function', 'Attested browser and fulfillWorkspaceCreation required for mobileDrawersBrowser')
+export async function mobileDrawersBrowser({values, m, out, browser, storageState, fulfillWorkspaceCreation, writeOutput, url, root}) {
+  assert(
+    browser && typeof fulfillWorkspaceCreation === 'function' && typeof writeOutput === 'function',
+    'Attested browser, fulfillWorkspaceCreation, and writeOutput required for mobileDrawersBrowser',
+  )
   const assets = await bundleAssetPaths(path.resolve(root, process.env.RUNE_WEB_DIR ?? 'target/rune-web-connected'))
   const linked = path.join(path.dirname(values.project), 'linked')
   const ownedDirectory = dir => samePath(dir, values.project) || samePath(dir, linked)
+  let routeError = null
+  let rejectRoute = () => {}
+  const routeFailed = new Promise((_, reject) => {
+    rejectRoute = reject
+  })
+  routeFailed.catch(() => {})
+  const failRoute = error => {
+    if (!routeError) {
+      routeError = error
+      rejectRoute(error)
+    }
+    proof.errors.push(error?.message ?? String(error))
+  }
   const proof = {
     runner: 'web-mobile-drawers',
     emulation: 'Chromium Playwright (isMobile+hasTouch), not Android ADB/Gboard',
@@ -56,6 +71,7 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
     }
   }
 
+  const contexts = []
   const createPage = async ({width, height, colorScheme}) => {
     const policy = workspacePolicy({origin: url.origin, project: values.project, assets})
     const context = await browser.newContext({
@@ -66,34 +82,44 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
       hasTouch: true,
       storageState,
     })
+    contexts.push(context)
     await context.route('**/*', async route => {
-      const req = route.request(), u = new URL(req.url()), p = u.pathname
-      let allowed = await policy.request(req)
-      if (!allowed && u.origin === url.origin && (await req.allHeaders()).cookie) {
-        const [, id, tail] = p.match(/^\/api\/workspaces\/([^/]+)\/(files|worktrees\/[^/]+\/git-status)$/) ?? []
-        const [, nativeId, nativeTail] = p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(location|worktree)$/) ?? []
-        if (req.method() === 'GET' && policy.workspaces.has(id)) {
-          if (tail === 'files') {
-            const keys = [...u.searchParams.keys()]
-            allowed = keys.every(k => k === 'directory' || k === 'path') && ownedDirectory(u.searchParams.get('directory')) && ['.', ''].includes(u.searchParams.get('path') ?? '')
-          } else {
-            allowed = u.search === ''
-          }
-        } else if (req.method() === 'GET' && policy.workspaces.has(nativeId)) {
-          if (nativeTail === 'location') {
-            const keys = [...u.searchParams.keys()]
-            allowed = keys.length === 1 && keys[0] === 'location[directory]' && ownedDirectory(u.searchParams.get('location[directory]'))
-          } else if (nativeTail === 'worktree') {
-            allowed = u.search === ''
+      try {
+        const req = route.request(), u = new URL(req.url()), p = u.pathname
+        let allowed = await policy.request(req)
+        if (!allowed && u.origin === url.origin && (await req.allHeaders()).cookie) {
+          const [, id, tail] = p.match(/^\/api\/workspaces\/([^/]+)\/(files|worktrees\/[^/]+\/git-status)$/) ?? []
+          const [, nativeId, nativeTail] = p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(location|worktree)$/) ?? []
+          if (req.method() === 'GET' && policy.workspaces.has(id)) {
+            if (tail === 'files') {
+              const keys = [...u.searchParams.keys()]
+              allowed = keys.every(k => k === 'directory' || k === 'path') && ownedDirectory(u.searchParams.get('directory')) && ['.', ''].includes(u.searchParams.get('path') ?? '')
+            } else {
+              allowed = u.search === ''
+            }
+          } else if (req.method() === 'GET' && policy.workspaces.has(nativeId)) {
+            if (nativeTail === 'location') {
+              const keys = [...u.searchParams.keys()]
+              allowed = keys.length === 1 && keys[0] === 'location[directory]' && ownedDirectory(u.searchParams.get('location[directory]'))
+            } else if (nativeTail === 'worktree') {
+              allowed = u.search === ''
+            }
           }
         }
+        if (!allowed) {
+          proof.refused.push(`${req.method()} ${p}${u.search}`)
+          await route.abort('blockedbyclient').catch(() => {})
+          return
+        }
+        if (req.method() === 'POST' && p === '/api/workspaces') {
+          await fulfillWorkspaceCreation(route, policy)
+          return
+        }
+        await route.continue().catch(() => {})
+      } catch (error) {
+        failRoute(error)
+        await route.abort('failed').catch(() => {})
       }
-      if (!allowed) {
-        proof.refused.push(`${req.method()} ${p}${u.search}`)
-        return route.abort('blockedbyclient')
-      }
-      if (req.method() === 'POST' && p === '/api/workspaces') return fulfillWorkspaceCreation(route, policy)
-      return route.continue()
     })
     const page = await context.newPage()
     page.setDefaultTimeout(20000)
@@ -120,11 +146,10 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
     return {context, page}
   }
 
-  let phoneCtx, tabletCtx
-  try {
+  let primaryError = null
+  const runProbe = async () => {
     // 1. Phone portrait start (390x844): floating drawers, IME shrink, rotation, full-width Files, Escape layering, outside tap.
     const phone = await createPage({width: 390, height: 844, colorScheme: 'dark'})
-    phoneCtx = phone.context
     const page = phone.page
     const left = button(page, m['window.menu.leftPanel'])
     const right = button(page, m['window.menu.rightPanel'])
@@ -329,7 +354,6 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
 
     // 2. Landscape tablet start (1366x1024): both panels docked, hide on portrait, independent per-orientation memory.
     const tablet = await createPage({width: 1366, height: 1024, colorScheme: 'light'})
-    tabletCtx = tablet.context
     const tPage = tablet.page
     const tLeft = button(tPage, m['window.menu.leftPanel'])
     const tRight = button(tPage, m['window.menu.rightPanel'])
@@ -355,20 +379,38 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
 
     assert.deepEqual(proof.refused, [], `Forbidden requests: ${JSON.stringify(proof.refused)}`)
     assert.deepEqual(proof.errors, [], `Page errors: ${JSON.stringify(proof.errors)}`)
+    if (routeError) throw routeError
     proof.result = 'pass'
     console.log(JSON.stringify({runner: 'web-mobile-drawers', result: proof.result, out}))
+  }
+  try {
+    const probePromise = runProbe()
+    probePromise.catch(() => {})
+    await Promise.race([probePromise, routeFailed])
+    if (routeError) throw routeError
   } catch (error) {
+    primaryError = error
     proof.result = 'fail'
-    proof.failure = error.message
-    await Promise.all([phoneCtx, tabletCtx].flatMap(ctx => ctx?.pages() ?? []).map(async (p, i) => {
-      await writeFile(path.join(out, `mobile-drawers-fail-${i}.aria.yml`), await p.locator('body').ariaSnapshot({timeout: 2000}))
-    })).catch(() => {})
+    proof.failure = error?.message ?? String(error)
+    await Promise.allSettled(contexts.flatMap(ctx => ctx.pages()).map(async (p, i) => {
+      await writeOutput(`mobile-drawers-fail-${i}.aria.yml`, await p.locator('body').ariaSnapshot({timeout: 2000}))
+    }))
     throw error
   } finally {
-    try {
-      await Promise.allSettled([phoneCtx?.close(), tabletCtx?.close()])
-    } finally {
-      await writeFile(path.join(out, 'mobile-drawers-proof.json'), JSON.stringify(proof, null, 2))
+    let cleanupError = null
+    const closed = await Promise.allSettled(contexts.map(ctx => ctx.close()))
+    for (const outcome of closed) {
+      if (outcome.status === 'rejected') {
+        console.error(`Failed to close mobile-drawers context: ${outcome.reason?.message ?? outcome.reason}`)
+        cleanupError ??= outcome.reason
+      }
     }
+    try {
+      await writeOutput('mobile-drawers-proof.json', JSON.stringify(proof, null, 2))
+    } catch (writeError) {
+      console.error(`Failed to write mobile-drawers proof: ${writeError.message}`)
+      cleanupError ??= writeError
+    }
+    if (!primaryError && cleanupError) throw cleanupError
   }
 }

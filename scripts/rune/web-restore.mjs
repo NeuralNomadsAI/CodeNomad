@@ -24,12 +24,18 @@ assert(Number.isSafeInteger(targetPid)&&targetPid>0,'Connected web-restore requi
 const launcherPid=Number(values['launcher-pid'])
 assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Connected web-restore requires --launcher-pid <private launcher PID>')
 const out=path.resolve(values.out)
-const {profile,storage}=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
+const {profile,storage,inside}=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
 await verifyLoopbackListenerOwner(Number(url.port),targetPid)
 const targetStartId=(await verifyPrivateFixtureServer({targetPid,launcherPid,profile,root})).targetStartId
 url.search='?locale=fr'
-await createPrivateOutputDir(out,profile)
+const outReal=await createPrivateOutputDir(out,profile)
 const outputAuthorized=true
+const writeOutput=async(name,content)=>{
+  assert(typeof name==='string'&&name.length>0&&path.basename(name)===name&&name!=='.'&&name!=='..',`Invalid output artifact name: ${name}`)
+  const currentOut=await realpath(outReal)
+  assert(currentOut===outReal&&inside(profile,currentOut),`Output directory shifted outside fixture profile: ${currentOut}`)
+  await writePrivateFile(path.join(outReal,name),content,outReal)
+}
 const rawStorage=JSON.parse(await readFile(storage,'utf8'))
 const realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
 const realCookieMap=parseCookiePairs(realCookieHeader)
@@ -74,7 +80,7 @@ try {
   const browser=ownedBrowser.browser
   if(values['pending-open']){await pendingBrowser({values,m,out,profile,browser,ownedBrowser,storageState:browserStorageState,realCookieHeader,attestedFetch});wroteSummary=true}
   else if(values['file-wrap']){await fileWrapBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,url,root});wroteSummary=true}
-  else if(values['mobile-drawers']){await mobileDrawersBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,url,root});wroteSummary=true}
+  else if(values['mobile-drawers']){await mobileDrawersBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,writeOutput,url,root});wroteSummary=true}
   else {
 const KEY='codenomad.rune.alpha.client-state.v1',RELEASED='codenomad.rune.alpha.records-released'
 const PROOF='codenomad.fixture.rune.web-restore-proof.v1'
@@ -456,13 +462,22 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
   primaryError=error
   throw error
 }finally{
+  let cleanupError=null
   await attestedFetch?.close().catch(()=>{})
   if(ownedBrowser){
     try{await ownedBrowser.close()}catch(closeError){
       console.error(`Failed to close browser: ${closeError.message}`)
-      if(!primaryError)throw closeError
+      cleanupError??=closeError
     }
   }
-  if(outputAuthorized&&!wroteSummary)await writePrivateFile(path.join(out,'summary.json'),JSON.stringify({runner:'web-restore',origin:url.origin,contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure})),scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions'},null,2),profile)
+  if(outputAuthorized&&!wroteSummary){
+    try{
+      await writeOutput('summary.json',JSON.stringify({runner:'web-restore',origin:url.origin,contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure})),scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions'},null,2))
+    }catch(writeError){
+      console.error(`Failed to write web-restore summary: ${writeError.message}`)
+      cleanupError??=writeError
+    }
+  }
+  if(!primaryError&&cleanupError)throw cleanupError
 }
 console.log(JSON.stringify({runner:'web-restore',contexts:results.map(r=>({context:r.context,result:r.result})),out}))
