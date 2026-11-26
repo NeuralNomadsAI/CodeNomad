@@ -809,7 +809,7 @@ async fn remote_control_local_auth_and_meta_capabilities_cover_plugin_controls()
     remote_task.abort();
 
     // 3. `/api/meta` advertises `"plugin-controls"`.
-    let doc = meta::document(Uuid::new_v4(), 9898, Path::new("."), None, json!({})).unwrap();
+    let doc = meta::document(Some(Uuid::new_v4()), 9898, Path::new("."), None, json!({})).unwrap();
     let caps = doc["capabilities"].as_array().unwrap();
     assert!(caps.iter().any(|c| c == "plugin-controls"), "missing plugin-controls capability: {caps:?}");
 }
