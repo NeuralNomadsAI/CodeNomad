@@ -103,7 +103,7 @@ pub fn eye<S: 'static>(
     active: bool,
     press: impl Fn(&mut S, &mut rune::Tx) + 'static,
 ) -> El {
-    let k = kit(dark);
+    let k = &*kit(dark);
     let mut selected;
     let k = if active && !disabled {
         selected = k.clone();
@@ -222,6 +222,12 @@ fn wrapped_rows(line: &str, style: TextStyle, width: Option<f32>) -> usize {
         rune::text::measure_with(line.trim_end_matches('\r'), &[], style, width, options);
     ((height / style.line_px()).round() as usize).max(1)
 }
+fn gutter_palette_key(dark: bool) -> (usize, Option<crate::palettes::PaletteKey>) {
+    (
+        crate::palette_index(dark),
+        crate::palettes::active(dark).map(|palette| palette.cache_key()),
+    )
+}
 fn gutter_style(
     dark: bool,
     contents: &str,
@@ -238,7 +244,7 @@ fn gutter_style(
     rune::memo(
         "file-line-numbers",
         (
-            crate::palette_index(dark),
+            gutter_palette_key(dark),
             wrap.map(f32::to_bits),
             style.line_px().to_bits(),
             gap.to_bits(),
@@ -296,14 +302,18 @@ pub fn mermaid_error(dark: bool, message: &str, source: &str) -> El {
                 .font(t.text(TextRole::Mono)),
         )
 }
+/// Combined Mermaid element cap (`nodes + edges + subgraphs`) covering Solid's `maxEdges: 500`.
+pub(crate) const MERMAID_MAX_ITEMS: usize = 1_500;
+
 fn markdown_style(dark: bool) -> MarkdownStyle {
     let t = tokens(dark);
-    let mut style = MarkdownStyle::from_kit(kit(dark))
+    let mut style = MarkdownStyle::from_kit(&kit(dark))
         .body_font(font(t, "readerMarkdown"))
         .strong_weight(t.number("font-weight-regular").px())
         .link_underline(rune::Color::TRANSPARENT)
         .link_hover(t.color("accent-hover"))
-        .code_block(t.color("surface-inset"), t.color("border-muted"));
+        .code_block(t.color("surface-inset"), t.color("border-muted"))
+        .diagram_max_items(MERMAID_MAX_ITEMS);
     for level in 1..=4 {
         style = style.heading_font(level, font(t, &format!("readerHeading{level}")));
     }
@@ -328,7 +338,7 @@ pub fn markdown<S: 'static>(
         .on_link_tx(open)
         .images(image)
         .diagram_frame(move |diagram, _| diagram.label(diagram_label))
-        .build(kit(dark))
+        .build(&kit(dark))
 }
 pub fn markdown_image_sources(text: &str) -> Vec<String> {
     fn collect(blocks: Vec<Block>, found: &mut Vec<String>) {
@@ -379,7 +389,7 @@ pub fn code_copy<S: 'static>(
         .variant(rune_kit::IconButtonVariant::GhostMuted)
         .label(label)
         .on_press_tx(move |s, tx| copy(s, tx))
-        .build(kit(dark))
+        .build(&kit(dark))
         .on_key(move |s: &mut S, key, tx| {
             if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
                 return false;
@@ -401,4 +411,80 @@ pub fn mermaid(dark: bool, text: &str) -> Option<El> {
             t.color("surface-inset"),
         ),
     )
+}
+
+#[cfg(test)]
+mod mermaid_tests {
+    use super::*;
+
+    fn chain_flowchart(edges: usize) -> String {
+        let mut source = String::from("flowchart LR\n");
+        for i in 0..edges {
+            source.push_str(&format!("  N{i} --> N{}\n", i + 1));
+        }
+        source
+    }
+
+    #[test]
+    fn mermaid_renders_up_to_1500_items_and_rejects_above() {
+        assert!(mermaid(false, &chain_flowchart(500)).is_some());
+        // 750 nodes + 749 edges = 1,499 items (< 1,500 ceiling).
+        assert!(mermaid(false, &chain_flowchart(749)).is_some());
+        assert!(mermaid(false, &chain_flowchart(750)).is_none());
+
+        let md = format!("```mermaid\n{}```", chain_flowchart(500));
+        let mut rt = rune::Runtime::new(
+            md,
+            |md, _| {
+                markdown(
+                    false,
+                    md,
+                    "Mermaid diagram",
+                    |_: &mut String, _, _| {},
+                    |_, _| false,
+                    |_| rune::el(),
+                    |_| None,
+                )
+            },
+            (880.0, 520.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.02);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|el| el.label.as_deref() == Some("Mermaid diagram")),
+            "markdown file reader must render a 500-edge mermaid fence"
+        );
+    }
+
+    #[test]
+    fn gutter_memo_key_invalidates_when_palette_changes_at_same_luminance() {
+        use crate::palettes::{
+            ColorField, built_in, custom, increased_contrast, with_palette, with_resolved,
+        };
+
+        let first = built_in().iter().find(|p| p.dark).expect("dark palette");
+        let second = built_in()
+            .iter()
+            .find(|p| p.dark && p.id != first.id)
+            .expect("second dark palette");
+        let contrast = increased_contrast(Some(first), true).expect("high-contrast variant");
+
+        let key_first = with_palette(Some(first), || gutter_palette_key(true));
+        let key_second = with_palette(Some(second), || gutter_palette_key(true));
+        let key_contrast = with_palette(Some(contrast), || gutter_palette_key(true));
+        assert_ne!(key_first, key_second);
+        assert_ne!(key_first, key_contrast);
+
+        let base_colors = first.colors();
+        let muted_colors = base_colors
+            .with(ColorField::TextMuted, "#C8A0FF")
+            .expect("valid muted color");
+        let custom_a = custom(Some("custom-gutter"), true, false, base_colors);
+        let custom_b = custom(Some("custom-gutter"), true, false, muted_colors);
+        let key_a = with_resolved(Some(custom_a), || gutter_palette_key(true));
+        let key_b = with_resolved(Some(custom_b), || gutter_palette_key(true));
+        assert_ne!(key_a, key_b);
+    }
 }

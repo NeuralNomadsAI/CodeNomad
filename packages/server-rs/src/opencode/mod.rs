@@ -57,6 +57,11 @@ pub struct Native {
     inner: Arc<NativeInner>,
 }
 
+pub struct ConnectionGuard<'a> {
+    _validated: std::sync::MutexGuard<'a, Option<Instant>>,
+    _endpoint: std::sync::RwLockReadGuard<'a, Option<Arc<Endpoint>>>,
+}
+
 /// Port 0 refuses every connection: before the first acquisition, native requests fail
 /// like the reference's unconfigured lifecycle.
 static UNCONNECTED: std::sync::LazyLock<Url> = std::sync::LazyLock::new(|| Url::parse("http://127.0.0.1:0/").unwrap());
@@ -80,6 +85,25 @@ impl Native {
             retired: tokio::sync::Notify::new(),
         });
         Self { client, inner }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_test_endpoint(&self, address: std::net::SocketAddr) {
+        let url = Url::parse(&format!("http://{address}")).unwrap();
+        *self.inner.endpoint.write().unwrap() =
+            Some(Arc::new(Endpoint { url, password: "synthetic".into(), version: String::new(), pid: 0 }));
+        *self.inner.validated.lock().unwrap() = Some(Instant::now());
+        self.inner.retired.notify_waiters();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn invalidate_test_endpoint(&self, endpoint: &Arc<Endpoint>) {
+        let live = self.inner.endpoint.read().unwrap();
+        if live.as_ref().is_some_and(|e| Arc::ptr_eq(e, endpoint)) {
+            *self.inner.validated.lock().unwrap() = None;
+            drop(live);
+            self.inner.retired.notify_waiters();
+        }
     }
 
     /// The bench's fixture daemon when the positional launch injects it, else the CLI lifecycle of `binary`.
@@ -122,9 +146,16 @@ impl Native {
         self.inner.endpoint.read().unwrap().clone()
     }
     pub fn current(&self, endpoint: &Arc<Endpoint>) -> bool {
+        self.guard_current(endpoint).is_some()
+    }
+    pub fn guard_current(&self, endpoint: &Arc<Endpoint>) -> Option<ConnectionGuard<'_>> {
         let live = self.inner.endpoint.read().unwrap();
-        live.as_ref().is_some_and(|current| Arc::ptr_eq(current, endpoint))
-            && self.inner.validated.lock().unwrap().is_some()
+        let validated = self.inner.validated.lock().unwrap();
+        if live.as_ref().is_some_and(|current| Arc::ptr_eq(current, endpoint)) && validated.is_some() {
+            Some(ConnectionGuard { _endpoint: live, _validated: validated })
+        } else {
+            None
+        }
     }
     pub async fn wait_retired(&self, endpoint: &Arc<Endpoint>) {
         loop {

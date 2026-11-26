@@ -25,12 +25,12 @@ pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
 pub fn dark() -> bool {
     APPEARANCE.get()
 }
-pub fn appearance_key() -> (bool, bool, Option<(&'static str, bool)>) {
+pub fn appearance_key() -> (bool, bool, Option<crate::palettes::PaletteKey>) {
     let dark = dark();
     (
         dark,
         source_palette(),
-        crate::palettes::active(dark).map(|p| (p.id, p.is_high_contrast())),
+        crate::palettes::active(dark).map(|p| p.cache_key()),
     )
 }
 pub(crate) fn render_with_dark<S, T>(
@@ -70,7 +70,7 @@ pub fn button_tx<S: 'static>(
     let button = rune_kit::Button::new(label)
         .disabled(disabled)
         .on_press_tx(move |s, tx| press(s, tx))
-        .build(kit(dark()));
+        .build(&kit(dark()));
     if disabled {
         button
     } else {
@@ -81,7 +81,7 @@ pub fn button_tx<S: 'static>(
 pub fn focusable_disabled_button(label: &str) -> El {
     rune_kit::Button::new(label)
         .disabled(true)
-        .build(kit(dark()))
+        .build(&kit(dark()))
         .disabled(false)
         .focusable(true)
         .aria_disabled(true)
@@ -121,6 +121,22 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 }
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
+}
+pub fn dialog(key: &str, title: &str, close_label: &str) -> rune_kit::Dialog {
+    rune_kit::Dialog::new(key, title).close_label(close_label)
+}
+pub fn combobox<S: 'static>(
+    key: &str,
+    label: &str,
+    search_label: &str,
+    state: &rune_kit::ComboboxState,
+    options: &[rune_kit::ComboboxOption],
+    access: impl for<'a> Fn(&'a mut S) -> &'a mut rune_kit::ComboboxState + 'static,
+) -> rune_kit::Combobox<S> {
+    rune_kit::Combobox::new(key, state, options, access)
+        .label(label)
+        .search_label(search_label)
+        .search_placeholder(search_label)
 }
 pub fn composer_input(edit: &TextEdit, placeholder: &str) -> El {
     base_editor(edit).hint(placeholder)
@@ -173,25 +189,66 @@ pub fn editor_menu<S: 'static>(
     }
     tx.popup_menu(menu, point, pick);
 }
-pub fn composer_field(editor: El, compact: bool, focused: bool) -> El {
-    let t = tokens(dark());
-    let minimum = if compact {
-        t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0
+fn caret_pin(key: &'static str, top: f32, height: f32) -> El {
+    let top = if top.is_finite() { top.max(0.0) } else { 0.0 };
+    let height = if height.is_finite() {
+        height.max(1.0)
     } else {
-        104.0
+        1.0
     };
-    let field = rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
+    rune::el().key(key).absolute(0.0, top).w(0.0).h(height)
+}
+
+pub fn composer_field(
+    editor: El,
+    bounds: crate::interruption::SessionLayout,
+    focused: bool,
+    on_scroll: impl Fn(f32, f32) + 'static,
+    inner_caret_pin: Option<(f32, f32)>,
+    stack_caret_pin: Option<(f32, f32)>,
+) -> El {
+    let t = tokens(dark());
+    let minimum = if bounds.composer_min.is_finite() {
+        bounds.composer_min.max(0.0)
+    } else {
+        0.0
+    };
+    let maximum = if bounds.composer_max.is_finite() {
+        bounds.composer_max.max(minimum)
+    } else {
+        minimum
+    };
+    let mut field = rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
         .min_h(minimum)
-        .max_h(320.0);
-    let field = rune::col()
+        .max_h(maximum)
+        .on_scroll_offset(move |at| on_scroll(at.offset[1], at.max[1]));
+    if let Some((top, height)) = inner_caret_pin {
+        field = field.child(caret_pin("composer-caret-pin", top, height));
+    }
+    let mut field = rune::col()
         .w_full()
         .child(field)
         .fill(t.color("surface-field"));
+    if let Some((top, height)) = stack_caret_pin {
+        field = field.child(caret_pin("stack-caret-pin", top, height));
+    }
     if focused {
         field.outline(1.0, -1.0, t.color("focus-ring-color"))
     } else {
         field
     }
+}
+pub fn caret_rect<S>(cx: &rune::Cx<S>, key: &str) -> Option<[f32; 4]> {
+    cx.caret(key)
+}
+pub fn layout_rect<S>(cx: &rune::Cx<S>, key: &str) -> Option<[f32; 4]> {
+    cx.layout(key)
+}
+pub fn window_layout<S>(cx: &rune::Cx<S>, key: &str) -> Option<[f32; 4]> {
+    cx.window_layout(key)
+}
+pub fn layout_probe(key: impl Into<String>) -> El {
+    rune::el().key(key.into()).absolute(0.0, 0.0).w(0.0).h(0.0)
 }
 pub fn announce_polite(tx: &mut rune::Tx, text: impl Into<String>) {
     tx.announce(text, rune::LiveRegion::Polite);
@@ -274,7 +331,7 @@ pub fn transcript_rows<S: 'static>(
             tokens(dark()).length(crate::Length::TouchTarget).px(),
             key,
             move |state, index| {
-                crate::palettes::with_palette(palette, || {
+                crate::palettes::with_resolved(palette.clone(), || {
                     with_appearance(appearance, || build(state, index))
                 })
             },
@@ -361,7 +418,7 @@ mod tests {
                     rune_kit::Button::new("Save")
                         .disabled(disabled)
                         .on_press(|_: &mut (bool, bool)| {})
-                        .build(kit(dark()))
+                        .build(&kit(dark()))
                 } else {
                     button("Save", disabled, |_: &mut (bool, bool)| {})
                 }
@@ -528,8 +585,8 @@ mod tests {
                     .child(rune::text("Bare text").key("bare"))
                     .child(rune::text("Title").key("title").text_role(TextRole::Title))
                     .child(input(edit).key("editor"))
-                    .child(field(edit).build(crate::field_kit(dark())).key("field"))
-                    .child(textarea(edit).build(crate::field_kit(dark())).key("area"))
+                    .child(field(edit).build(&crate::field_kit(dark())).key("field"))
+                    .child(textarea(edit).build(&crate::field_kit(dark())).key("area"))
             })
         }
         let mut runtime = rune::Runtime::new(
@@ -642,6 +699,81 @@ mod tests {
                 rt.resolve_popup(None).unwrap();
             }
         }
+    }
+    #[test]
+    fn localized_dialog_and_combobox_forward_accessible_labels() {
+        fn has_node(node: &serde_json::Value, role: &str, name: &str) -> bool {
+            if node["role"].as_str() == Some(role) && node["name"].as_str() == Some(name) {
+                return true;
+            }
+            node["children"]
+                .as_array()
+                .is_some_and(|children| children.iter().any(|child| has_node(child, role, name)))
+        }
+
+        fn dialog_view(open: &bool, cx: &mut rune::Cx<bool>) -> El {
+            render(cx, |_| {
+                let mut layers = Vec::new();
+                dialog("confirm", "Confirmer", "Fermer")
+                    .open(*open)
+                    .on_close(|open: &mut bool| *open = false)
+                    .build(&kit(dark()), &mut layers);
+                rune::el().w_full().h_full().children(layers)
+            })
+        }
+        let mut dialog_rt = rune::Runtime::new(
+            true,
+            dialog_view,
+            (480.0, 320.0),
+            rune::Env::new(false, 1.0),
+        );
+        dialog_rt.frame(0.0);
+        let tree = dialog_rt.accessibility_json();
+        assert!(has_node(&tree, "button", "Fermer"), "{tree}");
+        assert!(!has_node(&tree, "button", "Close"), "{tree}");
+
+        fn combo_view(
+            state: &rune_kit::ComboboxState,
+            cx: &mut rune::Cx<rune_kit::ComboboxState>,
+        ) -> El {
+            render(cx, |_| {
+                let mut layers = Vec::new();
+                let options = [
+                    rune_kit::ComboboxOption::new("a", "Alpha"),
+                    rune_kit::ComboboxOption::new("b", "Beta"),
+                ];
+                let trigger = combobox(
+                    "models",
+                    "Modèle",
+                    "Rechercher des modèles",
+                    state,
+                    &options,
+                    |s: &mut rune_kit::ComboboxState| s,
+                )
+                .build(&kit(dark()), &mut layers);
+                rune::col()
+                    .w_full()
+                    .h_full()
+                    .child(trigger)
+                    .children(layers)
+            })
+        }
+        let mut combo_rt = rune::Runtime::new(
+            rune_kit::ComboboxState::default(),
+            combo_view,
+            (480.0, 320.0),
+            rune::Env::new(false, 1.0),
+        );
+        combo_rt.frame(0.0);
+        let (x, y) = combo_rt.find("models-trigger").unwrap();
+        combo_rt.pointer_down(x, y);
+        combo_rt.pointer_up(x, y);
+        combo_rt.frame(0.02);
+        let tree = combo_rt.accessibility_json();
+        assert!(
+            has_node(&tree, "text-input", "Rechercher des modèles"),
+            "{tree}"
+        );
     }
 }
 impl Layout for El {

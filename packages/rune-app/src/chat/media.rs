@@ -69,6 +69,38 @@ impl Pictures {
         self.hover = None;
     }
 
+    pub(crate) fn retained_bytes(&self) -> usize {
+        let entries = self.images.iter().fold(0usize, |total, (key, entry)| {
+            let decoded = entry
+                .image
+                .as_ref()
+                .and_then(attachment::decoded_size)
+                .map_or(0, |[w, h]| {
+                    (w as usize).saturating_mul(h as usize).saturating_mul(4)
+                });
+            let source = match &entry.media {
+                PictureSource::Inline(bytes) => bytes.len(),
+                PictureSource::Http(url) => url.len(),
+                PictureSource::Attachment(_)
+                | PictureSource::Deferred(_)
+                | PictureSource::Unavailable => 0,
+            };
+            total
+                .saturating_add(key.len())
+                .saturating_add(entry.mime.len())
+                .saturating_add(source)
+                .saturating_add(decoded)
+        });
+        let preview = self
+            .preview
+            .as_ref()
+            .and_then(|(_, _, image)| attachment::decoded_size(image))
+            .map_or(0, |[w, h]| {
+                (w as usize).saturating_mul(h as usize).saturating_mul(4)
+            });
+        entries.saturating_add(preview)
+    }
+
     pub(crate) fn retry_interrupted(&mut self) {
         for (key, entry) in &mut self.images {
             if entry.image.is_none()

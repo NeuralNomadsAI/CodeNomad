@@ -1033,7 +1033,7 @@ try {
   await memory.waitFor({state:'attached'})
   assert.equal(await memory.getAttribute('aria-checked'),'false')
   await memory.click({force:true})
-  await page.locator('[role="switch"][aria-checked="true"]').waitFor({state:'attached'})
+  await page.getByRole('switch',{name:'Memory',checked:true,exact:true}).waitFor({state:'attached'})
   assert.equal(await memory.getAttribute('aria-checked'),'true')
   assert.equal(memoryRequests.filter(method=>method==='PUT').length,1)
   await page.getByRole('button',{name:'Entries 1/200 New Needs review',exact:true}).waitFor({state:'attached'})

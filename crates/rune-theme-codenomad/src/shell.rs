@@ -96,14 +96,19 @@ fn titlebar_height() -> f32 {
 
 /// A producer can update an owning window independently of its next paint.
 pub type WindowFeed<S> = rune::AppHandle<S>;
+pub use rune::CloseResponse;
 
 pub fn app<S: 'static>(
     spec: AppSpec<S>,
+    close_request: fn(&mut S, &mut Tx) -> CloseResponse,
     closing: fn(&mut S, &mut Tx),
     native_chrome: bool,
     locale: &'static str,
 ) -> App<S> {
-    let mut app = App::new(spec).on_close(closing).on_quit(closing);
+    let mut app = App::new(spec)
+        .on_close_request(close_request)
+        .on_close(closing)
+        .on_quit(closing);
     if native_chrome {
         native_locale(locale);
         app = app.titlebar(rune::Titlebar::new(titlebar_height()));
@@ -142,6 +147,11 @@ pub fn live_caption() -> bool {
     cfg!(target_os = "windows") && !rune::is_headless()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub fn is_headless() -> bool {
+    rune::is_headless()
+}
+
 pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
     let t = tokens(layout::dark());
     let gutter = t.space(Space::Md).px();
@@ -172,7 +182,7 @@ pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
                 .truncate(),
         )
         .leading(menus)
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
 }
 
 pub fn titlebar_menu<S: 'static>(label: &str, activate: impl Fn(&mut S, &mut Tx) + 'static) -> El {
@@ -182,7 +192,7 @@ pub fn titlebar_menu<S: 'static>(label: &str, activate: impl Fn(&mut S, &mut Tx)
         .variant(ButtonVariant::GhostMuted)
         .control_size(ControlSize::Small)
         .on_press_tx(move |s, tx| press(s, tx))
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
         .on_key(enter_action(activate))
 }
 
@@ -208,7 +218,7 @@ pub fn panel_tabs<S: 'static>(
                 })
                 .control_size(ControlSize::Small)
                 .on_press_tx(move |s, tx| press(s, tx))
-                .build(kit(dark))
+                .build(&kit(dark))
                 .h(height)
                 .key(format!("right-panel-tab-{index}"))
                 .role("tab")
@@ -269,6 +279,22 @@ pub fn cover(element: El) -> El {
     element.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
 }
 
+pub fn viewport_probe<S: 'static>(
+    touch: bool,
+    on_layout: impl Fn(&mut S, [f32; 4], &mut Tx) + 'static,
+) -> El {
+    rune::el()
+        .key(if touch {
+            "shell-viewport-touch"
+        } else {
+            "shell-viewport-pointer"
+        })
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .inert()
+        .a11y_hidden()
+        .on_layout_tx(on_layout)
+}
+
 pub fn floating_notice(notice: El) -> El {
     let inset = tokens(layout::dark()).space(Space::Sm).px();
     row()
@@ -324,7 +350,7 @@ pub fn older_button<S: 'static>(
         .help(label)
         .disabled(busy)
         .on_press_tx(activate)
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
         .key("older")
 }
 
@@ -338,7 +364,7 @@ pub fn session_row<S: 'static>(
     if !disabled {
         row = row.on_select(select);
     }
-    row.build(kit(layout::dark())).disabled(disabled)
+    row.build(&kit(layout::dark())).disabled(disabled)
 }
 
 fn control_size(touch: bool) -> f32 {
@@ -443,7 +469,7 @@ pub fn compact_switch<S: 'static>(
         .hide_label()
         .disabled(disabled)
         .on_toggle(toggle)
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
 }
 
 pub fn service_row(leading: Option<El>, title: &str, trailing: impl IntoIterator<Item = El>) -> El {
@@ -526,6 +552,69 @@ mod tests {
         });
         rt.frame(0.01);
         assert_eq!(rt.state, 1);
+    }
+
+    #[test]
+    fn panel_tabs_web_mirror_groups_tabs_under_tablist() {
+        let mut rt = rune::Runtime::new(
+            0_usize,
+            |chosen, _| {
+                panel_tabs("Right panel", &["Status", "Files"], *chosen, |s, i, _| {
+                    *s = i;
+                })
+            },
+            (280.0, 60.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        let items: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+        let tablist_index = items
+            .iter()
+            .position(|e| e["o"] == "tablist" && e["t"] == "Right panel")
+            .unwrap_or_else(|| panic!("missing panel tablist in web mirror: {}", rt.a11y_json()));
+        let tabs: Vec<_> = items.iter().filter(|e| e["o"] == "tab").collect();
+        assert_eq!(tabs.len(), 2, "real web mirror: {}", rt.a11y_json());
+        assert!(
+            tabs.iter().all(|tab| {
+                let mut ancestor = tab["a"].as_u64().map(|index| index as usize);
+                while let Some(index) = ancestor {
+                    if index == tablist_index {
+                        return true;
+                    }
+                    ancestor = items[index]["a"].as_u64().map(|next| next as usize);
+                }
+                false
+            }),
+            "panel tabs must be grouped inside tablist: {}",
+            rt.a11y_json()
+        );
+        assert!(
+            tabs.iter()
+                .any(|tab| tab["t"] == "Status" && tab["se"] == true)
+        );
+        assert!(
+            tabs.iter()
+                .any(|tab| tab["t"] == "Files" && tab["se"] == false)
+        );
+    }
+
+    #[test]
+    fn older_button_web_mirror_exposes_disabled_state() {
+        for busy in [false, true] {
+            let mut rt = rune::Runtime::new(
+                busy,
+                |busy, _| older_button("Older messages", *busy, |_: &mut bool, _| {}),
+                (180.0, 60.0),
+                rune::Env::new(false, 1.0),
+            );
+            rt.frame(0.0);
+            let items: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+            let button = items
+                .iter()
+                .find(|item| item["k"] == "button" && item["t"] == "Older messages")
+                .unwrap_or_else(|| panic!("missing older button: {}", rt.a11y_json()));
+            assert_eq!(button.get("dis") == Some(&serde_json::json!(true)), busy);
+        }
     }
 
     #[test]

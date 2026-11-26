@@ -448,6 +448,12 @@ pub(super) fn check(
         .phase(rune_theme_codenomad::timeline::GesturePhase::Began);
     bottom_mom.momentum = true;
     rt.wheel_event(bottom_mom);
+    // An inert key queued in the same frame triggers Rune's intermediate commit_for before
+    // scroll offsets run; wheel_pending_commit must survive until observe_history_scroll.
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Function(12),
+        mods: rune::Mods::default(),
+    });
     for _ in 0..3 {
         rt.frame(0.016);
     }

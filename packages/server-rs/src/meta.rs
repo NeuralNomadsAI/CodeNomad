@@ -23,6 +23,12 @@ async fn read(State(app): State<Shared>, channel: Option<Extension<tls::Channel>
     if let Some(update) = update {
         meta["update"] = update;
     }
+    if app.temporary_workspaces.is_some()
+        && let Some(caps) = meta.get_mut("capabilities").and_then(Value::as_array_mut)
+        && !caps.iter().any(|c| c == "temporary-workspaces")
+    {
+        caps.push(json!("temporary-workspaces"));
+    }
     if channel.is_some() {
         // SideCar content stays host-only: the direct HTTPS opt-in is not served here.
         (meta["localRequest"], meta["sidecarsAllowed"]) = (json!(false), json!(false));
@@ -34,7 +40,7 @@ async fn read(State(app): State<Shared>, channel: Option<Extension<tls::Channel>
 }
 
 pub fn document(
-    server_id: Uuid,
+    server_id: Option<Uuid>,
     port: u16,
     root: &Path,
     tls: Option<&tls::Listener>,
@@ -50,6 +56,8 @@ pub fn document(
         "sidecars",
         "service-usage",
         "provider-usage",
+        "websearch-settings",
+        "image-settings",
         "remote-control",
         "settings-atomic-patches",
         "conversation-permissions",
@@ -58,7 +66,7 @@ pub fn document(
         capabilities.push("missions");
     }
     let mut meta = json!({
-        "serverId": server_id, "apiContract": API_CONTRACT, "capabilities": capabilities,
+        "apiContract": API_CONTRACT, "capabilities": capabilities,
         "localUrl": format!("http://127.0.0.1:{port}"), "localPort": port, "host": "127.0.0.1",
         "listeningMode": "local", "hostLabel": "127.0.0.1", "eventsUrl": "/api/events", "workspaceRoot": root,
         "addresses": [], "localRequest": true, "sidecarsAllowed": true,
@@ -67,6 +75,9 @@ pub fn document(
             "arch": if cfg!(target_arch = "x86_64") { "x64" } else { std::env::consts::ARCH } },
         "serverVersion": config::VERSION, "ui": ui
     });
+    if let Some(server_id) = server_id {
+        meta["serverId"] = json!(server_id);
+    }
     if let Some(tls) = tls {
         let address = tls.socket.local_addr()?;
         meta["remoteUrl"] = json!(tls.origin);
@@ -95,5 +106,21 @@ pub(crate) fn update_feed(server: &crate::settings::document::Doc) -> &'static s
             "preview"
         }
         _ => "stable",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn document_omits_server_id_when_unavailable() {
+        let root = std::env::temp_dir();
+        let without = document(None, 9899, &root, None, json!({})).unwrap();
+        assert!(without.get("serverId").is_none());
+
+        let id = Uuid::new_v4();
+        let with = document(Some(id), 9899, &root, None, json!({})).unwrap();
+        assert_eq!(with["serverId"], json!(id));
     }
 }

@@ -215,7 +215,7 @@ pub(super) fn add_source_panel(s: &State, panel: &PluginsPanel, locked: bool) ->
         ))
         .child(
             input
-                .build(field_kit(layout::dark()))
+                .build(&field_kit(layout::dark()))
                 .literal_direction()
                 .key("plugins-add-spec"),
         )

@@ -11,9 +11,11 @@ mod memory;
 pub(crate) mod notification_routing;
 mod notification_settings;
 mod opencode;
+mod palettes;
 mod preferences;
 mod providers;
 mod remote;
+pub(crate) mod startup_state;
 mod stats;
 pub(crate) mod transcript_filters;
 mod transcript_preset;
@@ -53,7 +55,7 @@ pub(crate) use delivery::{notification_fixture, notification_test_config};
 pub(crate) use shortcuts::{with_shortcut_label, with_shortcut_label_excluding};
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
-pub(crate) use window::{close, direct_entry, entries, open_providers};
+pub(crate) use window::{close, close_request, direct_entry, entries, open_providers};
 #[cfg(not(target_arch = "wasm32"))]
 use window::{launch_preferences, settle_close, warn_save_failed};
 
@@ -74,7 +76,7 @@ pub(crate) struct Host {
     contrast: Option<web_contrast::Watch>,
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
-    last_display: Option<([&'static str; 5], bool, bool, bool)>,
+    last_display: Option<([&'static str; 3], String, String, bool, bool, bool)>,
     last_revision: u64,
     last_transcript: Option<[&'static str; transcript_preset::ROW_COUNT]>,
     transcript_filters: transcript_filters::Filters,
@@ -144,6 +146,7 @@ pub(crate) fn poll_window_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
         | s.settings.web.poll_window_actions(
             &s.settings.shared.borrow(),
             s.settings.transcript_filters.is_open(&s.input_scope),
+            !crate::platform::pairing::required(s),
             tx,
         );
     #[cfg(not(target_arch = "wasm32"))]
@@ -164,10 +167,21 @@ pub(crate) fn poll_stats(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
 
 pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
+    if s.settings
+        .window
+        .as_ref()
+        .is_some_and(|(_, _, request)| request.close_main_now.replace(false))
+    {
+        tx.close_window();
+        return true;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some((request, editor)) = s.settings.window.as_ref().and_then(|(_, _, request)| {
         let editor = request.reopen.borrow_mut().take();
-        (editor.is_some() || request.config_reopen.borrow().is_some())
-            .then(|| (request.clone(), editor))
+        (editor.is_some()
+            || request.config_reopen.borrow().is_some()
+            || request.palette_reopen.borrow().is_some())
+        .then(|| (request.clone(), editor))
     }) {
         launch_preferences(s, request, editor);
     }
@@ -268,6 +282,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     #[cfg(target_arch = "wasm32")]
     if s.settings
         .last_display
+        .as_ref()
         .is_none_or(|(last, ..)| last[0] != locale)
         && let Some(root) = web_sys::window()
             .and_then(|window| window.document())
@@ -276,13 +291,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         let _ = root.set_attribute("lang", locale);
     }
     let display = Some((
-        [
-            locale,
-            shared.mode(),
-            shared.palette(false).map_or("", |p| p.id),
-            shared.palette(true).map_or("", |p| p.id),
-            shared.contrast(),
-        ],
+        [locale, shared.mode(), shared.contrast()],
+        shared.palette_display_signature(false),
+        shared.palette_display_signature(true),
         awaiting_appearance(s, &shared),
         shared.show_timeline(),
         shared.transcript_ready(),
@@ -318,7 +329,11 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let locale = shared.locale().unwrap_or_else(strings::locale);
     let notify_failure = shared.take_notification_failure();
     let update = shared.notification_update.take();
+    let startup_notice = shared.startup.take_notice();
     drop(shared);
+    let startup_changed = startup_state::StartupState::poll_main(s);
+    let startup_notice =
+        startup_notice.or_else(|| s.settings.shared.borrow_mut().startup.take_notice());
     strings::with_locale(locale, || {
         use crate::shell::notifications::{Category, emit, emit_outcome};
         if notify_failure {
@@ -329,6 +344,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 strings::t("settings.preferenceSaveFailed"),
                 true,
             );
+        }
+        if let Some((key, failed)) = startup_notice {
+            emit_outcome(s, Category::Settings, None, strings::t(key), failed);
         }
         if let Some(version) = update {
             emit(
@@ -357,13 +375,16 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     }
     let filters_changed =
         preferences_changed && s.settings.transcript_filters.is_open(&s.input_scope);
+    let display_changed = s.settings.last_display != display;
+    s.settings.last_display = display;
     preferences_changed
         | revision_changed
         | changed
+        | startup_changed
         | expired
         | filters_changed
         | transcript_changed
-        | (display != std::mem::replace(&mut s.settings.last_display, display))
+        | display_changed
 }
 
 pub(crate) fn queues_follow_ups(s: &State) -> bool {
@@ -386,6 +407,24 @@ pub(crate) fn show_provider_usage_credit_balance(s: &State) -> bool {
         .is_some_and(|config| config["settings"]["showProviderUsageCreditBalance"] == true)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn keep_computer_awake(s: &State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .general_toggle(preferences::behavior::GeneralToggle::KeepComputerAwake)
+        == Some(true)
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn focus_existing_window_on_second_launch(s: &State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .advanced_toggle(advanced::Toggle::SecondLaunch)
+        == Some(true)
+}
+
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn locale(s: &State) -> &'static str {
     s.settings
@@ -398,4 +437,92 @@ pub(crate) fn locale(s: &State) -> &'static str {
 #[cfg(test)]
 pub(crate) fn fixture_shortcuts(s: &State, overrides: serde_json::Value) {
     s.settings.shared.borrow_mut().fixture_shortcuts(overrides);
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn fixture_config(s: &mut State, url: &str, settings: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_config(url, settings);
+}
+
+#[derive(Default)]
+pub(super) struct ExternalLink {
+    failed: bool,
+    seq: u64,
+}
+
+impl ExternalLink {
+    pub(super) fn failed(&self) -> bool {
+        self.failed
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.seq = self.seq.wrapping_add(1);
+        self.failed = false;
+    }
+
+    pub(super) fn open<S: 'static>(
+        &mut self,
+        url: &str,
+        tx: &mut rune::Tx,
+        access: impl Fn(&mut S) -> Option<&mut Self> + 'static,
+    ) {
+        self.clear();
+        let seq = self.seq;
+        let launch = tx.open_url_then(url, move |s: &mut S, result, _| {
+            if let Some(link) = access(s)
+                && link.seq == seq
+            {
+                link.failed = result.is_err();
+            }
+        });
+        if launch.is_err() {
+            self.failed = true;
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn external_link_reports_sync_validation_and_fences_stale_launches() {
+    use rune::{Env, Runtime};
+    let mut rt = Runtime::new(
+        ExternalLink::default(),
+        |_, _| rune::el(),
+        (100.0, 100.0),
+        Env::default(),
+    );
+    rt.frame(0.0);
+    rt.update(|link, tx| link.open("javascript:alert(1)", tx, |l| Some(l)));
+    assert!(rt.state.failed());
+    assert!(rt.take_url_requests().is_empty());
+
+    rt.update(|link, tx| {
+        link.open(
+            "https://neuralnomadsai.github.io/CodeNomad/en/settings.html",
+            tx,
+            |l| Some(l),
+        )
+    });
+    assert!(!rt.state.failed());
+    assert_eq!(
+        rt.take_url_requests(),
+        ["https://neuralnomadsai.github.io/CodeNomad/en/settings.html"]
+    );
+    rt.frame(0.02);
+    assert!(!rt.state.failed());
+
+    rt.update(|link, tx| {
+        link.open(
+            "https://neuralnomadsai.github.io/CodeNomad/en/sponsor.html",
+            tx,
+            |l| Some(l),
+        );
+        link.clear();
+        link.failed = true;
+    });
+    rt.frame(0.02);
+    assert!(
+        rt.state.failed(),
+        "stale launch completion after clear must not overwrite newer state"
+    );
 }

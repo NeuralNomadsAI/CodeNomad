@@ -297,6 +297,33 @@ impl Reader {
         self.ready_copy = None;
     }
 
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.cache
+            .retained_bytes()
+            .saturating_add(self.ready_copy.as_ref().map_or(0, String::len))
+    }
+
+    pub(crate) fn evict_cache(&mut self) -> usize {
+        let mut freed = self.cache.evict_all();
+        if let Some(copy) = self.ready_copy.take() {
+            freed = freed.saturating_add(copy.len());
+        }
+        self.pending_copy = None;
+        freed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_cache_body(&mut self, mission_id: &str, text: String) {
+        self.cache.fixture_insert_body(
+            (
+                mission_id.into(),
+                "fixture".into(),
+                ContentSelector::mission("summary"),
+            ),
+            text,
+        );
+    }
+
     pub(crate) fn invalidate(&mut self) {
         self.cache.invalidate_all();
         self.lookup_missing = None;

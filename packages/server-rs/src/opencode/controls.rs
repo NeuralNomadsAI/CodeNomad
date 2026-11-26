@@ -18,10 +18,31 @@ pub(super) enum Control<'a> {
     FormCancel(&'a str),
 }
 
+pub(super) fn is_global_form(route: &str, method: &Method) -> bool {
+    let Some(rest) = route.strip_prefix("/api/session/global/form/") else {
+        return false;
+    };
+    match method {
+        &Method::POST => rest.strip_suffix("/reply").is_some_and(|id| !id.is_empty() && !id.contains('/')),
+        &Method::DELETE => !rest.is_empty() && !rest.contains('/'),
+        _ => false,
+    }
+}
+
 pub(super) fn classify<'a>(route: &'a str, method: &Method) -> Option<Control<'a>> {
     let mut parts = route.strip_prefix("/api/session/")?.split('/');
-    if matches!(parts.next()?, "" | "active" | "global") {
+    let session = parts.next()?;
+    if matches!(session, "" | "active") {
         return None;
+    }
+    if session == "global" {
+        return match (method, parts.next(), parts.next(), parts.next(), parts.next()) {
+            (&Method::POST, Some("form"), Some(id), Some("reply"), None) if !id.is_empty() => {
+                Some(Control::FormReply(id))
+            }
+            (&Method::DELETE, Some("form"), Some(id), None, None) if !id.is_empty() => Some(Control::FormCancel(id)),
+            _ => None,
+        };
     }
     match (method, parts.next(), parts.next(), parts.next(), parts.next()) {
         (&Method::POST, Some("interrupt"), None, None, None) => Some(Control::Interrupt),

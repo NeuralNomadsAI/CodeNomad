@@ -88,18 +88,28 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
       else assert.equal(body.length,0)
       pairedEntry[method]=response.status()
     }
-    for (const pathname of ['/login', '/api/remote-control/devices', '/snippets/missing.js', '/app.d.ts']) {
+    for (const pathname of ['/login', '/api/remote-control/devices', '/snippets/missing.js', '/app.d.ts', '/app_bg.wasm.br']) {
       assert.equal((await get(pathname)).status(), 404, pathname)
     }
-    const wasm = await get('/app_bg.wasm')
+    const wasm = await get('/app_bg.wasm', {headers: {'accept-encoding': 'br'}})
     assert.equal(wasm.status(), 200)
     assert.equal(wasm.headers()['content-type'], 'application/wasm')
-    const cached = await get('/app_bg.wasm', {headers:{'if-none-match':wasm.headers().etag}})
+    assert.equal(wasm.headers()['content-encoding'], 'br')
+    const cached = await get('/app_bg.wasm', {headers:{'accept-encoding': 'br', 'if-none-match':wasm.headers().etag}})
     assert.equal(cached.status(), 304)
+    const rawWasm = await get('/app_bg.wasm', {headers: {'accept-encoding': 'identity'}})
+    assert.equal(rawWasm.status(), 200)
+    assert.equal(rawWasm.headers()['content-type'], 'application/wasm')
+    assert.equal(rawWasm.headers()['content-encoding'], undefined)
+    assert.notEqual(rawWasm.headers().etag, wasm.headers().etag)
+    const rawCached = await get('/app_bg.wasm', {headers: {'accept-encoding': 'identity', 'if-none-match': rawWasm.headers().etag}})
+    assert.equal(rawCached.status(), 304)
     assert.equal((await get('/app_bg.wasm',{headers:{origin:'https://foreign.invalid'}})).status(),403)
     assert.equal((await get('/app_bg.wasm',{headers:{'x-codenomad-server-request':'1'}})).status(),404)
+    const expectedWasmSha = manifest.files.find(row => row.file === 'app_bg.wasm').sha256
     const sha256 = createHash('sha256').update(await wasm.body()).digest('hex')
-    assert.equal(sha256, manifest.files.find(row => row.file === 'app_bg.wasm').sha256)
+    assert.equal(sha256, expectedWasmSha)
+    assert.equal(createHash('sha256').update(await rawWasm.body()).digest('hex'), expectedWasmSha)
     await context.storageState({path:storage})
     return {origin, sha256, paired:true, crossOriginLink:fromLink, clientBootReady:true, pairedEntry}
   } finally { await browser.close() }
@@ -229,6 +239,10 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
     assert(rect && rect.width && rect.height)
     return {x:Math.round(rect.x + rect.width / 2),y:Math.round(rect.y + rect.height / 2)}
   }
+  const fieldCenter = async () => {
+    const field = await fieldRect()
+    return {x:Math.round(field.x + field.width / 2),y:Math.round(field.y + field.height / 2)}
+  }
   const rowSample = () => page.evaluate(() => [...document.querySelectorAll('[data-rune-a11y] p')]
     .filter(n => n.textContent.startsWith('Mobile history row '))
     .map(n => [n.textContent,Math.round(n.getBoundingClientRect().top)])
@@ -252,8 +266,20 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
     const beforeTop = rowIndex(prev[0][0]), afterTop = rowIndex(rows[0][0])
     return beforeTop !== null && afterTop !== null && afterTop < beforeTop
   }
-  const waitValue = value => page.waitForFunction(value =>
-    document.activeElement?.tagName === 'TEXTAREA' && document.activeElement.value === value, value, {timeout:2500})
+  const waitValue = async value => {
+    try {
+      await page.waitForFunction(value =>
+        document.activeElement?.tagName === 'TEXTAREA' && document.activeElement.value === value,
+        value, {polling: 50, timeout: 10_000})
+    } catch (error) {
+      const state = await page.evaluate(() => ({
+        activeTag: document.activeElement?.tagName ?? null,
+        activeValue: typeof document.activeElement?.value === 'string' ? document.activeElement.value : null,
+        textareas: [...document.querySelectorAll('textarea')].map(el => ({inert: el.inert, value: el.value})),
+      })).catch(() => null)
+      throw new Error(`${error.message} (expected=${JSON.stringify(value)}, state=${JSON.stringify(state)})`, {cause: error})
+    }
+  }
   const text = 'été 日本語 🦀'
   let blank,paintedDraft
   try {
@@ -265,7 +291,9 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       await withBudget(now() + 10000, 'touchScroll gesture', () => cdp.send('Input.synthesizeScrollGesture', {
         x:175,y,yDistance:240,speed:1000,gestureSourceType:'touch',preventFling:true,
       }))
-      const frames = await withBudget(now() + 20000, 'touchScroll frames', () => page.evaluate(() => new Promise(resolve => {
+      // DPR 2.75 software WebGL (SwiftShader) renders ~800 ms/frame (~19.5 s for 24 frames);
+      // 35 s keeps the full 24-frame sample without timing out under parallel CPU load.
+      const frames = await withBudget(now() + 35000, 'touchScroll frames', () => page.evaluate(() => new Promise(resolve => {
         const all = []
         let last = performance.now()
         function frame(at) {
@@ -276,7 +304,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
         }
         requestAnimationFrame(frame)
       })))
-      // Post-scroll accessibility mirror updates defer for SCROLL_SETTLE + IDLE_TIMEOUT (#1670).
+      // Post-scroll accessibility mirror updates flush off-rAF after scroll settle and idle timeout.
       let after = [], moved = false
       const settleDeadline = now() + 1500
       while (now() < settleDeadline) {
@@ -298,9 +326,10 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       return {moved,before,after,frameP95Ms:frames[Math.floor(frames.length*0.95)]}
     })
     await probe('touchEditor', async () => {
-      const focus = await center(composer)
+      const focus = await fieldCenter()
       await page.touchscreen.tap(focus.x,focus.y)
-      await editor.waitFor({state:'attached',timeout:2500})
+      await editor.waitFor({state:'attached',timeout:10_000})
+      assert.equal(await page.locator('[data-rune-menu]').count(),0,'Primary tap on composer must not open a long-press menu')
       blank=await capture(inkClip(await fieldRect()))
       await cdp.send('Input.insertText',{text})
       await waitValue(text)
@@ -310,7 +339,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
     await probe('compositionAndReplacement', async () => {
       const clip=inkClip(await fieldRect())
       let before,prefix
-      for(const until=Date.now()+2500;;){
+      for(const until=Date.now()+10_000;;){
         before=await capture(clip)
         // Locate the typed prefix by its ink, not by changed focus or field pixels.
         prefix=await glyphMatch(blank,before,before,0,0,true)
@@ -327,7 +356,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       await cdp.send('Input.insertText',{text:composing})
       await waitValue(text+composing)
       let preedit,reference
-      for(const until=Date.now()+2500;;){
+      for(const until=Date.now()+10_000;;){
         reference=await capture(clip)
         const matches=await Promise.all(samples.map(sample=>glyphMatch(before,reference,sample,startX)))
         preedit=matches.find(looksLikeGlyphs)
@@ -346,11 +375,11 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       paintedDraft=await capture(clip)
       await page.keyboard.press('Tab')
       await page.waitForFunction(()=>!document.querySelector('textarea:focus')&&[...document.querySelectorAll('textarea')].every(el=>!el.value))
-      const point=await center(composer)
+      const point=await fieldCenter()
       await page.touchscreen.tap(point.x,point.y)
       await waitValue(draft)
       let refocused
-      for(const until=Date.now()+2500;;){
+      for(const until=Date.now()+10_000;;){
         refocused=await glyphMatch(blank,paintedDraft,await capture(clip))
         if(looksLikeGlyphs(refocused))break
         assert(Date.now()<until,'The committed glyphs must reappear in the painted editor after refocus')
@@ -372,7 +401,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
         left:visualViewport.offsetLeft,right:visualViewport.offsetLeft+visualViewport.width}))
       const {top,bottom,left,right}=viewportBounds
       let settled = null, lastField = null, lastButton = null
-      // Mirror updates defer off rAF after resize/scroll settle (#1670).
+      // Accessibility mirror updates flush off-rAF after viewport resize settles.
       for(const until=now()+2000;;){
         const remaining=until-now()
         if(remaining<=0) break
@@ -412,7 +441,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       const {field, button} = settled
       const clip=inkClip(field)
       let draftInk,resizedDraft
-      for(const until=Date.now()+2500;;){
+      for(const until=Date.now()+10_000;;){
         // CSS screenshots at fractional DPR can round the two crops differently.
         resizedDraft=await capture(clip)
         draftInk=await glyphMatch(blank,paintedDraft,resizedDraft,0,2,true)
