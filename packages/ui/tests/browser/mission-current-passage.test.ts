@@ -17,7 +17,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
 import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
 import { captureMissionView } from "./mission-view-capture"
-import { inlineMissionEntry, missionMenuTrigger, missionRow, missionToolbar, missionToolbarAction, openTaskReader, selectMission, selectTaskMission,
+import { expandRow, inlineMissionEntry, missionMenuTrigger, missionRow, missionToolbar, missionToolbarAction, openTaskReader, selectMission, selectTaskMission,
   selectedMissionTitle } from "./mission-actions"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
@@ -187,7 +187,9 @@ for (const mode of ["reader", "answer", "reader and answer"]) test(`deferred sch
     await row.click(); await passage.started.promise
     web = await holdBrowser(page)
     passage.release.resolve(); await passage.settled.promise
-    await page.locator('.mission-tree-node[data-task-key="second"]').waitFor({ state: "attached" }); await paint(page)
+    // The selected schedule's tree mounts while its row is expanded.
+    await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
+    await page.locator('section.mission-detail[aria-label="Daily review"] .mission-tree-node[data-task-key="second"]').waitFor({ state: "attached" }); await paint(page)
     assert.equal(await page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")), undefined)
     if (mode !== "answer") assert.equal((await readerTarget(page))?.missionId, "msn_daily_passage", "passive passage discovery retargets immediately")
     web.release(); assert.equal(await web.finish(), "opened")
@@ -380,6 +382,7 @@ for (const [id, title] of [["rec_daily", "Daily review"], ["msn_native", "Native
       gate.release.resolve(); await gate.settled.promise; await paint(page)
       if (close) {
         // The selected schedule still demands its passage: prove it rendered after release.
+        await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
         await page.locator(`section.mission-detail[aria-label="${title}"] .mission-tree .mission-tree-node[data-task-key="second"]`).waitFor({ state: "attached" })
         assert.equal(await readerTarget(page), undefined)
         assert.equal(await eye(page).getAttribute("aria-pressed"), "false")
@@ -564,6 +567,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         await row.click()
         await probe.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).navigateMissionProjectView("fixture", { reader: { missionId: "custom", kind: "playbook", taskMode: "native" } }))
         release(); hold = undefined
+        await expandRow(probe.locator(".mission-rows button.mission-row-select[aria-current=true]"))
         await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.waitForTimeout(500)
         assert.notEqual(await probe.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")), "ses_child")
@@ -585,6 +589,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         await row.click()
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
         release(); hold = undefined
+        await expandRow(probe.locator(".mission-rows button.mission-row-select[aria-current=true]"))
         await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.waitForTimeout(500)
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).addFormToQueue("fixture", { id: "form_later", sessionID: "ses_child",
@@ -618,6 +623,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).addFormToQueue("fixture", { id: "form_later", sessionID: "ses_child",
           location: { directory: "/fixture" }, title: "Later question", tool: { name: "question" }, fields: [], time: { created: 2 } } as never))
         await probe.evaluate(() => (window as any).passageFixture.invalidate())
+        await expandRow(probe.locator(".mission-rows button.mission-row-select[aria-current=true]"))
         await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.locator('.mission-row-select[aria-current=true] .mission-row-flag[data-mark="permission"]').waitFor()
         await probe.waitForTimeout(500)
