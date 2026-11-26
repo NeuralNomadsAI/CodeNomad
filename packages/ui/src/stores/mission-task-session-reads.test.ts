@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { createEffect, createRoot } from "solid-js"
 import type { MissionMap } from "../../../server/src/api-types"
 import { createMissionTaskSessions } from "./mission-task-session-reads"
 
@@ -347,4 +348,22 @@ test("a kept cursor that no longer reads restarts the scan from the newest messa
   await store.demand("inst", wider, 2, "view")
   assert.equal(store.taskSession("inst", wider, "docs"), "ses_docs")
   assert.deepEqual(warnings, [])
+})
+
+test("views demanding one mission at different pulses never retrigger each other", async () => {
+  const root = { message: { list: async () => ({ data: [], cursor: {} }) }, session: { list: async () => ({ data: [] }), active: async () => ({}) } }
+  const store = createMissionTaskSessions({ connection: () => root, generation: () => 1, root: () => root as never, warn: () => {} })
+  // Nothing to link and no live task: every later demand takes the synchronous path.
+  const settled = { ...mission, tasks: [{ key: "build", status: "completed" }] } as unknown as MissionMap
+  await store.demand("inst", settled, 1, "tree")
+  let runs = 0
+  const demand = (pulse: number, owner: string) => createEffect(() => {
+    if (++runs > 20) throw new Error("a demand retriggered the other view's")
+    void store.demand("inst", settled, pulse, owner)
+  })
+  // A task reader demands without a pulse while the tree follows the activity projection.
+  const dispose = createRoot(dispose => { demand(0, "reader"); demand(2, "tree"); return dispose })
+  await new Promise(resolve => setImmediate(resolve))
+  dispose()
+  assert.equal(runs, 2)
 })

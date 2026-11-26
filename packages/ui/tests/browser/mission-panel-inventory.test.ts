@@ -414,7 +414,7 @@ test("601-actor selection keeps its header small and reaches a real off-page que
   } finally { await f.close() }
 })
 
-for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geometry and nodes stable while the existing toolbar shows reads`, async () => {
+for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geometry and nodes stable, and the refresh icon still, while its reads are in flight`, async () => {
   const f = await open()
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
@@ -451,7 +451,9 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
     // Exercise the same event dispatcher as live plugin invalidations, not a
     // manually animated spinner or a substitute test component.
     await f.page.evaluate(() => (window as any).missionFixture.refresh())
-    await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').waitFor()
+    await f.page.waitForFunction(() => (window as any).inventoryStore.reading("fixture"))
+    assert.equal(await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').count(), 0,
+      "only the first read and an explicit refresh spin the icon")
     assert.deepEqual(await geometry(), before)
     assert.deepEqual(await buttons(), labels)
     assert.equal(await stableNode.evaluate((current, old) => current === old, node), true)
@@ -473,20 +475,21 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
   } finally { release?.(); await f.close() }
 })
 
-test("a schedule-only background read uses the same top-right indicator after panel reads settle", async () => {
+test("a schedule-only background read leaves the refresh icon still and enabled", async () => {
   const f = await open()
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
   try {
     await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
     await f.page.route("**/missions/scheduled?**", async route => { await gate; return route.fallback() })
+    const scheduleRead = f.page.waitForRequest(request => request.url().includes("/missions/scheduled?"))
     await f.page.evaluate(() => (window as any).missionFixture.refresh())
-    const spinner = f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin')
-    await spinner.waitFor()
+    await scheduleRead
     await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
-    assert.equal(await spinner.isVisible(), true)
+    const refresh = f.page.locator('.mission-control-header button[aria-label="Refresh mission map"]')
+    assert.equal(await refresh.locator(".animate-spin").count(), 0)
+    assert.equal(await refresh.isEnabled(), true)
     release()
-    await spinner.waitFor({ state: "detached" })
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { release?.(); await f.close() }
 })
