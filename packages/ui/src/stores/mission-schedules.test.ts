@@ -719,3 +719,57 @@ test("native activity rereads the schedules only while one runs a passage", { ti
     assert.equal(h.calls.list, before + 1, "a running passage rereads on activity")
   } finally { h.dispose(); fixture.backendEvents.on = on }
 })
+
+test("out-of-page selected schedule with 503 schedule-pending enables recovery Check without enabling ordinary mutations", { timeout: 10_000 }, async () => {
+  const pendingDoc = { ...selected, revision: 9, availableActions: ["check", "pause", "play"] as any }
+  const h = setup(false)
+  let detailMode: "fresh" | "pending-match" | "pending-stale" = "fresh"
+  const controlsCalls: any[] = []
+  let disposeControls: (() => void) | undefined
+  try {
+    fixture.detail = async id => {
+      if (detailMode === "fresh") return { pending: false, document: { ...pendingDoc, id } }
+      const rev = detailMode === "pending-match" ? 9 : 10
+      throw new HttpResponseError("pending", 503, null, "schedule-pending", {
+        pending: true, code: "schedule-pending",
+        document: { ...pendingDoc, id, revision: rev, control: { requestID: "orig", expectedRevision: 8, action: "check", pending: true } },
+      })
+    }
+    fixture.control = async (_instance, _id, input) => {
+      controlsCalls.push(input)
+      return { pending: false, document: { ...pendingDoc, revision: 10, control: { requestID: input.requestID, expectedRevision: 9, action: "check", pending: false } } }
+    }
+    h.store.refresh()
+    await until(() => h.store.fresh(selected.id))
+    const ctrl = createRoot(dispose => {
+      disposeControls = dispose
+      const doc = () => h.store.rows().find(row => row.id === selected.id)!
+      return createMissionScheduleControls({
+        instanceId: "instance", projectID: "project", directory: "/repo", document: doc, active: () => true,
+        enabled: () => !h.store.error() && h.store.fresh(selected.id),
+        recoveryEnabled: () => !h.store.error() && h.store.recoveryEligible(selected.id),
+        refreshVersion: () => 0, refresh: () => h.store.refresh(), onDeleted: () => {},
+      })
+    })
+    detailMode = "pending-match"
+    h.store.refresh()
+    await until(() => h.store.selectionError() === "pending" && !h.store.loading())
+    assert.equal(h.store.fresh(selected.id), false)
+    assert.equal(h.store.recoveryEligible(selected.id), true)
+    assert.equal(ctrl.capable("play"), false, "ordinary mutations stay disabled while non-fresh")
+    assert.equal(ctrl.capable("check"), true, "Check stays enabled for matching pending revision")
+    await ctrl.act("check")
+    assert.equal(controlsCalls.length, 1)
+    assert.equal(controlsCalls[0].action, "check")
+    // Mismatched revision on 503 does not grant recovery eligibility.
+    detailMode = "fresh"
+    h.store.refresh()
+    await until(() => h.store.fresh(selected.id))
+    detailMode = "pending-stale"
+    h.store.refresh()
+    await until(() => h.store.selectionError() === "pending" && !h.store.loading())
+    assert.equal(h.store.fresh(selected.id), false)
+    assert.equal(h.store.recoveryEligible(selected.id), false)
+    assert.equal(ctrl.capable("check"), false)
+  } finally { disposeControls?.(); h.dispose() }
+})

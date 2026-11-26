@@ -169,14 +169,22 @@ export class NativeMissionDocumentStore {
         || doc.oneTime?.firstPlay && doc.oneTime.firstPlay.admittedAt === null) throw new Error("Mission deletion reconciliation pending")
       const reservation = await this.reserveDeletionSlot(doc, current)
       const owner = doc.calendarOwner
+      const completedOriginals = new Set<string>()
       const settledChecks = new Map<string, { requestID: string; expectedRevision: number }>()
-      for (const receipt of owner?.receipts ?? [])
-        if (receipt.action === "check" && !receipt.pending)
-          settledChecks.set(receipt.requestID, { requestID: receipt.requestID, expectedRevision: receipt.expectedRevision })
-      if (owner?.operation.action === "check" && !owner.operation.pending)
-        settledChecks.set(owner.operation.requestID, { requestID: owner.operation.requestID, expectedRevision: owner.operation.expectedRevision })
+      for (const receipt of owner?.receipts ?? []) {
+        if (!receipt.pending) {
+          completedOriginals.add(receipt.requestID)
+          if (receipt.action === "check")
+            settledChecks.set(receipt.requestID, { requestID: receipt.requestID, expectedRevision: receipt.expectedRevision })
+        }
+      }
+      if (owner && !owner.operation.pending) {
+        completedOriginals.add(owner.operation.requestID)
+        if (owner.operation.action === "check")
+          settledChecks.set(owner.operation.requestID, { requestID: owner.operation.requestID, expectedRevision: owner.operation.expectedRevision })
+      }
       for (const check of owner?.checks ?? [])
-        if (owner!.operation.requestID !== check.originalRequestID || !owner!.operation.pending)
+        if (completedOriginals.has(check.originalRequestID))
           settledChecks.set(check.requestID, { requestID: check.requestID, expectedRevision: check.expectedRevision })
       const checks = [...settledChecks.values()].slice(-16)
       const tombstone = missionTombstoneSchema.parse({ version: 1, id, projectID: this.projectID, projectCanonical: this.projectCanonical,

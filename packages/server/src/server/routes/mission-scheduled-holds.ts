@@ -19,8 +19,9 @@ type Receipt = { pending?: unknown; deleted?: unknown; document?: { id?: unknown
 const receiptID = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{3,100}$/.test(value)
 const nonNegativeInt = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0
 const held = new WeakMap<WorktreeDeletionFence, Map<string, ReturnType<typeof record>>>()
+const skippedChecks = new WeakMap<WorktreeDeletionFence, Map<string, { missionID: string; requestID: string; expectedRevision: number; action: "check" }>>()
 export class ScheduledHoldError extends Error {
-  constructor(readonly status: 409 | 503, message: string) { super(message) }
+  constructor(readonly status: 409 | 503, message: string, readonly busyConflict = false) { super(message) }
 }
 const current = (connection: ServiceConnection) => { try { connection.assertCurrent(); return true } catch { return false } }
 export function exactScheduledRefusal(binding: ScheduledHoldBinding, raw: unknown) {
@@ -35,6 +36,7 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
   const original = Object.freeze({ ...binding, owner: Object.freeze({ ...binding.owner }),
     location: Object.freeze({ ...binding.location }), base: Object.freeze({ ...binding.base }) })
   let active = true, busy = false, dispatched = false, retried = false
+  const borrowedChecks = new Set<string>()
   let connection = original.connection, releasePermit = release
   const bound = (fresh: ScheduledHoldBinding) => {
     fresh.connection.assertCurrent()
@@ -74,6 +76,12 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
     get busy() { return busy || !dispatched },
     get preparing() { return !dispatched },
     assertBound: bound,
+    trackCheck(checkRequestID: string) {
+      if (borrowedChecks.has(checkRequestID)) return
+      borrowedChecks.add(checkRequestID)
+      if (borrowedChecks.size > 16) borrowedChecks.delete(borrowedChecks.values().next().value!)
+    },
+    hasCheck(checkRequestID: string) { return borrowedChecks.has(checkRequestID) },
     dispatch() {
       if (!active || busy) throw new ScheduledHoldError(503, "Mission schedule request is in flight")
       connection.assertCurrent(); busy = true; dispatched = true
@@ -112,11 +120,23 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
 export function holdScheduledMission(fence: WorktreeDeletionFence, binding: ScheduledHoldBinding, release: () => void) {
   let registry = held.get(fence)
   if (!registry) { registry = new Map(); held.set(fence, registry) }
-  if (registry.has(binding.missionID)) throw new ScheduledHoldError(409, "Mission schedule request remains held")
+  if (registry.has(binding.missionID)) throw new ScheduledHoldError(409, "Mission schedule request remains held", true)
   if (registry.size >= 128) throw new ScheduledHoldError(409, "Mission schedule hold capacity exhausted")
   const handle = record(binding, release, () => { if (registry!.get(binding.missionID) === handle) registry!.delete(binding.missionID) })
   registry.set(binding.missionID, handle)
   return handle
+}
+export function recordUndispatchedCheck(fence: WorktreeDeletionFence | undefined,
+  entry: { missionID: string; requestID: string; expectedRevision: number; action: "check" }) {
+  if (!fence) return
+  let map = skippedChecks.get(fence)
+  if (!map) { map = new Map(); skippedChecks.set(fence, map) }
+  const key = `${entry.missionID}\0${entry.requestID}`
+  map.delete(key); map.set(key, entry)
+  if (map.size > 32) map.delete(map.keys().next().value!)
+}
+export function readUndispatchedCheck(fence: WorktreeDeletionFence | undefined, missionID: string, requestID: string) {
+  return fence ? skippedChecks.get(fence)?.get(`${missionID}\0${requestID}`) : undefined
 }
 export const scheduledMissionHold = (fence: WorktreeDeletionFence | undefined, missionID: string) => fence && held.get(fence)?.get(missionID)
 export const scheduledMissionCreationHold = (fence: WorktreeDeletionFence | undefined, workspaceID: string, requestID: string) =>

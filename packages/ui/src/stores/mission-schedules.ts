@@ -4,7 +4,7 @@ import type { ServerApi } from "../lib/api-client"
 import { backendOf } from "../lib/backend-client"
 import { parseInstanceKey } from "../lib/backend-identity"
 import { captureBackendOperation } from "../lib/backend-operation"
-import { partialMissionScheduleReceipt } from "../lib/mission-schedule-receipt"
+import { partialMissionScheduleReceipt, pendingMissionScheduleRevision } from "../lib/mission-schedule-receipt"
 import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
 import { backendEvents as serverEvents } from "../lib/server-events"
 import { instances } from "./instances"
@@ -61,6 +61,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
   const [snapshot, setRows] = createSignal<UnifiedMissionSchedule[]>([]), [error, setError] = createSignal(false)
   const [selectionError, setSelectionError] = createSignal<"pending" | "failed">()
   const [fresh, setFresh] = createSignal<ReadonlySet<string>>(new Set())
+  const [recovery, setRecovery] = createSignal<ReadonlySet<string>>(new Set())
   const [loading, setLoading] = createSignal(false), [next, setNext] = createSignal<string>()
   let controller: AbortController | undefined, epoch = 0, selectionEpoch = 0, pages = 1, trailing = false
   const rows = createMemo(() => {
@@ -108,8 +109,14 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
         pages++
         const merged = [...new Map([...snapshot(), ...collected.values()].map(row => [row.id, row])).values()]
         setRows(merged)
+<<<<<<< HEAD
         setNext(after); setFresh(previous => new Set([...previous, ...collected.keys()])); setError(false)
         writeScheduleListCache(scope, { rows: merged, next: after, client: owner.client, generation: owner.generation, attachment: owner.attachment })
+=======
+        setNext(after); setFresh(previous => new Set([...previous, ...collected.keys()]))
+        setRecovery(previous => new Set([...previous].filter(id => !collected.has(id)))); setError(false)
+        writeScheduleListCache(scope, { rows: merged, next: after, pages, client: owner.client, generation: owner.generation, attachment: owner.attachment })
+>>>>>>> 0673d0ca3 (fix(missions): harden borrowed check recovery, compaction races, per-attempt busy conflicts, and out-of-page pending checks)
         published(owner, [...collected.values()])
         return
       }
@@ -120,7 +127,9 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
       // Keep the selected display/pointer target while its revalidation runs.
       const nextRows = [...collected.values(), ...(previous ? [previous] : [])]
       setRows(nextRows); setNext(after)
-      setFresh(new Set([...collected.keys(), ...(previous && fresh().has(previous.id) ? [previous.id] : [])])); setError(false)
+      setFresh(new Set([...collected.keys(), ...(previous && fresh().has(previous.id) ? [previous.id] : [])]))
+      setRecovery(previousSet => new Set([...previousSet].filter(id => id === previous?.id && !collected.has(id))))
+      setError(false)
       writeScheduleListCache(scope, { rows: nextRows, next: after, client: owner.client, generation: owner.generation, attachment: owner.attachment })
       published(owner, [...collected.values()])
       if (selected && !collected.has(selected)) {
@@ -134,12 +143,17 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
           writeScheduleListCache(scope, { rows: resolvedRows, next: after, client: owner.client, generation: owner.generation, attachment: owner.attachment })
           setSelectionError(value.pending ? "pending" : undefined)
           setFresh(previous => new Set([...previous].filter(id => id !== selected).concat(!value.pending && value.document ? [selected] : [])))
+          setRecovery(previousSet => new Set([...previousSet].filter(id => id !== selected)
+            .concat(value.pending && value.document && Number.isSafeInteger(value.document.revision) ? [selected] : [])))
           if (!value.pending && value.document) published(owner, [value.document])
         } catch (error) {
           if (!selectedCurrent()) return
           const receipt = partialMissionScheduleReceipt(error)
+          const pending = pendingMissionScheduleRevision(error)
           setFresh(previous => new Set([...previous].filter(id => id !== selected)))
-          setSelectionError(receipt?.document?.id === selected ? "pending" : "failed")
+          const eligible = pending?.document.id === selected && previous?.id === selected && previous.revision === pending.document.revision
+          setRecovery(previousSet => new Set([...previousSet].filter(id => id !== selected).concat(eligible ? [selected] : [])))
+          setSelectionError(receipt?.document?.id === selected || pending?.document.id === selected ? "pending" : "failed")
         }
       } else if (selectedCurrent()) {
         setSelectionError(undefined)
@@ -166,7 +180,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
       pages = 1
     }
     displayScope = scope
-    scheduler.cancel("list"); setError(false); setSelectionError(undefined); setFresh(new Set<string>()); setLoading(false)
+    scheduler.cancel("list"); setError(false); setSelectionError(undefined); setFresh(new Set<string>()); setRecovery(new Set<string>()); setLoading(false)
     if (owner.active) untrack(() => void read())
   })
   let previousDemand: string | undefined
@@ -187,6 +201,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
   })
   const opened = serverEvents.forInstance(props.instanceId).onOpen(() => schedule())
   onCleanup(() => { epoch++; controller?.abort(); scheduler.cancel("list"); event(); reconnect(); opened() })
-  return { rows, error, selectionError, fresh: (id: string) => fresh().has(id), loading, next, refresh: () => schedule(),
+  return { rows, error, selectionError, fresh: (id: string) => fresh().has(id),
+    recoveryEligible: (id: string) => fresh().has(id) || recovery().has(id), loading, next, refresh: () => schedule(),
     more: () => { if (next() && !loading()) void read(true) } }
 }

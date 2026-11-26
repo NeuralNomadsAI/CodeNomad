@@ -538,6 +538,7 @@ function controlScope(api: Record<string, any>) {
     HttpResponseError,
     requiresMissionCalendar: () => true, showConfirmDialog: async () => true,
     partialReceipt: () => undefined, pendingMissionScheduleRevision: () => undefined, exactMissionScheduleControl: () => true, refusedMissionScheduleReceipt: () => false,
+    notDispatchedMissionScheduleAttempt: () => false, undispatchedMissionScheduleCheck: () => false, validDeletionReceipt: () => false,
     settle: (_key: string, hold: any) => { holds.delete("scope"); refreshed.push(hold.phase) },
     receipt: () => assert.fail("direct complete ACK must settle without another read"),
   }
@@ -624,9 +625,9 @@ test("schedule check label uses checkStatus and dispatches check without confirm
   assert.equal(calls[0][2].action, "check")
 })
 
-test("schedule check proceeds across 503 schedule-pending preflight reads, settles compacted deletions directly or via GET, and rejects malformed tombstones", async () => {
+test("schedule check proceeds across 503 schedule-pending preflight reads, settles compacted deletions directly or via GET, handles undispatched/busy responses, and rejects malformed tombstones", async () => {
   const { HttpResponseError } = await import("../lib/retryable-file-search")
-  const { pendingMissionScheduleRevision, refusedMissionScheduleReceipt } = await import("../lib/mission-schedule-receipt")
+  const { notDispatchedMissionScheduleAttempt, pendingMissionScheduleRevision, refusedMissionScheduleReceipt, undispatchedMissionScheduleCheck } = await import("../lib/mission-schedule-receipt")
   const { exactMissionScheduleControl } = await import("./mission-schedule-controls")
   const calls: any[] = [], feedbacks: Array<string | undefined> = [], settled: Array<number | undefined> = []
   const doc = { id: "msn_stuck", revision: 21, availableActions: ["check", "pause", "play"], configuration: { title: "Sync", launch: { when: [] } } }
@@ -651,6 +652,8 @@ test("schedule check proceeds across 503 schedule-pending preflight reads, settl
     scope.props.document = () => doc
     scope.pendingMissionScheduleRevision = pendingMissionScheduleRevision
     scope.refusedMissionScheduleReceipt = refusedMissionScheduleReceipt
+    scope.notDispatchedMissionScheduleAttempt = notDispatchedMissionScheduleAttempt
+    scope.undispatchedMissionScheduleCheck = undispatchedMissionScheduleCheck
     scope.exactMissionScheduleControl = exactMissionScheduleControl
     scope.setFeedback = (value?: string) => { feedbacks.push(value) }
     scope.settle = (_key: string, hold: any, _current: any, revision?: number) => {
@@ -676,25 +679,36 @@ test("schedule check proceeds across 503 schedule-pending preflight reads, settl
   await production("./mission-schedule-controls.ts", "receipt", lostScope)("scope", lostHold, () => true)
   assert.equal(lostScope.holds.size, 0)
   assert.deepEqual(settled, [undefined])
-  // Second-client Check settles when backend returns the completed original control alongside exact checkReceipt.
-  settled.length = 0
-  const concurrentCheck = makeScope(21, {
+  // Second-client Check clears fresh UI hold cleanly when backend reports notDispatched (original already settled).
+  const undispatchedScope = makeScope(21, {
     controlMissionSchedule: async (...args: any[]) => ({
       pending: false,
       document: { id: doc.id, revision: 22, control: { requestID: "other_play", expectedRevision: 20, action: "play", pending: false } },
-      checkReceipt: { id: doc.id, requestID: args[2].requestID, expectedRevision: 21, action: "check" as const },
+      notDispatched: { missionID: doc.id, requestID: args[2].requestID, expectedRevision: 21, action: "check" as const },
     }),
   })
-  await production("./mission-schedule-controls.ts", "act", concurrentCheck)("check")
-  assert.equal(concurrentCheck.holds.size, 0)
-  assert.deepEqual(settled, [22])
-  // Second-client Pause hitting another client's backend hold receives typed schedule-refused and releases its UI hold.
+  await production("./mission-schedule-controls.ts", "act", undispatchedScope)("check")
+  assert.equal(undispatchedScope.holds.size, 0)
+  // Lost 200 on an undispatched Check recovers via GET 409 schedule-busy (dispatched:false).
+  const lostUndispatched = makeScope(21, {
+    fetchMissionSchedule: async (_owner: string, _id: string, input: any) => {
+      if (input?.requestID) throw new HttpResponseError("busy", 409, null, "schedule-busy", {
+        pending: true, dispatched: false, missionID: doc.id, requestID: input.requestID, expectedRevision: 21, action: "check",
+      })
+      throw pending503(21)
+    },
+    controlMissionSchedule: async () => { throw new Error("lost 200") },
+  })
+  await production("./mission-schedule-controls.ts", "act", lostUndispatched)("check")
+  assert.equal(lostUndispatched.holds.size, 1)
+  await production("./mission-schedule-controls.ts", "receipt", lostUndispatched)("scope", lostUndispatched.holds.get("scope"), () => true)
+  assert.equal(lostUndispatched.holds.size, 0)
+  // Second-client Pause hitting another client's backend hold receives per-attempt 409 schedule-busy (dispatched:false) and releases its fresh UI hold.
   feedbacks.length = 0
   const concurrentPause = makeScope(21, {
     controlMissionSchedule: async (...args: any[]) => {
-      throw new HttpResponseError("refused", 409, null, "schedule-refused", {
-        pending: false,
-        refusal: { missionID: doc.id, requestID: args[2].requestID, expectedRevision: 21, action: "pause", reason: "control-conflict" },
+      throw new HttpResponseError("busy", 409, null, "schedule-busy", {
+        pending: true, dispatched: false, missionID: doc.id, requestID: args[2].requestID, expectedRevision: 21, action: "pause",
       })
     },
   })

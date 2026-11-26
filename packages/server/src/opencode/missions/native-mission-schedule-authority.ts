@@ -112,7 +112,7 @@ export const acquireNativeMissionScheduleAuthority = Effect.fn("missions.acquire
   const before = yield* Effect.promise(() => store.read(request.missionID))
   if (request.action === "create" && request.missionID !== missionScheduleID(location.project.id, location.project.canonical, request.requestID))
     throw new Error("Mission schedule creation identity differs")
-  if (request.action !== "create" && (!before || "deletedAt" in before && request.action !== "delete"))
+  if (request.action !== "create" && (!before || "deletedAt" in before && request.action !== "delete" && request.action !== "check"))
     throw new Error("Mission schedule unavailable")
   assertMissionScheduleAgentRequest(request, before && !("deletedAt" in before) ? before : undefined)
   let agentCurrent = (): void => {}
@@ -134,7 +134,7 @@ export const acquireNativeMissionScheduleAuthority = Effect.fn("missions.acquire
   }
   const configuration = request.configuration ?? (before && !("deletedAt" in before) ? before.configuration : undefined)
   if (!configuration) {
-    if (request.action !== "delete" || !before || !("deletedAt" in before)) throw new Error("Mission schedule configuration unavailable")
+    if (request.action !== "delete" && request.action !== "check" || !before || !("deletedAt" in before)) throw new Error("Mission schedule configuration unavailable")
     const execution = nativeMissionScheduleControlExecution(request, () => {
       agentCurrent()
       if (!sameLocation()) throw new Error("Mission schedule Location changed")

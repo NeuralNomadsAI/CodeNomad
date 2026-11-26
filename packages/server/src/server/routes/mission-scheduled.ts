@@ -12,7 +12,7 @@ import { recurrenceHumanSession } from "./mission-recurrence-proof"
 import { readRecurrenceHoldOwner } from "./mission-recurrence-holds"
 import { missionCreationDigest } from "./mission-creation-holds"
 import { holdScheduledMission, scheduledMissionHold, scheduledMissionCreationHold, exactScheduledRefusal, ScheduledHoldError,
-  type ScheduledHoldBinding } from "./mission-scheduled-holds"
+  recordUndispatchedCheck, readUndispatchedCheck, type ScheduledHoldBinding } from "./mission-scheduled-holds"
 import type { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { scheduledMissionProfileSource } from "./mission-scheduled-admission"
@@ -88,6 +88,10 @@ export async function executeScheduledMission(deps: ScheduledMissionDeps, args: 
         let missionID = selected.data.missionID, held: Hold | undefined, ownsHold = false
         const pending = (result: object = {}) => reply.code(503).send({ ...result, missionID, pending: true,
           error: "Mission schedule action remains unconfirmed", code: "schedule-pending" })
+        const busyNoDispatch = (attempt: { requestID: string; expectedRevision: number; action: string }) => reply.code(409).send({
+          missionID, pending: true, dispatched: false, requestID: attempt.requestID, expectedRevision: attempt.expectedRevision,
+          action: attempt.action, error: "Mission schedule request remains held", code: "schedule-busy",
+        })
         try {
           args.currentPrincipal(); await args.checkPrincipal?.()
           if (method === "POST" && (!principal || !deps.bridgeToken || !deps.settings?.configYamlPathForAuthority))
@@ -138,7 +142,12 @@ export async function executeScheduledMission(deps: ScheduledMissionDeps, args: 
               base: owned.base, profile, configYamlPath: yaml, executionHost } : requested
             const profileSource = await scheduledMissionProfileSource({ manager, settings, workspaceID: selected.data.id,
               owned, owner, scope, yaml, executionHost, check: () => check(owned) })
-            if (!held) retain!(release => { held = holdScheduledMission(deps.worktreeDeletionFence!, binding, release); ownsHold = true })
+            if (!held) try {
+              retain!(release => { held = holdScheduledMission(deps.worktreeDeletionFence!, binding, release); ownsHold = true })
+            } catch (error) {
+              if (error instanceof ScheduledHoldError && error.busyConflict) return busyNoDispatch(value)
+              throw error
+            }
             await owned.refresh(); check(owned); await args.checkPrincipal?.()
             const identity = { ...(principal.kind === "human" ? { sessionID: principal.sessionID } : { principal }),
               workspaceID: selected.data.id, requestID: value.requestID,
@@ -152,34 +161,55 @@ export async function executeScheduledMission(deps: ScheduledMissionDeps, args: 
               else held!.retry(binding, retryReceipt)
               ownsHold = true
             }
+            if (checking) held!.trackCheck(value.requestID)
             const { signal: _observerSignal, ...nativeOptions } = options
             const raw = await rpc.scheduleControl({ missionID, requestID: value.requestID, expectedRevision: value.expectedRevision,
               action: value.action, ...(configuration ? { configuration } : {}),
               ...(value.deleteManagedSessions === undefined ? {} : { deleteManagedSessions: value.deleteManagedSessions }),
               ...(value.retry ? { retry: true } : {}), transport: { ...proof, proof: signNativeRecurrenceControl(proof, deps.bridgeToken) } }, nativeOptions)
             await owned.refresh(); check(owned)
-            let result = resultSchema.parse(raw)
-            if (result.refusal) {
-              if (exactScheduledRefusal(requested, result) && (checking || !value.retry && held!.refuse(binding, result)))
-                return reply.code(409).send({ ...result, missionID, error: "Mission schedule action refused", code: "schedule-refused" })
-              return pending(result)
+            const checkResult = resultSchema.parse(raw)
+            if (checkResult.refusal) {
+              if (exactScheduledRefusal(requested, checkResult) && (checking || !value.retry && held!.refuse(binding, checkResult)))
+                return reply.code(409).send({ ...checkResult, missionID, error: "Mission schedule action refused", code: "schedule-refused" })
+              return pending(checkResult)
             }
+            let result = checkResult
             if (checking) {
               // Check adopts/reconciles the saved intent. Its own ACK cannot
               // settle the original permit: reread that exact original receipt.
               result = resultSchema.parse(await lifetime.wait(rpc.scheduleRead({ missionID, requestID: binding.requestID }, options)))
               await owned.refresh(); check(owned)
             }
+            const ownCheckProof = checking && checkResult.pending === false ? (
+              checkResult.checkReceipt && checkResult.checkReceipt.id === missionID
+                && checkResult.checkReceipt.requestID === value.requestID
+                && checkResult.checkReceipt.expectedRevision === value.expectedRevision
+                && checkResult.checkReceipt.action === "check"
+                ? checkResult.checkReceipt
+              : checkResult.document?.id === missionID
+                && checkResult.document.control?.requestID === value.requestID
+                && checkResult.document.control.expectedRevision === value.expectedRevision
+                && checkResult.document.control.action === "check"
+                && checkResult.document.control.pending === false
+                ? { id: missionID, requestID: value.requestID, expectedRevision: value.expectedRevision, action: "check" as const }
+              : undefined
+            ) : undefined
             return held!.settle(binding, result)
-              ? reply.send(checking ? { ...result, checkReceipt: { id: missionID, requestID: value.requestID, expectedRevision: value.expectedRevision, action: "check" as const } } : result)
+              ? reply.send(ownCheckProof ? { ...result, checkReceipt: ownCheckProof } : result)
               : pending(result)
           }
           let retryReceipt: unknown
           if (existing) {
             held = existing; missionID = existing.binding.missionID
+            if (existing.preparing && value && value.requestID !== existing.binding.requestID)
+              return busyNoDispatch(value)
             if (!principal || !settings || !scope || !yaml || existing.preparing)
               return pending()
-            if (query.data.requestID && query.data.requestID !== existing.binding.requestID)
+            const borrowedCheckRead = method === "GET" && !!query.data.requestID && existing.hasCheck(query.data.requestID)
+            const borrowedCheckPost = method === "POST" && value?.action === "check" && value.requestID !== existing.binding.requestID
+            if (query.data.requestID && query.data.requestID !== existing.binding.requestID && !borrowedCheckRead
+              && !(borrowedCheckPost && query.data.requestID === value.requestID))
               throw new ScheduledHoldError(409, "Exact held Mission request required")
             const workspace = manager.get(selected.data.id), base = manager.getServiceLocation(selected.data.id)
             const connection = await lifetime.wait(manager.getSharedServiceConnection(selected.data.id))
@@ -203,25 +233,25 @@ export async function executeScheduledMission(deps: ScheduledMissionDeps, args: 
                 existing.assertBound({ ...existing.binding, owner, connection, base, profile, configYamlPath: yaml, executionHost })
               } }
             await owned.refresh(); check(owned)
+            const options = { location, ...locationRequestOptions(location), signal: lifetime.signal }, rpc = rpcFor(client)
+            if (borrowedCheckRead) {
+              const checkRead = resultSchema.parse(await lifetime.wait(rpc.scheduleRead({ missionID, requestID: query.data.requestID! }, options)))
+              await owned.refresh(); check(owned)
+              return checkRead.pending ? pending(checkRead) : reply.send(checkRead)
+            }
             if (value && value.action !== "check" && (value.requestID !== existing.binding.requestID || value.action !== existing.binding.action
               || value.expectedRevision !== existing.binding.expectedRevision || digestFor(configurationFor(location)) !== existing.binding.digest))
-              return reply.code(409).send({
-                document: null, pending: false, missionID, error: "Mission schedule action refused", code: "schedule-refused",
-                refusal: {
-                  missionID: missionID!, requestID: value.requestID, expectedRevision: value.expectedRevision, action: value.action,
-                  payloadDigest: missionSchedulePayloadDigest({ configuration: configurationFor(location), deleteManagedSessions: value.deleteManagedSessions }),
-                  reason: "control-conflict",
-                },
-              })
-            const options = { location, ...locationRequestOptions(location), signal: lifetime.signal }, rpc = rpcFor(client)
+              return busyNoDispatch(value)
             retryReceipt = resultSchema.parse(await lifetime.wait(rpc.scheduleRead({ missionID, requestID: existing.binding.requestID }, options)))
             await owned.refresh(); check(owned)
             const binding = { ...existing.binding, connection }
             if (existing.settle(binding, retryReceipt)) {
-              const checkSettled = value?.action === "check" && value.requestID !== existing.binding.requestID
-              return reply.send(checkSettled
-                ? { ...(retryReceipt as object), checkReceipt: { id: missionID!, requestID: value.requestID, expectedRevision: value.expectedRevision, action: "check" as const } }
-                : retryReceipt)
+              if (borrowedCheckPost) {
+                const entry = { missionID: missionID!, requestID: value!.requestID, expectedRevision: value!.expectedRevision, action: "check" as const }
+                recordUndispatchedCheck(deps.worktreeDeletionFence, entry)
+                return reply.send({ ...(retryReceipt as object), notDispatched: entry })
+              }
+              return reply.send(retryReceipt)
             }
             if (value?.action === "check" && value.requestID !== existing.binding.requestID || value?.retry && value.action !== "check") {
               if (existing.connection === connection) return await effect(owned, rpc, options)
@@ -251,6 +281,10 @@ export async function executeScheduledMission(deps: ScheduledMissionDeps, args: 
             const result = resultSchema.parse(await lifetime.wait(rpc.scheduleRead({ missionID: missionID!,
               ...((creationRequestID ?? query.data.requestID) ? { requestID: creationRequestID ?? query.data.requestID } : {}) }, { ...options, signal: lifetime.signal })))
             await owned.refresh(); check(owned)
+            if (result.pending && !creating && query.data.requestID) {
+              const skipped = readUndispatchedCheck(deps.worktreeDeletionFence, missionID!, query.data.requestID)
+              if (skipped) return busyNoDispatch(skipped)
+            }
             return result.pending ? pending(result) : reply.send(result)
           })
         } catch (error) {

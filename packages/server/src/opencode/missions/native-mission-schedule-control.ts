@@ -80,6 +80,11 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
   if (!doc) throw new Error("Mission schedule unavailable")
   const conflict = () => refusal("control-conflict")
   if ("deletedAt" in doc) {
+    if (action === "check") {
+      if (doc.checks?.some(item => item.requestID === requestID && item.expectedRevision === expectedRevision))
+        return yield* Effect.promise(() => nativeMissionScheduleResult(ctx, doc, run, false, requestID))
+      return conflict()
+    }
     if (action !== "delete" || doc.requestID !== requestID || doc.expectedRevision !== expectedRevision
       || doc.deleteManagedSessions !== (request.deleteManagedSessions ?? false)) return conflict()
     return yield* Effect.promise(() => nativeMissionScheduleResult(ctx, doc, run, false, requestID))

@@ -95,3 +95,22 @@ test("persisted Check identity survives deletion compaction so exact reads settl
   assert.equal(foreign.pending, true)
   assert.equal("checkReceipt" in foreign, false)
 })
+
+test("compaction omits checks linked to superseded incomplete operations and tombstone schema rejects invalid check lists", async t => {
+  const { missionTombstoneSchema } = await import("../../missions/mission-document")
+  const f = await ownerFixture(t)
+  await f.control("play")
+  const deleting = await f.control("delete", "delete_superseded")
+  const staged = await f.store.change(deleting.id, deleting.revision, f.current, value => {
+    value.calendarOwner!.checks = [
+      { requestID: "check_uncompleted_play", expectedRevision: 0, fingerprint: "d".repeat(64), originalRequestID: "play_never_completed" },
+      { requestID: "check_completed_delete", expectedRevision: deleting.revision, fingerprint: "e".repeat(64), originalRequestID: "delete_superseded" },
+    ]
+  })
+  const tombstone = await f.store.compact(staged.id, staged.revision, f.now + 1, f.current)
+  assert.deepEqual(tombstone.checks, [{ requestID: "check_completed_delete", expectedRevision: deleting.revision }])
+  assert.equal((await nativeMissionScheduleResult(f.ctx, tombstone, Effect.runPromise, false, "check_uncompleted_play")).pending, true)
+  assert.equal((await nativeMissionScheduleResult(f.ctx, tombstone, Effect.runPromise, false, "check_completed_delete")).pending, false)
+  assert.throws(() => missionTombstoneSchema.parse({ ...tombstone, checks: [{ requestID: "dup_check", expectedRevision: 0 }, { requestID: "dup_check", expectedRevision: 1 }] }))
+  assert.throws(() => missionTombstoneSchema.parse({ ...tombstone, checks: [{ requestID: "future_check", expectedRevision: tombstone.revision }] }))
+})

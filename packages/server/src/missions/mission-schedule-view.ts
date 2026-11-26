@@ -32,4 +32,5 @@ export function missionScheduleView(doc: MissionDocument | MissionDocumentTombst
 }
 export type MissionScheduleRead = ReturnType<typeof missionScheduleView> & {
   checkReceipt?: { id: string; requestID: string; expectedRevision: number; action: "check" }
+  notDispatched?: { missionID: string; requestID: string; expectedRevision: number; action: "check" }
 }

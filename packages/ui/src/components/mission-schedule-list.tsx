@@ -71,7 +71,9 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       const doc = createMemo<UnifiedMissionSchedule>(previous => schedules().find(row => row.id === id) ?? previous!)
       const controls = createMissionScheduleControls({ get instanceId() { return props.instanceId }, get projectID() { return props.projectID },
         get directory() { return props.directory }, document: doc, active: props.active,
-        enabled: () => props.enabled() && !list.error() && list.fresh(id), refreshVersion: () => props.refresh + revision(), refresh,
+        enabled: () => props.enabled() && !list.error() && list.fresh(id),
+        recoveryEnabled: () => props.enabled() && !list.error() && list.recoveryEligible(id),
+        refreshVersion: () => props.refresh + revision(), refresh,
         onDeleted: () => props.onDeleted(id) })
       const [expanded, expand] = createMissionDisclosure(() => props.instanceId, () => id, () => "schedule:instructions")
       const primary = () => (["pause", "resume", "play"] as const).find(action => controls.pendingAction() === action)

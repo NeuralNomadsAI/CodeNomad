@@ -9,7 +9,7 @@ import { showConfirmDialog } from "../stores/alerts"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { instances } from "../stores/instances"
 import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
-import { partialMissionScheduleReceipt as partialReceipt, pendingMissionScheduleRevision, refusedMissionScheduleReceipt, type MissionScheduleControlReceipt as ControlReceipt } from "../lib/mission-schedule-receipt"
+import { notDispatchedMissionScheduleAttempt, partialMissionScheduleReceipt as partialReceipt, pendingMissionScheduleRevision, refusedMissionScheduleReceipt, undispatchedMissionScheduleCheck, type MissionScheduleControlReceipt as ControlReceipt } from "../lib/mission-schedule-receipt"
 import type { MissionScheduleCapability } from "../../../server/src/api-types"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { rereadMissionHoldWhileActive } from "../lib/mission-held-reread"
@@ -43,7 +43,7 @@ export function exactMissionScheduleControl(result: ControlReceipt, hold: Hold, 
 }
 
 export function createMissionScheduleControls(props: { instanceId: string; projectID?: string; directory: string;
-  document: () => UnifiedMissionSchedule; active: () => boolean; enabled: () => boolean; refreshVersion: () => number;
+  document: () => UnifiedMissionSchedule; active: () => boolean; enabled: () => boolean; recoveryEnabled?: () => boolean; refreshVersion: () => number;
   refresh: () => void; onDeleted: () => void; captureOperation?: () => (() => boolean) }) {
   const { t } = useI18n()
   const identity = () => JSON.stringify([props.instanceId, props.projectID, props.directory, props.document().id])
@@ -95,17 +95,31 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       bump()
     })
   }
-  const capable = (action: Action, creation = false) => props.active() && props.enabled() && !busy() && props.document().availableActions.includes(action)
+  const isRecoveryAction = (action: Action) => action === "check" || action === "pause" || action === "stop" || action === "delete"
+  const capable = (action: Action, creation = false) => props.active()
+    && (isRecoveryAction(action) ? (props.recoveryEnabled?.() ?? props.enabled()) : props.enabled())
+    && !busy() && props.document().availableActions.includes(action)
      && (held()?.minimumRevision === undefined || props.document().revision >= held()!.minimumRevision!)
      && (!requiresMissionCalendar(props.document().configuration.launch) || !["play", "resume", "run-now"].includes(action)
         || creation && action === "play" || capability() === "available" || action !== "run-now" && capability() === "activatable")
     && !held()
   async function receipt(key: string, hold: Hold, current: () => boolean, signal?: AbortSignal) {
     if (!current()) return
-    const doc = props.document(), result = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, doc.id,
-      { directory: props.directory, requestID: hold.requestID }, signal ?? AbortSignal.timeout(30_000)).catch(error => {
-        const result = partialReceipt(error); if (result) return result; throw error
-      })
+    const doc = props.document()
+    let result: ControlReceipt
+    try {
+      result = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, doc.id,
+        { directory: props.directory, requestID: hold.requestID }, signal ?? AbortSignal.timeout(30_000))
+    } catch (error) {
+      if (hold.action === "check" && notDispatchedMissionScheduleAttempt(error, hold, doc.id) && holds.get(key) === hold) {
+        if (hold.minimumRevision !== undefined) settle(key, hold, current, hold.minimumRevision)
+        else { holds.delete(key); bump(); if (current()) props.refresh() }
+        return
+      }
+      const partial = partialReceipt(error)
+      if (partial) result = partial
+      else throw error
+    }
     if (!current()) return
     if (exactMissionScheduleControl(result, hold, doc.id)) {
       if (holds.get(key) !== hold) return
@@ -211,7 +225,12 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
           const result = partialReceipt(error); if (result) return result; throw error
         })
       const deleted = action === "delete" || action === "check" && "deleted" in result && result.deleted === true && result.document === null
-      if (exactMissionScheduleControl(result, request, original.id)
+      if (undispatchedMissionScheduleCheck(result, request, original.id)) {
+        if (deleted && validDeletionReceipt(result, original.id)) settle(key, request, current, undefined)
+        else if (request.minimumRevision !== undefined) settle(key, request, current, request.minimumRevision)
+        else { holds.delete(key); bump(); if (current()) props.refresh() }
+      }
+      else if (exactMissionScheduleControl(result, request, original.id)
         && (deleted || Number.isSafeInteger(result.document?.revision) && result.document!.revision! >= revision))
         settle(key, request, current, deleted ? undefined : result.document?.revision)
       else if (current()) await receipt(key, request, current)
@@ -229,7 +248,9 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
         && ["schedule-activation-conflict", "schedule-activation-unavailable"].includes(error.code ?? "") && holds.get(key) === dispatched) {
         holds.delete(key); bump()
         if (current()) setFeedback("missions.scheduleList.conflict")
-      } else if (dispatched?.phase === "control" && refusedMissionScheduleReceipt(error, dispatched, original.id) && holds.get(key) === dispatched) {
+      } else if (dispatched?.phase === "control"
+        && (refusedMissionScheduleReceipt(error, dispatched, original.id) || notDispatchedMissionScheduleAttempt(error, dispatched, original.id))
+        && holds.get(key) === dispatched) {
         if (dispatched.minimumRevision !== undefined) settle(key, dispatched, current, dispatched.minimumRevision)
         else { holds.delete(key); bump(); if (current()) props.refresh() }
         if (current()) setFeedback("missions.scheduleList.conflict")
