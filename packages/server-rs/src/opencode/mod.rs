@@ -58,8 +58,8 @@ pub struct Native {
 }
 
 pub struct ConnectionGuard<'a> {
-    _endpoint: std::sync::RwLockReadGuard<'a, Option<Arc<Endpoint>>>,
     _validated: std::sync::MutexGuard<'a, Option<Instant>>,
+    _endpoint: std::sync::RwLockReadGuard<'a, Option<Arc<Endpoint>>>,
 }
 
 /// Port 0 refuses every connection: before the first acquisition, native requests fail

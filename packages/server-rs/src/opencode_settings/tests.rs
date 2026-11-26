@@ -547,6 +547,7 @@ async fn websearch_settings_preserves_jsonc_enforces_scopes_fences_and_fastify_p
     ] {
         let r = h.client.put(h.url("/websearch-settings")).json(&bad).send().await.unwrap();
         assert_eq!(r.status(), Status::BAD_REQUEST);
+        assert!(r.headers().get(header::CONNECTION).is_none(), "route validation 400 must not force Connection: close");
         assert_eq!(r.json::<Value>().await.unwrap(), json!({ "error": "Invalid web search settings request" }));
     }
 
@@ -559,6 +560,11 @@ async fn websearch_settings_preserves_jsonc_enforces_scopes_fences_and_fastify_p
         .await
         .unwrap();
     assert_eq!(empty_json.status(), Status::BAD_REQUEST);
+    assert_eq!(
+        empty_json.headers().get(header::CONNECTION).and_then(|v| v.to_str().ok()),
+        Some("close"),
+        "Fastify JSON parser 400 must set Connection: close"
+    );
     assert_eq!(empty_json.json::<Value>().await.unwrap()["code"], "FST_ERR_CTP_EMPTY_JSON_BODY");
 
     // Subfolder inside a non-Git workspace root is owned when Git is installed (TS native-worktrees.ts:66).

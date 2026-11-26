@@ -202,7 +202,11 @@ pub(super) async fn read_json_body(
     match fastify::body(headers, &bytes) {
         Ok(Some(fastify::Body::Json(value))) => Ok(value),
         Ok(_) => Err(Box::new(bad_request(invalid_message))),
-        Err(err) => Err(Box::new(err.into_response())),
+        Err(err) => {
+            let close = err.0 == Status::BAD_REQUEST;
+            let response = err.into_response();
+            Err(Box::new(if close { close_response(response) } else { response }))
+        }
     }
 }
 
