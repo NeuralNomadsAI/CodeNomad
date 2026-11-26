@@ -49,6 +49,10 @@ pub enum WorkspaceEvent {
     ServicesConfigChanged {
         workspace_id: String,
     },
+    NativeStreamStatus {
+        workspace_id: String,
+        connected: bool,
+    },
     MemoryChanged,
     ProvidersChanged {
         workspace_id: String,

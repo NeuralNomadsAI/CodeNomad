@@ -3,9 +3,10 @@ use super::barrier::{self, Kind};
 use crate::{backend::Backend, platform, strings::t};
 use codenomad_client::{
     Receiver, Sender, bounded,
-    plugins::{self, ActionError, RemovalTarget, Scope, Snapshot},
+    plugins::{self, ActionError, ActivationResult, RemovalTarget, Scope, Snapshot},
 };
 use rune::TextEdit;
+use std::collections::{HashMap, HashSet};
 
 pub(super) const CONSENT_DELAY_S: f64 = 0.6;
 pub(super) const CONSENT_EXPIRY_S: f64 = 120.0;
@@ -13,16 +14,20 @@ pub(super) const INSTALL_PENDING_S: f64 = 120.0;
 const MAX_PENDING_INSTALLS: usize = 64;
 
 enum ReadOutcome {
-    Snapshot(Snapshot, u64),
+    Snapshot(Box<Snapshot>, u64, HashMap<String, u64>),
     Unsupported,
     Failed,
 }
+
+type ReadFlight = (Sender<()>, Receiver<ReadOutcome>, u64, HashMap<String, u64>);
 
 #[derive(Clone, Debug)]
 pub(super) struct ConfirmRemove {
     pub removal: RemovalTarget,
     pub opened_at: f64,
     pub consent_epoch: u64,
+    pub ready_notified: bool,
+    pub return_focus: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -31,13 +36,15 @@ pub(super) struct PendingInstall {
     pub scope: Scope,
     pub spec: String,
     pub started_at: f64,
+    pub expired_notified: bool,
 }
 
 struct PendingActivation {
     id: u64,
     name: String,
     scope: Scope,
-    rx: Receiver<Result<Snapshot, ActionError>>,
+    enabled: bool,
+    rx: Receiver<Result<ActivationResult, ActionError>>,
 }
 
 struct PendingAdd {
@@ -71,8 +78,12 @@ pub(crate) struct PluginsPanel {
     consent_epoch: u64,
     pub(super) write_unconfirmed: bool,
     pub(super) write_active: bool,
+    location_unconfirmed: bool,
     confirmed_settled_id: u64,
-    read: Option<(Sender<()>, Receiver<ReadOutcome>, u64)>,
+    confirmed_package_generations: HashMap<String, u64>,
+    unconfirmed_packages: HashSet<String>,
+    pub(super) runtime_unconfirmed: HashSet<String>,
+    read: Option<ReadFlight>,
     pending_activation: Option<PendingActivation>,
     pending_add: Option<PendingAdd>,
     pending_remove: Option<PendingRemove>,
@@ -104,7 +115,11 @@ impl Default for PluginsPanel {
             consent_epoch: 1,
             write_unconfirmed: false,
             write_active: false,
+            location_unconfirmed: false,
             confirmed_settled_id: 0,
+            confirmed_package_generations: HashMap::new(),
+            unconfirmed_packages: HashSet::new(),
+            runtime_unconfirmed: HashSet::new(),
             read: None,
             pending_activation: None,
             pending_add: None,
@@ -164,8 +179,8 @@ impl PluginsPanel {
             prev.base == next.base
                 && prev.workspace == next.workspace
                 && prev.session == next.session
-                && prev.session_directory == next.session_directory
                 && prev.client.same_connection(&next.client)
+                && (self.location_unconfirmed || prev.session_directory == next.session_directory)
         })
     }
 
@@ -183,8 +198,28 @@ impl PluginsPanel {
             if !online {
                 self.read = None;
                 self.write_unconfirmed = true;
+                self.location_unconfirmed = true;
                 self.revoke_consent();
+                if let Some(backend) = &mut self.backend
+                    && !backend.session.is_empty()
+                {
+                    backend.session_directory = None;
+                }
             }
+        }
+    }
+
+    pub(super) fn require_revalidation(&mut self) {
+        self.online = true;
+        self.write_unconfirmed = true;
+        self.location_unconfirmed = true;
+        self.read = None;
+        self.dirty = true;
+        self.revoke_consent();
+        if let Some(backend) = &mut self.backend
+            && !backend.session.is_empty()
+        {
+            backend.session_directory = None;
         }
     }
 
@@ -197,6 +232,7 @@ impl PluginsPanel {
     pub(super) fn location_moved(&mut self) {
         self.online = false;
         self.write_unconfirmed = true;
+        self.location_unconfirmed = true;
         self.read = None;
         self.dirty = true;
         self.feedback_error = None;
@@ -205,6 +241,7 @@ impl PluginsPanel {
         self.add_error = None;
         self.add_info_open = false;
         self.open_info_key = None;
+        self.runtime_unconfirmed.clear();
         self.revoke_consent();
         if let Some(backend) = &mut self.backend {
             backend.session_directory = None;
@@ -289,23 +326,37 @@ impl PluginsPanel {
         self.add_error = None;
     }
 
-    pub(super) fn request_remove_confirm(&mut self, removal: RemovalTarget, tx: &mut rune::Tx) {
+    pub(super) fn request_remove_confirm(
+        &mut self,
+        removal: RemovalTarget,
+        trigger_key: String,
+        tx: &mut rune::Tx,
+    ) {
         if self.mutations_locked() {
             return;
         }
         self.add_open = false;
         self.feedback_error = None;
+        let return_focus = Some(tx.focused().map(str::to_owned).unwrap_or(trigger_key));
         self.confirm_remove = Some(ConfirmRemove {
             removal,
             opened_at: self.clock,
             consent_epoch: self.consent_epoch,
+            ready_notified: false,
+            return_focus,
         });
         tx.focus("plugins-remove-cancel", true);
         tx.wake_at(self.clock + CONSENT_DELAY_S);
     }
 
-    pub(super) fn cancel_remove_confirm(&mut self) {
-        self.confirm_remove = None;
+    pub(super) fn cancel_remove_confirm(&mut self, tx: &mut rune::Tx) -> bool {
+        let Some(confirm) = self.confirm_remove.take() else {
+            return false;
+        };
+        if let Some(key) = confirm.return_focus {
+            tx.return_focus(key, tx.focus_visible());
+        }
+        true
     }
 
     pub(super) fn remove_ready(&self) -> bool {
@@ -370,6 +421,10 @@ impl PluginsPanel {
             .is_some_and(|b| barrier::is_active(&Kind::PluginPackage(target.to_owned()), &b.base))
     }
 
+    pub(super) fn package_unconfirmed(&self, target: &str) -> bool {
+        self.unconfirmed_packages.contains(target)
+    }
+
     pub(super) fn toggle_activation(
         &mut self,
         plugin_id: String,
@@ -413,6 +468,7 @@ impl PluginsPanel {
             id,
             name: plugin_id.clone(),
             scope,
+            enabled,
             rx,
         });
         platform::spawn(async move {
@@ -531,7 +587,11 @@ impl PluginsPanel {
     }
 
     pub(super) fn run_package(&mut self, target: String, update: bool, wake: &rune::Waker) {
-        if self.mutations_locked() || !self.visible || !self.expanded {
+        if self.mutations_locked()
+            || !self.visible
+            || !self.expanded
+            || self.unconfirmed_packages.contains(&target)
+        {
             return;
         }
         let Some(backend) = self.backend.clone() else {
@@ -545,13 +605,20 @@ impl PluginsPanel {
         }
         let directory = snap.directory.clone();
         let kind = Kind::PluginPackage(target.clone());
-        let expected = barrier::settled_id(&kind, &backend.base);
+        let expected = self
+            .confirmed_package_generations
+            .get(&target)
+            .copied()
+            .unwrap_or(0);
         let Some(guard) =
             barrier::try_begin(kind, &backend.base, expected, self.observer, wake.clone())
         else {
+            self.unconfirmed_packages.insert(target);
+            self.dirty = true;
             return;
         };
         self.feedback_error = None;
+        self.unconfirmed_packages.insert(target.clone());
         self.pending_packages.push(PendingPackage {
             base: backend.base.clone(),
             id: guard.id(),
@@ -573,34 +640,47 @@ impl PluginsPanel {
         self.clock = now;
         let mut changed = false;
 
-        if let Some(confirm) = &self.confirm_remove {
+        if let Some(confirm) = &mut self.confirm_remove {
             let elapsed = now - confirm.opened_at;
             if confirm.consent_epoch != self.consent_epoch || elapsed > CONSENT_EXPIRY_S {
+                let return_focus = confirm.return_focus.clone();
                 self.confirm_remove = None;
+                if let Some(key) = return_focus {
+                    tx.return_focus(key, tx.focus_visible());
+                }
                 changed = true;
             } else if elapsed < CONSENT_DELAY_S {
                 tx.wake_at(confirm.opened_at + CONSENT_DELAY_S);
             } else {
+                if !confirm.ready_notified {
+                    confirm.ready_notified = true;
+                    changed = true;
+                }
                 tx.wake_at(confirm.opened_at + CONSENT_EXPIRY_S + 0.01);
             }
         }
 
-        if let Some(due) = self
-            .pending_installs
-            .iter()
-            .filter_map(|item| {
-                let end = item.started_at + INSTALL_PENDING_S;
-                (now <= end).then_some(end + 0.01)
-            })
-            .reduce(f64::min)
-        {
+        let mut next_install_due: Option<f64> = None;
+        for item in &mut self.pending_installs {
+            let end = item.started_at + INSTALL_PENDING_S;
+            if now > end {
+                if !item.expired_notified {
+                    item.expired_notified = true;
+                    changed = true;
+                }
+            } else {
+                let due = end + 0.01;
+                next_install_due = Some(next_install_due.map_or(due, |cur| cur.min(due)));
+            }
+        }
+        if let Some(due) = next_install_due {
             tx.wake_at(due);
         }
 
         changed |= self.poll_writes(wake);
 
-        if let Some(backend) = &self.backend {
-            let obs = barrier::observe(&Kind::Plugins, &backend.base, self.observer, wake);
+        if let Some(base) = self.backend.as_ref().map(|b| b.base.clone()) {
+            let obs = barrier::observe(&Kind::Plugins, &base, self.observer, wake);
             if obs.active {
                 if !self.write_active {
                     self.write_active = true;
@@ -616,7 +696,7 @@ impl PluginsPanel {
                 let in_flight_covers = self
                     .read
                     .as_ref()
-                    .is_some_and(|(_, _, read_gen)| *read_gen == obs.settled_id);
+                    .is_some_and(|(_, _, read_gen, _)| *read_gen == obs.settled_id);
                 if foreign_settled {
                     if self.pending_activation.is_none()
                         && self.pending_add.is_none()
@@ -636,25 +716,98 @@ impl PluginsPanel {
                     changed = true;
                 }
             }
+
+            if let Some(snap) = &self.snapshot {
+                for target in package_targets(snap) {
+                    let kind = Kind::PluginPackage(target.to_owned());
+                    let obs = barrier::observe(&kind, &base, self.observer, wake);
+                    let confirmed = self
+                        .confirmed_package_generations
+                        .get(target)
+                        .copied()
+                        .unwrap_or(0);
+                    let in_flight_covers = self.read.as_ref().is_some_and(|(_, _, _, pkg_gens)| {
+                        pkg_gens.get(target).copied().unwrap_or(0) == obs.settled_id
+                    });
+                    if obs.active || obs.settled_id != confirmed {
+                        if self.unconfirmed_packages.insert(target.to_owned()) {
+                            changed = true;
+                        }
+                        if !obs.active && !in_flight_covers {
+                            self.dirty = true;
+                        }
+                    }
+                }
+            }
         }
 
-        if let Some((_, rx, _)) = &self.read {
+        if let Some((_, rx, _, _)) = &self.read {
             match rx.try_recv() {
                 Ok(outcome) => {
                     self.read = None;
                     if !self.dirty && !self.write_active {
                         match outcome {
-                            ReadOutcome::Snapshot(snap, read_gen) => {
+                            ReadOutcome::Snapshot(snap, read_gen, pkg_gens) => {
+                                let snap = *snap;
+                                let moved = self.snapshot.as_ref().is_some_and(|prev| {
+                                    !plugins::location_matches(&prev.directory, &snap.directory)
+                                });
+                                if moved {
+                                    self.add_open = false;
+                                    self.add_spec = TextEdit::new("");
+                                    self.add_error = None;
+                                    self.add_info_open = false;
+                                    self.open_info_key = None;
+                                    self.feedback_error = None;
+                                    self.runtime_unconfirmed.clear();
+                                } else {
+                                    self.runtime_unconfirmed.retain(|plugin_id| {
+                                        snap.controls.iter().any(|c| {
+                                            c.id == *plugin_id
+                                                && c.managed_by_codenomad
+                                                && c.runtime.is_none()
+                                        })
+                                    });
+                                }
+                                if let Some(backend) = &mut self.backend
+                                    && !backend.session.is_empty()
+                                {
+                                    backend.session_directory = Some(snap.directory.clone());
+                                }
+                                self.location_unconfirmed = false;
                                 self.prune_loaded_installs(&snap);
                                 self.revoke_consent();
-                                let live_gen = self
-                                    .backend
-                                    .as_ref()
-                                    .map_or(0, |b| barrier::settled_id(&Kind::Plugins, &b.base));
-                                let active = self
-                                    .backend
-                                    .as_ref()
-                                    .is_some_and(|b| barrier::is_active(&Kind::Plugins, &b.base));
+                                let base = self.backend.as_ref().map(|b| b.base.as_str());
+                                let live_gen =
+                                    base.map_or(0, |b| barrier::settled_id(&Kind::Plugins, b));
+                                let active =
+                                    base.is_some_and(|b| barrier::is_active(&Kind::Plugins, b));
+                                let mut need_reread = false;
+                                for target in package_targets(&snap) {
+                                    let at_read = pkg_gens.get(target).copied().unwrap_or(0);
+                                    let live = base.map_or(0, |b| {
+                                        barrier::settled_id(
+                                            &Kind::PluginPackage(target.to_owned()),
+                                            b,
+                                        )
+                                    });
+                                    let pkg_active = base.is_some_and(|b| {
+                                        barrier::is_active(
+                                            &Kind::PluginPackage(target.to_owned()),
+                                            b,
+                                        )
+                                    });
+                                    if !pkg_active && live == at_read {
+                                        self.confirmed_package_generations
+                                            .insert(target.to_owned(), at_read);
+                                        self.unconfirmed_packages.remove(target);
+                                    } else {
+                                        self.unconfirmed_packages.insert(target.to_owned());
+                                        if !pkg_active {
+                                            need_reread = true;
+                                        }
+                                    }
+                                }
                                 self.snapshot = Some(snap);
                                 self.unsupported = false;
                                 self.failed = false;
@@ -664,8 +817,11 @@ impl PluginsPanel {
                                 } else {
                                     self.write_unconfirmed = true;
                                     if !active {
-                                        self.dirty = true;
+                                        need_reread = true;
                                     }
+                                }
+                                if need_reread {
+                                    self.dirty = true;
                                 }
                             }
                             ReadOutcome::Unsupported => {
@@ -673,6 +829,7 @@ impl PluginsPanel {
                                 self.unsupported = true;
                                 self.failed = false;
                                 self.write_unconfirmed = false;
+                                self.location_unconfirmed = false;
                                 self.revoke_consent();
                             }
                             ReadOutcome::Failed => self.failed = true,
@@ -697,13 +854,17 @@ impl PluginsPanel {
             && self.online
             && self.read.is_none()
             && !self.write_active
-            && let Some(backend) = self.backend.clone()
+            && let Some(mut backend) = self.backend.clone()
         {
+            if self.location_unconfirmed && !backend.session.is_empty() {
+                backend.session_directory = None;
+            }
             let (cancel, cancelled) = bounded(1);
             let (out, rx) = bounded(1);
             let read_gen = barrier::settled_id(&Kind::Plugins, &backend.base);
+            let pkg_gens = barrier::package_generations(&backend.base);
             self.dirty = false;
-            self.read = Some((cancel, rx, read_gen));
+            self.read = Some((cancel, rx, read_gen, pkg_gens.clone()));
             let (reads, wake) = (reads.clone(), wake.clone());
             platform::spawn(async move {
                 let Some(_slot) = reads.background(&cancelled).await else {
@@ -713,7 +874,7 @@ impl PluginsPanel {
                     platform::reads::cancellable(&cancelled, plugins::load(&backend, None)).await
                 {
                     let outcome = match result {
-                        Ok(Some(snap)) => ReadOutcome::Snapshot(snap, read_gen),
+                        Ok(Some(snap)) => ReadOutcome::Snapshot(Box::new(snap), read_gen, pkg_gens),
                         Ok(None) => ReadOutcome::Unsupported,
                         Err(_) => ReadOutcome::Failed,
                     };
@@ -738,11 +899,25 @@ impl PluginsPanel {
             if let Some(outcome) = outcome {
                 let pending = self.pending_activation.take().unwrap();
                 match outcome {
-                    Ok(snap) => {
+                    Ok(ActivationResult {
+                        snapshot: snap,
+                        reload_pending,
+                    }) => {
                         let missing_revisions = snap
                             .targets
                             .iter()
                             .any(|target| target.exists && target.expected_revision.is_none());
+                        if pending.enabled
+                            && reload_pending
+                            && snap
+                                .controls
+                                .iter()
+                                .any(|c| c.id == pending.name && c.managed_by_codenomad)
+                        {
+                            self.runtime_unconfirmed.insert(pending.name.clone());
+                        } else if !pending.enabled {
+                            self.runtime_unconfirmed.remove(&pending.name);
+                        }
                         self.prune_loaded_installs(&snap);
                         self.revoke_consent();
                         self.snapshot = Some(snap);
@@ -874,6 +1049,7 @@ impl PluginsPanel {
             scope,
             spec,
             started_at: self.clock,
+            expired_notified: false,
         });
     }
 
@@ -888,4 +1064,24 @@ impl PluginsPanel {
             })
         });
     }
+}
+
+fn package_targets(snap: &Snapshot) -> Vec<&str> {
+    let mut out = Vec::new();
+    for entry in &snap.runtime {
+        if let plugins::RuntimeSource::Package { target, .. } = &entry.source
+            && !out.contains(&target.as_str())
+        {
+            out.push(target.as_str());
+        }
+    }
+    for control in &snap.controls {
+        if let Some(rt) = &control.runtime
+            && let plugins::RuntimeSource::Package { target, .. } = &rt.source
+            && !out.contains(&target.as_str())
+        {
+            out.push(target.as_str());
+        }
+    }
+    out
 }

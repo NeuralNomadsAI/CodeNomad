@@ -390,7 +390,8 @@ fn row_actions(
         ..
     }) = source
     {
-        let busy = locked || *updating || panel.package_busy(target);
+        let busy =
+            locked || *updating || panel.package_busy(target) || panel.package_unconfirmed(target);
         let key_name = if *outdated {
             "settings.pluginPackages.update"
         } else {
@@ -421,21 +422,25 @@ fn row_actions(
         let label =
             t("instanceServiceStatus.plugins.sources.remove").replace("{scope}", scope_label);
         let item = removal.clone();
+        let trigger_key = format!(
+            "plugin-remove-{}-{}",
+            removal.scope.as_str(),
+            removal.target
+        );
+        let trigger_key_for_action = trigger_key.clone();
         actions = actions.child(
             layout::button_tx(
                 &label,
                 locked,
                 screen::action_tx(&s.input_scope, move |s, tx| {
-                    s.status_services
-                        .plugins
-                        .request_remove_confirm(item.clone(), tx);
+                    s.status_services.plugins.request_remove_confirm(
+                        item.clone(),
+                        trigger_key_for_action.clone(),
+                        tx,
+                    );
                 }),
             )
-            .key(format!(
-                "plugin-remove-{}-{}",
-                removal.scope.as_str(),
-                removal.target
-            )),
+            .key(trigger_key),
         );
     }
     actions

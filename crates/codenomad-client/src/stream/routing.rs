@@ -121,12 +121,13 @@ pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceE
     if let Some(event) = parse_workspace_event(value) {
         return Some(event);
     }
-    if value["type"] == "instance.eventStatus" && value["status"] == "connected" {
+    if value["type"] == "instance.eventStatus" {
         let id = value["instanceId"]
             .as_str()
             .filter(|id| crate::history::valid_id(id))?;
-        return Some(WorkspaceEvent::WorktreesChanged {
+        return Some(WorkspaceEvent::NativeStreamStatus {
             workspace_id: id.into(),
+            connected: value["status"] == "connected",
         });
     }
     if value["type"] != "instance.event" {

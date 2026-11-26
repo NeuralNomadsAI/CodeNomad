@@ -22,6 +22,8 @@ enum ReadOutcome {
     Failed,
 }
 
+type ReadFlight = (Sender<()>, Receiver<ReadOutcome>, HashMap<String, u64>);
+
 pub(super) struct McpPanel {
     observer: u64,
     pub(super) expanded: bool,
@@ -32,7 +34,7 @@ pub(super) struct McpPanel {
     location_unconfirmed: bool,
     confirmed_generations: HashMap<String, u64>,
     unconfirmed_servers: HashSet<String>,
-    read: Option<(Sender<()>, Receiver<ReadOutcome>, HashMap<String, u64>)>,
+    read: Option<ReadFlight>,
     pending_toggles: Vec<(String, String, u64)>,
     pub(super) snapshot: Option<McpSnapshot>,
     pub(super) unsupported: bool,
@@ -93,8 +95,8 @@ impl McpPanel {
             prev.base == next.base
                 && prev.workspace == next.workspace
                 && prev.session == next.session
-                && prev.session_directory == next.session_directory
                 && prev.client.same_connection(&next.client)
+                && (self.location_unconfirmed || prev.session_directory == next.session_directory)
         })
     }
 
@@ -112,8 +114,34 @@ impl McpPanel {
             if !online {
                 self.read = None;
                 self.location_unconfirmed = true;
+                if let Some(backend) = &mut self.backend
+                    && !backend.session.is_empty()
+                {
+                    backend.session_directory = None;
+                }
             }
         }
+    }
+
+    pub(super) fn require_revalidation(&mut self) {
+        self.online = true;
+        self.location_unconfirmed = true;
+        self.read = None;
+        self.dirty = true;
+        if let Some(backend) = &mut self.backend
+            && !backend.session.is_empty()
+        {
+            backend.session_directory = None;
+        }
+    }
+
+    pub(super) fn request_refresh(&mut self) {
+        if !self.online || self.read.is_some() || self.any_toggle_active() {
+            return;
+        }
+        self.failed = false;
+        self.action_error = None;
+        self.dirty = true;
     }
 
     pub(super) fn synchronized(&mut self) {
@@ -295,6 +323,11 @@ impl McpPanel {
                                         }
                                     }
                                 }
+                                if let Some(backend) = &mut self.backend
+                                    && !backend.session.is_empty()
+                                {
+                                    backend.session_directory = Some(snap.directory.clone());
+                                }
                                 self.snapshot = Some(snap);
                                 self.unsupported = false;
                                 self.failed = false;
@@ -331,8 +364,11 @@ impl McpPanel {
             && self.online
             && self.read.is_none()
             && !self.any_toggle_active()
-            && let Some(backend) = self.backend.clone()
+            && let Some(mut backend) = self.backend.clone()
         {
+            if self.location_unconfirmed && !backend.session.is_empty() {
+                backend.session_directory = None;
+            }
             let (cancel, cancelled) = bounded(1);
             let (out, rx) = bounded(1);
             let read_gens = barrier::mcp_generations(&backend.base);
@@ -384,13 +420,33 @@ pub(super) fn view(s: &State) -> Option<El> {
         } else if panel.failed && panel.snapshot.is_none() {
             body = body.child(
                 layout::action_row()
-                    .child(text(t("instanceServiceStatus.mcp.empty")).role("status"))
+                    .child(text(t("instanceServiceStatus.plugins.errors.load")).role("alert"))
                     .child(
                         layout::button(
                             t("settings.providers.refresh"),
-                            panel.read.is_some() || !panel.online,
+                            panel.read.is_some() || !panel.online || panel.any_toggle_active(),
                             screen::action(&s.input_scope, |s| {
-                                s.status_services.mcp.invalidate();
+                                s.status_services.mcp.request_refresh();
+                            }),
+                        )
+                        .key("mcp-refresh"),
+                    ),
+            );
+        }
+        if panel.failed && panel.snapshot.is_some() {
+            body = body.child(
+                layout::action_row()
+                    .child(
+                        text(t("instanceServiceStatus.plugins.errors.refresh"))
+                            .wrap()
+                            .role("alert"),
+                    )
+                    .child(
+                        layout::button(
+                            t("settings.providers.refresh"),
+                            panel.read.is_some() || !panel.online || panel.any_toggle_active(),
+                            screen::action(&s.input_scope, |s| {
+                                s.status_services.mcp.request_refresh();
                             }),
                         )
                         .key("mcp-refresh"),

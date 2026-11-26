@@ -86,8 +86,24 @@ impl Cache {
         if let Some(git) = &mut self.git.owner
             && git.workspace_id() == target
         {
-            git.event(event);
-            delivered = true;
+            if let codenomad_client::transport::WorkspaceEvent::NativeStreamStatus {
+                workspace_id,
+                connected: true,
+            } = event
+            {
+                git.event(
+                    &codenomad_client::transport::WorkspaceEvent::WorktreesChanged {
+                        workspace_id: workspace_id.clone(),
+                    },
+                );
+                delivered = true;
+            } else if !matches!(
+                event,
+                codenomad_client::transport::WorkspaceEvent::NativeStreamStatus { .. }
+            ) {
+                git.event(event);
+                delivered = true;
+            }
         }
         if let Some(files) = &mut self.files
             && files.workspace_id() == target

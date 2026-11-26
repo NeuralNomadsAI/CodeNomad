@@ -17,7 +17,7 @@ pub(super) fn system_attention_block(
     panel: &PluginsPanel,
     snap: &Snapshot,
 ) -> Option<El> {
-    let entries = snap.system_attention_entries();
+    let entries = snap.system_attention_entries(&panel.runtime_unconfirmed);
     if entries.is_empty() {
         return None;
     }
@@ -287,22 +287,23 @@ pub(super) fn remove_confirm_card(
     }
     detail.push('\n');
     detail.push_str(t("instanceServiceStatus.plugins.sources.removeRecovery"));
+    let escape_scope = s.input_scope.clone();
     settings::card(
         col()
             .full_width()
             .separate(Space::Xs)
-            .role("group")
+            .role("alertdialog")
             .label(&action)
             .child(text(&action).text_role(TextRole::Button).role("heading"))
             .child(text(&detail).wrap())
             .child(
                 layout::action_row()
                     .child(
-                        layout::button(
+                        layout::button_tx(
                             t("settings.providers.actions.close"),
-                            locked,
-                            screen::action(&s.input_scope, |s| {
-                                s.status_services.plugins.cancel_remove_confirm();
+                            false,
+                            screen::action_tx(&s.input_scope, |s, tx| {
+                                s.status_services.plugins.cancel_remove_confirm(tx);
                             }),
                         )
                         .key("plugins-remove-cancel"),
@@ -318,7 +319,18 @@ pub(super) fn remove_confirm_card(
                         )
                         .key("plugins-remove-confirm"),
                     ),
-            ),
+            )
+            .on_key(move |s: &mut State, key, tx| {
+                if s.input_scope == escape_scope
+                    && !tx.key_repeat()
+                    && key.mods == rune::Mods::default()
+                    && key.key == rune::Key::Escape
+                {
+                    s.status_services.plugins.cancel_remove_confirm(tx)
+                } else {
+                    false
+                }
+            }),
     )
     .key("plugins-remove-dialog")
 }

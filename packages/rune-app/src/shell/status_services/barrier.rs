@@ -115,6 +115,18 @@ pub(super) fn mcp_generations(base: &str) -> HashMap<String, u64> {
         .collect()
 }
 
+pub(super) fn package_generations(base: &str) -> HashMap<String, u64> {
+    let map = registry().lock().unwrap_or_else(|e| e.into_inner());
+    map.iter()
+        .filter_map(|((kind, key_base), entry)| match kind {
+            Kind::PluginPackage(target) if key_base == base => {
+                Some((target.clone(), entry.settled_id))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 pub(super) fn observe(kind: &Kind, base: &str, observer: u64, wake: &Waker) -> Observation {
     let mut map = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(entry) = map.get_mut(&(kind.clone(), base.to_owned())) else {

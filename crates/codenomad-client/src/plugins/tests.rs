@@ -269,7 +269,7 @@ fn excludes_managed_codenomad_plugins_from_ordinary_controls_and_surfaces_attent
     );
     assert!(snap.removable_for_control(&snap.controls[1]).is_empty());
 
-    let attention = snap.system_attention_entries();
+    let attention = snap.system_attention_entries(&std::collections::HashSet::new());
     // codenomad.missions disabled explicitly in global is omitted; memory (disabled), design (failed) and source (unconfirmed) appear.
     assert_eq!(attention.len(), 3);
     assert_eq!(attention[0].name, "codenomad.memory");
@@ -279,4 +279,70 @@ fn excludes_managed_codenomad_plugins_from_ordinary_controls_and_surfaces_attent
     assert_eq!(attention[1].kind, super::SystemAttentionKind::Failed);
     assert_eq!(attention[2].name, "codenomad-managed-pkg");
     assert_eq!(attention[2].kind, super::SystemAttentionKind::Unconfirmed);
+
+    // An active managed plugin marked runtime_unconfirmed after reloadPending stays visible as Unconfirmed.
+    let active_doc = json!({
+        "location": { "directory": "/home/u/repo" },
+        "runtime": [],
+        "configured": { "rules": [], "sources": [] },
+        "controls": [{
+            "id": "codenomad.memory",
+            "managedBy": "codenomad",
+            "builtin": false,
+            "effective": "enabled",
+            "global": "default",
+            "project": "enabled",
+            "runtime": {
+                "key": "mem",
+                "id": "codenomad.memory",
+                "managedBy": "codenomad",
+                "source": { "type": "local", "path": "/opt/mem.js" },
+                "features": { "server": true },
+                "state": { "status": "active" }
+            }
+        }],
+        "targets": []
+    });
+    let active_snap = parse_snapshot(&active_doc, "/home/u/repo").unwrap();
+    assert!(
+        active_snap
+            .system_attention_entries(&std::collections::HashSet::new())
+            .is_empty()
+    );
+    let unconfirmed = std::collections::HashSet::from(["codenomad.memory".to_owned()]);
+    let kept = active_snap.system_attention_entries(&unconfirmed);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].kind, super::SystemAttentionKind::Unconfirmed);
+}
+
+#[test]
+fn add_source_timeout_exceeds_server_budget_and_turns_queued_hang_into_uncertain_failure() {
+    assert!(super::ADD_SOURCE_TIMEOUT >= std::time::Duration::from_secs(30));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            // Hold the queued request open past the client timeout.
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        });
+        let mut backend =
+            crate::backend::Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+        backend.workspace = "owned".into();
+        let err = super::add_source_with_timeout(
+            &backend,
+            "/repo",
+            Scope::Global,
+            "@acme/queued@1.0.0",
+            std::time::Duration::from_millis(50),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, ActionError::Failed);
+        let _ = server.await;
+    });
 }

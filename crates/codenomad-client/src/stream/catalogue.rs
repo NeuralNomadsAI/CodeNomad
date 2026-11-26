@@ -553,7 +553,14 @@ mod tests {
             "instanceId": "proj-1",
             "status": "disconnected"
         }));
-        assert!(watch.take_workspace_events().2.is_empty());
+        let (_, _, events) = watch.take_workspace_events();
+        assert!(matches!(
+            events.front(),
+            Some(WorkspaceEvent::NativeStreamStatus {
+                workspace_id,
+                connected: false
+            }) if workspace_id == "proj-1"
+        ));
         watch.signals.observe(&json!({
             "type": "instance.eventStatus",
             "instanceId": "proj-1",
@@ -562,7 +569,10 @@ mod tests {
         let (_, _, events) = watch.take_workspace_events();
         assert!(matches!(
             events.front(),
-            Some(WorkspaceEvent::WorktreesChanged { workspace_id }) if workspace_id == "proj-1"
+            Some(WorkspaceEvent::NativeStreamStatus {
+                workspace_id,
+                connected: true
+            }) if workspace_id == "proj-1"
         ));
 
         watch.signals.observe(&json!({

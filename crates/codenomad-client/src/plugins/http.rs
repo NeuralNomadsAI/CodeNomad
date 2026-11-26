@@ -200,6 +200,12 @@ pub async fn load(backend: &Backend, directory: Option<&str>) -> Result<Option<S
     }))
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivationResult {
+    pub snapshot: Snapshot,
+    pub reload_pending: bool,
+}
+
 pub async fn set_activation(
     backend: &Backend,
     directory: &str,
@@ -207,7 +213,7 @@ pub async fn set_activation(
     scope: Scope,
     enabled: bool,
     managed_by_codenomad: bool,
-) -> std::result::Result<Snapshot, ActionError> {
+) -> std::result::Result<ActivationResult, ActionError> {
     if !valid_id(&backend.workspace)
         || !crate::absolute_server_path(directory)
         || !valid_plugin_id(plugin_id)
@@ -240,7 +246,13 @@ pub async fn set_activation(
     let value = read_json_limited(response, MAX_RESPONSE_BYTES)
         .await
         .map_err(|_| ActionError::Failed)?;
-    parse_snapshot(&value["snapshot"], directory).map_err(|_| ActionError::Failed)
+    let snapshot =
+        parse_snapshot(&value["snapshot"], directory).map_err(|_| ActionError::Failed)?;
+    let reload_pending = value["reloadPending"] == Value::Bool(true);
+    Ok(ActivationResult {
+        snapshot,
+        reload_pending,
+    })
 }
 
 pub async fn add_source(
@@ -248,6 +260,16 @@ pub async fn add_source(
     directory: &str,
     scope: Scope,
     spec: &str,
+) -> std::result::Result<String, ActionError> {
+    add_source_with_timeout(backend, directory, scope, spec, super::ADD_SOURCE_TIMEOUT).await
+}
+
+pub(crate) async fn add_source_with_timeout(
+    backend: &Backend,
+    directory: &str,
+    scope: Scope,
+    spec: &str,
+    timeout: std::time::Duration,
 ) -> std::result::Result<String, ActionError> {
     let trimmed = spec.trim();
     if !valid_id(&backend.workspace)
@@ -269,7 +291,7 @@ pub async fn add_source(
             "scope": scope.as_str(),
             "spec": trimmed,
         }))
-        .timeout(REQUEST_TIMEOUT)
+        .timeout(timeout)
         .send()
         .await
         .map_err(|_| ActionError::Failed)?;

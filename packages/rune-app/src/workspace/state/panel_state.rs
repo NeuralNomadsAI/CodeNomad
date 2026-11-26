@@ -586,6 +586,7 @@ pub(crate) fn event_workspace_id(event: &WorkspaceEvent) -> Option<&str> {
         | WorkspaceEvent::WorktreesChanged { workspace_id }
         | WorkspaceEvent::SessionMoved { workspace_id, .. }
         | WorkspaceEvent::ServicesConfigChanged { workspace_id }
+        | WorkspaceEvent::NativeStreamStatus { workspace_id, .. }
         | WorkspaceEvent::Stopped { workspace_id } => Some(workspace_id.as_str()),
         WorkspaceEvent::PluginsChanged { workspace_id, .. }
         | WorkspaceEvent::McpStatusChanged { workspace_id } => workspace_id.as_deref(),
@@ -616,8 +617,22 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
                 .as_ref()
                 .is_some_and(|git| git.workspace_id() == target)
             {
-                crate::git::event(s, event);
-                delivered = true;
+                if let WorkspaceEvent::NativeStreamStatus {
+                    workspace_id,
+                    connected: true,
+                } = event
+                {
+                    crate::git::event(
+                        s,
+                        &WorkspaceEvent::WorktreesChanged {
+                            workspace_id: workspace_id.clone(),
+                        },
+                    );
+                    delivered = true;
+                } else if !matches!(event, WorkspaceEvent::NativeStreamStatus { .. }) {
+                    crate::git::event(s, event);
+                    delivered = true;
+                }
             }
             if let Some(files) = &mut s.files
                 && files.workspace_id() == target

@@ -1,5 +1,5 @@
 use super::*;
-use crate::files::test_http::Http;
+use crate::{files::test_http::Http, strings::t};
 use codenomad_client::plugins::{Scope, ScopeRuleState, mcp::McpState};
 use rune::{Env, Runtime, Tx, col};
 use rune_theme_codenomad::layout::{self, Layout};
@@ -291,20 +291,6 @@ fn mcp_resolves_conversation_location_and_enforces_multitab_generation_barrier()
         );
         req.reply(204, json!(null)).await;
         poll_until(&mut tab_a, 1.0, |s| s.status_services.mcp.reading());
-        let dir_req2 = http.accept().await;
-        assert!(
-            dir_req2
-                .header
-                .starts_with("GET /workspaces/owned/instance/api/session/session"),
-            "{}",
-            dir_req2.header
-        );
-        dir_req2
-            .reply(
-                200,
-                json!({ "data": { "id": "session", "location": { "directory": "/repo/wt-conv" } } }),
-            )
-            .await;
         http.accept()
             .await
             .reply(
@@ -464,14 +450,15 @@ fn plugins_consent_guard_install_cycle_uncertain_add_and_patch_revision_refresh(
                 .plugins
                 .is_install_pending("/repo/a", "@acme/new@1.0.0")
         );
-        let _ = poll_at(&mut s, 131.0);
+        // Timer crossing 120s MUST signal changed=true at rest and update the rendered a11y label.
+        assert!(poll_at(&mut s, 131.0));
         assert!(
             !s.status_services
                 .plugins
                 .is_install_pending("/repo/a", "@acme/new@1.0.0")
         );
 
-        // Remove consent guard: blocked before 0.6s, allowed at +0.7s, revoked by show(false).
+        // Remove consent guard: blocked before 0.6s, signals changed=true at +0.6s, revoked by show(false).
         let removal = s
             .status_services
             .plugins
@@ -481,9 +468,11 @@ fn plugins_consent_guard_install_cycle_uncertain_add_and_patch_revision_refresh(
             .removable_for_target("@acme/plugin")[0]
             .clone();
         let mut tx = Tx::default();
-        s.status_services
-            .plugins
-            .request_remove_confirm(removal.clone(), &mut tx);
+        s.status_services.plugins.request_remove_confirm(
+            removal.clone(),
+            "plugin-remove-global-@acme/plugin".into(),
+            &mut tx,
+        );
         assert!(s.status_services.plugins.confirm_remove.is_some());
         assert!(!s.status_services.plugins.remove_ready());
         s.status_services.plugins.confirm_and_remove(&s.wake);
@@ -503,11 +492,13 @@ fn plugins_consent_guard_install_cycle_uncertain_add_and_patch_revision_refresh(
             .await;
         poll_until(&mut s, 132.0, |s| !s.status_services.plugins.reading());
 
-        // Re-open, wait 0.7s -> DELETE proceeds with expectedRevision.
-        s.status_services
-            .plugins
-            .request_remove_confirm(removal, &mut tx);
-        let _ = poll_at(&mut s, 132.7);
+        // Re-open, wait 0.7s -> poll returns changed=true and DELETE proceeds with expectedRevision.
+        s.status_services.plugins.request_remove_confirm(
+            removal,
+            "plugin-remove-global-@acme/plugin".into(),
+            &mut tx,
+        );
+        assert!(poll_at(&mut s, 132.7));
         assert!(s.status_services.plugins.remove_ready());
         s.status_services.plugins.confirm_and_remove(&s.wake);
         let req = http.accept().await;
@@ -672,5 +663,420 @@ fn plugins_package_actions_and_fallback_vs_domain_404() {
             .await;
         poll_until(&mut s, 1.0, |s| s.status_services.plugins.failed);
         http.quiet().await;
+    });
+}
+
+#[test]
+fn reconnect_re_resolves_conversation_location_and_mcp_failed_reconcile_offers_refresh() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let mut backend = http.backend.clone();
+        backend.session_directory = Some("/repo/old-wt".into());
+
+        let mut s = crate::init();
+        s.status_services.bind(&backend);
+        s.status_services.online(true);
+        s.status_services.show(true);
+        s.status_services.mcp.expanded = true;
+        s.status_services.plugins.expanded = true;
+        assert!(poll_at(&mut s, 1.0));
+
+        // Initial reads use the initial bound directory.
+        for _ in 0..2 {
+            let req = http.accept().await;
+            if req
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/mcp")
+            {
+                req.reply(
+                    200,
+                    json!({
+                        "location": { "directory": "/repo/old-wt" },
+                        "data": [{ "name": "docs", "status": { "status": "connected" } }]
+                    }),
+                )
+                .await;
+            } else {
+                req.reply(
+                    200,
+                    sample_controls_snapshot("/repo/old-wt", false, false, Some(REV_A)),
+                )
+                .await;
+            }
+        }
+        poll_until(&mut s, 1.0, |s| {
+            s.status_services.mcp.snapshot.is_some() && s.status_services.plugins.snapshot.is_some()
+        });
+
+        // SSE disconnect invalidates Location even if session moved during outage.
+        s.status_services.online(false);
+        // Reconnect: must resolve via prompt_directory before reading /api/mcp and /plugin-controls.
+        s.status_services.online(true);
+        assert!(poll_at(&mut s, 2.0));
+
+        let mut saw_new_mcp = false;
+        let mut saw_new_plugins = false;
+        while !(saw_new_mcp && saw_new_plugins) {
+            let req = http.accept().await;
+            if req
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session")
+            {
+                req.reply(
+                    200,
+                    json!({ "data": { "id": "session", "location": { "directory": "/repo/new-wt" } } }),
+                )
+                .await;
+            } else if req.header.starts_with(
+                "GET /workspaces/owned/instance/api/mcp?location%5Bdirectory%5D=%2Frepo%2Fnew-wt",
+            ) {
+                saw_new_mcp = true;
+                // Simulate failed reconciliation GET while old snapshot is still displayed.
+                req.reply(503, json!({ "error": "unavailable" })).await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/plugin-controls?directory=%2Frepo%2Fnew-wt")
+            {
+                saw_new_plugins = true;
+                req.reply(
+                    200,
+                    sample_controls_snapshot("/repo/new-wt", false, false, Some(REV_B)),
+                )
+                .await;
+            } else {
+                panic!("unexpected request using stale worktree: {}", req.header);
+            }
+        }
+        poll_until(&mut s, 2.0, |s| {
+            s.status_services.mcp.failed
+                && s.status_services
+                    .plugins
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|snap| snap.directory == "/repo/new-wt")
+        });
+
+        // Even with a prior MCP snapshot visible, failed reconciliation exposes mcp-refresh.
+        layout::with_source_palette(|| {
+            let mut rt = Runtime::new(
+                s,
+                |st, cx| {
+                    layout::render(cx, |_| col().full_width().full_height().children(view(st)))
+                },
+                (340.0, 500.0),
+                Env::new(false, 1.0),
+            );
+            rt.frame(0.0);
+            let tree = rt.accessibility_json();
+            assert!(node(&tree, "mcp-refresh").is_some(), "{tree}");
+            assert!(node(&tree, "mcp-switch-docs").is_some(), "{tree}");
+        });
+    });
+}
+
+#[test]
+fn timer_transitions_update_a11y_at_rest_and_escape_restores_focus() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let mut backend = http.backend.clone();
+        backend.session_directory = Some("/repo/a".into());
+
+        let mut s = crate::init();
+        s.status_services.bind(&backend);
+        s.status_services.online(true);
+        s.status_services.show(true);
+        s.status_services.plugins.expanded = true;
+        assert!(poll_at(&mut s, 10.0));
+        http.accept()
+            .await
+            .reply(
+                200,
+                sample_controls_snapshot("/repo/a", false, false, Some(REV_A)),
+            )
+            .await;
+        poll_until(&mut s, 10.0, |s| {
+            s.status_services.plugins.snapshot.is_some()
+        });
+
+        // Add source -> enters 120s Installing state.
+        s.status_services.plugins.open_add();
+        s.status_services.plugins.add_spec = rune::TextEdit::new("@acme/pending@1.0.0");
+        s.status_services.plugins.submit_add(&s.wake);
+        http.accept()
+            .await
+            .reply(
+                200,
+                json!({ "scope": "global", "spec": "@acme/pending@1.0.0", "reloadPending": true }),
+            )
+            .await;
+        poll_until(&mut s, 10.0, |s| s.status_services.plugins.reading());
+        let mut with_pending = sample_controls_snapshot("/repo/a", false, false, Some(REV_A));
+        with_pending["configured"]["sources"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "target": "@acme/pending@1.0.0",
+                "scope": "global",
+                "path": "/home/opencode.jsonc",
+                "entryIndex": 1,
+                "expectedRevision": REV_A
+            }));
+        http.accept().await.reply(200, with_pending).await;
+        poll_until(&mut s, 10.0, |s| {
+            !s.status_services.plugins.reading() && !s.status_services.plugins.write_unconfirmed
+        });
+
+        layout::with_source_palette(|| {
+            let mut rt = Runtime::new(
+                s,
+                |st, cx| {
+                    layout::render(cx, |_| col().full_width().full_height().children(view(st)))
+                },
+                (360.0, 620.0),
+                Env::new(false, 1.0),
+            );
+            rt.frame(10.0);
+            let is_focused = |rt: &Runtime<State>, key: &str| {
+                rt.elements()
+                    .iter()
+                    .any(|e| e.focused && e.key.as_deref() == Some(key))
+            };
+            // Open confirmation from the Remove button via real keyboard Enter.
+            rt.update(|_, tx| tx.focus("plugin-remove-global-@acme/plugin", true));
+            rt.frame(10.0);
+            assert!(is_focused(&rt, "plugin-remove-global-@acme/plugin"));
+            rt.key(rune::KeyEvent {
+                key: rune::Key::Enter,
+                mods: rune::Mods::default(),
+            });
+            rt.frame(10.0);
+            rt.frame(10.0);
+            assert!(is_focused(&rt, "plugins-remove-cancel"));
+            let is_disabled = |el: &Value| {
+                el["states"]
+                    .as_array()
+                    .is_some_and(|states| states.iter().any(|s| s == "disabled"))
+            };
+            let before = rt.accessibility_json();
+            let confirm_before = node(&before, "plugins-remove-confirm").expect("confirm button");
+            assert!(is_disabled(confirm_before), "{before}");
+            let installing = t("instanceServiceStatus.plugins.sources.pendingLabel");
+            assert!(before.to_string().contains(installing), "{before}");
+
+            // Before 0.6s: poll returns false (no unnecessary redraw) and schedules wakeup.
+            assert!(!poll_at(&mut rt.state, 10.3));
+            // At +0.6s with NO user input: poll reports changed=true and confirm button enables in a11y.
+            assert!(poll_at(&mut rt.state, 10.65));
+            rt.update(|_, _| {});
+            rt.frame(10.65);
+            let ready = rt.accessibility_json();
+            let confirm_ready = node(&ready, "plugins-remove-confirm").expect("confirm button");
+            assert!(!is_disabled(confirm_ready), "{ready}");
+            // Subsequent idle poll before expiry does not spin.
+            assert!(!poll_at(&mut rt.state, 10.7));
+
+            // Real Escape key closes confirmation and restores keyboard focus to the trigger button.
+            rt.key(rune::KeyEvent {
+                key: rune::Key::Escape,
+                mods: rune::Mods::default(),
+            });
+            rt.frame(10.7);
+            rt.frame(10.7);
+            assert!(node(&rt.accessibility_json(), "plugins-remove-dialog").is_none());
+            assert!(is_focused(&rt, "plugin-remove-global-@acme/plugin"));
+
+            // At +121s with NO user input: poll reports changed=true and Installing becomes Not confirmed.
+            assert!(poll_at(&mut rt.state, 131.0));
+            rt.update(|_, _| {});
+            rt.frame(131.0);
+            let expired = rt.accessibility_json();
+            let unconfirmed = t("instanceServiceStatus.plugins.sources.unconfirmedLabel");
+            assert!(expired.to_string().contains(unconfirmed), "{expired}");
+            assert!(
+                node(&expired, "plugin-src-refresh-@acme/pending@1.0.0").is_some(),
+                "{expired}"
+            );
+            assert!(!poll_at(&mut rt.state, 131.5));
+        });
+    });
+}
+
+#[test]
+fn managed_reload_pending_detached_native_status_and_multitab_package_fence() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let mut backend = http.backend.clone();
+        backend.session_directory = Some("/repo/m".into());
+
+        let managed_snap = |disabled: bool, active: bool| {
+            json!({
+                "location": { "directory": "/repo/m" },
+                "runtime": [{
+                    "key": "acme-plugin",
+                    "id": "acme-plugin",
+                    "source": { "type": "package", "target": "@acme/plugin", "version": "1.0.0", "outdated": true },
+                    "features": { "server": true },
+                    "state": { "status": "active" }
+                }],
+                "configured": { "rules": [], "sources": [] },
+                "controls": [
+                    {
+                        "id": "codenomad.memory",
+                        "managedBy": "codenomad",
+                        "builtin": false,
+                        "effective": if disabled { "disabled" } else { "enabled" },
+                        "global": "default",
+                        "project": if disabled { "disabled" } else { "enabled" },
+                        "controllingRule": { "selector": "codenomad.memory", "enabled": !disabled, "scope": "project", "path": "/repo/m/opencode.jsonc" },
+                        "runtime": if active {
+                            json!({
+                                "key": "mem",
+                                "id": "codenomad.memory",
+                                "managedBy": "codenomad",
+                                "source": { "type": "local", "path": "/opt/mem.js" },
+                                "features": { "server": true },
+                                "state": { "status": "active" }
+                            })
+                        } else {
+                            json!(null)
+                        }
+                    },
+                    {
+                        "id": "acme-plugin",
+                        "builtin": false,
+                        "effective": "enabled",
+                        "global": "default",
+                        "project": "default",
+                        "runtime": {
+                            "key": "acme-plugin",
+                            "id": "acme-plugin",
+                            "source": { "type": "package", "target": "@acme/plugin", "version": "1.0.0", "outdated": true },
+                            "features": { "server": true },
+                            "state": { "status": "active" }
+                        }
+                    }
+                ],
+                "targets": [
+                    { "scope": "global", "path": "/home/opencode.jsonc", "exists": true, "expectedRevision": REV_A },
+                    { "scope": "project", "path": "/repo/m/opencode.jsonc", "exists": true, "expectedRevision": REV_A }
+                ]
+            })
+        };
+
+        let mut tab_a = crate::init();
+        let mut tab_b = crate::init();
+        for tab in [&mut tab_a, &mut tab_b] {
+            tab.status_services.bind(&backend);
+            tab.status_services.online(true);
+            tab.status_services.show(true);
+            tab.status_services.plugins.expanded = true;
+            assert!(poll_at(tab, 1.0));
+            http.accept()
+                .await
+                .reply(200, managed_snap(true, true))
+                .await;
+            poll_until(tab, 1.0, |s| s.status_services.plugins.snapshot.is_some());
+        }
+
+        // Re-enable managed plugin: PATCH returns reloadPending=true with stale active runtime -> stays in attention!
+        tab_a.status_services.plugins.toggle_activation(
+            "codenomad.memory".into(),
+            Scope::Project,
+            true,
+            true,
+            &tab_a.wake,
+        );
+        let req = http.accept().await;
+        assert_eq!(req.body["managedBy"], "codenomad");
+        req.reply(
+            200,
+            json!({
+                "snapshot": managed_snap(false, true),
+                "changed": true,
+                "reloadPending": true
+            }),
+        )
+        .await;
+        poll_until(&mut tab_a, 1.0, |s| !s.status_services.plugins.write_active);
+        assert!(
+            tab_a
+                .status_services
+                .plugins
+                .runtime_unconfirmed
+                .contains("codenomad.memory")
+        );
+        assert_eq!(
+            tab_a
+                .status_services
+                .plugins
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .system_attention_entries(&tab_a.status_services.plugins.runtime_unconfirmed)
+                .len(),
+            1
+        );
+
+        // Subsequent fresh GET confirms runtime -> clears runtime_unconfirmed.
+        tab_a.status_services.plugins.invalidate(None);
+        assert!(poll_at(&mut tab_a, 2.0));
+        http.accept()
+            .await
+            .reply(200, managed_snap(false, true))
+            .await;
+        poll_until(&mut tab_a, 2.0, |s| !s.status_services.plugins.reading());
+        assert!(tab_a.status_services.plugins.runtime_unconfirmed.is_empty());
+
+        // Tab A updates @acme/plugin -> Tab B's stale snapshot CANNOT fire Update before reconciling!
+        tab_a
+            .status_services
+            .plugins
+            .run_package("@acme/plugin".into(), true, &tab_a.wake);
+        http.accept().await.reply(204, json!(null)).await;
+        poll_until(&mut tab_a, 2.0, |s| {
+            !s.status_services.plugins.package_busy("@acme/plugin")
+                && s.status_services.plugins.reading()
+        });
+        http.accept()
+            .await
+            .reply(200, managed_snap(false, true))
+            .await;
+        poll_until(&mut tab_a, 2.0, |s| !s.status_services.plugins.reading());
+
+        tab_b
+            .status_services
+            .plugins
+            .run_package("@acme/plugin".into(), true, &tab_b.wake);
+        http.quiet().await;
+
+        // Detached NativeStreamStatus disconnect revokes consent and locks writes; reconnect requires GET.
+        let mut tx = Tx::default();
+        tab_a.status_services.plugins.request_remove_confirm(
+            codenomad_client::plugins::RemovalTarget {
+                scope: Scope::Global,
+                target: "@acme/plugin".into(),
+                path: None,
+                entry_index: Some(0),
+                expected_revision: REV_A.into(),
+            },
+            "plugin-remove-global-@acme/plugin".into(),
+            &mut tx,
+        );
+        assert!(tab_a.status_services.plugins.confirm_remove.is_some());
+        tab_a
+            .status_services
+            .event(&WorkspaceEvent::NativeStreamStatus {
+                workspace_id: "owned".into(),
+                connected: false,
+            });
+        assert!(tab_a.status_services.plugins.confirm_remove.is_none());
+        assert!(tab_a.status_services.plugins.write_unconfirmed);
+        tab_a
+            .status_services
+            .event(&WorkspaceEvent::NativeStreamStatus {
+                workspace_id: "owned".into(),
+                connected: true,
+            });
+        assert!(tab_a.status_services.plugins.write_unconfirmed);
     });
 }

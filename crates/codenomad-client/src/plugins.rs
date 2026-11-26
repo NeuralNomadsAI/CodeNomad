@@ -7,9 +7,11 @@ mod parse;
 #[cfg(test)]
 mod tests;
 
+pub use http::{
+    ActivationResult, add_source, load, remove_source, run_package_action, set_activation,
+};
 #[cfg(test)]
-pub(crate) use http::is_route_not_found_body;
-pub use http::{add_source, load, remove_source, run_package_action, set_activation};
+pub(crate) use http::{add_source_with_timeout, is_route_not_found_body};
 pub(crate) use http::{classify_action_error, route_unavailable};
 #[cfg(test)]
 pub(crate) use parse::parse_snapshot;
@@ -18,6 +20,9 @@ const MAX_RESPONSE_BYTES: usize = 512 * 1024;
 const MAX_ITEMS: usize = 512;
 const MAX_SPEC_CHARS: usize = 512;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+// Exceeds server PLUGIN_SOURCE_ADD_TIMEOUT_MS (20s) + PLUGIN_SOURCE_ABORT_GRACE_MS (5s)
+// with headroom for a request waiting behind one prior queued add turn.
+pub(crate) const ADD_SOURCE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Scope {
@@ -311,7 +316,10 @@ impl Snapshot {
         seen
     }
 
-    pub fn system_attention_entries(&self) -> Vec<SystemAttentionEntry> {
+    pub fn system_attention_entries(
+        &self,
+        runtime_unconfirmed: &std::collections::HashSet<String>,
+    ) -> Vec<SystemAttentionEntry> {
         use std::collections::{HashMap, HashSet};
         let mut order: Vec<String> = Vec::new();
         let mut by_key: HashMap<
@@ -412,12 +420,15 @@ impl Snapshot {
                 continue;
             }
             let disabled = control.is_some_and(|c| c.effective == ScopeRuleState::Disabled);
+            let unconfirmed = runtime_unconfirmed.contains(&name);
             let active = runtime.is_some_and(|r| matches!(r.state, RuntimeState::Active));
-            if !disabled && active {
+            if !disabled && !unconfirmed && active {
                 continue;
             }
             let kind = if disabled {
                 SystemAttentionKind::Disabled
+            } else if unconfirmed {
+                SystemAttentionKind::Unconfirmed
             } else if runtime.is_some_and(|r| matches!(r.state, RuntimeState::Failed { .. })) {
                 SystemAttentionKind::Failed
             } else {

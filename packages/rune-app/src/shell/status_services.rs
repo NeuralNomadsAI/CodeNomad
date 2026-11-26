@@ -61,6 +61,10 @@ impl Services {
         self.plugins.invalidate(directory);
     }
 
+    pub(crate) fn dismiss_confirm(&mut self, tx: &mut rune::Tx) -> bool {
+        self.plugins.cancel_remove_confirm(tx)
+    }
+
     pub(crate) fn event(&mut self, event: &WorkspaceEvent) {
         match event {
             WorkspaceEvent::PluginsChanged { directory, .. } => {
@@ -72,6 +76,14 @@ impl Services {
             WorkspaceEvent::ServicesConfigChanged { .. } => {
                 self.plugins.invalidate(None);
                 self.mcp.invalidate();
+            }
+            WorkspaceEvent::NativeStreamStatus { connected, .. } => {
+                if *connected {
+                    self.mcp.require_revalidation();
+                    self.plugins.require_revalidation();
+                } else {
+                    self.online(false);
+                }
             }
             WorkspaceEvent::Stopped { .. } => {
                 self.online(false);

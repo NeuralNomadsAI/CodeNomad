@@ -139,6 +139,13 @@ pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> 
     if event.key == Key::Escape && crate::timeline::dismiss_preview(s) {
         return true;
     }
+    if !tx.key_repeat()
+        && event.mods == Mods::default()
+        && event.key == Key::Escape
+        && s.status_services.dismiss_confirm(tx)
+    {
+        return true;
+    }
     if event.key == Key::Tab && !event.mods.ctrl && !event.mods.cmd && !event.mods.alt {
         return s.shell.wrap_floating_focus(event.mods.shift, tx);
     }
