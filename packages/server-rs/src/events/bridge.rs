@@ -504,6 +504,7 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                     IntegrationRelay::Relay(event) => event,
                     IntegrationRelay::Drop => continue,
                     IntegrationRelay::Malformed => {
+                        keep_connection = true;
                         disconnect_reason = "Invalid location".into();
                         break;
                     }

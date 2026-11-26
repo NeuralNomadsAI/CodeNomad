@@ -28,11 +28,20 @@ struct NativeState {
     root: PathBuf,
     foreign: PathBuf,
     calls: Mutex<Vec<String>>,
+    global_form_scopes: Mutex<Vec<(String, Option<String>, Option<String>)>>,
 }
 
 async fn fake_native(State(state): State<Arc<NativeState>>, req: Request) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_owned();
+    let query_dir = req.uri().query().and_then(|q| {
+        reqwest::Url::parse(&format!("http://localhost/?{q}"))
+            .ok()?
+            .query_pairs()
+            .find(|(k, _)| k == "location[directory]")
+            .map(|(_, v)| v.into_owned())
+    });
+    let header_dir = req.headers().get("x-opencode-directory").and_then(|v| v.to_str().ok()).map(str::to_owned);
     state.calls.lock().unwrap().push(format!("{method} {path}"));
     match (method, path.as_str()) {
         (Method::GET, "/api/config") => Json(json!([{"type": "directory", "path": state.root}])).into_response(),
@@ -87,8 +96,14 @@ async fn fake_native(State(state): State<Arc<NativeState>>, req: Request) -> Res
         .into_response(),
         (Method::POST, "/api/session/ses_owned/form/frm_1/reply") => Status::NO_CONTENT.into_response(),
         (Method::DELETE, "/api/session/ses_owned/form/frm_1") => Status::NO_CONTENT.into_response(),
-        (Method::POST, "/api/session/global/form/frm_g1/reply") => Status::NO_CONTENT.into_response(),
-        (Method::DELETE, "/api/session/global/form/frm_g1") => Status::NO_CONTENT.into_response(),
+        (Method::POST, "/api/session/global/form/frm_g1/reply") => {
+            state.global_form_scopes.lock().unwrap().push(("reply".into(), query_dir, header_dir));
+            Status::NO_CONTENT.into_response()
+        }
+        (Method::DELETE, "/api/session/global/form/frm_g1") => {
+            state.global_form_scopes.lock().unwrap().push(("cancel".into(), query_dir, header_dir));
+            Status::NO_CONTENT.into_response()
+        }
         (Method::POST, "/api/session/ses_owned/revert/stage") => Json(json!({"staged": true})).into_response(),
         (Method::DELETE, "/api/session/ses_owned/revert") => Status::NO_CONTENT.into_response(),
         (Method::POST, "/api/session/ses_owned/fork") => Json(json!({
@@ -231,11 +246,19 @@ async fn paired_browser_and_server_device_admit_session_controls_and_reject_out_
         percent_encoding::utf8_percent_encode(foreign.to_str().unwrap(), percent_encoding::NON_ALPHANUMERIC)
             .to_string();
 
-    let native_state = Arc::new(NativeState { root: root.clone(), foreign, calls: Mutex::new(Vec::new()) });
+    let native_state = Arc::new(NativeState {
+        root: root.clone(),
+        foreign,
+        calls: Mutex::new(Vec::new()),
+        global_form_scopes: Mutex::new(Vec::new()),
+    });
     let native_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let native_addr = native_listener.local_addr().unwrap();
+    let native_for_task = Arc::clone(&native_state);
     let native_task = tokio::spawn(async move {
-        axum::serve(native_listener, Router::new().fallback(any(fake_native)).with_state(native_state)).await.unwrap();
+        axum::serve(native_listener, Router::new().fallback(any(fake_native)).with_state(native_for_task))
+            .await
+            .unwrap();
     });
 
     let host = "192.168.1.40:9898";
@@ -336,13 +359,43 @@ async fn paired_browser_and_server_device_admit_session_controls_and_reject_out_
                 .unwrap();
         assert_eq!(redo_carrier_meta.status(), Status::FORBIDDEN, "{label} revert delete reserved metadata");
 
-        // Global form reply and cancel (owned directory admitted, foreign/workspace refused)
+        // Global form reply and cancel (unscoped adds location[directory]; explicit header forwards without duplicating query; foreign refused)
+        native_state.global_form_scopes.lock().unwrap().clear();
         let global_prefix = format!("{base}/workspaces/{ws_id}/instance/api/session/global/form/frm_g1");
         let global_reply =
             send(Method::POST, format!("{global_prefix}/reply"), Some(json!({"answer": {"ok": true}}))).await.unwrap();
         assert_eq!(global_reply.status(), Status::NO_CONTENT, "{label} global form reply");
         let global_cancel = send(Method::DELETE, global_prefix.clone(), None).await.unwrap();
         assert_eq!(global_cancel.status(), Status::NO_CONTENT, "{label} global form cancel");
+        let owned_encoded =
+            percent_encoding::utf8_percent_encode(root.to_str().unwrap(), percent_encoding::NON_ALPHANUMERIC)
+                .to_string();
+        let mut global_scoped = client
+            .post(format!("{global_prefix}/reply"))
+            .header(header::HOST, host)
+            .header(header::COOKIE, cookie)
+            .header("x-opencode-directory", owned_encoded.as_str())
+            .json(&json!({"answer": {"ok": true}}));
+        if is_server {
+            global_scoped = global_scoped.header("x-codenomad-server-request", "1");
+        } else {
+            global_scoped = global_scoped.header(header::ORIGIN, &origin);
+        }
+        assert_eq!(
+            global_scoped.send().await.unwrap().status(),
+            Status::NO_CONTENT,
+            "{label} global form owned header"
+        );
+        let root_str = root.to_string_lossy().into_owned();
+        assert_eq!(
+            *native_state.global_form_scopes.lock().unwrap(),
+            vec![
+                ("reply".into(), Some(root_str.clone()), None),
+                ("cancel".into(), Some(root_str), None),
+                ("reply".into(), None, Some(owned_encoded)),
+            ],
+            "{label} global form upstream location scopes"
+        );
         let mut global_foreign = client
             .post(format!("{global_prefix}/reply"))
             .header(header::HOST, host)
@@ -482,12 +535,25 @@ async fn remote_memory_requires_multi_backend_for_browsers_and_preserves_local_a
 
     // 2b. Refusal ordering parity (TS gate.ts):
     //     - Ingress browser POST /api/memory without Origin returns 403 even when multiBackend is off.
+    //     - Ingress unauthenticated server-header POST /api/memory without Origin returns 403 (not 404).
     //     - Direct HTTPS unauthenticated server-device on an unlisted memory method returns 401 (paired gets 404).
     assert_eq!(
         client
             .post(format!("{ingress_base}/api/memory"))
             .header(header::HOST, ingress_host)
             .header(header::COOKIE, &ingress_browser)
+            .json(&json!({"operation": {"action": "list", "scope": "global"}}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        Status::FORBIDDEN
+    );
+    assert_eq!(
+        client
+            .post(format!("{ingress_base}/api/memory"))
+            .header(header::HOST, ingress_host)
+            .header("x-codenomad-server-request", "1")
             .json(&json!({"operation": {"action": "list", "scope": "global"}}))
             .send()
             .await
@@ -613,6 +679,18 @@ async fn remote_memory_requires_multi_backend_for_browsers_and_preserves_local_a
             .header(header::COOKIE, &ingress_server)
             .header("x-codenomad-server-request", "1")
             .json(&json!({"operation": {"action": "list", "scope": "global"}}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        Status::NOT_FOUND
+    );
+    // Unpaired ingress GET /api/memory/settings stays 404 (not 401) even when multiBackend is on.
+    assert_eq!(
+        client
+            .get(format!("{ingress_base}/api/memory/settings"))
+            .header(header::HOST, ingress_host)
+            .header(header::ORIGIN, &ingress_origin)
             .send()
             .await
             .unwrap()

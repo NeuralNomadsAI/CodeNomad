@@ -699,7 +699,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             prompt_input: &mut prompt_input,
             prompt_locations: &prompt_locations,
             trace_fence,
-            explicit: explicit || global_form,
+            explicit: explicit || global_form_directory.is_some(),
             session_list,
             target: &mut target,
         }))

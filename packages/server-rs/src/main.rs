@@ -96,7 +96,12 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     git::empty_hooks(&data.join("git-empty-hooks"))?;
     let identity_ok = match identity {
         Some(path) => match data_owner::foreign(path) {
-            Ok(true) => return Err("Identity file is owned by another account".into()),
+            Ok(true) => {
+                eprintln!(
+                    "Stable server identity unavailable; backend compatibility falls back: Identity file is owned by another account"
+                );
+                false
+            }
             Ok(false) => true,
             Err(err) => {
                 eprintln!("Stable server identity unavailable; backend compatibility falls back: {err}");

@@ -2,6 +2,7 @@
 //! the user's Git configuration.
 mod branches;
 mod config_guard;
+pub use config_guard::host_filter_disables;
 mod history;
 mod repository_source;
 mod status_read;
@@ -67,9 +68,6 @@ pub struct Output {
 impl Output {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
-    }
-    pub fn stderr_contains(&self, needle: &str) -> bool {
-        String::from_utf8_lossy(&self.err).contains(needle)
     }
     pub fn ok(self) -> Result<Self, Error> {
         if self.code == 0 { Ok(self) } else { Err(bad("Git read failed")) }

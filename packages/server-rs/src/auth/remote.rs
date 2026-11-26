@@ -242,11 +242,8 @@ pub async fn admit(
         .filter(|_| !server && direct)
         .and_then(|bundle| bundle.path(&method, &path).map(|asset| (bundle, asset)));
     let has_server_header = h.contains_key("x-codenomad-server-request");
-    let multi_backend = !has_server_header && crate::previews::backend::enabled(&app);
-    let preview_ui = multi_backend && preview_control(&path, &method);
     let memory_path = path == "/api/memory" || path.starts_with("/api/memory/");
     let memory_route = memory_relay_route(&path, &method);
-    let memory_ui = multi_backend && memory_route;
     // Direct HTTPS server-device catalog retains authenticated memory relay; ingress stays closed.
     let server_memory = server && !channel.ingress && memory_route;
     let remote_logout = !server && method == Method::POST && path == "/api/auth/logout";
@@ -275,9 +272,6 @@ pub async fn admit(
         }
         return cors(next.run(req).await, supplied);
     }
-    if !server && !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok {
-        return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
-    }
     let Ok((_, token)) = crate::auth::cookies(h, app.auth.cookie_name()) else {
         return cors(reply(Status::BAD_REQUEST, "Invalid cookie"), supplied);
     };
@@ -289,11 +283,22 @@ pub async fn admit(
             tunnel_active,
         )
     });
-    // Direct HTTPS server-device and memory requests authenticate before route-catalog 404s
-    // (TS `gate.ts:133-138, 231-245`).
-    if !channel.ingress && owner.is_none() && (server || memory_path) {
+    let server_authenticated = server && owner.is_some();
+    // Direct HTTPS server-device requests authenticate before origin/catalog checks
+    // (TS `gate.ts:133-138`); ingress unauthenticated mutations fail origin check with 403
+    // even when `x-codenomad-server-request: 1` is sent (`gate.ts:177-183`).
+    if !channel.ingress && server && owner.is_none() {
         return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
     }
+    if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok && !server_authenticated {
+        return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
+    }
+    if !channel.ingress && owner.is_none() && memory_path {
+        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
+    }
+    let multi_backend = !has_server_header && owner.is_some() && crate::previews::backend::enabled(&app);
+    let preview_ui = multi_backend && preview_control(&path, &method);
+    let memory_ui = multi_backend && memory_route;
     if path.starts_with("/api/auth/") && path != "/api/auth/status" && !remote_logout
         || (path.starts_with("/api/backends/") && !preview_ui)
         || (memory_path && !memory_ui && !server_memory)
