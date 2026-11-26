@@ -20,12 +20,26 @@ use std::{
     rc::Rc,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CloseConfirm {
+    ConfigFiles,
+    Palette,
+    Memory,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AfterPaletteSave {
+    Close,
+    Section(Section),
+}
+
 #[derive(Default)]
 pub(super) struct Window {
     shared: Rc<RefCell<Preferences>>,
     token: Option<Rc<Cell<bool>>>,
     close_request: Option<Rc<CloseRequest>>,
-    confirm_close: bool,
+    confirm_close: Option<CloseConfirm>,
+    after_palette_save: Option<(u64, AfterPaletteSave)>,
     closing: bool,
     general: super::general::Controls,
     transcript_picker: Cell<Option<super::TranscriptRow>>,
@@ -34,12 +48,14 @@ pub(super) struct Window {
     memory_editor: super::memory::editor::Editor,
     seen_revision: u64,
     section: Section,
+    pending_section: Option<Section>,
     recording_shortcut: bool,
     shortcut_capture: super::shortcuts::editor::Capture,
     shortcut_filter: rune::TextEdit,
     pub(super) opencode: opencode::Status,
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
+    integrations: super::integrations::Panel,
     stats: super::stats::Dashboard,
     remote: remote::Remote,
     info: info::Info,
@@ -54,17 +70,22 @@ pub(super) struct Window {
 #[derive(Default)]
 pub(super) struct CloseRequest {
     pub requested: Cell<bool>,
+    pub guard_close: Cell<bool>,
+    pub close_main_after: Cell<bool>,
+    pub close_main_now: Cell<bool>,
     pub reopen: RefCell<Option<super::memory::editor::Editor>>,
     pub config_reopen: RefCell<Option<super::config_files::Editor>>,
+    pub palette_reopen: RefCell<Option<super::general::Controls>>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
     General,
     Conversation,
     OpenCode,
     Notifications,
     Providers,
+    Integrations,
     Shortcuts,
     Stats,
     Remote,
@@ -95,7 +116,7 @@ impl Window {
     }
 
     fn start_opencode_install(&mut self) {
-        if self.section == Section::OpenCode && !self.confirm_close && !self.closing {
+        if self.section == Section::OpenCode && self.confirm_close.is_none() && !self.closing {
             let mut prefs = self.shared.borrow_mut();
             let wake = prefs.window_wake.clone();
             self.opencode.start(&mut prefs, wake);
@@ -118,7 +139,7 @@ impl Window {
         self.close_request = Some(request);
         if let Some(editor) = editor {
             self.memory_editor = editor;
-            self.confirm_close = true;
+            self.confirm_close = Some(CloseConfirm::Memory);
         }
         if let Some(editor) = self
             .close_request
@@ -127,14 +148,78 @@ impl Window {
         {
             self.config_files = editor;
             self.section = Section::ConfigFiles;
-            self.confirm_close = self.config_files.dirty() && !self.config_files.busy();
+            self.confirm_close = (self.config_files.dirty() && !self.config_files.busy())
+                .then_some(CloseConfirm::ConfigFiles);
+        }
+        if let Some(general) = self
+            .close_request
+            .as_ref()
+            .and_then(|request| request.palette_reopen.borrow_mut().take())
+        {
+            self.general = general;
+            self.section = Section::General;
+            let prefs = self.shared.borrow();
+            let saving = self.general.busy(&prefs);
+            if saving {
+                self.after_palette_save = Some((prefs.binding_epoch(), AfterPaletteSave::Close));
+            } else {
+                self.confirm_close = self.general.dirty().then_some(CloseConfirm::Palette);
+            }
         }
         self
+    }
+
+    fn switch_section(&mut self, next: Section) {
+        self.general.close();
+        self.transcript_picker.set(None);
+        self.advanced_help = None;
+        self.recording_shortcut = false;
+        self.shortcut_capture = Default::default();
+        self.behavior.close();
+        self.section = next;
+        if self.section != Section::OpenCode {
+            self.opencode = opencode::Status::default();
+            self.logging.close();
+            self.shared.borrow_mut().hide_opencode();
+        }
+        self.shared
+            .borrow_mut()
+            .memory
+            .show(self.section == Section::General);
+        self.memory_help.clear();
+        if self.section != Section::Providers {
+            self.providers.suspend();
+        }
+        if self.section != Section::Integrations {
+            self.integrations.suspend();
+        }
+        if self.section != Section::Remote {
+            self.remote.close();
+        }
+        if self.section != Section::Info {
+            self.info.close();
+        }
+    }
+
+    fn can_open_section(&self, prefs: &Preferences, section: Section) -> bool {
+        match section {
+            Section::Stats => super::stats::supported(prefs),
+            Section::ConfigFiles => self.host_support.config_files(prefs),
+            _ => true,
+        }
     }
 
     fn request_close(&mut self, tx: &mut rune::Tx) {
         if self.config_files.busy() {
             return;
+        }
+        {
+            let mut prefs = self.shared.borrow_mut();
+            self.general.settle_save(&mut prefs);
+            if self.general.busy(&prefs) {
+                self.after_palette_save = Some((prefs.binding_epoch(), AfterPaletteSave::Close));
+                return;
+            }
         }
         self.info.close();
         {
@@ -144,18 +229,56 @@ impl Window {
         }
         self.logging.close();
         self.remote.close();
-        if self.memory_editor.has_unsaved() || self.config_files.dirty() {
-            self.confirm_close = true;
+        self.integrations.suspend();
+        if self.config_files.dirty() {
+            self.confirm_close = Some(CloseConfirm::ConfigFiles);
+        } else if self.general.dirty() {
+            self.confirm_close = Some(CloseConfirm::Palette);
+        } else if self.memory_editor.has_unsaved() {
+            self.confirm_close = Some(CloseConfirm::Memory);
         } else {
             self.closing = true;
+            if let Some(request) = &self.close_request
+                && request.close_main_after.replace(false)
+            {
+                request.close_main_now.set(true);
+                if let Some(wake) = &self.shared.borrow().main_wake {
+                    wake();
+                }
+            }
             tx.close_window();
         }
     }
 
+    pub(super) fn cancel_close_main(&self) {
+        if let Some(request) = &self.close_request {
+            request.close_main_after.set(false);
+        }
+    }
+
+    pub(super) fn sync_close_guard(&self, prefs: &Preferences) {
+        if let Some(request) = &self.close_request {
+            let guarded = !self.closing
+                && (self.memory_editor.has_unsaved()
+                    || self.config_files.dirty()
+                    || self.config_files.busy()
+                    || self.general.dirty()
+                    || self.general.busy(prefs));
+            request.guard_close.set(guarded);
+        }
+    }
+
     fn retain_editor_on_native_close(&mut self) -> bool {
+        let palette_saving = {
+            let mut prefs = self.shared.borrow_mut();
+            self.general.settle_save(&mut prefs);
+            self.general.busy(&prefs)
+        };
         if (!self.memory_editor.has_unsaved()
             && !self.config_files.dirty()
-            && !self.config_files.busy())
+            && !self.config_files.busy()
+            && !self.general.dirty()
+            && !palette_saving)
             || self.token.as_ref().is_some_and(|token| token.get())
         {
             return false;
@@ -170,6 +293,9 @@ impl Window {
             self.config_files.suspend();
             *request.config_reopen.borrow_mut() = Some(std::mem::take(&mut self.config_files));
         }
+        if self.general.dirty() || palette_saving {
+            *request.palette_reopen.borrow_mut() = Some(std::mem::take(&mut self.general));
+        }
         let mut prefs = self.shared.borrow_mut();
         prefs.window_wake = None;
         if let Some(wake) = &prefs.main_wake {
@@ -179,8 +305,10 @@ impl Window {
     }
 
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
+        self.integrations.suspend();
         {
             let mut prefs = self.shared.borrow_mut();
+            prefs.set_palette_preview(None);
             prefs.window_wake = None;
             prefs.hide_opencode();
             prefs.show_environment(false);
@@ -197,6 +325,7 @@ impl Window {
 pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     s.general.commit_palette(&s.shared, cx.system_dark());
     let prefs = s.shared.borrow();
+    s.sync_close_guard(&prefs);
     if prefs.awaiting_appearance() {
         return rune::el().key("preferences-bootstrap");
     }
@@ -204,11 +333,12 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     let system_more = cx.system_increased_contrast();
     s.general
         .close_palette_on_slot_change(prefs.dark(system_dark));
-    render_with(cx, &prefs, system_more, |cx| {
+    render_with(cx, &prefs, system_more, true, |cx| {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
         let notifications_label = t("settings.nav.notifications");
         let providers_label = t("settings.nav.providers");
+        let integrations_label = t("settings.nav.integrations");
         let stats_label = t("settings.usage.title");
         let conversation_label = t("settings.nav.chat");
         let shortcuts_label = t("settings.nav.hotkeys");
@@ -222,6 +352,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::OpenCode => opencode_label,
             Section::Notifications => notifications_label,
             Section::Providers => providers_label,
+            Section::Integrations => integrations_label,
             Section::Shortcuts => shortcuts_label,
             Section::Stats => stats_label,
             Section::Remote => remote_label,
@@ -258,6 +389,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     providers_label,
                     s.section == Section::Providers,
                 ),
+                (
+                    "settings-integrations",
+                    integrations_label,
+                    s.section == Section::Integrations,
+                ),
                 ("settings-stats", stats_label, s.section == Section::Stats),
                 (
                     "settings-hotkeys",
@@ -292,17 +428,12 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 if s.config_files.busy() {
                     return;
                 }
-                s.general.close();
-                s.transcript_picker.set(None);
-                s.advanced_help = None;
-                s.recording_shortcut = false;
-                s.shortcut_capture = Default::default();
-                s.behavior.close();
-                s.section = match key {
+                let next = match key {
                     "settings-opencode" => Section::OpenCode,
                     "settings-conversation" => Section::Conversation,
                     "settings-notifications" => Section::Notifications,
                     "settings-providers" => Section::Providers,
+                    "settings-integrations" => Section::Integrations,
                     "settings-hotkeys" => Section::Shortcuts,
                     "settings-stats" if super::stats::supported(&s.shared.borrow()) => {
                         Section::Stats
@@ -313,25 +444,20 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-info" => Section::Info,
                     _ => Section::General,
                 };
-                if s.section != Section::OpenCode {
-                    s.opencode = opencode::Status::default();
-                    s.logging.close();
-                    s.shared.borrow_mut().hide_opencode();
+                if next != s.section {
+                    let prefs = s.shared.borrow();
+                    if s.general.busy(&prefs) {
+                        s.after_palette_save =
+                            Some((prefs.binding_epoch(), AfterPaletteSave::Section(next)));
+                        return;
+                    }
+                    drop(prefs);
+                    if s.general.dirty() {
+                        s.pending_section = Some(next);
+                        return;
+                    }
                 }
-                s.shared
-                    .borrow_mut()
-                    .memory
-                    .show(s.section == Section::General);
-                s.memory_help.clear();
-                if s.section != Section::Providers {
-                    s.providers.suspend();
-                }
-                if s.section != Section::Remote {
-                    s.remote.close();
-                }
-                if s.section != Section::Info {
-                    s.info.close();
-                }
+                s.switch_section(next);
             },
         );
         let mut layers = Vec::new();
@@ -369,7 +495,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     s.recording_shortcut,
                     &s.shortcut_capture,
                     |s| {
-                        (s.section == Section::Shortcuts && !s.closing && !s.confirm_close)
+                        (s.section == Section::Shortcuts && !s.closing && s.confirm_close.is_none())
                             .then_some((&mut s.recording_shortcut, &mut s.shortcut_capture))
                     },
                 ),
@@ -438,7 +564,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             }
             Section::General => (
                 "general",
-                general::view(s, &prefs, system_dark, system_more, &mut layers),
+                general::view(s, cx, &prefs, system_dark, system_more, &mut layers),
             ),
             Section::Notifications => (
                 "notifications",
@@ -459,10 +585,17 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             .is_some_and(providers::Target::online),
                 ),
             ),
+            Section::Integrations => (
+                "integrations",
+                super::integrations::view(&s.integrations, &mut layers, |s: &mut Window| {
+                    (s.section == Section::Integrations && !s.closing && s.confirm_close.is_none())
+                        .then_some(&mut s.integrations)
+                }),
+            ),
             Section::Stats => (
                 "stats",
                 super::stats::view(cx, &s.stats, &mut layers, |s: &mut Window| {
-                    (s.section == Section::Stats && !s.closing && !s.confirm_close)
+                    (s.section == Section::Stats && !s.closing && s.confirm_close.is_none())
                         .then_some(&mut s.stats)
                 }),
             ),
@@ -471,7 +604,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 s.remote.view(
                     &s.shared,
                     |s: &mut Window| {
-                        (s.section == Section::Remote && !s.closing && !s.confirm_close)
+                        (s.section == Section::Remote && !s.closing && s.confirm_close.is_none())
                             .then_some(&mut s.remote)
                     },
                     |s: &mut Window| &mut s.remote,
@@ -512,11 +645,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 s.info.view(
                     &s.shared,
                     |s: &mut Window| {
-                        (s.section == Section::Info && !s.confirm_close && !s.closing)
+                        (s.section == Section::Info && s.confirm_close.is_none() && !s.closing)
                             .then_some(&mut s.info)
                     },
                     Some(|s: &mut Window| {
-                        if s.section == Section::Info && !s.confirm_close && !s.closing {
+                        if s.section == Section::Info && s.confirm_close.is_none() && !s.closing {
                             s.info.close();
                             s.section = Section::Remote;
                         }
@@ -533,27 +666,74 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         ) {
             layers.push(editor);
         }
-        if s.confirm_close && s.config_files.dirty() {
+        let palette_saving = s.general.busy(&prefs);
+        let active_confirm_close = match s.confirm_close {
+            Some(CloseConfirm::ConfigFiles) if s.config_files.dirty() => {
+                Some(CloseConfirm::ConfigFiles)
+            }
+            Some(CloseConfirm::Palette) if s.general.dirty() && !palette_saving => {
+                Some(CloseConfirm::Palette)
+            }
+            Some(CloseConfirm::Memory) if s.memory_editor.has_unsaved() => {
+                Some(CloseConfirm::Memory)
+            }
+            _ => None,
+        };
+        if active_confirm_close == Some(CloseConfirm::ConfigFiles) {
             layers.push(super::config_files::confirm_discard(
                 |s: &mut Window, accept, tx| {
-                    s.confirm_close = false;
+                    s.confirm_close = None;
                     if accept {
                         s.config_files = Default::default();
                         s.request_close(tx);
+                    } else {
+                        s.cancel_close_main();
                     }
                 },
             ));
-        } else if s.confirm_close {
+        } else if active_confirm_close == Some(CloseConfirm::Palette) {
+            layers.push(super::config_files::confirm_discard(
+                |s: &mut Window, accept, tx| {
+                    s.confirm_close = None;
+                    if accept {
+                        let mut prefs = s.shared.borrow_mut();
+                        s.general.discard_draft(&mut prefs);
+                        drop(prefs);
+                        s.request_close(tx);
+                    } else {
+                        s.cancel_close_main();
+                    }
+                },
+            ));
+        } else if active_confirm_close == Some(CloseConfirm::Memory) {
             layers.push(rune_theme_codenomad::document_reader::editor::confirmation(
                 layout::dark(),
                 t("settings.memory.discard"),
                 t("settings.memory.cancel"),
                 t("settings.memory.discardConfirm"),
                 |s: &mut Window, accept, tx| {
-                    s.confirm_close = false;
+                    s.confirm_close = None;
                     if accept {
                         s.memory_editor = Default::default();
                         s.request_close(tx);
+                    } else {
+                        s.cancel_close_main();
+                    }
+                },
+            ));
+        } else if let Some(next_section) = s.pending_section.filter(|&next| {
+            s.general.dirty() && !palette_saving && s.can_open_section(&prefs, next)
+        }) {
+            layers.push(super::config_files::confirm_discard(
+                move |s: &mut Window, accept, _| {
+                    s.pending_section = None;
+                    if accept && !s.config_files.busy() {
+                        let mut prefs = s.shared.borrow_mut();
+                        if !s.general.busy(&prefs) && s.can_open_section(&prefs, next_section) {
+                            s.general.discard_draft(&mut prefs);
+                            drop(prefs);
+                            s.switch_section(next_section);
+                        }
                     }
                 },
             ));

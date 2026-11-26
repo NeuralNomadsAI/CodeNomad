@@ -203,6 +203,32 @@ impl Store {
         self.has_matching_edits(|key| key.instance == tab_key)
     }
 
+    pub(crate) fn retained_bytes(&self) -> usize {
+        let (drafts, saved_bytes) = {
+            let store = lock(&self.0);
+            let saved = store.saved.iter().fold(0usize, |total, row| {
+                total
+                    .saturating_add(row.text.len())
+                    .saturating_add(row.key.path.len())
+                    .saturating_add(row.key.directory.len())
+            });
+            (store.drafts.values().cloned().collect::<Vec<_>>(), saved)
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut total = saved_bytes;
+        for shared in drafts {
+            if !seen.insert(Arc::as_ptr(&shared)) {
+                continue;
+            }
+            let draft = lock(&shared);
+            total = total
+                .saturating_add(draft.text.len())
+                .saturating_add(draft.original.as_ref().map_or(0, |snap| snap.text.len()))
+                .saturating_add(draft.uncertain.as_ref().map_or(0, |snap| snap.text.len()));
+        }
+        total
+    }
+
     pub(super) fn has_edits(&self, server: &str, instance: &str) -> bool {
         self.has_matching_edits(|key| key.server == server && key.instance == instance)
     }
@@ -304,9 +330,63 @@ impl Store {
         store.saved = saved;
         true
     }
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn file_draft_revision(&self) -> u64 {
         lock(&self.0).revision
+    }
+    pub(crate) fn mark_file_drafts_dirty_if_nonempty(&self) {
+        let mut store = lock(&self.0);
+        if !store.saved.is_empty() {
+            store.revision = store.revision.wrapping_add(1);
+        }
+    }
+    pub(crate) fn has_saved_file_drafts(&self) -> bool {
+        !lock(&self.0).saved.is_empty()
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn live_file_draft_bytes(&self) -> Option<Vec<u8>> {
+        let live: Vec<(SavedKey, Shared)> = {
+            let store = lock(&self.0);
+            store
+                .live
+                .iter()
+                .filter_map(|(key, pointer)| pointer.upgrade().map(|shared| (key.clone(), shared)))
+                .collect()
+        };
+        let active: std::collections::HashSet<SavedKey> = live
+            .into_iter()
+            .filter_map(|(key, shared)| {
+                let draft = lock(&shared);
+                (draft.owns_saved && draft.retained()).then_some(key)
+            })
+            .collect();
+        let store = lock(&self.0);
+        let rows: Vec<Saved> = store
+            .saved
+            .iter()
+            .filter(|row| active.contains(&row.key))
+            .cloned()
+            .collect();
+        (!rows.is_empty()).then(|| Self::encode(&rows))
+    }
+    pub(crate) fn discard_unopened_saved_drafts(&self) {
+        let live: Vec<(SavedKey, Shared)> = {
+            let mut store = lock(&self.0);
+            store.live.retain(|_, pointer| pointer.strong_count() > 0);
+            store
+                .live
+                .iter()
+                .filter_map(|(key, pointer)| pointer.upgrade().map(|shared| (key.clone(), shared)))
+                .collect()
+        };
+        let active: std::collections::HashSet<SavedKey> = live
+            .into_iter()
+            .filter_map(|(key, shared)| {
+                let draft = lock(&shared);
+                (draft.owns_saved && draft.retained()).then_some(key)
+            })
+            .collect();
+        let mut store = lock(&self.0);
+        store.saved.retain(|row| active.contains(&row.key));
     }
     pub(crate) fn file_draft_snapshot(&self, saved_revision: u64) -> Option<(u64, Vec<u8>)> {
         let store = lock(&self.0);

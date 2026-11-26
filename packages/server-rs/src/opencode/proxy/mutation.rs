@@ -121,12 +121,20 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     let InputRecheck { app, workspace, endpoint, principal, session, directory, actual, .. } = *recheck;
     let create = route == "/api/session" && head.method == Method::POST;
     let fork = session.is_some() && route.ends_with("/fork") && head.method == Method::POST;
+    let revert_stage = session.is_some() && route.ends_with("/revert/stage") && head.method == Method::POST;
     let background =
         route.starts_with("/api/session/") && route.ends_with("/background") && head.method == Method::POST;
-    let permissions_patch = session.is_some() && head.method == Method::PATCH;
+    let inbox_patch = session.is_some()
+        && head.method == Method::PATCH
+        && route.strip_prefix("/api/session/").and_then(|r| r.split_once("/inbox/")).is_some_and(|(sid, item)| {
+            !sid.is_empty() && !sid.contains('/') && !item.is_empty() && !item.contains('/')
+        });
+    let permissions_patch = session.is_some()
+        && head.method == Method::PATCH
+        && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/'));
     let mut root_permissions = None;
     let mut input = None;
-    if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH) {
+    if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE) {
         let mut body_empty = false;
         let data: Value = if let Some(data) = prompt_input.take() {
             data
@@ -187,10 +195,14 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 &["title", "location", "agent", "model"]
             } else if fork {
                 &["before"]
-            } else if background {
+            } else if revert_stage {
+                &["messageID", "partID"]
+            } else if background || head.method == Method::DELETE {
                 &[]
             } else if permissions_patch {
                 &["permissions"]
+            } else if inbox_patch {
+                &["delivery"]
             } else if route.ends_with("/agent") {
                 &["agent"]
             } else if route.ends_with("/model") {
@@ -202,6 +214,12 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             };
             if !send_input && data.keys().any(|key| !fields.contains(&key.as_str())) {
                 return Ok(MutationOutcome::Early(unavailable()));
+            }
+            if inbox_patch
+                && let Some(delivery) = data.get("delivery")
+                && !matches!(delivery.as_str(), Some("steer" | "queue"))
+            {
+                return Err(error(Status::BAD_REQUEST, "Invalid inbox delivery"));
             }
             if send_input {
                 crate::opencode::prompt::validate(app, workspace, &data).await?;
@@ -216,7 +234,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                     data.insert("permissions".into(), block.clone());
                 }
             }
-            if !(background && body_empty) {
+            if head.method != Method::DELETE && !(background && body_empty) {
                 input = Some(Value::Object(data));
             }
         }
@@ -366,12 +384,16 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     if !app.native.current(endpoint) {
         return Err(upstream_error());
     }
-    let permission_snapshot = if let Some(control) = control {
-        control.pending(app, endpoint, session.ok_or_else(upstream_error)?).await?
+    let permission_snapshot = if let Some(control) = control
+        && let Some(session_id) = session
+    {
+        control.pending(app, endpoint, session_id).await?
     } else {
         None
     };
-    if let Some(form) = human_answer::form_reply(route, &head.method) {
+    if session.is_some()
+        && let Some(form) = human_answer::form_reply(route, &head.method)
+    {
         if human_answer::reply(
             app,
             workspace,

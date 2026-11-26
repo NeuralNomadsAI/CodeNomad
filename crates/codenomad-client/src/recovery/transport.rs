@@ -18,6 +18,41 @@ use std::{
     time::Duration,
 };
 
+pub(super) async fn next_input(
+    rx: &Receiver<Input>,
+    reading: Option<&ReadingLane>,
+    generation: u64,
+    active_reader: bool,
+    deadline: Option<Instant>,
+) -> Option<Input> {
+    if let Ok(input) = rx.try_recv() {
+        return Some(input);
+    }
+    let wait = deadline.map(|at| at.saturating_duration_since(Instant::now()));
+    if wait.is_some_and(|duration| duration.is_zero()) {
+        return None;
+    }
+    let receive = async { Some(rx.recv().await.unwrap_or(Input::Command(Command::Close))) };
+    let demand = async {
+        if let Some(reading) = reading {
+            let changed = reading.demand.changed_after(generation).await;
+            if changed.is_some() || active_reader {
+                return None;
+            }
+        }
+        std::future::pending::<Option<Input>>().await
+    };
+    let timer = async {
+        if let Some(duration) = wait {
+            runtime::sleep(duration).await;
+            None
+        } else {
+            std::future::pending::<Option<Input>>().await
+        }
+    };
+    futures_lite::future::or(receive, futures_lite::future::or(demand, timer)).await
+}
+
 pub(crate) async fn run_with_reading(
     backend: Backend,
     out: Sender<Event>,
@@ -57,11 +92,23 @@ pub(crate) async fn run_with_reading(
     let mut opened = false;
     let mut connection_lost = false;
     let mut connection_closed = false;
-    let mut retry = None;
+    let mut retry: Option<Instant> = None;
     let mut attempts = 0u32;
     let mut reader = Reader::new();
     loop {
-        let input = runtime::recv_timeout(&rx, Duration::from_millis(25)).await;
+        reader.demand(reading);
+        let deadline = match (retry, reader.next_sync_at(opened, &wire, reading)) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let input = next_input(
+            &rx,
+            reading,
+            reader.generation,
+            reader.active_reader,
+            deadline,
+        )
+        .await;
         reader.demand(reading);
         if retry.is_some_and(|at| Instant::now() >= at) {
             retry = None;
@@ -76,12 +123,12 @@ pub(crate) async fn run_with_reading(
         match input {
             Some(Input::Workspace(e, event)) if e == epoch => {
                 if !publish(&out, &wake, Event::Workspace(event)).await {
-                    wire.cancelled.store(true, SeqCst);
+                    wire.cancel();
                     return Ok(());
                 }
             }
             Some(Input::Command(Command::Close)) => {
-                wire.cancelled.store(true, SeqCst);
+                wire.cancel();
                 return Ok(());
             }
             Some(Input::Opened(e)) if e == epoch => {
@@ -243,7 +290,7 @@ pub(crate) async fn run_with_reading(
                     if native["data"]["sessionID"] != backend.session {
                         continue;
                     }
-                    wire.cancelled.store(true, SeqCst);
+                    wire.cancel();
                     publish(
                         &out,
                         &wake,
@@ -304,7 +351,7 @@ pub(crate) async fn run_with_reading(
                 if matches!(kind, "session.deleted" | "session.revert.committed") {
                     publish(&out, &wake, Event::HistoryInvalidated).await;
                     if kind == "session.deleted" {
-                        wire.cancelled.store(true, SeqCst);
+                        wire.cancel();
                         return Err("session scope changed".into());
                     }
                     reader.clear_window_on_revert();

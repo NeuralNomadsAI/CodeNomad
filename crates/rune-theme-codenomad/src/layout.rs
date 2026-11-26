@@ -25,12 +25,12 @@ pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
 pub fn dark() -> bool {
     APPEARANCE.get()
 }
-pub fn appearance_key() -> (bool, bool, Option<(&'static str, bool)>) {
+pub fn appearance_key() -> (bool, bool, Option<crate::palettes::PaletteKey>) {
     let dark = dark();
     (
         dark,
         source_palette(),
-        crate::palettes::active(dark).map(|p| (p.id, p.is_high_contrast())),
+        crate::palettes::active(dark).map(|p| p.cache_key()),
     )
 }
 pub(crate) fn render_with_dark<S, T>(
@@ -70,7 +70,7 @@ pub fn button_tx<S: 'static>(
     let button = rune_kit::Button::new(label)
         .disabled(disabled)
         .on_press_tx(move |s, tx| press(s, tx))
-        .build(kit(dark()));
+        .build(&kit(dark()));
     if disabled {
         button
     } else {
@@ -81,7 +81,7 @@ pub fn button_tx<S: 'static>(
 pub fn focusable_disabled_button(label: &str) -> El {
     rune_kit::Button::new(label)
         .disabled(true)
-        .build(kit(dark()))
+        .build(&kit(dark()))
         .disabled(false)
         .focusable(true)
         .aria_disabled(true)
@@ -331,7 +331,7 @@ pub fn transcript_rows<S: 'static>(
             tokens(dark()).length(crate::Length::TouchTarget).px(),
             key,
             move |state, index| {
-                crate::palettes::with_palette(palette, || {
+                crate::palettes::with_resolved(palette.clone(), || {
                     with_appearance(appearance, || build(state, index))
                 })
             },
@@ -418,7 +418,7 @@ mod tests {
                     rune_kit::Button::new("Save")
                         .disabled(disabled)
                         .on_press(|_: &mut (bool, bool)| {})
-                        .build(kit(dark()))
+                        .build(&kit(dark()))
                 } else {
                     button("Save", disabled, |_: &mut (bool, bool)| {})
                 }
@@ -585,8 +585,8 @@ mod tests {
                     .child(rune::text("Bare text").key("bare"))
                     .child(rune::text("Title").key("title").text_role(TextRole::Title))
                     .child(input(edit).key("editor"))
-                    .child(field(edit).build(crate::field_kit(dark())).key("field"))
-                    .child(textarea(edit).build(crate::field_kit(dark())).key("area"))
+                    .child(field(edit).build(&crate::field_kit(dark())).key("field"))
+                    .child(textarea(edit).build(&crate::field_kit(dark())).key("area"))
             })
         }
         let mut runtime = rune::Runtime::new(
@@ -717,7 +717,7 @@ mod tests {
                 dialog("confirm", "Confirmer", "Fermer")
                     .open(*open)
                     .on_close(|open: &mut bool| *open = false)
-                    .build(kit(dark()), &mut layers);
+                    .build(&kit(dark()), &mut layers);
                 rune::el().w_full().h_full().children(layers)
             })
         }
@@ -750,7 +750,7 @@ mod tests {
                     &options,
                     |s: &mut rune_kit::ComboboxState| s,
                 )
-                .build(kit(dark()), &mut layers);
+                .build(&kit(dark()), &mut layers);
                 rune::col()
                     .w_full()
                     .h_full()

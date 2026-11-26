@@ -31,7 +31,7 @@ pub fn button<S: 'static>(
         ButtonLook::Submit => button.variant(ButtonVariant::Submit),
         ButtonLook::WithIcon(glyph) => button.variant(ButtonVariant::Ghost).icon(glyph),
     };
-    button.build(kit(dark()))
+    button.build(&kit(dark()))
 }
 
 pub fn icon_button<S: 'static>(
@@ -55,7 +55,7 @@ pub fn icon_button<S: 'static>(
             State::Rest
         })
         .on_press_tx(press)
-        .build(kit(dark()));
+        .build(&kit(dark()));
     match active {
         Some(active) => button.checked(active),
         None => button,
@@ -67,7 +67,7 @@ pub fn overflow_trigger(label: &str) -> El {
         .label(label)
         .variant(IconButtonVariant::GhostMuted)
         .control_size(ControlSize::Small)
-        .build(kit(dark()))
+        .build(&kit(dark()))
 }
 
 pub fn compact_file_actions(width: f32, label: &str) -> bool {
@@ -88,7 +88,7 @@ pub fn modes<S: 'static>(
         .label(title)
         .width(None)
         .on_pick(select)
-        .build(kit(dark()))
+        .build(&kit(dark()))
 }
 
 pub fn fit_modes<S: 'static>(
@@ -205,7 +205,7 @@ pub fn section_button<S: 'static>(
                 .child(counter)
         })
         .on_press_tx(press)
-        .build(kit(dark()))
+        .build(&kit(dark()))
         .full_width()
 }
 
@@ -263,7 +263,7 @@ pub fn session_worktree_picker<S: 'static>(
         .on_toggle(toggle)
         .on_close(close)
         .on_choose(choose)
-        .build(kit(dark()), overlays)
+        .build(&kit(dark()), overlays)
         .shrink()
 }
 
@@ -276,7 +276,7 @@ pub fn commit_message<S: 'static>(
         .label(label)
         .placeholder(label)
         .on_edit(edit)
-        .build(field_kit(dark()))
+        .build(&field_kit(dark()))
         .remaining()
 }
 
@@ -316,7 +316,7 @@ pub fn file<S: 'static>(
                 )
                 .child(counts.map_or_else(rune::el, |(plus, minus)| super::changes(plus, minus)))
         })
-        .build(kit(dark()))
+        .build(&kit(dark()))
         .remaining()
         .shrink()
         .checked(selected)

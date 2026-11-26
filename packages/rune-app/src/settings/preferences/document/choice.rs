@@ -1,5 +1,6 @@
 use crate::settings::{
     notification_routing::{Category, Destination},
+    palettes::PaletteMutation,
     transcript_preset::{self, Row},
 };
 use serde_json::{Value, json};
@@ -25,6 +26,7 @@ pub(in crate::settings::preferences) enum Choice {
     NotificationsFocused,
     Mode,
     Palette(bool),
+    PaletteMutation,
 }
 
 fn env_key_eq(a: &str, b: &str) -> bool {
@@ -100,6 +102,10 @@ impl Choice {
             patch["opencodeBinaries"] = apply_opencode_binaries_patch(snapshot, op);
             return;
         }
+        if let (Self::PaletteMutation, ChoiceValue::Palette(mutation)) = (self, value) {
+            mutation.put(patch, snapshot);
+            return;
+        }
         let ChoiceValue::Text(value) = *value else {
             return;
         };
@@ -137,8 +143,18 @@ impl Choice {
             | Self::ShortcutReset
             | Self::Environment
             | Self::OpenCodeBinary
-            | Self::OpenCodeBinaries => (),
+            | Self::OpenCodeBinaries
+            | Self::PaletteMutation => (),
             Self::Palette(dark) => {
+                let legacy = crate::settings::palettes::legacy_scheme(snapshot, &Value::Null);
+                crate::settings::palettes::migrate_active_builtin_override(
+                    patch,
+                    snapshot,
+                    &Value::Null,
+                    legacy.as_ref(),
+                    dark,
+                    None,
+                );
                 let mode = if dark { "dark" } else { "light" };
                 patch["appearancePreferences"][mode] = json!({
                     "scheme":{"id":value,"appearance":mode,"colors":null},"presetId":null
@@ -206,6 +222,9 @@ impl Choice {
                 }
             };
         }
+        if let (Self::PaletteMutation, ChoiceValue::Palette(mutation)) = (self, value) {
+            return mutation.confirmed(snapshot);
+        }
         let ChoiceValue::Text(value) = *value else {
             return false;
         };
@@ -236,7 +255,8 @@ impl Choice {
             | Self::ShortcutReset
             | Self::Environment
             | Self::OpenCodeBinary
-            | Self::OpenCodeBinaries => false,
+            | Self::OpenCodeBinaries
+            | Self::PaletteMutation => false,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 let slot = &appearance[mode];
@@ -257,6 +277,7 @@ impl Choice {
                 | Self::Shortcut(_)
                 | Self::ShortcutReset
                 | Self::UpdateFeed
+                | Self::PaletteMutation
         )
     }
 }
@@ -393,6 +414,7 @@ fn apply_opencode_binaries_patch(snapshot: &Value, op: &OpenCodeBinariesOp) -> V
 pub(super) enum ChoiceValue {
     Text(&'static str),
     Shortcut(Value),
+    Palette(Box<PaletteMutation>),
     Environment {
         name: String,
         value: Option<String>,

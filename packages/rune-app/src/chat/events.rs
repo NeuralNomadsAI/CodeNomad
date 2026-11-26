@@ -7,15 +7,20 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
-    drain_chat(s, limit, true, true, false)
+    drain_chat(s, limit, true, true, false, None)
 }
 
 pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize, active_has_stream: bool) -> bool {
-    drain_chat(s, limit, false, !active_has_stream, false)
+    drain_chat(s, limit, false, !active_has_stream, false, None)
 }
 
-pub(crate) fn poll_chat_for_window(s: &mut State, limit: usize, defer_reader_sync: bool) -> bool {
-    drain_chat(s, limit, true, true, defer_reader_sync)
+pub(crate) fn poll_chat_for_window(
+    s: &mut State,
+    limit: usize,
+    defer_reader_sync: bool,
+    clock: f64,
+) -> bool {
+    drain_chat(s, limit, true, true, defer_reader_sync, Some(clock))
 }
 
 fn drain_chat(
@@ -24,6 +29,7 @@ fn drain_chat(
     visible: bool,
     affects_preferences: bool,
     defer_reader_sync: bool,
+    clock: Option<f64>,
 ) -> bool {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
     if changed
@@ -51,7 +57,13 @@ fn drain_chat(
             let cached_gap =
                 s.history_detached || s.reader.as_ref().is_some_and(chat::reader::Reader::has_gap);
             s.reader.as_mut().and_then(|reader| {
-                reader.take_next(defer_reader_sync, reading, history_bounds, cached_gap)
+                reader.take_next(
+                    defer_reader_sync,
+                    reading,
+                    history_bounds,
+                    cached_gap,
+                    clock,
+                )
             })
         });
         let Some(event) = event else { break };
@@ -65,6 +77,7 @@ fn drain_chat(
                 s.conversation_client_id = Some(backend.client_id.clone());
                 s.conversation_stream_connected = false;
                 s.status_permissions.bind(&backend);
+                s.status_services.bind(&backend);
                 s.status_usage.bind(&backend);
                 s.transcript_display.children.bind(backend.clone());
                 s.transcript_display.usage_family.bind(backend.clone());
@@ -92,6 +105,7 @@ fn drain_chat(
                     let _ = newly_connected;
                     s.transcript_display.messages.refresh();
                     s.status_permissions.online(true);
+                    s.status_services.online(true);
                     workspace::mission_event(s, None);
                     s.transcript_display.receipts.reconnect();
                     s.transcript_display.pictures.retry_interrupted();
@@ -143,6 +157,23 @@ fn drain_chat(
                 codenomad_client::transport::WorkspaceEvent::PermissionModeChanged { root },
             ) => {
                 s.status_permissions.invalidate(root.as_deref());
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::PluginsChanged {
+                directory,
+                ..
+            }) => {
+                s.status_services.invalidate_plugins(directory.as_deref());
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::McpStatusChanged {
+                ..
+            }) => {
+                s.status_services.invalidate_mcp();
+            }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::ServicesConfigChanged { .. },
+            ) => {
+                s.status_services.invalidate_plugins(None);
+                s.status_services.invalidate_mcp();
             }
             Event::Workspace(
                 codenomad_client::transport::WorkspaceEvent::ComposerCataloguesChanged,
@@ -248,6 +279,7 @@ fn drain_chat(
                     codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
                 ) {
                     s.status_permissions.online(false);
+                    s.status_services.location_moved();
                     s.status_usage.disconnect();
                     chat::reader::suspend(s);
                     s.composer.picker.set_attachments_supported(false);
@@ -297,6 +329,7 @@ fn drain_chat(
                 if s.reader.is_none() {
                     // Direct startup also uses Reconnecting to stage a fresh transcript read.
                     s.status_permissions.synchronized();
+                    s.status_services.synchronized();
                 }
                 if chat::reader::reconcile_bookmark(s, &page) {
                     s.revision += 1;
@@ -354,6 +387,7 @@ fn drain_chat(
                             prev_phase,
                             trimmed_older,
                             trimmed_newer,
+                            clock,
                         );
                     }
                     reader.install(page.newer.is_some());
@@ -423,6 +457,7 @@ fn drain_chat(
                 s.transcript_display.messages.offline();
                 s.transcript_display.tool_clock.pause();
                 s.status_permissions.online(false);
+                s.status_services.online(false);
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::reconnecting(s);
                 #[cfg(target_arch = "wasm32")]
@@ -480,6 +515,7 @@ fn drain_chat(
                 s.conversation_stream_connected = false;
                 s.transcript_display.receipts.clear();
                 s.status_permissions.online(false);
+                s.status_services.online(false);
                 s.status_usage.disconnect();
                 if let Some(a) = s.agent.as_mut() {
                     a.mark_scope_missing();
@@ -629,6 +665,7 @@ fn drain_chat(
                 }
                 s.composer.picker.set_attachments_supported(false);
                 s.status_permissions.online(false);
+                s.status_services.online(false);
                 s.status_usage.disconnect();
                 chat::reader::suspend(s);
                 git::online(s, false);

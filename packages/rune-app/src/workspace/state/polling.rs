@@ -1,7 +1,7 @@
 //! Workspace persistence, background tabs and active-panel updates.
 #[cfg(target_arch = "wasm32")]
 use super::platform;
-use super::{State, Tx, catalogue, history_budget, observation::poll_cached, panel_state, resume};
+use super::{State, Tx, catalogue, observation::poll_cached, panel_state, resume};
 
 pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let Some(mut ui) = s.workspace.take() else {
@@ -24,7 +24,10 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
     }
     let became_ready = loading && !ui.persistence.loading;
-    if let Some(store) = &ui.persistence.store {
+    if ui.persistence.restore_enabled
+        && !ui.persistence.mutating
+        && let Some(store) = &ui.persistence.store
+    {
         s.saved_outlines.poll(store, s.wake.clone());
     }
     if became_ready {
@@ -66,9 +69,6 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     if became_ready {
         resume(s, tx);
-    }
-    if changed {
-        history_budget::enforce(s);
     }
     changed |= catalogue::poll(s, now, tx);
     changed || became_ready || error != previous_error

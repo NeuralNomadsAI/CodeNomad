@@ -276,7 +276,7 @@ impl State {
                         .label(&placeholder)
                         .disabled(disabled || self.submit_flight.is_some())
                         .on_edit(move |s| &mut access(s).executable.custom_path)
-                        .build(field_kit(layout::dark()))
+                        .build(&field_kit(layout::dark()))
                         .key("opencode-binary-path")
                         .on_key(move |s, event, tx| {
                             if event.key == rune::Key::Enter
