@@ -1,6 +1,8 @@
 //! /workspaces/:id/instance/*: the allowlisted relay to the daemon, confined to the workspace's
 //! locations and sessions.
 #[cfg(test)]
+mod account_tests;
+#[cfg(test)]
 mod background_tests;
 mod defer_media;
 mod dispatch;
@@ -18,7 +20,7 @@ use std::time::Duration;
 use axum::{
     Json,
     extract::{Request, State},
-    http::{Method, StatusCode as Status, header},
+    http::{HeaderValue, Method, StatusCode as Status, header},
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
@@ -26,16 +28,45 @@ use serde_json::{Value, json};
 use super::{SESSION_LOCATED_ELSEWHERE, SESSION_PLACEMENT_HEADER, controls, upstream_error};
 use crate::{Error, Shared, error, not_found, unavailable};
 use guards::{
-    ALLOWED, carrier_denied, foreign, guarded, is_hop_by_hop_connection_token, parse_location_context,
-    resolve_media_path_async, safe_route, schedule_input,
+    ALLOWED, carrier_denied, foreign, guarded, is_account_no_store_route, is_hop_by_hop_connection_token,
+    parse_location_context, resolve_media_path_async, safe_route, schedule_input, valid_segment,
 };
 
 pub(super) fn before_dispatch_error((status, body): Error) -> Response {
     (status, [("x-codenomad-before-dispatch", "1")], body).into_response()
 }
 
+fn is_account_proxy_path(path: &str, method: &Method) -> bool {
+    let Some(suffix) =
+        path.strip_prefix("/workspaces/").and_then(|t| t.split_once('/')).and_then(|(_, s)| s.strip_prefix("instance"))
+    else {
+        return false;
+    };
+    if let Some(route) = safe_route(suffix) {
+        let route = route.trim_end_matches('/');
+        if is_account_no_store_route(route, method) {
+            return true;
+        }
+    }
+    let trimmed = suffix.trim_end_matches('/');
+    trimmed == "/api/credential"
+        || trimmed.starts_with("/api/credential/")
+        || (trimmed.starts_with("/api/integration/") && trimmed.contains("/connect/"))
+}
+
 pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Response, Error> {
-    Box::pin(relay_inner(app, request)).await
+    let no_store = is_account_proxy_path(request.uri().path(), request.method());
+    let result = Box::pin(relay_inner(app, request)).await;
+    if no_store {
+        let mut response = match result {
+            Ok(response) => response,
+            Err(err) => err.into_response(),
+        };
+        response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        Ok(response)
+    } else {
+        result
+    }
 }
 
 async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
@@ -90,6 +121,12 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
     let workspace = app.workspace(id)?;
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.strip_suffix('/').unwrap_or(&route);
+    if (route.starts_with("/api/credential/")
+        || (route.starts_with("/api/integration/") && route.contains("/connect/")))
+        && route.trim_start_matches('/').split('/').any(|seg| !valid_segment(seg))
+    {
+        return Err(invalid());
+    }
     let prompt = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/prompt");
     let command = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/command");
     let send_input = prompt || command;
@@ -133,6 +170,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         && session.is_some_and(|s| {
             route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
         });
+    let account_route = is_account_no_store_route(route, &head.method);
     let workspace_closed = || async {
         loop {
             let notified = app.workspace_closed.notified();
@@ -161,16 +199,23 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         acquired = app.native.acquire(deadline) => match acquired {
             Ok(endpoint) => endpoint,
             Err(ref refusal @ super::admission::Refusal::Unsupported { ref actual, reason }) => {
-                return Err((
-                    Status::UPGRADE_REQUIRED,
-                    Json(json!({
+                let body = if account_route {
+                    json!({
+                        "error": "opencode_update_required",
+                        "message": "OpenCode update required",
+                        "minimumVersion": super::admission::MINIMUM_VERSION,
+                        "reason": reason,
+                    })
+                } else {
+                    json!({
                         "error": "opencode_update_required",
                         "message": refusal.to_string(),
                         "actualVersion": actual,
                         "minimumVersion": super::admission::MINIMUM_VERSION,
                         "reason": reason,
-                    })),
-                ));
+                    })
+                };
+                return Err((Status::UPGRADE_REQUIRED, Json(body)));
             }
             Err(_) => return Err(if send_input { super::pre_dispatch_unavailable() } else { upstream_error() }),
         },
@@ -357,7 +402,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
                 if requested_checkout.is_none() {
                     requested_checkout = Some(proof);
                 }
-            } else if !crate::worktrees::owns(&app, &workspace, req).await {
+            } else if !account_route && !crate::worktrees::owns(&app, &workspace, req).await {
                 return Err(foreign());
             }
         }
@@ -597,7 +642,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
             } else {
                 false
             };
-        if !reused_ok && !crate::worktrees::owns(&app, &workspace, directory).await {
+        if !account_route && !reused_ok && !crate::worktrees::owns(&app, &workspace, directory).await {
             return Err(foreign());
         }
     }
@@ -629,6 +674,8 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
     } else {
         target.set_query(head.uri.query());
     }
+    let location_context_dir =
+        parsed_location_context.as_ref().and_then(|v| v["directory"].as_str()).map(str::to_owned);
     if let Some(context) = parsed_location_context {
         if send_input {
             let raw = super::prompt::context(&context)?;
@@ -644,7 +691,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
                 }
                 prompt_locations.push((raw.to_owned(), context, (live, observed)));
             }
-        } else if !message_list {
+        } else if !message_list && !account_route {
             // Match TS `http-server.ts:1224-1269` & `compatibility/location.ts:74-83`: an ambient
             // `x-codenomad-location` only needs to belong to this workspace and agree with any
             // explicit query selector, NOT with the target session's own linked worktree.
@@ -684,11 +731,12 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
     for (key, value) in target.query_pairs() {
         match key.as_ref() {
             "directory" | "location[directory]" => {
-                if !message_list && (seen_directory || (prompt_query.is_none() && value != directory)) {
+                if !message_list && !account_route && (seen_directory || (prompt_query.is_none() && value != directory))
+                {
                     return Err(foreign());
                 }
                 seen_directory = true;
-                explicit = (key == "directory") == session_list;
+                explicit = account_route || (key == "directory") == session_list;
             }
             "project" if session_list => {
                 if value.is_empty() || project.replace(value.into_owned()).is_some() {
@@ -780,29 +828,41 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         initial_identity: &initial_identity,
         input_checkout: &input_checkout,
     };
-    let mutation::PreparedMutation { fork, root_permissions, input, rules_lock, mutation, receipt } =
-        match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
-            recheck: &recheck,
-            head: &head,
-            route,
-            control,
-            send_input,
-            command,
-            body_limit,
-            declared,
-            pending_body: &mut pending_body,
-            prompt_input: &mut prompt_input,
-            prompt_locations: &prompt_locations,
-            trace_fence,
-            explicit: explicit || global_form_directory.is_some(),
-            session_list,
-            target: &mut target,
-        }))
-        .await?
-        {
-            mutation::MutationOutcome::Ready(prepared) => prepared,
-            mutation::MutationOutcome::Early(response) => return Ok(PreparedRelay::Response(response)),
-        };
+    let mutation::PreparedMutation {
+        fork,
+        root_permissions,
+        input,
+        rules_lock,
+        mutation,
+        account_manual,
+        account_context_dir,
+        account_verified_locs,
+        receipt,
+    } = match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
+        recheck: &recheck,
+        head: &head,
+        route,
+        control,
+        send_input,
+        command,
+        body_limit,
+        declared,
+        pending_body: &mut pending_body,
+        prompt_input: &mut prompt_input,
+        prompt_locations: &prompt_locations,
+        trace_fence,
+        explicit: explicit || global_form_directory.is_some(),
+        requested_dirs: &requested_dirs,
+        location_context_dir: location_context_dir.as_deref(),
+        session_list,
+        target: &mut target,
+    }))
+    .await?
+    {
+        mutation::MutationOutcome::Ready(prepared) => prepared,
+        mutation::MutationOutcome::Early(response) => return Ok(PreparedRelay::Response(response)),
+    };
+    let method_str = head.method.to_string();
     let mut upstream = app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password));
     // Forward all sanitized request headers across every proxied route (including Accept,
     // conditionals, Range, If-Range), matching TS `sanitizeInstanceProxyRequestHeaders`
@@ -844,7 +904,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
             upstream = upstream.header(name, value);
         }
     }
-    if let Some(dir) = &global_form_directory {
+    if let Some(dir) = global_form_directory.as_ref().or(account_context_dir.as_ref()) {
         let encoded = percent_encoding::utf8_percent_encode(dir, percent_encoding::NON_ALPHANUMERIC).to_string();
         upstream = upstream.header("x-opencode-directory", encoded);
     }
@@ -897,6 +957,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         endpoint,
         principal,
         upstream,
+        method: method_str,
         route,
         opened,
         directory,
@@ -907,12 +968,15 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         initial_identity,
         input_checkout,
         message_list,
+        account_route,
         fork,
         actual,
         project,
         root_permissions,
         receipt,
         mutation,
+        account_manual,
+        account_verified_locs,
         rules_lock,
     })))
 }

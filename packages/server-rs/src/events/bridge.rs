@@ -1114,6 +1114,7 @@ async fn deliver(
         }
     }
     if delivered {
+        app.provider_usage.accounts.observe_event(app, &endpoint, &event);
         let sid = session_id.as_deref().or(event["data"]["session"]["id"].as_str()).or(event["data"]["id"].as_str());
         let (took, sid) = (routed.elapsed().as_millis(), sid.unwrap_or("-"));
         crate::bench::route_trace(format_args!("event {kind} {took}ms to 1 at {received} sid {sid}"));

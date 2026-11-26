@@ -186,7 +186,7 @@ pub(super) fn registered_proof(
     Some(DirectoryProof { tree: Some(tree.clone()), source, root: None, external, media: false })
 }
 
-pub(super) fn existing_directory(path: &Path) -> Option<&Path> {
+pub(crate) fn existing_directory(path: &Path) -> Option<&Path> {
     for ancestor in path.ancestors() {
         match std::fs::symlink_metadata(ancestor) {
             Ok(metadata) => return metadata.is_dir().then_some(ancestor),

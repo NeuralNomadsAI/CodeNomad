@@ -41,7 +41,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET PUT DELETE",r"^/api/storage/instances/[^/]+$"),
     ("PATCH",r"^/api/storage/(?:state/ui|config/[^/]+)$"),
     ("GET",r"^/api/(?:remote-control/status|config-files|opencode/update)$"),
-    ("GET",r"^/api/workspaces/[^/]+/provider-accounts/[^/]+$"),
+    ("GET PUT",r"^/api/workspaces/[^/]+/provider-accounts/[^/]+$"),
     ("GET PUT",r"^/api/config-files/[^/]+/content$"),
     ("POST",r"^/api/storage/binaries/validate$"),
     ("POST",r"^/api/(?:client-connections/pong|workspaces(?:/creation/cancel|/[^/]+/creation/release)?)$"),
@@ -79,6 +79,18 @@ pub(crate) struct DeviceAdmission {
 
 fn reply(code: Status, text: &str) -> Response {
     (code, [(header::CONNECTION, "close")], Json(json!({"error":text}))).into_response()
+}
+pub(crate) fn is_no_store_account_path(path: &str) -> bool {
+    let matches_raw = |p: &str| {
+        (p.starts_with("/api/workspaces/") && p.contains("/provider-accounts/"))
+            || (p.starts_with("/workspaces/")
+                && (p.contains("/instance/api/credential")
+                    || (p.contains("/instance/api/integration/") && p.contains("/connect/"))))
+    };
+    if matches_raw(path) {
+        return true;
+    }
+    percent_encoding::percent_decode_str(path).decode_utf8().ok().is_some_and(|decoded| matches_raw(&decoded))
 }
 fn status(paired: bool) -> Response {
     Json(if paired {
@@ -158,6 +170,19 @@ fn route_path(uri: &axum::http::Uri) -> Option<String> {
 }
 
 pub async fn admit(
+    state: State<(Shared, Option<crate::host::ui::RemoteBundle>)>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let no_store = is_no_store_account_path(req.uri().path());
+    let mut response = admit_inner(state, req, next).await;
+    if no_store && !response.status().is_success() {
+        response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
+}
+
+async fn admit_inner(
     State((app, bundle)): State<(Shared, Option<crate::host::ui::RemoteBundle>)>,
     mut req: Request,
     next: Next,

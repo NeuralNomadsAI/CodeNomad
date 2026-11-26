@@ -20,6 +20,7 @@ pub(super) struct DispatchContext {
     pub endpoint: Arc<Endpoint>,
     pub principal: crate::auth::Principal,
     pub upstream: reqwest::RequestBuilder,
+    pub method: String,
     pub route: String,
     pub opened: String,
     pub directory: String,
@@ -30,12 +31,15 @@ pub(super) struct DispatchContext {
     pub initial_identity: Option<(PathBuf, PathBuf, String)>,
     pub input_checkout: Option<crate::worktrees::ownership::DirectoryProof>,
     pub message_list: bool,
+    pub account_route: bool,
     pub fork: bool,
     pub actual: Option<Value>,
     pub project: Option<String>,
     pub root_permissions: Option<Value>,
     pub receipt: Option<crate::sessions::receipts::Prepared>,
     pub mutation: Option<crate::worktrees::fence::Entered>,
+    pub account_manual: Option<crate::provider_usage::selection::ManualGuard>,
+    pub account_verified_locs: Vec<super::mutation::VerifiedAccountLocation>,
     pub rules_lock: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
@@ -46,6 +50,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         endpoint,
         principal,
         upstream,
+        method,
         route,
         opened,
         directory,
@@ -56,12 +61,15 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         initial_identity,
         input_checkout,
         message_list,
+        account_route,
         fork,
         actual,
         project,
         root_permissions,
         receipt,
         mutation,
+        account_manual,
+        account_verified_locs,
         rules_lock,
     } = ctx;
     let dispatched_mutation = mutation.is_some();
@@ -69,6 +77,14 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
     let dispatch = move |detached: tokio_util::sync::CancellationToken,
                          gate: crate::opencode::proxy_write::DispatchGate| {
         Box::pin(async move {
+            if principal.0.is_cancelled() {
+                return Ok(crate::auth::unauthorized_before_dispatch());
+            }
+            for loc in &account_verified_locs {
+                if !super::mutation::verify_account_location_live(&app, &workspace, loc).await {
+                    return Err(foreign());
+                }
+            }
             if principal.0.is_cancelled() {
                 return Ok(crate::auth::unauthorized_before_dispatch());
             }
@@ -144,13 +160,37 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     Err(_) => return Err(upstream_error()),
                 },
             };
-            if message_list && matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            if (message_list || account_route) && matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
                 drop(response);
                 app.native.invalidate(&endpoint);
                 return Err((
                     Status::INTERNAL_SERVER_ERROR,
                     Json(json!({"statusCode": 500, "error": "Internal Server Error", "message": "fetch failed"})),
                 ));
+            }
+            if account_route && !response.status().is_success() {
+                let status = response.status();
+                let unauthorized = status == Status::UNAUTHORIZED;
+                drop(response);
+                if status == Status::NOT_MODIFIED {
+                    app.native.invalidate(&endpoint);
+                    return Err(upstream_error());
+                }
+                if unauthorized {
+                    app.native.invalidate(&endpoint);
+                }
+                return Ok((
+                    status,
+                    Json(json!({
+                        "_tag": "OpenCodeContractError",
+                        "error": status.canonical_reason().unwrap_or("Upstream Error"),
+                        "message": format!("OpenCode account request returned HTTP {}", status.as_u16()),
+                        "status": status.as_u16(),
+                        "profile": "modern",
+                        "method": method,
+                    })),
+                )
+                    .into_response());
             }
             if message_list && !response.status().is_success() && !is_transport_json_content_type(response.headers()) {
                 let status = response.status();
@@ -168,10 +208,10 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     status,
                     Json(json!({
                         "_tag": "OpenCodeContractError",
-                        "message": format!("OpenCode {version}: GET {route} returned HTTP {}", status.as_u16()),
+                        "message": format!("OpenCode {version}: {method} {route} returned HTTP {}", status.as_u16()),
                         "status": status.as_u16(),
                         "profile": "modern",
-                        "method": "GET",
+                        "method": method,
                         "path": route,
                     })),
                 )
@@ -393,6 +433,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     dispatched_mutation,
                     unauthorized,
                     invalidate,
+                    account_manual,
                     false,
                 ),
                 |(
@@ -404,6 +445,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     dispatched_mutation,
                     unauthorized,
                     invalidate,
+                    account_manual,
                     done,
                 )| async move {
                     if done {
@@ -423,6 +465,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                                     dispatched_mutation,
                                     unauthorized,
                                     invalidate,
+                                    account_manual,
                                     true,
                                 ),
                             ));
@@ -439,6 +482,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                                     dispatched_mutation,
                                     unauthorized,
                                     invalidate,
+                                    account_manual,
                                     true,
                                 ),
                             ));
@@ -455,6 +499,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                                     dispatched_mutation,
                                     unauthorized,
                                     invalidate,
+                                    account_manual,
                                     true,
                                 ),
                             ));
@@ -473,6 +518,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                                 dispatched_mutation,
                                 unauthorized,
                                 invalidate,
+                                account_manual,
                                 false,
                             ),
                         )
