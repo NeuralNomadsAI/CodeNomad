@@ -5129,6 +5129,172 @@ fn unsaved_editor_draft_prompts_before_navigation_or_close_and_discards_only_on_
     assert!(panel.has_reader());
 }
 
+#[test]
+fn deferred_submits_do_not_dispatch_when_discard_prompt_or_preview_obscures_editor() {
+    let posts = Arc::new(AtomicUsize::new(0));
+    let posts_srv = posts.clone();
+    let (base, _) = start_scripted_server(move |_idx, raw| {
+        if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+            posts_srv.fetch_add(1, Ordering::SeqCst);
+        }
+        ("500 Internal Server Error".into(), "{}".into())
+    });
+    let backend = attested_backend(base);
+    let mut panel = Panel::new(
+        backend.clone(),
+        Some("prj_1".into()),
+        Reads::default(),
+        noop_wake(),
+    );
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+    open_create_ready(&mut panel, &mut holds, &mut lifecycle, None);
+    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Draft with deferred submit");
+    panel.editor.form.as_mut().unwrap().start_on_creation = true;
+    let submit_gen = panel.editor.form.as_ref().unwrap().generation;
+    panel.editor.ready_create_submit = Some(("tab-1".into(), submit_gen, backend.clone()));
+
+    // Opening the discard confirmation must cancel the deferred POST and hide active editor context.
+    assert_eq!(
+        panel.request_close_surface(&holds, false),
+        CloseSurface::PromptedDiscard
+    );
+    assert!(
+        panel.active_editor("tab-1").is_none(),
+        "active editor context must be hidden while discard confirmation is open"
+    );
+    assert!(
+        !panel.commit_editor_submit(&mut holds, &[]),
+        "deferred POST must not dispatch while discard confirmation is open"
+    );
+    assert_eq!(posts.load(Ordering::SeqCst), 0);
+
+    // Dismissing the prompt keeps the draft; obscuring behind a Git/Files preview cancels deferred POST.
+    panel.editor_gesture("tab-1", &mut holds, EditorGesture::CancelDiscard);
+    let gen2 = panel.editor.form.as_ref().unwrap().generation;
+    panel.editor.ready_create_submit = Some(("tab-1".into(), gen2, backend));
+    panel.close_reader_preserving_dirty_editor(&holds);
+    assert!(panel.has_editor(), "dirty editor must remain preserved");
+    assert!(
+        !panel.commit_editor_submit(&mut holds, &[]),
+        "obscuring the editor behind a preview must cancel any deferred POST"
+    );
+    assert_eq!(posts.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn tab_close_unblocks_after_unknown_creation_receipt_and_retires_hold() {
+    let (base, _) = start_scripted_server(|_idx, raw| {
+        if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+            ("500 Internal Server Error".into(), "{}".into())
+        } else if raw.contains("/missions/creation/") {
+            ("200 OK".into(), json!({ "state": "unknown" }).to_string())
+        } else {
+            ("404 Not Found".into(), "{}".into())
+        }
+    });
+    let backend = attested_backend(base);
+    let mut panel = Panel::new(
+        backend.clone(),
+        Some("prj_1".into()),
+        Reads::default(),
+        noop_wake(),
+    );
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+    open_create_ready(&mut panel, &mut holds, &mut lifecycle, None);
+    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Never reached server");
+    panel.submit_editor("tab-1", &mut holds);
+    let scope = panel.creation_scope_key();
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        holds
+            .creation(&scope)
+            .is_some_and(|h| h.state == HoldState::Uncertain)
+    });
+
+    // Before checking the receipt, closing the tab is blocked.
+    assert!(holds.creation_blocks_tab_close(&scope));
+
+    // User clicks Refresh -> server reports state: "unknown".
+    panel.reconcile_editor_creation("tab-1", &mut holds);
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        holds
+            .creation(&scope)
+            .is_some_and(|h| h.state == HoldState::Uncertain && !h.checking)
+    });
+    // Hold stays active in-tab (still fences duplicate POSTs), but tab close is now allowed.
+    assert!(holds.creation(&scope).is_some());
+    assert!(!holds.creation_blocks_tab_close(&scope));
+    assert!(!holds.has_blocking_creation_for_workspace(&backend));
+
+    panel.close_reader();
+    let state = crate::workspace::test_state_with_mission_panel(panel, holds);
+    let mut rt = Runtime::new(
+        state,
+        |_, _| rune::el(),
+        (1200.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let tab_key = crate::workspace::test_mission_entry_mut(&mut rt.state, 0).0;
+    rt.update(|s, tx| {
+        crate::workspace::close(s, &tab_key, tx);
+    });
+    let (after_key, has_panel, holds_after) =
+        crate::workspace::test_tab_state_and_holds(&rt.state, 0);
+    assert_ne!(
+        after_key, tab_key,
+        "tab must close once creation receipt has been checked and returned unknown"
+    );
+    assert!(!has_panel, "replacement blank tab must not keep old panel");
+    assert!(
+        holds_after.creation(&scope).is_none(),
+        "closing the tab must retire the dead workspace creation hold"
+    );
+}
+
+#[test]
+fn sse_reconnecting_preserves_pending_edit_recheck_while_connection_lost_cancels_it() {
+    let backend = unattested_backend("http://127.0.0.1:9/".into());
+    let mut panel = Panel::new(
+        backend.clone(),
+        Some("prj_1".into()),
+        Reads::default(),
+        noop_wake(),
+    );
+    let mut holds = EditorHolds::default();
+    panel.open_create_editor(&mut holds, None);
+    let submit_gen = panel.editor.form.as_ref().unwrap().generation;
+    panel.editor.ready_create_submit = Some(("tab-1".into(), submit_gen, backend));
+
+    let mut state = crate::workspace::test_state_with_mission_panel(panel, holds);
+    let (evt_tx, evt_rx) = bounded(4);
+    state.incoming = Some(evt_rx);
+
+    // Event::Reconnecting (e.g. history refresh hint) must NOT cancel the pending submit.
+    let _ = evt_tx.try_send(crate::transport::Event::Reconnecting);
+    let _ = crate::chat::events::poll_chat(&mut state, 8);
+    let (_, panel_after_reconnecting, _) = crate::workspace::test_mission_entry_mut(&mut state, 0);
+    assert!(
+        panel_after_reconnecting
+            .editor
+            .ready_create_submit
+            .is_some(),
+        "Event::Reconnecting alone must preserve deferred submit"
+    );
+
+    // Event::ConnectionLost MUST immediately cancel the deferred submit.
+    let _ = evt_tx.try_send(crate::transport::Event::ConnectionLost);
+    let _ = crate::chat::events::poll_chat(&mut state, 8);
+    let (_, panel_after_lost, _) = crate::workspace::test_mission_entry_mut(&mut state, 0);
+    assert!(
+        panel_after_lost.editor.ready_create_submit.is_none(),
+        "Event::ConnectionLost must cancel deferred submit immediately"
+    );
+}
+
 fn sample_doc_header_for(mission_id: &str, revision: u64, objective: &str) -> MapHeader {
     serde_json::from_value(json!({
         "root": {

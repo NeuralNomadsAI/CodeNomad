@@ -318,10 +318,14 @@ impl Panel {
         self.detail.cancel_lookup();
         let reader_back = self.reader.take_return_focus();
         self.reader.close();
-        if self.editor.is_open() && !self.has_unsaved_editor_draft(holds) {
-            self.editor_suspended = false;
+        if self.editor.is_open() {
             self.editor_auto_start_revoked = true;
-            return self.editor.close().or(reader_back);
+            if self.has_unsaved_editor_draft(holds) {
+                self.editor.invalidate_generation();
+            } else {
+                self.editor_suspended = false;
+                return self.editor.close().or(reader_back);
+            }
         }
         reader_back
     }
@@ -336,6 +340,7 @@ impl Panel {
                 return super::editor::CloseSurface::CancelledPrompt;
             }
             if self.has_unsaved_editor_draft(holds) {
+                self.editor_auto_start_revoked = true;
                 self.editor.arm_leave(super::editor::LeaveIntent::Close);
                 return super::editor::CloseSurface::PromptedDiscard;
             }
@@ -690,6 +695,7 @@ impl Panel {
                         id.to_owned(),
                     ))
                 {
+                    self.editor_auto_start_revoked = true;
                     (self.wake)();
                     return false;
                 }
@@ -721,6 +727,7 @@ impl Panel {
                         task_key.to_owned(),
                     ))
                 {
+                    self.editor_auto_start_revoked = true;
                     (self.wake)();
                     return false;
                 }
@@ -1326,6 +1333,7 @@ impl Panel {
                         id.to_owned(),
                     ))
                 {
+                    self.editor_auto_start_revoked = true;
                     (self.wake)();
                     return;
                 }

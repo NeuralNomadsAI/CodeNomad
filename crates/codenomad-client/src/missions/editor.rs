@@ -586,8 +586,7 @@ impl Backend {
                 .await
                 .map_err(|_| false)
         };
-        let (schedule_res, location_res) =
-            futures_lite::future::zip(schedule_fut, location_fut).await;
+        let (schedule_res, location_res) = zip_abort_on_auth(schedule_fut, location_fut).await;
         if matches!(schedule_res, Err(true)) || matches!(location_res, Err(true)) {
             return DocumentEditCheck::AuthExpired;
         }
@@ -1115,6 +1114,47 @@ fn missions_url(backend: &Backend, extra: &[&str]) -> Result<Url> {
         .extend([backend.workspace.as_str(), "missions"])
         .extend(extra.iter().copied());
     Ok(url)
+}
+
+/// Races two concurrent `Result<_, bool>` reads (where `Err(true)` signals HTTP 401)
+/// so an already-received 401 returns immediately instead of waiting behind the sibling
+/// read and risking loss if the caller cancels.
+pub(super) async fn zip_abort_on_auth<A, B, FA, FB>(
+    fa: FA,
+    fb: FB,
+) -> (std::result::Result<A, bool>, std::result::Result<B, bool>)
+where
+    FA: std::future::Future<Output = std::result::Result<A, bool>>,
+    FB: std::future::Future<Output = std::result::Result<B, bool>>,
+{
+    let mut fa = std::pin::pin!(fa);
+    let mut fb = std::pin::pin!(fb);
+    let mut a_done: Option<std::result::Result<A, bool>> = None;
+    let mut b_done: Option<std::result::Result<B, bool>> = None;
+    futures_lite::future::poll_fn(|cx| {
+        if a_done.is_none()
+            && let std::task::Poll::Ready(res) = fa.as_mut().poll(cx)
+        {
+            if matches!(res, Err(true)) {
+                return std::task::Poll::Ready((Err(true), Err(false)));
+            }
+            a_done = Some(res);
+        }
+        if b_done.is_none()
+            && let std::task::Poll::Ready(res) = fb.as_mut().poll(cx)
+        {
+            if matches!(res, Err(true)) {
+                return std::task::Poll::Ready((Err(false), Err(true)));
+            }
+            b_done = Some(res);
+        }
+        if a_done.is_some() && b_done.is_some() {
+            std::task::Poll::Ready((a_done.take().unwrap(), b_done.take().unwrap()))
+        } else {
+            std::task::Poll::Pending
+        }
+    })
+    .await
 }
 
 fn settle_create(

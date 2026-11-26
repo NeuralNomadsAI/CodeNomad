@@ -104,6 +104,20 @@ pub(crate) fn test_mission_panel(s: &State, index: usize) -> &crate::missions::P
         .unwrap()
 }
 
+#[cfg(test)]
+pub(crate) fn test_tab_state_and_holds(
+    s: &State,
+    index: usize,
+) -> (String, bool, &crate::missions::EditorHolds) {
+    let ui = s.workspace.as_ref().unwrap();
+    let entry = &ui.entries[index];
+    (
+        entry.key.clone(),
+        entry.missions.is_some(),
+        &ui.mission_editor,
+    )
+}
+
 pub(super) struct Entry {
     key: String,
     saved: Tab,

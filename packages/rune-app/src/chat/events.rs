@@ -283,9 +283,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             Event::Reconnecting | Event::ConnectionLost => {
                 if matches!(event, Event::ConnectionLost) {
                     s.conversation_stream_connected = false;
+                    workspace::on_mission_transport_lost(s);
                 }
                 workspace::suspend_mission_briefing(s);
-                workspace::on_mission_transport_lost(s);
                 s.transcript_display.messages.offline();
                 s.transcript_display.tool_clock.pause();
                 s.status_permissions.online(false);
@@ -344,6 +344,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             }
             Event::WorkspaceMissing => {
                 s.conversation_stream_connected = false;
+                workspace::on_mission_transport_lost(s);
                 s.transcript_display.receipts.clear();
                 s.status_permissions.online(false);
                 s.status_usage.disconnect();

@@ -516,6 +516,7 @@ pub(super) fn poll_missions(
     let mut selection_changed = false;
     let mounted = crate::shell::right_panel_visible(s);
     let blocked = mission_context_blocked(s);
+    let editor_foreground = !crate::git::has_preview(s) && !crate::files::has_preview(s);
     let current = &ui.entries[ui.active];
     let current_source = (!blocked
         && mounted
@@ -626,6 +627,11 @@ pub(super) fn poll_missions(
             if visible || panel.has_surface() {
                 panel.refresh_when_due(ui.clock, tx);
             }
+            if !editor_foreground && panel.has_editor() {
+                panel.invalidate_editor_generation();
+                ui.mission_editor
+                    .revoke_auto_start_for_occurrence(&entry.key);
+            }
             if panel.take_editor_auto_start_revoked() {
                 ui.mission_editor
                     .revoke_auto_start_for_occurrence(&entry.key);
@@ -641,7 +647,7 @@ pub(super) fn poll_missions(
 
     let (editor_changed, editor_events) = {
         let active_entry = &ui.entries[ui.active];
-        let active_ctx = active_polled
+        let active_ctx = (active_polled && editor_foreground)
             .then(|| {
                 active_entry
                     .missions
@@ -659,7 +665,9 @@ pub(super) fn poll_missions(
     if active_polled {
         let entry = &mut ui.entries[ui.active];
         if let (Tab::Workspace(saved), Some(panel)) = (&mut entry.saved, &mut entry.missions) {
-            changed |= panel.commit_editor_submit(&mut ui.mission_editor, &auth_expired);
+            if editor_foreground {
+                changed |= panel.commit_editor_submit(&mut ui.mission_editor, &auth_expired);
+            }
             changed |= panel.apply_editor_events(&entry.key, &editor_events);
             if let Some(text) = panel.take_reader_copy()
                 && !any_auth_expired

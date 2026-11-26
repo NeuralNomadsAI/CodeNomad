@@ -345,8 +345,7 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
     }
     if ui.entries[index].missions.as_ref().is_some_and(|panel| {
         ui.mission_editor
-            .creation(&panel.creation_scope_key())
-            .is_some()
+            .creation_blocks_tab_close(&panel.creation_scope_key())
             || panel.has_unsaved_editor_draft(&ui.mission_editor)
     }) {
         return true;
@@ -358,7 +357,8 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
         .is_some_and(|(backend, project)| {
             let mut ws_backend = backend.clone();
             ws_backend.workspace.clone_from(&project.id);
-            ui.mission_editor.has_creation_for_workspace(&ws_backend)
+            ui.mission_editor
+                .has_blocking_creation_for_workspace(&ws_backend)
         })
     {
         return true;

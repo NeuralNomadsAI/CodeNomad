@@ -40,7 +40,10 @@ pub(crate) use state::{
     suspend_missions,
 };
 #[cfg(test)]
-pub(crate) use state::{test_mission_entry_mut, test_mission_panel, test_state_with_mission_panel};
+pub(crate) use state::{
+    test_mission_entry_mut, test_mission_panel, test_state_with_mission_panel,
+    test_tab_state_and_holds,
+};
 
 use crate::composer::draft_storage::SavedParts;
 use save_snapshot::encode_for_save;

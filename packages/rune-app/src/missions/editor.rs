@@ -463,7 +463,7 @@ impl Form {
         creation_hold: Option<&CreationHoldView>,
         edit_hold: Option<&EditHoldView>,
     ) -> bool {
-        if self.is_locked(creation_hold, edit_hold) {
+        if self.is_locked(creation_hold, edit_hold) || self.pending_leave.is_some() {
             return false;
         }
         if !valid_objective_input(&self.objective.text) || !valid_notes_input(&self.notes.text) {
@@ -643,6 +643,9 @@ impl Editor {
         wake: &'a Wake,
     ) -> Option<ActiveEditor<'a>> {
         let form = self.form.as_ref()?;
+        if form.pending_leave.is_some() {
+            return None;
+        }
         Some(ActiveEditor {
             origin: FormOrigin {
                 occurrence: occurrence.to_owned(),
@@ -831,11 +834,14 @@ impl Editor {
     }
 
     pub(crate) fn request_leave_from_form(&mut self, intent: LeaveIntent) -> bool {
-        let Some(form) = &mut self.form else {
+        let Some(form) = self.form.as_ref() else {
             return true;
         };
         if form.is_dirty_unsubmitted() {
-            form.pending_leave = Some(intent);
+            self.invalidate_generation();
+            if let Some(form) = &mut self.form {
+                form.pending_leave = Some(intent);
+            }
             false
         } else {
             true
@@ -843,8 +849,11 @@ impl Editor {
     }
 
     pub(crate) fn arm_leave(&mut self, intent: LeaveIntent) {
-        if let Some(form) = &mut self.form {
-            form.pending_leave = Some(intent);
+        if self.form.is_some() {
+            self.invalidate_generation();
+            if let Some(form) = &mut self.form {
+                form.pending_leave = Some(intent);
+            }
         }
     }
 
@@ -1526,6 +1535,7 @@ impl Editor {
             changed = true;
             if form.mode == Mode::Create
                 && form.generation == submit_gen
+                && form.pending_leave.is_none()
                 && reply_backend.client.same_connection(&backend.client)
             {
                 if auth_expired
@@ -1545,6 +1555,7 @@ impl Editor {
             changed = true;
             if form.mode == Mode::Edit
                 && form.generation == submit_gen
+                && form.pending_leave.is_none()
                 && reply_backend.client.same_connection(&backend.client)
             {
                 if auth_expired

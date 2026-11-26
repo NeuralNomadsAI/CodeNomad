@@ -126,6 +126,7 @@ struct CreationEntry {
     auto_start_alive: bool,
     origin: Option<FormOrigin>,
     checking: bool,
+    reconcile_tried: bool,
     create_flight: Option<Receiver<CreateReply>>,
     receipt_flight: Option<Receiver<ReceiptReply>>,
 }
@@ -138,6 +139,10 @@ impl CreationEntry {
             start_on_creation: self.start_on_creation,
             checking: self.checking,
         }
+    }
+
+    fn blocks_tab_close(&self) -> bool {
+        self.state == HoldState::Pending || self.checking || !self.reconcile_tried
     }
 }
 
@@ -243,11 +248,17 @@ impl EditorHolds {
         self.creations.get(key).map(CreationEntry::view)
     }
 
-    pub(crate) fn has_creation_for_workspace(&self, backend: &Backend) -> bool {
-        let server = server_owner(backend);
+    pub(crate) fn creation_blocks_tab_close(&self, key: &CreationScopeKey) -> bool {
         self.creations
-            .keys()
-            .any(|key| key.server == server && key.workspace == backend.workspace)
+            .get(key)
+            .is_some_and(CreationEntry::blocks_tab_close)
+    }
+
+    pub(crate) fn has_blocking_creation_for_workspace(&self, backend: &Backend) -> bool {
+        let server = server_owner(backend);
+        self.creations.iter().any(|(key, entry)| {
+            key.server == server && key.workspace == backend.workspace && entry.blocks_tab_close()
+        })
     }
 
     pub(crate) fn retire_creation_workspace(&mut self, backend: &Backend) {
@@ -316,6 +327,7 @@ impl EditorHolds {
                 auto_start_alive: start_on_creation,
                 origin: Some(origin),
                 checking: false,
+                reconcile_tried: false,
                 create_flight: Some(incoming),
                 receipt_flight: None,
             },
@@ -662,6 +674,7 @@ impl EditorHolds {
                 CreationReceiptOutcome::AuthExpired | CreationReceiptOutcome::Unknown => {
                     if let Some(entry) = self.creations.get_mut(&key) {
                         entry.checking = false;
+                        entry.reconcile_tried = true;
                     }
                 }
             }
@@ -763,6 +776,7 @@ impl EditorHolds {
                 auto_start_alive: false,
                 origin: None,
                 checking: false,
+                reconcile_tried: false,
                 create_flight: None,
                 receipt_flight: None,
             },

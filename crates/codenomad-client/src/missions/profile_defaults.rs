@@ -551,7 +551,7 @@ impl Backend {
             }
         };
         let (agents_res, models_res) =
-            futures_lite::future::zip(fetch("agent"), fetch("model")).await;
+            super::editor::zip_abort_on_auth(fetch("agent"), fetch("model")).await;
         let (agents_body, models_body) = match (agents_res, models_res) {
             (Ok(a), Ok(m)) => (a, m),
             (Err(true), _) | (_, Err(true)) => return MissionCatalogOutcome::AuthExpired,

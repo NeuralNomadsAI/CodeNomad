@@ -1603,3 +1603,20 @@ fn mission_catalog_reads_filters_and_validates_profiles_by_task_mode() {
         );
     });
 }
+
+#[test]
+fn zip_abort_on_auth_short_circuits_immediately_without_waiting_on_slow_sibling() {
+    futures_lite::future::block_on(async {
+        let fast_401 = async { Err::<(), bool>(true) };
+        let forever_pending = futures_lite::future::pending::<std::result::Result<(), bool>>();
+        let (a, b) = zip_abort_on_auth(fast_401, forever_pending).await;
+        assert_eq!(a, Err(true));
+        assert_eq!(b, Err(false));
+
+        let forever_pending_left = futures_lite::future::pending::<std::result::Result<(), bool>>();
+        let fast_401_right = async { Err::<(), bool>(true) };
+        let (a, b) = zip_abort_on_auth(forever_pending_left, fast_401_right).await;
+        assert_eq!(a, Err(false));
+        assert_eq!(b, Err(true));
+    });
+}
