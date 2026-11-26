@@ -563,6 +563,12 @@ pub fn schedule_catalogue_refresh(s: &mut State) {
         l.linked.mark_reload();
     }
 }
+
+pub fn cancel_catalogue_refresh(s: &mut State) {
+    if let Some(ui) = &mut s.workspace {
+        ui.entries[ui.active].catalogue.clear();
+    }
+}
 pub fn has_conversation_stream(s: &State) -> bool {
     s.incoming
         .as_ref()

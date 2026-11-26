@@ -135,6 +135,13 @@ impl Refresh {
             self.schedule(now);
         }
     }
+
+    pub(super) fn clear(&mut self) {
+        self.due = None;
+        self.urgent = false;
+        self.reset_cursor = false;
+        self.request = None;
+    }
 }
 
 pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
@@ -396,6 +403,46 @@ mod tests {
                 "urgent must remain set while a coalesced trailing read is queued"
             );
             assert!(entry.catalogue.due.is_some());
+        });
+    }
+
+    #[test]
+    fn cancel_catalogue_refresh_clears_pre_create_refresh_without_rearming() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        state.workspace = Some(workspace::Ui::new());
+        workspace::connected(&mut state);
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1000.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(|s, tx| {
+            let project = Project {
+                id: "p1".into(),
+                path: "/repo".into(),
+            };
+            s.screen.launcher_mut().unwrap().project = Some(project.clone());
+            workspace::opened(s, &project);
+            let (_out, rx) = codenomad_client::bounded(1);
+            let generation = s.screen.launcher().unwrap().catalogue_generation;
+            let ui = s.workspace.as_mut().unwrap();
+            let entry = &mut ui.entries[ui.active];
+            entry.catalogue.urgent = true;
+            entry.catalogue.reset_cursor = true;
+            entry.catalogue.due = Some(2.0);
+            entry.catalogue.request = Some((generation, rx));
+            workspace::cancel_catalogue_refresh(s);
+            let launcher = s.screen.launcher_mut().unwrap();
+            launcher.pending = true;
+            launcher.catalogue_generation = launcher.catalogue_generation.wrapping_add(1);
+            let _ = super::poll(s, 3.0, tx);
+            let entry = &s.workspace.as_ref().unwrap().entries[0];
+            assert!(entry.catalogue.request.is_none());
+            assert!(entry.catalogue.due.is_none());
+            assert!(!entry.catalogue.urgent);
+            assert!(!entry.catalogue.reset_cursor);
         });
     }
 }
