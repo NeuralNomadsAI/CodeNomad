@@ -38,7 +38,6 @@ pub async fn observe(base: String) -> Result<(), wasm_bindgen::JsValue> {
         Ok(())
     }
     .await;
-    wire.cancelled
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    wire.cancel();
     result
 }
