@@ -174,7 +174,9 @@ impl Setting {
 
     pub fn take_cleanup(&mut self) -> Option<cleanup::Intent> {
         if self.busy() {
-            let _ = self.review.take_cleanup();
+            if let Some(intent) = self.review.take_cleanup() {
+                self.review.cleanup_failed(&intent);
+            }
             return None;
         }
         self.review.take_cleanup()

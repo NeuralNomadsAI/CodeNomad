@@ -405,13 +405,17 @@ impl Editor {
                 match api::save(&backend, &id, &payload).await {
                     Ok(()) => true,
                     Err(_) => {
-                        still_authorized()
+                        let read_ok = still_authorized()
                             && (!backend.client.tracks_server_attestation()
                                 || backend.attest_server().await.is_ok())
                             && still_authorized()
                             && api::read(&backend, &id).await.is_ok_and(|content| {
                                 still_authorized() && content.exists && content.contents == payload
-                            })
+                            });
+                        read_ok
+                            && (!backend.client.tracks_server_attestation()
+                                || backend.attest_server().await.is_ok())
+                            && still_authorized()
                     }
                 }
             };
@@ -579,6 +583,10 @@ mod tests {
             let server_id_srv = server_id.clone();
             let swap_after_read_meta = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let swap_after_read_meta_srv = swap_after_read_meta.clone();
+            let fail_put_once = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let fail_put_once_srv = fail_put_once.clone();
+            let swap_readback_match = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let swap_readback_match_srv = swap_readback_match.clone();
             let hold_put = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let hold_put_srv = hold_put.clone();
             let put_arrived = Arc::new(tokio::sync::Notify::new());
@@ -592,6 +600,8 @@ mod tests {
                     let saved_srv = saved_srv.clone();
                     let server_id_srv = server_id_srv.clone();
                     let swap_after_read_meta_srv = swap_after_read_meta_srv.clone();
+                    let fail_put_once_srv = fail_put_once_srv.clone();
+                    let swap_readback_match_srv = swap_readback_match_srv.clone();
                     let hold_put_srv = hold_put_srv.clone();
                     let put_arrived_srv = put_arrived_srv.clone();
                     let put_release_srv = put_release_srv.clone();
@@ -664,15 +674,22 @@ mod tests {
                                 .to_string(),
                             ),
                             ("GET", "/api/config-files/codenomad/content") => {
-                                if swap_after_read_meta_srv.swap(false, Ordering::SeqCst) {
+                                let contents = if swap_readback_match_srv
+                                    .swap(false, Ordering::SeqCst)
+                                {
                                     *server_id_srv.lock().unwrap() = "server-profile-b".to_owned();
-                                }
-                                let contents =
+                                    "locale: uncertain\n"
+                                } else {
+                                    if swap_after_read_meta_srv.swap(false, Ordering::SeqCst) {
+                                        *server_id_srv.lock().unwrap() =
+                                            "server-profile-b".to_owned();
+                                    }
                                     if *server_id_srv.lock().unwrap() == "server-profile-a" {
                                         "locale: en\n"
                                     } else {
                                         "locale: foreign-b\n"
-                                    };
+                                    }
+                                };
                                 (
                                     "200 OK",
                                     json!({
@@ -684,14 +701,21 @@ mod tests {
                                 )
                             }
                             ("PUT", "/api/config-files/codenomad/content") => {
-                                let parsed: Value = serde_json::from_str(&body).unwrap();
-                                *saved_srv.lock().unwrap() =
-                                    parsed["contents"].as_str().map(str::to_owned);
-                                if hold_put_srv.swap(false, Ordering::SeqCst) {
-                                    put_arrived_srv.notify_one();
-                                    put_release_srv.notified().await;
+                                if fail_put_once_srv.swap(false, Ordering::SeqCst) {
+                                    (
+                                        "500 Internal Server Error",
+                                        json!({"error": "uncertain"}).to_string(),
+                                    )
+                                } else {
+                                    let parsed: Value = serde_json::from_str(&body).unwrap();
+                                    *saved_srv.lock().unwrap() =
+                                        parsed["contents"].as_str().map(str::to_owned);
+                                    if hold_put_srv.swap(false, Ordering::SeqCst) {
+                                        put_arrived_srv.notify_one();
+                                        put_release_srv.notified().await;
+                                    }
+                                    ("204 No Content", String::new())
                                 }
-                                ("204 No Content", String::new())
                             }
                             _ => ("404 Not Found", json!({"error": "not found"}).to_string()),
                         };
@@ -913,6 +937,41 @@ mod tests {
             editor.save(&prefs);
             assert!(!editor.busy());
             assert_eq!(saved_payload.lock().unwrap().as_deref(), None);
+
+            // Uncertain PUT followed by HTTP swap to profile B between readback /api/meta and
+            // GET content: even when profile B serves identical content, post-readback
+            // re-attestation must reject confirmation and keep the draft dirty.
+            *server_id.lock().unwrap() = "server-profile-a".to_owned();
+            let backend_readback_swap = Backend::connect(&base, "").await.unwrap();
+            backend_readback_swap.attest_server().await.unwrap();
+            prefs.bind(Some(backend_readback_swap.clone()));
+            for _ in 0..100 {
+                prefs.poll();
+                editor.poll(&prefs, &wake, true);
+                if !prefs.transport_lost() && editor.can_write(&prefs) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!prefs.transport_lost());
+            assert!(editor.can_write(&prefs));
+            editor.draft = TextEdit::new("locale: uncertain\n");
+            assert!(editor.dirty());
+            fail_put_once.store(true, Ordering::SeqCst);
+            swap_readback_match.store(true, Ordering::SeqCst);
+            editor.save(&prefs);
+            assert!(editor.busy());
+            for _ in 0..100 {
+                editor.poll(&prefs, &wake, true);
+                if !editor.busy() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(backend_readback_swap.client.attestation_revoked());
+            assert!(!editor.can_write(&prefs));
+            assert!(editor.dirty());
+            assert_eq!(editor.draft.text, "locale: uncertain\n");
 
             // Connecting to a different server profile on the same address must reset the draft.
             let backend_c = Backend::connect(&base, "").await.unwrap();

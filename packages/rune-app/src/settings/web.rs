@@ -275,7 +275,9 @@ impl Panel {
     fn poll_scope(&mut self, prefs: &mut Preferences, wake: &rune::Waker, paired: bool) -> bool {
         let shown = self.shown && paired;
         let mut changed = self.scope.poll(prefs, wake, shown);
-        if matches!(self.section, Section::OpenCode | Section::Remote) && !self.local(prefs) {
+        if matches!(self.section, Section::OpenCode | Section::Remote)
+            && (self.scope.local_unsupported(prefs) || prefs.backend.is_none())
+        {
             prefs.hide_opencode();
             self.logging.close();
             self.remote.close();
@@ -308,7 +310,12 @@ impl Panel {
     fn can_open_section(&self, prefs: &Preferences, section: Section) -> bool {
         match section {
             Section::Stats => super::stats::supported(prefs),
-            Section::OpenCode | Section::Remote => self.local(prefs),
+            Section::OpenCode | Section::Remote => {
+                self.local(prefs)
+                    || (self.section == section
+                        && prefs.backend.is_some()
+                        && !self.scope.local_unsupported(prefs))
+            }
             Section::ConfigFiles => {
                 self.scope.config_files(prefs)
                     || self.config_files.dirty()
@@ -494,7 +501,7 @@ pub(super) fn view(
     ]
     .into_iter()
     .filter(|section| match section {
-        Section::OpenCode | Section::Remote => local,
+        Section::OpenCode | Section::Remote => panel.can_open_section(prefs, *section),
         Section::ConfigFiles => panel.can_open_section(prefs, Section::ConfigFiles),
         Section::Stats => super::stats::supported(prefs),
         _ => true,
@@ -516,7 +523,8 @@ pub(super) fn view(
             };
             if !panel.shown
                 || (section == Section::Stats && !super::stats::supported(&prefs))
-                || (matches!(section, Section::OpenCode | Section::Remote) && !panel.local(&prefs))
+                || (matches!(section, Section::OpenCode | Section::Remote)
+                    && !panel.can_open_section(&prefs, section))
                 || (section == Section::ConfigFiles
                     && !panel.can_open_section(&prefs, Section::ConfigFiles))
                 || panel.config_files.busy()
@@ -673,47 +681,58 @@ pub(super) fn view(
                             .wrap()
                     }),
             ),
-        Section::OpenCode if local => col()
-            .full_width()
-            .child(opencode::view(
-                &panel.opencode,
-                prefs,
+        Section::OpenCode
+            if local || (prefs.backend.is_some() && !panel.scope.local_unsupported(prefs)) =>
+        {
+            col()
+                .full_width()
+                .child(opencode::view(
+                    &panel.opencode,
+                    prefs,
+                    |s: &mut State| {
+                        let panel = &s.settings.web;
+                        let mut prefs = s.settings.shared.borrow_mut();
+                        if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs)
+                        {
+                            panel.opencode.start(&mut prefs, Some(s.wake.clone()));
+                        }
+                    },
+                    |s: &mut State| {
+                        let panel = &mut s.settings.web;
+                        let mut prefs = s.settings.shared.borrow_mut();
+                        if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs)
+                        {
+                            panel.opencode.read(&mut prefs, Some(&s.wake), Some(true));
+                        }
+                    },
+                    |s| &mut s.settings.web.opencode,
+                ))
+                .child(
+                    panel
+                        .logging
+                        .view(&s.settings.shared, &mut layers, |s: &mut State| {
+                            &mut s.settings.web.logging
+                        }),
+                )
+        }
+        Section::Remote
+            if local || (prefs.backend.is_some() && !panel.scope.local_unsupported(prefs)) =>
+        {
+            panel.remote.view_gated(
+                &s.settings.shared,
+                local,
                 |s: &mut State| {
-                    let panel = &s.settings.web;
-                    let mut prefs = s.settings.shared.borrow_mut();
-                    if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs) {
-                        panel.opencode.start(&mut prefs, Some(s.wake.clone()));
-                    }
-                },
-                |s: &mut State| {
+                    let paired = !crate::platform::pairing::required(s);
                     let panel = &mut s.settings.web;
-                    let mut prefs = s.settings.shared.borrow_mut();
-                    if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs) {
-                        panel.opencode.read(&mut prefs, Some(&s.wake), Some(true));
-                    }
+                    (paired
+                        && panel.shown
+                        && panel.section == Section::Remote
+                        && panel.local(&s.settings.shared.borrow()))
+                    .then_some(&mut panel.remote)
                 },
-                |s| &mut s.settings.web.opencode,
-            ))
-            .child(
-                panel
-                    .logging
-                    .view(&s.settings.shared, &mut layers, |s: &mut State| {
-                        &mut s.settings.web.logging
-                    }),
-            ),
-        Section::Remote if local => panel.remote.view(
-            &s.settings.shared,
-            |s: &mut State| {
-                let paired = !crate::platform::pairing::required(s);
-                let panel = &mut s.settings.web;
-                (paired
-                    && panel.shown
-                    && panel.section == Section::Remote
-                    && panel.local(&s.settings.shared.borrow()))
-                .then_some(&mut panel.remote)
-            },
-            |s: &mut State| &mut s.settings.web.remote,
-        ),
+                |s: &mut State| &mut s.settings.web.remote,
+            )
+        }
         Section::ConfigFiles => {
             if panel.scope.config_files(prefs) {
                 panel

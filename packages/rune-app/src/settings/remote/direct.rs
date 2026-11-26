@@ -27,7 +27,6 @@ pub(super) struct DirectAccess {
     meta_flight: Option<(u64, Sender<()>, Receiver<MetaReply>)>,
     mode_flight: Option<Receiver<Result<(), remote::Error>>>,
     password_flight: Option<Receiver<Result<PasswordSaved, remote::Error>>>,
-    inflight_lock: Option<(String, Receiver<()>)>,
     meta_error: Option<ErrorText>,
     disclosure_override: Option<bool>,
     locked_info_open: bool,
@@ -52,11 +51,9 @@ struct MetaReply {
 impl DirectAccess {
     pub fn close(&mut self) {
         let open_seq = self.open_seq.wrapping_add(1);
-        let inflight_lock = self.inflight_lock.take().filter(|(_, rx)| !rx.is_closed());
         self.wipe_password_fields();
         *self = Self {
             open_seq,
-            inflight_lock,
             ..Self::default()
         };
     }
@@ -66,16 +63,14 @@ impl DirectAccess {
         self.confirm = TextEdit::new("");
     }
 
-    fn mutating(&self) -> bool {
+    fn mutating(&self, prefs: &Preferences) -> bool {
         self.mode_flight.is_some()
             || self.password_flight.is_some()
-            || self.inflight_lock.as_ref().is_some_and(|(id, rx)| {
-                self.owner.as_deref() == Some(id.as_str()) && !rx.is_closed()
-            })
+            || prefs.direct_access_locked(self.owner.as_deref())
     }
 
-    pub fn refresh(&mut self, backend: &Backend, wake: &Waker) {
-        if self.meta_flight.is_some() || self.mutating() {
+    pub fn refresh(&mut self, prefs: &Preferences, backend: &Backend, wake: &Waker) {
+        if self.meta_flight.is_some() || self.mutating(prefs) {
             self.pending_refresh = true;
             return;
         }
@@ -100,27 +95,22 @@ impl DirectAccess {
         });
     }
 
-    pub fn poll(&mut self, backend: Option<&Backend>, wake: &Waker) -> bool {
+    pub fn poll(&mut self, prefs: &Preferences, backend: Option<&Backend>, wake: &Waker) -> bool {
         let owner = backend.map(|b| b.client_id.as_str());
         if self.owner.as_deref() != owner {
             self.close();
             self.owner = owner.map(str::to_owned);
             if let Some(backend) = backend {
-                self.refresh(backend, wake);
+                self.refresh(prefs, backend, wake);
             }
             return true;
         }
         let mut changed = self.address_copy.poll();
         if self.mode_flight.is_none()
             && self.password_flight.is_none()
-            && let Some((lock_owner, lock_rx)) = &self.inflight_lock
-            && lock_rx.is_closed()
+            && prefs.take_finished_direct_access_lock(owner)
         {
-            let same_owner = owner == Some(lock_owner.as_str());
-            self.inflight_lock = None;
-            if same_owner {
-                self.pending_refresh = true;
-            }
+            self.pending_refresh = true;
             changed = true;
         }
         if let Some((flight_auth_gen, _, flight)) = &self.meta_flight {
@@ -174,13 +164,13 @@ impl DirectAccess {
             match flight.try_recv() {
                 Ok(result) => {
                     self.mode_flight = None;
-                    self.inflight_lock = None;
+                    prefs.clear_direct_access_lock();
                     match result {
                         Ok(()) => {
                             self.restart_notice = true;
                             self.mode_error = None;
                             if let Some(backend) = backend {
-                                self.refresh(backend, wake);
+                                self.refresh(prefs, backend, wake);
                             }
                         }
                         Err(err) => {
@@ -197,7 +187,7 @@ impl DirectAccess {
                 }
                 Err(_) if flight.is_closed() => {
                     self.mode_flight = None;
-                    self.inflight_lock = None;
+                    prefs.clear_direct_access_lock();
                     self.mode_error = Some(ErrorText::Key("settings.preferenceSaveFailed"));
                     changed = true;
                 }
@@ -208,7 +198,7 @@ impl DirectAccess {
             match flight.try_recv() {
                 Ok(result) => {
                     self.password_flight = None;
-                    self.inflight_lock = None;
+                    prefs.clear_direct_access_lock();
                     match result {
                         Ok(saved) => {
                             self.auth_gen = self.auth_gen.wrapping_add(1);
@@ -237,7 +227,7 @@ impl DirectAccess {
                             self.password_error =
                                 Some(ErrorText::from_remote(err, "settings.preferenceSaveFailed"));
                             if let Some(backend) = backend {
-                                self.refresh(backend, wake);
+                                self.refresh(prefs, backend, wake);
                             }
                         }
                     }
@@ -245,10 +235,10 @@ impl DirectAccess {
                 }
                 Err(_) if flight.is_closed() => {
                     self.password_flight = None;
-                    self.inflight_lock = None;
+                    prefs.clear_direct_access_lock();
                     self.password_error = Some(ErrorText::Key("settings.preferenceSaveFailed"));
                     if let Some(backend) = backend {
-                        self.refresh(backend, wake);
+                        self.refresh(prefs, backend, wake);
                     }
                     changed = true;
                 }
@@ -257,10 +247,10 @@ impl DirectAccess {
         }
         if self.pending_refresh
             && self.meta_flight.is_none()
-            && !self.mutating()
+            && !self.mutating(prefs)
             && let Some(backend) = backend
         {
-            self.refresh(backend, wake);
+            self.refresh(prefs, backend, wake);
             changed = true;
         }
         changed
@@ -284,7 +274,7 @@ impl DirectAccess {
         wake: &Waker,
         target: ListeningMode,
     ) {
-        if self.mutating()
+        if self.mutating(prefs)
             || self.meta_flight.is_some()
             || !self.meta_verified
             || prefs.transport_lost()
@@ -306,7 +296,7 @@ impl DirectAccess {
         let (out, input) = bounded(1);
         let (lock_tx, lock_rx) = bounded::<()>(1);
         self.mode_flight = Some(input);
-        self.inflight_lock = Some((backend.client_id.clone(), lock_rx));
+        prefs.set_direct_access_lock(backend.client_id.clone(), lock_rx);
         let (backend, wake) = (backend.clone(), wake.clone());
         platform::spawn(async move {
             let still_ok = || {
@@ -333,7 +323,7 @@ impl DirectAccess {
     }
 
     fn submit_password(&mut self, prefs: &Preferences, backend: &Backend, wake: &Waker) {
-        if self.mutating()
+        if self.mutating(prefs)
             || !self.meta_verified
             || prefs.transport_lost()
             || !super::super::ServerOwner::backend_verified(backend)
@@ -360,7 +350,7 @@ impl DirectAccess {
         let (out, input) = bounded(1);
         let (lock_tx, lock_rx) = bounded::<()>(1);
         self.password_flight = Some(input);
-        self.inflight_lock = Some((backend.client_id.clone(), lock_rx));
+        prefs.set_direct_access_lock(backend.client_id.clone(), lock_rx);
         let (backend, wake) = (backend.clone(), wake.clone());
         platform::spawn(async move {
             let still_ok = || {
@@ -425,7 +415,7 @@ impl DirectAccess {
         access: fn(&mut S) -> Option<&mut Remote>,
     ) -> El {
         let loading = self.meta_flight.is_some();
-        let applying = self.mutating();
+        let applying = self.mutating(&shared.borrow());
         let locked = self.meta.as_ref().is_some_and(|m| m.listening_locked);
         let local_request = self.meta.as_ref().is_none_or(|m| m.local_request);
         let allow_external = self.allow_external();
@@ -440,7 +430,7 @@ impl DirectAccess {
                 if let Some(backend) = prefs.backend.as_ref().filter(|_| prefs.can_retry())
                     && let Some(wake) = prefs.window_wake.as_ref().or(prefs.main_wake.as_ref())
                 {
-                    state.direct.refresh(backend, wake);
+                    state.direct.refresh(&prefs, backend, wake);
                 }
             },
         )
@@ -600,7 +590,13 @@ impl DirectAccess {
                 .as_ref()
                 .map(ErrorText::as_str)
                 .unwrap_or_else(|| t("remoteAccess.authStatus.unavailable"));
-            return chrome::card(card.child(text(message).wrap()));
+            return chrome::card(
+                card.child(text(message).wrap()).children(
+                    self.password_error
+                        .as_ref()
+                        .map(|err| text(err.as_str()).role("alert").wrap()),
+                ),
+            );
         };
 
         let username = auth.username.as_deref().unwrap_or("codenomad");
@@ -610,7 +606,7 @@ impl DirectAccess {
             "remoteAccess.password.status.unset"
         };
         let saving = self.password_flight.is_some();
-        let mutating = self.mutating();
+        let mutating = self.mutating(&shared.borrow());
         let local_request = self.meta.as_ref().is_some_and(|m| m.local_request);
         card = card
             .child(text(t("remoteAccess.username").replace("{username}", username)).wrap())

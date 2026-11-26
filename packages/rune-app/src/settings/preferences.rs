@@ -52,9 +52,41 @@ pub(super) struct Preferences {
     seen_drops: Vec<(String, u64)>,
     seen_drop_generation: u64,
     observed_drop_watch: Option<codenomad_client::http::ClientDropWatch>,
+    direct_access_lock: std::sync::Mutex<Option<(String, codenomad_client::Receiver<()>)>>,
 }
 
 impl Preferences {
+    pub(super) fn set_direct_access_lock(
+        &self,
+        owner: String,
+        lock: codenomad_client::Receiver<()>,
+    ) {
+        *self.direct_access_lock.lock().unwrap() = Some((owner, lock));
+    }
+
+    pub(super) fn clear_direct_access_lock(&self) {
+        *self.direct_access_lock.lock().unwrap() = None;
+    }
+
+    pub(super) fn direct_access_locked(&self, owner: Option<&str>) -> bool {
+        let Some(owner) = owner else {
+            return false;
+        };
+        let guard = self.direct_access_lock.lock().unwrap();
+        guard
+            .as_ref()
+            .is_some_and(|(lock_owner, rx)| lock_owner == owner && !rx.is_closed())
+    }
+
+    pub(super) fn take_finished_direct_access_lock(&self, owner: Option<&str>) -> bool {
+        let mut guard = self.direct_access_lock.lock().unwrap();
+        let finished = guard.as_ref().is_some_and(|(_, rx)| rx.is_closed());
+        if !finished {
+            return false;
+        }
+        let lock_owner = guard.take().map(|(id, _)| id);
+        owner.is_some() && owner == lock_owner.as_deref()
+    }
     pub(super) fn show_timeline(&self) -> bool {
         self.config
             .snapshot

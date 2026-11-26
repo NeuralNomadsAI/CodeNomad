@@ -169,11 +169,11 @@ impl Remote {
             self.owner = owner.map(str::to_owned);
             if let Some(backend) = backend {
                 self.start(backend, wake, Action::Refresh);
-                self.direct.poll(Some(backend), wake);
+                self.direct.poll(prefs, Some(backend), wake);
             }
             return true;
         }
-        let mut changed = self.direct.poll(backend, wake);
+        let mut changed = self.direct.poll(prefs, backend, wake);
         changed |= self.copy.poll();
         let expired = self
             .pairing
@@ -557,15 +557,27 @@ impl Remote {
         });
     }
 
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     pub fn view<S: 'static>(
         &self,
         shared: &Rc<RefCell<Preferences>>,
         access: fn(&mut S) -> Option<&mut Self>,
         edit: fn(&mut S) -> &mut Self,
     ) -> El {
+        self.view_gated(shared, true, access, edit)
+    }
+
+    pub fn view_gated<S: 'static>(
+        &self,
+        shared: &Rc<RefCell<Preferences>>,
+        host_ready: bool,
+        access: fn(&mut S) -> Option<&mut Self>,
+        edit: fn(&mut S) -> &mut Self,
+    ) -> El {
         let prefs = shared.borrow();
         let busy = self.flight.is_some();
-        let available = prefs.can_retry()
+        let available = host_ready
+            && prefs.can_retry()
             && self.owner.as_ref() == prefs.backend.as_ref().map(|backend| &backend.client_id);
         let control = |label: &str, primary: bool, extra_disabled: bool, action: Action| {
             let shared = shared.clone();

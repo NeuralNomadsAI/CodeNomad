@@ -213,6 +213,7 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
         let mut saw_settings = false;
         let mut saw_config = false;
         let mut saw_state = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !saw_list
             || !saw_settings
             || !saw_config
@@ -228,6 +229,12 @@ fn reauthentication_on_same_server_keeps_open_memory_edit_saveable_and_different
             {
                 break;
             }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "re-authentication did not settle in time: saw_list={saw_list}, saw_settings={saw_settings}, saw_config={saw_config}, saw_state={saw_state}, review_writable={}, transport_lost={}",
+                prefs.memory.review_writable(&edit),
+                prefs.transport_lost()
+            );
             if let Ok(Ok((stream, _))) = timeout(Duration::from_millis(20), listener.accept()).await
             {
                 let req = read_request(stream, Duration::from_secs(2)).await;

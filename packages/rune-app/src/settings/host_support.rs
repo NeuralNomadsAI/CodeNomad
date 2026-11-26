@@ -117,6 +117,11 @@ impl HostSupport {
         self.current(prefs) && self.loaded && self.capabilities.local
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn local_unsupported(&self, prefs: &Preferences) -> bool {
+        self.current(prefs) && self.loaded && !self.capabilities.local
+    }
+
     pub fn config_files(&self, prefs: &Preferences) -> bool {
         self.current(prefs) && self.loaded && self.capabilities.config_files
     }
