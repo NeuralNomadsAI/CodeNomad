@@ -50,17 +50,14 @@ fn check_scoped(listing: &str) -> Result<(), Error> {
 }
 
 /// Collect `-c filter.<name>.{clean,smudge,process,required}` overrides disabling every
-/// filter driver defined in host system/global config so passive working-tree reads never invoke
-/// external filter commands referenced by repository `.gitattributes`.
+/// filter driver defined in host system/global config (including both `~/.gitconfig` and XDG
+/// global config plus their includes) so passive working-tree reads never invoke external
+/// filter commands referenced by repository `.gitattributes`.
 pub async fn host_filter_disables(dir: &Path) -> Result<Vec<String>, Error> {
+    let args = ["config", "--show-scope", "--includes", "--name-only", "-z", "--list"];
+    let out = run(dir, &args, 64 * 1024).await?.ok()?;
     let mut names = std::collections::BTreeSet::new();
-    for scope in ["--system", "--global"] {
-        let args = ["config", scope, "--includes", "--name-only", "-z", "--list"];
-        let out = run(dir, &args, 64 * 1024).await?;
-        if out.code == 0 {
-            collect_filter_names(&out.text(), &mut names);
-        }
-    }
+    collect_host_filter_names(&out.text(), &mut names)?;
     let mut flags = Vec::with_capacity(names.len() * 8);
     for name in names {
         flags.push("-c".into());
@@ -75,8 +72,16 @@ pub async fn host_filter_disables(dir: &Path) -> Result<Vec<String>, Error> {
     Ok(flags)
 }
 
-fn collect_filter_names(listing: &str, out: &mut std::collections::BTreeSet<String>) {
-    for raw in listing.split('\0') {
+fn collect_host_filter_names(listing: &str, out: &mut std::collections::BTreeSet<String>) -> Result<(), Error> {
+    let mut parts = listing.split('\0');
+    while let Some(scope) = parts.next() {
+        if scope.is_empty() {
+            break;
+        }
+        let raw = parts.next().ok_or_else(refused)?;
+        if !matches!(scope, "system" | "global") {
+            continue;
+        }
         let Some((section, rest)) = raw.split_once('.') else { continue };
         if !section.eq_ignore_ascii_case("filter") {
             continue;
@@ -86,6 +91,7 @@ fn collect_filter_names(listing: &str, out: &mut std::collections::BTreeSet<Stri
             out.insert(name.to_owned());
         }
     }
+    Ok(())
 }
 
 pub async fn effective(dir: &Path) -> Result<(), Error> {
@@ -266,7 +272,41 @@ mod tests {
         }
 
         let mut names = std::collections::BTreeSet::new();
-        collect_filter_names("filter.lfs.clean\0filter.My.Custom.smudge\0core.bare\0filter.lfs.process\0", &mut names);
+        collect_host_filter_names(
+            "system\0filter.lfs.clean\0global\0filter.My.Custom.smudge\0local\0filter.repo.clean\0global\0core.bare\0global\0filter.lfs.process\0",
+            &mut names,
+        )
+        .unwrap();
         assert_eq!(names, ["My.Custom", "lfs"].into_iter().map(str::to_owned).collect());
+        assert_eq!(collect_host_filter_names("global", &mut names).unwrap_err().0, Status::FORBIDDEN);
+
+        // Verify real `git config --show-scope --includes --name-only -z --list` discovers
+        // a filter defined only in XDG global config even when `~/.gitconfig` also exists.
+        let env_root = crate::shared::test_dir("config-guard-xdg-global");
+        let home = env_root.join("home");
+        let xdg = env_root.join("xdg");
+        let repo = env_root.join("repo");
+        std::fs::create_dir_all(xdg.join("git")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        std::fs::write(home.join(".gitconfig"), "[user]\n\tname = Host\n").unwrap();
+        std::fs::write(xdg.join("git").join("config"), "[filter \"xdgonly\"]\n\tclean = cat\n").unwrap();
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "--show-scope", "--includes", "--name-only", "-z", "--list"])
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GIT_CONFIG_GLOBAL")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let mut xdg_names = std::collections::BTreeSet::new();
+        collect_host_filter_names(&String::from_utf8_lossy(&out.stdout), &mut xdg_names).unwrap();
+        assert!(xdg_names.contains("xdgonly"), "expected XDG global filter, got: {xdg_names:?}");
+        let _ = std::fs::remove_dir_all(env_root);
     }
 }

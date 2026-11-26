@@ -697,6 +697,50 @@ async fn remote_memory_requires_multi_backend_for_browsers_and_preserves_local_a
             .status(),
         Status::NOT_FOUND
     );
+    // Paired ingress browser sending valid Origin + x-codenomad-server-request: 1 loses backend UI
+    // admission and gets 404 (not 403), matching TS gate.ts:175-198.
+    assert_eq!(
+        client
+            .get(format!("{ingress_base}/api/memory/settings"))
+            .header(header::HOST, ingress_host)
+            .header(header::ORIGIN, &ingress_origin)
+            .header(header::COOKIE, &ingress_browser)
+            .header("x-codenomad-server-request", "1")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        Status::NOT_FOUND
+    );
+    assert_eq!(
+        client
+            .post(format!("{ingress_base}/api/memory"))
+            .header(header::HOST, ingress_host)
+            .header(header::ORIGIN, &ingress_origin)
+            .header(header::COOKIE, &ingress_browser)
+            .header("x-codenomad-server-request", "1")
+            .json(&json!({"operation": {"action": "list", "scope": "global"}}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        Status::NOT_FOUND
+    );
+    // Paired ingress mutation with browser metadata (no Origin) + server header stays 403.
+    assert_eq!(
+        client
+            .post(format!("{ingress_base}/api/memory"))
+            .header(header::HOST, ingress_host)
+            .header("sec-fetch-site", "same-origin")
+            .header(header::COOKIE, &ingress_server)
+            .header("x-codenomad-server-request", "1")
+            .json(&json!({"operation": {"action": "list", "scope": "global"}}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        Status::FORBIDDEN
+    );
 
     local_task.abort();
     direct_task.abort();

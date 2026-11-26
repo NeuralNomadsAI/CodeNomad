@@ -230,11 +230,8 @@ pub async fn admit(
     {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
-    if server && (!direct || browser_metadata(h)) {
-        return cors(
-            reply(if channel.ingress { Status::FORBIDDEN } else { Status::UNAUTHORIZED }, "This device is not paired"),
-            None,
-        );
+    if !channel.ingress && server && (!direct || browser_metadata(h)) {
+        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), None);
     }
     let method = req.method().clone();
     let ui = bundle
@@ -283,7 +280,7 @@ pub async fn admit(
             tunnel_active,
         )
     });
-    let server_authenticated = server && owner.is_some();
+    let server_authenticated = server && !browser_metadata(h) && owner.is_some();
     // Direct HTTPS server-device requests authenticate before origin/catalog checks
     // (TS `gate.ts:133-138`); ingress unauthenticated mutations fail origin check with 403
     // even when `x-codenomad-server-request: 1` is sent (`gate.ts:177-183`).
