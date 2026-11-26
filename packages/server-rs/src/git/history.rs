@@ -105,7 +105,17 @@ pub async fn commit_details(
         .map_err(|_| bad("Object is not a commit"))?;
     let (parents, message) = text.split_once('\0').ok_or_else(|| bad("Object is not a commit"))?;
     let parent = parents.split_whitespace().next().filter(|p| sha(p));
-    let mut args = vec!["diff-tree", "--root", "--no-commit-id", "-r", "-M", "--name-status", "-z"];
+    let mut args = vec![
+        "diff-tree",
+        "--root",
+        "--no-commit-id",
+        "-r",
+        "-M",
+        "--name-status",
+        "-z",
+        "--no-ext-diff",
+        "--no-textconv",
+    ];
     if let Some(parent) = parent {
         args.push(parent);
     }

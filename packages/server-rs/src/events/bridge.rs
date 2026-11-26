@@ -92,6 +92,9 @@ const ROUTING_BYTES: usize = 32 << 20;
 const ROUTING_TIMEOUT: Duration = Duration::from_secs(60);
 /// A session's directory from its last located event or native read (TS `sessionLocations`).
 const LOCATION_TTL: Duration = Duration::from_secs(2);
+/// Per-workspace resync pulse backoff when routing fails (TS `ROUTING_RESYNC_{MIN,MAX}_MS`).
+const ROUTING_RESYNC_MIN: Duration = Duration::from_secs(1);
+const ROUTING_RESYNC_MAX: Duration = Duration::from_secs(30);
 
 /// Estimates the in-memory footprint of a retained `serde_json::Value` so dense numeric/object
 /// arrays cannot exceed `ROUTING_BYTES` even when their serialized JSON text is compact.
@@ -175,10 +178,17 @@ enum CachedLocation {
     ForeignWorkspace,
 }
 
+struct ResyncState {
+    next: Instant,
+    interval: Duration,
+    timer: Option<tokio::task::JoinHandle<()>>,
+}
+
 #[derive(Default)]
 struct Routes {
     held: Mutex<Held>,
     locations: Mutex<(u64, HashMap<String, (Instant, CachedLocation)>)>,
+    resyncs: Mutex<(u64, HashMap<Uuid, ResyncState>)>,
 }
 
 impl Routes {
@@ -187,10 +197,91 @@ impl Routes {
     /// `instance-events.ts:143-147, 282-309`) and bumps the generation so late workers from an
     /// earlier subscription cannot repopulate stale locations.
     fn reset_locations(&self) -> u64 {
+        {
+            let mut resyncs = self.resyncs.lock().unwrap();
+            resyncs.0 = resyncs.0.wrapping_add(1);
+            for (_, state) in resyncs.1.drain() {
+                if let Some(handle) = state.timer {
+                    handle.abort();
+                }
+            }
+        }
         let mut guard = self.locations.lock().unwrap();
         guard.0 = guard.0.wrapping_add(1);
         guard.1.clear();
         guard.0
+    }
+
+    fn pulse_routing_resync(app: &App, workspace_id: Uuid) {
+        let (connected, generation) = {
+            let store = app.inner.lock().unwrap();
+            (store.status == "connected" && store.workspaces.iter().any(|w| w.id == workspace_id), store.generation)
+        };
+        if !connected {
+            return;
+        }
+        app.emit_status(workspace_id, "error", generation, Some("event routing failed"));
+        app.emit_status(workspace_id, "connected", generation, None);
+    }
+
+    /// Pulses one workspace's status (`error`, then `connected`) so its clients run reconnect
+    /// reconciliation for an event that could not be routed (TS `instance-events.ts:448-468`).
+    fn request_routing_resync(self: &Arc<Self>, app: &Shared, workspace_id: Uuid) {
+        let now = Instant::now();
+        let immediate = {
+            let mut resyncs = self.resyncs.lock().unwrap();
+            let resync_gen = resyncs.0;
+            match resyncs.1.get_mut(&workspace_id) {
+                Some(state) if state.timer.is_some() => return,
+                Some(state) if now < state.next => {
+                    let wait = state.next.saturating_duration_since(now);
+                    let next_interval = (state.interval * 2).min(ROUTING_RESYNC_MAX);
+                    let routes = Arc::clone(self);
+                    let app = Arc::clone(app);
+                    state.timer = Some(tokio::spawn(async move {
+                        tokio::time::sleep(wait).await;
+                        {
+                            let mut guard = routes.resyncs.lock().unwrap();
+                            if guard.0 != resync_gen {
+                                return;
+                            }
+                            guard.1.insert(
+                                workspace_id,
+                                ResyncState {
+                                    next: Instant::now() + next_interval,
+                                    interval: next_interval,
+                                    timer: None,
+                                },
+                            );
+                        }
+                        Self::pulse_routing_resync(&app, workspace_id);
+                    }));
+                    false
+                }
+                _ => {
+                    resyncs.1.insert(
+                        workspace_id,
+                        ResyncState { next: now + ROUTING_RESYNC_MIN, interval: ROUTING_RESYNC_MIN, timer: None },
+                    );
+                    true
+                }
+            }
+        };
+        if immediate {
+            Self::pulse_routing_resync(app, workspace_id);
+        }
+    }
+
+    /// An unresolvable session event pulses the recipients it reached before, or every open
+    /// workspace when it reached none (TS `instance-events.ts:418-426`).
+    fn request_session_resync(self: &Arc<Self>, app: &Shared, session_id: &str) {
+        let known = self.held.lock().unwrap().sessions.get(session_id).cloned();
+        let open: Vec<Uuid> = app.inner.lock().unwrap().workspaces.iter().map(|w| w.id).collect();
+        for id in open {
+            if known.as_ref().is_none_or(|set| set.contains(&id)) {
+                self.request_routing_resync(app, id);
+            }
+        }
     }
     /// The location a session event is routed by: its envelope's, else a fresh cached one.
     /// Preserves native `workspaceID` selectors so events for foreign workspaces are never
@@ -600,6 +691,53 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
     }
 }
 
+enum SessionLocationLookup {
+    Found(CachedLocation),
+    Missing,
+    Unresolved,
+}
+
+async fn resolve_session_location(
+    app: &App,
+    endpoint: &Arc<crate::opencode::Endpoint>,
+    session: &str,
+) -> SessionLocationLookup {
+    let to_loc = |found: Option<String>| match found {
+        Some(dir) => CachedLocation::Directory(dir),
+        None => CachedLocation::ForeignWorkspace,
+    };
+    match crate::opencode::session_location_at(app, endpoint, session).await {
+        Ok(found) => SessionLocationLookup::Found(to_loc(found)),
+        Err((axum::http::StatusCode::NOT_FOUND, _)) => SessionLocationLookup::Missing,
+        Err(_) => {
+            if !app.native.current(endpoint) {
+                return SessionLocationLookup::Missing;
+            }
+            match crate::opencode::session_location_at(app, endpoint, session).await {
+                Ok(found) => SessionLocationLookup::Found(to_loc(found)),
+                Err((axum::http::StatusCode::NOT_FOUND, _)) => SessionLocationLookup::Missing,
+                Err(_) => SessionLocationLookup::Unresolved,
+            }
+        }
+    }
+}
+
+async fn check_event_ownership(
+    app: &Shared,
+    workspace: &crate::Workspace,
+    endpoint: &Arc<crate::opencode::Endpoint>,
+    directory: &str,
+) -> crate::worktrees::EventOwnership {
+    let first = crate::worktrees::event_ownership(app, workspace, endpoint, directory).await;
+    if first != crate::worktrees::EventOwnership::Unavailable
+        || !app.native.current(endpoint)
+        || app.workspace(&workspace.id.to_string()).is_err()
+    {
+        return first;
+    }
+    crate::worktrees::event_ownership(app, workspace, endpoint, directory).await
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn route(
     app: &Shared,
@@ -618,18 +756,21 @@ async fn route(
         .or_else(|| event["data"]["form"]["sessionID"].as_str())
         .filter(|s| crate::opencode::valid_id(s));
     let mut resolved = routes.location(generation, kind, session, &event);
+    let mut unresolved_session = false;
     if resolved.is_none()
         && let Some(session) = session
     {
-        if let Ok(found) = crate::opencode::session_location(app, session).await {
-            let loc = match found {
-                Some(dir) => CachedLocation::Directory(dir),
-                None => CachedLocation::ForeignWorkspace,
-            };
-            if kind != "session.deleted" {
-                routes.learn(generation, session, loc.clone());
+        match resolve_session_location(app, &endpoint, session).await {
+            SessionLocationLookup::Found(loc) => {
+                if kind != "session.deleted" {
+                    routes.learn(generation, session, loc.clone());
+                }
+                resolved = Some(loc);
             }
-            resolved = Some(loc);
+            SessionLocationLookup::Missing => {}
+            SessionLocationLookup::Unresolved => {
+                unresolved_session = true;
+            }
         }
     }
     let foreign_workspace = matches!(resolved, Some(CachedLocation::ForeignWorkspace));
@@ -652,6 +793,12 @@ async fn route(
             && event["location"].get("workspaceID").is_none()
             && (directory.is_some() || GLOBAL.split(' ').any(|g| g == kind) || kind == "session.deleted"));
     if !eligible {
+        if unresolved_session
+            && let Some(sid) = session
+            && app.native.current(&endpoint)
+        {
+            routes.request_session_resync(app, sid);
+        }
         return;
     }
     // Fan out onto per-(workspace, lane) delivery queues (matching TS `instance-events.ts:288-311`)
@@ -682,7 +829,7 @@ async fn route(
 #[allow(clippy::too_many_arguments)]
 async fn deliver(
     app: &Shared,
-    routes: &Routes,
+    routes: &Arc<Routes>,
     workspace: crate::Workspace,
     event: Arc<Value>,
     endpoint: Arc<crate::opencode::Endpoint>,
@@ -695,9 +842,10 @@ async fn deliver(
     let inbox = kind.starts_with("session.inbox.");
     let receipt_event = matches!(kind, "permission.asked" | "permission.replied" | "session.deleted");
     let mut delivered = false;
-    // Match TS `instance-events.ts:288-328`: resolve ownership for this workspace, retrying
+    // Match TS `instance-events.ts:288-336`: resolve ownership for this workspace, retrying
     // whenever `worktree.updated` bumps `inventory_revision` while the route stays current
-    // (bounded by the lane's `ROUTING_TIMEOUT`).
+    // (bounded by the lane's `ROUTING_TIMEOUT`), and pulse a workspace resync when ownership
+    // cannot be verified instead of dropping events silently.
     if kind == "session.moved"
         && let Some(sid) = session_id.as_deref()
         && let Some(destination) = event["data"]["location"]["directory"]
@@ -710,13 +858,28 @@ async fn deliver(
                 break;
             }
             let rev = crate::worktrees::event_inventory_revision(app, workspace.id);
+            let mut lookup_failed = false;
             let source = match directory.as_deref() {
                 Some(dir) if !foreign_workspace && event["location"].get("workspaceID").is_none() => {
-                    crate::worktrees::owns_event(app, &workspace, dir).await
+                    match check_event_ownership(app, &workspace, &endpoint, dir).await {
+                        crate::worktrees::EventOwnership::Owned => true,
+                        crate::worktrees::EventOwnership::NotOwned => false,
+                        crate::worktrees::EventOwnership::Unavailable => {
+                            lookup_failed = true;
+                            false
+                        }
+                    }
                 }
                 _ => false,
             };
-            let owns_destination = crate::worktrees::owns_event(app, &workspace, &destination).await;
+            let owns_destination = match check_event_ownership(app, &workspace, &endpoint, &destination).await {
+                crate::worktrees::EventOwnership::Owned => true,
+                crate::worktrees::EventOwnership::NotOwned => false,
+                crate::worktrees::EventOwnership::Unavailable => {
+                    lookup_failed = true;
+                    false
+                }
+            };
             if crate::worktrees::event_inventory_revision(app, workspace.id) != rev {
                 continue;
             }
@@ -741,6 +904,8 @@ async fn deliver(
                 let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":&*event});
                 app.emit(envelope);
                 delivered = true;
+            } else if lookup_failed {
+                routes.request_routing_resync(app, workspace.id);
             }
             break;
         }
@@ -754,6 +919,7 @@ async fn deliver(
             }
             let rev = crate::worktrees::event_inventory_revision(app, workspace.id);
             let mut inbox_proof = None;
+            let mut lookup_failed = false;
             let owned = if let Some(dir) = directory.as_deref() {
                 if inbox {
                     let resolved = {
@@ -770,20 +936,46 @@ async fn deliver(
                         .ok()
                         .flatten()
                     };
-                    if let Some((physical, identity)) = resolved
-                        && let Some(proof) =
+                    if let Some((physical, identity)) = resolved {
+                        let mut proof =
                             crate::worktrees::ownership::capture_event_directory(app, &workspace, &endpoint, &physical)
-                                .await
-                    {
-                        inbox_proof = Some((physical, identity, proof));
-                        true
+                                .await;
+                        if proof.is_none() && app.native.current(&endpoint) {
+                            match check_event_ownership(app, &workspace, &endpoint, dir).await {
+                                crate::worktrees::EventOwnership::Owned => {
+                                    proof = crate::worktrees::ownership::capture_event_directory(
+                                        app, &workspace, &endpoint, &physical,
+                                    )
+                                    .await;
+                                }
+                                crate::worktrees::EventOwnership::Unavailable => {
+                                    lookup_failed = true;
+                                }
+                                crate::worktrees::EventOwnership::NotOwned => {}
+                            }
+                        }
+                        if let Some(proof) = proof {
+                            inbox_proof = Some((physical, identity, proof));
+                            true
+                        } else {
+                            false
+                        }
                     } else {
                         false
                     }
                 } else {
-                    crate::worktrees::owns_event(app, &workspace, dir).await
-                        || (receipt_event
-                            && crate::worktrees::ownership::owns_loaded(app, &workspace, &endpoint, dir).await)
+                    match check_event_ownership(app, &workspace, &endpoint, dir).await {
+                        crate::worktrees::EventOwnership::Owned => true,
+                        crate::worktrees::EventOwnership::NotOwned => {
+                            receipt_event
+                                && crate::worktrees::ownership::owns_loaded(app, &workspace, &endpoint, dir).await
+                        }
+                        crate::worktrees::EventOwnership::Unavailable => {
+                            lookup_failed = true;
+                            receipt_event
+                                && crate::worktrees::ownership::owns_loaded(app, &workspace, &endpoint, dir).await
+                        }
+                    }
                 }
             } else {
                 true
@@ -791,7 +983,16 @@ async fn deliver(
             if crate::worktrees::event_inventory_revision(app, workspace.id) != rev {
                 continue;
             }
+            if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
+                break;
+            }
             if !owned {
+                if lookup_failed
+                    || (directory.is_some()
+                        && session_id.as_deref().is_some_and(|sid| routes.held.lock().unwrap().has(sid, workspace.id)))
+                {
+                    routes.request_routing_resync(app, workspace.id);
+                }
                 break;
             }
             if inbox {
@@ -812,6 +1013,13 @@ async fn deliver(
                     || !crate::sessions::permission_mode::workspace_current(app, &workspace)
                     || !app.native.current(&endpoint)
                 {
+                    if !still_live
+                        && crate::sessions::permission_mode::workspace_current(app, &workspace)
+                        && app.native.current(&endpoint)
+                        && session_id.as_deref().is_some_and(|sid| routes.held.lock().unwrap().has(sid, workspace.id))
+                    {
+                        routes.request_routing_resync(app, workspace.id);
+                    }
                     break;
                 }
             } else if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
@@ -976,5 +1184,374 @@ mod tests {
                 "expected malformed for {malformed}"
             );
         }
+    }
+
+    fn drain_hub(app: &App, sub: &crate::events::hub::Sub) -> Vec<Value> {
+        let mut out = Vec::new();
+        while let crate::events::hub::Next::Frame(text) = app.events.pop(sub) {
+            out.push(serde_json::from_str(&text).unwrap());
+        }
+        out
+    }
+
+    fn build_bridge_test_app(
+        dir: &std::path::Path,
+        ws_root: &std::path::Path,
+        native_addr: std::net::SocketAddr,
+    ) -> (Shared, crate::Workspace) {
+        let auth = crate::auth::Auth::new(crate::auth::Settings {
+            username: "fixture".into(),
+            password: None,
+            file: None,
+            cookie: "fixture".into(),
+            token: false,
+            managed_local: false,
+            skip: true,
+            idle: Duration::from_secs(60),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let settings = crate::settings::Settings::new(crate::settings::document::Location::resolve(
+            dir.join("config.yaml").to_str().unwrap(),
+        ));
+        let native = crate::opencode::Native::test_connection(native_addr);
+        let app = Arc::new(App::new(
+            auth,
+            0,
+            dir.to_path_buf(),
+            dir.to_path_buf(),
+            false,
+            settings,
+            Value::Null,
+            native,
+            std::path::PathBuf::new(),
+            None,
+            crate::files::watch::Watches::new(tx),
+            None,
+        ));
+        let ws = crate::Workspace {
+            id: Uuid::new_v4(),
+            request_id: None,
+            path: ws_root.to_path_buf(),
+            name: None,
+            status: "running",
+            proxy_path: "/workspaces/test/instance".into(),
+            binary_id: std::path::PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({"directory": ws_root}),
+            temporary: None,
+        };
+        {
+            let mut inner = app.inner.lock().unwrap();
+            inner.status = "connected";
+            inner.generation = 1;
+            inner.workspaces.push(ws.clone());
+        }
+        (app, ws)
+    }
+
+    #[tokio::test]
+    async fn session_location_retries_once_on_transient_error_and_resyncs_on_persistent_failure() {
+        use axum::{Json, Router, extract::Request, http::StatusCode, response::IntoResponse, routing::any};
+        use std::sync::atomic::AtomicUsize;
+
+        #[derive(Clone)]
+        struct Stub {
+            root: String,
+            retry_calls: Arc<AtomicUsize>,
+            fail_calls: Arc<AtomicUsize>,
+            gone_calls: Arc<AtomicUsize>,
+        }
+
+        async fn fake_native(
+            axum::extract::State(st): axum::extract::State<Stub>,
+            req: Request,
+        ) -> axum::response::Response {
+            match req.uri().path() {
+                "/api/session/ses_retry" => {
+                    let n = st.retry_calls.fetch_add(1, Relaxed);
+                    if n == 0 {
+                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                    } else {
+                        Json(json!({"data": {"id": "ses_retry", "location": {"directory": st.root}}})).into_response()
+                    }
+                }
+                "/api/session/ses_fail" => {
+                    st.fail_calls.fetch_add(1, Relaxed);
+                    StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                }
+                "/api/session/ses_gone" => {
+                    st.gone_calls.fetch_add(1, Relaxed);
+                    (
+                        StatusCode::NOT_FOUND,
+                        Json(json!({"_tag": "SessionNotFoundError", "sessionID": "ses_gone", "message": "Session not found"})),
+                    )
+                        .into_response()
+                }
+                _ => StatusCode::NOT_FOUND.into_response(),
+            }
+        }
+
+        let dir = crate::shared::test_dir("bridge-m7-session-location");
+        let ws_root = dir.join("project");
+        std::fs::create_dir_all(&ws_root).unwrap();
+        let ws_root = dunce::canonicalize(&ws_root).unwrap();
+        let root_str = ws_root.to_string_lossy().into_owned();
+
+        let retry_calls = Arc::new(AtomicUsize::new(0));
+        let fail_calls = Arc::new(AtomicUsize::new(0));
+        let gone_calls = Arc::new(AtomicUsize::new(0));
+        let stub = Stub {
+            root: root_str,
+            retry_calls: Arc::clone(&retry_calls),
+            fail_calls: Arc::clone(&fail_calls),
+            gone_calls: Arc::clone(&gone_calls),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let http = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(any(fake_native)).with_state(stub)).await.unwrap()
+        });
+
+        let (app, ws) = build_bridge_test_app(&dir, &ws_root, addr);
+        let endpoint = app.native.endpoint().unwrap();
+        let routes = Arc::new(Routes::default());
+        let lanes = Arc::new(Lanes::default());
+        let generation = routes.reset_locations();
+        let sub = app.events.subscribe();
+
+        // 1. Transient 500 on first lookup succeeds on retry and delivers the event.
+        let lease = Arc::new(BytesLease { lanes: Arc::downgrade(&lanes), bytes: 0 });
+        route(
+            &app,
+            &routes,
+            &lanes,
+            "session:ses_retry".into(),
+            Arc::new(json!({"type": "session.text.delta", "data": {"sessionID": "ses_retry", "delta": "ok"}})),
+            Arc::clone(&endpoint),
+            (Instant::now(), 1),
+            generation,
+            lease,
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert_eq!(retry_calls.load(Relaxed), 2, "transient failure must retry once");
+        let frames = drain_hub(&app, &sub);
+        assert!(
+            frames.iter().any(|f| f["type"] == "instance.event" && f["event"]["data"]["sessionID"] == "ses_retry"),
+            "retried session event must be delivered: {frames:?}"
+        );
+
+        // 2. Definite 404 does NOT retry and does NOT pulse resync.
+        let lease = Arc::new(BytesLease { lanes: Arc::downgrade(&lanes), bytes: 0 });
+        route(
+            &app,
+            &routes,
+            &lanes,
+            "session:ses_gone".into(),
+            Arc::new(json!({"type": "session.text.delta", "data": {"sessionID": "ses_gone", "delta": "x"}})),
+            Arc::clone(&endpoint),
+            (Instant::now(), 2),
+            generation,
+            lease,
+        )
+        .await;
+        assert_eq!(gone_calls.load(Relaxed), 1, "404 must not retry");
+        assert!(drain_hub(&app, &sub).is_empty(), "404 must not pulse resync");
+
+        // 3. Persistent 500 retries once then pulses resync (error -> connected) for the workspace.
+        let lease = Arc::new(BytesLease { lanes: Arc::downgrade(&lanes), bytes: 0 });
+        route(
+            &app,
+            &routes,
+            &lanes,
+            "session:ses_fail".into(),
+            Arc::new(json!({"type": "session.text.delta", "data": {"sessionID": "ses_fail", "delta": "x"}})),
+            Arc::clone(&endpoint),
+            (Instant::now(), 3),
+            generation,
+            lease,
+        )
+        .await;
+        assert_eq!(fail_calls.load(Relaxed), 2, "persistent 500 must retry once");
+        let resync_frames = drain_hub(&app, &sub);
+        assert_eq!(resync_frames.len(), 2, "expected error+connected resync pulse: {resync_frames:?}");
+        assert_eq!(resync_frames[0]["type"], "instance.eventStatus");
+        assert_eq!(resync_frames[0]["instanceId"], ws.id.to_string());
+        assert_eq!(resync_frames[0]["status"], "error");
+        assert_eq!(resync_frames[0]["reason"], "event routing failed");
+        assert_eq!(resync_frames[1]["type"], "instance.eventStatus");
+        assert_eq!(resync_frames[1]["status"], "connected");
+
+        let _ = routes.reset_locations();
+        http.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn delivery_retries_unavailable_inventory_and_resyncs_when_unreadable_or_previously_held() {
+        use axum::{Json, Router, extract::Request, http::StatusCode, response::IntoResponse, routing::any};
+        use std::sync::atomic::AtomicUsize;
+
+        let _serial = crate::git::test_git_serial().await;
+
+        #[derive(Clone)]
+        struct Stub {
+            root: String,
+            linked: String,
+            mode: Arc<AtomicUsize>, // 0 = fail first /api/location then succeed, 1 = always 500
+            loc_calls: Arc<AtomicUsize>,
+        }
+
+        async fn fake_native(
+            axum::extract::State(st): axum::extract::State<Stub>,
+            req: Request,
+        ) -> axum::response::Response {
+            match req.uri().path() {
+                "/api/location" => {
+                    let n = st.loc_calls.fetch_add(1, Relaxed);
+                    let m = st.mode.load(Relaxed);
+                    if m == 1 || (m == 0 && n == 0) {
+                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                    } else {
+                        Json(json!({
+                            "directory": st.root,
+                            "project": {"id": "prj_m7", "directory": st.root, "canonical": st.root}
+                        }))
+                        .into_response()
+                    }
+                }
+                "/api/worktree" => Json(json!([{"directory": st.root}, {"directory": st.linked}])).into_response(),
+                _ => StatusCode::NOT_FOUND.into_response(),
+            }
+        }
+
+        let dir = crate::shared::test_dir("bridge-m7-delivery-resync");
+        let root_dir = dir.join("main");
+        let linked_dir = dir.join("linked");
+        let foreign_dir = dir.join("foreign");
+        std::fs::create_dir_all(&root_dir).unwrap();
+        std::fs::create_dir_all(&foreign_dir).unwrap();
+        let git = |p: &std::path::Path, args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(p)
+                .args(args)
+                .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "{args:?}");
+        };
+        git(&root_dir, &["init", "-q"]);
+        git(&root_dir, &["config", "user.name", "test"]);
+        git(&root_dir, &["config", "user.email", "test@example.com"]);
+        git(&root_dir, &["commit", "--allow-empty", "-q", "-m", "init"]);
+        git(&root_dir, &["worktree", "add", "--quiet", "--detach", linked_dir.to_str().unwrap()]);
+        let root_dir = dunce::canonicalize(&root_dir).unwrap();
+        let linked_dir = dunce::canonicalize(&linked_dir).unwrap();
+        let foreign_dir = dunce::canonicalize(&foreign_dir).unwrap();
+
+        let mode = Arc::new(AtomicUsize::new(0));
+        let loc_calls = Arc::new(AtomicUsize::new(0));
+        let stub = Stub {
+            root: root_dir.to_string_lossy().into_owned(),
+            linked: linked_dir.to_string_lossy().into_owned(),
+            mode: Arc::clone(&mode),
+            loc_calls: Arc::clone(&loc_calls),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let http = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(any(fake_native)).with_state(stub)).await.unwrap()
+        });
+
+        let (app, ws) = build_bridge_test_app(&dir, &root_dir, addr);
+        let endpoint = app.native.endpoint().unwrap();
+        let routes = Arc::new(Routes::default());
+        let sub = app.events.subscribe();
+
+        // 1. Transient 500 on first inventory lookup -> retries once -> delivers linked worktree event!
+        deliver(
+            &app,
+            &routes,
+            ws.clone(),
+            Arc::new(json!({"type": "session.text.delta", "data": {"sessionID": "ses_wt", "delta": "hi"}})),
+            Arc::clone(&endpoint),
+            (Instant::now(), 1),
+            Some(Arc::from(linked_dir.to_string_lossy().into_owned())),
+            false,
+            Some(Arc::from("ses_wt")),
+        )
+        .await;
+        assert_eq!(loc_calls.load(Relaxed), 2, "transient inventory error must retry once");
+        let frames = drain_hub(&app, &sub);
+        assert!(
+            frames.iter().any(|f| f["type"] == "instance.event" && f["event"]["data"]["sessionID"] == "ses_wt"),
+            "linked worktree event must be delivered after retry: {frames:?}"
+        );
+
+        // 2. Foreign directory for an unknown session is proven NotOwned -> silent drop (no resync).
+        deliver(
+            &app,
+            &routes,
+            ws.clone(),
+            Arc::new(json!({"type": "session.text.delta", "data": {"sessionID": "ses_other", "delta": "x"}})),
+            Arc::clone(&endpoint),
+            (Instant::now(), 2),
+            Some(Arc::from(foreign_dir.to_string_lossy().into_owned())),
+            false,
+            Some(Arc::from("ses_other")),
+        )
+        .await;
+        assert!(drain_hub(&app, &sub).is_empty(), "foreign unknown session must not pulse resync");
+
+        // 3. Previously-held session (`ses_wt`) now refused without move -> pulses resync.
+        deliver(
+            &app,
+            &routes,
+            ws.clone(),
+            Arc::new(json!({"type": "session.text.delta", "data": {"sessionID": "ses_wt", "delta": "x"}})),
+            Arc::clone(&endpoint),
+            (Instant::now(), 3),
+            Some(Arc::from(foreign_dir.to_string_lossy().into_owned())),
+            false,
+            Some(Arc::from("ses_wt")),
+        )
+        .await;
+        let held_resync = drain_hub(&app, &sub);
+        assert_eq!(held_resync.len(), 2, "previously held session refused must pulse resync: {held_resync:?}");
+        assert_eq!(held_resync[0]["status"], "error");
+        assert_eq!(held_resync[1]["status"], "connected");
+
+        // 4. Persistent inventory failure (after invalidating cache & clearing resync backoff) -> retries & pulses resync.
+        let _ = routes.reset_locations();
+        crate::worktrees::linked::invalidate_blocking(&app);
+        mode.store(1, Relaxed);
+        loc_calls.store(0, Relaxed);
+        deliver(
+            &app,
+            &routes,
+            ws.clone(),
+            Arc::new(json!({"type": "session.text.delta", "data": {"sessionID": "ses_unavail", "delta": "x"}})),
+            Arc::clone(&endpoint),
+            (Instant::now(), 4),
+            Some(Arc::from(linked_dir.to_string_lossy().into_owned())),
+            false,
+            Some(Arc::from("ses_unavail")),
+        )
+        .await;
+        assert_eq!(loc_calls.load(Relaxed), 2, "persistent unavailable inventory must retry once");
+        let unavail_resync = drain_hub(&app, &sub);
+        assert_eq!(unavail_resync.len(), 2, "unavailable inventory must pulse resync: {unavail_resync:?}");
+        assert_eq!(unavail_resync[0]["status"], "error");
+        assert_eq!(unavail_resync[1]["status"], "connected");
+
+        let _ = routes.reset_locations();
+        http.abort();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

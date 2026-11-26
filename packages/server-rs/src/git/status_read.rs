@@ -141,7 +141,7 @@ pub async fn status(
     let w = repo(&app, &id, &slug).await?;
     files::root(&w)?;
     let p = w.path.as_path();
-    let filter_flags = super::config_guard::host_filter_disables(p).await?;
+    let filter_flags = super::config_guard::filter_disables(p).await?;
     let read = |flags: &[&'static str]| {
         let args = diff_args(&filter_flags, flags, &[]);
         async move { metadata(p, &args).await }
@@ -237,7 +237,7 @@ pub async fn diff(
     if let Some(old) = &old {
         crate::files::links::guard(&w.path, old)?;
     }
-    let filter_flags = super::config_guard::host_filter_disables(&w.path).await?;
+    let filter_flags = super::config_guard::filter_disables(&w.path).await?;
     let mut args = diff_args(&filter_flags, &["--numstat", "--find-renames", "--find-copies"], &[]);
     if stage {
         args.push("--cached");

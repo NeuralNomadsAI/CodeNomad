@@ -2,7 +2,7 @@
 //! the user's Git configuration.
 mod branches;
 mod config_guard;
-pub use config_guard::host_filter_disables;
+pub use config_guard::filter_disables;
 mod history;
 mod repository_source;
 mod status_read;
@@ -113,6 +113,8 @@ pub fn command(dir: &Path, args: &[&str]) -> Command {
             "-c",
             "commit.gpgSign=false",
             "-c",
+            "diff.external=",
+            "-c",
             "submodule.recurse=false",
         ])
         .args(args)
@@ -171,14 +173,13 @@ pub async fn run(dir: &Path, args: &[&str], max: usize) -> Result<Output, Error>
     Ok(Output { code: status.code().unwrap_or(-1), bytes, err })
 }
 pub async fn repo(app: &crate::App, id: &str, slug: &str) -> Result<Workspace, Error> {
-    Ok(repo_target(app, id, slug, true).await?.0)
+    Ok(repo_target(app, id, slug).await?.0)
 }
 
 async fn repo_target(
     app: &crate::App,
     id: &str,
     slug: &str,
-    guard: bool,
 ) -> Result<(Workspace, crate::worktrees::linked::Tree), Error> {
     let w = app.workspace(id)?;
     let hit = crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Validated).await?;
@@ -253,29 +254,11 @@ async fn repo_target(
             }
         }
     }
-    if guard {
-        guard_config(&cat.main).await?;
-    }
     let tree = cat.get(slug)?;
     if !tree.direct_folder() {
         return Err(error(Status::NOT_FOUND, "Worktree folder is missing"));
     }
-    // The directory Git runs in may read its own `config.worktree`.
-    if guard && tree.path != cat.main {
-        config_guard::effective(&tree.path).await?;
-    }
     Ok((crate::worktrees::linked::scope(w, tree), tree.clone()))
-}
-pub async fn guard_config(main: &Path) -> Result<(), Error> {
-    for path in [".git/objects/info/alternates", ".git/objects/info/http-alternates"] {
-        if !matches!(std::fs::symlink_metadata(main.join(path)),Err(e) if e.kind()==io::ErrorKind::NotFound) {
-            return Err(error(Status::FORBIDDEN, "Repository uses external object storage"));
-        }
-    }
-    // Config capable of executing external filters (or importing more
-    // config) is out of scope for passive Git reads and linked worktree lifecycle commands.
-    config_guard::effective(main).await?;
-    config_guard::submodules(main).await
 }
 pub fn sha(s: &str) -> bool {
     matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
@@ -308,33 +291,38 @@ async fn apply_paths_with(
     verify_live: impl Fn() -> Result<(), Error>,
     configure: impl Fn(&mut Command),
 ) -> Result<(), Error> {
-    let mut args = if stage {
-        vec!["add", "--"]
+    let args: &[&str] = if stage {
+        &["add", "--pathspec-from-file=-", "--pathspec-file-nul"]
     } else {
         let mut head_cmd = user_command::literal_command(dir, &["rev-parse", "--verify", "HEAD"]);
         configure(&mut head_cmd);
         if user_command::execute(head_cmd).await?.code == 0 {
-            vec!["restore", "--staged", "--"]
+            &["restore", "--staged", "--pathspec-from-file=-", "--pathspec-file-nul"]
         } else {
-            vec!["rm", "--cached", "--quiet", "--"]
+            &["rm", "--cached", "--quiet", "--pathspec-from-file=-", "--pathspec-file-nul"]
         }
     };
     verify_live()?;
-    args.extend(validated.iter().map(String::as_str));
-    let mut cmd = user_command::literal_command(dir, &args);
+    let mut stdin_bytes = Vec::with_capacity(validated.iter().map(|p| p.len() + 1).sum());
+    for path in validated {
+        stdin_bytes.extend_from_slice(path.as_bytes());
+        stdin_bytes.push(0);
+    }
+    let mut cmd = user_command::literal_command(dir, args);
     configure(&mut cmd);
-    user_command::execute(cmd).await?.mutation()
+    user_command::execute_with_stdin(cmd, stdin_bytes).await?.mutation()
 }
 
 async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage: bool) -> Result<Json<Value>, Error> {
-    if items.is_empty() || items.len() > 256 {
+    if items.is_empty() {
         return Err(bad("Invalid path count"));
     }
-    let (w, tree) = repo_target(&app, &id, &slug, false).await?;
+    let (w, tree) = repo_target(&app, &id, &slug).await?;
     let admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(tree.registered())])?;
     app.workspace(&id)?;
     files::root(&w)?;
-    let mut validated = Vec::new();
+    let mut seen = std::collections::HashSet::with_capacity(items.len());
+    let mut validated = Vec::with_capacity(items.len());
     for p in items {
         let p = files::relative(p.trim(), false)?;
         crate::files::links::guard(&w.path, &p)?;
@@ -342,12 +330,9 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
         if std::fs::symlink_metadata(crate::files::links::target(&w.path, &p)).is_ok_and(|m| m.is_dir()) {
             return Err(bad("Staging requires individual files"));
         }
-        if !validated.contains(&p) {
+        if seen.insert(p.clone()) {
             validated.push(p);
         }
-    }
-    if validated.iter().map(String::len).sum::<usize>() > 16000 {
-        return Err(bad("Git paths exceed limit"));
     }
     tokio::spawn(async move {
         let _admitted = admitted;
@@ -392,7 +377,7 @@ pub async fn commit(
     if message.is_empty() || message.len() > 16384 || message.contains('\0') {
         return Err(bad("Invalid commit message"));
     }
-    let (w, tree) = repo_target(&app, &id, &slug, false).await?;
+    let (w, tree) = repo_target(&app, &id, &slug).await?;
     let admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(tree.registered())])?;
     app.workspace(&id)?;
     if !tree.contains_live(&w.path) {
@@ -640,11 +625,29 @@ mod tests {
         });
         let id_str = id.to_string();
 
-        // Passive reads stay protected by `config_guard` against unqualified local filters.
-        let Err(read_err) = repo(&app, &id_str, "root").await else {
-            panic!("expected passive read to be refused for unqualified local filter");
-        };
-        assert_eq!(read_err.0, Status::FORBIDDEN);
+        // Passive status read succeeds on a repo with local LFS filter without executing the filter.
+        let marker = dir.join("passive-filter-ran");
+        raw_git(
+            &repo_dir,
+            &[
+                "config",
+                "filter.testlfs.smudge",
+                &format!("sh -c 'touch \"{}\" && cat'", marker.to_string_lossy().replace('\\', "/")),
+            ],
+        );
+        let status_rows = status_read::status(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(
+            status_rows.as_array().unwrap().iter().any(|r| r["path"] == "asset.bin"),
+            "status must include asset.bin: {status_rows}"
+        );
+        assert!(!marker.exists(), "passive status read must neutralize local filter drivers");
 
         // Explicit stage honors the local LFS filter and indexes the pointer, not raw binary bytes.
         assert_eq!(
@@ -720,5 +723,246 @@ mod tests {
             "git::command must keep GIT_TERMINAL_PROMPT=0"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    async fn build_git_fixture(label: &str, repo_dir: &Path) -> (Shared, String, FixtureGuard) {
+        let dir = repo_dir.parent().unwrap().to_path_buf();
+        let root = dunce::canonicalize(repo_dir).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native = opencode::Native::test_connection(listener.local_addr().unwrap());
+        let stub_root = root.clone();
+        let http = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(any(fake_native)).with_state(stub_root)).await.unwrap()
+        });
+        let guard = FixtureGuard { dir: dir.clone(), http };
+        let auth = auth::Auth::new(auth::Settings {
+            username: "fixture".into(),
+            password: None,
+            file: None,
+            cookie: "fixture".into(),
+            token: false,
+            managed_local: false,
+            skip: true,
+            idle: Duration::from_secs(60),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let settings =
+            settings::Settings::new(settings::document::Location::resolve(dir.join("config.yaml").to_str().unwrap()));
+        let app = Arc::new(App::new(
+            auth,
+            0,
+            dir.clone(),
+            root.clone(),
+            false,
+            settings,
+            Value::Null,
+            native,
+            PathBuf::new(),
+            None,
+            files::watch::Watches::new(tx),
+            None,
+        ));
+        let id = Uuid::new_v4();
+        app.inner.lock().unwrap().workspaces.push(Workspace {
+            id,
+            request_id: None,
+            path: root.clone(),
+            name: Some(label.into()),
+            status: "running",
+            proxy_path: format!("/workspaces/{id}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({"directory": root}),
+            temporary: None,
+        });
+        (app, id.to_string(), guard)
+    }
+
+    #[tokio::test]
+    async fn common_repos_with_include_if_worktree_config_partial_clone_and_alternates_read_cleanly() {
+        let _serial = test_git_serial().await;
+        let dir = crate::shared::test_dir("git-m4-common-repos");
+        let origin_dir = dir.join("origin");
+        let clone_dir = dir.join("shared-clone");
+        let included = dir.join("conditional.gitconfig");
+        let marker = dir.join("filter-executed");
+        std::fs::create_dir_all(&origin_dir).unwrap();
+
+        raw_git(&origin_dir, &["init", "-q"]);
+        raw_git(&origin_dir, &["config", "user.name", "test"]);
+        raw_git(&origin_dir, &["config", "user.email", "test@example.com"]);
+        std::fs::write(origin_dir.join("file.txt"), "hello\n").unwrap();
+        std::fs::write(origin_dir.join(".gitattributes"), "*.txt filter=cond -text\n").unwrap();
+        raw_git(&origin_dir, &["add", "."]);
+        raw_git(&origin_dir, &["commit", "-q", "-m", "initial"]);
+
+        // Clone with `--shared` to create `.git/objects/info/alternates`.
+        raw_git(&dir, &["clone", "--quiet", "--shared", origin_dir.to_str().unwrap(), clone_dir.to_str().unwrap()]);
+        assert!(clone_dir.join(".git/objects/info/alternates").is_file(), "shared clone must create alternates");
+
+        // Configure `includeIf`, `extensions.worktreeConfig`, `config.worktree` filter, and partial clone promisor.
+        let marker_posix = marker.to_string_lossy().replace('\\', "/");
+        std::fs::write(
+            &included,
+            format!("[filter \"cond\"]\n\tclean = sh -c 'touch \"{marker_posix}\" && cat'\n\trequired = true\n"),
+        )
+        .unwrap();
+        let clone_posix = clone_dir.to_string_lossy().replace('\\', "/");
+        raw_git(
+            &clone_dir,
+            &[
+                "config",
+                &format!("includeIf.gitdir:{clone_posix}/.path"),
+                &included.to_string_lossy().replace('\\', "/"),
+            ],
+        );
+        raw_git(&clone_dir, &["config", "extensions.worktreeConfig", "true"]);
+        raw_git(
+            &clone_dir,
+            &["config", "--worktree", "filter.wt.clean", &format!("sh -c 'touch \"{marker_posix}\" && cat'")],
+        );
+        raw_git(&clone_dir, &["config", "extensions.partialClone", "origin"]);
+        raw_git(&clone_dir, &["config", "remote.origin.promisor", "true"]);
+        std::fs::write(clone_dir.join("file.txt"), "hello updated\n").unwrap();
+
+        let (app, id_str, _guard) = build_git_fixture("m4-common", &clone_dir).await;
+        let status = status_read::status(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(
+            status.as_array().unwrap().iter().any(|r| r["path"] == "file.txt" && r["unstagedStatus"] == "modified"),
+            "status must report modified file.txt: {status}"
+        );
+        let diff = status_read::diff(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({"path": "file.txt", "scope": "unstaged"})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(diff["before"], "hello\n");
+        assert_eq!(diff["after"], "hello updated\n");
+        let hist = history::history(
+            State(app.clone()),
+            Route((id_str, "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(hist["commits"].as_array().unwrap().len(), 1);
+        assert!(!marker.exists(), "passive Git reads must never execute included or worktree filter drivers");
+    }
+
+    #[tokio::test]
+    async fn stage_and_unstage_handle_more_than_256_paths_above_16kb() {
+        let _serial = test_git_serial().await;
+        let dir = crate::shared::test_dir("git-m13-many-paths");
+        let repo_dir = dir.join("repo");
+        let nested = repo_dir.join("deeply_nested_directory_segment_for_path_budget_testing");
+        std::fs::create_dir_all(&nested).unwrap();
+        raw_git(&repo_dir, &["init", "-q"]);
+        raw_git(&repo_dir, &["config", "user.name", "test"]);
+        raw_git(&repo_dir, &["config", "user.email", "test@example.com"]);
+
+        let mut file_paths = Vec::with_capacity(320);
+        for i in 0..320 {
+            let rel = format!("deeply_nested_directory_segment_for_path_budget_testing/item_{i:04}.txt");
+            std::fs::write(repo_dir.join(&rel), format!("v1-{i}\n")).unwrap();
+            file_paths.push(rel);
+        }
+        assert!(file_paths.len() > 256);
+        assert!(file_paths.iter().map(String::len).sum::<usize>() > 16_000);
+
+        let (app, id_str, _guard) = build_git_fixture("m13-many", &repo_dir).await;
+
+        // 1. Stage > 256 paths (> 16 KiB total) without HEAD.
+        assert_eq!(
+            stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: file_paths.clone() }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        let staged = String::from_utf8(raw_git(&repo_dir, &["ls-files", "--cached"])).unwrap();
+        assert_eq!(staged.lines().count(), 320);
+
+        // 2. Unstage > 256 paths without HEAD (`git rm --cached --pathspec-from-file=-`).
+        assert_eq!(
+            unstage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: file_paths.clone() }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        assert!(raw_git(&repo_dir, &["ls-files", "--cached"]).is_empty());
+
+        // 3. Re-stage, commit, modify all 320, re-stage, and unstage with HEAD (`git restore --staged --pathspec-from-file=-`).
+        assert_eq!(
+            stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: file_paths.clone() })
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        assert_eq!(
+            commit(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Commit { message: "add 320 files".into() }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        for (i, rel) in file_paths.iter().enumerate() {
+            std::fs::write(repo_dir.join(rel), format!("v2-{i}\n")).unwrap();
+        }
+        assert_eq!(
+            stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: file_paths.clone() })
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        let staged_diff = String::from_utf8(raw_git(&repo_dir, &["diff", "--cached", "--name-only"])).unwrap();
+        assert_eq!(staged_diff.lines().count(), 320);
+
+        assert_eq!(
+            unstage(State(app.clone()), Route((id_str, "root".into())), Json(Paths { paths: file_paths }))
+                .await
+                .unwrap()
+                .0["ok"],
+            true
+        );
+        let staged_after = String::from_utf8(raw_git(&repo_dir, &["diff", "--cached", "--name-only"])).unwrap();
+        assert!(staged_after.is_empty(), "all 320 modified files must be unstaged");
     }
 }
