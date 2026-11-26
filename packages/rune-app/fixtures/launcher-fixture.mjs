@@ -20,7 +20,7 @@ import {webLiveFixture} from './web-live-fixture.mjs'
 import {seedGitImages} from '../../../scripts/rune/web-git-images.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
 import {launchWeb} from './launcher-web.mjs'
-import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
+import {fixtureShuttingDown,launchFixture,onFixtureSignal,rustOrigin,signInFixture} from './fixture-host.mjs'
 import {assertWorktreeTestRoot} from '../../../scripts/rune/web-workspace-policy.mjs'
 import {needsOwnedWindowsWorker} from './launcher-worker-guard.mjs'
 const webMoreActions=process.argv.includes('--web-mobile-more-actions')
@@ -36,19 +36,23 @@ assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes(
 if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDrawers||webSse7Tabs)&&!process.argv.includes('--owned-mobile-worker'))){
   const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:['pipe','inherit','inherit']})
   worker.stdin?.on('error',()=>{})
-  const closed=new Promise(resolve=>worker.once('close',resolve))
+  const closed=new Promise(resolve=>{
+    worker.once('close',(code,signal)=>resolve({code,signal}))
+    worker.once('error',()=>resolve({code:1,signal:null}))
+  })
   const graceMs=webAndroid?70000:12000
-  let stopping
+  let stopping,stopError
   const stop=()=>{
-    stopping??=stopFixtureChild(worker,closed,graceMs,2000,{close:()=>{try{worker.stdin?.end('shutdown\n')}catch{}}}).catch(error=>console.error(error.message))
+    stopping??=stopFixtureChild(worker,closed,graceMs,2000,{close:()=>{try{worker.stdin?.end('shutdown\n')}catch{}}}).catch(error=>{stopError=error;console.error(error.message)})
   }
   process.on('SIGINT',stop)
   process.on('SIGTERM',stop)
-  const code=await closed
+  const exit=await closed
   await stopping
   process.off('SIGINT',stop)
   process.off('SIGTERM',stop)
-  process.exit(code??1)
+  const workerCode=exit.code??(exit.signal==='SIGINT'?130:exit.signal==='SIGTERM'?143:1)
+  process.exit(stopError?1:workerCode)
 }
 const webMissions=process.argv.includes('--web-missions')
 const webGitImages=process.argv.includes('--web-git-images')
@@ -553,19 +557,68 @@ const stopClientOnce=child=>{
   }
   return clientStopPromise
 }
-const onLauncherSignal=signal=>{
-  if(interruptedSignal)return
+let finalizePromise,proofPublished=false,publishedResult=1,runError
+const teardownErrors=[]
+const recordTeardown=async(label,fn)=>{
+  try{await fn()}catch(error){teardownErrors.push(`${label}: ${error?.message??error}`)}
+}
+function finalize(){
+  return finalizePromise??=(async()=>{
+    try{control?.close()}catch(error){teardownErrors.push(`control close: ${error?.message??error}`)}
+    for(const gate of gates.values())gate.reject()
+    client??=webState.client
+    if(client&&client.exitCode===null&&client.signalCode===null){
+      await stopClientOnce(client)
+    }
+    if(webState.deviceLease){
+      await stopClientOnce(client)
+      await recordTeardown('android device lease',async()=>{androidCleanup=await webState.deviceLease.close()})
+    }else if(webState.androidRelay){
+      await recordTeardown('android relay',async()=>{
+        try{await webState.androidRelay.close()}catch(error){
+          androidCleanup=[`relay close: ${error?.message??error}`]
+          throw error
+        }
+      })
+    }
+    if(webState.mobileAction)await recordTeardown('mobile action',()=>webState.mobileAction)
+    if(clientRelay)await recordTeardown('client relay',()=>clientRelay.close())
+    if(http)await recordTeardown('http dispose',()=>http.dispose())
+    await recordTeardown('server stop',()=>stopServer())
+    for(const stream of streams)stream.destroy()
+    try{upstream.closeAllConnections();upstream.close()}catch(error){teardownErrors.push(`upstream close: ${error?.message??error}`)}
+    await recordTeardown('server log',()=>writeFile(path.join(profile,ts?'ts.log':'rust.log'),log))
+    if(!web)await recordTeardown('client log',()=>writeFile(path.join(profile,'client.log'),clientLog))
+    if(web)await recordTeardown('browser log',()=>writeFile(path.join(profile,'browser-run.log'),webState.diagnostic))
+    const interrupted=interruptedSignal??(fixtureShuttingDown()?'SIGTERM':null)
+    const serverFailed=server?.exitCode!==0
+    const finalResult=result===0&&!interrupted&&!serverFailed&&!clientStopError&&!androidCleanup?.length&&teardownErrors.length===0?0:1
+    const proofTmp=path.join(profile,'proof.json.tmp')
+    const proofFile=path.join(profile,'proof.json')
+    writeFileSync(proofTmp,JSON.stringify({result:finalResult,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,interruptedSignal:interrupted,clientStopError,teardownErrors:teardownErrors.length?teardownErrors:undefined,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2))
+    renameSync(proofTmp,proofFile)
+    proofPublished=true
+    publishedResult=finalResult
+    untrackSignal()
+    return finalResult
+  })()
+}
+const triggerShutdown=signal=>{
+  if(proofPublished||interruptedSignal)return
   interruptedSignal=signal
   const activeClient=client??webState.client
   if(activeClient)void stopClientOnce(activeClient)
   abortClientWait?.(signal)
 }
-process.on('SIGINT',onLauncherSignal)
-process.on('SIGTERM',onLauncherSignal)
+const untrackSignal=onFixtureSignal(
+  ()=>finalize(),
+  ()=>triggerShutdown('SIGTERM'),
+  {beforeChildren:true},
+)
 if(process.argv.includes('--owned-mobile-worker')){
   process.stdin.resume()
-  process.stdin.on('data',chunk=>{if(String(chunk).includes('shutdown'))onLauncherSignal('SIGTERM')})
-  process.stdin.once('end',()=>onLauncherSignal('SIGTERM'))
+  process.stdin.on('data',chunk=>{if(String(chunk).includes('shutdown'))triggerShutdown('SIGTERM')})
+  process.stdin.once('end',()=>triggerShutdown('SIGTERM'))
   process.stdin.unref()
 }
 try{
@@ -702,43 +755,14 @@ try{
   if(!web&&!controls&&!workspaceClaims&&!pendingOpen&&!filesState&&!gitPanel)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
   if(restoreState){assert.deepEqual(restoreStages.map(s=>s.stage),['prepare','resume','verify']);assert.deepEqual(restorePrompts.map(p=>p.sessionID),['ses_created_2','ses_created_1']);for(const id of ['ses_created_1','ses_created_2']){const rows=stores.get(id).rows;assert.deepEqual(rows.map(r=>r.type),['user','assistant']);assert(rows[1].time.completed)}}
   console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,workspaceClaims,restoreState,webRestore,filesState,documentState,...stats,profile}))
-}catch(error){result=1;console.error(JSON.stringify({profile,stats}));throw error}finally{
-  try{
-    control?.close()
-    for(const gate of gates.values())gate.reject()
-    client??=webState.client
-    if(client&&client.exitCode===null&&client.signalCode===null){
-      await stopClientOnce(client)
-    }
-    if(webState.deviceLease){
-      await stopClientOnce(client)
-      androidCleanup=await webState.deviceLease.close()
-    }else if(webState.androidRelay){
-      await webState.androidRelay.close().catch(error=>{androidCleanup=[`relay close: ${error.message}`]})
-    }
-    await webState.mobileAction
-    await clientRelay?.close().catch(()=>{})
-    await http?.dispose()
-    await stopServer()
-    for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-    await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
-    if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
-    if(web)await writeFile(path.join(profile,'browser-run.log'),webState.diagnostic)
-    const serverFailed=server?.exitCode!==0
-    const finalResult=androidCleanup?.length||clientStopError||interruptedSignal||serverFailed?1:result
-    const proofTmp=path.join(profile,'proof.json.tmp')
-    const proofFile=path.join(profile,'proof.json')
-    writeFileSync(proofTmp,JSON.stringify({result:finalResult,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,interruptedSignal:interruptedSignal??null,clientStopError,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2))
-    renameSync(proofTmp,proofFile)
-    if(interruptedSignal)result=1
-    if(result===0){
-      assert(!clientStopError,`Owned client cleanup failed: ${clientStopError}`)
-      if(webState.deviceLease)assert.deepEqual(androidCleanup,[],'Android fixture cleanup must complete')
-      assert.equal(server.exitCode,0,'Owned server must exit cleanly')
-    }
-  }finally{
-    process.off('SIGINT',onLauncherSignal)
-    process.off('SIGTERM',onLauncherSignal)
+}catch(error){result=1;runError=error;console.error(JSON.stringify({profile,stats}));throw error}finally{
+  const finalResult=await finalize()
+  result=finalResult
+  if(!runError&&finalResult!==0&&!interruptedSignal&&!fixtureShuttingDown()){
+    if(clientStopError)assert.fail(`Owned client cleanup failed: ${clientStopError}`)
+    if(teardownErrors.length)assert.fail(`Fixture teardown failed: ${teardownErrors.join('; ')}`)
+    if(webState.deviceLease&&androidCleanup?.length)assert.deepEqual(androidCleanup,[],'Android fixture cleanup must complete')
+    assert.equal(server?.exitCode,0,'Owned server must exit cleanly')
   }
 }
-process.exitCode=interruptedSignal?1:(result??1)
+process.exitCode=publishedResult
