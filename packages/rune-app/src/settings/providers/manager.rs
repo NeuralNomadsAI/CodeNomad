@@ -217,12 +217,7 @@ enum AccountFlightOutcome {
 }
 
 type CatalogFlight = (Sender<()>, Receiver<Result<CatalogSnapshot, AuthError>>);
-type AuthFlight = (
-    u64,
-    Sender<()>,
-    Arc<provider_auth::SendGate>,
-    Arc<Mutex<AuthHandover>>,
-);
+type AuthFlight = (u64, Sender<()>, Arc<Mutex<AuthHandover>>);
 type PollFlight = (u64, Sender<()>, Receiver<Result<AttemptPoll, AuthError>>);
 type AccountFlight = (
     AccountAction,
@@ -805,11 +800,17 @@ impl Manager {
 
     #[cfg(test)]
     pub(super) fn auth_handover_ready(&self) -> bool {
-        self.auth_flight
-            .as_ref()
-            .is_some_and(|(_, _, _, handover)| {
-                matches!(*handover.lock().unwrap(), AuthHandover::Ready(_))
-            })
+        self.auth_flight.as_ref().is_some_and(|(_, _, handover)| {
+            matches!(*handover.lock().unwrap(), AuthHandover::Ready(_))
+        })
+    }
+
+    fn has_queued_user_write(&self) -> bool {
+        self.pending_account.is_some()
+            || self
+                .connect
+                .as_ref()
+                .is_some_and(|flow| flow.pending_submit || flow.pending_code_submit)
     }
 
     fn cancel_account_flight(&mut self) {
@@ -829,8 +830,7 @@ impl Manager {
                 flow.provider_id.clone(),
             ))
         });
-        if let Some((_, cancel_tx, send_gate, handover)) = self.auth_flight.take() {
-            send_gate.cancel();
+        if let Some((_, cancel_tx, handover)) = self.auth_flight.take() {
             drop(cancel_tx);
             let taken = std::mem::replace(&mut *handover.lock().unwrap(), AuthHandover::Cancelled);
             if let (
@@ -969,7 +969,10 @@ impl Manager {
         changed |= self.poll_attempt_flight(now, tx);
 
         let desired_rev = target.revision().wrapping_add(self.refresh_nonce);
-        if visible && self.flight.is_none() && self.seen != Some(desired_rev) {
+        if (visible || self.has_queued_user_write())
+            && self.flight.is_none()
+            && self.seen != Some(desired_rev)
+        {
             let (cancel, cancelled) = bounded(1);
             let (out, reply) = bounded(1);
             let (backend_cl, ws_cl, ses_cl, wake_cl) = (
@@ -1210,7 +1213,7 @@ impl Manager {
 
     fn poll_auth_flight(&mut self, now: f64, tx: &mut Tx) -> bool {
         let outcome = {
-            let Some((_, _, _, handover)) = &self.auth_flight else {
+            let Some((_, _, handover)) = &self.auth_flight else {
                 return false;
             };
             let mut slot = handover.lock().unwrap();
@@ -1222,7 +1225,7 @@ impl Manager {
                 _ => return false,
             }
         };
-        let (seq, _, _, _) = self.auth_flight.take().unwrap();
+        let (seq, _, _) = self.auth_flight.take().unwrap();
         let Some(flow) = &mut self.connect else {
             return true;
         };
@@ -1435,159 +1438,144 @@ impl Manager {
                 flow.pending_submit = false;
                 v
             });
-        if want_submit
-            && self.can_submit_auth()
-            && let Some(directory) = self.snapshot.as_ref().map(|s| s.directory.clone())
-        {
-            self.op_counter = self.op_counter.wrapping_add(1);
-            let seq = self.op_counter;
-            let flow = self.connect.as_mut().unwrap();
-            let provider_id = flow.provider_id.clone();
-            let method = flow.selected_method().cloned().unwrap();
-            let effective = form::effective_answers(
-                method.form(),
-                &flow.form_answers,
-                &flow.form_edits,
-                &flow.form_touched,
-            );
-            flow.form_answers = effective;
-            let answer = build_form_answer(method.form(), &flow.form_answers);
-            let api_key = flow.api_key.text.trim().to_owned();
-            flow.operation_seq = seq;
-            flow.stage = AuthStage::Authorizing;
-            flow.error = None;
-            flow.active_directory = Some(directory.clone());
-            flow.active_workspace = Some(workspace.to_owned());
-            flow.active_backend = Some(backend.clone());
-            let (cancel_tx, cancelled) = bounded(1);
-            let send_gate = Arc::new(provider_auth::SendGate::new());
-            let send_gate_cl = send_gate.clone();
-            let handover = Arc::new(Mutex::new(AuthHandover::Pending));
-            let handover_cl = handover.clone();
-            let (backend_cl, ws_cl, wake_cl) =
-                (backend.clone(), workspace.to_owned(), wake.clone());
-            self.auth_flight = Some((seq, cancel_tx, send_gate, handover));
-            platform::spawn(async move {
-                if send_gate_cl.is_cancelled()
-                    || cancelled.is_closed()
-                    || matches!(*handover_cl.lock().unwrap(), AuthHandover::Cancelled)
-                {
-                    return;
-                }
-                let outcome = match method {
-                    AuthMethod::Key { .. } => {
-                        let Some(res) = platform::reads::cancellable(
-                            &cancelled,
-                            provider_auth::connect_key(
+        if want_submit {
+            if self.can_submit_auth()
+                && let Some(directory) = self.snapshot.as_ref().map(|s| s.directory.clone())
+            {
+                self.op_counter = self.op_counter.wrapping_add(1);
+                let seq = self.op_counter;
+                let flow = self.connect.as_mut().unwrap();
+                let provider_id = flow.provider_id.clone();
+                let method = flow.selected_method().cloned().unwrap();
+                let effective = form::effective_answers(
+                    method.form(),
+                    &flow.form_answers,
+                    &flow.form_edits,
+                    &flow.form_touched,
+                );
+                flow.form_answers = effective;
+                let answer = build_form_answer(method.form(), &flow.form_answers);
+                let api_key = flow.api_key.text.trim().to_owned();
+                flow.operation_seq = seq;
+                flow.stage = AuthStage::Authorizing;
+                flow.error = None;
+                flow.active_directory = Some(directory.clone());
+                flow.active_workspace = Some(workspace.to_owned());
+                flow.active_backend = Some(backend.clone());
+                let (cancel_tx, cancelled) = bounded(1);
+                let handover = Arc::new(Mutex::new(AuthHandover::Pending));
+                let handover_cl = handover.clone();
+                let (backend_cl, ws_cl, wake_cl) =
+                    (backend.clone(), workspace.to_owned(), wake.clone());
+                self.auth_flight = Some((seq, cancel_tx, handover));
+                platform::spawn(async move {
+                    if cancelled.is_closed()
+                        || matches!(*handover_cl.lock().unwrap(), AuthHandover::Cancelled)
+                    {
+                        return;
+                    }
+                    let Some(outcome) = platform::reads::cancellable(&cancelled, async {
+                        match method {
+                            AuthMethod::Key { .. } => match provider_auth::connect_key(
                                 &backend_cl,
                                 &ws_cl,
                                 &directory,
                                 &provider_id,
                                 &api_key,
                                 answer,
-                            ),
-                        )
-                        .await
-                        else {
-                            return;
-                        };
-                        match res {
-                            Ok(()) => AuthFlightOutcome::Done,
-                            Err(err) => AuthFlightOutcome::Failed(err),
-                        }
-                    }
-                    AuthMethod::External { id, .. } => {
-                        let Some(res) = platform::reads::cancellable(
-                            &cancelled,
-                            provider_auth::connect_external(
+                            )
+                            .await
+                            {
+                                Ok(()) => AuthFlightOutcome::Done,
+                                Err(err) => AuthFlightOutcome::Failed(err),
+                            },
+                            AuthMethod::External { id, .. } => {
+                                match provider_auth::connect_external(
+                                    &backend_cl,
+                                    &ws_cl,
+                                    &directory,
+                                    &provider_id,
+                                    &id,
+                                    answer,
+                                )
+                                .await
+                                {
+                                    Ok(()) => AuthFlightOutcome::Done,
+                                    Err(err) => AuthFlightOutcome::Failed(err),
+                                }
+                            }
+                            AuthMethod::OAuth { id, .. } => match provider_auth::oauth_connect(
                                 &backend_cl,
                                 &ws_cl,
                                 &directory,
                                 &provider_id,
                                 &id,
                                 answer,
-                            ),
-                        )
-                        .await
-                        else {
-                            return;
-                        };
-                        match res {
-                            Ok(()) => AuthFlightOutcome::Done,
-                            Err(err) => AuthFlightOutcome::Failed(err),
+                            )
+                            .await
+                            {
+                                Ok(attempt) => AuthFlightOutcome::OAuthStarted(attempt),
+                                Err(err) => AuthFlightOutcome::Failed(err),
+                            },
+                            AuthMethod::Command { id, .. } => match provider_auth::command_connect(
+                                &backend_cl,
+                                &ws_cl,
+                                &directory,
+                                &provider_id,
+                                &id,
+                            )
+                            .await
+                            {
+                                Ok(attempt_id) => AuthFlightOutcome::CommandStarted(attempt_id),
+                                Err(err) => AuthFlightOutcome::Failed(err),
+                            },
                         }
-                    }
-                    // OAuth/command POSTs acquire `SendGate` across checking cancellation and the
-                    // initial synchronous `poll` of `request.send()`; once dispatched, they finish
-                    // reading the reply so any server-created `attemptID` is cancelled via `DELETE`.
-                    AuthMethod::OAuth { id, .. } => {
-                        match provider_auth::oauth_connect(
-                            &backend_cl,
-                            &ws_cl,
-                            &directory,
-                            &provider_id,
-                            &id,
-                            answer,
-                            &send_gate_cl,
-                        )
-                        .await
-                        {
-                            Ok(attempt) => AuthFlightOutcome::OAuthStarted(attempt),
-                            Err(err) => AuthFlightOutcome::Failed(err),
-                        }
-                    }
-                    AuthMethod::Command { id, .. } => match provider_auth::command_connect(
-                        &backend_cl,
-                        &ws_cl,
-                        &directory,
-                        &provider_id,
-                        &id,
-                        &send_gate_cl,
-                    )
+                    })
                     .await
-                    {
-                        Ok(attempt_id) => AuthFlightOutcome::CommandStarted(attempt_id),
-                        Err(err) => AuthFlightOutcome::Failed(err),
-                    },
-                };
-                let cancelled_outcome = {
-                    let mut slot = handover_cl.lock().unwrap();
-                    if matches!(*slot, AuthHandover::Cancelled) {
-                        Some(outcome)
+                    else {
+                        return;
+                    };
+                    let cancelled_outcome = {
+                        let mut slot = handover_cl.lock().unwrap();
+                        if matches!(*slot, AuthHandover::Cancelled) {
+                            Some(outcome)
+                        } else {
+                            *slot = AuthHandover::Ready(outcome);
+                            None
+                        }
+                    };
+                    if let Some(unsent) = cancelled_outcome {
+                        match unsent {
+                            AuthFlightOutcome::OAuthStarted(attempt) => {
+                                provider_auth::oauth_cancel(
+                                    &backend_cl,
+                                    &ws_cl,
+                                    &directory,
+                                    &provider_id,
+                                    &attempt.attempt_id,
+                                )
+                                .await;
+                            }
+                            AuthFlightOutcome::CommandStarted(attempt_id) => {
+                                provider_auth::command_cancel(
+                                    &backend_cl,
+                                    &ws_cl,
+                                    &directory,
+                                    &provider_id,
+                                    &attempt_id,
+                                )
+                                .await;
+                            }
+                            AuthFlightOutcome::Done | AuthFlightOutcome::Failed(_) => {}
+                        }
                     } else {
-                        *slot = AuthHandover::Ready(outcome);
-                        None
+                        wake_cl();
                     }
-                };
-                if let Some(unsent) = cancelled_outcome {
-                    match unsent {
-                        AuthFlightOutcome::OAuthStarted(attempt) => {
-                            provider_auth::oauth_cancel(
-                                &backend_cl,
-                                &ws_cl,
-                                &directory,
-                                &provider_id,
-                                &attempt.attempt_id,
-                            )
-                            .await;
-                        }
-                        AuthFlightOutcome::CommandStarted(attempt_id) => {
-                            provider_auth::command_cancel(
-                                &backend_cl,
-                                &ws_cl,
-                                &directory,
-                                &provider_id,
-                                &attempt_id,
-                            )
-                            .await;
-                        }
-                        AuthFlightOutcome::Done | AuthFlightOutcome::Failed(_) => {}
-                    }
-                } else {
-                    wake_cl();
-                }
-            });
-            changed = true;
+                });
+                changed = true;
+            } else if let Some(flow) = &mut self.connect {
+                flow.close_pending_popup();
+            }
         }
 
         let want_code = can_start_write
@@ -1613,12 +1601,11 @@ impl Manager {
                 flow.error = None;
                 let provider_id = flow.provider_id.clone();
                 let (cancel_tx, cancelled) = bounded(1);
-                let send_gate = Arc::new(provider_auth::SendGate::new());
                 let handover = Arc::new(Mutex::new(AuthHandover::Pending));
                 let handover_cl = handover.clone();
                 let (backend_cl, ws_cl, wake_cl) =
                     (backend.clone(), workspace.to_owned(), wake.clone());
-                self.auth_flight = Some((seq, cancel_tx, send_gate, handover));
+                self.auth_flight = Some((seq, cancel_tx, handover));
                 platform::spawn(async move {
                     if matches!(*handover_cl.lock().unwrap(), AuthHandover::Cancelled) {
                         return;

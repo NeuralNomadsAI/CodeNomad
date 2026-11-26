@@ -793,64 +793,6 @@ pub async fn connect_external(
     check_empty_response(response).await
 }
 
-/// Coordinates cancellation with the initial synchronous `poll` of an OAuth/command start POST.
-///
-/// The worker locks this gate across checking cancellation and executing the first `poll(cx)` of
-/// `request.send()`, so `cancel()` either blocks the POST before `send()` is ever polled or
-/// synchronizes after dispatch is committed (letting `AuthHandover` cancel any returned `attemptID`).
-#[derive(Default)]
-pub struct SendGate {
-    state: std::sync::Mutex<SendGateState>,
-}
-
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-enum SendGateState {
-    #[default]
-    Pending,
-    Dispatched,
-    Cancelled,
-}
-
-impl SendGate {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn cancel(&self) {
-        *self.state.lock().unwrap() = SendGateState::Cancelled;
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        *self.state.lock().unwrap() == SendGateState::Cancelled
-    }
-}
-
-async fn send_gated(
-    request: reqwest::RequestBuilder,
-    gate: &SendGate,
-) -> std::result::Result<reqwest::Response, AuthError> {
-    use std::future::Future;
-    let mut send_fut = std::pin::pin!(request.send());
-    let immediate = std::future::poll_fn(|cx| {
-        let mut state = gate.state.lock().unwrap();
-        if *state == SendGateState::Cancelled {
-            return std::task::Poll::Ready(Err(AuthError::Failed));
-        }
-        *state = SendGateState::Dispatched;
-        match send_fut.as_mut().poll(cx) {
-            std::task::Poll::Ready(res) => {
-                std::task::Poll::Ready(res.map(Some).map_err(|_| AuthError::Failed))
-            }
-            std::task::Poll::Pending => std::task::Poll::Ready(Ok(None)),
-        }
-    })
-    .await?;
-    match immediate {
-        Some(response) => Ok(response),
-        None => send_fut.await.map_err(|_| AuthError::Failed),
-    }
-}
-
 pub async fn oauth_connect(
     backend: &Backend,
     workspace: &str,
@@ -858,11 +800,7 @@ pub async fn oauth_connect(
     integration_id: &str,
     method_id: &str,
     answer: Option<Value>,
-    gate: &SendGate,
 ) -> std::result::Result<OAuthAttempt, AuthError> {
-    if gate.is_cancelled() {
-        return Err(AuthError::Failed);
-    }
     let url = instance_url(
         backend,
         workspace,
@@ -873,12 +811,14 @@ pub async fn oauth_connect(
     if let Some(answer) = answer {
         body.insert("answer".into(), answer);
     }
-    let request = backend
+    let response = backend
         .client
         .post(url)
         .query(&[("location[directory]", directory)])
-        .json(&Value::Object(body));
-    let response = send_gated(request, gate).await?;
+        .json(&Value::Object(body))
+        .send()
+        .await
+        .map_err(|_| AuthError::Failed)?;
     let value = check_json_response(response).await?;
     verify_response_location(&value, directory)?;
     let data = &value["data"];
@@ -996,22 +936,20 @@ pub async fn command_connect(
     directory: &str,
     integration_id: &str,
     method_id: &str,
-    gate: &SendGate,
 ) -> std::result::Result<String, AuthError> {
-    if gate.is_cancelled() {
-        return Err(AuthError::Failed);
-    }
     let url = instance_url(
         backend,
         workspace,
         &["integration", integration_id, "connect", "command"],
     )?;
-    let request = backend
+    let response = backend
         .client
         .post(url)
         .query(&[("location[directory]", directory)])
-        .json(&json!({ "methodID": method_id }));
-    let response = send_gated(request, gate).await?;
+        .json(&json!({ "methodID": method_id }))
+        .send()
+        .await
+        .map_err(|_| AuthError::Failed)?;
     let value = check_json_response(response).await?;
     verify_response_location(&value, directory)?;
     clean_token(&value["data"]["attemptID"]).ok_or(AuthError::Failed)

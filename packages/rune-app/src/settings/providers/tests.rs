@@ -648,7 +648,7 @@ fn closing_modal_mid_oauth_post_sends_delete_and_logical_clock_advances_polling(
         reply_catalog(&http, integrations.clone(), json!([]), json!([]), None).await;
         poll_until(&mut rt, 1.0, |h| h.catalog.manager.snapshot.is_some());
 
-        // Start OAuth POST, then close the modal BEFORE the POST returns -> late attemptID MUST trigger DELETE.
+        // Start OAuth POST, then close the modal BEFORE the POST returns -> HTTP socket aborts immediately.
         click(&mut rt, "providers-connect-button", 1.0);
         click(&mut rt, "provider-auth-continue", 1.0);
         assert!(tick(&mut rt, 1.0));
@@ -661,29 +661,7 @@ fn closing_modal_mid_oauth_post_sends_delete_and_logical_clock_advances_polling(
         );
         click(&mut rt, "provider-auth-close", 1.0);
         assert!(rt.state.catalog.manager.connect.is_none());
-
-        post.reply(
-            200,
-            json!({
-                "location": { "directory": "/repo/a" },
-                "data": {
-                    "attemptID": "att_late",
-                    "url": "https://auth.example.test/late",
-                    "instructions": "Late",
-                    "mode": "auto"
-                }
-            }),
-        )
-        .await;
-        let del = http.accept().await;
-        assert!(
-            del.header.starts_with(
-                "DELETE /workspaces/ws1/instance/api/integration/openai/connect/oauth/att_late?"
-            ),
-            "{}",
-            del.header
-        );
-        del.reply(200, json!({})).await;
+        post.disconnected().await;
 
         // Second flow: verify logical-clock polling advances from pending -> second poll at now+1.0 -> completed.
         click(&mut rt, "providers-connect-button", 10.0);
@@ -1009,38 +987,24 @@ fn command_external_snapshotted_methods_and_absent_optional_fields() {
         reply_catalog(&http, integrations.clone(), json!([]), json!([]), None).await;
         poll_until(&mut rt, 3.5, |h| !h.catalog.manager.catalog_flight_active());
 
-        // Pre-cancelled SendGate prevents OAuth and command start POSTs from touching the server.
-        let gate = codenomad_client::settings::provider_auth::SendGate::new();
-        gate.cancel();
+        // Closing the modal while a command POST is in flight aborts the HTTP socket immediately.
+        click(&mut rt, "providers-connect-button", 4.0);
+        click(&mut rt, "provider-auth-continue", 4.0);
+        assert!(tick(&mut rt, 4.0));
+        let cmd_post = http.accept().await;
         assert!(
-            codenomad_client::settings::provider_auth::oauth_connect(
-                &http.backend,
-                "ws1",
-                "/repo/a",
-                "acme",
-                "oauth",
-                None,
-                &gate,
-            )
-            .await
-            .is_err()
+            cmd_post
+                .header
+                .starts_with("POST /workspaces/ws1/instance/api/integration/acme/connect/command?"),
+            "{}",
+            cmd_post.header
         );
-        assert!(
-            codenomad_client::settings::provider_auth::command_connect(
-                &http.backend,
-                "ws1",
-                "/repo/a",
-                "acme",
-                "cli",
-                &gate,
-            )
-            .await
-            .is_err()
-        );
-        http.quiet().await;
+        click(&mut rt, "provider-auth-close", 4.0);
+        assert!(rt.state.catalog.manager.connect.is_none());
+        cmd_post.disconnected().await;
 
-        // Hidden tab cancels an in-flight account mutation immediately on authority revocation
-        // and aborts the underlying HTTP socket.
+        // Already-requested account mutation dispatches even if the tab becomes hidden before poll,
+        // and authority revocation while hidden aborts the underlying HTTP socket immediately.
         let http2 = Http::new().await;
         let mut rt2 = make_rt(http2.backend.clone());
         assert!(tick(&mut rt2, 1.0));
@@ -1059,7 +1023,7 @@ fn command_external_snapshotted_methods_and_absent_optional_fields() {
         reply_catalog(&http2, acc_integrations, acc_providers, json!([]), None).await;
         poll_until(&mut rt2, 1.0, |h| h.catalog.manager.snapshot.is_some());
         click(&mut rt2, "provider-account-remove-openai", 1.0);
-        assert!(tick(&mut rt2, 1.0));
+        assert!(tick_with_visibility(&mut rt2, 1.0, false));
         assert!(rt2.state.catalog.manager.any_account_busy());
         let del_req = http2.accept().await;
         assert!(
@@ -1241,11 +1205,32 @@ fn catalogue_move_revokes_authority_ready_before_cancel_deletes_and_stable_label
         click(&mut rt, "provider-auth-close", 2.5);
 
         // Opening a foreground OAuth popup tab immediately hides the originating tab (visible=false)
-        // before the next poll: the queued OAuth POST must still dispatch while hidden, passive
-        // catalog refresh must stay paused, and ProviderMoves must revoke authority immediately.
+        // before the next poll: even if a passive invalidation hint arrives before that poll, the
+        // queued OAuth submit must still refresh the catalog and dispatch while hidden; once active,
+        // subsequent passive hints stay paused while hidden and ProviderMoves revokes immediately.
         click(&mut rt, "provider-account-add-openai", 3.0);
         click(&mut rt, "provider-auth-continue", 3.0);
+        rt.update(|h, _| {
+            assert!(h.target.hint("ws1"));
+        });
         assert!(tick_with_visibility(&mut rt, 3.0, false));
+        reply_catalog(
+            &http,
+            integrations.clone(),
+            providers.clone(),
+            json!([]),
+            Some(("openai", selection.clone())),
+        )
+        .await;
+        let deadline_reload = Instant::now() + Duration::from_secs(3);
+        while rt.state.catalog.manager.catalog_flight_active() {
+            assert!(
+                Instant::now() < deadline_reload,
+                "hidden queued-write catalog refresh did not settle"
+            );
+            let _ = tick_with_visibility(&mut rt, 3.0, false);
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
         let post_move = http.accept().await;
         post_move
             .reply(
