@@ -40,7 +40,7 @@ function computeDirectoryKey(directory: string): string {
 }
 
 export function buildProjectSessionListOptions(options: ProjectSessionListInput): ProjectSessionListOptions {
-  if (options.cursor) return { cursor: options.cursor }
+  if (options.cursor) return { cursor: options.cursor, limit: PROJECT_SESSION_LIST_LIMIT }
   return {
     ...(options.directory ? { directory: options.directory } : {}),
     ...(options.search ? { search: options.search } : {}),

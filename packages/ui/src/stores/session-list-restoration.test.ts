@@ -5,6 +5,7 @@ import { createRoot, createEffect } from "solid-js"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { serverApi } from "../lib/api-client.ts"
 import { addInstance, removeInstance } from "./instances.ts"
+import { setInstanceMetadata } from "./instance-metadata.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { fetchSessions } from "./session-api.ts"
 import { sessionListRestored } from "./session-list-restoration.ts"
@@ -82,6 +83,47 @@ describe("session-list restoration gate", () => {
       void fetchSessions(instanceId).catch(() => {})
       assert.equal(sessionListRestored(instanceId), false)
     } finally {
+      cleanup()
+    }
+  })
+
+  it("settles once the first visible page and project metadata arrive while project inventory continues", async () => {
+    const instanceId = "restoration-first-page"
+    let resolveInventory!: (value: unknown) => void
+    const inventoryPending = new Promise((resolve) => { resolveInventory = resolve })
+    const cleanup = setup(instanceId, (input?: any) => {
+      if (input?.parentID === null) {
+        return Promise.resolve({
+          data: [{
+            id: "root-1", title: "root-1", projectID: "project", location: { directory: "/work" },
+            cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            time: { created: 1, updated: 1 },
+          }],
+          cursor: {},
+        })
+      }
+      return inventoryPending
+    })
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+    const observed: boolean[] = []
+    const dispose = createRoot((dispose) => {
+      createEffect(() => observed.push(sessionListRestored(instanceId)))
+      return dispose
+    })
+    try {
+      const pending = fetchSessions(instanceId, { projectMetadata: Promise.resolve() })
+      for (let i = 0; i < 6 && !sessionListRestored(instanceId); i++) {
+        await new Promise((resolve) => setImmediate(resolve))
+      }
+      assert.equal(sessionListRestored(instanceId), true)
+      assert.equal(observed.at(-1), true)
+      assert.equal(loading().fetchingSessions.get(instanceId), true, "full inventory is still running")
+      resolveInventory({ data: [], cursor: {} })
+      await pending
+      assert.equal(loading().fetchingSessions.get(instanceId), false)
+    } finally {
+      resolveInventory({ data: [], cursor: {} })
+      dispose()
       cleanup()
     }
   })
