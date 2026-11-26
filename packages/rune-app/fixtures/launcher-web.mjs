@@ -11,7 +11,7 @@ import {serverBinary} from './fixture-binaries.mjs'
 
 export async function launchWeb({
   root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog,http,mobile,restart,
-  webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,webSse7Tabs,emitMultiplexSse,
+  webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,webSse7Tabs,emitMultiplexSse,appendHistory,
 }, state) {
   if(webTimeline||webSearch||webOutline){
     const config=await http.patch('/api/storage/config/ui',{data:{settings:{showThinkingBlocks:true,systemMessagesVisibility:'expanded',
@@ -90,6 +90,7 @@ export async function launchWeb({
           return {value:true}
         }
         if(action?.type==='emit-multiplex-sse')return {value:emitMultiplexSse(action.targets)}
+        if(action?.type==='append-history')return {value:appendHistory(action)}
         if(action?.type==='server-workspaces'){
           const res=await http.get('/api/workspaces')
           assert.equal(res.status(),200)

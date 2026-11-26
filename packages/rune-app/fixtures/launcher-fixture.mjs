@@ -503,7 +503,7 @@ async function restartWeb(previous,uiOrigin){
   assert(opened.ok())
   return {http,value:{older,witness:(await opened.json()).id}}
 }
-let clientStopPromise,clientStopError
+let clientStopPromise,clientStopError,interruptedSignal,abortClientWait
 const stopClientOnce=child=>{
   if(!child)return Promise.resolve()
   if(!clientStopPromise){
@@ -529,8 +529,18 @@ const stopClientOnce=child=>{
   }
   return clientStopPromise
 }
+const onLauncherSignal=signal=>{
+  if(interruptedSignal)return
+  interruptedSignal=signal
+  const activeClient=client??webState.client
+  if(activeClient)void stopClientOnce(activeClient)
+  abortClientWait?.(signal)
+}
+process.on('SIGINT',onLauncherSignal)
+process.on('SIGTERM',onLauncherSignal)
 try{
   const origin=await startServer()
+  if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
   if(web){
     await signIn(origin)
     const emitMultiplexSse=targets=>{
@@ -554,9 +564,18 @@ try{
       }
       return emitted
     }
+    const appendHistory=({sessionID,text})=>{
+      assert(typeof sessionID==='string'&&/^ses_tab_[1-7]$/.test(sessionID),`Unexpected sessionID: ${sessionID}`)
+      assert(typeof text==='string'&&text.length>0&&text.length<=256,'Invalid history text')
+      const store=stores.get(sessionID)
+      assert(store,`Unknown session store: ${sessionID}`)
+      const row=store.append('assistant',text,true)
+      return {sessionID,messageID:row.id,text}
+    }
     await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog:host.stdout(),http,mobile,restart:restartWeb,
-      webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard:()=>{keyboardPermissionSettled=false;keyboardFormSettled=false},webRestore,webTimeline,webTouchHistory,webSearch,webOutline,webSse7Tabs,emitMultiplexSse},webState)
+      webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard:()=>{keyboardPermissionSettled=false;keyboardFormSettled=false},webRestore,webTimeline,webTouchHistory,webSearch,webOutline,webSse7Tabs,emitMultiplexSse,appendHistory},webState)
     client=webState.client
+    if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
   }else if(pendingOpen){
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
   }else if(restoreState){
@@ -593,16 +612,20 @@ try{
     webState.clientClosed=exited
     let timer
     try{
-      const outcome=await Promise.race([
-        exited.then(code=>({timedOut:false,code})),
-        new Promise(resolve=>{timer=setTimeout(()=>resolve({timedOut:true,code:1}),budget)}),
-      ])
-      if(outcome.timedOut){
-        expired=true
+      const outcome=interruptedSignal
+        ?{timedOut:false,interrupted:interruptedSignal,code:1}
+        :await Promise.race([
+          exited.then(code=>({timedOut:false,interrupted:null,code})),
+          new Promise(resolve=>{timer=setTimeout(()=>resolve({timedOut:true,interrupted:null,code:1}),budget)}),
+          new Promise(resolve=>{abortClientWait=signal=>resolve({timedOut:false,interrupted:signal,code:1})}),
+        ])
+      if(outcome.timedOut||outcome.interrupted){
+        if(outcome.timedOut)expired=true
         await stopClientOnce(client)
       }
+      if(outcome.interrupted)throw Error(`Launcher interrupted by ${outcome.interrupted}`)
       result=outcome.code
-    }finally{clearTimeout(timer)}
+    }finally{clearTimeout(timer);abortClientWait=null}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
   assert.equal(result,0,webState.diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webMoreActions||webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||mobileSessionSearch||historyReturnOnly||webMoreActions?1:webTouchHistory?4:webMissions||webGitImages?2:webSse7Tabs?7:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
@@ -642,6 +665,8 @@ try{
   if(restoreState){assert.deepEqual(restoreStages.map(s=>s.stage),['prepare','resume','verify']);assert.deepEqual(restorePrompts.map(p=>p.sessionID),['ses_created_2','ses_created_1']);for(const id of ['ses_created_1','ses_created_2']){const rows=stores.get(id).rows;assert.deepEqual(rows.map(r=>r.type),['user','assistant']);assert(rows[1].time.completed)}}
   console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,workspaceClaims,restoreState,webRestore,filesState,documentState,...stats,profile}))
 }catch(error){result=1;console.error(JSON.stringify({profile,stats}));throw error}finally{
+  process.off('SIGINT',onLauncherSignal)
+  process.off('SIGTERM',onLauncherSignal)
   control?.close()
   for(const gate of gates.values())gate.reject()
   client??=webState.client

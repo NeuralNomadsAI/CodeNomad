@@ -137,6 +137,7 @@ test('allowBenchOwnedRoute restricts routes strictly to ses_tab_1..ses_tab_7', (
   assert.equal(allowBenchOwnedRoute({method: 'GET', path: 'worktrees', native: false}), true)
   assert.equal(allowBenchOwnedRoute({method: 'GET', path: 'sessions/ses_tab_4/permission-mode', native: false}), true)
   assert.equal(allowBenchOwnedRoute({method: 'POST', path: 'session-history/window', body: {sessionID: 'ses_tab_3'}, native: false}), true)
+  assert.equal(allowBenchOwnedRoute({method: 'POST', path: 'session-history/outlinePreview', body: {sessionID: 'ses_tab_1'}, native: false}), true)
   assert.equal(allowBenchOwnedRoute({method: 'POST', path: 'session-history/window', body: {sessionID: 'ses_other'}, native: false}), false)
   assert.equal(allowBenchOwnedRoute({method: 'POST', path: 'session/ses_tab_1/prompt', native: true}), false)
 })
