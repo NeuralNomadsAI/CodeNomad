@@ -43,8 +43,9 @@ const RECHECK: Duration = Duration::from_secs(30);
 // Default headers/body inactivity limit of the reference's Undici transport.
 const PROXY_IDLE: Duration = Duration::from_secs(300);
 
+/// `Ok(None)` signals that `reconnect()` superseded this flight; callers rejoin `acquire()`.
 type AcquireFlight =
-    futures_util::future::Shared<futures_util::future::BoxFuture<'static, Result<Arc<Endpoint>, Refusal>>>;
+    futures_util::future::Shared<futures_util::future::BoxFuture<'static, Result<Option<Arc<Endpoint>>, Refusal>>>;
 
 struct NativeInner {
     client: Client,
@@ -266,45 +267,52 @@ impl Native {
         if self.inner.lifecycle.read().unwrap().is_none() {
             return self.endpoint().ok_or_else(|| Refusal::Failed("OpenCode fixture endpoint is missing".into()));
         }
-        {
-            let current = self.inner.endpoint.read().unwrap();
-            if let (Some(current), Some(at)) = (current.as_ref(), *self.inner.validated.lock().unwrap())
-                && at.elapsed() < RECHECK
+        for _ in 0..8 {
             {
-                return Ok(current.clone());
+                let current = self.inner.endpoint.read().unwrap();
+                if let (Some(current), Some(at)) = (current.as_ref(), *self.inner.validated.lock().unwrap())
+                    && at.elapsed() < RECHECK
+                {
+                    return Ok(current.clone());
+                }
+            }
+            let flight = {
+                let mut slot = self.inner.inflight.lock().unwrap();
+                if let Some((_, existing)) = slot.as_ref() {
+                    existing.clone()
+                } else {
+                    use futures_util::FutureExt;
+                    let id = self.inner.next_flight_id.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+                    let inner = self.inner.clone();
+                    let shared_deadline = deadline.max(Instant::now() + Duration::from_secs(30));
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    let shared: AcquireFlight = async move {
+                        rx.await.unwrap_or_else(|_| Err(Refusal::Failed("OpenCode acquisition stopped".into())))
+                    }
+                    .boxed()
+                    .shared();
+                    *slot = Some((id, shared.clone()));
+                    tokio::spawn(async move {
+                        let result = run_acquire(&inner, id, shared_deadline).await;
+                        let mut slot = inner.inflight.lock().unwrap();
+                        if slot.as_ref().is_some_and(|(current_id, _)| *current_id == id) {
+                            *slot = None;
+                        }
+                        drop(slot);
+                        let _ = tx.send(result);
+                    });
+                    shared
+                }
+            };
+            match tokio::time::timeout_at(deadline, flight)
+                .await
+                .map_err(|_| Refusal::Failed("Timed out waiting for OpenCode".into()))??
+            {
+                Some(endpoint) => return Ok(endpoint),
+                None => continue,
             }
         }
-        let flight = {
-            let mut slot = self.inner.inflight.lock().unwrap();
-            if let Some((_, existing)) = slot.as_ref() {
-                existing.clone()
-            } else {
-                use futures_util::FutureExt;
-                let id = self.inner.next_flight_id.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
-                let inner = self.inner.clone();
-                let shared_deadline = deadline.max(Instant::now() + Duration::from_secs(30));
-                let (tx, rx) = tokio::sync::oneshot::channel();
-                let shared: AcquireFlight = async move {
-                    rx.await.unwrap_or_else(|_| Err(Refusal::Failed("OpenCode acquisition stopped".into())))
-                }
-                .boxed()
-                .shared();
-                *slot = Some((id, shared.clone()));
-                tokio::spawn(async move {
-                    let result = run_acquire(&inner, id, shared_deadline).await;
-                    let mut slot = inner.inflight.lock().unwrap();
-                    if slot.as_ref().is_some_and(|(current_id, _)| *current_id == id) {
-                        *slot = None;
-                    }
-                    drop(slot);
-                    let _ = tx.send(result);
-                });
-                shared
-            }
-        };
-        tokio::time::timeout_at(deadline, flight)
-            .await
-            .map_err(|_| Refusal::Failed("Timed out waiting for OpenCode".into()))?
+        Err(Refusal::Failed("OpenCode connection was invalidated during discovery".into()))
     }
     /// `lifecycle.discover()`: the running daemon, never started. The bench's fixture endpoint
     /// reports the version its `/api/info` declares, as the reference remembers it.
@@ -357,11 +365,10 @@ fn is_active_flight(inner: &NativeInner, flight_id: u64) -> bool {
     inner.inflight.lock().unwrap().as_ref().is_some_and(|(id, _)| *id == flight_id)
 }
 
-async fn run_acquire(inner: &NativeInner, flight_id: u64, deadline: Instant) -> Result<Arc<Endpoint>, Refusal> {
-    let retired = || Refusal::Failed("OpenCode connection was retired".into());
+async fn run_acquire(inner: &NativeInner, flight_id: u64, deadline: Instant) -> Result<Option<Arc<Endpoint>>, Refusal> {
     for _attempt in 0..6 {
         if !is_active_flight(inner, flight_id) {
-            return Err(retired());
+            return Ok(None);
         }
         let generation = inner.generation.load(Ordering::SeqCst);
         let Some(lifecycle) = inner.lifecycle.read().unwrap().clone() else {
@@ -370,18 +377,19 @@ async fn run_acquire(inner: &NativeInner, flight_id: u64, deadline: Instant) -> 
                 .read()
                 .unwrap()
                 .clone()
+                .map(Some)
                 .ok_or_else(|| Refusal::Failed("OpenCode fixture endpoint is missing".into()));
         };
         let validated = *inner.validated.lock().unwrap();
         let current = inner.endpoint.read().unwrap().clone();
         let found = match (&current, validated) {
-            (Some(current), Some(at)) if at.elapsed() < RECHECK => return Ok(current.clone()),
+            (Some(current), Some(at)) if at.elapsed() < RECHECK => return Ok(Some(current.clone())),
             (Some(current), Some(_)) => match lifecycle.discover(deadline).await {
                 Ok(Some(found)) if found != **current => found,
                 _ => {
                     let mut validated = inner.validated.lock().unwrap();
                     if !is_active_flight(inner, flight_id) {
-                        return Err(retired());
+                        return Ok(None);
                     }
                     if validated.is_none() || inner.generation.load(Ordering::SeqCst) != generation {
                         // Connection was invalidated or binary changed while discovery ran;
@@ -389,39 +397,66 @@ async fn run_acquire(inner: &NativeInner, flight_id: u64, deadline: Instant) -> 
                         continue;
                     }
                     *validated = Some(Instant::now());
-                    return Ok(current.clone());
+                    return Ok(Some(current.clone()));
                 }
             },
-            _ => match lifecycle.discover(deadline).await? {
-                Some(found) => found,
-                None => {
+            _ => match lifecycle.discover(deadline).await {
+                Ok(Some(found)) => found,
+                Ok(None) => {
                     if !is_active_flight(inner, flight_id) {
-                        return Err(retired());
+                        return Ok(None);
                     }
                     if inner.generation.load(Ordering::SeqCst) != generation {
                         continue;
                     }
                     // Match TS `ensure()`: validate profile startup env and run a final discovery
                     // before launching `service start`, checking generation right before spawn.
-                    let environment = launch::daemon_environment_from_config(lifecycle.config_path.as_deref())
-                        .map_err(Refusal::Failed)?;
-                    match lifecycle.discover(deadline).await? {
-                        Some(found) => found,
-                        None => {
+                    let environment = match launch::daemon_environment_from_config(lifecycle.config_path.as_deref()) {
+                        Ok(env) => env,
+                        Err(err) => {
+                            return if is_active_flight(inner, flight_id) {
+                                Err(Refusal::Failed(err))
+                            } else {
+                                Ok(None)
+                            };
+                        }
+                    };
+                    match lifecycle.discover(deadline).await {
+                        Ok(Some(found)) => found,
+                        Ok(None) => {
                             if !is_active_flight(inner, flight_id) {
-                                return Err(retired());
+                                return Ok(None);
                             }
                             if inner.generation.load(Ordering::SeqCst) != generation {
                                 continue;
                             }
-                            lifecycle.start_with_env(&environment, deadline).await?
+                            match lifecycle.start_with_env(&environment, deadline).await {
+                                Ok(found) => found,
+                                Err(err) => {
+                                    return if is_active_flight(inner, flight_id) {
+                                        Err(Refusal::Failed(err))
+                                    } else {
+                                        Ok(None)
+                                    };
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            return if is_active_flight(inner, flight_id) {
+                                Err(Refusal::Failed(err))
+                            } else {
+                                Ok(None)
+                            };
                         }
                     }
+                }
+                Err(err) => {
+                    return if is_active_flight(inner, flight_id) { Err(Refusal::Failed(err)) } else { Ok(None) };
                 }
             },
         };
         if !is_active_flight(inner, flight_id) {
-            return Err(retired());
+            return Ok(None);
         }
         if inner.generation.load(Ordering::SeqCst) != generation {
             continue;
@@ -433,7 +468,7 @@ async fn run_acquire(inner: &NativeInner, flight_id: u64, deadline: Instant) -> 
                 let mut endpoint = inner.endpoint.write().unwrap();
                 let mut validated = inner.validated.lock().unwrap();
                 if !is_active_flight(inner, flight_id) {
-                    return Err(retired());
+                    return Ok(None);
                 }
                 if inner.generation.load(Ordering::SeqCst) != generation {
                     continue;
@@ -443,13 +478,15 @@ async fn run_acquire(inner: &NativeInner, flight_id: u64, deadline: Instant) -> 
             }
             inner.retired.notify_waiters();
         }
-        admission::admit(&inner.client, &found).await?;
+        if let Err(err) = admission::admit(&inner.client, &found).await {
+            return if is_active_flight(inner, flight_id) { Err(err) } else { Ok(None) };
+        }
         let found = Arc::new(found);
         {
             let mut endpoint = inner.endpoint.write().unwrap();
             let mut validated = inner.validated.lock().unwrap();
             if !is_active_flight(inner, flight_id) {
-                return Err(retired());
+                return Ok(None);
             }
             if inner.generation.load(Ordering::SeqCst) != generation {
                 continue;
@@ -458,7 +495,7 @@ async fn run_acquire(inner: &NativeInner, flight_id: u64, deadline: Instant) -> 
             *validated = Some(Instant::now());
         }
         inner.retired.notify_waiters();
-        return Ok(found);
+        return Ok(Some(found));
     }
     Err(Refusal::Failed("OpenCode connection was invalidated during discovery".into()))
 }
