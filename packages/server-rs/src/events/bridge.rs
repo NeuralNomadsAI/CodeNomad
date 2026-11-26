@@ -4,7 +4,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
-        Arc, Mutex,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicI64, AtomicUsize, Ordering::Relaxed},
     },
     time::{Duration, Instant},
@@ -17,6 +17,33 @@ use uuid::Uuid;
 
 use super::upstream;
 use crate::{App, Shared};
+
+/// Integration notifications carry invalidation only (`integrations/events.ts:4-10`).
+static INTEGRATION_RPC_EVENT: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^rpc\.neuralnomads\.[a-z][a-z0-9-]{0,31}\.(status_changed|hosts_changed)$").unwrap()
+});
+
+fn integration_event_for_relay(event: Value) -> Option<Value> {
+    let kind = event["type"].as_str()?;
+    if !kind.starts_with("rpc.neuralnomads.") {
+        return Some(event);
+    }
+    if !INTEGRATION_RPC_EVENT.is_match(kind) {
+        return None;
+    }
+    let location = event.get("location")?.as_object()?;
+    let directory = location.get("directory")?.clone();
+    let mut sanitized_location = serde_json::Map::new();
+    sanitized_location.insert("directory".into(), directory);
+    if let Some(workspace_id) = location.get("workspaceID") {
+        sanitized_location.insert("workspaceID".into(), workspace_id.clone());
+    }
+    Some(json!({
+        "type": kind,
+        "location": Value::Object(sanitized_location),
+        "data": {},
+    }))
+}
 
 /// Native events without a location that every workspace receives.
 const GLOBAL: &str = "agent.updated command.updated config.updated credential.switched credential.updated \
@@ -434,7 +461,11 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                     Err(_) if now() - seen.load(Relaxed) < 60_000 => continue,
                     Err(_) => break,
                 };
-                let Some(Ok(mut event)) = next else { break };
+                let Some(Ok(event)) = next else { break };
+                if event["type"].as_str().is_none() {
+                    break;
+                }
+                let Some(mut event) = integration_event_for_relay(event) else { continue };
                 let Some(kind) = event["type"].as_str().map(str::to_owned) else { break };
                 let received = (Instant::now(), now());
                 if !connected {
@@ -467,7 +498,6 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                     }
                     event["data"]["daemon"] = json!(daemon);
                 }
-                // Integration events can contain backend-only data and need the TS sanitizer.
                 if kind.starts_with("worktree.") || kind == "server.connected" {
                     // Match TS `instance-events.ts:170-173` & `manager.ts:506-511`: any worktree
                     // event invalidates every workspace's cached worktree inventory.
@@ -478,9 +508,6 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                     && let Some(id) = event["data"]["sessionID"].as_str()
                 {
                     lanes.receipts.retire(id);
-                }
-                if matches!(kind.as_str(), "integration.updated" | "rpc") {
-                    continue;
                 }
                 const SDK_FRAME_UNITS: usize = 16 * 1024 * 1024;
                 let wire = event.to_string();
@@ -842,5 +869,50 @@ mod tests {
             None,
             "stale subscription worker cannot repopulate locations after reconnect"
         );
+    }
+
+    #[test]
+    fn integration_event_filter_sanitizes_rpc_and_preserves_integration_updated() {
+        assert!(GLOBAL.split_whitespace().any(|kind| kind == "integration.updated"));
+        let updated = json!({"type": "integration.updated", "data": {"id": "app-1"}});
+        assert_eq!(integration_event_for_relay(updated.clone()), Some(updated));
+
+        let allowed = json!({
+            "type": "rpc.neuralnomads.my-app1.status_changed",
+            "location": {"directory": "/repo", "extra": "secret"},
+            "data": {"token": "do-not-leak", "nested": [1, 2]}
+        });
+        assert_eq!(
+            integration_event_for_relay(allowed),
+            Some(json!({
+                "type": "rpc.neuralnomads.my-app1.status_changed",
+                "location": {"directory": "/repo"},
+                "data": {}
+            }))
+        );
+
+        let hosts_with_ws = json!({
+            "type": "rpc.neuralnomads.a.hosts_changed",
+            "location": {"directory": "/repo", "workspaceID": "ws_remote", "extra": true},
+            "data": {"hosts": ["internal"]}
+        });
+        assert_eq!(
+            integration_event_for_relay(hosts_with_ws),
+            Some(json!({
+                "type": "rpc.neuralnomads.a.hosts_changed",
+                "location": {"directory": "/repo", "workspaceID": "ws_remote"},
+                "data": {}
+            }))
+        );
+
+        for dropped in [
+            json!({"type": "rpc.neuralnomads.my-app.other_event", "location": {"directory": "/repo"}, "data": {}}),
+            json!({"type": "rpc.neuralnomads.BadApp.status_changed", "location": {"directory": "/repo"}, "data": {}}),
+            json!({"type": "rpc.neuralnomads.9app.status_changed", "location": {"directory": "/repo"}, "data": {}}),
+            json!({"type": "rpc.neuralnomads.my-app.status_changed", "data": {}}),
+            json!({"type": "rpc.neuralnomads.my-app.status_changed", "location": {"workspaceID": "w"}, "data": {}}),
+        ] {
+            assert_eq!(integration_event_for_relay(dropped.clone()), None, "expected drop for {dropped}");
+        }
     }
 }

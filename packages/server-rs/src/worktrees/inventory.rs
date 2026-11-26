@@ -423,15 +423,14 @@ pub(crate) async fn probe_root_checkout(workspace: &Workspace) -> Result<RootChe
         Ok(out) if out.code == 0 => {
             Ok(RootCheckout::Git(parse_checkout(workspace.path.clone(), out.text(), pre).await.map(Box::new)))
         }
-        Ok(out) if out.code == 128 && out.stderr_contains("not a git repository") => Ok(RootCheckout::NonGit),
         Err(err) if crate::git::is_missing_git(&err) => Ok(RootCheckout::MissingGit),
         Ok(out) => {
             crate::bench::route_trace(format_args!("root-proof git exited {}", out.code));
-            Err(super::probe_error())
+            Ok(RootCheckout::NonGit)
         }
         Err(_) => {
             crate::bench::route_trace(format_args!("root-proof git failed"));
-            Err(super::probe_error())
+            Ok(RootCheckout::NonGit)
         }
     }
 }

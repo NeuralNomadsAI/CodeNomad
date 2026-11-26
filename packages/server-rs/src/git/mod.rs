@@ -68,9 +68,6 @@ impl Output {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
     }
-    pub fn stderr_contains(&self, needle: &str) -> bool {
-        String::from_utf8_lossy(&self.err).contains(needle)
-    }
     pub fn ok(self) -> Result<Self, Error> {
         if self.code == 0 { Ok(self) } else { Err(bad("Git read failed")) }
     }
@@ -128,6 +125,10 @@ pub fn command(dir: &Path, args: &[&str]) -> Command {
             && !matches!(
                 name.as_str(),
                 "GIT_CEILING_DIRECTORIES"
+                    | "GIT_CONFIG_GLOBAL"
+                    | "GIT_CONFIG_SYSTEM"
+                    | "GIT_CONFIG_NOSYSTEM"
+                    | "GIT_ATTR_NOSYSTEM"
                     | "GIT_AUTHOR_NAME"
                     | "GIT_AUTHOR_EMAIL"
                     | "GIT_AUTHOR_DATE"
@@ -142,9 +143,6 @@ pub fn command(dir: &Path, args: &[&str]) -> Command {
     cmd.env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
-        .env("GIT_ATTR_NOSYSTEM", "1")
         .env("GIT_NO_REPLACE_OBJECTS", "1")
         .env("GIT_NO_LAZY_FETCH", "1")
         .env("GIT_LITERAL_PATHSPECS", "1");
@@ -698,5 +696,28 @@ mod tests {
         assert_eq!(committed["ok"], true);
         assert!(committed["commitSha"].as_str().is_some_and(sha), "{committed}");
         assert_eq!(raw_git(&repo_dir, &["show", "HEAD:asset.bin"]), pointer.as_bytes());
+    }
+
+    #[test]
+    fn read_command_preserves_global_and_system_git_config() {
+        let dir = crate::shared::test_dir("git-read-preserves-config");
+        let cmd = command(&dir, &["rev-parse", "--show-toplevel"]);
+        let envs: Vec<(String, Option<String>)> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|s| s.to_string_lossy().into_owned())))
+            .collect();
+        for forbidden_override in ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_ATTR_NOSYSTEM"]
+        {
+            assert!(
+                !envs.iter().any(|(k, _)| k.eq_ignore_ascii_case(forbidden_override)),
+                "git::command must not override or strip {forbidden_override}: {envs:?}"
+            );
+        }
+        assert!(
+            envs.iter().any(|(k, v)| k == "GIT_TERMINAL_PROMPT" && v.as_deref() == Some("0")),
+            "git::command must keep GIT_TERMINAL_PROMPT=0"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

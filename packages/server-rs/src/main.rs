@@ -102,7 +102,14 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     };
     let devices = Some(auth::devices::open(&data, tls.as_ref())?);
     let settings = settings::Settings::new(launch.settings);
-    let meta = meta::document(settings.server_id()?, port, &root, tls.as_ref(), launch.ui.meta())?;
+    let server_id = match settings.server_id() {
+        Ok(id) => Some(id),
+        Err(err) => {
+            eprintln!("Stable server identity unavailable; backend compatibility falls back: {err}");
+            None
+        }
+    };
+    let meta = meta::document(server_id, port, &root, tls.as_ref(), launch.ui.meta())?;
     let positional = launch.binary.to_string_lossy();
     let binary = if !positional.is_empty() {
         opencode::launch::resolve(&positional)

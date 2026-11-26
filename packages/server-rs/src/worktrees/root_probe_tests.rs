@@ -244,6 +244,29 @@ async fn root_only_uses_shared_git_runner_and_classifies_git_and_non_git() {
     assert_eq!(broken_json["isGitRepo"], false);
     assert_eq!(broken.rev_parse_runs("broken-list"), 1);
     assert!(!linked::readable_checkout(&broken.ws.path).await);
+
+    // Invalid gitfile format (exit 128 without "not a git repository"): display list and root_only
+    // still fall back to isGitRepo=false (TS git-worktrees.ts:14-22), while strict checks fail closed.
+    let invalid_gitfile = Harness::new("root-only-invalid-gitfile", false, false).await;
+    std::fs::write(invalid_gitfile.ws.path.join(".git"), "not-a-gitdir-header\n").unwrap();
+    let invalid_list = REQUEST
+        .scope(
+            ("invalid-list", invalid_gitfile.trace.clone()),
+            list(
+                State(invalid_gitfile.app.clone()),
+                Path(invalid_gitfile.id.to_string()),
+                Ok(Query(Input { fresh: Some("false".into()) })),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_list.status(), Status::OK);
+    let invalid_body = axum::body::to_bytes(invalid_list.into_body(), 64 * 1024).await.unwrap();
+    let invalid_json: Value = serde_json::from_slice(&invalid_body).unwrap();
+    assert_eq!(invalid_json["isGitRepo"], false);
+    assert_eq!(root_only(&invalid_gitfile.ws).await.unwrap(), Some(true));
+    assert!(strict_non_git_workspace(&invalid_gitfile.ws).await.is_err());
+    assert!(!linked::readable_checkout(&invalid_gitfile.ws.path).await);
 }
 
 #[tokio::test]

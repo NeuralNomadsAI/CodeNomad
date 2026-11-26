@@ -66,15 +66,14 @@ pub(crate) async fn root_only_with_slot(
     }
     match crate::git::run(&workspace.path, &["rev-parse", "--show-toplevel"], 16 * 1024).await {
         Ok(output) if output.code == 0 => Ok(None),
-        Ok(output) if output.code == 128 && output.stderr_contains("not a git repository") => Ok(Some(true)),
         Err(err) if crate::git::is_missing_git(&err) => Ok(Some(false)),
         Ok(output) => {
             crate::bench::route_trace(format_args!("root-proof git exited {}", output.code));
-            Err(probe_error())
+            Ok(Some(true))
         }
         Err(_) => {
             crate::bench::route_trace(format_args!("root-proof git failed"));
-            Err(probe_error())
+            Ok(Some(true))
         }
     }
 }

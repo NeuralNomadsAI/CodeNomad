@@ -1,7 +1,7 @@
 //! Repository configuration admitted before any Git display read or linked
 //! worktree lifecycle command (audit M3). The listing is the effective configuration of the directory
 //! Git actually runs in (local, `config.worktree` and command scopes; system
-//! and global are disabled by `command`), with includes named but never
+//! and global host scopes are skipped), with includes named but never
 //! followed, plus every absorbed submodule's own configuration. Status and
 //! diff reads pass `--ignore-submodules=dirty`: gitlink commits stay visible
 //! (reference parity) and Git never runs in a submodule's work tree, whose
@@ -29,13 +29,29 @@ pub fn forbidden(key: &str) -> bool {
 }
 
 fn check(listing: &str) -> Result<(), Error> {
-    // Scope names (`local`, `worktree`, `command`) never match a refused key.
     if listing.split(['\0', '\t', '\n']).any(forbidden) { Err(refused()) } else { Ok(()) }
+}
+
+fn check_scoped(listing: &str) -> Result<(), Error> {
+    let mut parts = listing.split('\0');
+    while let Some(scope) = parts.next() {
+        if scope.is_empty() {
+            break;
+        }
+        let key = parts.next().ok_or_else(refused)?;
+        if matches!(scope, "system" | "global") {
+            continue;
+        }
+        if forbidden(key) {
+            return Err(refused());
+        }
+    }
+    Ok(())
 }
 
 pub async fn effective(dir: &Path) -> Result<(), Error> {
     let args = ["config", "--show-scope", "--no-includes", "--name-only", "-z", "--list"];
-    check(&run(dir, &args, 64 * 1024).await?.ok()?.text())
+    check_scoped(&run(dir, &args, 64 * 1024).await?.ok()?.text())
 }
 
 /// Every `config` of an absorbed submodule under `<main>/.git/modules`.
@@ -191,6 +207,23 @@ mod tests {
         assert_eq!(submodules(&module).await.unwrap_err().0, Status::FORBIDDEN);
         for dir in [plain, worktree, module] {
             let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn scoped_check_skips_system_and_global_host_config() {
+        let host_only =
+            "system\0filter.lfs.clean\0system\0diff.astextplain.textconv\0global\0include.path\0local\0core.bare\0";
+        assert!(check_scoped(host_only).is_ok());
+
+        for bad in [
+            "local\0filter.x.clean\0",
+            "worktree\0filter.x.clean\0",
+            "command\0include.path\0",
+            "unknown\0filter.x.clean\0",
+            "local",
+        ] {
+            assert_eq!(check_scoped(bad).unwrap_err().0, Status::FORBIDDEN, "{bad:?}");
         }
     }
 }

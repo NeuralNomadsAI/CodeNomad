@@ -121,6 +121,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     let InputRecheck { app, workspace, endpoint, principal, session, directory, actual, .. } = *recheck;
     let create = route == "/api/session" && head.method == Method::POST;
     let fork = session.is_some() && route.ends_with("/fork") && head.method == Method::POST;
+    let revert_stage = session.is_some() && route.ends_with("/revert/stage") && head.method == Method::POST;
     let background =
         route.starts_with("/api/session/") && route.ends_with("/background") && head.method == Method::POST;
     let permissions_patch = session.is_some() && head.method == Method::PATCH;
@@ -187,6 +188,8 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 &["title", "location", "agent", "model"]
             } else if fork {
                 &["before"]
+            } else if revert_stage {
+                &["messageID", "partID"]
             } else if background {
                 &[]
             } else if permissions_patch {

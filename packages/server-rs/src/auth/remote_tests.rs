@@ -1,0 +1,552 @@
+use super::*;
+use crate::{App, Workspace, auth, files, memory, opencode, settings};
+use axum::{
+    Json, Router,
+    extract::{Request, State},
+    http::{Method, StatusCode as Status, header},
+    middleware::{Next, from_fn, from_fn_with_state},
+    response::{IntoResponse, Response},
+    routing::any,
+};
+use serde_json::{Value, json};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+struct TempDir(PathBuf);
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+struct NativeState {
+    root: PathBuf,
+    foreign: PathBuf,
+    calls: Mutex<Vec<String>>,
+}
+
+async fn fake_native(State(state): State<Arc<NativeState>>, req: Request) -> Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_owned();
+    state.calls.lock().unwrap().push(format!("{method} {path}"));
+    match (method, path.as_str()) {
+        (Method::GET, "/api/config") => Json(json!([{"type": "directory", "path": state.root}])).into_response(),
+        (Method::GET, "/api/location") => Json(json!({
+            "directory": state.root,
+            "project": {"id": "prj_remote_test", "directory": state.root, "canonical": state.root}
+        }))
+        .into_response(),
+        (Method::GET, "/api/worktree") => Json(json!([{"directory": state.root}])).into_response(),
+        (Method::POST, "/api/worktree/refresh") => Status::NO_CONTENT.into_response(),
+        (Method::POST, "/api/rpc/codenomad.missions/scheduleCarrierRead") => {
+            Json(json!({"output": {"owned": false}})).into_response()
+        }
+        (Method::GET, "/api/session/ses_owned") => Json(json!({
+            "data": {
+                "id": "ses_owned",
+                "projectID": "prj_remote_test",
+                "location": {"directory": state.root},
+                "time": {"created": 1}
+            }
+        }))
+        .into_response(),
+        (Method::GET, "/api/session/ses_foreign") => Json(json!({
+            "data": {
+                "id": "ses_foreign",
+                "projectID": "prj_foreign",
+                "location": {"directory": state.foreign},
+                "time": {"created": 1}
+            }
+        }))
+        .into_response(),
+        (Method::GET, "/api/session/ses_owned/permission/per_1") => Json(json!({
+            "data": {
+                "id": "per_1",
+                "sessionID": "ses_owned",
+                "tool": "bash",
+                "action": "bash",
+                "resources": ["echo hi"]
+            }
+        }))
+        .into_response(),
+        (Method::POST, "/api/session/ses_owned/permission/per_1/reply") => Status::NO_CONTENT.into_response(),
+        (Method::GET, "/api/session/ses_owned/form/frm_1") => Json(json!({
+            "data": {
+                "id": "frm_1",
+                "sessionID": "ses_owned",
+                "title": "Confirm",
+                "fields": [],
+                "state": {"status": "pending"}
+            }
+        }))
+        .into_response(),
+        (Method::POST, "/api/session/ses_owned/form/frm_1/reply") => Status::NO_CONTENT.into_response(),
+        (Method::DELETE, "/api/session/ses_owned/form/frm_1") => Status::NO_CONTENT.into_response(),
+        (Method::POST, "/api/session/ses_owned/revert/stage") => Json(json!({"staged": true})).into_response(),
+        (Method::DELETE, "/api/session/ses_owned/revert") => Status::NO_CONTENT.into_response(),
+        (Method::POST, "/api/session/ses_owned/fork") => Json(json!({
+            "data": {
+                "id": "ses_forked",
+                "projectID": "prj_remote_test",
+                "fork": {"sessionID": "ses_owned"},
+                "location": {"directory": state.root},
+                "time": {"created": 2}
+            }
+        }))
+        .into_response(),
+        (Method::DELETE, "/api/session/ses_owned") => Status::NO_CONTENT.into_response(),
+        _ => Status::NOT_IMPLEMENTED.into_response(),
+    }
+}
+
+fn per_request_channel(
+    origin: String,
+    origins: Arc<[String]>,
+    ingress: bool,
+) -> impl Fn(Request, Next) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>> + Clone {
+    move |mut req: Request, next: Next| {
+        let channel = tls::Channel {
+            origin: origin.clone(),
+            origins: origins.clone(),
+            ingress,
+            socket: CancellationToken::new(),
+            principal: Arc::new(Mutex::new(None)),
+        };
+        req.extensions_mut().insert(channel);
+        Box::pin(next.run(req))
+    }
+}
+
+fn build_app(
+    dir: &std::path::Path,
+    native: opencode::Native,
+    devices: crate::shared::panic_guard::Lock<devices::Devices>,
+) -> Shared {
+    let auth = auth::Auth::new(auth::Settings {
+        username: "codenomad".into(),
+        password: None,
+        file: None,
+        cookie: auth::DEFAULT_COOKIE.into(),
+        token: false,
+        managed_local: false,
+        skip: true,
+        idle: Duration::from_secs(60),
+        absolute: Duration::from_secs(60),
+    })
+    .unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(4);
+    let root = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let settings =
+        settings::Settings::new(settings::document::Location::resolve(root.join("config.yaml").to_str().unwrap()));
+    Arc::new(App::new(
+        auth,
+        0,
+        root.clone(),
+        root,
+        false,
+        settings,
+        Value::Null,
+        native,
+        PathBuf::new(),
+        Some(devices),
+        files::watch::Watches::new(tx),
+        None,
+    ))
+}
+
+async fn pair_browser(
+    client: &reqwest::Client,
+    app: &Shared,
+    base: &str,
+    host: &str,
+    origin: &str,
+    ingress: bool,
+) -> String {
+    let payload =
+        if ingress { axum::body::Bytes::new() } else { axum::body::Bytes::from(format!(r#"{{"origin":"{origin}"}}"#)) };
+    let issued = devices::issue(State(app.clone()), payload).await;
+    assert_eq!(issued.status(), Status::OK);
+    let body = axum::body::to_bytes(issued.into_body(), 4096).await.unwrap();
+    let link: Value = serde_json::from_slice(&body).unwrap();
+    let code = link["url"].as_str().unwrap().strip_prefix(&format!("{origin}/remote-pair#")).unwrap().to_owned();
+    let paired = client
+        .post(format!("{base}/api/remote-control/pair"))
+        .header(header::HOST, host)
+        .header(header::ORIGIN, origin)
+        .json(&json!({"code": code}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(paired.status(), Status::OK);
+    paired.headers()[header::SET_COOKIE].to_str().unwrap().split(';').next().unwrap().to_owned()
+}
+
+async fn pair_server_device(
+    client: &reqwest::Client,
+    app: &Shared,
+    base: &str,
+    host: &str,
+    origin: &str,
+    ingress: bool,
+) -> String {
+    let payload =
+        if ingress { axum::body::Bytes::new() } else { axum::body::Bytes::from(format!(r#"{{"origin":"{origin}"}}"#)) };
+    let issued = devices::issue(State(app.clone()), payload).await;
+    assert_eq!(issued.status(), Status::OK);
+    let body = axum::body::to_bytes(issued.into_body(), 4096).await.unwrap();
+    let link: Value = serde_json::from_slice(&body).unwrap();
+    let code = link["url"].as_str().unwrap().strip_prefix(&format!("{origin}/remote-pair#")).unwrap().to_owned();
+    let paired = client
+        .post(format!("{base}/api/remote-control/server-pair"))
+        .header(header::HOST, host)
+        .header("x-codenomad-server-pairing", "1")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(json!({"code": code, "hostName": "peer-host"}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(paired.status(), Status::OK);
+    let payload: Value = paired.json().await.unwrap();
+    let cred = payload["credential"].as_str().unwrap();
+    format!("{}={cred}", devices::COOKIE)
+}
+
+#[tokio::test]
+async fn paired_browser_and_server_device_admit_session_controls_and_reject_out_of_scope() {
+    let dir = TempDir(crate::shared::test_dir("remote-b1-session-controls"));
+    let root = dir.0.join("project");
+    let foreign = dir.0.join("other");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&foreign).unwrap();
+    let root = dunce::canonicalize(&root).unwrap();
+    let foreign = dunce::canonicalize(&foreign).unwrap();
+
+    let native_state = Arc::new(NativeState { root: root.clone(), foreign, calls: Mutex::new(Vec::new()) });
+    let native_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let native_addr = native_listener.local_addr().unwrap();
+    let native_task = tokio::spawn(async move {
+        axum::serve(native_listener, Router::new().fallback(any(fake_native)).with_state(native_state)).await.unwrap();
+    });
+
+    let host = "192.168.1.40:9898";
+    let origin = format!("https://{host}");
+    let origins = vec![origin.clone()];
+    let devices = devices::open_for_test(&dir.0, origin.clone(), origins.clone());
+    let app = build_app(&dir.0, opencode::Native::test_connection(native_addr), devices);
+    let ws_id = Uuid::new_v4();
+    let ws = Workspace {
+        id: ws_id,
+        request_id: None,
+        path: root.clone(),
+        name: None,
+        status: "ready",
+        proxy_path: format!("/workspaces/{ws_id}/instance"),
+        binary_id: PathBuf::new(),
+        binary_label: String::new(),
+        created_at: String::new(),
+        updated_at: String::new(),
+        location: json!({"directory": root}),
+        temporary: None,
+    };
+    app.inner.lock().unwrap().workspaces.push(ws.clone());
+
+    let router = auth::remote_routes()
+        .route("/workspaces/{id}/instance/{*route}", any(opencode::proxy::relay))
+        .layer(from_fn_with_state((app.clone(), None), admit))
+        .layer(from_fn(per_request_channel(origin.clone(), Arc::from(origins), false)))
+        .with_state(app.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server_task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let browser_cookie = pair_browser(&client, &app, &base, host, &origin, false).await;
+    let server_cookie = pair_server_device(&client, &app, &base, host, &origin, false).await;
+
+    let prefix = format!("{base}/workspaces/{ws_id}/instance/api/session/ses_owned");
+    for (label, is_server, cookie) in [("browser", false, &browser_cookie), ("server-device", true, &server_cookie)] {
+        let send = |method: Method, url: String, body: Option<Value>| {
+            let mut req = client.request(method, url).header(header::HOST, host).header(header::COOKIE, cookie);
+            if is_server {
+                req = req.header("x-codenomad-server-request", "1");
+            } else {
+                req = req.header(header::ORIGIN, &origin);
+            }
+            if let Some(body) = body {
+                req = req.json(&body);
+            }
+            req.send()
+        };
+
+        // Permission reply (B1 headline scenario)
+        let perm = send(Method::POST, format!("{prefix}/permission/per_1/reply"), Some(json!({"decision": "once"})))
+            .await
+            .unwrap();
+        assert_eq!(perm.status(), Status::NO_CONTENT, "{label} permission reply");
+
+        // Question reply and reject (form cancel)
+        let form_reply =
+            send(Method::POST, format!("{prefix}/form/frm_1/reply"), Some(json!({"answer": {"q0": "yes"}})))
+                .await
+                .unwrap();
+        assert_eq!(form_reply.status(), Status::NO_CONTENT, "{label} form reply");
+        let form_cancel = send(Method::DELETE, format!("{prefix}/form/frm_1"), None).await.unwrap();
+        assert_eq!(form_cancel.status(), Status::NO_CONTENT, "{label} form cancel");
+
+        // Undo / redo (revert/stage + DELETE /revert)
+        let undo = send(
+            Method::POST,
+            format!("{prefix}/revert/stage"),
+            Some(json!({"messageID": "msg_1", "partID": "prt_1"})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(undo.status(), Status::OK, "{label} revert/stage");
+        let undo_bad_field =
+            send(Method::POST, format!("{prefix}/revert/stage"), Some(json!({"messageID": "msg_1", "extra": 1})))
+                .await
+                .unwrap();
+        assert_eq!(undo_bad_field.status(), Status::NOT_IMPLEMENTED, "{label} revert/stage rejects extra field");
+        let redo = send(Method::DELETE, format!("{prefix}/revert"), None).await.unwrap();
+        assert_eq!(redo.status(), Status::NO_CONTENT, "{label} delete revert");
+
+        // Fork and session delete
+        let forked = send(Method::POST, format!("{prefix}/fork"), Some(json!({}))).await.unwrap();
+        assert_eq!(forked.status(), Status::OK, "{label} fork");
+        let deleted = send(Method::DELETE, prefix.clone(), None).await.unwrap();
+        assert_eq!(deleted.status(), Status::NO_CONTENT, "{label} session delete");
+
+        // Out-of-scope refusals: foreign session (403), unallowlisted native route (403), host management (404)
+        let foreign_prefix = format!("{base}/workspaces/{ws_id}/instance/api/session/ses_foreign");
+        let foreign_perm =
+            send(Method::POST, format!("{foreign_prefix}/permission/per_1/reply"), Some(json!({"decision": "once"})))
+                .await
+                .unwrap();
+        assert_eq!(foreign_perm.status(), Status::FORBIDDEN, "{label} foreign permission reply");
+        let foreign_redo = send(Method::DELETE, format!("{foreign_prefix}/revert"), None).await.unwrap();
+        assert_eq!(foreign_redo.status(), Status::FORBIDDEN, "{label} foreign delete revert");
+        let unallowlisted =
+            send(Method::POST, format!("{base}/workspaces/{ws_id}/instance/api/not-allowed"), Some(json!({})))
+                .await
+                .unwrap();
+        assert_eq!(unallowlisted.status(), Status::FORBIDDEN, "{label} unallowlisted native route");
+        let host_admin =
+            send(Method::POST, format!("{base}/api/remote-control/pairings"), Some(json!({}))).await.unwrap();
+        assert_eq!(host_admin.status(), Status::NOT_FOUND, "{label} host-only route");
+    }
+
+    // Unpaired client is refused with 401 on admitted session control routes.
+    let unpaired = client
+        .post(format!("{prefix}/permission/per_1/reply"))
+        .header(header::HOST, host)
+        .header(header::ORIGIN, &origin)
+        .json(&json!({"decision": "once"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unpaired.status(), Status::UNAUTHORIZED);
+
+    server_task.abort();
+    native_task.abort();
+}
+
+#[tokio::test]
+async fn remote_memory_requires_multi_backend_for_browsers_and_preserves_local_and_direct_server_device() {
+    let dir = TempDir(crate::shared::test_dir("remote-m2-memory-gate"));
+    let direct_host = "192.168.1.41:9898";
+    let direct_origin = format!("https://{direct_host}");
+    let ingress_host = "remote.example.test";
+    let ingress_origin = format!("https://{ingress_host}");
+
+    let direct_devices = devices::open_for_test(&dir.0, direct_origin.clone(), vec![direct_origin.clone()]);
+    let direct_app = build_app(&dir.0, opencode::Native::test_connection(([127, 0, 0, 1], 9).into()), direct_devices);
+    let ingress_dir = TempDir(crate::shared::test_dir("remote-m2-memory-ingress"));
+    let ingress_devices = devices::open_ingress_for_test(&ingress_dir.0, ingress_origin.clone());
+    let ingress_app =
+        build_app(&ingress_dir.0, opencode::Native::test_connection(([127, 0, 0, 1], 9).into()), ingress_devices);
+
+    // Local router (no remote admit middleware): memory works even when multiBackend is disabled.
+    let local_router = memory::routes()
+        .layer(from_fn(|mut req: Request, next: Next| async move {
+            req.extensions_mut().insert(Principal(CancellationToken::new()));
+            next.run(req).await
+        }))
+        .with_state(direct_app.clone());
+    let local_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_base = format!("http://{}", local_listener.local_addr().unwrap());
+    let local_task = tokio::spawn(async move { axum::serve(local_listener, local_router).await.unwrap() });
+
+    // Direct HTTPS remote router.
+    let direct_router = auth::remote_routes()
+        .merge(memory::routes())
+        .layer(from_fn_with_state((direct_app.clone(), None), admit))
+        .layer(from_fn(per_request_channel(direct_origin.clone(), Arc::from(vec![direct_origin.clone()]), false)))
+        .with_state(direct_app.clone());
+    let direct_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let direct_base = format!("http://{}", direct_listener.local_addr().unwrap());
+    let direct_task = tokio::spawn(async move { axum::serve(direct_listener, direct_router).await.unwrap() });
+
+    // Ingress remote router.
+    let ingress_router = auth::remote_routes()
+        .merge(memory::routes())
+        .layer(from_fn_with_state((ingress_app.clone(), None), admit))
+        .layer(from_fn(per_request_channel(ingress_origin.clone(), Arc::from(vec![ingress_origin.clone()]), true)))
+        .with_state(ingress_app.clone());
+    let ingress_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ingress_base = format!("http://{}", ingress_listener.local_addr().unwrap());
+    let ingress_task = tokio::spawn(async move { axum::serve(ingress_listener, ingress_router).await.unwrap() });
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let direct_browser = pair_browser(&client, &direct_app, &direct_base, direct_host, &direct_origin, false).await;
+    let direct_server =
+        pair_server_device(&client, &direct_app, &direct_base, direct_host, &direct_origin, false).await;
+    let ingress_browser = pair_browser(&client, &ingress_app, &ingress_base, ingress_host, &ingress_origin, true).await;
+    let ingress_server =
+        pair_server_device(&client, &ingress_app, &ingress_base, ingress_host, &ingress_origin, true).await;
+
+    // 1. Local access works with multiBackend disabled.
+    assert_eq!(client.get(format!("{local_base}/api/memory/settings")).send().await.unwrap().status(), Status::OK);
+    assert_eq!(
+        client
+            .post(format!("{local_base}/api/memory"))
+            .json(&json!({"operation": {"action": "list", "scope": "global"}}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        Status::OK
+    );
+
+    // 2. With multiBackend disabled: paired browsers get 404 on BOTH direct HTTPS and ingress.
+    for (label, base, host, origin, cookie) in [
+        ("direct-browser-off", &direct_base, direct_host, &direct_origin, &direct_browser),
+        ("ingress-browser-off", &ingress_base, ingress_host, &ingress_origin, &ingress_browser),
+    ] {
+        for (method, path, body) in [
+            (Method::GET, "/api/memory/settings", None),
+            (Method::PUT, "/api/memory/settings", Some(json!({"enabled": true}))),
+            (Method::POST, "/api/memory", Some(json!({"operation": {"action": "list", "scope": "global"}}))),
+            (Method::GET, "/api/memory/extra", None),
+        ] {
+            let mut req = client
+                .request(method.clone(), format!("{base}{path}"))
+                .header(header::HOST, host)
+                .header(header::ORIGIN, origin)
+                .header(header::COOKIE, cookie);
+            if let Some(body) = body {
+                req = req.json(&body);
+            }
+            assert_eq!(req.send().await.unwrap().status(), Status::NOT_FOUND, "{label} {method} {path}");
+        }
+    }
+
+    // 3. Server-device on direct HTTPS retains authenticated memory transport; ingress stays 404.
+    assert_eq!(
+        client
+            .get(format!("{direct_base}/api/memory/settings"))
+            .header(header::HOST, direct_host)
+            .header(header::COOKIE, &direct_server)
+            .header("x-codenomad-server-request", "1")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        Status::OK
+    );
+    assert_eq!(
+        client
+            .post(format!("{direct_base}/api/memory"))
+            .header(header::HOST, direct_host)
+            .header(header::COOKIE, &direct_server)
+            .header("x-codenomad-server-request", "1")
+            .json(&json!({"operation": {"action": "list", "scope": "global"}}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        Status::OK
+    );
+    assert_eq!(
+        client
+            .get(format!("{ingress_base}/api/memory/settings"))
+            .header(header::HOST, ingress_host)
+            .header(header::COOKIE, &ingress_server)
+            .header("x-codenomad-server-request", "1")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        Status::NOT_FOUND
+    );
+
+    // 4. Enable multiBackend on both hosts: paired browsers are admitted on direct and ingress,
+    //    unlisted methods/bogus server headers stay 404, and ingress server-device stays 404.
+    for config_root in [&dir.0, &ingress_dir.0] {
+        std::fs::write(config_root.join("config.yaml"), "ui:\n  settings:\n    multiBackend: true\n").unwrap();
+    }
+    for (label, base, host, origin, cookie) in [
+        ("direct-browser-on", &direct_base, direct_host, &direct_origin, &direct_browser),
+        ("ingress-browser-on", &ingress_base, ingress_host, &ingress_origin, &ingress_browser),
+    ] {
+        let get_settings = client
+            .get(format!("{base}/api/memory/settings"))
+            .header(header::HOST, host)
+            .header(header::ORIGIN, origin)
+            .header(header::COOKIE, cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(get_settings.status(), Status::OK, "{label} GET /api/memory/settings");
+        let list_op = client
+            .post(format!("{base}/api/memory"))
+            .header(header::HOST, host)
+            .header(header::ORIGIN, origin)
+            .header(header::COOKIE, cookie)
+            .json(&json!({"operation": {"action": "list", "scope": "global"}}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(list_op.status(), Status::OK, "{label} POST /api/memory");
+        let bad_method = client
+            .delete(format!("{base}/api/memory"))
+            .header(header::HOST, host)
+            .header(header::ORIGIN, origin)
+            .header(header::COOKIE, cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(bad_method.status(), Status::NOT_FOUND, "{label} DELETE /api/memory");
+        let bogus_server_header = client
+            .get(format!("{base}/api/memory/settings"))
+            .header(header::HOST, host)
+            .header(header::ORIGIN, origin)
+            .header(header::COOKIE, cookie)
+            .header("x-codenomad-server-request", "0")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(bogus_server_header.status(), Status::NOT_FOUND, "{label} bogus server header");
+    }
+    assert_eq!(
+        client
+            .post(format!("{ingress_base}/api/memory"))
+            .header(header::HOST, ingress_host)
+            .header(header::COOKIE, &ingress_server)
+            .header("x-codenomad-server-request", "1")
+            .json(&json!({"operation": {"action": "list", "scope": "global"}}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        Status::NOT_FOUND
+    );
+
+    local_task.abort();
+    direct_task.abort();
+    ingress_task.abort();
+}
