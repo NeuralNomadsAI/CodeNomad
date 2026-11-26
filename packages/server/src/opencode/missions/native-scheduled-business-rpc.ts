@@ -67,17 +67,22 @@ function json(value: unknown, request = true): unknown {
 
 /** Public facade and exact KV only. Ordinary sources do not discover or RPC. */
 async function source(ctx: Plugin.Context, sessionID: string, run: Run, current: () => true) {
-  let root: Effect.Success<ReturnType<typeof ctx.session.get>> | undefined
+  type SourceSession = Effect.Success<ReturnType<typeof ctx.session.get>>
+  const family: SourceSession[] = []
+  let root: SourceSession | undefined
   const owned = await isNativeScheduledPassageFamily(sessionID, async value => {
     current()
     const session = await run(Effect.suspend(() => { current(); return ctx.session.get({ sessionID: Session.ID.make(value) }) }))
     current()
-    if (session.projectID !== ctx.location.project.id || session.location.directory !== ctx.location.directory
-      || session.location.workspaceID !== ctx.location.workspaceID) throw new Error("Business source moved")
+    family.push(session)
     if (!session.parentID) root = session
     return session
   })
   if (!owned || !root) return undefined
+  for (const session of family) {
+    if (session.projectID !== ctx.location.project.id || session.location.directory !== ctx.location.directory
+      || session.location.workspaceID !== ctx.location.workspaceID) throw new Error("Business source moved")
+  }
   const marker = root.metadata?.["codenomad.mission"] as { missionID?: unknown; document?: { missionID?: unknown; passageID?: unknown; coordinatorReused?: unknown } } | undefined
   if (typeof marker?.document?.missionID !== "string") throw new Error("Business document marker unavailable")
   const stored = await run(ctx.storage.get(nativeScheduleDocumentKey(ctx, marker.document.missionID)))
