@@ -724,15 +724,11 @@ try{
     await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
     if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
     if(web)await writeFile(path.join(profile,'browser-run.log'),webState.diagnostic)
-    const buildProof=finalResult=>JSON.stringify({result:finalResult,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,interruptedSignal:interruptedSignal??null,clientStopError,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2)
+    const serverFailed=server?.exitCode!==0
+    const finalResult=androidCleanup?.length||clientStopError||interruptedSignal||serverFailed?1:result
     const proofTmp=path.join(profile,'proof.json.tmp')
     const proofFile=path.join(profile,'proof.json')
-    const initialProofResult=androidCleanup?.length||clientStopError||interruptedSignal?1:result
-    await writeFile(proofTmp,buildProof(initialProofResult))
-    const finalProofResult=androidCleanup?.length||clientStopError||interruptedSignal?1:result
-    if(finalProofResult!==initialProofResult){
-      writeFileSync(proofTmp,buildProof(finalProofResult))
-    }
+    writeFileSync(proofTmp,JSON.stringify({result:finalResult,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,interruptedSignal:interruptedSignal??null,clientStopError,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2))
     renameSync(proofTmp,proofFile)
     if(interruptedSignal)result=1
     if(result===0){

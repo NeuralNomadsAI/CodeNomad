@@ -160,6 +160,7 @@ test('assertExactInjectedMultiset rejects stray, duplicate, or misrouted injecte
     delta: e.text,
   }))
   assert.equal(assertExactInjectedMultiset(exactFrames, 'sse-1', expected), 2)
+  assert.throws(() => assertExactInjectedMultiset([...exactFrames, exactFrames[0]], 'sse-1', expected))
   assert.throws(() => assertExactInjectedMultiset([
     ...exactFrames,
     {requestId: 'sse-1', nativeType: 'session.text.delta', assistantMessageID: 'sse-live-1', instanceId: 'ws-wrong', sessionID: 'ses_tab_1', delta: 'Tab 1'},
