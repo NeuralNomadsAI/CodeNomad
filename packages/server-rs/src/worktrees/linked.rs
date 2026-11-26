@@ -76,20 +76,25 @@ pub(super) async fn send_with_timeout(
 async fn native_get(app: &App, path: &str, max: usize) -> Result<Value, Error> {
     native(app, Method::GET, path, &[], None, max).await
 }
-/// `DELETE /api/worktree` without force, pinned to an acquired endpoint.
+/// `DELETE /api/worktree` without force, pinned to an acquired endpoint and shared deadline.
 async fn delete_worktree_at(
     app: &App,
     endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
     project: &str,
     directory: &str,
+    deadline: tokio::time::Instant,
 ) -> Result<(), Error> {
     if !app.native.current(endpoint) {
+        return Err(native_error());
+    }
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
         return Err(native_error());
     }
     let body = json!({"projectID": project, "directory": directory, "force": false});
     let url = endpoint.url.join("/api/worktree").map_err(|_| native_error())?;
     let request = app.native.client.request(Method::DELETE, url).basic_auth("opencode", Some(&endpoint.password));
-    send(request, &[], Some(body), 16384).await.map(drop)
+    send_with_timeout(request, &[], Some(body), 16384, remaining).await.map(drop)
 }
 
 async fn native_at(
@@ -448,7 +453,8 @@ pub async fn create(
         .ok_or_else(native_error)?;
     let args = if existing { vec!["switch", "--", branch] } else { vec!["switch", "-c", branch] };
     if git(checkout.registered(), &args).await.is_err() {
-        delete_worktree_at(&app, &endpoint, &catalogue.project, service).await?;
+        let rollback_deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        delete_worktree_at(&app, &endpoint, &catalogue.project, service, rollback_deadline).await?;
         return Err(conflict("Unable to attach the branch"));
     }
     // Retry the final inventory read once ONLY on `WorktreeConfigChangedError` so a newly created
@@ -910,6 +916,7 @@ async fn remove_owned(
     }
     no_blockers(&app, target, &cat, true).await?;
     let mut moved = Vec::new();
+    let mut final_endpoint = None;
     let removal = async {
         for members in &families {
             principal.live()?;
@@ -917,18 +924,22 @@ async fn remove_owned(
             moved.extend(members.iter());
         }
         let final_deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-        let final_endpoint = app.native.acquire(final_deadline).await.map_err(|_| native_error())?;
-        no_blockers_at(&app, &final_endpoint, target, &cat, false, final_deadline).await?;
-        let now_timeout =
-            final_deadline.saturating_duration_since(tokio::time::Instant::now()).max(Duration::from_secs(1));
-        let now = super::inventory::catalogue_at(&app, &w, false, Some(&final_endpoint), now_timeout).await?;
+        let endpoint = app.native.acquire(final_deadline).await.map_err(|_| native_error())?;
+        no_blockers_at(&app, &endpoint, target, &cat, false, final_deadline).await?;
+        let remaining = final_deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(native_error());
+        }
+        let now = super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), remaining).await?;
         if now.get(&slug).ok() != Some(target) {
             return Err(conflict("Worktree changed before deletion"));
         }
-        clean(target).await?;
+        tokio::time::timeout_at(final_deadline, clean(target)).await.map_err(|_| native_error())??;
         principal.live()?;
         trace("issue native deletion");
-        delete_worktree_at(&app, &final_endpoint, &cat.project, &target.service_root).await
+        delete_worktree_at(&app, &endpoint, &cat.project, &target.service_root, final_deadline).await?;
+        final_endpoint = Some(endpoint);
+        Ok(())
     }
     .await;
     if let Err(err) = removal {
@@ -963,7 +974,9 @@ async fn remove_owned(
         }
         return Err(err);
     }
-    if target.registered().exists() || catalogue(&app, &w, false).await?.get(&slug).is_ok() {
+    let post =
+        super::inventory::catalogue_at(&app, &w, false, final_endpoint.as_ref(), Duration::from_secs(12)).await?;
+    if target.registered().exists() || post.get(&slug).is_ok() {
         return Err(native_error());
     }
     app.file_watches.lock().unwrap().forget_under(target.registered());

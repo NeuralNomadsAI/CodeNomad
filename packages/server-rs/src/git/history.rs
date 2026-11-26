@@ -15,6 +15,11 @@ use std::path::Path;
 async fn git(dir: &Path, args: &[&str]) -> Result<String, Error> {
     Ok(run(dir, args, TWO_MIB).await?.ok()?.text())
 }
+async fn has_alternates(dir: &Path) -> Result<bool, Error> {
+    let common = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).await?;
+    let alternates = Path::new(common.trim()).join("objects").join("info").join("alternates");
+    Ok(std::fs::symlink_metadata(alternates).is_ok())
+}
 async fn ensure_commit_reachable(dir: &Path, commit: &str, err_msg: &str) -> Result<String, Error> {
     let verify = run(dir, &["rev-parse", "--verify", "--quiet", &format!("{commit}^{{commit}}")], 1024).await?;
     if verify.code != 0 {
@@ -24,6 +29,9 @@ async fn ensure_commit_reachable(dir: &Path, commit: &str, err_msg: &str) -> Res
     if !sha(&resolved) {
         return Err(bad(err_msg));
     }
+    if !has_alternates(dir).await? {
+        return Ok(resolved);
+    }
     let on_head = run(dir, &["merge-base", "--is-ancestor", &resolved, "HEAD"], 1024).await?;
     if on_head.code == 0 {
         return Ok(resolved);
@@ -32,6 +40,12 @@ async fn ensure_commit_reachable(dir: &Path, commit: &str, err_msg: &str) -> Res
         run(dir, &["for-each-ref", &format!("--contains={resolved}"), "--count=1", "--format=%(refname)"], 4096)
             .await?;
     if on_ref.code == 0 && !on_ref.bytes.is_empty() {
+        return Ok(resolved);
+    }
+    // Preserve pinned history pagination anchors after a local rebase/reset in shared clones
+    // by admitting commits recorded in this worktree's own HEAD reflog.
+    let reflog = run(dir, &["log", "--no-show-signature", "-g", "--format=%H", "HEAD"], TWO_MIB).await?;
+    if reflog.code == 0 && reflog.text().lines().any(|line| line.trim() == resolved) {
         return Ok(resolved);
     }
     Err(bad(err_msg))

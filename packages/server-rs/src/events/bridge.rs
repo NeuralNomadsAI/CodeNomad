@@ -127,7 +127,7 @@ fn value_bytes(value: &Value) -> usize {
     total
 }
 
-fn status(app: &App, next: &'static str, reason: Option<&str>) {
+fn status(app: &App, next: &'static str, reason: Option<&str>) -> u64 {
     let mut store = app.inner.lock().unwrap();
     if next == "connecting" {
         store.generation += 1;
@@ -136,6 +136,7 @@ fn status(app: &App, next: &'static str, reason: Option<&str>) {
     for w in &store.workspaces {
         app.emit_status(w.id, next, store.generation, reason);
     }
+    store.generation
 }
 
 /// Workspaces that received a session's events (TS `sessionRecipients`, same
@@ -212,23 +213,24 @@ impl Routes {
         guard.0
     }
 
-    fn pulse_routing_resync(app: &App, workspace_id: Uuid, expected_generation: Option<u64>) {
+    fn pulse_routing_resync(app: &App, workspace_id: Uuid, app_generation: u64) {
         let store = app.inner.lock().unwrap();
         if store.status != "connected"
-            || expected_generation.is_some_and(|g| store.generation != g)
+            || store.generation != app_generation
             || !store.workspaces.iter().any(|w| w.id == workspace_id)
         {
             return;
         }
-        let generation = store.generation;
-        app.emit_status(workspace_id, "error", generation, Some("event routing failed"));
-        app.emit_status(workspace_id, "connected", generation, None);
+        app.emit_status(workspace_id, "error", app_generation, Some("event routing failed"));
+        app.emit_status(workspace_id, "connected", app_generation, None);
     }
 
     /// Pulses one workspace's status (`error`, then `connected`) so its clients run reconnect
     /// reconciliation for an event that could not be routed (TS `instance-events.ts:448-468`).
-    fn request_routing_resync(self: &Arc<Self>, app: &Shared, workspace_id: Uuid) {
-        let app_gen = app.inner.lock().unwrap().generation;
+    fn request_routing_resync(self: &Arc<Self>, app: &Shared, workspace_id: Uuid, app_generation: u64) {
+        if app.inner.lock().unwrap().generation != app_generation {
+            return;
+        }
         let now = Instant::now();
         let immediate = {
             let mut resyncs = self.resyncs.lock().unwrap();
@@ -256,7 +258,7 @@ impl Routes {
                                 },
                             );
                         }
-                        Self::pulse_routing_resync(&app, workspace_id, Some(app_gen));
+                        Self::pulse_routing_resync(&app, workspace_id, app_generation);
                     }));
                     false
                 }
@@ -270,32 +272,18 @@ impl Routes {
             }
         };
         if immediate {
-            Self::pulse_routing_resync(app, workspace_id, Some(app_gen));
+            Self::pulse_routing_resync(app, workspace_id, app_generation);
         }
     }
 
     /// An unresolvable session event pulses the recipients it reached before, or every open
     /// workspace when it reached none (TS `instance-events.ts:418-426`).
-    fn request_session_resync(self: &Arc<Self>, app: &Shared, session_id: &str) {
+    fn request_session_resync(self: &Arc<Self>, app: &Shared, session_id: &str, app_generation: u64) {
         let known = self.held.lock().unwrap().sessions.get(session_id).cloned();
         let open: Vec<Uuid> = app.inner.lock().unwrap().workspaces.iter().map(|w| w.id).collect();
         for id in open {
             if known.as_ref().is_none_or(|set| set.contains(&id)) {
-                self.request_routing_resync(app, id);
-            }
-        }
-    }
-
-    /// Pulses only workspaces that previously held `session_id` (matching TS `instance-events.ts:336`
-    /// when a previously-held session is later observed at a foreign or non-owned location).
-    fn request_held_session_resync(self: &Arc<Self>, app: &Shared, session_id: &str) {
-        let Some(known) = self.held.lock().unwrap().sessions.get(session_id).cloned() else {
-            return;
-        };
-        let open: Vec<Uuid> = app.inner.lock().unwrap().workspaces.iter().map(|w| w.id).collect();
-        for id in open {
-            if known.contains(&id) {
-                self.request_routing_resync(app, id);
+                self.request_routing_resync(app, id, app_generation);
             }
         }
     }
@@ -376,6 +364,7 @@ enum JobWork {
         endpoint: Arc<crate::opencode::Endpoint>,
         received: (Instant, i64),
         generation: u64,
+        app_generation: u64,
     },
     Deliver {
         workspace: crate::Workspace,
@@ -385,6 +374,7 @@ enum JobWork {
         directory: Option<Arc<str>>,
         foreign_workspace: bool,
         session_id: Option<Arc<str>>,
+        app_generation: u64,
     },
 }
 
@@ -406,6 +396,7 @@ struct Lanes {
 
 impl Lanes {
     /// Queues a root event job behind its lane, starting the lane when idle; false past the budget.
+    #[allow(clippy::too_many_arguments)]
     fn enqueue_root(
         self: &Arc<Self>,
         app: &Shared,
@@ -416,6 +407,7 @@ impl Lanes {
         endpoint: Arc<crate::opencode::Endpoint>,
         received: (Instant, i64),
         generation: u64,
+        app_generation: u64,
     ) -> bool {
         if self.bytes.fetch_add(bytes, Relaxed) + bytes > ROUTING_BYTES {
             self.bytes.fetch_sub(bytes, Relaxed);
@@ -425,7 +417,14 @@ impl Lanes {
         let job = Job {
             received_at: received.0,
             lease,
-            work: JobWork::Route { lane_key: key.clone(), event: Arc::new(event), endpoint, received, generation },
+            work: JobWork::Route {
+                lane_key: key.clone(),
+                event: Arc::new(event),
+                endpoint,
+                received,
+                generation,
+                app_generation,
+            },
         };
         self.enqueue_job(app, routes, key, job)
     }
@@ -463,8 +462,20 @@ impl Lanes {
                 }
                 done = tokio::time::timeout(timeout, async {
                     match job.work {
-                        JobWork::Route { lane_key, event, endpoint, received, generation } => {
-                            route(&app, &routes, &self, lane_key, event, endpoint, received, generation, job.lease).await;
+                        JobWork::Route { lane_key, event, endpoint, received, generation, app_generation } => {
+                            route(
+                                &app,
+                                &routes,
+                                &self,
+                                lane_key,
+                                event,
+                                endpoint,
+                                received,
+                                generation,
+                                app_generation,
+                                job.lease,
+                            )
+                            .await;
                         }
                         JobWork::Deliver {
                             workspace,
@@ -474,6 +485,7 @@ impl Lanes {
                             directory,
                             foreign_workspace,
                             session_id,
+                            app_generation,
                         } => {
                             let _lease = job.lease;
                             deliver(
@@ -486,6 +498,7 @@ impl Lanes {
                                 directory,
                                 foreign_workspace,
                                 session_id,
+                                app_generation,
                             )
                             .await;
                         }
@@ -520,7 +533,7 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                 _ = app.opened.notified() => {}
             }
         }
-        status(&app, "connecting", None);
+        let app_generation = status(&app, "connecting", None);
         // Reacquire the shared daemon on every subscription and prepare its bundled plugins.
         let deadline = tokio::time::Instant::now() + crate::opencode::daemon::TIMEOUT;
         let endpoint = tokio::select! {
@@ -682,7 +695,17 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                     }
                 }
                 let key = lane(&event);
-                if !lanes.enqueue_root(&app, &routes, key, bytes, event, endpoint.clone(), received, generation) {
+                if !lanes.enqueue_root(
+                    &app,
+                    &routes,
+                    key,
+                    bytes,
+                    event,
+                    endpoint.clone(),
+                    received,
+                    generation,
+                    app_generation,
+                ) {
                     keep_connection = true;
                     break;
                 }
@@ -764,6 +787,7 @@ async fn route(
     endpoint: Arc<crate::opencode::Endpoint>,
     received: (Instant, i64),
     generation: u64,
+    app_generation: u64,
     lease: Arc<BytesLease>,
 ) {
     let kind = event["type"].as_str().unwrap_or_default();
@@ -806,20 +830,20 @@ async fn route(
         || (!foreign_workspace
             && event["location"].get("workspaceID").is_none()
             && (directory.is_some() || GLOBAL.split(' ').any(|g| g == kind) || kind == "session.deleted"));
-    if !eligible {
-        if let Some(sid) = session_id.as_deref()
+    let foreign_held_resync =
+        !eligible && session_id.is_some() && (foreign_workspace || event["location"].get("workspaceID").is_some());
+    if !eligible && !foreign_held_resync {
+        if unresolved_session
+            && let Some(sid) = session_id.as_deref()
             && app.native.current(&endpoint)
         {
-            if unresolved_session {
-                routes.request_session_resync(app, sid);
-            } else if foreign_workspace || event["location"].get("workspaceID").is_some() {
-                routes.request_held_session_resync(app, sid);
-            }
+            routes.request_session_resync(app, sid, app_generation);
         }
         return;
     }
     // Fan out onto per-(workspace, lane) delivery queues (matching TS `instance-events.ts:288-311`)
-    // so a slow ownership check on one workspace never stalls subsequent deltas for another.
+    // so a slow ownership check on one workspace never stalls subsequent deltas for another, and
+    // foreign-workspace refusals stay strictly FIFO-ordered behind earlier local events of the lane.
     let workspaces = app.inner.lock().unwrap().workspaces.clone();
     for workspace in workspaces {
         let deliver_key = format!("deliver:{}:{lane_key}", workspace.id);
@@ -834,6 +858,7 @@ async fn route(
                 directory: directory.clone(),
                 foreign_workspace,
                 session_id: session_id.clone(),
+                app_generation,
             },
         };
         if !lanes.enqueue_job(app, routes, deliver_key, deliver_job) {
@@ -854,6 +879,7 @@ async fn deliver(
     directory: Option<Arc<str>>,
     foreign_workspace: bool,
     session_id: Option<Arc<str>>,
+    app_generation: u64,
 ) {
     let kind = event["type"].as_str().unwrap_or_default();
     let inbox = kind.starts_with("session.inbox.");
@@ -918,11 +944,14 @@ async fn deliver(
                 }
             };
             if send {
+                if app.inner.lock().unwrap().generation != app_generation {
+                    break;
+                }
                 let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":&*event});
                 app.emit(envelope);
                 delivered = true;
             } else if lookup_failed {
-                routes.request_routing_resync(app, workspace.id);
+                routes.request_routing_resync(app, workspace.id, app_generation);
             }
             break;
         }
@@ -1008,7 +1037,7 @@ async fn deliver(
                     || (directory.is_some()
                         && session_id.as_deref().is_some_and(|sid| routes.held.lock().unwrap().has(sid, workspace.id)))
                 {
-                    routes.request_routing_resync(app, workspace.id);
+                    routes.request_routing_resync(app, workspace.id, app_generation);
                 }
                 break;
             }
@@ -1035,11 +1064,14 @@ async fn deliver(
                         && app.native.current(&endpoint)
                         && session_id.as_deref().is_some_and(|sid| routes.held.lock().unwrap().has(sid, workspace.id))
                     {
-                        routes.request_routing_resync(app, workspace.id);
+                        routes.request_routing_resync(app, workspace.id, app_generation);
                     }
                     break;
                 }
             } else if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
+                break;
+            }
+            if app.inner.lock().unwrap().generation != app_generation {
                 break;
             }
             if let Some(sid) = session_id.as_deref() {
@@ -1054,6 +1086,14 @@ async fn deliver(
             app.emit(envelope);
             delivered = true;
             break;
+        }
+    } else if (foreign_workspace || event["location"].get("workspaceID").is_some())
+        && let Some(sid) = session_id.as_deref()
+        && app.native.current(&endpoint)
+        && app.workspace(&workspace.id.to_string()).is_ok()
+    {
+        if routes.held.lock().unwrap().has(sid, workspace.id) {
+            routes.request_routing_resync(app, workspace.id, app_generation);
         }
     }
     if delivered {
@@ -1334,6 +1374,7 @@ mod tests {
         });
 
         let (app, ws) = build_bridge_test_app(&dir, &ws_root, addr);
+        let app_gen = app.inner.lock().unwrap().generation;
         let endpoint = app.native.endpoint().unwrap();
         let routes = Arc::new(Routes::default());
         let lanes = Arc::new(Lanes::default());
@@ -1351,6 +1392,7 @@ mod tests {
             Arc::clone(&endpoint),
             (Instant::now(), 1),
             generation,
+            app_gen,
             lease,
         )
         .await;
@@ -1373,6 +1415,7 @@ mod tests {
             Arc::clone(&endpoint),
             (Instant::now(), 2),
             generation,
+            app_gen,
             lease,
         )
         .await;
@@ -1390,6 +1433,7 @@ mod tests {
             Arc::clone(&endpoint),
             (Instant::now(), 3),
             generation,
+            app_gen,
             lease,
         )
         .await;
@@ -1487,6 +1531,7 @@ mod tests {
         });
 
         let (app, ws) = build_bridge_test_app(&dir, &root_dir, addr);
+        let app_gen = app.inner.lock().unwrap().generation;
         let endpoint = app.native.endpoint().unwrap();
         let routes = Arc::new(Routes::default());
         let sub = app.events.subscribe();
@@ -1502,6 +1547,7 @@ mod tests {
             Some(Arc::from(linked_dir.to_string_lossy().into_owned())),
             false,
             Some(Arc::from("ses_wt")),
+            app_gen,
         )
         .await;
         assert_eq!(loc_calls.load(Relaxed), 2, "transient inventory error must retry once");
@@ -1522,6 +1568,7 @@ mod tests {
             Some(Arc::from(foreign_dir.to_string_lossy().into_owned())),
             false,
             Some(Arc::from("ses_other")),
+            app_gen,
         )
         .await;
         assert!(drain_hub(&app, &sub).is_empty(), "foreign unknown session must not pulse resync");
@@ -1537,6 +1584,7 @@ mod tests {
             Some(Arc::from(foreign_dir.to_string_lossy().into_owned())),
             false,
             Some(Arc::from("ses_wt")),
+            app_gen,
         )
         .await;
         let held_resync = drain_hub(&app, &sub);
@@ -1560,6 +1608,7 @@ mod tests {
                 .unwrap()
         });
         let (unavail_app, unavail_ws) = build_bridge_test_app(&dir, &root_dir, unavail_addr);
+        let unavail_app_gen = unavail_app.inner.lock().unwrap().generation;
         let unavail_endpoint = unavail_app.native.endpoint().unwrap();
         let unavail_routes = Arc::new(Routes::default());
         let unavail_sub = unavail_app.events.subscribe();
@@ -1573,6 +1622,7 @@ mod tests {
             Some(Arc::from(linked_dir.to_string_lossy().into_owned())),
             false,
             Some(Arc::from("ses_unavail")),
+            unavail_app_gen,
         )
         .await;
         assert_eq!(unavail_calls.load(Relaxed), 2, "persistent unavailable inventory must retry once");
@@ -1583,11 +1633,12 @@ mod tests {
         let _ = unavail_routes.reset_locations();
         unavail_http.abort();
 
-        // 5. `form.created` with `data.form.sessionID` tracks held recipient and pulses resync on foreign workspaceID.
-        let _ = routes.reset_locations();
+        // 5. `form.created` with `data.form.sessionID` followed IMMEDIATELY (no sleep!) by a foreign
+        // `workspaceID` event on the same lane must stay FIFO-ordered so the foreign refusal sees the
+        // newly recorded held recipient and pulses resync.
         let generation = routes.reset_locations();
         let lanes = Arc::new(Lanes::default());
-        let lease = Arc::new(BytesLease { lanes: Arc::downgrade(&lanes), bytes: 0 });
+        let lease1 = Arc::new(BytesLease { lanes: Arc::downgrade(&lanes), bytes: 0 });
         route(
             &app,
             &routes,
@@ -1601,16 +1652,11 @@ mod tests {
             Arc::clone(&endpoint),
             (Instant::now(), 5),
             generation,
-            lease,
+            app_gen,
+            lease1,
         )
         .await;
-        tokio::time::sleep(Duration::from_millis(80)).await;
-        let form_frames = drain_hub(&app, &sub);
-        assert!(
-            form_frames.iter().any(|f| f["type"] == "instance.event" && f["event"]["type"] == "form.created"),
-            "form.created must deliver to owning workspace: {form_frames:?}"
-        );
-        let lease = Arc::new(BytesLease { lanes: Arc::downgrade(&lanes), bytes: 0 });
+        let lease2 = Arc::new(BytesLease { lanes: Arc::downgrade(&lanes), bytes: 0 });
         route(
             &app,
             &routes,
@@ -1624,28 +1670,54 @@ mod tests {
             Arc::clone(&endpoint),
             (Instant::now(), 6),
             generation,
-            lease,
+            app_gen,
+            lease2,
         )
         .await;
-        let foreign_ws_resync = drain_hub(&app, &sub);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let fifo_frames = drain_hub(&app, &sub);
         assert_eq!(
-            foreign_ws_resync.len(),
-            2,
-            "previously held form session on foreign workspaceID must resync: {foreign_ws_resync:?}"
+            fifo_frames.len(),
+            3,
+            "expected form.created followed by error+connected resync in FIFO order: {fifo_frames:?}"
         );
-        assert_eq!(foreign_ws_resync[0]["status"], "error");
-        assert_eq!(foreign_ws_resync[1]["status"], "connected");
+        assert_eq!(fifo_frames[0]["type"], "instance.event");
+        assert_eq!(fifo_frames[0]["event"]["type"], "form.created");
+        assert_eq!(fifo_frames[1]["status"], "error");
+        assert_eq!(fifo_frames[2]["status"], "connected");
 
-        // 6. A pending trailing resync timer must NEVER publish `connected` after workspace stop.
-        routes.request_routing_resync(&app, ws.id); // arms trailing timer (within ROUTING_RESYNC_MIN)
+        // 6. After SSE reconnect on the SAME endpoint (bumping app_generation), a stale worker
+        // carrying the old `app_generation` must never emit a resync pulse on the new connection.
+        let _ = status(&app, "connecting", None);
+        let live_gen = status(&app, "connected", None);
+        assert_ne!(live_gen, app_gen);
+        let _ = drain_hub(&app, &sub);
+        let _ = routes.reset_locations();
+        deliver(
+            &app,
+            &routes,
+            ws.clone(),
+            Arc::new(json!({"type": "session.text.delta", "data": {"sessionID": "ses_wt", "delta": "stale"}})),
+            Arc::clone(&endpoint),
+            (Instant::now(), 7),
+            Some(Arc::from(foreign_dir.to_string_lossy().into_owned())),
+            false,
+            Some(Arc::from("ses_wt")),
+            app_gen, // stale SSE generation!
+        )
+        .await;
+        assert!(drain_hub(&app, &sub).is_empty(), "stale app_generation worker must not pulse resync");
+
+        // 7. A pending trailing resync timer must NEVER publish `connected` after workspace stop.
+        routes.request_routing_resync(&app, ws.id, live_gen); // leading pulse
+        routes.request_routing_resync(&app, ws.id, live_gen); // arms trailing timer
         {
             let mut store = app.inner.lock().unwrap();
             let idx = store.workspaces.iter().position(|w| w.id == ws.id).unwrap();
             app.remove(&mut store, idx, false);
         }
         let _ = drain_hub(&app, &sub);
-        // Simulate late timer firing directly against the removed workspace.
-        Routes::pulse_routing_resync(&app, ws.id, None);
+        Routes::pulse_routing_resync(&app, ws.id, live_gen);
         assert!(drain_hub(&app, &sub).is_empty(), "removed workspace must never receive late resync pulse");
 
         let _ = routes.reset_locations();

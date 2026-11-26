@@ -14,6 +14,8 @@ use std::path::Path;
 /// filter driver defined in effective Git configuration across all scopes (system,
 /// `~/.gitconfig`, XDG global, local, `config.worktree`, and includes) so passive
 /// working-tree reads never invoke external filter commands referenced by `.gitattributes`.
+/// Limit: Git has no single-process `--no-filters` flag that preserves `.gitattributes`
+/// `text`/`eol`/`binary` semantics; upgrade to a native flag if Git adds one.
 pub async fn filter_disables(dir: &Path) -> Result<Vec<String>, Error> {
     let args = ["config", "--show-scope", "--includes", "--name-only", "-z", "--list"];
     let out = run(dir, &args, 256 * 1024).await?.ok()?;

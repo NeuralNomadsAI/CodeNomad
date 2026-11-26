@@ -836,14 +836,29 @@ mod tests {
         let origin_only_oid =
             String::from_utf8(raw_git(&origin_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
 
-        // Configure `includeIf` (with `filter` + `log.showSignature` + `gpg.program`), `extensions.worktreeConfig`,
-        // `config.worktree` filter, and partial clone promisor.
+        // Configure `includeIf` (with `filter` + `log.showSignature` + executable `gpg.program`),
+        // `extensions.worktreeConfig`, `config.worktree` filter, and partial clone promisor.
         let marker_posix = marker.to_string_lossy().replace('\\', "/");
-        let gpg_marker_posix = gpg_marker.to_string_lossy().replace('\\', "/");
+        #[cfg(windows)]
+        let fake_gpg = {
+            let script = dir.join("fake-gpg.cmd");
+            std::fs::write(&script, format!("@echo off\r\necho ran > \"{}\"\r\nexit /b 1\r\n", gpg_marker.display()))
+                .unwrap();
+            script
+        };
+        #[cfg(not(windows))]
+        let fake_gpg = {
+            use std::os::unix::fs::PermissionsExt;
+            let script = dir.join("fake-gpg.sh");
+            std::fs::write(&script, format!("#!/bin/sh\ntouch \"{}\"\nexit 1\n", gpg_marker.display())).unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            script
+        };
+        let fake_gpg_posix = fake_gpg.to_string_lossy().replace('\\', "/");
         std::fs::write(
             &included,
             format!(
-                "[filter \"cond\"]\n\tclean = sh -c 'touch \"{marker_posix}\" && cat'\n\trequired = true\n[log]\n\tshowSignature = true\n[gpg]\n\tprogram = sh -c 'touch \"{gpg_marker_posix}\" && exit 1'\n"
+                "[filter \"cond\"]\n\tclean = sh -c 'touch \"{marker_posix}\" && cat'\n\trequired = true\n[log]\n\tshowSignature = true\n[gpg]\n\tprogram = {fake_gpg_posix}\n"
             ),
         )
         .unwrap();
@@ -863,6 +878,19 @@ mod tests {
         );
         raw_git(&clone_dir, &["config", "extensions.partialClone", "origin"]);
         raw_git(&clone_dir, &["config", "remote.origin.promisor", "true"]);
+        raw_git(&clone_dir, &["config", "user.name", "test"]);
+        raw_git(&clone_dir, &["config", "user.email", "test@example.com"]);
+
+        // Create a local commit in `clone_dir` and reset HEAD back so `clone_rebased_oid` lives only in HEAD reflog.
+        std::fs::write(clone_dir.join("rebased.txt"), "temp\n").unwrap();
+        raw_git(&clone_dir, &["add", "rebased.txt"]);
+        assert!(marker.exists(), "positive control: plain git add must execute includeIf filter");
+        std::fs::remove_file(&marker).unwrap();
+        raw_git(&clone_dir, &["commit", "-q", "-m", "before-reset"]);
+        let clone_rebased_oid =
+            String::from_utf8(raw_git(&clone_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
+        raw_git(&clone_dir, &["reset", "--hard", "-q", "HEAD~1"]);
+
         std::fs::write(clone_dir.join("file.txt"), "hello updated\n").unwrap();
 
         let (app, id_str, _guard) = build_git_fixture("m4-common", &clone_dir).await;
@@ -907,6 +935,17 @@ mod tests {
         .0;
         assert_eq!(details["id"], signed_oid);
 
+        // Pinned pagination anchor from this clone's own pre-reset HEAD reflog stays readable.
+        let rebased_hist = history::history(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({"head": clone_rebased_oid})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(rebased_hist["head"], clone_rebased_oid);
+
         // Unreachable commit present only in alternate object store must be rejected on both history routes.
         let alt_hist = history::history(
             State(app.clone()),
@@ -927,6 +966,31 @@ mod tests {
 
         assert!(!marker.exists(), "passive Git reads must never execute included or worktree filter drivers");
         assert!(!gpg_marker.exists(), "passive Git history reads must never invoke gpg.program via log.showSignature");
+
+        // Positive control: plain `git log` in `clone_dir` DOES execute `fake_gpg` via included `log.showSignature=true`.
+        let control =
+            std::process::Command::new("git").arg("-C").arg(&clone_dir).args(["log", "-n", "1"]).output().unwrap();
+        assert!(control.status.success(), "{}", String::from_utf8_lossy(&control.stderr));
+        assert!(gpg_marker.exists(), "positive control must confirm included log.showSignature invokes fake-gpg");
+
+        // Non-alternates repo: pinned pagination anchor after reset (even with reflog expired) stays readable like TS.
+        std::fs::write(origin_dir.join("detached.txt"), "v1\n").unwrap();
+        raw_git(&origin_dir, &["add", "detached.txt"]);
+        raw_git(&origin_dir, &["commit", "-q", "-m", "to-be-rebased"]);
+        let origin_rebased_oid =
+            String::from_utf8(raw_git(&origin_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
+        raw_git(&origin_dir, &["reset", "--hard", "-q", "HEAD~1"]);
+        raw_git(&origin_dir, &["reflog", "expire", "--expire=now", "--all"]);
+        let (origin_app, origin_id, _origin_guard) = build_git_fixture("m4-origin", &origin_dir).await;
+        let origin_page = history::history(
+            State(origin_app),
+            Route((origin_id, "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({"head": origin_rebased_oid})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(origin_page["head"], origin_rebased_oid);
     }
 
     #[tokio::test]
