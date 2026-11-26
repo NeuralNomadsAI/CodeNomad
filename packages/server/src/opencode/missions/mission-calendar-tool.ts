@@ -38,8 +38,8 @@ export const registerMissionCalendarTool = (ctx: Context, registered: <T>(work: 
       try {
         const occurrence = missionCalendarOccurrence(tool.messageID)
         if (!occurrence || !(await ctx.session.get({ sessionID: tool.sessionID })).metadata?.[MISSION_CALENDAR_CARRIER]) throw new Error("mission-calendar-caller")
-        const { objective, title, notes, template, taskMode, profiles, coordinatorGoal, permissions, when } = input as Record<string, unknown>
-        const mission = parseCreateMissionInput({ objective, title, notes, template, taskMode, profiles, coordinatorGoal, permissions, requestID: occurrence.automationID })
+        const { objective, title, notes, template, taskMode, profiles, coordinatorGoal, coordinatorSessionID, permissions, when } = input as Record<string, unknown>
+        const mission = parseCreateMissionInput({ objective, title, notes, template, taskMode, profiles, coordinatorGoal, coordinatorSessionID, permissions, requestID: occurrence.automationID })
         const events = missionCalendarEventsSchema.parse(when ?? [])
         const key = missionCalendarKey(stableToken(`${ctx.location.project.id}\0${ctx.location.project.canonical}`, 24), occurrence.automationID)
         // OpenCode gives the whole program 30 seconds.

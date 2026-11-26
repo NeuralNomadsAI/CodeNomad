@@ -8,7 +8,8 @@
 //    prompts it and delivers its report by its own session API; the Mission completes.
 // 5. The next run launches a second Mission; OpenCode restarts in the middle of it and
 //    Missions registers again by itself, so the coordinator can finish.
-// 6. A calendar waiting for commits on a local branch launches nothing until one lands.
+// 6. A calendar waiting for commits on a local branch launches nothing until one lands,
+//    then coordinates in the conversation it names.
 // Usage: node --import tsx scripts/test-mission-calendar-run-e2e.mjs <absolute-opencode-cli>
 import assert from "node:assert/strict"
 import { execFileSync, spawn } from "node:child_process"
@@ -209,16 +210,19 @@ try {
   script.holdMs = 10_000
   const watching = await daemon.client.experimental.automation.create({ sessionID: carrier.id, name: "calendar-commits-e2e",
     trigger: { type: "every", every: "15 seconds" }, action: { type: "code", code: MISSION_CALENDAR_CODE,
-      args: { objective: OBJECTIVE, title: "Commits E2E", template: "custom", when: [{ kind: "branch-commits", directory: root, ref: "refs/heads/main" }] } } })
+      args: { objective: OBJECTIVE, title: "Commits E2E", template: "custom", coordinatorSessionID: first.coordinatorSessionId,
+        when: [{ kind: "branch-commits", directory: root, ref: "refs/heads/main" }] } } })
   const watch = () => daemon.client.experimental.automation.get({ automationID: watching.id })
-  const quiet = await until("two runs without a commit", watch, info => info.runCount >= 2 || info.lastOutcome === "failed", 60_000)
+  // Beside an Automation that existed at startup, OpenCode can take a minute to run a new one for the first time.
+  const quiet = await until("two runs without a commit", watch, info => info.runCount >= 2 || info.lastOutcome === "failed", 150_000)
   assert.notEqual(quiet.lastOutcome, "failed", quiet.lastOutput)
   assert.equal((await missions(daemon).catch(() => [])).filter(mission => mission.title === "Commits E2E").length, 0, "no commit, no Mission")
   git("commit", "-q", "--allow-empty", "-m", "second")
-  await until("the commit's Mission", () => missions(daemon), list => list.some(mission => mission.title === "Commits E2E"), 60_000).catch(async error => {
+  const reused = (await until("the commit's Mission", () => missions(daemon), list => list.some(mission => mission.title === "Commits E2E"), 60_000).catch(async error => {
     throw new Error(`${error.message}\nautomation: ${JSON.stringify(await watch().catch(() => null))?.slice(0, 1500)}`)
-  })
-  console.log("PASS 6 (a calendar waiting for commits launches only once one lands)")
+  })).find(mission => mission.title === "Commits E2E")
+  assert.equal(reused.coordinatorSessionId, first.coordinatorSessionId, "the calendar's Missions share the conversation it names")
+  console.log("PASS 6 (a calendar waiting for commits launches only once one lands, in the conversation it names)")
   await daemon.client.experimental.automation.delete({ automationID: watching.id })
 } finally {
   console.log("seen:", JSON.stringify({ ...seen, delegated: [...seen.delegated] }))
