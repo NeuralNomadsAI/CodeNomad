@@ -12,6 +12,18 @@ export function refusedMissionScheduleReceipt(error: unknown, request: { request
     && refusal.requestID === request.requestID && refusal.expectedRevision === request.expectedRevision && refusal.action === request.action
 }
 
+// A pending status read (HTTP 503 schedule-pending) still carries the document's
+// current id and revision so recovery/interruption controls can verify revision
+// before dispatching.
+export function pendingMissionScheduleRevision(error: unknown): { document: { id: string; revision: number; scheduleActivation?: undefined } } | undefined {
+  if (!(error instanceof HttpResponseError) || error.status !== 503 || error.code !== "schedule-pending") return
+  const body = error.body as { pending?: unknown; document?: { id?: unknown; revision?: unknown } | null } | undefined
+  const doc = body?.document
+  if (body?.pending !== true || typeof doc?.id !== "string" || !/^[A-Za-z0-9_-]{3,100}$/.test(doc.id)
+    || typeof doc.revision !== "number" || !Number.isSafeInteger(doc.revision) || doc.revision < 0) return
+  return { document: { id: doc.id, revision: doc.revision } }
+}
+
 // A partial response proves only this receipt, never the freshness of its display
 // document or permission to mutate it.
 export function partialMissionScheduleReceipt(error: unknown): MissionScheduleControlReceipt | undefined {

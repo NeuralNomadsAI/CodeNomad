@@ -537,7 +537,7 @@ function controlScope(api: Record<string, any>) {
     setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, setFeedback: () => {}, bump: () => {}, label: () => "Play", t: (key: string) => key,
     HttpResponseError,
     requiresMissionCalendar: () => true, showConfirmDialog: async () => true,
-    partialReceipt: () => undefined, exactMissionScheduleControl: () => true, refusedMissionScheduleReceipt: () => false,
+    partialReceipt: () => undefined, pendingMissionScheduleRevision: () => undefined, exactMissionScheduleControl: () => true, refusedMissionScheduleReceipt: () => false,
     settle: (_key: string, hold: any) => { holds.delete("scope"); refreshed.push(hold.phase) },
     receipt: () => assert.fail("direct complete ACK must settle without another read"),
   }
@@ -622,4 +622,54 @@ test("schedule check label uses checkStatus and dispatches check without confirm
   assert.deepEqual(confirms, [])
   assert.equal(calls.length, 1)
   assert.equal(calls[0][2].action, "check")
+})
+
+test("schedule check proceeds across 503 schedule-pending preflight reads and settles compacted deletions", async () => {
+  const { HttpResponseError } = await import("../lib/retryable-file-search")
+  const { pendingMissionScheduleRevision } = await import("../lib/mission-schedule-receipt")
+  const { exactMissionScheduleControl } = await import("./mission-schedule-controls")
+  const calls: any[] = [], feedbacks: Array<string | undefined> = [], settled: Array<number | undefined> = []
+  const doc = { id: "msn_stuck", revision: 21, availableActions: ["check", "play"], configuration: { title: "Sync", launch: { when: [] } } }
+  const pending503 = (revision: number) => new HttpResponseError("pending", 503, null, "schedule-pending", {
+    pending: true, code: "schedule-pending",
+    document: { id: doc.id, revision, control: { requestID: "reconcile_20", expectedRevision: 20, action: "reconcile", pending: false } },
+  })
+  const tombstone = {
+    pending: false, deleted: true, document: null,
+    deletionReceipt: { id: doc.id, requestID: "delete_orig", expectedRevision: 5, deleteManagedSessions: false },
+  }
+  const makeScope = (preflightRevision: number) => {
+    const scope = controlScope({
+      fetchMissionSchedule: async () => { throw pending503(preflightRevision) },
+      controlMissionSchedule: async (...args: any[]) => { calls.push(args); return tombstone },
+    })
+    scope.props.document = () => doc
+    scope.pendingMissionScheduleRevision = pendingMissionScheduleRevision
+    scope.exactMissionScheduleControl = exactMissionScheduleControl
+    scope.setFeedback = (value?: string) => { feedbacks.push(value) }
+    scope.settle = (_key: string, hold: any, _current: any, revision?: number) => {
+      scope.holds.delete("scope"); settled.push(revision); scope.refreshed.push(hold.phase)
+    }
+    return scope
+  }
+  // Matching revision on 503 schedule-pending dispatches check and settles compacted tombstone with revision=undefined.
+  await production("./mission-schedule-controls.ts", "act", makeScope(21))("check")
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][2].action, "check")
+  assert.equal(calls[0][2].expectedRevision, 21)
+  assert.deepEqual(settled, [undefined])
+  // Stale revision on 503 schedule-pending reports conflict without dispatching.
+  feedbacks.length = 0
+  await production("./mission-schedule-controls.ts", "act", makeScope(22))("check")
+  assert.equal(calls.length, 1)
+  assert.ok(feedbacks.includes("missions.scheduleList.conflict"))
+  // Non-recovery play still fails on 503 schedule-pending without dispatching.
+  feedbacks.length = 0
+  await production("./mission-schedule-controls.ts", "act", makeScope(21))("play")
+  assert.equal(calls.length, 1)
+  assert.ok(feedbacks.includes("missions.scheduleList.readFailed"))
+  // Unqualified tombstone does not satisfy exactMissionScheduleControl for check.
+  const hold = { phase: "control" as const, action: "check" as const, requestID: "req_c", expectedRevision: 21, partial: false, pending: false, document: doc as any }
+  assert.equal(exactMissionScheduleControl(tombstone, hold, doc.id), true)
+  assert.equal(exactMissionScheduleControl({ pending: false, deleted: true, document: null }, hold, doc.id), false)
 })

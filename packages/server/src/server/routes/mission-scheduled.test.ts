@@ -402,3 +402,20 @@ test("unqualified tombstone and mismatched receipts never settle a DELETE hold",
   assert.equal((await f.get()).statusCode, 503)
   assert.ok(scheduledMissionHold(f.fence, "msn_owned")); assert.equal(f.state.writes.length, 1)
 })
+
+test("CHECK settles on a qualified compacted tombstone and rejects an unqualified one", async t => {
+  const f = await fixture(t), payload = { requestID: "check_compact", expectedRevision: 5, action: "check" as const }
+  f.state.write = async () => ({ document: null, deleted: true, pending: false })
+  assert.equal((await f.post(payload)).statusCode, 503)
+  assert.ok(scheduledMissionHold(f.fence, "msn_owned"))
+  const f2 = await fixture(t)
+  const tombstone = {
+    document: null, deleted: true, pending: false,
+    deletionReceipt: { id: "msn_owned", requestID: "delete_original", expectedRevision: 2, deleteManagedSessions: false },
+  }
+  f2.state.write = async () => tombstone
+  const settled = await f2.post(payload)
+  assert.equal(settled.statusCode, 200)
+  assert.deepEqual(settled.json(), tombstone)
+  assert.equal(scheduledMissionHold(f2.fence, "msn_owned"), undefined)
+})

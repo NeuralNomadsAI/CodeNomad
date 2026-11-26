@@ -12,7 +12,7 @@ export type ScheduledHoldBinding = {
   profile: string; configYamlPath: string; executionHost: string
   deleteManagedSessions?: boolean
 }
-type Receipt = { pending?: unknown; document?: { id?: unknown; control?: {
+type Receipt = { pending?: unknown; deleted?: unknown; document?: { id?: unknown; control?: {
   requestID?: unknown; action?: unknown; expectedRevision?: unknown; pending?: unknown
 } | null } | null; deletionReceipt?: { id?: unknown; requestID?: unknown; expectedRevision?: unknown; deleteManagedSessions?: unknown } }
 const held = new WeakMap<WorktreeDeletionFence, Map<string, ReturnType<typeof record>>>()
@@ -44,12 +44,18 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
       || fresh.digest !== original.digest || fresh.connection !== connection && current(connection))
       throw new ScheduledHoldError(409, "Held Mission schedule scope differs")
   }
+  const qualifiedCheckDeletion = (result: Receipt | null) =>
+    original.action === "check" && result?.document === null && result.deleted === true && !!result.deletionReceipt
+    && result.deletionReceipt.id === original.missionID
+    && typeof result.deletionReceipt.requestID === "string" && Number.isSafeInteger(result.deletionReceipt.expectedRevision)
+    && typeof result.deletionReceipt.deleteManagedSessions === "boolean"
   const exact = (raw: unknown) => {
     const result = raw as Receipt | null, control = result?.document?.control
     const deleted = result?.deletionReceipt
     if (original.action === "delete" && result?.document === null && deleted)
       return deleted.id === original.missionID && deleted.requestID === original.requestID
         && deleted.expectedRevision === original.expectedRevision && deleted.deleteManagedSessions === (original.deleteManagedSessions ?? false)
+    if (qualifiedCheckDeletion(result)) return true
     return result?.document?.id === original.missionID && control?.requestID === original.requestID
       && control.action === original.action && control.expectedRevision === original.expectedRevision && typeof control.pending === "boolean"
   }
@@ -81,9 +87,11 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
     },
     settle(fresh: ScheduledHoldBinding, raw: unknown) {
       bound(fresh)
-      if (!dispatched || !exact(raw) || (raw as Receipt).pending !== false
-        || !(original.action === "delete" && (raw as Receipt).document === null && (raw as Receipt).deletionReceipt)
-          && (raw as Receipt).document?.control?.pending !== false) return false
+      const receipt = raw as Receipt | null
+      const settledDeletion = (original.action === "delete" && receipt?.document === null && !!receipt.deletionReceipt)
+        || qualifiedCheckDeletion(receipt)
+      if (!dispatched || !exact(raw) || receipt?.pending !== false
+        || !settledDeletion && receipt?.document?.control?.pending !== false) return false
       active = false; busy = false; drop(); releasePermit(); return true
     },
     dispose() {

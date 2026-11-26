@@ -9,7 +9,7 @@ import { showConfirmDialog } from "../stores/alerts"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { instances } from "../stores/instances"
 import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
-import { partialMissionScheduleReceipt as partialReceipt, refusedMissionScheduleReceipt, type MissionScheduleControlReceipt as ControlReceipt } from "../lib/mission-schedule-receipt"
+import { partialMissionScheduleReceipt as partialReceipt, pendingMissionScheduleRevision, refusedMissionScheduleReceipt, type MissionScheduleControlReceipt as ControlReceipt } from "../lib/mission-schedule-receipt"
 import type { MissionScheduleCapability } from "../../../server/src/api-types"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { rereadMissionHoldWhileActive } from "../lib/mission-held-reread"
@@ -18,11 +18,17 @@ type ActivationRefusal = Extract<MissionScheduleCapability["activation"], { avai
 
 // Exact dispatched identities survive navigation and remount. Unresolved entries
 // never evict; the ceiling refuses another control rather than forgetting one.
+const qualifiedCheckDeletion = (result: ControlReceipt, id: string) =>
+  result.deleted === true && result.document === null && result.deletionReceipt?.id === id
+  && typeof result.deletionReceipt.requestID === "string" && Number.isSafeInteger(result.deletionReceipt.expectedRevision)
+  && typeof result.deletionReceipt.deleteManagedSessions === "boolean"
+
 export function exactMissionScheduleControl(result: ControlReceipt, hold: Hold, id: string) {
   if (hold.phase !== "control" || result.pending) return false
   if (hold.action === "delete") return !!("deleted" in result && result.deleted && result.deletionReceipt?.id === id
     && result.deletionReceipt.requestID === hold.requestID && result.deletionReceipt.expectedRevision === hold.expectedRevision
     && result.deletionReceipt.deleteManagedSessions === false)
+  if (hold.action === "check" && qualifiedCheckDeletion(result, id)) return true
   const receipt = result.document?.control
   return result.document?.id === id && receipt?.requestID === hold.requestID && receipt.expectedRevision === hold.expectedRevision
     && receipt.action === hold.action && receipt.pending === false
@@ -77,7 +83,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
     batch(() => {
       if (revision !== undefined) holds.set(key, { ...hold, phase: "publication", pending: false, minimumRevision: Math.max(hold.minimumRevision ?? 0, revision) })
       else holds.delete(key)
-      if (current()) { props.refresh(); if (revision === undefined && hold.action === "delete") props.onDeleted() }
+      if (current()) { props.refresh(); if (revision === undefined && (hold.action === "delete" || hold.action === "check")) props.onDeleted() }
       bump()
     })
   }
@@ -96,8 +102,9 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
     if (exactMissionScheduleControl(result, hold, doc.id)) {
       if (holds.get(key) !== hold) return
       const revision = result.document?.revision
-      if (hold.action !== "delete" && (!Number.isSafeInteger(revision) || revision! < hold.expectedRevision)) return
-      settle(key, hold, current, hold.action === "delete" ? undefined : revision)
+      const deleted = hold.action === "delete" || hold.action === "check" && "deleted" in result && result.deleted === true && result.document === null
+      if (!deleted && (!Number.isSafeInteger(revision) || revision! < hold.expectedRevision)) return
+      settle(key, hold, current, deleted ? undefined : revision)
     }
     else if (holds.get(key) === hold) {
       const control = result.document?.control
@@ -139,6 +146,11 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
     try {
       // The button/confirmation describes an exact revision, not a live draft.
       const latest = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, original.id, { directory: props.directory }, AbortSignal.timeout(30_000))
+        .catch(error => {
+          const pending = ["check", "pause", "stop", "delete"].includes(action) ? pendingMissionScheduleRevision(error) : undefined
+          if (pending) return pending
+          throw error
+        })
       if (!current()) return
       if (!latest.document || latest.document.id !== original.id || latest.document.revision !== original.revision) {
         setFeedback("missions.scheduleList.conflict"); props.refresh(); return
@@ -190,9 +202,10 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
         expectedRevision: revision, directory: props.directory, ...(action === "delete" ? { deleteManagedSessions: false } : {}) }).catch(error => {
           const result = partialReceipt(error); if (result) return result; throw error
         })
+      const deleted = action === "delete" || action === "check" && "deleted" in result && result.deleted === true && result.document === null
       if (exactMissionScheduleControl(result, request, original.id)
-        && (action === "delete" || Number.isSafeInteger(result.document?.revision) && result.document!.revision! >= revision))
-        settle(key, request, current, action === "delete" ? undefined : result.document?.revision)
+        && (deleted || Number.isSafeInteger(result.document?.revision) && result.document!.revision! >= revision))
+        settle(key, request, current, deleted ? undefined : result.document?.revision)
       else if (current()) await receipt(key, request, current)
       if (current()) props.refresh()
     } catch (error) {
