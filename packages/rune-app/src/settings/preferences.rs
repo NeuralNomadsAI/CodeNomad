@@ -794,6 +794,7 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        self.state.settle_palette_mutation_on_auth_expired();
         self.opencode_install.cancel_check();
         if let Some(target) = &mut self.provider_target {
             target.transport(false);

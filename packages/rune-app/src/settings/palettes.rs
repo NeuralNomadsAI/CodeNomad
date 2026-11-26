@@ -213,6 +213,28 @@ impl PaletteMutation {
             patch["appearancePreferences"]["mode"] = json!(mode);
             return;
         }
+        if let PaletteOp::SelectBuiltIn {
+            id,
+            dark,
+            colors: None,
+        } = &self.op
+        {
+            let legacy = legacy_scheme(snapshot, &self.legacy_config);
+            migrate_active_builtin_override(
+                patch,
+                snapshot,
+                &self.legacy_config,
+                legacy.as_ref(),
+                *dark,
+                Some(*id),
+            );
+            let mode = mode_str(*dark);
+            patch["appearancePreferences"][mode] = json!({
+                "scheme": { "id": id, "appearance": mode, "colors": Value::Null },
+                "presetId": Value::Null,
+            });
+            return;
+        }
         let legacy = legacy_scheme(snapshot, &self.legacy_config);
         if !is_valid_mode(&snapshot["appearancePreferences"]["mode"])
             && !is_valid_mode(&patch["appearancePreferences"]["mode"])
@@ -424,18 +446,22 @@ impl PaletteMutation {
             PaletteOp::SelectBuiltIn { id, dark, colors } => {
                 let mode = mode_str(*dark);
                 let slot = &appearance[mode];
-                let colors_match = match colors {
+                match colors {
                     Some(colors) => {
-                        ColorSchemeColors::from_json(&slot["scheme"]["colors"]).as_ref()
-                            == Some(colors)
+                        slot["scheme"]["id"] == *id
+                            && slot["scheme"]["appearance"] == mode
+                            && ColorSchemeColors::from_json(&slot["scheme"]["colors"]).as_ref()
+                                == Some(colors)
+                            && slot["presetId"].is_null()
+                            && snapshot["activeColorSchemePresetId"].is_null()
                     }
-                    None => slot["scheme"]["colors"].is_null(),
-                };
-                slot["scheme"]["id"] == *id
-                    && slot["scheme"]["appearance"] == mode
-                    && colors_match
-                    && slot["presetId"].is_null()
-                    && snapshot["activeColorSchemePresetId"].is_null()
+                    None => {
+                        slot["scheme"]["id"] == *id
+                            && slot["scheme"]["appearance"] == mode
+                            && slot["scheme"]["colors"].is_null()
+                            && slot["presetId"].is_null()
+                    }
+                }
             }
             PaletteOp::SelectCustom { dark, colors } | PaletteOp::SaveCustom { dark, colors } => {
                 let mode = mode_str(*dark);

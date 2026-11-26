@@ -265,6 +265,30 @@ impl Document {
         self.write.uncertain.remove(&Choice::PaletteMutation);
     }
 
+    pub(super) fn settle_palette_mutation_on_auth_expired(&mut self) {
+        let had_unsent = self.write.pending.remove(&Choice::PaletteMutation)
+            | self.write.retry.remove(&Choice::PaletteMutation);
+        let had_sent = self
+            .write
+            .uncertain
+            .remove(&Choice::PaletteMutation)
+            .is_some()
+            || self.flight.as_ref().is_some_and(|flight| {
+                matches!(&flight.operation, Operation::Write(sent) if sent.contains_key(&Choice::PaletteMutation))
+            })
+            || self.barrier.as_ref().is_some_and(|flight| {
+                matches!(&flight.operation, Operation::Write(sent) if sent.contains_key(&Choice::PaletteMutation))
+            });
+        let had_requested = self
+            .write
+            .requested
+            .remove(&Choice::PaletteMutation)
+            .is_some();
+        if had_unsent || had_sent || had_requested {
+            self.write.failed.insert(Choice::PaletteMutation);
+        }
+    }
+
     pub(super) fn palette_mutation_pending(&self) -> bool {
         (self.write.requested.contains_key(&Choice::PaletteMutation)
             || self.write.pending.contains(&Choice::PaletteMutation)

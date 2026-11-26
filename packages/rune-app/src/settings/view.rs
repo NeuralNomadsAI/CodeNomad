@@ -206,7 +206,8 @@ impl Window {
             return;
         }
         {
-            let prefs = self.shared.borrow();
+            let mut prefs = self.shared.borrow_mut();
+            self.general.settle_save(&mut prefs);
             if self.general.busy(&prefs) {
                 self.after_palette_save = Some((prefs.binding_epoch(), AfterPaletteSave::Close));
                 return;
@@ -233,7 +234,11 @@ impl Window {
     }
 
     fn retain_editor_on_native_close(&mut self) -> bool {
-        let palette_saving = self.general.busy(&self.shared.borrow());
+        let palette_saving = {
+            let mut prefs = self.shared.borrow_mut();
+            self.general.settle_save(&mut prefs);
+            self.general.busy(&prefs)
+        };
         if (!self.memory_editor.has_unsaved()
             && !self.config_files.dirty()
             && !self.config_files.busy()

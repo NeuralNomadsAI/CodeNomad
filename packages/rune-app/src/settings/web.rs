@@ -377,6 +377,7 @@ fn request_close_panel(panel: &mut Panel, prefs: &mut Preferences) {
     if panel.config_files.busy() {
         return;
     }
+    panel.general.settle_save(prefs);
     if panel.general.busy(prefs) {
         panel.after_palette_save = Some((prefs.binding_epoch(), AfterPaletteSave::Close));
         return;
