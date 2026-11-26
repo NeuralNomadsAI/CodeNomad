@@ -114,9 +114,9 @@ async fn verify_uncertain_linked(
 #[derive(Default)]
 pub(super) struct Refresh {
     due: Option<f64>,
-    urgent: bool,
+    pub(super) urgent: bool,
     reset_cursor: bool,
-    request: Option<(u64, Receiver<Option<(Sessions, bool, bool)>>)>,
+    pub(super) request: Option<(u64, u64, Receiver<Option<(Sessions, bool, bool)>>)>,
 }
 
 impl Refresh {
@@ -172,7 +172,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if refresh
         .request
         .as_ref()
-        .is_some_and(|(generation, _)| *generation != l.catalogue_generation)
+        .is_some_and(|(generation, _, _)| *generation != l.catalogue_generation)
     {
         refresh.pause(now);
     }
@@ -184,18 +184,22 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         return false;
     }
     let mut changed = false;
-    if let Some(result) = refresh
+    let mut fresh_present: Option<(super::ProjectScope, Vec<String>)> = None;
+    if let Some((req_conn_gen, result)) = refresh
         .request
         .as_ref()
-        .and_then(|(_, rx)| rx.try_recv().ok())
+        .and_then(|(_, conn_gen, rx)| rx.try_recv().ok().map(|res| (*conn_gen, res)))
     {
         refresh.request = None;
         if refresh.due.is_none() {
             refresh.urgent = false;
             if let Some((page, authoritative, includes_linked)) = result {
-                let selected = match &entry.saved {
-                    super::Tab::Workspace(w) => w.active_session_id.as_deref(),
-                    _ => None,
+                let (selected, scope) = match &entry.saved {
+                    super::Tab::Workspace(w) => (
+                        w.active_session_id.as_deref(),
+                        Some(super::ProjectScope::from_workspace(w)),
+                    ),
+                    _ => (None, None),
                 };
                 if let Some(row) = page
                     .rows
@@ -203,6 +207,14 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                     .find(|row| Some(row.id.as_str()) == selected)
                 {
                     s.chat_title.clone_from(&row.title);
+                }
+                if !l.authentication_required
+                    && req_conn_gen == l.connection_generation
+                    && let Some(scope) = scope
+                    && !page.rows.is_empty()
+                {
+                    fresh_present =
+                        Some((scope, page.rows.iter().map(|row| row.id.clone()).collect()));
                 }
                 let reset_cursor = refresh.reset_cursor;
                 if authoritative || !includes_linked {
@@ -239,7 +251,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             };
             let uncertain_linked = l.creation_uncertain_linked.clone();
             refresh.due = None;
-            refresh.request = Some((l.catalogue_generation, input));
+            refresh.request = Some((l.catalogue_generation, l.connection_generation, input));
             crate::platform::spawn(async move {
                 let read = async {
                     let can_replace = match inventory::load(
@@ -313,6 +325,9 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             });
         }
     }
+    if let Some((scope, ids)) = fresh_present {
+        super::drafts::note_sessions_present_in_scope(ui, &scope, &ids);
+    }
     changed
 }
 
@@ -383,10 +398,11 @@ mod tests {
             assert!(!s.shell.visible(0));
             let (out, rx) = codenomad_client::bounded(1);
             let generation = s.screen.launcher().unwrap().catalogue_generation;
+            let conn_gen = s.screen.launcher().unwrap().connection_generation;
             let ui = s.workspace.as_mut().unwrap();
             let entry = &mut ui.entries[ui.active];
             entry.catalogue.urgent = true;
-            entry.catalogue.request = Some((generation, rx));
+            entry.catalogue.request = Some((generation, conn_gen, rx));
             entry.catalogue.due = Some(2.0);
             assert!(out.try_send(None).is_ok());
             let _ = super::poll(s, 1.0, tx);

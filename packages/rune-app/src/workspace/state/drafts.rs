@@ -1596,6 +1596,16 @@ fn set_restored_probe_outcome(
     }
 }
 
+pub(super) fn note_sessions_present_in_scope<I, S>(ui: &mut Ui, scope: &super::ProjectScope, ids: I)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    for id in ids {
+        note_session_present_in_scope(ui, scope, id.as_ref());
+    }
+}
+
 fn note_session_present_in_scope(ui: &mut Ui, scope: &super::ProjectScope, id: &str) {
     if is_local_draft_id(id) {
         return;
@@ -1604,8 +1614,10 @@ fn note_session_present_in_scope(ui: &mut Ui, scope: &super::ProjectScope, id: &
     if !relevant {
         return;
     }
-    ui.restored_draft_presence_epoch = ui.restored_draft_presence_epoch.wrapping_add(1);
-    let epoch = ui.restored_draft_presence_epoch;
+    let epoch = ui
+        .restored_draft_presence_epoch
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        .wrapping_add(1);
     if let Some((_, _, existing_epoch)) = ui
         .restored_draft_seen_present
         .iter_mut()
@@ -1697,7 +1709,7 @@ fn pump_restored_draft_probes(s: &mut State) {
         super::ProjectScope,
         Backend,
         crate::catalog::Project,
-        u64,
+        std::sync::Arc<std::sync::atomic::AtomicU64>,
         Vec<String>,
         codenomad_client::Sender<RestoredProbeResult>,
     )> = {
@@ -1763,7 +1775,7 @@ fn pump_restored_draft_probes(s: &mut State) {
             if to_check.is_empty() {
                 continue;
             }
-            let started_epoch = ui.restored_draft_presence_epoch;
+            let presence_epoch = ui.restored_draft_presence_epoch.clone();
             for id in &to_check {
                 ui.restored_draft_in_flight
                     .push((scope.clone(), id.clone(), conn_gen));
@@ -1772,7 +1784,7 @@ fn pump_restored_draft_probes(s: &mut State) {
                 scope,
                 backend,
                 project,
-                started_epoch,
+                presence_epoch,
                 to_check,
                 ui.restored_draft_checks.0.clone(),
             ));
@@ -1780,11 +1792,12 @@ fn pump_restored_draft_probes(s: &mut State) {
         launched
     };
     let wake = s.wake.clone();
-    for (scope, backend, project, started_epoch, ids, out) in batches {
+    for (scope, backend, project, presence_epoch, ids, out) in batches {
         let wake = wake.clone();
         let backend_base = backend.base.clone();
         crate::platform::spawn(async move {
             for id in ids {
+                let started_epoch = presence_epoch.load(std::sync::atomic::Ordering::SeqCst);
                 let absence = backend.probe_session_absence(&project, &id).await;
                 if out
                     .send(RestoredProbeResult {
@@ -1869,39 +1882,36 @@ pub fn check_restored_draft_sessions(
 
 /// Resumes restored-draft absence checks for already-open projects belonging to the newly
 /// reauthenticated connection (covering openings that completed while `authentication_required`
-/// was armed and transient failures from an earlier connection generation).
+/// was armed and transient failures from an earlier connection generation). Never reuses
+/// pre-reauthentication `listed_sessions` as fresh presence proof for the new generation.
 pub fn resume_restored_draft_checks(
     s: &mut State,
     live_ids: Option<&std::collections::HashSet<String>>,
 ) {
-    let Some((backend, backend_id, server_id, conn_gen, active_project_id, active_listed)) =
-        s.screen.launcher().and_then(|l| {
-            if l.authentication_required {
-                return None;
+    let Some((backend, backend_id, server_id, conn_gen)) = s.screen.launcher().and_then(|l| {
+        if l.authentication_required {
+            return None;
+        }
+        let backend = l.connection.clone()?;
+        let backend_id = (!l.local_connection()).then(|| {
+            if cfg!(target_arch = "wasm32") {
+                "web".to_owned()
+            } else {
+                "external".to_owned()
             }
-            let backend = l.connection.clone()?;
-            let backend_id = (!l.local_connection()).then(|| {
-                if cfg!(target_arch = "wasm32") {
-                    "web".to_owned()
-                } else {
-                    "external".to_owned()
-                }
-            });
-            Some((
-                backend,
-                backend_id,
-                l.server_id.clone(),
-                l.connection_generation,
-                l.project.as_ref().map(|p| p.id.clone()),
-                l.listed_sessions.clone(),
-            ))
-        })
-    else {
+        });
+        Some((
+            backend,
+            backend_id,
+            l.server_id.clone(),
+            l.connection_generation,
+        ))
+    }) else {
         return;
     };
     if let Some(ui) = &mut s.workspace {
         let mut scopes = Vec::new();
-        for (idx, entry) in ui.entries.iter().enumerate() {
+        for entry in &ui.entries {
             let Tab::Workspace(w) = &entry.saved else {
                 continue;
             };
@@ -1915,22 +1925,16 @@ pub fn resume_restored_draft_checks(
                 continue;
             }
             let scope = super::ProjectScope::from_workspace(w);
-            let is_active_listed =
-                idx == ui.active && active_project_id.as_deref() == Some(project.id.as_str());
-            if !scopes.iter().any(
-                |(sc, _, _): &(super::ProjectScope, crate::catalog::Project, bool)| {
+            if !scopes
+                .iter()
+                .any(|(sc, _): &(super::ProjectScope, crate::catalog::Project)| {
                     sc.same_scope(&scope)
-                },
-            ) {
-                scopes.push((scope, project.clone(), is_active_listed));
+                })
+            {
+                scopes.push((scope, project.clone()));
             }
         }
-        for (scope, project, is_active_listed) in scopes {
-            if is_active_listed {
-                for id in &active_listed {
-                    note_session_present_in_scope(ui, &scope, id);
-                }
-            }
+        for (scope, project) in scopes {
             if let Some(existing) = ui
                 .restored_draft_targets
                 .iter_mut()

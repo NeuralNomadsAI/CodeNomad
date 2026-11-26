@@ -172,7 +172,7 @@ pub struct Ui {
         codenomad_client::Sender<(ProjectScope, String)>,
         codenomad_client::Receiver<(ProjectScope, String)>,
     ),
-    restored_draft_presence_epoch: u64,
+    restored_draft_presence_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
     restored_draft_seen_present: Vec<(ProjectScope, String, u64)>,
     restored_draft_checked: Vec<(ProjectScope, String, drafts::RestoredProbeOutcome)>,
     restored_draft_in_flight: Vec<(ProjectScope, String, u64)>,
@@ -240,7 +240,9 @@ impl Ui {
             closed_derived_from: Vec::new(),
             closed_pending_deleted: Vec::new(),
             deleted_sessions: codenomad_client::bounded(256),
-            restored_draft_presence_epoch: 0,
+            restored_draft_presence_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+                0,
+            )),
             restored_draft_seen_present: Vec::new(),
             restored_draft_checked: Vec::new(),
             restored_draft_in_flight: Vec::new(),
@@ -490,7 +492,9 @@ impl Ui {
                 });
                 let unprojected: Vec<_> =
                     closed_bundles.into_iter().skip(projected_count).collect();
-                let unprojected_len = unprojected.len();
+                if unprojected.is_empty() {
+                    continue;
+                }
                 let can_host_session = |tabs: &[Tab], i: usize| -> bool {
                     matches!(
                         &tabs[i],
@@ -513,81 +517,72 @@ impl Ui {
                         Some(i)
                     })
                 };
-                for (bundle_pos, bundle) in unprojected.iter().enumerate() {
-                    let remaining = unprojected_len - bundle_pos;
-                    let mut chosen_no_session = None;
-                    if no_session_free {
-                        let mut all_id_slots = 0usize;
-                        let mut surviving_id_slots = 0usize;
-                        for j in 0..snap.tabs.len() {
-                            if can_host_session(&snap.tabs, j) {
-                                all_id_slots += 1;
-                                if !self.entries[j].closing_deferred {
-                                    surviving_id_slots += 1;
-                                }
-                            }
+                // Simulate each candidate placement (pure session-key placement vs placing
+                // __no_session_draft__ on each eligible tab) against full v1 encoding so we
+                // maximize genuinely encodable preserved drafts before tie-breaking by surviving
+                // tabs, local recovery slot preference, and tab order.
+                let mut candidates: Vec<Option<usize>> = vec![None];
+                if no_session_free {
+                    for (i, tab) in snap.tabs.iter().enumerate() {
+                        if let Tab::Workspace(w) = tab
+                            && scope.matches(w)
+                            && !self.entries[i].cleared.contains(super::NO_SESSION_DRAFT_ID)
+                            && tab_has_room(w, &[super::NO_SESSION_DRAFT_ID])
+                        {
+                            candidates.push(Some(i));
                         }
-                        let mut best_rank = (
-                            remaining.min(all_id_slots),
-                            remaining.min(surviving_id_slots),
-                            false,
-                            false,
-                            std::cmp::Reverse(usize::MAX),
-                        );
-                        for (i, tab) in snap.tabs.iter().enumerate() {
-                            let Tab::Workspace(w) = tab else {
-                                continue;
-                            };
-                            if !scope.matches(w)
-                                || self.entries[i].cleared.contains(super::NO_SESSION_DRAFT_ID)
-                                || !tab_has_room(w, &[super::NO_SESSION_DRAFT_ID])
-                            {
-                                continue;
+                    }
+                }
+                let mut best: Option<(
+                    (usize, usize, bool, bool, std::cmp::Reverse<usize>),
+                    Snapshot,
+                )> = None;
+                for no_session_dest in candidates {
+                    let mut cand = snap.clone();
+                    let mut kept = 0usize;
+                    let mut surviving_kept = 0usize;
+                    let mut used_no_session = false;
+                    for bundle in &unprojected {
+                        if let Some(dest) = no_session_dest
+                            && !used_no_session
+                            && try_insert(&mut cand, dest, super::NO_SESSION_DRAFT_ID, bundle)
+                        {
+                            used_no_session = true;
+                            kept += 1;
+                            if !self.entries[dest].closing_deferred {
+                                surviving_kept += 1;
                             }
-                            let mut surviving_after = 0usize;
-                            let mut deferred_after = 0usize;
-                            for j in 0..snap.tabs.len() {
-                                if !can_host_session(&snap.tabs, j) {
-                                    continue;
-                                }
-                                if j == i
-                                    && !tab_has_room(w, &[super::NO_SESSION_DRAFT_ID, id.as_str()])
-                                {
-                                    continue;
-                                }
-                                if self.entries[j].closing_deferred {
-                                    deferred_after += 1;
-                                } else {
-                                    surviving_after += 1;
-                                }
-                            }
-                            let total_kept = remaining.min(1 + surviving_after + deferred_after);
-                            let surviving_kept = usize::from(!self.entries[i].closing_deferred)
-                                + (total_kept - 1).min(surviving_after);
-                            let rank = (
-                                total_kept,
-                                surviving_kept,
-                                true,
-                                !self.entries[i].closing_deferred,
-                                std::cmp::Reverse(i),
-                            );
-                            if rank > best_rank {
-                                best_rank = rank;
-                                chosen_no_session = Some(i);
+                            continue;
+                        }
+                        if let Some(dest) = find_empty_session(&cand.tabs, true)
+                            .or_else(|| find_empty_session(&cand.tabs, false))
+                            && try_insert(&mut cand, dest, id, bundle)
+                        {
+                            kept += 1;
+                            if !self.entries[dest].closing_deferred {
+                                surviving_kept += 1;
                             }
                         }
                     }
-                    if let Some(dest) = chosen_no_session
-                        && try_insert(&mut snap, dest, super::NO_SESSION_DRAFT_ID, bundle)
-                    {
-                        no_session_free = false;
+                    if kept == 0 {
                         continue;
                     }
-                    if let Some(dest) = find_empty_session(&snap.tabs, true)
-                        .or_else(|| find_empty_session(&snap.tabs, false))
-                    {
-                        let _ = try_insert(&mut snap, dest, id, bundle);
+                    let dest_surviving =
+                        no_session_dest.is_some_and(|i| !self.entries[i].closing_deferred);
+                    let dest_order = std::cmp::Reverse(no_session_dest.unwrap_or(usize::MAX));
+                    let rank = (
+                        kept,
+                        surviving_kept,
+                        used_no_session,
+                        dest_surviving,
+                        dest_order,
+                    );
+                    if best.as_ref().is_none_or(|(best_rank, _)| rank > *best_rank) {
+                        best = Some((rank, cand));
                     }
+                }
+                if let Some((_, best_snap)) = best {
+                    snap = best_snap;
                 }
             }
         }

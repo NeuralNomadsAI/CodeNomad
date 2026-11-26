@@ -3634,10 +3634,6 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         let probed_srv = probed.clone();
         let list_calls = Arc::new(Mutex::new(0usize));
         let list_calls_srv = list_calls.clone();
-        let (probe_404_entered_tx, probe_404_entered_rx) = mpsc::channel::<()>();
-        let probe_404_entered_tx = Arc::new(Mutex::new(Some(probe_404_entered_tx)));
-        let (release_404_tx, release_404_rx) = mpsc::channel::<()>();
-        let release_404_rx = Arc::new(Mutex::new(release_404_rx));
         let listed_rows: Vec<serde_json::Value> = (0..48)
             .map(|i| {
                 serde_json::json!({
@@ -3663,8 +3659,6 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                 let probed_srv = probed_srv.clone();
                 let list_calls_srv = list_calls_srv.clone();
                 let paginated_body = paginated_body.clone();
-                let probe_404_entered_tx = probe_404_entered_tx.clone();
-                let release_404_rx = release_404_rx.clone();
                 workers.push(std::thread::spawn(move || {
                     socket.set_nonblocking(false).unwrap();
                     socket
@@ -3716,13 +3710,6 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                         (200, paginated_body)
                     } else if line.contains("/instance/api/session/ses_probe_404 ") {
                         probed_srv.lock().unwrap().push("ses_probe_404".into());
-                        if let Some(tx) = probe_404_entered_tx.lock().unwrap().take() {
-                            let _ = tx.send(());
-                        }
-                        let _ = release_404_rx
-                            .lock()
-                            .unwrap()
-                            .recv_timeout(Duration::from_secs(5));
                         (
                             404,
                             r#"{"_tag":"SessionNotFoundError","sessionID":"ses_probe_404"}"#.into(),
@@ -3735,6 +3722,16 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                         (
                             200,
                             r#"{"data":{"id":"ses_probe_200","title":"live","location":{"directory":"/fixture"}}}"#
+                                .into(),
+                        )
+                    } else if line.contains("/instance/api/session/ses_probe_inflight ") {
+                        probed_srv
+                            .lock()
+                            .unwrap()
+                            .push("ses_probe_inflight".into());
+                        (
+                            404,
+                            r#"{"_tag":"SessionNotFoundError","sessionID":"ses_probe_inflight"}"#
                                 .into(),
                         )
                     } else {
@@ -3780,6 +3777,9 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         t2.active_session_id = None;
         t2.drafts.insert("ses_probe_403".into(), "keep 403".into());
         t2.drafts.insert("ses_probe_200".into(), "keep 200".into());
+        t2.drafts
+            .insert("ses_probe_inflight".into(), "controlled inflight".into());
+        let scope_http = crate::workspace::state::ProjectScope::from_workspace(&t0);
         let mut ui = Ui::new();
         ui.hydrate(crate::workspace::Snapshot {
             revision: 1,
@@ -3790,15 +3790,23 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
             active: Some(0),
         });
         ui.ready = true;
+        // R19 Mineur 1: represent an already in-flight probe deterministically (no 1 s HTTP
+        // timeout dependency) so both sibling Reply::Opened cycles prove non-cancellation and
+        // non-duplication cleanly even on slow CI.
+        let conn_gen_http = r17_http.screen.launcher().unwrap().connection_generation;
+        ui.restored_draft_in_flight.push((
+            scope_http.clone(),
+            "ses_probe_inflight".into(),
+            conn_gen_http,
+        ));
         r17_http.workspace = Some(ui);
         crate::platform::block_on(async {
             // 1. Real launcher::choose_project -> Reply::Opened with paginated cursor ("page-2")
-            // and 48 listed sessions: must start bounded checks for tab 2's 3 unlisted keys
-            // immediately. ses_probe_404 is held in-flight on the HTTP server until sibling #2 opens.
+            // and 48 listed sessions: must immediately probe ses_probe_200/403/404 without
+            // duplicating or cancelling ses_probe_inflight.
             crate::launcher::choose_project(&mut r17_http, "/fixture", &mut tx);
             let deadline = Instant::now() + Duration::from_secs(5);
             let mut opened_once = false;
-            let mut held_in_flight = false;
             while Instant::now() < deadline {
                 let _ = crate::launcher::poll(&mut r17_http, &mut tx);
                 let _ = crate::workspace::poll(&mut r17_http, 1.0, &mut tx);
@@ -3809,19 +3817,21 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                 {
                     opened_once = true;
                 }
-                if probe_404_entered_rx.try_recv().is_ok() {
-                    held_in_flight = true;
-                }
-                if opened_once && held_in_flight {
+                let others_done = opened_once
+                    && probed.lock().unwrap().len() >= 3
+                    && r17_http
+                        .workspace
+                        .as_ref()
+                        .unwrap()
+                        .restored_draft_in_flight
+                        .iter()
+                        .all(|(_, id, _)| id == "ses_probe_inflight");
+                if others_done {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             assert!(opened_once, "Reply::Opened must receive paginated cursor");
-            assert!(
-                held_in_flight,
-                "ses_probe_404 HTTP request must be actively in-flight"
-            );
             assert!(
                 r17_http
                     .workspace
@@ -3829,11 +3839,11 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                     .unwrap()
                     .restored_draft_in_flight
                     .iter()
-                    .any(|(_, id, _)| id == "ses_probe_404"),
-                "ses_probe_404 must be tracked in-flight before sibling open"
+                    .any(|(_, id, _)| id == "ses_probe_inflight"),
+                "in-flight probe must remain active after first Reply::Opened"
             );
-            // 2. Second sibling Reply::Opened WHILE ses_probe_404 is still in-flight: must neither
-            // cancel nor duplicate the in-flight probe, nor replay already-checked keys.
+            // 2. Second sibling Reply::Opened while ses_probe_inflight is still in-flight: must
+            // neither cancel nor duplicate it, nor replay already-checked keys.
             crate::launcher::choose_project(&mut r17_http, "/fixture", &mut tx);
             let second_deadline = Instant::now() + Duration::from_secs(5);
             let mut opened_twice = false;
@@ -3862,27 +3872,38 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                     .unwrap()
                     .restored_draft_in_flight
                     .iter()
-                    .any(|(_, id, _)| id == "ses_probe_404"),
+                    .any(|(_, id, _)| id == "ses_probe_inflight"),
                 "sibling Reply::Opened must NOT cancel the in-flight probe"
             );
-            // Release the held 404 response and wait for all 3 probes to finish cleanly.
-            let _ = release_404_tx.send(());
-            let finish_deadline = Instant::now() + Duration::from_secs(5);
-            while Instant::now() < finish_deadline {
-                let _ = crate::launcher::poll(&mut r17_http, &mut tx);
-                let _ = crate::workspace::poll(&mut r17_http, 3.0, &mut tx);
-                if r17_http
+            // Deliver the controlled completion for ses_probe_inflight deterministically.
+            let _ = r17_http
+                .workspace
+                .as_ref()
+                .unwrap()
+                .restored_draft_checks
+                .0
+                .try_send(crate::workspace::state::drafts::RestoredProbeResult {
+                    scope: scope_http,
+                    id: "ses_probe_inflight".into(),
+                    connection_generation: conn_gen_http,
+                    backend_base: address.clone(),
+                    started_epoch: r17_http
+                        .workspace
+                        .as_ref()
+                        .unwrap()
+                        .restored_draft_presence_epoch
+                        .load(std::sync::atomic::Ordering::SeqCst),
+                    absence: Some(Some(codenomad_client::catalog::SessionAbsence::NotFound)),
+                });
+            let _ = crate::workspace::poll(&mut r17_http, 3.0, &mut tx);
+            assert!(
+                r17_http
                     .workspace
                     .as_ref()
                     .unwrap()
                     .restored_draft_in_flight
                     .is_empty()
-                    && probed.lock().unwrap().len() >= 3
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+            );
         });
         let _ = stop.send(());
         let _ = server.join();
@@ -3891,7 +3912,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         assert_eq!(
             seen_probes,
             vec!["ses_probe_200", "ses_probe_403", "ses_probe_404"],
-            "paginated Reply::Opened must probe each unlisted restored key once without starvation, cancellation, or duplication"
+            "paginated Reply::Opened must probe each unlisted restored key once without starvation, cancellation, or duplicating in-flight probes"
         );
         let Tab::Workspace(after_t2) = &r17_http.workspace.as_ref().unwrap().entries[2].saved
         else {
@@ -3903,6 +3924,13 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                 .iter()
                 .any(|(k, v)| crate::workspace::is_local_draft_id(k) && v == "recover me 404"),
             "404 probe must recover the draft into a local key"
+        );
+        assert!(
+            after_t2
+                .drafts
+                .iter()
+                .any(|(k, v)| crate::workspace::is_local_draft_id(k) && v == "controlled inflight"),
+            "controlled in-flight 404 probe must recover cleanly after surviving sibling open"
         );
         assert_eq!(
             after_t2.drafts.get("ses_probe_403").map(String::as_str),
@@ -4335,7 +4363,17 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                 let header = String::from_utf8_lossy(&bytes);
                 let line = header.lines().next().unwrap_or("").to_string();
                 let path = line.split_whitespace().nth(1).unwrap_or("");
-                let (status, body) = if let Some(id) =
+                let (status, body) = if path == "/api/meta" {
+                    (
+                        200,
+                        r#"{"apiContract":1,"serverId":"trial-server","capabilities":[]}"#.into(),
+                    )
+                } else if path == "/api/workspaces" {
+                    (
+                        200,
+                        r#"[{"id":"ws-batch","location":{"directory":"/fixture"}}]"#.into(),
+                    )
+                } else if let Some(id) =
                     path.strip_prefix("/workspaces/ws-batch/instance/api/session/")
                 {
                     probed_srv.lock().unwrap().push(id.to_owned());
@@ -4482,23 +4520,31 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                     .is_empty(),
                 "no probe may start while authentication_required is armed"
             );
-            // Reauthenticate: clear authentication_required, advance connection_generation, resume.
+            // Reauthenticate through the real launcher::connect -> launcher::poll ->
+            // apply_connected path, with stale pre-reauth listed_sessions containing
+            // ses_reauth_404 so we also prove pre-reauth listings are NOT trusted on the new
+            // connection generation.
             {
                 let l = s.screen.launcher_mut().unwrap();
-                l.authentication_required = false;
-                l.connection_generation = l.connection_generation.wrapping_add(1);
+                l.project = Some(proj.clone());
+                l.listed_sessions.insert("ses_reauth_404".into());
+                l.password = TextEdit::new("");
             }
-            let mut live_ids = std::collections::HashSet::new();
-            live_ids.insert(proj.id.clone());
-            crate::workspace::resume_restored_draft_checks(&mut s, Some(&live_ids));
+            crate::launcher::connect(&mut s, &mut tx);
             let reauth_deadline = Instant::now() + Duration::from_secs(5);
             while Instant::now() < reauth_deadline {
+                let _ = crate::launcher::poll(&mut s, &mut tx);
                 let _ = crate::workspace::poll(&mut s, 2.0, &mut tx);
-                if s.workspace
-                    .as_ref()
-                    .unwrap()
-                    .restored_draft_in_flight
-                    .is_empty()
+                let reauthenticated = s
+                    .screen
+                    .launcher()
+                    .is_some_and(|l| !l.authentication_required && !l.pending);
+                if reauthenticated
+                    && s.workspace
+                        .as_ref()
+                        .unwrap()
+                        .restored_draft_in_flight
+                        .is_empty()
                     && probed
                         .lock()
                         .unwrap()
@@ -4509,6 +4555,12 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
+            assert!(
+                s.screen
+                    .launcher()
+                    .is_some_and(|l| !l.authentication_required && l.connection_generation > 0),
+                "reauthentication must complete via real launcher::connect -> apply_connected"
+            );
         });
         let _ = stop.send(());
         let _ = server.join();
@@ -4535,7 +4587,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                 .filter(|id| id.as_str() == "ses_reauth_404")
                 .count(),
             1,
-            "skipped restored draft check must run after reauthentication"
+            "skipped restored draft check must run after reauthentication without trusting pre-reauth listed_sessions"
         );
         let Tab::Workspace(after_t2) = &s.workspace.as_ref().unwrap().entries[2].saved else {
             panic!("tab 2");
@@ -4556,6 +4608,302 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
                 .iter()
                 .any(|(k, v)| crate::workspace::is_local_draft_id(k) && v == "recover after reauth"),
             "reauth resumed 404 probe must recover into local draft"
+        );
+    }
+
+    // 40. R19 Bloquant 1: Maximize genuinely encodable fallback drafts under MAX_STRINGS.
+    // Two tabs each have 1 free slot, two 10-char closed drafts for `ses_s` (5 chars), and 35
+    // UTF-16 units remain: `__no_session_draft__` (20+10=30) would leave only 5 units (keeping 1),
+    // whereas `ses_s` on both tabs takes 15+15=30 <= 35 (keeping BOTH).
+    {
+        let mut a = closed("ses_s", "");
+        a.drafts.clear();
+        a.active_session_id = None;
+        let mut b = closed("ses_s", "");
+        b.drafts.clear();
+        b.occurrence = 1;
+        b.active_session_id = None;
+        // Fill 3 large drafts on A + 1 pad draft on A, plus 23 small drafts across A & B so each
+        // tab has 1 slot left and exactly 35 UTF-16 units remain under MAX_STRINGS.
+        let chunk = "x".repeat(30_000);
+        for i in 0..3 {
+            a.drafts.insert(format!("ses_ba_{i:02}"), chunk.clone());
+        }
+        for i in 3..(crate::workspace::MAX_DRAFTS - 2) {
+            a.drafts.insert(format!("ses_ba_{i:02}"), "a".into());
+        }
+        for i in 0..(crate::workspace::MAX_DRAFTS - 1) {
+            b.drafts.insert(format!("ses_bb_{i:02}"), "b".into());
+        }
+        a.drafts.insert("ses_ba_pad".into(), "p".into());
+        let mut probe_ui = Ui::new();
+        probe_ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(a.clone()), Tab::Workspace(b.clone())],
+            active: Some(0),
+        });
+        let base_units = crate::workspace::snapshot_string_units(&probe_ui.snapshot()).unwrap();
+        let remaining_units = crate::workspace::MAX_STRINGS.saturating_sub(base_units);
+        let extra_pad = remaining_units.saturating_sub(35);
+        a.drafts
+            .insert("ses_ba_pad".into(), "p".repeat(1 + extra_pad));
+
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(a.clone()), Tab::Workspace(b)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.closed = vec![closed("ses_s", "0123456789"), closed("ses_s", "abcdefghij")];
+        ui.closed_restored = vec![Default::default(); 2];
+        ui.closed_derived_from = vec![Default::default(); 2];
+        ui.closed_pending_deleted.push((
+            crate::workspace::state::ProjectScope::from_workspace(&a),
+            "ses_s".into(),
+        ));
+        let snap = ui.snapshot();
+        assert!(crate::workspace::encode(&snap).is_ok());
+        let Tab::Workspace(wa) = &snap.tabs[0] else {
+            panic!("tab A");
+        };
+        let Tab::Workspace(wb) = &snap.tabs[1] else {
+            panic!("tab B");
+        };
+        assert_eq!(
+            wa.drafts.get("ses_s").map(String::as_str),
+            Some("abcdefghij")
+        );
+        assert_eq!(
+            wb.drafts.get("ses_s").map(String::as_str),
+            Some("0123456789")
+        );
+        assert!(!wa.drafts.contains_key(NO_SESSION_DRAFT_ID));
+        assert!(!wb.drafts.contains_key(NO_SESSION_DRAFT_ID));
+    }
+
+    // 41. R19 Moyen 2: Passive catalogue refresh records fresh presence proof so a late 404
+    // started earlier cannot detach the draft of a session shown as present.
+    {
+        let mut s = draft_state();
+        let proj = Project {
+            id: "ws-passive".into(),
+            path: "/fixture".into(),
+        };
+        let mut tab = closed("ses_passive_live", "keep passive");
+        tab.active_session_id = None;
+        let scope = crate::workspace::state::ProjectScope::from_workspace(&tab);
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(tab)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.entries[0].project = Some(proj.clone());
+        let base = s
+            .screen
+            .launcher()
+            .unwrap()
+            .connection
+            .as_ref()
+            .unwrap()
+            .base
+            .clone();
+        let conn_gen = s.screen.launcher().unwrap().connection_generation;
+        let cat_gen = s.screen.launcher().unwrap().catalogue_generation;
+        ui.restored_draft_in_flight
+            .push((scope.clone(), "ses_passive_live".into(), conn_gen));
+        let (out, rx) = codenomad_client::bounded(1);
+        ui.entries[0].catalogue.urgent = true;
+        ui.entries[0].catalogue.request = Some((cat_gen, conn_gen, rx));
+        assert!(
+            out.try_send(Some((
+                codenomad_client::catalog::Sessions {
+                    rows: vec![codenomad_client::catalog::Session {
+                        id: "ses_passive_live".into(),
+                        title: "live".into(),
+                    }],
+                    next: None,
+                },
+                true,
+                true,
+            )))
+            .is_ok()
+        );
+        s.screen.launcher_mut().unwrap().project = Some(proj);
+        s.workspace = Some(ui);
+        let _ = crate::workspace::state::catalogue::poll(&mut s, 1.0, &mut tx);
+        // Now deliver the late 404 probe that started at epoch 0 before passive refresh arrived.
+        let _ = s
+            .workspace
+            .as_ref()
+            .unwrap()
+            .restored_draft_checks
+            .0
+            .try_send(crate::workspace::state::drafts::RestoredProbeResult {
+                scope,
+                id: "ses_passive_live".into(),
+                connection_generation: conn_gen,
+                backend_base: base,
+                started_epoch: 0,
+                absence: Some(Some(codenomad_client::catalog::SessionAbsence::NotFound)),
+            });
+        assert!(
+            !crate::workspace::state::drafts::poll_restored_draft_checks(&mut s),
+            "late 404 must be ignored after fresher passive catalogue refresh listed the session"
+        );
+        let Tab::Workspace(after) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+            panic!("expected workspace");
+        };
+        assert_eq!(
+            after.drafts.get("ses_passive_live").map(String::as_str),
+            Some("keep passive")
+        );
+    }
+
+    // 42. R19 Moyen 3: Per-request started_epoch in a serial probe batch — if key #2 is listed
+    // while key #1 is blocked in-flight, and then key #2 is deleted BEFORE key #2's own probe
+    // starts, key #2 captures the updated presence_epoch at request start so its valid 404 IS
+    // applied and recovers the draft.
+    {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            sync::{Arc, Mutex, mpsc},
+            time::{Duration, Instant},
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = format!("http://{}/", listener.local_addr().unwrap());
+        let (k0_entered_tx, k0_entered_rx) = mpsc::channel::<()>();
+        let k0_entered_tx = Arc::new(Mutex::new(Some(k0_entered_tx)));
+        let (release_k0_tx, release_k0_rx) = mpsc::channel::<()>();
+        let (stop, stopped) = mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            while matches!(stopped.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let mut byte = [0];
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    if socket.read_exact(&mut byte).is_err() {
+                        break;
+                    }
+                    bytes.push(byte[0]);
+                }
+                let header = String::from_utf8_lossy(&bytes);
+                let line = header.lines().next().unwrap_or("").to_string();
+                let (status, body): (u16, String) = if line
+                    .contains("/instance/api/session/ses_ser_0 ")
+                {
+                    if let Some(tx) = k0_entered_tx.lock().unwrap().take() {
+                        let _ = tx.send(());
+                    }
+                    let _ = release_k0_rx.recv_timeout(Duration::from_millis(500));
+                    (
+                        200,
+                        r#"{"data":{"id":"ses_ser_0","title":"ok","location":{"directory":"/fixture"}}}"#
+                            .into(),
+                    )
+                } else if line.contains("/instance/api/session/ses_ser_1 ") {
+                    (
+                        404,
+                        r#"{"_tag":"SessionNotFoundError","sessionID":"ses_ser_1"}"#.into(),
+                    )
+                } else {
+                    (200, r#"{"data":[]}"#.into())
+                };
+                let _ = socket.write_all(
+                    format!(
+                        "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        let mut s = draft_state();
+        s.screen
+            .launcher_mut()
+            .unwrap()
+            .connection
+            .as_mut()
+            .unwrap()
+            .base = address;
+        let proj = Project {
+            id: "ws-serial".into(),
+            path: "/fixture".into(),
+        };
+        let mut tab = closed("ses_ser_0", "keep ser 0");
+        tab.active_session_id = None;
+        tab.drafts
+            .insert("ses_ser_1".into(), "recover ser 1".into());
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(tab)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        s.workspace = Some(ui);
+        let conn = s.screen.launcher().unwrap().connection.clone().unwrap();
+        let empty = std::collections::HashSet::new();
+        crate::platform::block_on(async {
+            crate::workspace::check_restored_draft_sessions(&mut s, &conn, &proj, &empty);
+            let wait_k0 = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < wait_k0 && k0_entered_rx.try_recv().is_err() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            // While ses_ser_0 is in-flight (before ses_ser_1's request starts), ses_ser_1 is listed.
+            let mut present = std::collections::HashSet::new();
+            present.insert("ses_ser_1".into());
+            crate::workspace::note_restored_draft_sessions_present(&mut s, &present);
+            // Release ses_ser_0; ses_ser_1's probe now starts AFTER the listing and receives 404.
+            let _ = release_k0_tx.send(());
+            let finish = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < finish {
+                let _ = crate::workspace::poll(&mut s, 1.0, &mut tx);
+                if s.workspace
+                    .as_ref()
+                    .unwrap()
+                    .restored_draft_in_flight
+                    .is_empty()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        let _ = stop.send(());
+        let _ = server.join();
+        let Tab::Workspace(after) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+            panic!("expected workspace");
+        };
+        assert!(
+            after
+                .drafts
+                .iter()
+                .any(|(k, v)| crate::workspace::is_local_draft_id(k) && v == "recover ser 1"),
+            "valid 404 started AFTER an earlier listing must capture per-request epoch and recover"
         );
     }
 }
