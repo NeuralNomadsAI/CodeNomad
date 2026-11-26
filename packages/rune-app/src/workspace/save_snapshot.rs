@@ -145,18 +145,27 @@ fn select_mixed_tier(
     let keep_budget = sum_whole - excess;
     let dp_stride = keep_budget + 1;
     if eligible.len().saturating_mul(dp_stride) <= max_dp_cells {
-        let mut best: Vec<Option<u128>> = vec![None; dp_stride];
-        best[0] = Some(0);
+        // Pack (marker_score, text_score): 16 bits per tier for retained attachment markers,
+        // and 18 bits per tier for retained text units (MAX_STRINGS < 2^17) to break ties by
+        // priority rank when marker score and total retained weight are equal.
+        let mut best: Vec<Option<(u128, u128)>> = vec![None; dp_stride];
+        best[0] = Some((0, 0));
         let mut choices = vec![0u8; eligible.len() * dp_stride];
         for (row, &item_idx) in eligible.iter().enumerate() {
             let item = &items[item_idx];
             let mixed = item.has_text && item.has_attachment;
             let marker_cost = item.whole_units.saturating_sub(item.text_only_units);
             let full_cost = item.whole_units;
-            // Priority ranks are 0..=6, so 16 bits per tier pack exact lexicographic marker
-            // counts across all priority tiers into one u128.
             let marker_bonus = if item.has_attachment {
                 1u128 << (usize::from(item.priority.min(7)) * 16)
+            } else {
+                0u128
+            };
+            let text_bonus = if item.has_text {
+                (u128::try_from(item.text_only_units)
+                    .unwrap_or(0)
+                    .min((1u128 << 18) - 1))
+                    << (usize::from(item.priority.min(6)) * 18)
             } else {
                 0u128
             };
@@ -167,9 +176,9 @@ fn select_mixed_tier(
                 if mixed
                     && marker_cost > 0
                     && w >= marker_cost
-                    && let Some(prev) = best[w - marker_cost]
+                    && let Some((prev_m, prev_t)) = best[w - marker_cost]
                 {
-                    let candidate = prev.saturating_add(marker_bonus);
+                    let candidate = (prev_m.saturating_add(marker_bonus), prev_t);
                     if current.is_none_or(|cur| candidate > cur) {
                         current = Some(candidate);
                         chosen = 1;
@@ -177,9 +186,12 @@ fn select_mixed_tier(
                 }
                 if full_cost > 0
                     && w >= full_cost
-                    && let Some(prev) = best[w - full_cost]
+                    && let Some((prev_m, prev_t)) = best[w - full_cost]
                 {
-                    let candidate = prev.saturating_add(marker_bonus);
+                    let candidate = (
+                        prev_m.saturating_add(marker_bonus),
+                        prev_t.saturating_add(text_bonus),
+                    );
                     if current.is_none_or(|cur| candidate > cur) {
                         current = Some(candidate);
                         chosen = 2;
@@ -190,7 +202,9 @@ fn select_mixed_tier(
             }
         }
         let mut w = (0..=keep_budget)
-            .filter_map(|weight| best[weight].map(|score| (score, weight)))
+            .filter_map(|weight| {
+                best[weight].map(|(markers, text_prio)| ((markers, weight, text_prio), weight))
+            })
             .max()
             .map(|(_, weight)| weight)
             .unwrap_or(0);
@@ -652,5 +666,66 @@ mod tests {
         );
         assert_eq!(actions[1], MixedAction::TextOnly);
         assert_eq!(actions[2], MixedAction::TextOnly);
+
+        // R11 Moyen 2: Main DP (not just fallback) must tie-break equal marker score and equal
+        // retained weight by priority rank of retained text.
+        // keep_budget = 225: draft 0 (prio 0, 55+60), draft 1 (prio 1, 55+60), draft 2 (prio 1,
+        // 55+10_000), draft 3 (prio 0, standalone marker 100) -> keeps all three 55-unit markers
+        // plus draft 1's prio-1 60-unit text (not draft 0's prio-0 60-unit text).
+        let dp_tie_items = vec![
+            TextItem {
+                tab: 0,
+                id: "ses_p0".into(),
+                priority: 0,
+                text_only_units: 60,
+                whole_units: 115,
+                has_text: true,
+                has_attachment: true,
+            },
+            TextItem {
+                tab: 0,
+                id: "ses_p1".into(),
+                priority: 1,
+                text_only_units: 60,
+                whole_units: 115,
+                has_text: true,
+                has_attachment: true,
+            },
+            TextItem {
+                tab: 0,
+                id: "ses_p1_big".into(),
+                priority: 1,
+                text_only_units: 10_000,
+                whole_units: 10_055,
+                has_text: true,
+                has_attachment: true,
+            },
+            TextItem {
+                tab: 0,
+                id: "ses_p0_att".into(),
+                priority: 0,
+                text_only_units: 100,
+                whole_units: 100,
+                has_text: false,
+                has_attachment: true,
+            },
+        ];
+        let sum_whole: usize = dp_tie_items.iter().map(|it| it.whole_units).sum();
+        let eligible: Vec<usize> = (0..dp_tie_items.len()).collect();
+        let actions = select_mixed_tier(
+            &dp_tie_items,
+            &eligible,
+            sum_whole - 225,
+            super::MAX_DP_CELLS,
+        )
+        .expect("must fit");
+        assert_eq!(actions[0], MixedAction::TextOnly);
+        assert_eq!(
+            actions[1],
+            MixedAction::Keep,
+            "main DP must keep prio-1 text over equal-cost prio-0 text"
+        );
+        assert_eq!(actions[2], MixedAction::TextOnly);
+        assert_eq!(actions[3], MixedAction::DropWhole);
     }
 }

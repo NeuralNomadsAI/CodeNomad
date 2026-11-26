@@ -2442,6 +2442,17 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
     }
     let first_delivered = bound(&mut r10_m1, &backend("ses_r10_order"));
     assert_eq!(first_delivered, "distinct second");
+    // R11 Bloquant: snapshot taken BEFORE D binds must already carry the remaining closed draft
+    // on D so a restart before D binds never loses "distinct first".
+    let snap_before_d = r10_m1.workspace.as_ref().unwrap().snapshot();
+    assert_eq!(
+        match &snap_before_d.tabs[1] {
+            Tab::Workspace(w) => w.drafts.get("ses_r10_order").map(String::as_str),
+            _ => None,
+        },
+        Some("distinct first"),
+        "rearmed sibling D must hold the remaining closed draft in its snapshot before binding"
+    );
     select(&mut r10_m1, "tab-3", &mut tx);
     if let Some(l) = r10_m1.screen.launcher_mut() {
         l.pending = false;
