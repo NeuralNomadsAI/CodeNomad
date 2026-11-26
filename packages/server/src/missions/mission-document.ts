@@ -284,7 +284,10 @@ export function missionDocumentPassageID(doc: Pick<MissionDocument, "projectID" 
 export const missionTombstoneSchema = missionDocumentDeletionIdentitySchema.extend({ version: z.literal(1), id: documentID, projectID: nativeDocumentID,
   projectCanonical: z.string().min(1).max(4096), revision: documentCounter,
   deletedAt: documentTimestamp, timeGeneration: generation,
+  checks: z.array(z.object({ requestID, expectedRevision: documentCounter }).strict()).max(16).optional(),
   creation: missionPreparationCreationSchema.pick({ requestID: true, digest: true, author: true }).optional() }).strict()
+  .refine(value => !value.checks || new Set(value.checks.map(item => item.requestID)).size === value.checks.length
+    && value.checks.every(item => item.expectedRevision < value.revision), "Mission tombstone check receipts invalid")
 export type MissionDocumentTombstone = z.infer<typeof missionTombstoneSchema>
 export const missionTombstoneRegistrySchema = z.object({ version: z.literal(1), revision: documentCounter,
   entries: z.array(z.object({ id: documentID, requestID, deletedAt: documentTimestamp }).strict()).max(MISSION_TOMBSTONE_LIMIT)

@@ -30,4 +30,7 @@ export function missionScheduleView(doc: MissionDocument | MissionDocumentTombst
       pending: operation.pending } : null },
   pending: pending ?? !!(operation?.pending || doc.synchronization || doc.blocked === "unknown") }
 }
-export type MissionScheduleRead = ReturnType<typeof missionScheduleView>
+export type MissionScheduleRead = ReturnType<typeof missionScheduleView> & {
+  checkReceipt?: { id: string; requestID: string; expectedRevision: number; action: "check" }
+  notDispatched?: { missionID: string; requestID: string; expectedRevision: number; action: "check" }
+}

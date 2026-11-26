@@ -402,3 +402,132 @@ test("unqualified tombstone and mismatched receipts never settle a DELETE hold",
   assert.equal((await f.get()).statusCode, 503)
   assert.ok(scheduledMissionHold(f.fence, "msn_owned")); assert.equal(f.state.writes.length, 1)
 })
+
+test("CHECK settles on a qualified compacted tombstone (direct and after lost POST via GET) and rejects malformed tombstones", async t => {
+  const payload = { requestID: "check_compact", expectedRevision: 5, action: "check" as const }
+  const malformed = [
+    { document: null, deleted: true, pending: false },
+    { document: null, deleted: true, pending: false, deletionReceipt: { id: "msn_owned", requestID: "", expectedRevision: 2, deleteManagedSessions: false },
+      checkReceipt: { id: "msn_owned", requestID: "check_compact", expectedRevision: 5, action: "check" } },
+    { document: null, deleted: true, pending: false, deletionReceipt: { id: "msn_owned", requestID: "delete_original", expectedRevision: -1, deleteManagedSessions: false },
+      checkReceipt: { id: "msn_owned", requestID: "check_compact", expectedRevision: 5, action: "check" } },
+    { document: null, deleted: true, pending: false, deletionReceipt: { id: "msn_owned", requestID: "delete_original", expectedRevision: 2, deleteManagedSessions: false } },
+    { document: null, deleted: true, pending: false, deletionReceipt: { id: "msn_owned", requestID: "delete_original", expectedRevision: 2, deleteManagedSessions: false },
+      checkReceipt: { id: "msn_owned", requestID: "other_check", expectedRevision: 5, action: "check" } },
+    { document: null, deleted: true, pending: true, deletionReceipt: { id: "msn_owned", requestID: "delete_original", expectedRevision: 2, deleteManagedSessions: false },
+      checkReceipt: { id: "msn_owned", requestID: "check_compact", expectedRevision: 5, action: "check" } },
+  ]
+  for (const bad of malformed) {
+    const f = await fixture(t)
+    f.state.write = async () => bad
+    assert.equal((await f.post(payload)).statusCode, 503)
+    assert.ok(scheduledMissionHold(f.fence, "msn_owned"))
+    // Tombstones never qualify for partial retry.
+    f.state.read = async () => bad
+    assert.equal((await f.post({ ...payload, retry: true })).statusCode, 503)
+    assert.equal(f.state.writes.length, 1)
+  }
+  const tombstone = {
+    document: null, deleted: true, pending: false,
+    deletionReceipt: { id: "msn_owned", requestID: "delete_original", expectedRevision: 2, deleteManagedSessions: false },
+    checkReceipt: { id: "msn_owned", requestID: "check_compact", expectedRevision: 5, action: "check" as const },
+  }
+  // Direct POST settlement.
+  const fDirect = await fixture(t)
+  fDirect.state.write = async () => tombstone
+  const settled = await fDirect.post(payload)
+  assert.equal(settled.statusCode, 200)
+  assert.deepEqual(settled.json(), tombstone)
+  assert.equal(scheduledMissionHold(fDirect.fence, "msn_owned"), undefined)
+  // Lost POST response recovers via GET without another write.
+  const fLost = await fixture(t)
+  fLost.state.write = async () => { throw new Error("Lost Check ACK after compaction") }
+  assert.equal((await fLost.post(payload)).statusCode, 503)
+  assert.ok(scheduledMissionHold(fLost.fence, "msn_owned"))
+  const deletion = fLost.deleting()
+  fLost.state.read = async input => {
+    assert.equal(input.requestID, "check_compact")
+    return tombstone
+  }
+  const recovered = await fLost.get("msn_owned", "?requestID=check_compact")
+  assert.equal(recovered.statusCode, 200)
+  assert.deepEqual(recovered.json(), tombstone)
+  assert.equal(scheduledMissionHold(fLost.fence, "msn_owned"), undefined)
+  assert.equal(fLost.state.writes.length, 1)
+  await deletion.done
+})
+
+test("concurrent client control against a held request gets a per-attempt schedule-busy (sequential and simultaneous), and borrowed Check paths recover honestly after lost replies", async t => {
+  // 1. Sequential conflict + preflight-shortcut borrowed Check (including lost 200 recovery via GET).
+  const f = await fixture(t)
+  f.state.write = async () => { throw new Error("Lost Play ACK") }
+  assert.equal((await f.post()).statusCode, 503)
+  const originalHold = scheduledMissionHold(f.fence, "msn_owned")!
+  for (const action of ["pause", "stop", "delete"] as const) {
+    const busy = await f.post({ requestID: `second_${action}`, expectedRevision: 0, action, ...(action === "delete" ? { deleteManagedSessions: false } : {}) })
+    assert.equal(busy.statusCode, 409)
+    assert.equal(busy.json().code, "schedule-busy")
+    assert.equal(busy.json().pending, true, "never claims never-applied for a potential replay")
+    assert.equal(busy.json().dispatched, false)
+    assert.equal(busy.json().requestID, `second_${action}`)
+    assert.equal(busy.json().action, action)
+    assert.equal(scheduledMissionHold(f.fence, "msn_owned"), originalHold)
+  }
+  assert.equal(f.state.writes.length, 1)
+  // Original completes before second client Check POST arrives: Check gets 200 with notDispatched (not a fake checkReceipt).
+  f.state.read = async () => f.result()
+  const checked = await f.post({ requestID: "second_check", expectedRevision: 0, action: "check" })
+  assert.equal(checked.statusCode, 200)
+  assert.equal(checked.json().document.control.requestID, control.requestID)
+  assert.equal("checkReceipt" in checked.json(), false)
+  assert.deepEqual(checked.json().notDispatched, { missionID: "msn_owned", requestID: "second_check", expectedRevision: 0, action: "check" })
+  assert.equal(scheduledMissionHold(f.fence, "msn_owned"), undefined)
+  assert.equal(f.state.writes.length, 1)
+  // If that 200 was lost, GET ?requestID=second_check recovers schedule-busy (dispatched:false) without a write.
+  f.state.read = async () => ({ document: null, pending: true })
+  const lostShortcut = await f.get("msn_owned", "?requestID=second_check")
+  assert.equal(lostShortcut.statusCode, 409)
+  assert.equal(lostShortcut.json().code, "schedule-busy")
+  assert.equal(lostShortcut.json().dispatched, false)
+  assert.equal(lostShortcut.json().requestID, "second_check")
+
+  // 2. Dispatched borrowed Check: real native checkReceipt on 200, and exact GET recovery while original hold remains active.
+  const f2 = await fixture(t)
+  f2.state.write = async input => f2.result(input, true)
+  assert.equal((await f2.post()).statusCode, 503)
+  const original = f2.state.writes[0]
+  f2.state.read = async input => {
+    if (input.requestID === "borrowed_check_lost") return { pending: false, document: { id: "msn_owned", revision: 4, control: { requestID: "borrowed_check_lost", expectedRevision: 2, action: "check", pending: false } } }
+    return f2.result(original, true)
+  }
+  f2.state.write = async () => { throw new Error("Lost borrowed Check ACK") }
+  assert.equal((await f2.post({ requestID: "borrowed_check_lost", expectedRevision: 2, action: "check" }, `${f2.url}?requestID=borrowed_check_lost`)).statusCode, 503)
+  assert.equal(f2.state.writes.length, 2)
+  // Exact GET for the dispatched borrowed Check succeeds even while the original Play hold is still active.
+  const borrowedRecovery = await f2.get("msn_owned", "?requestID=borrowed_check_lost")
+  assert.equal(borrowedRecovery.statusCode, 200)
+  assert.equal(borrowedRecovery.json().document.control.requestID, "borrowed_check_lost")
+  assert.ok(scheduledMissionHold(f2.fence, "msn_owned"), "original hold remains intact")
+  // Dispatched borrowed Check that settles original also carries real checkReceipt only when native Check returned pending:false.
+  let settledOriginal = false
+  f2.state.read = async () => f2.result(original, !settledOriginal)
+  f2.state.write = async input => { settledOriginal = true; return f2.result(input, false) }
+  const settledBorrowed = await f2.post({ requestID: "borrowed_check_ok", expectedRevision: 2, action: "check" })
+  assert.equal(settledBorrowed.statusCode, 200)
+  assert.deepEqual(settledBorrowed.json().checkReceipt, { id: "msn_owned", requestID: "borrowed_check_ok", expectedRevision: 2, action: "check" })
+  assert.equal(scheduledMissionHold(f2.fence, "msn_owned"), undefined)
+
+  // 3. Simultaneous overlapping POSTs before either registers a hold: winner dispatches, loser gets 409 schedule-busy (dispatched:false).
+  const f3 = await fixture(t), firstInFlight = deferred<void>(), finishFirst = deferred<unknown>()
+  f3.state.write = async input => { firstInFlight.resolve(); return finishFirst.promise.then(() => f3.result(input)) }
+  const winnerPromise = f3.post({ requestID: "sim_first", expectedRevision: 0, action: "pause" })
+  await firstInFlight.promise
+  const loser = await f3.post({ requestID: "sim_second", expectedRevision: 0, action: "stop" })
+  assert.equal(loser.statusCode, 409)
+  assert.equal(loser.json().code, "schedule-busy")
+  assert.equal(loser.json().dispatched, false)
+  assert.equal(loser.json().requestID, "sim_second")
+  finishFirst.resolve(undefined)
+  assert.equal((await winnerPromise).statusCode, 200)
+  assert.equal(f3.state.writes.length, 1)
+})
