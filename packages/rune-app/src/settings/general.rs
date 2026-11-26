@@ -33,8 +33,7 @@ impl Picker {
 #[derive(Clone, PartialEq, Eq)]
 enum PendingDiscard {
     Mode(&'static str),
-    Palette(String),
-    StepPalette(bool, isize),
+    Palette { dark: bool, key: String },
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -231,7 +230,10 @@ impl Controls {
         };
         if self.draft.borrow().dirty {
             if self.draft.borrow().editing_key != option.key {
-                self.draft.borrow_mut().pending_discard = Some(PendingDiscard::Palette(key));
+                self.draft.borrow_mut().pending_discard = Some(PendingDiscard::Palette {
+                    dark: active_dark,
+                    key,
+                });
             }
             return;
         }
@@ -285,6 +287,17 @@ impl Controls {
                     SavedTarget::BuiltInOrCustom | SavedTarget::Delete => {}
                 }
             }
+        }
+        if let Some(PendingDiscard::Palette { dark, ref key }) = draft.pending_discard
+            && (!draft.dirty
+                || draft.dark != dark
+                || !prefs.palette_options(dark).iter().any(|o| &o.key == key))
+        {
+            draft.pending_discard = None;
+            settled = true;
+        } else if matches!(draft.pending_discard, Some(PendingDiscard::Mode(_))) && !draft.dirty {
+            draft.pending_discard = None;
+            settled = true;
         }
         settled
     }
@@ -871,7 +884,20 @@ impl Controls {
                     }
                 },
             ));
-        } else if let Some(target) = draft.pending_discard.clone() {
+        } else if let Some(target) = draft.pending_discard.clone().filter(|target| {
+            !saving
+                && match target {
+                    PendingDiscard::Mode(_) => prefs.mode_ready(),
+                    PendingDiscard::Palette {
+                        dark: slot_dark,
+                        key,
+                    } => {
+                        *slot_dark == dark
+                            && prefs.palette_ready()
+                            && options.iter().any(|o| &o.key == key)
+                    }
+                }
+        }) {
             let discard_shared = shared.clone();
             layers.push(palette_ui::confirm_dialog(
                 t("settings.configFiles.confirmDiscard.message"),
@@ -884,17 +910,30 @@ impl Controls {
                         return;
                     }
                     let mut prefs = discard_shared.borrow_mut();
-                    controls.discard_draft(&mut prefs);
+                    if controls.busy(&prefs) {
+                        return;
+                    }
                     match &target {
-                        PendingDiscard::Mode(mode) => prefs.set_mode(mode),
-                        PendingDiscard::Palette(key) => {
-                            let options = prefs.palette_options(dark);
-                            if let Some(option) = options.iter().find(|o| &o.key == key) {
-                                controls.apply_option_selection(&mut prefs, option);
+                        PendingDiscard::Mode(mode) => {
+                            if !prefs.mode_ready() {
+                                return;
                             }
+                            controls.discard_draft(&mut prefs);
+                            prefs.set_mode(mode);
                         }
-                        PendingDiscard::StepPalette(slot_dark, step) => {
-                            controls.step_palette(&mut prefs, *slot_dark, *step);
+                        PendingDiscard::Palette {
+                            dark: slot_dark,
+                            key,
+                        } => {
+                            if *slot_dark != dark || !prefs.palette_ready() {
+                                return;
+                            }
+                            let options = prefs.palette_options(*slot_dark);
+                            let Some(option) = options.iter().find(|o| &o.key == key) else {
+                                return;
+                            };
+                            controls.discard_draft(&mut prefs);
+                            controls.apply_option_selection(&mut prefs, option);
                         }
                     }
                 },
@@ -938,9 +977,12 @@ impl Controls {
                 let mut prefs = key_shared.borrow_mut();
                 if (prefs.dark(system_dark) == dark || controls.dirty()) && !controls.busy(&prefs) {
                     if controls.dirty() {
-                        if controls.step_target(&prefs, dark, step).is_some() {
+                        if let Some(option) = controls.step_target(&prefs, dark, step) {
                             controls.draft.borrow_mut().pending_discard =
-                                Some(PendingDiscard::StepPalette(dark, step));
+                                Some(PendingDiscard::Palette {
+                                    dark,
+                                    key: option.key,
+                                });
                         }
                     } else {
                         controls.step_palette(&mut prefs, dark, step);
