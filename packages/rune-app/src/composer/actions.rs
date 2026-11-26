@@ -327,7 +327,7 @@ pub fn can_send(s: &State) -> bool {
         && !crate::git::placement_unconfirmed(s)
         && s.reader
             .as_ref()
-            .is_none_or(|reader| !reader.blocks_send_while(stream_disconnected))
+            .is_none_or(|reader| !reader.blocks_send_while(s.stream_offline))
         && s.composer.sending.is_none()
         && !s.transcript_display.messages.pending()
         && !s.composer.picker.open()
@@ -973,6 +973,12 @@ mod tests {
         assert!(rt.state.conversation_stream_connected);
         assert!(rt.state.reader.as_ref().unwrap().is_resuming());
         assert!(can_send(&rt.state));
+        // Even if agent status HTTP read promotes phase to Ready while upstream SSE is still
+        // down, the armed reader offline_send exception keeps Send eligible (paging stays gated).
+        rt.state.phase = Phase::Ready;
+        rt.state.can_older = true;
+        assert!(can_send(&rt.state));
+        assert!(!crate::chat::reader::older(&mut rt.state));
 
         // Once upstream reports ready, end the offline send exception while keeping
         // resume_pending armed until the replacement ReaderSync installs.
@@ -986,10 +992,6 @@ mod tests {
         assert!(rt.state.stream_offline);
         assert!(rt.state.reader.as_ref().unwrap().is_resuming());
         assert!(rt.state.reader.as_ref().unwrap().blocks_send());
-        assert!(!can_send(&rt.state));
-        // Even if agent status restores Ready before ReaderSync, attached paging stays gated on stream_offline.
-        rt.state.phase = Phase::Ready;
-        rt.state.can_older = true;
         assert!(!can_send(&rt.state));
         assert!(!crate::chat::reader::older(&mut rt.state));
 

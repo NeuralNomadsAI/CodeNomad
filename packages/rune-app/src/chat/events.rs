@@ -734,7 +734,7 @@ fn drain_chat(
         let terminal_phase = matches!(s.phase, Phase::Failed) || {
             #[cfg(target_arch = "wasm32")]
             {
-                matches!(s.phase, Phase::WorkspaceMissing)
+                matches!(s.phase, Phase::WorkspaceMissing | Phase::RestoreFailed)
             }
             #[cfg(not(target_arch = "wasm32"))]
             {

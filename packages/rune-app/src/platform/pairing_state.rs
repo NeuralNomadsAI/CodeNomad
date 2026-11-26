@@ -127,7 +127,14 @@ impl PairingState {
 
     pub(crate) fn take_deferred_check(&mut self) -> bool {
         self.defer_checks = false;
-        std::mem::take(&mut self.deferred_check)
+        if std::mem::take(&mut self.deferred_check) {
+            // The deferred probe dispatches after every signal queued during deferral, so
+            // no redundant trailing recheck is needed for those earlier signals.
+            self.recheck = false;
+            true
+        } else {
+            false
+        }
     }
 
     pub(crate) fn settle(&mut self, result: Option<bool>) -> Settled {
@@ -530,17 +537,22 @@ mod tests {
         );
         assert!(state.should_defer_start());
         assert!(state.deferred_check);
-        // Repeated signals during the same cached poll do not clear the deferred dispatch.
+        // A distinct authenticated signal arriving before dispatch must not leave a redundant
+        // trailing recheck once the deferred probe actually starts after workspace restore.
         assert_eq!(
-            state.on_authenticated_signal(AuthSignal::Conversation(1)),
+            state.on_authenticated_signal(AuthSignal::Launcher(2)),
             Action::None
         );
         assert!(state.deferred_check);
-        // Restoring s.workspace flushes the deferred check once, with defer_checks cleared.
+        assert!(state.recheck);
+        // Restoring s.workspace flushes the deferred check once, clearing defer_checks and recheck.
         assert!(state.take_deferred_check());
         assert!(!state.defer_checks);
         assert!(!state.deferred_check);
+        assert!(!state.recheck);
         assert!(!state.should_defer_start());
         assert!(!state.take_deferred_check());
+        // Settling true after the fresh post-restore probe does not spawn a redundant Recheck.
+        assert_eq!(state.settle(Some(true)), Settled::Unchanged);
     }
 }
