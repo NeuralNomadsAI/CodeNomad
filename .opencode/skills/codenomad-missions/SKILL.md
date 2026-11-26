@@ -16,7 +16,7 @@ Prefer ordinary native delegation for bounded work. Use a mission only when the 
 7. Finish through `mission.report({ final: true, ... })` only when the objective is actually met. Retired work never counts as success; retiring does not interrupt admitted native execution, which can finish on its own or be stopped with `mission.interrupt` when eligible; playbook proof requirements still apply. A retired native task takes no coordinator readout; record what it returned under its replacement or in the final report. Admitted retired work settles through its actor's terminal report or an observed native end.
 
 Use `mission.inspect({ catalog: true })` before selecting a native execution profile.
-Use `mission.inspect({ list: true })` to discover all project Missions, including human-created ones; explicit `missionID` reads them from any owned conversation. `project` provides pure bounded native views: `panel` for summaries, cleanup and mission fields; `current`, `current-page` and `current-content` for scheduled passages; `passage` for archived daily results; `sources` for branch, conversation, coordinator and forge discovery. Continue only the returned pages/cursors explicitly. File criteria take relative paths; existing file tools discover them. Project reads preserve work and request identities.
+Use `mission.inspect({ list: true })` to discover all project Missions, including human-created ones; explicit `missionID` reads them from any owned conversation. `project` provides pure bounded native views: `panel` for summaries, cleanup and mission fields; `current`, `current-page` and `current-content` for scheduled passages; `sources` for branch, conversation, coordinator and forge discovery. Continue only the returned pages/cursors explicitly. File criteria take relative paths; existing file tools discover them. Project reads preserve work and request identities.
 Use `mission.inspect({ project: { kind: "playbook", template, taskMode } })` to read the UI's exact steps, roles and full prompts before creation (taskMode defaults to native).
 Use `mission.inspect({ configurations: true })` to list the unique owning backend's saved configurations, including from an owned root outside a mission; pass `configurations: "<id>"` to read one record and its suggested title. Copy the chosen fields explicitly into `prepare` or `start`. For an oversized record, pass its `read` whole and join every slice following `next`; a changed digest requires a fresh read. Invalid or unavailable libraries require recovery, preserving their stored data.
 Copy only `objective`, suggested `title`, `notes`, `template`, `profiles` and `taskMode`;
@@ -92,15 +92,6 @@ positively read partial lifecycle, cleanup or structural-edit receipt.
 reads that preparation without Play. `configure` accepts eligible immediate/schedule
 conversion. Use `retry: true` only after positively reading the exact partial
 configuration receipt, preserving every original field.
-For daily documents use `owner: "daily"` with list/read, paused create (`creation`
-contains instructions, clock, profiles, task mode and followed sources), or
-play/pause/resume/stop/run-now/check. Creation takes a stable requestID and no missionID
-or expectedRevision. An exact daily receipt read includes requestID, expectedRevision
-and receiptAction. Only partial Pause/Stop supports explicit original `retry: true`.
-Recover a daily creation with `read`, its original `requestID` and `creation`
-fields alone; an absent receipt stays pending without dispatch. Daily discovery covers
-the project across checkouts; reads, receipts and controls resolve and revalidate
-each schedule's saved execution Location.
 
 `prepare.launch?: { when: [...] }` accepts the editor's ordered criteria: same-kind
 cards are OR, schedule→event is IF, event→schedule is ELSE. Absent, empty or sole

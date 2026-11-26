@@ -75,7 +75,7 @@ for (const delta of [0, 1]) test(`immediate Play remains unknown until exact ori
     },
   }
   const observation: NativePassageObservation = {
-    assertCurrent: f.current, assertScheduleCurrent: f.current, exists: async id => roots.has(id), children: async () => [], requests: async () => false,
+    assertCurrent: f.current, exists: async id => roots.has(id), children: async () => [], requests: async () => false,
     session: async (id, messageID) => ({ id, projectID: "project", directory: f.directory, active: false, inbox: 0,
       suspended: false, runningTools: 0, failed: false, messagePresent: !!messageID && messages.has(messageID) }),
   }

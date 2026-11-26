@@ -8,14 +8,14 @@ import { createMissionContentStore, type MissionBodyRef } from "../../src/stores
 import { TASK_READ_TIMEOUT_MS } from "../../src/lib/mission-task-read-lifetime"
 
 const ref: MissionBodyRef = { instanceId: "fixture", projectID: "project", missionID: "msn_current", selector: { kind: "task", taskKey: "work", field: "brief" },
-  passage: { owner: "daily", projectID: "project", scheduleID: "schedule", passageID: "passage", missionID: "msn_current", digest: "a".repeat(43) } }
+  passage: { owner: "scheduled", projectID: "project", scheduleID: "schedule", passageID: "passage", missionID: "msn_current", digest: "a".repeat(43) } }
 const text = "0123456789", digest = contentDigest(text)
 const slice = (offset: number) => ({ available: true as const, version: 1 as const, projectID: ref.projectID, missionID: ref.missionID, revision: 1,
   content: { ...ref.selector, digest, offset, characters: text.length, text: text.slice(offset, offset + 5), ...(offset === 0 ? { next: 5 } : {}) } })
 const flush = async () => { for (let tick = 0; tick < 30; tick++) await Promise.resolve() }
 
-for (const owner of ["daily", "scheduled"] as const) test(`${owner} a real escaped body cannot succeed after its original 30-second semantic demand deadline`, { timeout: 60_000 }, async t => {
-  const f = await currentPassageFixture(owner), original = globalThis.fetch, brief = "\u0001".repeat(20_000)
+test(`a real escaped body cannot succeed after its original 30-second semantic demand deadline`, { timeout: 60_000 }, async t => {
+  const f = await currentPassageFixture(), original = globalThis.fetch, brief = "\u0001".repeat(20_000)
   let handle: ReturnType<ReturnType<typeof createMissionContentStore>["use"]> | undefined
   try {
     let map = (await f.control.snapshot()).missions[0]
@@ -48,7 +48,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} a real escap
     const atDeadline = handle.state().status
     await delay(3_000)
     const state = handle.state()
-    t.diagnostic(JSON.stringify({ owner, elapsed: performance.now() - started, atDeadline, status: state.status, characters: state.body?.text.length, times }))
+    t.diagnostic(JSON.stringify({ elapsed: performance.now() - started, atDeadline, status: state.status, characters: state.body?.text.length, times }))
     assert.equal(offsets.size, 2, "the producer requires two automatic semantic offsets")
     assert.equal(state.status, "error", "automatic semantic slices must not publish success after the original 30 seconds")
     assert.equal(atDeadline, "error", "the logical demand is parked at the original deadline, before the late second answer")
@@ -62,7 +62,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} a real escap
     assert.equal(handle.state().status, "ready"); assert.equal(handle.state().body?.text, brief)
     assert.ok(operations[2].deadline! > operations[0].deadline!)
     assert.notEqual(operations[2].signal, operations[0].signal)
-  } finally { handle?.release(); globalThis.fetch = original; await f.dispose() }
+  } finally { handle?.release(); globalThis.fetch = original }
 })
 
 for (const mode of ["continuation", "restart", "invalidation"] as const) test(`current automatic ${mode} retains its logical deadline and last-good display`, async t => {
@@ -143,8 +143,8 @@ test("a user extension of a parked current demand admits a fresh operation", asy
   } finally { handle.release() }
 })
 
-for (const owner of ["daily", "scheduled"] as const) for (const trigger of ["reduce", "release"] as const)
-  for (const late of ["success", "failure"] as const) test(`${owner} demand contraction by ${trigger} fences late ${late} and admits a later extension`, async t => {
+for (const trigger of ["reduce", "release"] as const)
+  for (const late of ["success", "failure"] as const) test(`demand contraction by ${trigger} fences late ${late} and admits a later extension`, async t => {
     let clock = 0, resolve!: (value: ReturnType<typeof slice>) => void, reject!: (error: Error) => void
     t.mock.method(performance, "now", () => clock)
     const calls: Array<{ signal: AbortSignal; deadline?: number }> = []
@@ -153,7 +153,7 @@ for (const owner of ["daily", "scheduled"] as const) for (const trigger of ["red
       if (calls.length === 2) return new Promise((yes, no) => { resolve = yes; reject = no })
       return slice(query.offset)
     })
-    const source = { ...ref, passage: { ...ref.passage!, owner } }
+    const source = ref
     const whole = store.use(source, "connection"), prefix = store.use(source, "connection")
     whole.need(Infinity); prefix.need(3)
     try {
@@ -173,8 +173,8 @@ for (const owner of ["daily", "scheduled"] as const) for (const trigger of ["red
     } finally { whole.release(); prefix.release(); resolve?.(slice(5)) }
   })
 
-for (const owner of ["daily", "scheduled"] as const) for (const trigger of ["reduce", "release"] as const)
-  test(`${owner} ${trigger} preserves another consumer's outstanding lifetime`, async t => {
+for (const trigger of ["reduce", "release"] as const)
+  test(`${trigger} preserves another consumer's outstanding lifetime`, async t => {
     let clock = 0, resolve!: (value: ReturnType<typeof slice>) => void
     t.mock.method(performance, "now", () => clock)
     const calls: Array<{ signal: AbortSignal; deadline?: number }> = []
@@ -182,7 +182,7 @@ for (const owner of ["daily", "scheduled"] as const) for (const trigger of ["red
       calls.push({ signal, deadline })
       return query.offset === 0 ? slice(0) : new Promise(yes => { resolve = yes })
     })
-    const source = { ...ref, passage: { ...ref.passage!, owner } }
+    const source = ref
     const a = store.use(source, "connection"), b = store.use(source, "connection")
     a.need(Infinity); b.need(10)
     try {
@@ -195,8 +195,8 @@ for (const owner of ["daily", "scheduled"] as const) for (const trigger of ["red
     } finally { a.release(); b.release(); resolve?.(slice(5)) }
   })
 
-for (const owner of ["daily", "scheduled"] as const) for (const change of ["invalidate", "descriptor", "same-revision-descriptor"] as const)
-  test(`${owner} contraction must retain ${change} revalidation despite an old covered prefix`, async t => {
+for (const change of ["invalidate", "descriptor", "same-revision-descriptor"] as const)
+  test(`contraction must retain ${change} revalidation despite an old covered prefix`, async t => {
     let clock = 0, resolve!: (value: ReturnType<typeof slice>) => void
     t.mock.method(performance, "now", () => clock)
     const calls: Array<{ signal: AbortSignal; deadline?: number }> = []
@@ -204,7 +204,7 @@ for (const owner of ["daily", "scheduled"] as const) for (const change of ["inva
       calls.push({ signal, deadline })
       return query.offset === 0 ? slice(0) : new Promise(yes => { resolve = yes })
     })
-    const source = { ...ref, passage: { ...ref.passage!, owner } }
+    const source = ref
     const whole = store.use(source, "connection"), prefix = store.use(source, "connection")
     whole.need(Infinity); prefix.need(3)
     try {

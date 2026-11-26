@@ -20,7 +20,7 @@ Pide a un agente en cualquier conversación del proyecto, incluido un subagente 
 
 Los agentes pueden consultar todas las Misiones del proyecto, incluidas las tuyas, desde cualquier conversación propia. Las vistas de solo lectura incluyen tareas, resultados, limpieza, ejecuciones programadas y selección de fuentes; consultar nunca inicia ni reintenta trabajo.
 
-También pueden diagnosticar la programación, preparar sus ajustes conservando un OFF explícito, reanudar una edición parcial confirmada con la solicitud original y crear o controlar programaciones diarias.
+También pueden diagnosticar la programación, preparar sus ajustes conservando un OFF explícito y reanudar una edición parcial confirmada con la solicitud original.
 
 **Configuración** carga opcionalmente objetivo, notas, guion, perfiles y sesiones guardados. Su nombre proporciona el título editable. Revisa los campos.
 
@@ -104,12 +104,6 @@ En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conver
 
 Elige **Nuevos commits en una rama local** para seguir una referencia Git local o **Nuevos commits en una rama remota** e introduce el nombre de la rama (por ejemplo, `dev`). La comprobación consulta directamente el repositorio detectado, sin un fetch local. Varios commits entre comprobaciones generan un solo pase.
 
-### Programaciones diarias existentes {#existing-daily-schedules}
-
-Los agentes pueden encontrar y controlar estas programaciones desde cualquier conversación del mismo proyecto, incluso en otro worktree.
-
-Conservan controles y zona. Tras reiniciar el servicio requieren **Reanudar** desde el estado interrumpido. Recuperan el último día válido, no todos los perdidos. La entrada seleccionada permite leer resultados.
-
 ## Árbol y resultados {#tracking}
 
 El chevrón despliega tareas; hacer clic selecciona Misión o tarea. Sus acciones quedan en la cabecera. Sin tareas no hay chevrón. El filtro busca en las entradas cargadas. Las Misiones únicas y recurrentes comparten una lista, con la actividad más reciente primero; una ejecución programada en curso va arriba.
@@ -146,7 +140,7 @@ Con CodeNomad funcionando, los agentes pueden buscar conversaciones guardadas de
 
 ## Cierre y reinicios {#lifetime}
 
-Cerrar CodeNomad no detiene trabajo nativo. Las programaciones nativas activadas funcionan con servicio/equipo disponibles; calendarios sanos se reanudan tras reiniciar el servicio. Pausas, paradas e incertidumbres conservan sus bloqueos. Las entradas diarias existentes requieren Reanudar.
+Cerrar CodeNomad no detiene trabajo nativo. Las programaciones nativas activadas funcionan con servicio/equipo disponibles; calendarios sanos se reanudan tras reiniciar el servicio. Pausas, paradas e incertidumbres conservan sus bloqueos.
 
 Algunas acciones de coordinación y recuperación necesitan el servidor CodeNomad.
 
@@ -154,7 +148,7 @@ Algunas acciones de coordinación y recuperación necesitan el servidor CodeNoma
 
 Pausa puntual deja acabar los pasos actuales sin empezar otros; interrumpir solicita interrupción inmediata. Parar es terminal y requiere confirmación. La pausa de programación cierra futuros inicios y pide interrumpir la pasada actual. Los efectos de herramientas pueden continuar.
 
-Conserva la solicitud original no confirmada: mientras la vista de una programación nativa o el editor estén abiertos, CodeNomad la vuelve a leer automáticamente hasta resolverla y reintenta por sí solo únicamente una preparación parcial exactamente registrada. Usa **Comprobar estado** para controles de Misiones puntuales o programaciones diarias, y **Actualizar mapa de misión** para una creación puntual ordinaria cuando se ofrezcan; no crees una acción sustitutiva. Una programación nativa ofrece **Comprobar estado** en su menú **Más acciones**.
+Conserva la solicitud original no confirmada: mientras la vista de una programación nativa o el editor estén abiertos, CodeNomad la vuelve a leer automáticamente hasta resolverla y reintenta por sí solo únicamente una preparación parcial exactamente registrada. Usa **Comprobar estado** para controles de Misiones puntuales, y **Actualizar mapa de misión** para una creación puntual ordinaria cuando se ofrezcan; no crees una acción sustitutiva. Una programación nativa ofrece **Comprobar estado** en su menú **Más acciones**.
 
 ## Editar, eliminar y limpiar conversaciones {#cleanup}
 

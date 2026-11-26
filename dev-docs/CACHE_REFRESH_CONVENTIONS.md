@@ -52,7 +52,7 @@ share one metadata read carrying the latest title and archive changes observed
 during that read, fenced by newer snapshots.
 Single-row event publications read interruption flags by session ID.
 
-Current daily/native-scheduled passages acquire a source identity before slices and reuse
+Current scheduled passages acquire a source identity before slices and reuse
 the bounded selected-mission inventory owner without directory or finish-counter reads.
 Body keys include that exact passage source. Owner revision fences publication separately
 from frozen execution-source identity, preserving unchanged task/body windows through

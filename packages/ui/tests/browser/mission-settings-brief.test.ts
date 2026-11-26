@@ -8,7 +8,6 @@ import { missionMenuItem, missionToolbar } from "./mission-actions"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-editor-lifetime"
-import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 
 let browser: Browser, url: string
 before(async () => {
@@ -50,9 +49,7 @@ async function setup(page: Page, preferences: "accept" | "reject", initial: Reco
     const request = route.request(), path = new URL(request.url()).pathname, content = missionContentFixture(request.url(), request.method(), [finished])
     if (content) return route.fulfill({ json: content })
     if (request.method() !== "GET") { missionWrites.push(path); return route.abort() }
-    return route.fulfill({ json: path.endsWith("/missions/recurrence")
-      ? recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] })
-      : { available: true, projectID: "project", missions: panelMissions([finished]), generatedAt: 1, discardedEvents: 0 } })
+    return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([finished]), generatedAt: 1, discardedEvents: 0 } })
   })
   await page.goto(url)
   await page.evaluate(async () => {

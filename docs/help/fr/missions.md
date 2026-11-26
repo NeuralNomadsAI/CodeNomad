@@ -20,7 +20,7 @@ Demandez à un agent dans toute conversation du projet, y compris un sous-agent 
 
 Les agents peuvent consulter toutes les Missions du projet, y compris les vôtres, depuis toute conversation possédée. Les vues en lecture seule couvrent tâches, résultats, nettoyage, passages programmés et choix des sources ; consulter ne lance ni ne relance le travail.
 
-Les agents peuvent aussi diagnostiquer la programmation, préparer ses réglages en préservant un OFF explicite, reprendre une modification partielle confirmée avec sa demande d’origine, et créer ou contrôler les programmations quotidiennes.
+Les agents peuvent aussi diagnostiquer la programmation, préparer ses réglages en préservant un OFF explicite et reprendre une modification partielle confirmée avec sa demande d’origine.
 
 **Configuration** charge éventuellement un objectif, des notes, un scénario et des choix d’agents, de modèles et de sessions enregistrés. Son nom fournit le titre modifiable. Vérifiez les champs remplis avant de créer.
 
@@ -114,12 +114,6 @@ Dans **Conversations suivies**, utilisez **Ajouter une conversation** puis chois
 
 Choisissez **Nouveaux commits sur une branche locale** pour suivre une référence Git locale, ou **Nouveaux commits sur une branche distante** et saisissez le nom de la branche (par exemple `dev`). La vérification interroge directement le dépôt distant détecté, sans `git fetch` local. Plusieurs commits entre deux vérifications déclenchent un seul passage.
 
-### Programmations quotidiennes existantes {#existing-daily-schedules}
-
-Les agents peuvent trouver et contrôler ces programmations depuis toute conversation appartenant au même projet, y compris dans un autre worktree.
-
-Les entrées quotidiennes existantes conservent leurs contrôles et leur fuseau. Après un redémarrage du service, elles indiquent **Interrompue** et demandent **Reprendre**. Elles rattrapent le dernier jour admissible plutôt que chaque jour manqué. L’entrée sélectionnée donne accès aux résultats conservés.
-
 ## Suivre l’arbre et lire les résultats {#tracking}
 
 Le chevron déplie ou replie les tâches. Cliquer une ligne sélectionne la Mission ou la tâche ; les actions de cette sélection restent dans l’en-tête. Une Mission sans tâche n’a pas de chevron. **Filtrer les missions** filtre le répertoire chargé. Missions ponctuelles et récurrentes partagent une seule liste, activité la plus récente en premier ; une exécution planifiée en cours passe en tête.
@@ -167,7 +161,7 @@ Lorsque CodeNomad fonctionne, les agents peuvent rechercher les conversations en
 
 ## Fermeture et redémarrages {#lifetime}
 
-Fermer un projet ou CodeNomad n’arrête pas le travail natif OpenCode. Les programmes natifs activés peuvent fonctionner avec CodeNomad fermé tant que le service et l’hôte d’exécution sont disponibles. Un programme natif sain reprend son calendrier après redémarrage du service ; pauses, arrêts et résultats incertains conservent leurs blocages. Les entrées quotidiennes existantes demandent Reprendre après redémarrage.
+Fermer un projet ou CodeNomad n’arrête pas le travail natif OpenCode. Les programmes natifs activés peuvent fonctionner avec CodeNomad fermé tant que le service et l’hôte d’exécution sont disponibles. Un programme natif sain reprend son calendrier après redémarrage du service ; pauses, arrêts et résultats incertains conservent leurs blocages.
 
 Certaines actions de coordination et de récupération nécessitent le serveur CodeNomad.
 
@@ -175,7 +169,7 @@ Certaines actions de coordination et de récupération nécessitent le serveur C
 
 La **Pause** ponctuelle laisse les étapes en cours finir sans en démarrer de nouvelles. **Interrompre maintenant** demande une interruption immédiate. **Arrêter** est définitif et demande confirmation. La pause d’un programme natif ferme les lancements futurs et demande l’interruption du passage en cours. Des effets d’outils peuvent continuer après interruption ; vérifiez les résultats partiels.
 
-Conservez la requête d’origine d’une action non confirmée : tant que la vue d’un programme natif ou l’éditeur est ouvert, CodeNomad la relit automatiquement jusqu’à ce qu’elle soit tranchée et ne relance de lui-même qu’une préparation partielle exactement enregistrée. Utilisez **Vérifier l’état** pour les commandes de Mission ponctuelle ou les entrées quotidiennes, et **Actualiser la carte de mission** pour une création ponctuelle ordinaire lorsqu’ils sont proposés ; ne créez pas de remplacement pour contourner l’incertitude. Un programme natif propose **Vérifier l’état** dans son menu **Plus d'actions**.
+Conservez la requête d’origine d’une action non confirmée : tant que la vue d’un programme natif ou l’éditeur est ouvert, CodeNomad la relit automatiquement jusqu’à ce qu’elle soit tranchée et ne relance de lui-même qu’une préparation partielle exactement enregistrée. Utilisez **Vérifier l’état** pour les commandes de Mission ponctuelle, et **Actualiser la carte de mission** pour une création ponctuelle ordinaire lorsqu’ils sont proposés ; ne créez pas de remplacement pour contourner l’incertitude. Un programme natif propose **Vérifier l’état** dans son menu **Plus d'actions**.
 
 Une Mission ponctuelle interrompue ou échouée peut proposer **Reprendre la mission interrompue**. Les tâches admissibles proposent la récupération d’un rapport manquant.
 

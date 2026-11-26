@@ -335,12 +335,6 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --conditions=browser --import tsx scripts/test-blank-session-cleanup-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # Recurring schedule journeys (~6.5 min) qualify the latest stable
-          # only; the contract fixture qualifies the recurrence graph on both.
-          if ('${{ matrix.runtime }}' -eq 'latest') {
-            node scripts/test-recurring-simple-native.mjs $cli ABCD
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          }
 
       - name: Upload isolated schedule product failure diagnostics
         if: ${{ failure() && env.NATIVE_SCHEDULE_PRODUCT_FIXTURE != '' }}

@@ -3,9 +3,7 @@ import { Location } from "@opencode/schema/location"
 import { Context, Effect, Option, Schema } from "effect"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { currentRecurrenceContent, recurrenceCurrentInput, recurrenceCurrentContentInput, recurrenceCurrentPageInput } from "../../missions/recurrence-current"
-import { recurrencePassage } from "../../missions/recurrence-passage"
 import type { MissionStorage } from "../../missions/journal"
-import { NativeMissionRecurrenceStore } from "../../missions/recurrence-store"
 import { NativeMissionDocumentStore } from "../../missions/mission-document-store"
 import { missionDocumentPassage } from "../../missions/mission-document-passage-storage"
 import { contentDigest } from "../../missions/content-digest"
@@ -17,11 +15,10 @@ import type { MissionCurrentSource } from "../../missions/mission-current-source
 import type { MissionCurrentIdentity } from "../../missions/mission-current-source"
 import type { MissionPanelPageResult } from "../../missions/mission-panel-wire"
 import { MISSION_DOCUMENT_MAX_BYTES } from "../../missions/launch-policy"
-import { RECURRENCE_MAX_BYTES } from "../../missions/recurrence-contract"
 import { nativeInvocation } from "./native-invocation"
 
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
-const OWNER_BYTES = Math.max(MISSION_DOCUMENT_MAX_BYTES, RECURRENCE_MAX_BYTES)
+const OWNER_BYTES = MISSION_DOCUMENT_MAX_BYTES
 const invocation = nativeInvocation(30000)
 const equal = (a: unknown, b: unknown) => canonicalAuthority(a ?? null, OWNER_BYTES) === canonicalAuthority(b ?? null, OWNER_BYTES)
 
@@ -56,36 +53,21 @@ const readCurrent = Effect.fn("missions.readNativeRecurrenceCurrent")(function* 
   }
   const identity = { version: 1 as const, projectID: location.project.id, projectCanonical: location.project.canonical,
     location: { directory: location.directory, ...(location.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }) }, scheduleID: input.scheduleID }
-  let passage: ReturnType<typeof recurrencePassage> | ReturnType<typeof missionDocumentPassage> | undefined
+  let passage: ReturnType<typeof missionDocumentPassage> | undefined
   let source: MissionCurrentSource | undefined, profiles: unknown, taskMode: unknown
-  let ownerRevision = 0
-  let reread!: () => Promise<boolean>
-  if (input.owner === "scheduled") {
-    const store = new NativeMissionDocumentStore({ get: storage.get, compareAndSet: async () => { throw new Error("Current passage is read-only") } }, identity.projectID, identity.projectCanonical)
-    const doc = yield* Effect.promise(() => store.read(input.scheduleID))
-    if (!doc || !("configuration" in doc) || !doc.configuration.roots.some(root => root.directory === location.directory)) throw new Error("Current schedule unavailable")
-    ownerRevision = doc.revision
-    if (doc.pending) {
-      passage = missionDocumentPassage(storage, doc, current)
-      profiles = doc.pending.configuration.profiles; taskMode = doc.pending.configuration.taskMode
-      // Only an admitted passage has a readable Mission; before that, readers see its ID alone.
-      if (doc.pending.admittedAt !== null) source = { owner: "scheduled", projectID: identity.projectID, scheduleID: doc.id, passageID: passage.passageID, missionID: passage.missionID,
-        digest: contentDigest(canonicalAuthority({ pending: doc.pending, configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration,
-          roots: doc.configuration.roots }, OWNER_BYTES)), configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration }
-    }
-    reread = async () => equal(await store.read(doc.id), doc)
-  } else {
-    const store = new NativeMissionRecurrenceStore(storage, identity.projectID, identity.projectCanonical)
-    const doc = yield* Effect.promise(() => store.read(input.scheduleID))
-    if (!doc || !doc.config.roots.some(root => root.directory === location.directory)) throw new Error("Current recurrence schedule unavailable")
-    ownerRevision = doc.revision
-    if (doc.pending) {
-      passage = recurrencePassage(storage, doc, current); profiles = doc.config.profiles; taskMode = doc.config.taskMode
-      if (doc.pending.admission) source = { owner: "daily", projectID: identity.projectID, scheduleID: doc.id, passageID: passage.passageID,
-        missionID: passage.missionID, digest: contentDigest(canonicalAuthority({ pending: doc.pending, profiles: doc.config.profiles, taskMode: doc.config.taskMode, roots: doc.config.roots }, OWNER_BYTES)) }
-    }
-    reread = async () => equal(await store.read(doc.id), doc)
+  const store = new NativeMissionDocumentStore({ get: storage.get, compareAndSet: async () => { throw new Error("Current passage is read-only") } }, identity.projectID, identity.projectCanonical)
+  const doc = yield* Effect.promise(() => store.read(input.scheduleID))
+  if (!doc || !("configuration" in doc) || !doc.configuration.roots.some(root => root.directory === location.directory)) throw new Error("Current schedule unavailable")
+  const ownerRevision = doc.revision
+  if (doc.pending) {
+    passage = missionDocumentPassage(storage, doc, current)
+    profiles = doc.pending.configuration.profiles; taskMode = doc.pending.configuration.taskMode
+    // Only an admitted passage has a readable Mission; before that, readers see its ID alone.
+    if (doc.pending.admittedAt !== null) source = { owner: "scheduled", projectID: identity.projectID, scheduleID: doc.id, passageID: passage.passageID, missionID: passage.missionID,
+      digest: contentDigest(canonicalAuthority({ pending: doc.pending, configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration,
+        roots: doc.configuration.roots }, OWNER_BYTES)), configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration }
   }
+  const reread = async () => equal(await store.read(doc.id), doc)
   if (pageInput && (!source || !equal(pageInput.source, source))) throw new Error("Current passage changed")
   if ("passageID" in input && input.passageID !== passage?.passageID) throw new Error("Current passage changed")
   let answer: unknown

@@ -4,7 +4,6 @@ import { z } from "zod"
 import type { InstanceData } from "../../api-types"
 import { EventBus } from "../../events/bus"
 import { createHttpServer } from "../http-server"
-import { recurrenceCreateSchema } from "../routes/mission-recurrence-create"
 import { InstanceDataSchema } from "../routes/storage"
 
 // Exercise the production routes and global authentication hook without listening
@@ -39,15 +38,9 @@ function fixture(t: TestContext) {
   t.after(() => app.close())
   const put = (payload: unknown, authenticated = true) => app.inject({ method: "PUT", url: "/api/storage/instances/workspace",
     headers: { "content-type": "application/json", ...(authenticated ? { cookie: "fixture=human" } : {}) }, payload: JSON.stringify(payload) })
-  const post = (payload: unknown, authenticated = true) => app.inject({ method: "POST", url: "/api/workspaces/workspace/missions/recurrence",
-    headers: { "content-type": "application/json", ...(authenticated ? { cookie: "fixture=human" } : {}) }, payload: JSON.stringify(payload) })
-  return { app, state, put, post }
+  return { app, state, put }
 }
 
-const profile = { agent: "general", model: { providerID: "provider", id: "model" } }
-const recurrence = { requestID: "bounded_request", instructions: "Review changes", template: "custom", taskMode: "native",
-  clock: { time: "09:30", zone: "UTC" }, watchedConversationIDs: [],
-  profiles: { coordinator: profile, roles: { specialist: profile } } }
 const invalid = Array(65_536).fill(0)
 
 function observeArrayParsing(t: TestContext, ...schemas: z.ZodArray[]) {
@@ -77,41 +70,6 @@ test("bounded Zod collections reject excess entries before parsing their element
     assert.equal(result.success, false)
     assert.equal(visits, 0, "oversized collections must not visit attacker-controlled elements")
   }
-})
-
-test("recurrence rejects oversized and wrongly typed watches before Zod or workspace admission", async t => {
-  const { app, post, state } = fixture(t)
-  const parsing = observeArrayParsing(t, recurrenceCreateSchema.shape.watchedConversationIDs)
-  for (const watchedConversationIDs of [invalid, Array.from({ length: 33 }, (_, i) => `ses_${i}`), null, {}, [0], ["ses_ok", false]]) {
-    const payload = { ...recurrence, watchedConversationIDs }
-    assert.ok(Buffer.byteLength(JSON.stringify(payload)) < app.initialConfig.bodyLimit!)
-    parsing.mock.resetCalls()
-    const response = await post(payload)
-    assert.equal(response.statusCode, 400)
-    assert.deepEqual(response.json(), { error: "Invalid recurrence creation request" })
-    assert.equal(parsing.mock.callCount(), 0, "hostile watch arrays must never enter Zod")
-  }
-  assert.equal(state.workspaceReads, 0)
-  assert.equal(state.nativeCalls, 0)
-  assert.deepEqual(state.writes, [])
-  assert.deepEqual(state.events, [])
-})
-
-test("recurrence keeps the 32-watch schema boundary, optional fields and bounded content validation", async t => {
-  const { post, state } = fixture(t)
-  for (const watchedConversationIDs of [[], Array.from({ length: 32 }, (_, i) => `ses_${i}`)]) {
-    // The fixture's unavailable Location is reached only after request validation.
-    // 32 watches retain the separate whole-input capacity check after ownership.
-    const response = await post({ ...recurrence, watchedConversationIDs })
-    assert.equal(response.statusCode, 404)
-    assert.deepEqual(response.json(), { error: "Workspace unavailable" })
-  }
-  assert.equal(state.workspaceReads, 2, "missing optional title, notes and directory remain accepted")
-  for (const watchedConversationIDs of [undefined, ["ses_duplicate", "ses_duplicate"], [""], ["ses/invalid"], ["x".repeat(241)]]) {
-    assert.equal((await post({ ...recurrence, watchedConversationIDs })).statusCode, 400)
-  }
-  assert.equal(state.workspaceReads, 2)
-  assert.equal(state.nativeCalls, 0)
 })
 
 test("storage rejects invalid histories before Zod and returns bounded schema errors without effects", async t => {
@@ -160,17 +118,12 @@ test("storage preserves string histories, defaults, arbitrary selection keys and
   assert.equal(state.events.length, events, "failed writes never publish")
 })
 
-test("global authentication and recurrence's human gate stay ahead of array validation", async t => {
-  const { put, post, state } = fixture(t)
-  const parsing = observeArrayParsing(t, recurrenceCreateSchema.shape.watchedConversationIDs, InstanceDataSchema.shape.messageHistory.unwrap())
+test("global authentication stays ahead of array validation", async t => {
+  const { put, state } = fixture(t)
+  const parsing = observeArrayParsing(t, InstanceDataSchema.shape.messageHistory.unwrap())
   assert.equal((await put({ messageHistory: invalid }, false)).statusCode, 401)
-  assert.equal((await post({ ...recurrence, watchedConversationIDs: invalid }, false)).statusCode, 401)
   assert.equal(parsing.mock.callCount(), 0)
   state.authEnabled = false
-  const response = await post({ ...recurrence, watchedConversationIDs: invalid })
-  assert.equal(response.statusCode, 401)
-  assert.deepEqual(response.json(), { error: "Human authentication required" })
-  assert.equal(parsing.mock.callCount(), 0)
   assert.equal(state.workspaceReads, 0)
   assert.deepEqual(state.writes, [])
   assert.deepEqual(state.events, [])

@@ -15,10 +15,10 @@ function observe(handle: MissionBodyConsumer) {
   const dispose = createRoot(dispose => { createComputed(() => { const digest = handle.state().body?.digest; if (digest) digests.push(digest) }); return dispose })
   return { digests, dispose }
 }
-async function pending(owner: "daily" | "scheduled", prefixNeed = 3) {
+async function pending(prefixNeed = 3) {
   let value = A, revision = 1, held = false, resolve!: (value: ReturnType<typeof answer>) => void, reject!: (error: Error) => void
   const ref: MissionBodyRef = { instanceId: "fixture", projectID: "project", missionID: "msn_pending", selector: { kind: "mission", field: "notes" },
-    passage: { owner, projectID: "project", scheduleID: "schedule", passageID: "passage", missionID: "msn_pending", digest: "a".repeat(43) } }
+    passage: { owner: "scheduled", projectID: "project", scheduleID: "schedule", passageID: "passage", missionID: "msn_pending", digest: "a".repeat(43) } }
   const answer = (offset: number, text = value, at = revision) => ({ available: true as const, version: 1 as const, projectID: ref.projectID,
     missionID: ref.missionID, revision: at, content: { ...ref.selector, digest: contentDigest(text), offset, characters: text.length,
       text: text.slice(offset, offset + 5), ...(offset === 0 ? { next: 5 } : {}) } })
@@ -42,12 +42,12 @@ async function pending(owner: "daily" | "scheduled", prefixNeed = 3) {
   }
 }
 
-// Keep the review's exact 20-case baseline: six old-code failures and fourteen controls.
-for (const owner of ["daily", "scheduled"] as const) for (const change of ["descriptor", "same-revision", "invalidate", "expired", "valid"] as const)
-  for (const trigger of ["reduce", "release"] as const) test(`${owner} pending baseline ${change}/${trigger}`, async t => {
+// The review's baseline: old-code failures and their controls.
+for (const change of ["descriptor", "same-revision", "invalidate", "expired", "valid"] as const)
+  for (const trigger of ["reduce", "release"] as const) test(`pending baseline ${change}/${trigger}`, async t => {
     let clock = 0
     t.mock.method(performance, "now", () => clock)
-    const f = await pending(owner)
+    const f = await pending()
     try {
       clock = change === "expired" ? 31_000 : 10_000
       if (change === "descriptor" || change === "same-revision") {
@@ -76,11 +76,11 @@ for (const owner of ["daily", "scheduled"] as const) for (const change of ["desc
     } finally { f.dispose(); await flush() }
   })
 
-for (const owner of ["daily", "scheduled"] as const) for (const change of ["descriptor", "same-revision", "invalidate", "mark"] as const)
-  for (const late of ["success", "failure"] as const) test(`${owner} pending need increase and automatic accept/revalidation preserve ${change} after late ${late}`, async t => {
+for (const change of ["descriptor", "same-revision", "invalidate", "mark"] as const)
+  for (const late of ["success", "failure"] as const) test(`pending need increase and automatic accept/revalidation preserve ${change} after late ${late}`, async t => {
     let clock = 0
     t.mock.method(performance, "now", () => clock)
-    const f = await pending(owner, 1)
+    const f = await pending(1)
     try {
       clock = 10_000; f.current()
       if (change === "descriptor" || change === "same-revision") f.prefix.expect({ digest: contentDigest(C), characters: 10 }, change === "descriptor" ? 3 : 2)
@@ -99,10 +99,10 @@ for (const owner of ["daily", "scheduled"] as const) for (const change of ["desc
     } finally { f.dispose(); await flush() }
   })
 
-for (const owner of ["daily", "scheduled"] as const) test(`${owner} an ended operation cannot promote its cached pending value on new user demand`, async t => {
+test(`an ended operation cannot promote its cached pending value on new user demand`, async t => {
   let clock = 0
   t.mock.method(performance, "now", () => clock)
-  const f = await pending(owner, 10)
+  const f = await pending(10)
   let reopened: MissionBodyConsumer | undefined
   try {
     f.whole.release(); f.prefix.release(); assert.equal(f.heldCall.signal.aborted, true)
@@ -127,9 +127,9 @@ async function started(promise: Promise<void>) {
   finally { cancel.abort() }
 }
 
-for (const owner of ["daily", "scheduled"] as const) for (const change of ["descriptor", "same-revision", "invalidate"] as const)
-  for (const trigger of ["reduce", "release", "increase"] as const) test(`${owner} actual reader pending ${change}/${trigger} retains A until header-bound C`, { timeout: 20_000 }, async t => {
-    const f = await currentPassageFixture(owner), original = globalThis.fetch
+for (const change of ["descriptor", "same-revision", "invalidate"] as const)
+  for (const trigger of ["reduce", "release", "increase"] as const) test(`actual reader pending ${change}/${trigger} retains A until header-bound C`, { timeout: 20_000 }, async t => {
+    const f = await currentPassageFixture(), original = globalThis.fetch
     let releaseA!: () => void, releaseB!: () => void, enterA!: () => void, enterB!: () => void
     const gateA = new Promise<void>(resolve => { releaseA = resolve }), gateB = new Promise<void>(resolve => { releaseB = resolve })
     const startedA = new Promise<void>(resolve => { enterA = resolve }), startedB = new Promise<void>(resolve => { enterB = resolve })
@@ -182,7 +182,7 @@ for (const owner of ["daily", "scheduled"] as const) for (const change of ["desc
       else whole.expect(rootC.bodies.notes, change === "same-revision" ? rootB.revision : rootC.revision)
       if (trigger === "reduce") whole.need(pageOne)
       else { whole.release(); if (trigger === "increase") prefix.need(pageOne) }
-      t.diagnostic(JSON.stringify({ owner, change, trigger, oldPrefix: first.text.length, pendingPrefix: pendingOffset, pageTwo, pageOne,
+      t.diagnostic(JSON.stringify({ change, trigger, oldPrefix: first.text.length, pendingPrefix: pendingOffset, pageTwo, pageOne,
         expected: change === "invalidate" ? "invalidated" : dc, display: prefix.state().body?.digest, source: source.digest }))
       assert.equal(prefix.state().body?.digest, da, "the actual page-need helper must never newly publish B under C/invalidation")
       assert.ok(!seen.digests.includes(db)); assert.equal(operations.length, before); assert.equal(operation.signal.aborted, false)
@@ -193,5 +193,5 @@ for (const owner of ["daily", "scheduled"] as const) for (const change of ["desc
       prefix.retry(); await waitFor(() => prefix!.state().body?.digest === dc, "explicit fresh Retry must adopt real C")
       assert.equal(prefix.state().status, "ready"); assert.ok(operations.at(-1)!.deadline! > operation.deadline!)
       assert.notEqual(operations.at(-1)!.signal, operation.signal); assert.ok(!seen.digests.includes(db))
-    } finally { whole?.release(); prefix?.release(); releaseA(); releaseB(); seen?.dispose(); globalThis.fetch = original; await f.dispose(); await flush() }
+    } finally { whole?.release(); prefix?.release(); releaseA(); releaseB(); seen?.dispose(); globalThis.fetch = original; await flush() }
   })

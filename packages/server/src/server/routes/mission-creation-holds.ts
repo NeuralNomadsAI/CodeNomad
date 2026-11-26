@@ -101,15 +101,3 @@ export function holdMissionCreation(fence: WorktreeDeletionFence, binding: Bindi
     get uncertain() { return record.state !== "preparing" && !proven },
   }
 }
-
-/** Only recurrence's exact durable readback may settle its lost transport ACK;
- * ordinary one-shot creation retains its existing hold semantics. */
-export function reconcileRecurrenceCreation(fence: WorktreeDeletionFence, key: string, digest: string): void {
-  const registry = held.get(fence), record = registry?.get(key)
-  if (!record) return
-  if (!key.startsWith("recurrence:") || record.binding.requestDigest !== digest || record.state !== "uncertain") {
-    throw new MissionCreationHoldError("creation-conflict")
-  }
-  registry!.delete(key)
-  record.releasePermit()
-}

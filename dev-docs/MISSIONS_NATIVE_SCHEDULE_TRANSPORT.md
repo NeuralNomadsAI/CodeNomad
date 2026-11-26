@@ -3,7 +3,6 @@
 `native-mission-schedule-runtime.ts` registers the carrier hooks, receiving
 wake/status/admit RPC, Code Mode wake tool, maintenance and fixed business bridge.
 The durable calendar owner and passage engine share project document exclusion.
-The daily document runtime keeps its own admission and control path.
 
 The adapter owns the Code Mode wake program, private calendar facade and own-process
 HTTP hop; the launch policy, document CAS and passage engine own business scheduling.

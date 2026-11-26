@@ -34,8 +34,8 @@ function Fixture() {
   const [active, activate] = createSignal(true)
   Object.assign(window, { passageFixture: { activate, settled: () => {
     (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: {
-      type: "rpc.codenomad.missions.scheduleChanged", id: "native-settlement", created: 2, location: { directory: "/fixture" },
-      data: { scheduleID: "rec_current", revision: 3 } } }])
+      type: "rpc.codenomad.missions.changed", id: "native-settlement", created: 2, location: { directory: "/fixture" },
+      data: { missionID: "msn_current", revision: 3 } } }])
   }, invalidate: (type = "session.execution.started") => {
     (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: {
       type, id: "native-event", created: 1, location: { directory: "/fixture" }, data: {} } }])

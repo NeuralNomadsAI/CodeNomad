@@ -13,12 +13,20 @@ import { readRecurrenceHoldOwner } from "./mission-recurrence-holds"
 import { missionCreationDigest } from "./mission-creation-holds"
 import { holdScheduledMission, scheduledMissionHold, scheduledMissionCreationHold, exactScheduledRefusal, ScheduledHoldError,
   recordUndispatchedCheck, readUndispatchedCheck, type ScheduledHoldBinding } from "./mission-scheduled-holds"
-import type { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { WorkspaceManager } from "../../workspaces/manager"
+import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import type { SettingsService } from "../../settings/service"
+import type { AuthManager } from "../../auth/manager"
+import type { RemoteControlManager } from "../../remote-control/manager"
 import { scheduledMissionProfileSource } from "./mission-scheduled-admission"
 
-export type ScheduledMissionDeps = Parameters<typeof registerMissionRecurrenceCreate>[1] & {
-  workspaceManager: Parameters<typeof registerMissionRecurrenceCreate>[1]["workspaceManager"] & Partial<Pick<WorkspaceManager, "getServicePathStyle">>
+export type ScheduledMissionDeps = {
+  workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation"
+    | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "getServiceWslDistro">
+    & Partial<Pick<WorkspaceManager, "getServicePathStyle">>
+  settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "configYamlPathForAuthority">>
+  auth?: Pick<AuthManager, "isAuthEnabled" | "getSessionFromRequest">; bridgeToken?: string
+  remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">; worktreeDeletionFence?: WorktreeDeletionFence
 }
 type Owned = Awaited<ReturnType<typeof prepareMissionMapMutation>>
 type Scope = Pick<Owned, "client" | "connection" | "workspace" | "base" | "location" | "current" | "refresh">

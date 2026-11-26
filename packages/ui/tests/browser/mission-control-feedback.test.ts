@@ -70,8 +70,6 @@ async function visible(missions: () => MissionMap[], activity?: () => unknown) {
   await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
     const path = new URL(route.request().url()).pathname
     if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "fixture", schedules: [] } })
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "fixture", projectCanonical: "/fixture",
-      location: { directory: "/fixture" }, schedules: [] } })
     if (route.request().method() !== "GET") return route.fallback()
     if (new URL(route.request().url()).searchParams.get("panelSource") === "summaries") counter.reads++
     return route.fulfill({ json: { available: true, projectID: "fixture", missions: panelMissions(missions()), generatedAt: counter.reads, discardedEvents: 0,
@@ -184,8 +182,6 @@ async function navigable(values: MissionMap[]) {
     if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     if (pathname.includes("/instructions/") && request.method() !== "GET") return route.fulfill({ status: 204, body: "" })
-    if (pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: "/fixture",
-      location: { directory: "/fixture" }, schedules: [] } })
     if (pathname.endsWith("/missions")) { counter.reads++; return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(values),
       generatedAt: counter.reads, discardedEvents: 0 } }) }
     const read = missionReadFixture(pathname, request.method(), values)
