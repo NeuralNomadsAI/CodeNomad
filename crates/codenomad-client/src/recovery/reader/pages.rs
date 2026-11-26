@@ -78,22 +78,27 @@ impl Reader {
                             self.frozen_tools.retain(|(id, call), _| {
                                 self.known.contains(id) && !tool_settled(&raw_rows, id, call)
                             });
-                            let before_inbox = self.inbox.len();
-                            self.inbox.retain(|item| !self.known.contains(&item.id));
-                            if self.inbox.len() != before_inbox {
+                            let mut removed = Vec::new();
+                            self.inbox.retain(|item| {
+                                if self.known.contains(&item.id) {
+                                    removed.push(item.id.clone());
+                                    false
+                                } else {
+                                    true
+                                }
+                            });
+                            if !removed.is_empty() {
                                 self.schedule_inbox_sync(Duration::from_millis(100));
-                                let _ = reader_event(
-                                    reading,
-                                    self.generation,
-                                    out,
-                                    wake,
-                                    Event::Inbox {
-                                        items: self.inbox.clone(),
-                                        authoritative: false,
-                                        fence: None,
-                                    },
-                                )
-                                .await;
+                                for id in removed {
+                                    let _ = reader_event(
+                                        reading,
+                                        self.generation,
+                                        out,
+                                        wake,
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(id)),
+                                    )
+                                    .await;
+                                }
                             }
                             if !self.historical
                                 && (reordered || !self.owed_tools.is_empty())
@@ -184,22 +189,27 @@ impl Reader {
             self.frozen_tools.retain(|(id, call), _| {
                 self.known.contains(id) && !tool_settled(&raw_rows, id, call)
             });
-            let before_inbox = self.inbox.len();
-            self.inbox.retain(|item| !self.known.contains(&item.id));
-            if self.inbox.len() != before_inbox {
+            let mut removed = Vec::new();
+            self.inbox.retain(|item| {
+                if self.known.contains(&item.id) {
+                    removed.push(item.id.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            if !removed.is_empty() {
                 self.schedule_inbox_sync(std::time::Duration::from_millis(100));
-                let _ = reader_event(
-                    reading,
-                    self.generation,
-                    out,
-                    wake,
-                    Event::Inbox {
-                        items: self.inbox.clone(),
-                        authoritative: false,
-                        fence: None,
-                    },
-                )
-                .await;
+                for id in removed {
+                    let _ = reader_event(
+                        reading,
+                        self.generation,
+                        out,
+                        wake,
+                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(id)),
+                    )
+                    .await;
+                }
             }
             self.anchored = None;
             self.parked = false;

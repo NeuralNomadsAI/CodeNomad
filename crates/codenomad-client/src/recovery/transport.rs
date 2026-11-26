@@ -262,6 +262,7 @@ pub(crate) async fn run_with_reading(
             Some(Input::Hint(e, v)) if e == epoch && v > reader.fence => {
                 reader.dirty = true;
                 reader.quiet = Instant::now() + Duration::from_millis(100);
+                reader.schedule_inbox_sync(Duration::from_millis(100));
                 if reading.is_none() && !reader.historical {
                     publish(&out, &wake, Event::Reconnecting).await;
                 }
@@ -473,20 +474,18 @@ pub(crate) async fn run_with_reading(
                                         if let Some(existing) =
                                             reader.inbox.iter_mut().find(|row| row.id == item.id)
                                         {
-                                            *existing = item;
+                                            *existing = item.clone();
                                         } else if reader.inbox.len() < crate::inbox::MAX_ITEMS {
-                                            reader.inbox.push(item);
+                                            reader.inbox.push(item.clone());
                                         }
                                         reader_event(
                                             reading,
                                             reader.generation,
                                             &out,
                                             &wake,
-                                            Event::Inbox {
-                                                items: reader.inbox.clone(),
-                                                authoritative: false,
-                                                fence: None,
-                                            },
+                                            Event::InboxDelta(crate::inbox::InboxDelta::Upsert(
+                                                item,
+                                            )),
                                         )
                                         .await;
                                     } else if !reader.historical && reader.inbox_overlap_repairs < 2
@@ -507,20 +506,21 @@ pub(crate) async fn run_with_reading(
                             "session.inbox.delivery.changed" => {
                                 if let Some((inbox_id, delivery)) =
                                     crate::inbox::decode_delivery_changed(&native)
-                                    && let Some(existing) =
-                                        reader.inbox.iter_mut().find(|row| row.id == inbox_id)
                                 {
-                                    existing.delivery = delivery;
+                                    if let Some(existing) =
+                                        reader.inbox.iter_mut().find(|row| row.id == inbox_id)
+                                    {
+                                        existing.delivery = delivery;
+                                    }
                                     reader_event(
                                         reading,
                                         reader.generation,
                                         &out,
                                         &wake,
-                                        Event::Inbox {
-                                            items: reader.inbox.clone(),
-                                            authoritative: false,
-                                            fence: None,
-                                        },
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Delivery {
+                                            id: inbox_id,
+                                            delivery,
+                                        }),
                                     )
                                     .await;
                                 }
@@ -534,17 +534,17 @@ pub(crate) async fn run_with_reading(
                                         reader.generation,
                                         &out,
                                         &wake,
-                                        Event::Inbox {
-                                            items: reader.inbox.clone(),
-                                            authoritative: false,
-                                            fence: None,
-                                        },
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(
+                                            inbox_id.to_owned(),
+                                        )),
                                     )
                                     .await;
                                 }
                                 reader.schedule_inbox_sync(Duration::from_millis(100));
-                                reader.dirty = true;
-                                reader.quiet = Instant::now() + Duration::from_millis(100);
+                                if !reader.parked {
+                                    reader.dirty = true;
+                                    reader.quiet = Instant::now() + Duration::from_millis(100);
+                                }
                             }
                             "session.inbox.cancelled" => {
                                 let inbox_id = crate::inbox::decode_inbox_id(&native);
@@ -557,16 +557,14 @@ pub(crate) async fn run_with_reading(
                                         reader.generation,
                                         &out,
                                         &wake,
-                                        Event::Inbox {
-                                            items: reader.inbox.clone(),
-                                            authoritative: false,
-                                            fence: None,
-                                        },
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(
+                                            inbox_id.to_owned(),
+                                        )),
                                     )
                                     .await;
                                 }
                                 reader.schedule_inbox_sync(Duration::from_millis(100));
-                                if was_known || !reader.historical {
+                                if !reader.parked && (was_known || !reader.historical) {
                                     reader.dirty = true;
                                     reader.quiet = Instant::now() + Duration::from_millis(100);
                                 }
@@ -579,7 +577,7 @@ pub(crate) async fn run_with_reading(
                 if kind == "server.connected" {
                     if reader.active_reader {
                         reader.schedule_inbox_sync(Duration::from_millis(100));
-                        if !reader.historical && v > reader.fence {
+                        if !reader.historical && !reader.parked && v > reader.fence {
                             reader.dirty = true;
                             reader.quiet = Instant::now() + Duration::from_millis(100);
                         }

@@ -136,7 +136,7 @@ impl Reader {
             && !wire.is_stream_closed()
             && !wire.is_placement_changed()
             && self.inbox_flight.is_none()
-            && (!self.dirty || self.historical))
+            && (!self.dirty || self.historical || self.parked))
             .then_some(self.inbox_quiet)
     }
 
@@ -486,24 +486,29 @@ impl Reader {
                     if !reader_event(reading, self.generation, out, wake, event).await {
                         return Ok(Turn::Stop);
                     }
-                    let before_inbox = self.inbox.len();
-                    self.inbox.retain(|item| !self.known.contains(&item.id));
-                    if self.inbox.len() != before_inbox {
+                    let mut removed = Vec::new();
+                    self.inbox.retain(|item| {
+                        if self.known.contains(&item.id) {
+                            removed.push(item.id.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    if !removed.is_empty() {
                         self.schedule_inbox_sync(Duration::from_millis(100));
-                        if !reader_event(
-                            reading,
-                            self.generation,
-                            out,
-                            wake,
-                            Event::Inbox {
-                                items: self.inbox.clone(),
-                                authoritative: false,
-                                fence: None,
-                            },
-                        )
-                        .await
-                        {
-                            return Ok(Turn::Stop);
+                        for id in removed {
+                            if !reader_event(
+                                reading,
+                                self.generation,
+                                out,
+                                wake,
+                                Event::InboxDelta(crate::inbox::InboxDelta::Removed(id)),
+                            )
+                            .await
+                            {
+                                return Ok(Turn::Stop);
+                            }
                         }
                     }
                     if done && reading.is_none() {
@@ -1213,6 +1218,27 @@ mod diagnostic_tests {
             assert_eq!(rx_burst, 0);
             assert!(!rx.is_empty(), "remaining rx inputs must still be queued");
         });
+    }
+
+    #[test]
+    fn parked_dirty_history_reader_still_allows_inbox_deadline() {
+        let mut reader = super::Reader::new();
+        reader.active_reader = true;
+        reader.historical = false;
+        reader.dirty = true;
+        reader.parked = true;
+        reader.inbox_dirty = true;
+        let wire = crate::stream::State::default();
+        wire.upstream
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            reader.next_sync_at(true, &wire, None).is_none(),
+            "parked history reader must not schedule history sync"
+        );
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_some(),
+            "parked dirty history reader must still allow scheduled inbox refresh"
+        );
     }
 }
 

@@ -601,10 +601,15 @@ fn non_editable_attachment_prompt_disables_edit_and_omits_download_and_committed
         assert!(rt.state.transcript_display.queue.is_stale());
         assert!(rt.state.transcript_display.queue.has_error());
 
-        // A non-authoritative SSE delta must NOT clear staleness or re-enable cached actions.
+        // A non-authoritative targeted delta must NOT clear staleness or hide sibling cached rows.
+        ev_tx
+            .try_send(Event::InboxDelta(
+                codenomad_client::inbox::InboxDelta::Removed("m1".into()),
+            ))
+            .unwrap();
         ev_tx
             .try_send(Event::Inbox {
-                items: vec![attachment_item],
+                items: Vec::new(),
                 authoritative: false,
                 fence: None,
             })
@@ -616,6 +621,17 @@ fn non_editable_attachment_prompt_disables_edit_and_omits_download_and_committed
         assert!(
             rt.state.transcript_display.queue.is_stale(),
             "non-authoritative SSE delta must not clear inbox staleness"
+        );
+        assert_eq!(
+            rt.state
+                .transcript_display
+                .queue
+                .items()
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["q-att"],
+            "removing one ID or sending non-authoritative Event::Inbox must preserve still-queued q-att"
         );
         click(&mut rt, "queued-delivery-q-att");
         assert!(

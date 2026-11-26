@@ -534,14 +534,26 @@ fn drain_chat(
                 authoritative,
                 fence,
             } => {
-                if authoritative && fence.as_ref().is_some_and(|f| !f.is_valid()) {
+                if !authoritative || fence.as_ref().is_some_and(|f| !f.is_valid()) {
                     continue;
                 }
                 items.retain(|item| !s.messages.iter().any(|row| row.id == item.id));
                 chat::reader::preserve_anchor_on_inbox_change(s, &items);
-                if !s.transcript_display.queue.set_items(items, authoritative) {
+                if !s.transcript_display.queue.set_items(items) {
                     continue;
                 }
+            }
+            Event::InboxDelta(delta) => {
+                if let codenomad_client::inbox::InboxDelta::Upsert(ref item) = delta
+                    && s.messages.iter().any(|row| row.id == item.id)
+                {
+                    continue;
+                }
+                let Some(next) = s.transcript_display.queue.preview_delta(&delta) else {
+                    continue;
+                };
+                chat::reader::preserve_anchor_on_inbox_change(s, &next);
+                s.transcript_display.queue.apply_preview(next);
             }
             Event::InboxFailed => {
                 s.transcript_display.queue.failed();

@@ -149,19 +149,36 @@ pub(super) async fn read(
         let source = source.clone();
         let quota = quota.clone();
         let watchdog = watchdog.clone();
+        let inbox_version = state
+            .catalogue
+            .is_none()
+            .then(|| state.inbox_version.clone());
+        let workspace = b.workspace.clone();
+        let session = b.session.clone();
         Closure::new(move |event: MessageEvent| {
             watchdog.activity();
             let data = event.data().as_string().unwrap_or_default();
             let frame = if data.len() <= FRAME_LIMIT {
-                if kind == "message"
-                    && let Some(quota) = &quota
-                {
-                    quota.frame(&data);
+                if kind == "message" {
+                    if let Some(quota) = &quota {
+                        quota.frame(&data);
+                    }
+                    if let Some(inbox_version) = &inbox_version {
+                        super::sessions::note_inbox_frame(
+                            &workspace,
+                            &session,
+                            inbox_version,
+                            &data,
+                        );
+                    }
                 }
                 Frame::Data(kind.into(), data)
             } else {
                 if let Some(quota) = &quota {
                     quota.skipped();
+                }
+                if let Some(inbox_version) = &inbox_version {
+                    inbox_version.fetch_add(1, SeqCst);
                 }
                 Frame::Skipped
             };
@@ -187,9 +204,16 @@ pub(super) async fn read(
     let fail_error = overflow.clone();
     let close_error = source.clone();
     let quota_error = quota.clone();
+    let inbox_error = state
+        .catalogue
+        .is_none()
+        .then(|| state.inbox_version.clone());
     let on_error: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
         if let Some(quota) = &quota_error {
             quota.transport(false);
+        }
+        if let Some(inbox_version) = &inbox_error {
+            inbox_version.fetch_add(1, SeqCst);
         }
         close_error.close();
         if tx_error.try_send(Frame::Closed).is_err() {

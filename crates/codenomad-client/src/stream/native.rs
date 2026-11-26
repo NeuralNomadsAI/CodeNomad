@@ -163,7 +163,7 @@ pub(super) async fn read_frames_with<B: AsRef<[u8]>, C: Clock + Clone>(
                         // Waiting on the bounded local channel is UI backpressure, not server silence.
                         let _pause = read_watchdog.pause();
                         if let Err(err) =
-                            receive_chunk(&mut parser, bytes, quota.as_ref(), &send).await
+                            receive_chunk(&mut parser, bytes, quota.as_ref(), b, state, &send).await
                         {
                             return Ok(Err(err));
                         }
@@ -229,20 +229,39 @@ async fn receive_chunk(
     parser: &mut Parser,
     chunk: &[u8],
     quota: Option<&crate::provider_usage::Ingress>,
+    b: &Backend,
+    state: &State,
     frames: &Sender<Parsed>,
 ) -> Result<()> {
     // Bytes already delivered by HTTP may still contain a revocation past the next queued frame.
     let unobserved = quota.map(crate::provider_usage::Ingress::chunk);
     for byte in chunk {
         if let Some(frame) = parser.byte(*byte)? {
-            if let Some(quota) = quota {
-                match &frame {
-                    Parsed::Data(kind, data) if kind.is_empty() || kind == "message" => {
-                        quota.frame(data)
+            match &frame {
+                Parsed::Data(kind, data) if kind.is_empty() || kind == "message" => {
+                    if let Some(quota) = quota {
+                        quota.frame(data);
                     }
-                    Parsed::Skipped => quota.skipped(),
-                    _ => {}
+                    if state.catalogue.is_none() {
+                        super::sessions::note_inbox_frame(
+                            &b.workspace,
+                            &b.session,
+                            &state.inbox_version,
+                            data,
+                        );
+                    }
                 }
+                Parsed::Skipped => {
+                    if let Some(quota) = quota {
+                        quota.skipped();
+                    }
+                    if state.catalogue.is_none() {
+                        state
+                            .inbox_version
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
+                _ => {}
             }
             frames.send(frame).await?;
         }

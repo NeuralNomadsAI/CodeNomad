@@ -5,7 +5,7 @@ use crate::{
 };
 use codenomad_client::{
     Receiver, Sender, bounded,
-    inbox::{InboxUnavailable, QueuedPrompt},
+    inbox::{InboxDelta, InboxUnavailable, QueuedPrompt},
     prompt::Delivery,
 };
 use rune::{El, Tx, col, text};
@@ -98,24 +98,54 @@ impl Queue {
         self.announce_error = None;
     }
 
-    pub(super) fn set_items(&mut self, items: Vec<QueuedPrompt>, authoritative: bool) -> bool {
-        if authoritative {
-            let was_stale = std::mem::replace(&mut self.stale, false);
-            let cleared_read_error = self.error == Some("promptQueue.error.message");
-            if cleared_read_error {
-                self.error = None;
-            }
-            if self.items == items && !was_stale && !cleared_read_error {
-                return false;
-            }
-            self.items = items;
-            return true;
+    pub(super) fn set_items(&mut self, items: Vec<QueuedPrompt>) -> bool {
+        let was_stale = std::mem::replace(&mut self.stale, false);
+        let cleared_read_error = self.error == Some("promptQueue.error.message");
+        if cleared_read_error {
+            self.error = None;
         }
-        if self.items == items {
+        if self.items == items && !was_stale && !cleared_read_error {
             return false;
         }
         self.items = items;
         true
+    }
+
+    pub(super) fn preview_delta(&self, delta: &InboxDelta) -> Option<Vec<QueuedPrompt>> {
+        let mut next = self.items.clone();
+        match delta {
+            InboxDelta::Upsert(item) => {
+                if let Some(existing) = next.iter_mut().find(|row| row.id == item.id) {
+                    if existing == item {
+                        return None;
+                    }
+                    *existing = item.clone();
+                } else if next.len() < codenomad_client::inbox::MAX_ITEMS {
+                    next.push(item.clone());
+                } else {
+                    return None;
+                }
+            }
+            InboxDelta::Delivery { id, delivery } => {
+                let existing = next.iter_mut().find(|row| row.id == *id)?;
+                if existing.delivery == *delivery {
+                    return None;
+                }
+                existing.delivery = *delivery;
+            }
+            InboxDelta::Removed(id) => {
+                let before = next.len();
+                next.retain(|row| row.id != *id);
+                if next.len() == before {
+                    return None;
+                }
+            }
+        }
+        Some(next)
+    }
+
+    pub(super) fn apply_preview(&mut self, items: Vec<QueuedPrompt>) {
+        self.items = items;
     }
 
     pub(super) fn failed(&mut self) {

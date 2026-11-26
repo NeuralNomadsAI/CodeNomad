@@ -156,6 +156,7 @@ pub enum Event {
         authoritative: bool,
         fence: Option<crate::inbox::InboxFence>,
     },
+    InboxDelta(crate::inbox::InboxDelta),
     InboxFailed,
     PromptAcknowledged {
         attempted: String,

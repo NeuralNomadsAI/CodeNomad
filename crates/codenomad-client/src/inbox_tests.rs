@@ -1160,16 +1160,12 @@ fn available_retry_and_queued_sse_cancel_fence_and_resync_inbox() {
                 "data": { "sessionID": "ses", "inboxID": "q1" }
             }));
         }
-        // Wait for the non-authoritative SSE cancellation delta to be observed, then release stale GET.
+        // Wait for the targeted SSE cancellation delta to be observed, then release stale GET.
         recv_reader(&reader_rx, |seen_gen, event| {
             seen_gen == gen1
                 && matches!(
                     event,
-                    Event::Inbox {
-                        items,
-                        authoritative: false,
-                        ..
-                    } if items.is_empty()
+                    Event::InboxDelta(crate::inbox::InboxDelta::Removed(ref id)) if id == "q1"
                 )
         })
         .await;

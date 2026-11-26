@@ -50,6 +50,7 @@ pub(super) async fn dispatch(
         signals.observe(&value);
         return Ok(());
     }
+    sessions::note_inbox_value(&b.workspace, &b.session, &state.inbox_version, &value);
     if value["instanceId"] == b.workspace
         && state.provider_usage.is_some()
         && value["type"] == "instance.event"
@@ -181,5 +182,57 @@ pub(super) fn parse_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
             })
         }
         _ => None,
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, atomic::Ordering::SeqCst};
+    use std::time::Duration;
+
+    #[test]
+    fn server_connected_advances_inbox_version_before_blocked_providers_send() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            backend.workspace = "ws".into();
+            backend.session = "ses".into();
+            let state = Arc::new(State::default());
+            let (out_tx, out_rx) = crate::bounded(1);
+            // Pre-fill channel so routing::dispatch blocks on the ProvidersChanged side send.
+            out_tx.send(Input::Hint(1, 0)).await.unwrap();
+            let before = state.inbox_version.load(SeqCst);
+            let frame = json!({
+                "type": "instance.event",
+                "instanceId": "ws",
+                "event": { "type": "server.connected", "data": {} }
+            })
+            .to_string();
+            let task = {
+                let backend = backend.clone();
+                let out_tx = out_tx.clone();
+                let state = state.clone();
+                tokio::spawn(async move {
+                    dispatch(&backend, 1, &out_tx, &state, "c1", "message", &frame).await
+                })
+            };
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while state.inbox_version.load(SeqCst) == before {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("server.connected must advance inbox_version before awaiting side sends");
+            assert!(
+                !task.is_finished(),
+                "dispatch should still be blocked on the full ProvidersChanged channel"
+            );
+            drop(out_rx);
+            let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+        });
     }
 }

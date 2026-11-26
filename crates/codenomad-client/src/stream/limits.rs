@@ -8,6 +8,7 @@ pub(super) async fn reread(epoch: u64, out: &Sender<Input>, state: &State) -> Re
     if let Some(signals) = &state.catalogue {
         signals.invalidate_all();
     } else {
+        state.inbox_version.fetch_add(1, SeqCst);
         let version = state.version.fetch_add(1, SeqCst) + 1;
         out.send(Input::Hint(epoch, version)).await?;
     }

@@ -2,6 +2,59 @@
 use super::{Backend, Input, Result, Sender, SeqCst, State, children, mission_events};
 use crate::transport::WorkspaceEvent;
 use serde_json::Value;
+use std::sync::atomic::AtomicU64;
+
+/// Advance `inbox_version` synchronously on frame arrival before any routing queue or side send.
+pub(super) fn note_inbox_frame(
+    workspace: &str,
+    session: &str,
+    inbox_version: &AtomicU64,
+    data: &str,
+) {
+    if data.is_empty()
+        || !(data.contains("session.inbox.")
+            || data.contains("instance.eventStatus")
+            || data.contains("server.connected")
+            || data.contains("session.moved")
+            || data.contains("session.deleted")
+            || data.contains("session.revert."))
+    {
+        return;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(data.trim()) {
+        note_inbox_value(workspace, session, inbox_version, &value);
+    }
+}
+
+pub(super) fn note_inbox_value(
+    workspace: &str,
+    session: &str,
+    inbox_version: &AtomicU64,
+    value: &Value,
+) {
+    if value["instanceId"] != workspace {
+        return;
+    }
+    let native = &value["event"];
+    let invalidates = value["type"] == "instance.eventStatus"
+        || (value["type"] == "instance.event"
+            && (native["type"] == "server.connected"
+                || (native["data"]["sessionID"] == session
+                    && native["type"].as_str().is_some_and(|kind| {
+                        kind.starts_with("session.inbox.")
+                            || matches!(
+                                kind,
+                                "session.moved"
+                                    | "session.deleted"
+                                    | "session.revert.staged"
+                                    | "session.revert.cleared"
+                                    | "session.revert.committed"
+                            )
+                    }))));
+    if invalidates {
+        inbox_version.fetch_add(1, SeqCst);
+    }
+}
 
 pub(super) async fn relay(
     b: &Backend,
@@ -12,26 +65,6 @@ pub(super) async fn relay(
 ) -> Result<()> {
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
-    // Bump inbox_version before any awaited side notification so backpressure never hides invalidations.
-    let invalidates_inbox = own
-        && (value["type"] == "instance.eventStatus"
-            || (value["type"] == "instance.event"
-                && (native["type"] == "server.connected"
-                    || (native["data"]["sessionID"] == b.session
-                        && native["type"].as_str().is_some_and(|kind| {
-                            kind.starts_with("session.inbox.")
-                                || matches!(
-                                    kind,
-                                    "session.moved"
-                                        | "session.deleted"
-                                        | "session.revert.staged"
-                                        | "session.revert.cleared"
-                                        | "session.revert.committed"
-                                )
-                        })))));
-    if invalidates_inbox {
-        state.inbox_version.fetch_add(1, SeqCst);
-    }
     if own && value["type"] == "instance.event" {
         children::observe(b, native);
         if let Some(urgent) = native["type"]

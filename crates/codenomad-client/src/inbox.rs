@@ -33,6 +33,14 @@ impl InboxFence {
     }
 }
 
+/// Incremental non-authoritative inbox delta applied to existing UI rows without replacing the list.
+#[derive(Clone, Debug, PartialEq)]
+pub enum InboxDelta {
+    Upsert(QueuedPrompt),
+    Delivery { id: String, delivery: Delivery },
+    Removed(String),
+}
+
 const DEADLINE: Duration = Duration::from_secs(15);
 pub const MAX_ITEMS: usize = 256;
 const MAX_TEXT_BYTES: usize = 256 * 1024;
