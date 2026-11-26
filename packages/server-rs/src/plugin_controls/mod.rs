@@ -72,7 +72,7 @@ fn parse_location_query(raw: Option<&str>) -> Option<ControlLocation> {
             _ => return None,
         }
     }
-    Some(ControlLocation { directory: directory?, workspace_id })
+    Some(ControlLocation::new(directory?, workspace_id))
 }
 
 fn parse_location_object(value: &Value) -> Option<ControlLocation> {
@@ -87,7 +87,7 @@ fn parse_location_object(value: &Value) -> Option<ControlLocation> {
         None => None,
         Some(v) => Some(workspace_id_field(v.as_str()?)?),
     };
-    Some(ControlLocation { directory, workspace_id })
+    Some(ControlLocation::new(directory, workspace_id))
 }
 
 fn parse_scope(value: Option<&Value>) -> Option<Scope> {
@@ -117,7 +117,7 @@ fn parse_activation_mutation(value: &Value) -> Option<ActivationMutationRequest>
         Some(v) if v.as_str() == Some("codenomad") => Some("codenomad".to_owned()),
         Some(_) => return None,
     };
-    Some(ActivationMutationRequest { location, plugin_id, scope, enabled, managed_by })
+    Some(ActivationMutationRequest { location, plugin_id: Some(plugin_id), scope, enabled, managed_by })
 }
 
 fn parse_source_add(value: &Value) -> Option<SourceAddRequest> {
@@ -254,9 +254,7 @@ async fn read_plugin_json_body(
     }
 }
 
-type LocationU16 = (Result<String, ()>, Option<Result<String, ()>>);
-
-fn parse_location_u16(val: &JsVal) -> Option<LocationU16> {
+fn parse_location_u16(val: &JsVal) -> Option<ControlLocation> {
     let entries = val.as_object()?;
     for (k, _) in entries {
         if !eq_ascii(k, "directory") && !eq_ascii(k, "workspaceID") {
@@ -267,18 +265,26 @@ fn parse_location_u16(val: &JsVal) -> Option<LocationU16> {
     if !(1..=32_768).contains(&dir_u16.len()) {
         return None;
     }
-    let dir = String::from_utf16(dir_u16).map_err(|_| ());
-    let ws = match val.get_ascii("workspaceID") {
-        None => None,
+    let (directory, unrepresentable_directory) = match String::from_utf16(dir_u16) {
+        Ok(dir) => (dir, false),
+        // Preserve NUL presence (`422` before daemon check) while keeping `unrepresentable_directory`
+        // distinct so ownership fails closed (`403`) only after daemon availability (`503`).
+        Err(_) => (if dir_u16.contains(&0) { "\0".to_owned() } else { "x".to_owned() }, true),
+    };
+    let (workspace_id, unrepresentable_workspace_id) = match val.get_ascii("workspaceID") {
+        None => (None, false),
         Some(v) => {
             let w = js_trim_u16(v.as_u16_str()?);
             if !(1..=1_024).contains(&w.len()) {
                 return None;
             }
-            Some(String::from_utf16(w).map_err(|_| ()))
+            match String::from_utf16(w) {
+                Ok(id) => (Some(id), false),
+                Err(_) => (None, true),
+            }
         }
     };
-    Some((dir, ws))
+    Some(ControlLocation { directory, workspace_id, unrepresentable_directory, unrepresentable_workspace_id })
 }
 
 fn parse_scope_u16(val: Option<&JsVal>) -> Option<Scope> {
@@ -298,11 +304,6 @@ fn valid_plugin_id_u16(raw: &[u16]) -> bool {
         return false;
     }
     !trimmed.iter().any(|&u| u <= 0x1f || u == 0x7f || u == u16::from(b'*') || u == u16::from(b' '))
-}
-
-fn workspace_exists(app: &Shared, workspace_id: &str) -> bool {
-    let Ok(uuid) = uuid::Uuid::parse_str(workspace_id) else { return false };
-    app.inner.lock().unwrap().workspaces.iter().any(|w| w.id == uuid)
 }
 
 async fn patch_controls(
@@ -338,45 +339,30 @@ async fn patch_controls(
                     return bad_request(INVALID_ACTIVATION);
                 }
             }
-            let Some((dir, ws)) = js.get_ascii("location").and_then(parse_location_u16) else {
+            let Some(location) = js.get_ascii("location").and_then(parse_location_u16) else {
                 return bad_request(INVALID_ACTIVATION);
             };
             let Some(pid_u16) = js.get_ascii("pluginId").and_then(JsVal::as_u16_str) else {
                 return bad_request(INVALID_ACTIVATION);
             };
-            if !valid_plugin_id_u16(pid_u16)
-                || parse_scope_u16(js.get_ascii("scope")).is_none()
-                || js.get_ascii("enabled").and_then(JsVal::as_bool).is_none()
-            {
+            let Some(scope) = parse_scope_u16(js.get_ascii("scope")) else {
                 return bad_request(INVALID_ACTIVATION);
-            }
-            if let Some(mb) = js.get_ascii("managedBy")
-                && !mb.as_u16_str().is_some_and(|u| eq_ascii(u, "codenomad"))
-            {
-                return bad_request(INVALID_ACTIVATION);
-            }
-            let location = match (dir, ws) {
-                (Ok(directory), None) => ControlLocation { directory, workspace_id: None },
-                (Ok(directory), Some(Ok(workspace_id))) => {
-                    ControlLocation { directory, workspace_id: Some(workspace_id) }
-                }
-                _ => {
-                    if !workspace_exists(&app, &workspace_id) {
-                        return (Status::NOT_FOUND, Json(json!({ "error": "Workspace not found" }))).into_response();
-                    }
-                    return (Status::FORBIDDEN, Json(json!({ "error": "Location is not owned by this workspace" })))
-                        .into_response();
-                }
             };
-            // `pluginId` contains an unpaired UTF-16 surrogate: never substitute it for `\u{FFFD}`
-            // (which could target another plugin). Verify daemon/location readiness, then refuse as unavailable.
-            let token = principal_token(principal);
-            match engine::read(&app, &workspace_id, &location, token.as_ref(), None).await {
-                Ok(_) => (
-                    Status::FORBIDDEN,
-                    Json(json!({ "error": "Plugin activation control is unavailable for this plugin" })),
-                )
-                    .into_response(),
+            let Some(enabled) = js.get_ascii("enabled").and_then(JsVal::as_bool) else {
+                return bad_request(INVALID_ACTIVATION);
+            };
+            if !valid_plugin_id_u16(pid_u16) {
+                return bad_request(INVALID_ACTIVATION);
+            }
+            let managed_by = match js.get_ascii("managedBy") {
+                None => None,
+                Some(mb) if mb.as_u16_str().is_some_and(|u| eq_ascii(u, "codenomad")) => Some("codenomad".to_owned()),
+                Some(_) => return bad_request(INVALID_ACTIVATION),
+            };
+            let plugin_id = String::from_utf16(js_trim_u16(pid_u16)).ok();
+            let req = ActivationMutationRequest { location, plugin_id, scope, enabled, managed_by };
+            match engine::mutate(&app, &workspace_id, req, principal_token(principal)).await {
+                Ok(result) => (Status::OK, Json(result)).into_response(),
                 Err(err) => controls_error(err),
             }
         }
@@ -411,10 +397,10 @@ async fn post_source(
                     return bad_request(INVALID_SOURCE);
                 }
             }
-            let Some((dir, ws)) = js.get_ascii("location").and_then(parse_location_u16) else {
+            let Some(location) = js.get_ascii("location").and_then(parse_location_u16) else {
                 return bad_request(INVALID_SOURCE);
             };
-            let Some(_scope) = parse_scope_u16(js.get_ascii("scope")) else {
+            let Some(scope) = parse_scope_u16(js.get_ascii("scope")) else {
                 return bad_request(INVALID_SOURCE);
             };
             let Some(spec_u16) = js.get_ascii("spec").and_then(JsVal::as_u16_str) else {
@@ -430,11 +416,11 @@ async fn post_source(
             if let Err((code, _)) = validate_plugin_source_spec(&spec_str) {
                 return sources_error(SourceError::with_code(Status::UNPROCESSABLE_ENTITY, code.as_str()));
             }
-            if !workspace_exists(&app, &workspace_id) {
-                return sources_error(SourceError::Refused { status: Status::NOT_FOUND, code: None });
+            let req = SourceAddRequest { location, scope, spec: spec_str };
+            match sources::add(&app, &workspace_id, req, principal_token(principal)).await {
+                Ok(result) => (Status::OK, Json(result)).into_response(),
+                Err(err) => sources_error(err),
             }
-            let _ = (dir, ws);
-            sources_error(SourceError::Refused { status: Status::FORBIDDEN, code: None })
         }
     }
 }
@@ -462,7 +448,7 @@ async fn delete_source(
         }
         JsonBody::Utf16(js) => {
             let Some(entries) = js.as_object() else { return bad_request(INVALID_SOURCE) };
-            let Some((dir, ws)) = js.get_ascii("location").and_then(parse_location_u16) else {
+            let Some(location) = js.get_ascii("location").and_then(parse_location_u16) else {
                 return bad_request(INVALID_SOURCE);
             };
             let Some(scope) = parse_scope_u16(js.get_ascii("scope")) else {
@@ -511,18 +497,6 @@ async fn delete_source(
             } else {
                 return bad_request(INVALID_SOURCE);
             }
-            let location = match (dir, ws) {
-                (Ok(directory), None) => ControlLocation { directory, workspace_id: None },
-                (Ok(directory), Some(Ok(workspace_id))) => {
-                    ControlLocation { directory, workspace_id: Some(workspace_id) }
-                }
-                _ => {
-                    if !workspace_exists(&app, &workspace_id) {
-                        return sources_error(SourceError::Refused { status: Status::NOT_FOUND, code: None });
-                    }
-                    return sources_error(SourceError::Refused { status: Status::FORBIDDEN, code: None });
-                }
-            };
             // Reuse the full ordinary DELETE pipeline (queues, daemon availability, scope, ownership,
             // worktree fence, revision confirmation) and fail as `409 stale` at comparison time.
             let req = SourceRemoveRequest {

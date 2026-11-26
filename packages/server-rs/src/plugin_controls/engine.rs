@@ -151,7 +151,8 @@ impl ReadContext {
 
 pub(super) struct ActivationMutationRequest {
     pub(super) location: ControlLocation,
-    pub(super) plugin_id: String,
+    /// `None` when raw JSON `pluginId` contained an unpaired UTF-16 surrogate (never matches any ID).
+    pub(super) plugin_id: Option<String>,
     pub(super) scope: Scope,
     pub(super) enabled: bool,
     pub(super) managed_by: Option<String>,
@@ -381,8 +382,9 @@ pub(super) async fn read_context(
     assert_current(app, &endpoint, &workspace, principal)?;
 
     let foreign = fail(Status::FORBIDDEN, "Location is not owned by this workspace");
-    // OpenCode V2 identifies locations by directory; a retired `workspaceID` selector is never owned.
-    if ws_selector.is_some() {
+    // OpenCode V2 identifies locations by directory; a retired `workspaceID` selector or an
+    // unrepresentable UTF-16 directory is never owned.
+    if ws_selector.is_some() || input.unrepresentable_workspace_id || input.unrepresentable_directory {
         return Err(foreign);
     }
     let resolved = ownership::resolve(app, &workspace, &directory).await.ok_or(foreign.clone())?;
@@ -390,7 +392,7 @@ pub(super) async fn read_context(
     if ownership::resolve(app, &workspace, &location_dir).await.is_none() {
         return Err(foreign);
     }
-    let location = ControlLocation { directory: location_dir, workspace_id: None };
+    let location = ControlLocation::new(location_dir, None);
 
     let query = [("location[directory]", location.directory.as_str())];
     let (config, plugin) = tokio::join!(
@@ -665,7 +667,7 @@ pub(super) async fn mutate(
     ctx.discovery_loaders = compute_discovery_loaders(&ctx).await;
 
     let exact = req.scope == Scope::Global
-        && req.plugin_id == MISSIONS_PLUGIN_ID
+        && req.plugin_id.as_deref() == Some(MISSIONS_PLUGIN_ID)
         && req.managed_by.as_deref() == Some("codenomad");
     let target = ctx.targets[target_idx].clone();
     let load_path = if exact { target.requested_io_path.clone() } else { target.io_path.clone() };
@@ -686,7 +688,10 @@ pub(super) async fn mutate(
     )
     .snapshot;
 
-    let control = before.controls.iter().find(|c| c.id == req.plugin_id);
+    let Some(plugin_id) = req.plugin_id.as_deref() else {
+        return Err(fail(Status::FORBIDDEN, "Plugin ID is not present in the authorized inventory"));
+    };
+    let control = before.controls.iter().find(|c| c.id == plugin_id);
     let authorized = control.is_some_and(|c| req.managed_by.as_deref().is_none_or(|m| c.managed_by == Some(m)));
     if !authorized {
         return Err(fail(Status::FORBIDDEN, "Plugin ID is not present in the authorized inventory"));
@@ -700,14 +705,14 @@ pub(super) async fn mutate(
     }
 
     let desired = if req.enabled { ScopeRuleState::Enabled } else { ScopeRuleState::Disabled };
-    let rule = if req.enabled { req.plugin_id.clone() } else { format!("-{}", req.plugin_id) };
+    let rule = if req.enabled { plugin_id.to_owned() } else { format!("-{plugin_id}") };
     let exact_global = |snap: &Snapshot, plugins: &[PluginConfigEntry]| -> bool {
         let deciding = snap
             .configured
             .rules
             .iter()
             .rev()
-            .find(|r| r.scope == ConfigScope::Global && matches_selector(&r.selector, &req.plugin_id));
+            .find(|r| r.scope == ConfigScope::Global && matches_selector(&r.selector, plugin_id));
         deciding.is_some_and(|r| {
             r.path.as_deref().is_some_and(|p| ctx.style.same(p, &target.path))
                 && plugins.get(r.entry_index).and_then(PluginConfigEntry::as_str) == Some(rule.as_str())
@@ -736,7 +741,7 @@ pub(super) async fn mutate(
             &before,
             &target.path,
             req.scope,
-            &req.plugin_id,
+            plugin_id,
             ctx.style,
         )
     } else {
@@ -778,11 +783,11 @@ pub(super) async fn mutate(
         let through = evaluated.documents.iter().filter(|d| d.scope == scope_cfg).map(|d| d.order).max().unwrap_or(pos);
         if cand_rule.is_some()
             && req.enabled
-            && !defined_before(&evaluated.sequence, &req.plugin_id, pos, plugins.len() - 1, None)
+            && !defined_before(&evaluated.sequence, plugin_id, pos, plugins.len() - 1, None)
         {
             continue;
         }
-        if enabled_through(&evaluated.sequence, &req.plugin_id, through) != req.enabled {
+        if enabled_through(&evaluated.sequence, plugin_id, through) != req.enabled {
             continue;
         }
         if exact && !exact_global(&evaluated.snapshot, &plugins) {
@@ -795,9 +800,9 @@ pub(super) async fn mutate(
     let Some((remove_indexes, append_rule, snapshot)) = chosen else {
         return Err(fail(Status::FORBIDDEN, "OpenCode's plugin order cannot reach this state without a package spec"));
     };
-    let disable_rule = format!("-{}", req.plugin_id);
+    let disable_rule = format!("-{plugin_id}");
     let updated =
-        replace_plugin_control_rules(&doc, &remove_indexes, &[&req.plugin_id, &disable_rule], append_rule.as_deref())
+        replace_plugin_control_rules(&doc, &remove_indexes, &[plugin_id, &disable_rule], append_rule.as_deref())
             .map_err(mapped)?;
 
     let app_commit = app.clone();

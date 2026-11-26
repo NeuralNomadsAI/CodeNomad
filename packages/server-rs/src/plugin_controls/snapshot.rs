@@ -26,6 +26,18 @@ pub(super) struct ControlLocation {
     pub(super) directory: String,
     #[serde(rename = "workspaceID", skip_serializing_if = "Option::is_none")]
     pub(super) workspace_id: Option<String>,
+    /// Raw JSON `location.directory` contained an unpaired UTF-16 surrogate (never substituted).
+    #[serde(skip)]
+    pub(super) unrepresentable_directory: bool,
+    /// Raw JSON `location.workspaceID` was present and contained an unpaired UTF-16 surrogate.
+    #[serde(skip)]
+    pub(super) unrepresentable_workspace_id: bool,
+}
+
+impl ControlLocation {
+    pub(super) fn new(directory: String, workspace_id: Option<String>) -> Self {
+        Self { directory, workspace_id, unrepresentable_directory: false, unrepresentable_workspace_id: false }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

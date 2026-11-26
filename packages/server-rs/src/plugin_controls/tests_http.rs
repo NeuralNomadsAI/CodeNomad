@@ -659,7 +659,7 @@ async fn plugin_sources_add_remove_dependent_rules_stale_and_timeout() {
         &h.app,
         &h.workspace_id,
         super::sources::SourceAddRequest {
-            location: super::snapshot::ControlLocation { directory: project.clone(), workspace_id: None },
+            location: super::snapshot::ControlLocation::new(project.clone(), None),
             scope: crate::opencode_settings::Scope::Global,
             spec: "slow-pkg@1.0.0".into(),
         },
@@ -901,6 +901,60 @@ async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fa
         .await
         .unwrap();
     assert_eq!(foreign_del.status(), Status::FORBIDDEN);
+
+    // Lone surrogate in `workspaceID` still checks daemon availability (`503`) before ownership (`403`).
+    h.app.inner.lock().unwrap().workspaces[0].status = "starting";
+    let unavail_patch = h
+        .client
+        .patch(h.url("/plugin-controls"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(format!(
+            r#"{{"location":{{"directory":{},"workspaceID":"\uD800"}},"pluginId":"acme.plugin","scope":"global","enabled":false}}"#,
+            serde_json::to_string(&project).unwrap()
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unavail_patch.status(), Status::SERVICE_UNAVAILABLE);
+    let unavail_del = h
+        .client
+        .delete(h.url("/plugin-sources"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(format!(
+            r#"{{"location":{{"directory":{},"workspaceID":"\uD800"}},"scope":"global","target":"acme@1.0.0","entryIndex":0,"expectedRevision":"{}"}}"#,
+            serde_json::to_string(&project).unwrap(),
+            "a".repeat(64)
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unavail_del.status(), Status::SERVICE_UNAVAILABLE);
+    let unavail_post = h
+        .client
+        .post(h.url("/plugin-sources"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(format!(
+            r#"{{"location":{{"directory":{},"workspaceID":"\uD800"}},"scope":"global","spec":"acme@1.0.0"}}"#,
+            serde_json::to_string(&project).unwrap()
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unavail_post.status(), Status::SERVICE_UNAVAILABLE);
+    h.app.inner.lock().unwrap().workspaces[0].status = "ready";
+    let ready_ws_del = h
+        .client
+        .delete(h.url("/plugin-sources"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(format!(
+            r#"{{"location":{{"directory":{},"workspaceID":"\uD800"}},"scope":"global","target":"acme@1.0.0","entryIndex":0,"expectedRevision":"{}"}}"#,
+            serde_json::to_string(&project).unwrap(),
+            "a".repeat(64)
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ready_ws_del.status(), Status::FORBIDDEN);
     h.mock.lock().unwrap().runtime.clear();
 
     // 2. Seed reviewed integration catalog (native `fixture` with Git prefix + api `mail`).
@@ -1088,7 +1142,7 @@ async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fa
         &h.app,
         &Uuid::new_v4().to_string(),
         super::sources::SourceAddRequest {
-            location: super::snapshot::ControlLocation { directory: project.clone(), workspace_id: None },
+            location: super::snapshot::ControlLocation::new(project.clone(), None),
             scope: crate::opencode_settings::Scope::Global,
             spec: "fresh-pkg@1.0.0".into(),
         },
