@@ -28,30 +28,23 @@ test("bare paths link exactly the files that exist", { timeout: 60_000 }, async 
     await page.waitForFunction(() => (window as any).fixture.rendered() > 0)
 
     // Existing files convert: prose, bare file name, absolute-inside-root and CJK-adjacent.
-    await page.waitForFunction(() => (window as any).fixture.count("src/app.ts") === 4)
-    await page.waitForFunction(() => (window as any).fixture.count("README.md") === 3)
-    await page.waitForFunction(() => (window as any).fixture.count("/fixture-root/README.md") === 2)
+    await page.waitForFunction(() => (window as any).fixture.count("src/app.ts") === 3)
+    await page.waitForFunction(() => (window as any).fixture.count("README.md") === 1)
+    await page.waitForFunction(() => (window as any).fixture.count("/fixture-root/README.md") === 1)
 
-    // A path whose file name contains CJK letters links as one integral path,
-    // and a bare CJK file name converts too; a connector glued between two
-    // paths falls back to linking both. Backticked paths link inside inline
-    // code, and fenced code blocks stay literal. Exposed trailing punctuation
-    // trims off a recovered piece, a degenerate boundary reading falls back
-    // to the token's own segments, a URL with a non-ASCII path stays whole
-    // (its suffix never links the same-named local file), and a
-    // single-letter-colon prefix splits like a scheme so the absolute path
-    // after it converts.
-    await page.waitForFunction(() => (window as any).fixture.count("docs/算法工作台MVP-design.md") === 2)
-    await page.waitForFunction(() => (window as any).fixture.count("设计.md") === 1)
-    await page.waitForFunction(() => (window as any).fixture.count("脚本/启动") === 1)
-    await page.waitForFunction(() => (window as any).fixture.count("项目/v2/启动") === 1)
-    await page.waitForFunction(() => (window as any).fixture.count("/fixture-root/README.md") === 2)
+    // An inline code span converts as one exact, unambiguous path candidate:
+    // its whole content, including CJK letters and hyphen-glued segments.
+    await page.waitForFunction(() => (window as any).fixture.count("docs/算法工作台MVP-design.md") === 1)
     await page.waitForFunction(() => (window as any).fixture.count("前端-v2/run-测试") === 1)
 
-    // An inline-code span is one exact reference: a missing CJK-named span and
-    // a URL-shaped span never fall back to linking the same-named local file.
+    // A missing span, a URL-shaped span, a fragment-bearing span and a
+    // percent-escaped span never link — not even a same-named local file that
+    // exists (`README.md` at the root, `docs/issue` in the docs directory).
     assert.equal(await page.evaluate(() => (window as any).fixture.count("docs/不存在README.md")), 0)
-    assert.equal(await page.evaluate(() => (window as any).fixture.count("README.md")), 3)
+    assert.equal(await page.evaluate(() => (window as any).fixture.count("docs/issue#42.md")), 0)
+    assert.equal(await page.evaluate(() => (window as any).fixture.count("docs/%E7%AE%97.md")), 0)
+    assert.equal(await page.evaluate(() => (window as any).fixture.count("README.md")), 1)
+    assert.equal(await page.evaluate(() => (window as any).fixture.count("docs/issue")), 0)
 
     // Missing files, directories, worktree escapes and prose false positives never convert.
     assert.equal(await page.evaluate(() => (window as any).fixture.count("src/gone.ts")), 0)
@@ -59,26 +52,28 @@ test("bare paths link exactly the files that exist", { timeout: 60_000 }, async 
     assert.equal(await page.evaluate(() => (window as any).fixture.count("/etc/passwd")), 0)
     assert.equal(await page.evaluate(() => (window as any).fixture.count("and/or")), 0)
 
-    // The hand-written markdown link keeps its own anchor; inline code gains a
-    // link while fenced code blocks stay plain text.
+    // The hand-written markdown link keeps its own anchor; inline code gains
+    // a link while fenced code blocks stay plain text.
     assert.equal(await page.evaluate(() => (window as any).fixture.count("./README.md")), 1)
     assert.equal(await page.evaluate(() => (window as any).fixture.codeLinks()), 3)
     assert.equal(await page.locator("#main-root pre a").count(), 0)
 
     // Wrapped anchors route like hand-written ones and carry the same hint,
-    // including the ones wrapped inside inline code.
+    // including the ones wrapped inside inline code. The hint comparison
+    // waits for the locale to settle: the provider flips from the default
+    // once the environment locale loads, and the decoration pass follows.
     await page.click('#main-root a[href="src/app.ts"]')
     assert.equal(await page.evaluate(() => (window as any).fixture.target()), "src/app.ts")
     await page.click('#main-root code a[href="src/app.ts"]')
     assert.equal(await page.evaluate(() => (window as any).fixture.target()), "src/app.ts")
     await page.click('#main-root a[href="README.md"]')
     assert.equal(await page.evaluate(() => (window as any).fixture.target()), "README.md")
-    await page.click('#main-root a[href="docs/算法工作台MVP-design.md"]')
-    assert.equal(await page.evaluate(() => (window as any).fixture.target()), "docs/算法工作台MVP-design.md")
     await page.click('#main-root code a[href="docs/算法工作台MVP-design.md"]')
     assert.equal(await page.evaluate(() => (window as any).fixture.target()), "docs/算法工作台MVP-design.md")
-    assert.equal(await page.evaluate(() => (window as any).fixture.title("README.md")),
-      await page.evaluate(() => (window as any).fixture.label("markdown.link.fileOpens")))
+    await page.waitForFunction(() => {
+      const anchor = document.querySelector(`#main-root a[href="${CSS.escape("README.md")}"]`)
+      return anchor?.getAttribute("title") === (window as any).fixture.label("markdown.link.fileOpens")
+    })
   } finally {
     await page.close()
   }
@@ -93,8 +88,13 @@ test("on the local desktop, bare folder paths link too", { timeout: 60_000 }, as
   try {
     await page.goto(url)
     await page.waitForFunction(() => (window as any).fixture?.count("src/inner") === 1)
-    assert.equal(await page.evaluate(() => (window as any).fixture.title("src/inner")),
-      `/fixture-root/src/inner\n${await page.evaluate(() => (window as any).fixture.label("markdown.link.pathOpens"))}`)
+    // The title comparison waits for the locale to settle rather than
+    // sampling the label and the decoration at one possibly-racing instant.
+    await page.waitForFunction(() => {
+      const anchor = document.querySelector(`#main-root a[href="${CSS.escape("src/inner")}"]`)
+      return anchor?.getAttribute("title") ===
+        `/fixture-root/src/inner\n${(window as any).fixture.label("markdown.link.pathOpens")}`
+    })
   } finally {
     await page.close()
   }
@@ -117,7 +117,7 @@ test("a listing that resolves after a re-render wraps the new DOM only", { timeo
     await page.evaluate(() => (window as any).fixture.release())
 
     // The replaced DOM gets its links; the detached first pass stays silent.
-    await page.waitForFunction(() => (window as any).fixture.count("src/app.ts") === 5)
+    await page.waitForFunction(() => (window as any).fixture.count("src/app.ts") === 4)
     assert.equal(await page.evaluate(() => (window as any).fixture.count("src/gone.ts")), 0)
   } finally {
     await page.close()
@@ -132,7 +132,7 @@ test("a file that appears later converts once the cache revalidates", { timeout:
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture))
-    await page.waitForFunction(() => (window as any).fixture.count("src/app.ts") === 4)
+    await page.waitForFunction(() => (window as any).fixture.count("src/app.ts") === 3)
 
     await page.evaluate(() => {
       const fixture = (window as any).fixture
@@ -143,7 +143,7 @@ test("a file that appears later converts once the cache revalidates", { timeout:
     // The initial text already mentions src/gone.ts once; the suffix adds a
     // second mention, and both convert once the fresh listing admits it.
     await page.waitForFunction(() => (window as any).fixture.count("src/gone.ts") === 2)
-    assert.equal(await page.evaluate(() => (window as any).fixture.count("src/app.ts")), 4)
+    assert.equal(await page.evaluate(() => (window as any).fixture.count("src/app.ts")), 3)
   } finally {
     await page.close()
   }

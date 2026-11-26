@@ -32,11 +32,9 @@ serverApi.listWorkspaceFiles = (async (_id: string, relativePath = ".", director
   if (holdListing && !released) await new Promise<void>(resolve => { pendingReleases.push(resolve) })
   if (relativePath === "src") return entries([["app.ts", "file"], ["inner", "directory"],
     ...(includeGone ? ([["gone.ts", "file"]] as Array<[string, string]>) : [])])
-  if (relativePath === "docs") return entries([["算法工作台MVP-design.md", "file"]])
-  if (relativePath === "脚本") return entries([["启动", "file"]])
-  if (relativePath === "项目/v2") return entries([["启动", "file"]])
+  if (relativePath === "docs") return entries([["算法工作台MVP-design.md", "file"], ["issue", "file"]])
   if (relativePath === "前端-v2") return entries([["run-测试", "file"]])
-  if (relativePath === ".") return entries([["README.md", "file"], ["src", "directory"], ["docs", "directory"], ["设计.md", "file"]])
+  if (relativePath === ".") return entries([["README.md", "file"], ["src", "directory"], ["docs", "directory"]])
   if (relativePath === "and") throw new Error("no such directory")
   return []
 }) as typeof serverApi.listWorkspaceFiles
@@ -51,19 +49,12 @@ const initialText = [
   "The fix lives in src/app.ts and src/gone.ts today.",
   "Also see README.md and the old /fixture-root/README.md copy.",
   "Outside the worktree: /etc/passwd. A directory: src/inner.",
-  "Prose keeps and/or unclear; inline code links too: `src/app.ts`.",
+  "Prose keeps and/or unclear; inline code links exactly: `src/app.ts`.",
   "看看src/app.ts吧。",
   "A hand-written [readme](./README.md) keeps its own anchor.",
-  "规格写入 docs/算法工作台MVP-design.md，待确认两项。",
-  "根目录的 设计.md 也是；对比 src/app.ts和README.md 的差异。",
-  "也寫進 `docs/算法工作台MVP-design.md` 了。",
-  "看看README.md.吧。",
-  "跑 脚本/启动 前先读。",
-  "放进 项目/v2/启动 里。",
-  "File:/fixture-root/README.md 也行。",
-  "路徑在 `https://example.com/资料README.md`。",
+  "规格写入 `docs/算法工作台MVP-design.md`。",
   "缺的不連：`docs/不存在README.md`；URL `https://example.test/guide#README.md` 也不連。",
-  "`前端-v2/run-测试` 存在。",
+  "`前端-v2/run-测试` 存在；`docs/issue#42.md` 與 `docs/%E7%AE%97.md` 保持純文字。",
   "```\nsrc/app.ts\n```",
 ].join("\n\n")
 

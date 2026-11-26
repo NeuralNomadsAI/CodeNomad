@@ -6,7 +6,7 @@
 
 import { backendOf } from "../lib/backend-client"
 import { backgroundReads } from "../lib/background-read-queue"
-import { barePathCandidates, inlineCodeCandidates, type BarePathCandidate, type BarePathPiece } from "../lib/markdown-bare-paths"
+import { barePathCandidates, inlineCodeCandidates, type BarePathCandidate } from "../lib/markdown-bare-paths"
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
 import { canOpenLocalPaths } from "../lib/workspace-open"
 import type { SessionLinkBase, SessionLinkTitles } from "./markdown-session-links"
@@ -175,8 +175,7 @@ const walkHits = (container: ParentNode) => {
   for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
     // An inline code span (a `code` ancestor that survived the skip list, so
     // neither fenced `pre` content nor an existing link) is one exact
-    // reference: the wrap pass probes its whole content and never falls back
-    // to split pieces. Prose nodes keep the glue-and-connector grammar.
+    // reference, not prose: it converts through the exact-candidate grammar.
     const inlineCode = (node as Text).parentElement!.closest("code")
     const candidates = inlineCode
       ? inlineCodeCandidates(node.nodeValue ?? "")
@@ -196,12 +195,10 @@ const resolveTarget = (href: string, base: string): ResolvedTarget | undefined =
 /** One existence-gated pass over a rendered markdown container: bare-path
  * candidates that resolve inside the session's worktree and name a linkable entry
  * become anchors the shared click routing and link decoration already
- * serve. A token with non-ASCII letters offers its integral reading first —
- * the whole token as one path with the letters in its name — and falls back
- * to its boundary pieces, which convert independently exactly as the
- * ASCII-only grammar did. The container is walked once to warm the directory
- * cache and walked again after the listings land, so a fallback/final html
- * commit between the two walks can never strand a wrap. Fire-and-forget;
+ * serve. Inline code spans convert through the exact-candidate grammar; prose
+ * text keeps the boundary grammar. The container is walked once to warm the
+ * directory cache and walked again after the listings land, so a fallback/final
+ * html commit between the two walks can never strand a wrap. Fire-and-forget;
  * errors never break rendering. */
 export function linkBarePaths(container: ParentNode, options: LinkBarePathsOptions): void {
   void (async () => {
@@ -209,10 +206,8 @@ export function linkBarePaths(container: ParentNode, options: LinkBarePathsOptio
       const parents = new Set<string>()
       for (const { candidates } of walkHits(container)) {
         for (const candidate of candidates) {
-          for (const piece of candidate.integral ? [candidate.integral, ...candidate.pieces] : candidate.pieces) {
-            const target = resolveTarget(piece.href, options.base.base)
-            if (target) parents.add(target.parent)
-          }
+          const target = resolveTarget(candidate.href, options.base.base)
+          if (target) parents.add(target.parent)
         }
       }
       if (!parents.size || options.signal.aborted || !container.isConnected) return
@@ -225,30 +220,19 @@ export function linkBarePaths(container: ParentNode, options: LinkBarePathsOptio
       // children while the listings were in flight.
       let wrapped = false
       for (const { node, candidates } of walkHits(container)) {
-        const matches: BarePathPiece[] = []
-        for (const candidate of candidates) {
-          if (candidate.integral) {
-            const target = resolveTarget(candidate.integral.href, options.base.base)
-            if (target !== undefined && nameSets.get(target.parent)?.has(target.name)) {
-              matches.push(candidate.integral)
-              continue
-            }
-          }
-          for (const piece of candidate.pieces) {
-            const target = resolveTarget(piece.href, options.base.base)
-            if (target !== undefined && nameSets.get(target.parent)?.has(target.name)) matches.push(piece)
-          }
-        }
+        const matches = candidates
+          .map(candidate => ({ candidate, target: resolveTarget(candidate.href, options.base.base) }))
+          .filter(({ target }) => target !== undefined && nameSets.get(target.parent)?.has(target.name))
+          .sort((left, right) => right.candidate.start - left.candidate.start)
         if (!matches.length) continue
-        matches.sort((left, right) => right.start - left.start)
-        for (const piece of matches) {
-          if (piece.end < node.nodeValue!.length) node.splitText(piece.end)
-          const target = piece.start > 0 ? node.splitText(piece.start) : node
+        for (const { candidate } of matches) {
+          if (candidate.end < node.nodeValue!.length) node.splitText(candidate.end)
+          const target = candidate.start > 0 ? node.splitText(candidate.start) : node
           const anchor = document.createElement("a")
-          anchor.setAttribute("href", piece.href)
+          anchor.setAttribute("href", candidate.href)
           const range = document.createRange()
           range.setStart(target, 0)
-          range.setEnd(target, piece.end - piece.start)
+          range.setEnd(target, candidate.end - candidate.start)
           range.surroundContents(anchor)
         }
         wrapped = true
