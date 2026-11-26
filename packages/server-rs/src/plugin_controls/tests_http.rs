@@ -902,14 +902,15 @@ async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fa
         .unwrap();
     assert_eq!(foreign_del.status(), Status::FORBIDDEN);
 
-    // Lone surrogate in `workspaceID` still checks daemon availability (`503`) before ownership (`403`).
+    // Lone surrogate in `workspaceID` still checks daemon availability (`503`) before ownership (`403`),
+    // including for a `pluginId` containing an internal space.
     h.app.inner.lock().unwrap().workspaces[0].status = "starting";
     let unavail_patch = h
         .client
         .patch(h.url("/plugin-controls"))
         .header(header::CONTENT_TYPE, "application/json")
         .body(format!(
-            r#"{{"location":{{"directory":{},"workspaceID":"\uD800"}},"pluginId":"acme.plugin","scope":"global","enabled":false}}"#,
+            r#"{{"location":{{"directory":{},"workspaceID":"\uD800"}},"pluginId":"acme plugin","scope":"global","enabled":false}}"#,
             serde_json::to_string(&project).unwrap()
         ))
         .send()
@@ -942,6 +943,18 @@ async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fa
         .unwrap();
     assert_eq!(unavail_post.status(), Status::SERVICE_UNAVAILABLE);
     h.app.inner.lock().unwrap().workspaces[0].status = "ready";
+    let ready_ws_patch = h
+        .client
+        .patch(h.url("/plugin-controls"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(format!(
+            r#"{{"location":{{"directory":{},"workspaceID":"\uD800"}},"pluginId":"acme plugin","scope":"global","enabled":false}}"#,
+            serde_json::to_string(&project).unwrap()
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ready_ws_patch.status(), Status::FORBIDDEN);
     let ready_ws_del = h
         .client
         .delete(h.url("/plugin-sources"))

@@ -303,7 +303,7 @@ fn valid_plugin_id_u16(raw: &[u16]) -> bool {
     if !(1..=256).contains(&trimmed.len()) || trimmed[0] == u16::from(b'-') {
         return false;
     }
-    !trimmed.iter().any(|&u| u <= 0x1f || u == 0x7f || u == u16::from(b'*') || u == u16::from(b' '))
+    !trimmed.iter().any(|&u| u <= 0x1f || u == 0x7f || u == u16::from(b'*'))
 }
 
 async fn patch_controls(
