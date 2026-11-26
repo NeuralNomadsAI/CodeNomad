@@ -307,14 +307,10 @@ struct CustomEntry {
     value: String,
 }
 
-fn decode_custom_entry(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    let mut out = String::with_capacity(trimmed.len());
-    let mut chars = trimmed.chars().peekable();
-    let mut in_quotes = false;
+fn try_decode_quoted_entry(trimmed: &str) -> Option<String> {
+    let rest = trimmed.strip_prefix('"')?;
+    let mut out = String::with_capacity(rest.len());
+    let mut chars = rest.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\\'
             && let Some(&next) = chars.peek()
@@ -322,12 +318,37 @@ fn decode_custom_entry(raw: &str) -> String {
         {
             out.push(chars.next().unwrap());
         } else if c == '"' {
-            if in_quotes && chars.peek() == Some(&'"') {
+            if chars.peek() == Some(&'"') {
                 chars.next();
                 out.push('"');
+            } else if chars.peek().is_none() {
+                return Some(out);
             } else {
-                in_quotes = !in_quotes;
+                return None;
             }
+        } else {
+            out.push(c);
+        }
+    }
+    None
+}
+
+fn decode_custom_entry(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Some(decoded) = try_decode_quoted_entry(trimmed) {
+        return decoded;
+    }
+    let mut out = String::with_capacity(trimmed.len());
+    let mut chars = trimmed.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\'
+            && let Some(&next) = chars.peek()
+            && matches!(next, ',' | '\\')
+        {
+            out.push(chars.next().unwrap());
         } else {
             out.push(c);
         }
@@ -342,29 +363,46 @@ fn parse_custom_entries(text: &str) -> Vec<CustomEntry> {
     while pos < bytes.len() {
         let start = pos;
         let mut i = pos;
-        let mut in_quotes = false;
+        while i < bytes.len() && matches!(bytes[i], b' ' | b'\t') {
+            i += 1;
+        }
+        let mut in_quotes = if i < bytes.len() && bytes[i] == b'"' {
+            i += 1;
+            true
+        } else {
+            false
+        };
         while i < bytes.len() {
             let b = bytes[i];
             if b == b'\n' {
                 break;
             }
-            if b == b'\\' && i + 1 < bytes.len() && matches!(bytes[i + 1], b',' | b'"' | b'\\') {
-                i += 2;
-                continue;
-            }
-            if b == b'"' {
-                if in_quotes && i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+            if in_quotes {
+                if b == b'\\' && i + 1 < bytes.len() && matches!(bytes[i + 1], b',' | b'"' | b'\\')
+                {
                     i += 2;
                     continue;
                 }
-                in_quotes = !in_quotes;
+                if b == b'"' {
+                    if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                        i += 2;
+                        continue;
+                    }
+                    in_quotes = false;
+                    i += 1;
+                    continue;
+                }
                 i += 1;
-                continue;
+            } else {
+                if b == b'\\' && i + 1 < bytes.len() && matches!(bytes[i + 1], b',' | b'\\') {
+                    i += 2;
+                    continue;
+                }
+                if b == b',' {
+                    break;
+                }
+                i += 1;
             }
-            if b == b',' && !in_quotes {
-                break;
-            }
-            i += 1;
         }
         let content_end = if i > start && bytes[i - 1] == b'\r' {
             i - 1
@@ -522,7 +560,9 @@ fn collect_choice_provenance(draft: &mut Draft) -> BTreeSet<String> {
 fn collect_hidden_provenance(draft: &mut Draft) -> BTreeSet<String> {
     let mut provenance = std::mem::take(&mut draft.prior_hidden_values);
     if draft.hidden_only {
-        provenance.extend(draft.hidden_multiselect.iter().cloned());
+        if let Some(items) = &draft.hidden_multiselect {
+            provenance.extend(items.iter().cloned());
+        }
         if let Some(val) = draft.hidden_value.as_ref() {
             provenance.insert(val.clone());
         }
@@ -542,7 +582,7 @@ pub struct Draft {
     pub selected: BTreeSet<String>,
     pub preserved_custom: Vec<String>,
     pub preserved_custom_selected: BTreeSet<String>,
-    pub hidden_multiselect: Vec<String>,
+    pub hidden_multiselect: Option<Vec<String>>,
     pub hidden_multiselect_invalid: bool,
     pub declared_options: Option<BTreeSet<String>>,
     pub prior_choice_values: BTreeSet<String>,
@@ -616,7 +656,7 @@ impl Default for Draft {
             selected: BTreeSet::new(),
             preserved_custom: Vec::new(),
             preserved_custom_selected: BTreeSet::new(),
-            hidden_multiselect: Vec::new(),
+            hidden_multiselect: None,
             hidden_multiselect_invalid: false,
             declared_options: None,
             prior_choice_values: BTreeSet::new(),
@@ -663,6 +703,7 @@ fn fresh_draft(field: &Value) -> Draft {
         if hidden {
             if let Some(values) = value.as_array() {
                 let allowed = normalized_options(field);
+                let mut items = Vec::with_capacity(values.len());
                 for entry in values {
                     if let Some(raw) = entry.as_str() {
                         if allowed.iter().any(|opt| opt.value == raw)
@@ -671,11 +712,12 @@ fn fresh_draft(field: &Value) -> Draft {
                             d.prior_choice_values.insert(raw.to_string());
                         }
                         d.prior_hidden_values.insert(raw.to_string());
-                        d.hidden_multiselect.push(raw.to_string());
+                        items.push(raw.to_string());
                     } else {
                         d.hidden_multiselect_invalid = true;
                     }
                 }
+                d.hidden_multiselect = Some(items);
             } else if !value.is_null() {
                 d.hidden_multiselect_invalid = true;
             }
@@ -824,7 +866,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             draft.selected.clear();
                             draft.preserved_custom.clear();
                             draft.preserved_custom_selected.clear();
-                            draft.hidden_multiselect.clear();
+                            draft.hidden_multiselect = None;
                             draft.hidden_multiselect_invalid = false;
                             draft.hidden_value = None;
                             draft.prior_choice_values = choice_provenance;
@@ -952,7 +994,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.selected.clear();
                 draft.preserved_custom.clear();
                 draft.preserved_custom_selected.clear();
-                draft.hidden_multiselect.clear();
+                draft.hidden_multiselect = None;
                 draft.hidden_multiselect_invalid = false;
                 let allowed = normalized_options(field);
                 let allow_custom = field["custom"] == true;
@@ -1000,7 +1042,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.selected.clear();
                 draft.preserved_custom.clear();
                 draft.preserved_custom_selected.clear();
-                draft.hidden_multiselect.clear();
+                draft.hidden_multiselect = None;
                 draft.hidden_multiselect_invalid = false;
                 draft.choice = None;
                 if kind == FieldKind::StringFree {
@@ -1267,8 +1309,20 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                 if d.hidden_multiselect_invalid {
                     return Err(ValidationError::Unsupported);
                 }
+                let Some(raw_items) = d.hidden_multiselect.as_ref() else {
+                    if let Some(m) = min_items
+                        && m > 0
+                    {
+                        return Err(ValidationError::TooFewItems { min: m });
+                    }
+                    return if field["required"] == true {
+                        Err(ValidationError::Required)
+                    } else {
+                        Ok(None)
+                    };
+                };
                 let mut hidden_items = Vec::new();
-                for item in &d.hidden_multiselect {
+                for item in raw_items {
                     if item.encode_utf16().count() > 20_000 {
                         return Err(ValidationError::TooLong { max: 20_000 });
                     }

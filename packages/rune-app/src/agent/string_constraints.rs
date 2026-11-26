@@ -15,23 +15,30 @@ const MAX_AST_NODES: usize = 1024;
 const MAX_COMPILE_WORK: usize = 4096;
 const MAX_CACHE_ENTRIES: usize = 64;
 
-static PATTERN_CACHE: OnceLock<Mutex<HashMap<String, Option<Arc<Pattern>>>>> = OnceLock::new();
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompileError {
+    InvalidSyntax,
+    DeferToServer,
+}
 
-fn compile_cached(src: &str) -> Result<Arc<Pattern>, ()> {
+static PATTERN_CACHE: OnceLock<Mutex<HashMap<String, Result<Arc<Pattern>, CompileError>>>> =
+    OnceLock::new();
+
+fn compile_cached(src: &str) -> Result<Arc<Pattern>, CompileError> {
     let cache = PATTERN_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(map) = cache.lock()
         && let Some(entry) = map.get(src)
     {
-        return entry.clone().ok_or(());
+        return entry.clone();
     }
-    let compiled = Pattern::compile(src).ok().map(Arc::new);
+    let compiled = Pattern::compile(src).map(Arc::new);
     if let Ok(mut map) = cache.lock() {
         if map.len() >= MAX_CACHE_ENTRIES {
             map.clear();
         }
         map.insert(src.to_string(), compiled.clone());
     }
-    compiled.ok_or(())
+    compiled
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,7 +82,9 @@ pub fn valid_string_constraints(field: &Value) -> bool {
     match field.get("pattern") {
         None | Some(Value::Null) => true,
         Some(Value::String(raw)) if raw.is_empty() => true,
-        Some(Value::String(raw)) => compile_cached(raw).is_ok(),
+        Some(Value::String(raw)) => {
+            !matches!(compile_cached(raw), Err(CompileError::InvalidSyntax))
+        }
         _ => false,
     }
 }
@@ -90,9 +99,14 @@ pub fn matches_string_constraints(field: &Value, value: &str) -> Result<bool, ()
     if let Some(raw) = field.get("pattern").filter(|v| !v.is_null()) {
         let src = raw.as_str().ok_or(())?;
         if !src.is_empty() {
-            let pat = compile_cached(src)?;
-            if !pat.is_match(value) {
-                return Ok(false);
+            match compile_cached(src) {
+                Ok(pat) => {
+                    if !pat.is_match(value) {
+                        return Ok(false);
+                    }
+                }
+                Err(CompileError::DeferToServer) => {}
+                Err(CompileError::InvalidSyntax) => return Err(()),
             }
         }
     }
@@ -156,7 +170,7 @@ fn is_valid_email(value: &str) -> bool {
         return false;
     }
     let tld = labels.last().copied().unwrap_or_default();
-    if tld.chars().count() < 2 || tld.chars().all(|c| c.is_ascii_digit()) {
+    if tld.is_empty() || tld.chars().all(|c| c.is_ascii_digit()) {
         return false;
     }
     labels.iter().all(|label| {
@@ -174,11 +188,7 @@ fn is_valid_email(value: &str) -> bool {
 }
 
 fn is_valid_uri(value: &str) -> bool {
-    if value.is_empty()
-        || value
-            .chars()
-            .any(|c| c.is_ascii_control() || c.is_whitespace())
-    {
+    if value.is_empty() || value.trim() != value || value.chars().any(|c| c.is_ascii_control()) {
         return false;
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -250,28 +260,27 @@ fn is_valid_date_time(value: &str) -> bool {
     if hour > 23 || minute > 59 {
         return false;
     }
-    let rest = &value[16..];
-    let Some(after_colon) = rest.strip_prefix(':') else {
-        return false;
-    };
-    if after_colon.len() < 2 {
-        return false;
-    }
-    let Some(second) = parse_ascii_digits(&after_colon[0..2]) else {
-        return false;
-    };
-    if second > 59 {
-        return false;
-    }
-    let mut rest = &after_colon[2..];
-    if let Some(after_dot) = rest.strip_prefix('.') {
-        let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
-        if frac_len == 0 {
+    let mut rest = &value[16..];
+    if let Some(after_colon) = rest.strip_prefix(':') {
+        if after_colon.len() < 2 {
             return false;
         }
-        rest = &after_dot[frac_len..];
+        let Some(second) = parse_ascii_digits(&after_colon[0..2]) else {
+            return false;
+        };
+        if second > 59 {
+            return false;
+        }
+        rest = &after_colon[2..];
+        if let Some(after_dot) = rest.strip_prefix('.') {
+            let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
+            if frac_len == 0 {
+                return false;
+            }
+            rest = &after_dot[frac_len..];
+        }
     }
-    if rest == "Z" || rest == "z" {
+    if rest.is_empty() || rest == "Z" || rest == "z" {
         return true;
     }
     let rb = rest.as_bytes();
@@ -297,6 +306,7 @@ enum ClassItem {
     NonWord,
     Space,
     NonSpace,
+    Deferred,
 }
 
 impl ClassItem {
@@ -310,6 +320,7 @@ impl ClassItem {
             Self::NonWord => !is_word_u16(u),
             Self::Space => is_space_u16(u),
             Self::NonSpace => !is_space_u16(u),
+            Self::Deferred => false,
         }
     }
 }
@@ -374,6 +385,7 @@ struct Parser {
     pos: usize,
     depth: usize,
     nodes: usize,
+    deferred: bool,
 }
 
 impl Parser {
@@ -383,13 +395,14 @@ impl Parser {
             pos: 0,
             depth: 0,
             nodes: 0,
+            deferred: false,
         }
     }
 
-    fn charge_node(&mut self) -> Result<(), ()> {
+    fn charge_node(&mut self) -> Result<(), CompileError> {
         self.nodes += 1;
         if self.nodes > MAX_AST_NODES {
-            Err(())
+            Err(CompileError::DeferToServer)
         } else {
             Ok(())
         }
@@ -405,15 +418,18 @@ impl Parser {
         Some(u)
     }
 
-    fn parse(mut self) -> Result<Expr, ()> {
+    fn parse(mut self) -> Result<Expr, CompileError> {
         let expr = self.parse_alt()?;
         if self.pos != self.units.len() {
-            return Err(());
+            return Err(CompileError::InvalidSyntax);
+        }
+        if self.deferred {
+            return Err(CompileError::DeferToServer);
         }
         Ok(expr)
     }
 
-    fn parse_alt(&mut self) -> Result<Expr, ()> {
+    fn parse_alt(&mut self) -> Result<Expr, CompileError> {
         let mut branches = vec![self.parse_seq()?];
         while self.peek() == Some(b'|' as u16) {
             self.pos += 1;
@@ -426,7 +442,7 @@ impl Parser {
         }
     }
 
-    fn parse_seq(&mut self) -> Result<Expr, ()> {
+    fn parse_seq(&mut self) -> Result<Expr, CompileError> {
         let mut items = Vec::new();
         while let Some(u) = self.peek() {
             if u == b')' as u16 || u == b'|' as u16 {
@@ -441,52 +457,67 @@ impl Parser {
         })
     }
 
-    fn parse_quantified(&mut self) -> Result<Expr, ()> {
-        let mut expr = self.parse_atom()?;
-        while let Some(u) = self.peek() {
-            let (min, max) = if u == b'*' as u16 {
-                self.pos += 1;
-                (0, None)
-            } else if u == b'+' as u16 {
-                self.pos += 1;
-                (1, None)
-            } else if u == b'?' as u16 {
-                self.pos += 1;
-                (0, Some(1))
-            } else if u == b'{' as u16 {
-                let Some(bounds) = self.try_parse_brace_quantifier()? else {
-                    break;
-                };
-                bounds
-            } else {
-                break;
-            };
-            if matches!(
-                expr,
-                Expr::Empty | Expr::AssertStart | Expr::AssertEnd | Expr::AssertWord(_)
-            ) {
-                return Err(());
-            }
-            // Optional lazy `?` suffix does not change boolean match acceptance.
-            if self.peek() == Some(b'?' as u16) {
-                self.pos += 1;
-            }
-            self.charge_node()?;
-            if min == 0 && max == Some(0) {
-                expr = Expr::Empty;
-            } else {
-                expr = Expr::Repeat {
-                    inner: Box::new(expr),
-                    min,
-                    max,
-                };
-            }
+    fn try_parse_quantifier(&mut self) -> Result<Option<(usize, Option<usize>)>, CompileError> {
+        let Some(u) = self.peek() else {
+            return Ok(None);
+        };
+        if u == b'*' as u16 {
+            self.pos += 1;
+            Ok(Some((0, None)))
+        } else if u == b'+' as u16 {
+            self.pos += 1;
+            Ok(Some((1, None)))
+        } else if u == b'?' as u16 {
+            self.pos += 1;
+            Ok(Some((0, Some(1))))
+        } else if u == b'{' as u16 {
+            self.try_parse_brace_quantifier()
+        } else {
+            Ok(None)
         }
-        Ok(expr)
     }
 
-    fn try_parse_brace_quantifier(&mut self) -> Result<Option<(usize, Option<usize>)>, ()> {
+    fn parse_quantified(&mut self) -> Result<Expr, CompileError> {
+        let expr = self.parse_atom()?;
+        let Some((min, max)) = self.try_parse_quantifier()? else {
+            return Ok(expr);
+        };
+        if matches!(
+            expr,
+            Expr::AssertStart | Expr::AssertEnd | Expr::AssertWord(_)
+        ) {
+            return Err(CompileError::InvalidSyntax);
+        }
+        // Optional lazy `?` suffix does not change boolean match acceptance.
+        if self.peek() == Some(b'?' as u16) {
+            self.pos += 1;
+        }
+        if self
+            .peek()
+            .is_some_and(|u| u == b'*' as u16 || u == b'+' as u16 || u == b'?' as u16)
+            || self.try_parse_brace_quantifier()?.is_some()
+        {
+            return Err(CompileError::InvalidSyntax);
+        }
+        self.charge_node()?;
+        if (min == 0 && max == Some(0)) || matches!(expr, Expr::Empty) {
+            Ok(Expr::Empty)
+        } else {
+            Ok(Expr::Repeat {
+                inner: Box::new(expr),
+                min,
+                max,
+            })
+        }
+    }
+
+    fn try_parse_brace_quantifier(
+        &mut self,
+    ) -> Result<Option<(usize, Option<usize>)>, CompileError> {
         let saved = self.pos;
+        if self.peek() != Some(b'{' as u16) {
+            return Ok(None);
+        }
         self.pos += 1; // consume '{'
         let Some(min) = self.parse_usize() else {
             self.pos = saved;
@@ -520,8 +551,12 @@ impl Parser {
                 return Ok(None);
             }
         };
-        if min > MAX_REPEAT || max.is_some_and(|m| m > MAX_REPEAT || m < min) {
-            return Err(());
+        if max.is_some_and(|m| m < min) {
+            return Err(CompileError::InvalidSyntax);
+        }
+        if min > MAX_REPEAT || max.is_some_and(|m| m > MAX_REPEAT) {
+            self.deferred = true;
+            return Ok(Some((0, Some(0))));
         }
         Ok(Some((min, max)))
     }
@@ -536,32 +571,86 @@ impl Parser {
         (self.pos > start).then_some(val)
     }
 
-    fn parse_atom(&mut self) -> Result<Expr, ()> {
+    fn parse_atom(&mut self) -> Result<Expr, CompileError> {
         self.charge_node()?;
-        let u = self.next().ok_or(())?;
+        let u = self.next().ok_or(CompileError::InvalidSyntax)?;
         match u {
             x if x == b'^' as u16 => Ok(Expr::AssertStart),
             x if x == b'$' as u16 => Ok(Expr::AssertEnd),
             x if x == b'.' as u16 => Ok(Expr::Any),
-            x if x == b'*' as u16 || x == b'+' as u16 || x == b'?' as u16 => Err(()),
+            x if x == b'*' as u16 || x == b'+' as u16 || x == b'?' as u16 => {
+                Err(CompileError::InvalidSyntax)
+            }
             x if x == b'(' as u16 => {
                 self.depth += 1;
                 if self.depth > MAX_NESTING {
-                    return Err(());
+                    return Err(CompileError::DeferToServer);
                 }
+                let mut deferred_group = false;
                 if self.peek() == Some(b'?' as u16) {
                     self.pos += 1;
-                    if self.next() != Some(b':' as u16) {
-                        // Lookarounds and unknown group modifiers fail closed.
-                        return Err(());
+                    match self.peek() {
+                        Some(ch) if ch == b':' as u16 => {
+                            self.pos += 1;
+                        }
+                        Some(ch) if ch == b'=' as u16 || ch == b'!' as u16 => {
+                            self.pos += 1;
+                            self.deferred = true;
+                            deferred_group = true;
+                        }
+                        Some(ch) if ch == b'<' as u16 => {
+                            self.pos += 1;
+                            if matches!(self.peek(), Some(c) if c == b'=' as u16 || c == b'!' as u16)
+                            {
+                                self.pos += 1;
+                            } else {
+                                let name_start = self.pos;
+                                while let Some(c) = self.peek() {
+                                    if c == b'>' as u16 {
+                                        break;
+                                    }
+                                    self.pos += 1;
+                                }
+                                if self.pos == name_start || self.next() != Some(b'>' as u16) {
+                                    return Err(CompileError::InvalidSyntax);
+                                }
+                            }
+                            self.deferred = true;
+                            deferred_group = true;
+                        }
+                        _ => {
+                            let saved = self.pos;
+                            let mut seen_dash = false;
+                            let mut valid_mods = false;
+                            while let Some(c) = self.peek() {
+                                if c == b':' as u16 {
+                                    self.pos += 1;
+                                    valid_mods = self.pos > saved + 1;
+                                    break;
+                                }
+                                if c == b'-' as u16 && !seen_dash {
+                                    seen_dash = true;
+                                    self.pos += 1;
+                                } else if matches!(c, 0x0069 | 0x006D | 0x0073) {
+                                    self.pos += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                            if !valid_mods {
+                                return Err(CompileError::InvalidSyntax);
+                            }
+                            self.deferred = true;
+                            deferred_group = true;
+                        }
                     }
                 }
                 let inner = self.parse_alt()?;
                 self.depth -= 1;
                 if self.next() != Some(b')' as u16) {
-                    return Err(());
+                    return Err(CompileError::InvalidSyntax);
                 }
-                Ok(inner)
+                Ok(if deferred_group { Expr::Empty } else { inner })
             }
             x if x == b'[' as u16 => self.parse_class(),
             x if x == b'\\' as u16 => self.parse_escape(),
@@ -569,8 +658,8 @@ impl Parser {
         }
     }
 
-    fn parse_escape(&mut self) -> Result<Expr, ()> {
-        let u = self.next().ok_or(())?;
+    fn parse_escape(&mut self) -> Result<Expr, CompileError> {
+        let u = self.next().ok_or(CompileError::InvalidSyntax)?;
         match u {
             x if x == b'd' as u16 => Ok(Expr::Class {
                 negated: false,
@@ -598,44 +687,73 @@ impl Parser {
             }),
             x if x == b'b' as u16 => Ok(Expr::AssertWord(true)),
             x if x == b'B' as u16 => Ok(Expr::AssertWord(false)),
-            0x0031..=0x0039 => Err(()), // backreferences fail closed
-            other => Ok(Expr::Literal(self.decode_u16_escape(other)?)),
+            0x0031..=0x0039 => {
+                self.deferred = true;
+                Ok(Expr::Empty)
+            }
+            other => Ok(match self.decode_u16_escape(other)? {
+                Some(ch) => Expr::Literal(ch),
+                None => Expr::Empty,
+            }),
         }
     }
 
-    fn decode_u16_escape(&mut self, u: u16) -> Result<u16, ()> {
+    fn decode_u16_escape(&mut self, u: u16) -> Result<Option<u16>, CompileError> {
         match u {
-            x if x == b'n' as u16 => Ok(0x000A),
-            x if x == b'r' as u16 => Ok(0x000D),
-            x if x == b't' as u16 => Ok(0x0009),
-            x if x == b'f' as u16 => Ok(0x000C),
-            x if x == b'v' as u16 => Ok(0x000B),
-            x if x == b'0' as u16 => Ok(0x0000),
-            x if x == b'x' as u16 => self.parse_hex_u16(2),
+            x if x == b'n' as u16 => Ok(Some(0x000A)),
+            x if x == b'r' as u16 => Ok(Some(0x000D)),
+            x if x == b't' as u16 => Ok(Some(0x0009)),
+            x if x == b'f' as u16 => Ok(Some(0x000C)),
+            x if x == b'v' as u16 => Ok(Some(0x000B)),
+            x if x == b'0' as u16 => {
+                if self.peek().is_some_and(is_digit_u16) {
+                    self.deferred = true;
+                    return Ok(None);
+                }
+                Ok(Some(0x0000))
+            }
+            x if x == b'x' as u16 => match self.try_parse_hex_u16(2) {
+                Some(v) => Ok(Some(v)),
+                None => {
+                    self.deferred = true;
+                    Ok(None)
+                }
+            },
             x if x == b'u' as u16 => {
                 if self.peek() == Some(b'{' as u16) {
-                    // Unicode-flag `\u{...}` escapes fail closed in non-/u mode.
-                    return Err(());
+                    self.deferred = true;
+                    return Ok(None);
                 }
-                self.parse_hex_u16(4)
+                match self.try_parse_hex_u16(4) {
+                    Some(v) => Ok(Some(v)),
+                    None => {
+                        self.deferred = true;
+                        Ok(None)
+                    }
+                }
             }
             x if x == b'p' as u16 || x == b'P' as u16 || x == b'k' as u16 || x == b'c' as u16 => {
-                Err(())
+                self.deferred = true;
+                Ok(None)
             }
-            other => Ok(other),
+            other => Ok(Some(other)),
         }
     }
 
-    fn parse_hex_u16(&mut self, count: usize) -> Result<u16, ()> {
+    fn try_parse_hex_u16(&mut self, count: usize) -> Option<u16> {
+        let saved = self.pos;
         let mut val: u16 = 0;
         for _ in 0..count {
-            let h = self.next().ok_or(())?;
-            val = (val << 4) | hex_nibble_u16(h).ok_or(())?;
+            let Some(h) = self.next().and_then(hex_nibble_u16) else {
+                self.pos = saved;
+                return None;
+            };
+            val = (val << 4) | h;
         }
-        Ok(val)
+        Some(val)
     }
 
-    fn parse_class(&mut self) -> Result<Expr, ()> {
+    fn parse_class(&mut self) -> Result<Expr, CompileError> {
         let negated = if self.peek() == Some(b'^' as u16) {
             self.pos += 1;
             true
@@ -663,21 +781,26 @@ impl Parser {
                     (ClassItem::Single(lo), ClassItem::Single(hi)) if lo <= hi => {
                         items.push(ClassItem::Range(lo, hi));
                     }
-                    _ => return Err(()),
+                    (ClassItem::Single(_), ClassItem::Single(_)) => {
+                        return Err(CompileError::InvalidSyntax);
+                    }
+                    _ => {
+                        self.deferred = true;
+                    }
                 }
             } else {
                 items.push(item);
             }
         }
-        Err(())
+        Err(CompileError::InvalidSyntax)
     }
 
-    fn parse_class_atom(&mut self) -> Result<ClassItem, ()> {
-        let u = self.next().ok_or(())?;
+    fn parse_class_atom(&mut self) -> Result<ClassItem, CompileError> {
+        let u = self.next().ok_or(CompileError::InvalidSyntax)?;
         if u != b'\\' as u16 {
             return Ok(ClassItem::Single(u));
         }
-        let esc = self.next().ok_or(())?;
+        let esc = self.next().ok_or(CompileError::InvalidSyntax)?;
         match esc {
             x if x == b'd' as u16 => Ok(ClassItem::Digit),
             x if x == b'D' as u16 => Ok(ClassItem::NonDigit),
@@ -686,7 +809,14 @@ impl Parser {
             x if x == b's' as u16 => Ok(ClassItem::Space),
             x if x == b'S' as u16 => Ok(ClassItem::NonSpace),
             x if x == b'b' as u16 => Ok(ClassItem::Single(0x0008)),
-            other => Ok(ClassItem::Single(self.decode_u16_escape(other)?)),
+            0x0031..=0x0039 => {
+                self.deferred = true;
+                Ok(ClassItem::Deferred)
+            }
+            other => Ok(match self.decode_u16_escape(other)? {
+                Some(ch) => ClassItem::Single(ch),
+                None => ClassItem::Deferred,
+            }),
         }
     }
 }
@@ -712,9 +842,9 @@ pub struct Pattern {
 }
 
 impl Pattern {
-    pub fn compile(src: &str) -> Result<Self, ()> {
+    fn compile(src: &str) -> Result<Self, CompileError> {
         if src.len() > MAX_PATTERN_BYTES {
-            return Err(());
+            return Err(CompileError::DeferToServer);
         }
         let expr = Parser::new(src).parse()?;
         let mut insts = Vec::new();
@@ -820,29 +950,29 @@ impl Pattern {
     }
 }
 
-fn push_inst(insts: &mut Vec<Inst>, inst: Inst) -> Result<usize, ()> {
+fn push_inst(insts: &mut Vec<Inst>, inst: Inst) -> Result<usize, CompileError> {
     if insts.len() >= MAX_STATES {
-        return Err(());
+        return Err(CompileError::DeferToServer);
     }
     let idx = insts.len();
     insts.push(inst);
     Ok(idx)
 }
 
-fn charge_work(work: &mut usize) -> Result<(), ()> {
+fn charge_work(work: &mut usize) -> Result<(), CompileError> {
     charge_work_n(work, 1)
 }
 
-fn charge_work_n(work: &mut usize, cost: usize) -> Result<(), ()> {
+fn charge_work_n(work: &mut usize, cost: usize) -> Result<(), CompileError> {
     *work = work.saturating_add(cost);
     if *work > MAX_COMPILE_WORK {
-        Err(())
+        Err(CompileError::DeferToServer)
     } else {
         Ok(())
     }
 }
 
-fn compile_expr(expr: &Expr, insts: &mut Vec<Inst>, work: &mut usize) -> Result<(), ()> {
+fn compile_expr(expr: &Expr, insts: &mut Vec<Inst>, work: &mut usize) -> Result<(), CompileError> {
     charge_work(work)?;
     match expr {
         Expr::Empty => Ok(()),

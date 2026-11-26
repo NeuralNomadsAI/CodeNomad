@@ -3281,7 +3281,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
 fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque_paths_and_custom_labels()
  {
     crate::strings::with_locale("en", || {
-        // 1. Nested empty-repeat pattern fails closed immediately without freezing.
+        // 1. Nested empty-repeat pattern completes cleanly in bounded time without freezing.
         let dos_form = Form {
             tool: None,
             infer_websearch: false,
@@ -3295,13 +3295,13 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
             })],
         };
         assert!(
-            !agent_forms::supported(&dos_form),
-            "pathological nested repeat pattern must fail closed immediately"
+            agent_forms::supported(&dos_form),
+            "valid nested empty-repeat pattern must complete in bounded time without freezing"
         );
 
         // 2. OpenCode string constraint parity: unanchored pattern (`abc` matches `xabcx`),
-        // strict email (`a@b` rejected, `dev@example.com` accepted), and RFC 3339 date-time
-        // (`2026-11-26T14:30` rejected, `2026-11-26T14:30:00Z` accepted).
+        // email (`a@b` rejected, `dev@example.com` accepted), and date-time
+        // (`2026-11-26T25:00` rejected, `2026-11-26T14:30` and `2026-11-26T14:30:00+02:00` accepted).
         let parity_form = Form {
             tool: None,
             infer_websearch: false,
@@ -3338,10 +3338,10 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
             .get_mut(&("form-r12-parity".into(), "dt".into()))
             .unwrap()
             .editor()
-            .text = "2026-11-26T14:30".into();
+            .text = "2026-11-26T25:00".into();
         assert!(
             agent_forms::answer(&parity_form, &drafts).is_err(),
-            "date-time without seconds/offset must be rejected"
+            "out-of-range hour in date-time must be rejected"
         );
         drafts
             .get_mut(&("form-r12-parity".into(), "dt".into()))
@@ -3699,7 +3699,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let r13_esc = agent_forms::answer(&r13_form, &r13_drafts)
             .expect("escaped literal comma must submit as one item under maxItems=1");
         assert_eq!(r13_esc["single_custom"], json!(["Doe, Jane"]));
-        // Oversized character class under bounded repeat fails closed immediately.
+        // Oversized character class under bounded repeat defers cleanly in bounded time.
         let huge_class = format!("[{}]{{256}}", "a".repeat(2500));
         let huge_class_form = Form {
             tool: None,
@@ -3713,7 +3713,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
                 "pattern": huge_class
             })],
         };
-        assert!(!agent_forms::supported(&huge_class_form));
+        assert!(agent_forms::supported(&huge_class_form));
         let dense_class = format!("[{}]{{256}}", "a".repeat(1200));
         let dense_class_form = Form {
             tool: None,
@@ -3727,6 +3727,226 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
                 "pattern": dense_class
             })],
         };
-        assert!(!agent_forms::supported(&dense_class_form));
+        assert!(agent_forms::supported(&dense_class_form));
+
+        // Round 14 regressions:
+        // 1. Valid ECMAScript lookahead defers to OpenCode instead of disabling Answer, while
+        // genuinely malformed lookahead syntax still fails closed.
+        let lookahead_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r14-lookahead".into(),
+            title: "Lookahead".into(),
+            fields: vec![json!({
+                "key": "tok",
+                "title": "Token",
+                "type": "string",
+                "required": true,
+                "pattern": "^[A-Z]+(?=:)",
+                "default": "ABC:"
+            })],
+        };
+        let (state, _rx) = state_with_form(lookahead_form);
+        let mut lrt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        lrt.frame(0.0);
+        let ltree = lrt.accessibility_json();
+        assert!(
+            !has_state(find_node(&ltree, "answer-question").unwrap(), "disabled"),
+            "lookahead pattern with matching default must keep Answer enabled"
+        );
+        let lans = agent_forms::answer(
+            &lrt.state.agent.as_ref().unwrap().forms[0],
+            &lrt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("lookahead pattern must defer cleanly instead of blocking locally");
+        assert_eq!(lans["tok"], json!("ABC:"));
+
+        let bad_lookahead_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r14-bad-lookahead".into(),
+            title: "Bad lookahead".into(),
+            fields: vec![json!({
+                "key": "tok",
+                "title": "Token",
+                "type": "string",
+                "required": true,
+                "pattern": "(?=unclosed"
+            })],
+        };
+        assert!(
+            !agent_forms::supported(&bad_lookahead_form),
+            "unclosed lookahead is a genuine regex syntax error and must fail closed"
+        );
+
+        // 2. OpenCode format parity: `date-time` without seconds/zone (`2026-11-26T14:30`,
+        // including on an active hidden field), single-char TLD email (`a@b.c`), and URI with
+        // path space (`https://example.com/a b`) all pass, while invalid host/date-time fail.
+        let fmt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r14-formats".into(),
+            title: "Formats".into(),
+            fields: vec![
+                json!({
+                    "key": "hidden_dt",
+                    "type": "string",
+                    "format": "date-time",
+                    "hidden": true,
+                    "required": true,
+                    "default": "2026-11-26T14:30"
+                }),
+                json!({
+                    "key": "mail",
+                    "title": "Email",
+                    "type": "string",
+                    "format": "email",
+                    "required": true,
+                    "default": "a@b.c"
+                }),
+                json!({
+                    "key": "url",
+                    "title": "URL",
+                    "type": "string",
+                    "format": "uri",
+                    "required": true,
+                    "default": "https://example.com/a b"
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(fmt_form);
+        let mut frt = Runtime::new(state, render_form, (420.0, 560.0), Env::new(false, 1.0));
+        frt.frame(0.0);
+        let ftree = frt.accessibility_json();
+        assert!(
+            !has_state(find_node(&ftree, "answer-question").unwrap(), "disabled"),
+            "hidden date-time 2026-11-26T14:30, email a@b.c, and URI with path space must enable Answer"
+        );
+        let fans = agent_forms::answer(
+            &frt.state.agent.as_ref().unwrap().forms[0],
+            &frt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("OpenCode-compatible date-time, email, and uri defaults must submit");
+        assert_eq!(fans["hidden_dt"], json!("2026-11-26T14:30"));
+        assert_eq!(fans["mail"], json!("a@b.c"));
+        assert_eq!(fans["url"], json!("https://example.com/a b"));
+        frt.state
+            .agent
+            .as_mut()
+            .unwrap()
+            .drafts
+            .get_mut(&("form-r14-formats".into(), "url".into()))
+            .unwrap()
+            .editor()
+            .text = "https://bad host".into();
+        assert!(
+            agent_forms::answer(
+                &frt.state.agent.as_ref().unwrap().forms[0],
+                &frt.state.agent.as_ref().unwrap().drafts
+            )
+            .is_err(),
+            "URI with space in host must still be rejected"
+        );
+
+        // 3. Optional hidden multiselect with absent default omits key and does not trigger
+        // `when.neq`, whereas explicit `default: []` submits `[]` and triggers `when.neq`.
+        let absent_hidden_ms = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r14-hidden-absent".into(),
+            title: "Hidden absent".into(),
+            fields: vec![
+                json!({
+                    "key": "tags",
+                    "type": "multiselect",
+                    "hidden": true,
+                    "options": [{"value": "prod", "label": "Prod"}]
+                }),
+                json!({
+                    "key": "reason",
+                    "title": "Reason",
+                    "type": "string",
+                    "required": true,
+                    "when": [{"key": "tags", "op": "neq", "value": "prod"}]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(absent_hidden_ms);
+        let mut art = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        art.frame(0.0);
+        let atree = art.accessibility_json();
+        assert!(
+            find_node(&atree, "field-reason").is_none(),
+            "absent hidden multiselect default must not activate when.neq dependent field"
+        );
+        assert!(
+            !has_state(find_node(&atree, "answer-question").unwrap(), "disabled"),
+            "Answer must stay enabled when absent hidden multiselect leaves when.neq inactive"
+        );
+        let aans = agent_forms::answer(
+            &art.state.agent.as_ref().unwrap().forms[0],
+            &art.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("absent optional hidden multiselect must submit without tags key");
+        assert_eq!(aans, json!({}));
+
+        let explicit_empty_ms = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r14-hidden-empty".into(),
+            title: "Hidden empty".into(),
+            fields: vec![
+                json!({
+                    "key": "tags",
+                    "type": "multiselect",
+                    "hidden": true,
+                    "default": [],
+                    "options": [{"value": "prod", "label": "Prod"}]
+                }),
+                json!({
+                    "key": "reason",
+                    "title": "Reason",
+                    "type": "string",
+                    "required": true,
+                    "default": "non-prod",
+                    "when": [{"key": "tags", "op": "neq", "value": "prod"}]
+                }),
+            ],
+        };
+        let mut edrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&explicit_empty_ms), &mut edrafts);
+        let eans = agent_forms::answer(&explicit_empty_ms, &edrafts).expect(
+            "explicit empty hidden multiselect default [] must activate when.neq and submit",
+        );
+        assert_eq!(eans, json!({"tags": [], "reason": "non-prod"}));
+
+        // 4. Unquoted custom multiselect entries preserve literal double quotes verbatim
+        // (e.g. `Acme "West"`), while explicitly quoted entries still allow literal commas.
+        let quote_ms_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r14-quotes".into(),
+            title: "Literal quotes".into(),
+            fields: vec![json!({
+                "key": "orgs",
+                "title": "Orgs",
+                "type": "multiselect",
+                "custom": true,
+                "options": []
+            })],
+        };
+        let mut qdrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&quote_ms_form), &mut qdrafts);
+        qdrafts
+            .get_mut(&("form-r14-quotes".into(), "orgs".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "Acme \"West\", \"Doe, Jane\", \"Doe, \"\"Jr.\"\"\"".into();
+        let qans = agent_forms::answer(&quote_ms_form, &qdrafts)
+            .expect("unquoted quotes and quoted commas must both submit cleanly");
+        assert_eq!(
+            qans["orgs"],
+            json!(["Acme \"West\"", "Doe, \"Jr.\"", "Doe, Jane"])
+        );
     });
 }
