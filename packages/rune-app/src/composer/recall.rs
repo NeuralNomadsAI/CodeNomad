@@ -219,6 +219,32 @@ pub(super) fn replace_edit(s: &mut State, mut edit: TextEdit) {
     s.draft = edit;
 }
 
+pub(super) fn clear_fresh_shell(s: &mut State, expected_command: &str) -> bool {
+    if let Some(recall) = &mut s.composer.recall {
+        if recall.draft.resolve_shell(&recall.edit).as_deref() != Some(expected_command) {
+            return false;
+        }
+        recall.edit.clear();
+        recall
+            .draft
+            .attachments
+            .retain(|part| !matches!(part, Attachment::Pasted { .. }));
+        recall.shell_mode = false;
+        return true;
+    }
+    if s.composer.draft.resolve_shell(&s.draft).as_deref() != Some(expected_command) {
+        return false;
+    }
+    s.draft.clear();
+    s.composer
+        .draft
+        .attachments
+        .retain(|part| !matches!(part, Attachment::Pasted { .. }));
+    s.composer.shell_mode = false;
+    s.composer.draft_was_empty.set(true);
+    true
+}
+
 pub(super) fn clear_recalled(s: &mut State) {
     if let Some(recall) = s.composer.recall.take()
         && (s.composer.shell_mode || recall.shell_mode)

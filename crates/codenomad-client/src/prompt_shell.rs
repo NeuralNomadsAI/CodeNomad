@@ -444,8 +444,10 @@ mod tests {
             let shell_started = Arc::new(Notify::new());
             let sse2_opened = Arc::new(Notify::new());
 
+            let shell_hits = Arc::new(AtomicUsize::new(0));
             let server = tokio::spawn({
                 let sse_hits = sse_hits.clone();
+                let shell_hits = shell_hits.clone();
                 let release_shell = release_shell.clone();
                 let release_sse1 = release_sse1.clone();
                 let shell_started = shell_started.clone();
@@ -453,6 +455,7 @@ mod tests {
                 async move {
                     while let Ok((mut socket, _)) = listener.accept().await {
                         let sse_hits = sse_hits.clone();
+                        let shell_hits = shell_hits.clone();
                         let release_shell = release_shell.clone();
                         let release_sse1 = release_sse1.clone();
                         let shell_started = shell_started.clone();
@@ -509,13 +512,22 @@ mod tests {
                                     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                                 }
                             } else if path.contains("/shell") {
-                                shell_started.notify_one();
-                                release_shell.notified().await;
-                                let _ = socket
-                                    .write_all(
-                                        b"HTTP/1.1 401 Unauthorized\r\nx-codenomad-pre-dispatch: 1\r\nContent-Length: 0\r\n\r\n",
-                                    )
-                                    .await;
+                                let hit = shell_hits.fetch_add(1, Ordering::SeqCst) + 1;
+                                if hit == 1 {
+                                    shell_started.notify_one();
+                                    release_shell.notified().await;
+                                    let _ = socket
+                                        .write_all(
+                                            b"HTTP/1.1 401 Unauthorized\r\nx-codenomad-pre-dispatch: 1\r\nContent-Length: 0\r\n\r\n",
+                                        )
+                                        .await;
+                                } else {
+                                    let _ = socket
+                                        .write_all(
+                                            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n",
+                                        )
+                                        .await;
+                                }
                             } else if path.starts_with("/api/auth/status") {
                                 let body = r#"{"authenticated":false}"#;
                                 let resp = format!(
@@ -525,7 +537,7 @@ mod tests {
                                 );
                                 let _ = socket.write_all(resp.as_bytes()).await;
                             } else {
-                                let body = r#"{"messages":[],"running":false}"#;
+                                let body = r#"{"status":"window","messages":[],"running":false,"latest":true}"#;
                                 let resp = format!(
                                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
                                     body.len(),
@@ -548,11 +560,12 @@ mod tests {
 
             // Wait for epoch 1 SSE stream to open.
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                loop {
-                    if matches!(ev_rx.recv().await, Ok(Event::AgentHint(true))) {
-                        break;
+                while let Ok(ev) = ev_rx.recv().await {
+                    if matches!(ev, Event::AgentHint(true)) {
+                        return;
                     }
                 }
+                panic!("event channel closed before epoch 1 opened");
             })
             .await
             .expect("epoch 1 opened");
@@ -575,20 +588,23 @@ mod tests {
                 .await
                 .expect("epoch 2 opened");
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                loop {
-                    if matches!(ev_rx.recv().await, Ok(Event::AgentHint(true))) {
-                        break;
+                while let Ok(ev) = ev_rx.recv().await {
+                    if matches!(ev, Event::AgentHint(true)) {
+                        return;
                     }
                 }
+                panic!("event channel closed before epoch 2 opened");
             })
             .await
             .expect("epoch 2 AgentHint");
 
-            // Now release the stale epoch-1 shell POST with pre-dispatch 401 + auth/status=false.
+            // Release the stale epoch-1 shell POST with pre-dispatch 401 + auth/status=false.
             release_shell.notify_one();
 
-            // Must receive exact PromptAcknowledged(Rejected) and NEVER AuthenticationRequired!
-            let mut saw_ack = false;
+            // Must receive exact PromptAcknowledged(Rejected) and NEVER AuthenticationRequired,
+            // AND a subsequent epoch-2 shell command must succeed on the surviving transport.
+            let mut saw_stale_ack = false;
+            let mut saw_epoch2_ack = false;
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
                 while let Ok(event) = ev_rx.recv().await {
                     match event {
@@ -599,7 +615,22 @@ mod tests {
                             if attempted == "msg_stale_auth" =>
                         {
                             assert!(matches!(outcome, PromptOutcome::Rejected));
-                            saw_ack = true;
+                            saw_stale_ack = true;
+                            cmd_tx
+                                .send(Command::Shell {
+                                    attempt: "msg_epoch2_ok".into(),
+                                    command: "echo alive".into(),
+                                })
+                                .await
+                                .unwrap();
+                        }
+                        Event::PromptAcknowledged { attempted, outcome }
+                            if attempted == "msg_epoch2_ok" =>
+                        {
+                            assert!(
+                                matches!(outcome, PromptOutcome::Confirmed(ref id) if id == "msg_epoch2_ok")
+                            );
+                            saw_epoch2_ack = true;
                             break;
                         }
                         _ => {}
@@ -607,8 +638,9 @@ mod tests {
                 }
             })
             .await
-            .expect("received stale-epoch shell acknowledgement");
-            assert!(saw_ack);
+            .expect("received stale-epoch and epoch-2 shell acknowledgements");
+            assert!(saw_stale_ack);
+            assert!(saw_epoch2_ack);
             assert!(
                 !runner.is_finished(),
                 "transport loop must stay alive on epoch 2 after stale-epoch shell 401"

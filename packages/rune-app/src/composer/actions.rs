@@ -18,7 +18,7 @@ pub struct Owner {
     pub menu: rune_theme_codenomad::action_menu::State<State>,
     pub shell_mode: bool,
     pub(super) draft_was_empty: std::cell::Cell<bool>,
-    pub(super) suppress_exit_repeat: Option<rune::Key>,
+    pub(super) suppress_key_repeat: Option<rune::Key>,
     sending: Option<Send>,
     pub send_error: bool,
     unconfirmed: Option<UnconfirmedPrompt>,
@@ -37,7 +37,7 @@ impl Default for Owner {
             menu: Default::default(),
             shell_mode: false,
             draft_was_empty: std::cell::Cell::new(true),
-            suppress_exit_repeat: None,
+            suppress_key_repeat: None,
             sending: None,
             send_error: false,
             unconfirmed: None,
@@ -67,7 +67,7 @@ impl Owner {
     }
     pub(crate) fn on_tab_stash(&mut self) {
         self.shell_mode = false;
-        self.suppress_exit_repeat = None;
+        self.suppress_key_repeat = None;
         if let Some(send) = &mut self.sending {
             send.stashed = true;
         }
@@ -554,14 +554,14 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
                     s.composer.draft = send.draft;
                     if !send.stashed {
                         s.composer.shell_mode = true;
-                        if let CommandKind::Shell { command: cmd } = &command.kind {
-                            s.composer.restored_shell = Some(RestoredShell {
-                                id: send.id.clone(),
-                                target: command.target.clone(),
-                                command: cmd.clone(),
-                                edited: false,
-                            });
-                        }
+                    }
+                    if let CommandKind::Shell { command: cmd } = &command.kind {
+                        s.composer.restored_shell = Some(RestoredShell {
+                            id: send.id.clone(),
+                            target: command.target.clone(),
+                            command: cmd.clone(),
+                            edited: false,
+                        });
                     }
                     s.composer.restored = true;
                 }
@@ -661,20 +661,10 @@ pub fn reconcile(s: &mut State) {
         })
     }) && let Some(restored) = s.composer.restored_shell.take()
         && !restored.edited
-        && s.composer.shell_mode
-        && s.composer.recall.is_none()
-        && s.composer.draft.resolve_shell(&s.draft).as_deref() == Some(restored.command.as_str())
+        && super::recall::clear_fresh_shell(s, &restored.command)
+        && s.workspace.is_some()
     {
-        s.draft.clear();
-        s.composer
-            .draft
-            .attachments
-            .retain(|part| !matches!(part, super::draft::Attachment::Pasted { .. }));
-        s.composer.shell_mode = false;
-        s.composer.draft_was_empty.set(true);
-        if s.workspace.is_some() {
-            workspace::capture(s);
-        }
+        workspace::capture(s);
     }
     if s.composer.unconfirmed.as_ref().is_some_and(|send| {
         s.messages

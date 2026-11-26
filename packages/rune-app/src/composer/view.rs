@@ -268,6 +268,8 @@ fn editor(s: &State, compact: bool) -> El {
             s.current_scope(&key_scope) && key(s, event, tx)
         })
         .on_input_paste(move |s: &mut State, content, tx| {
+            #[cfg(target_arch = "wasm32")]
+            super::web_bang::clear();
             if !s.current_scope(&paste_scope) || s.composer.editing_locked() {
                 return true;
             }
@@ -442,8 +444,8 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     use super::shortcuts::Action;
     if !tx.key_repeat() {
-        s.composer.suppress_exit_repeat = None;
-    } else if s.composer.suppress_exit_repeat.as_ref() == Some(&event.key) {
+        s.composer.suppress_key_repeat = None;
+    } else if s.composer.suppress_key_repeat.as_ref() == Some(&event.key) {
         return true;
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -512,7 +514,7 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             if !tx.key_repeat() {
                 s.composer.exit_shell_mode();
                 s.composer.picker.reset();
-                s.composer.suppress_exit_repeat = Some(event.key.clone());
+                s.composer.suppress_key_repeat = Some(event.key.clone());
             }
             return true;
         }
@@ -545,6 +547,7 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             true
         } else if crate::settings::matches_shortcut(s, "prompt-send", event, tx) {
             if !tx.key_repeat() {
+                s.composer.suppress_key_repeat = Some(event.key.clone());
                 send(s, tx, false);
             }
             true

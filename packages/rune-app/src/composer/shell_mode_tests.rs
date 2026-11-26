@@ -659,3 +659,107 @@ fn in_flight_shell_reserves_command_and_reconciles_from_history_and_clear_keeps_
             .is_none()
     );
 }
+
+#[test]
+fn shell_reconciliation_clears_stashed_and_recalled_restores_and_held_enter_never_double_sends() {
+    let (mut rt, rx) = chat_runtime();
+    rt.update(|s, _| {
+        s.composer.draft.attach(Attachment::Skill {
+            id: "review".into(),
+            name: "Review".into(),
+        });
+    });
+    rt.frame(0.0);
+
+    // Holding Enter across a shell send with parked attachments must not send an ordinary prompt.
+    send_key(&mut rt, Key::Text("!".into()), Mods::default());
+    send_key(&mut rt, Key::Text("echo hold".into()), Mods::default());
+    rt.key(KeyEvent {
+        key: Key::Enter,
+        mods: Mods::default(),
+    });
+    rt.frame(0.02);
+    let Command::Shell { attempt, command } = rx.try_recv().expect("shell command") else {
+        panic!("expected Command::Shell");
+    };
+    assert_eq!(command, "echo hold");
+    assert!(!rt.state.composer.shell_mode);
+    acknowledge(
+        &mut rt.state,
+        &attempt,
+        PromptOutcome::Confirmed(attempt.clone()),
+    );
+    rt.repeat_key(KeyEvent {
+        key: Key::Enter,
+        mods: Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(
+        rx.try_recv().is_err(),
+        "repeated Enter after shell send must not submit parked attachments as a prompt"
+    );
+    rt.key_up(KeyEvent {
+        key: Key::Enter,
+        mods: Mods::default(),
+    });
+
+    // Stashing before Unconfirmed restores plain draft with RestoredShell; history still clears it.
+    rt.update(|s, _| {
+        s.composer.shell_mode = true;
+        s.draft.replace_text("echo pre-stash");
+    });
+    rt.update(|s, tx| send(s, tx, false));
+    let Command::Shell { attempt: a_pre, .. } = rx.try_recv().expect("pre-stash shell") else {
+        panic!("expected Command::Shell");
+    };
+    rt.update(|s, _| s.composer.on_tab_stash());
+    acknowledge(&mut rt.state, &a_pre, PromptOutcome::Unconfirmed);
+    assert!(!rt.state.composer.shell_mode);
+    assert_eq!(rt.state.draft.text, "echo pre-stash");
+    rt.update(|s, _| {
+        s.messages.push(std::sync::Arc::new(crate::Message {
+            id: a_pre.clone(),
+            role: "shell".into(),
+            completed: true,
+            body: "$ echo pre-stash\nok".into(),
+            usage: None,
+            parts: Vec::new(),
+        }));
+        super::actions::reconcile(s);
+    });
+    assert!(rt.state.draft.text.is_empty());
+    assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+
+    // Reconciling while forced recall is active clears the parked untouched fresh draft.
+    rt.update(|s, _| {
+        s.composer.shell_mode = true;
+        s.draft.replace_text("echo recalled-restore");
+    });
+    rt.update(|s, tx| send(s, tx, false));
+    let Command::Shell { attempt: a_rec, .. } = rx.try_recv().expect("recall-restore shell") else {
+        panic!("expected Command::Shell");
+    };
+    acknowledge(&mut rt.state, &a_rec, PromptOutcome::Unconfirmed);
+    assert!(rt.state.composer.shell_mode);
+    assert_eq!(rt.state.draft.text, "echo recalled-restore");
+    rt.update(|s, tx| {
+        assert!(super::recall::step(s, true, true, tx));
+    });
+    assert!(rt.state.composer.recall.is_some());
+    rt.update(|s, _| {
+        s.messages.push(std::sync::Arc::new(crate::Message {
+            id: a_rec.clone(),
+            role: "shell".into(),
+            completed: true,
+            body: "$ echo recalled-restore\nok".into(),
+            usage: None,
+            parts: Vec::new(),
+        }));
+        super::actions::reconcile(s);
+    });
+    // Leaving recall must restore an empty fresh draft, not the already-executed shell command.
+    rt.update(|s, _| super::recall::restore(s));
+    assert!(rt.state.draft.text.is_empty());
+    assert!(!can_send(&rt.state));
+    assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+}

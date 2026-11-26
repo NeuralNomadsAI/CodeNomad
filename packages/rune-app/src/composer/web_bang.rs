@@ -45,10 +45,14 @@ pub(super) fn install() {
             .ok()
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
-        PENDING_BANG.store(
-            qualifies_beforeinput(input_type.as_deref(), data.as_deref(), is_composing),
-            Ordering::SeqCst,
-        );
+        let armed = qualifies_beforeinput(input_type.as_deref(), data.as_deref(), is_composing);
+        PENDING_BANG.store(armed, Ordering::SeqCst);
+        if armed {
+            // Expire after the synchronous input turn so a cancelled or foreign edit cannot leak.
+            wasm_bindgen_futures::spawn_local(async {
+                PENDING_BANG.store(false, Ordering::SeqCst);
+            });
+        }
     });
     let _ = document.add_event_listener_with_callback_and_bool(
         "beforeinput",
@@ -60,11 +64,17 @@ pub(super) fn install() {
     let clear = Closure::<dyn FnMut(web_sys::Event)>::new(|_: web_sys::Event| {
         PENDING_BANG.store(false, Ordering::SeqCst);
     });
-    for name in ["compositionstart", "paste", "blur"] {
+    for (name, capture) in [
+        ("input", false),
+        ("compositionstart", true),
+        ("paste", true),
+        ("drop", true),
+        ("blur", true),
+    ] {
         let _ = document.add_event_listener_with_callback_and_bool(
             name,
             clear.as_ref().unchecked_ref(),
-            true,
+            capture,
         );
     }
     clear.forget();
