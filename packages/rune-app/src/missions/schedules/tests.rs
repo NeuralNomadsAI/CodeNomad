@@ -37,6 +37,15 @@ fn rdoc(doc: Value) -> Value {
 fn cap_body(enabled: bool) -> Value {
     json!({"api":{"available":true},"enabled":enabled,"activation":{"available":enabled,"targets":[]}})
 }
+async fn wait_auth_sink(sink: &super::AuthSink, done: &Receiver<()>) {
+    for _ in 0..40 {
+        if sink.lock().unwrap().len() == 1 {
+            return;
+        }
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(25), done.recv()).await;
+    }
+    assert_eq!(sink.lock().unwrap().len(), 1, "401 did not reach auth sink");
+}
 
 struct H {
     http: Http,
@@ -293,9 +302,8 @@ fn guards_auth_cancel_pre_races_confirmation_generation_roots_and_refusal() {
         s.show(true);
         s.refresh(c);
         let r1 = h.http.accept().await;
-        while h.done.try_recv().is_ok() {}
         r1.reply(401, js(r#"{"error":"unauthorized"}"#)).await;
-        h.done.recv().await.unwrap();
+        wait_auth_sink(&h.holds.auth_sink(), &h.done).await;
         h.panel.schedules.suspend();
         let mut exp = h.panel.drain_auth_expired();
         exp.extend(h.holds.drain_auth_expired());
@@ -569,9 +577,9 @@ fn r2_activation_proof_confirm_401_stale_invalidation_and_page_step_down() {
         let mut holds = h.holds;
         let done = h.done;
         let mut panel = h.panel;
-        while done.try_recv().is_ok() {}
+        let sink = holds.auth_sink();
         req.reply(401, js(r#"{"error":"unauthorized"}"#)).await;
-        done.recv().await.unwrap();
+        wait_auth_sink(&sink, &done).await;
         panel.suspend();
         drop(panel);
         let (changed, _) = holds.poll(None, &[]);
