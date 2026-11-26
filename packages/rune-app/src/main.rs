@@ -322,13 +322,13 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = gesture | chat | restored | transcript_state::Display::poll(s, chat, now, tx);
     changed |= chat::ToolDiffPreferences::sync_focused_agent_control(s, tx.focused());
     changed |= platform::titlebar::poll(s);
-    changed |= launcher::poll(s, tx);
-    changed |= s.composer.picker.poll(&s.reads, &s.wake);
-    changed |= composer::recall::poll(s);
     #[cfg(target_arch = "wasm32")]
     {
         changed |= platform::pairing::poll(s, tx);
     }
+    changed |= launcher::poll(s, tx);
+    changed |= s.composer.picker.poll(&s.reads, &s.wake);
+    changed |= composer::recall::poll(s);
     changed |= composer::menu::poll(s, tx);
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);

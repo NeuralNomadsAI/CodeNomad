@@ -304,6 +304,7 @@ struct PendingSend {
     slash: Option<CommandAttempt>,
     edited: bool,
     recallable: bool,
+    received: bool,
 }
 impl PendingSend {
     fn clear_retained(&mut self) {
@@ -423,6 +424,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
                 slash: Some(slash),
                 edited: s.composer.recall.is_some(),
                 recallable,
+                received: false,
             });
             s.draft.clear();
             s.composer
@@ -472,6 +474,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         slash: None,
         edited: s.composer.recall.is_some(),
         recallable,
+        received: false,
     });
     s.draft.clear();
     super::recall::restore(s);
@@ -573,11 +576,13 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         return;
     }
     if matches!(outcome, PromptOutcome::Unconfirmed) {
-        if s.composer.has_confirmed_prompt(
-            &s.messages,
-            s.transcript_display.queue.items(),
-            attempted,
-        ) {
+        if send.received
+            || s.composer.has_confirmed_prompt(
+                &s.messages,
+                s.transcript_display.queue.items(),
+                attempted,
+            )
+        {
             s.composer.clear_optimistic(Some(attempted));
             s.composer.send_error = false;
             s.composer.announce_send_error = false;
@@ -609,7 +614,6 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         reader.clear_sync_undo();
     }
     if let PromptOutcome::Confirmed(confirmed) = outcome {
-        s.composer.clear_optimistic(Some(attempted));
         s.composer.send_error = false;
         s.composer.announce_send_error = false;
         if confirmed != attempted {
@@ -617,6 +621,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         }
         if let Some(index) = row {
             if confirmed != attempted && s.messages.iter().any(|row| row.id == confirmed) {
+                s.composer.clear_optimistic(Some(attempted));
                 s.messages.remove(index);
             } else {
                 let row = std::sync::Arc::make_mut(&mut s.messages[index]);
@@ -630,8 +635,13 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
                         *id = format!("{confirmed}{suffix}");
                     }
                 }
-                row.id = confirmed;
+                row.id = confirmed.clone();
+                if s.composer.optimistic_id() == Some(attempted) {
+                    s.composer.optimistic_id = Some(confirmed);
+                }
             }
+        } else {
+            s.composer.clear_optimistic(Some(attempted));
         }
         return;
     }
@@ -661,16 +671,23 @@ pub fn settle_pending(s: &mut State, outcome: PromptOutcome) {
     }
 }
 
-pub(crate) fn confirm_unconfirmed_id(s: &mut State, attempt_id: &str) {
+pub(crate) fn confirm_unconfirmed_id(s: &mut State, attempt_id: &str) -> bool {
+    if let Some(send) = s.composer.sending.as_mut()
+        && send.id == attempt_id
+    {
+        send.received = true;
+    }
     let had_local = s.composer.unconfirmed_id() == Some(attempt_id);
     if had_local {
         s.composer
             .confirm_unconfirmed_matching(&mut s.draft, attempt_id);
     }
-    if s.workspace.is_some() && (had_local || workspace::has_unconfirmed(s)) {
+    let had_workspace = s.workspace.is_some() && (had_local || workspace::has_unconfirmed(s));
+    if had_workspace {
         workspace::confirm_unconfirmed(s, attempt_id);
         workspace::capture(s);
     }
+    had_local || had_workspace
 }
 
 pub fn reconcile(s: &mut State) {

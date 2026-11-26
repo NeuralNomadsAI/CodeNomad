@@ -64,7 +64,13 @@ pub(super) async fn dispatch_marked(
     let mark = if inbox_mark > 0 {
         inbox_mark
     } else {
-        sessions::note_inbox_value(&b.workspace, &b.session, &state.inbox, &value)
+        sessions::note_inbox_value(
+            &b.workspace,
+            &b.session,
+            &state.inbox,
+            Some(state.history_revision.as_ref()),
+            &value,
+        )
     };
     if value["instanceId"] == b.workspace
         && state.provider_usage.is_some()

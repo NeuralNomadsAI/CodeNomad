@@ -71,7 +71,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
 
 async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     let send_input = is_send_input_request(request.method(), request.uri().path());
-    match Box::pin(prepare_relay(app, request)).await {
+    match Box::pin(prepare_relay(app, request, send_input)).await {
         Ok(PreparedRelay::Response(mut response)) => {
             if send_input && !response.status().is_success() {
                 response.headers_mut().insert("x-codenomad-before-dispatch", header::HeaderValue::from_static("1"));
@@ -110,11 +110,12 @@ enum PreparedRelay {
     Dispatch(Box<dispatch::DispatchContext>),
 }
 
-async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, Error> {
+async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> Result<PreparedRelay, Error> {
     let (head, body) = request.into_parts();
     let principal = head.extensions.get::<crate::auth::Principal>().cloned().ok_or_else(crate::auth::unauthorized)?;
     let invalid = || error(Status::BAD_REQUEST, "Invalid workspace instance path");
-    let raw_path = head.uri.path().split(';').next().unwrap_or(head.uri.path());
+    let raw_path =
+        if send_input_hint { head.uri.path().split(';').next().unwrap_or(head.uri.path()) } else { head.uri.path() };
     let tail = raw_path.strip_prefix("/workspaces/").ok_or_else(invalid)?;
     let (id, suffix) = tail.split_once('/').ok_or_else(invalid)?;
     let suffix = suffix.strip_prefix("instance").ok_or_else(invalid)?;

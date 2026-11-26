@@ -2,15 +2,21 @@
 use super::{Backend, Input, Result, Sender, SeqCst, State, children, mission_events};
 use crate::{inbox::InboxWire, transport::WorkspaceEvent};
 use serde_json::Value;
+use std::sync::atomic::AtomicU64;
 
-/// Advance `inbox` ingress synchronously on frame arrival before any routing queue or side send.
+/// Advance `inbox` ingress and `history_revision` synchronously on frame arrival before any routing
+/// queue or side send.
 pub(super) fn note_inbox_frame(
     workspace: &str,
     session: &str,
     inbox: &InboxWire,
+    history_revision: Option<&AtomicU64>,
     data: &str,
 ) -> u64 {
     if data.len() > super::limits::FRAME_LIMIT {
+        if let Some(rev) = history_revision {
+            rev.fetch_add(1, SeqCst);
+        }
         return inbox.record_ingress();
     }
     if data.is_empty()
@@ -20,6 +26,7 @@ pub(super) fn note_inbox_frame(
             || data.contains("session.moved")
             || data.contains("session.deleted")
             || data.contains("session.revert.")
+            || data.contains("session.compaction.")
             || data.contains("\\u"))
     {
         return 0;
@@ -27,8 +34,33 @@ pub(super) fn note_inbox_frame(
     serde_json::from_str::<Value>(data.trim())
         .ok()
         .map_or(0, |value| {
-            note_inbox_value(workspace, session, inbox, &value)
+            note_inbox_value(workspace, session, inbox, history_revision, &value)
         })
+}
+
+fn matches_history_boundary(workspace: &str, session: &str, value: &Value) -> bool {
+    if value["instanceId"] != workspace || value["type"] != "instance.event" {
+        return false;
+    }
+    let native = &value["event"];
+    let own_session =
+        native["data"]["sessionID"] == session || native["data"]["form"]["sessionID"] == session;
+    own_session
+        && matches!(
+            native["type"].as_str(),
+            Some(
+                "session.moved"
+                    | "session.deleted"
+                    | "session.revert.committed"
+                    | "session.revert.staged"
+                    | "session.revert.cleared"
+                    | "session.inbox.cancelled"
+                    | "session.inbox.delivered"
+                    | "session.compaction.started"
+                    | "session.compaction.ended"
+                    | "session.compaction.failed"
+            )
+        )
 }
 
 fn matches_inbox_value(workspace: &str, session: &str, value: &Value) -> bool {
@@ -57,8 +89,14 @@ pub(super) fn note_inbox_value(
     workspace: &str,
     session: &str,
     inbox: &InboxWire,
+    history_revision: Option<&AtomicU64>,
     value: &Value,
 ) -> u64 {
+    if let Some(rev) = history_revision
+        && matches_history_boundary(workspace, session, value)
+    {
+        rev.fetch_add(1, SeqCst);
+    }
     if matches_inbox_value(workspace, session, value) {
         inbox.record_ingress()
     } else {
@@ -485,21 +523,25 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
                 "session.compaction.ended",
             ] {
                 while inbox.try_recv().is_ok() {}
+                let frame = json!({
+                    "type": "instance.event",
+                    "instanceId": "project",
+                    "event": {"type": kind, "data": {"sessionID": "session"}}
+                });
+                let before_wire = state.history_revision.load(SeqCst);
+                let _ = note_inbox_frame(
+                    &backend.workspace,
+                    &backend.session,
+                    &state.inbox,
+                    Some(state.history_revision.as_ref()),
+                    &frame.to_string(),
+                );
+                assert!(
+                    !state.history_current(before_wire),
+                    "{kind} must invalidate history_revision synchronously on wire ingress"
+                );
                 let before = state.history_revision.load(SeqCst);
-                relay(
-                    &backend,
-                    1,
-                    &out,
-                    &state,
-                    &json!({
-                        "type": "instance.event",
-                        "instanceId": "project",
-                        "event": {"type": kind, "data": {"sessionID": "session"}}
-                    }),
-                    0,
-                )
-                .await
-                .unwrap();
+                relay(&backend, 1, &out, &state, &frame, 0).await.unwrap();
                 assert!(
                     !state.history_current(before),
                     "{kind} must invalidate history_revision"

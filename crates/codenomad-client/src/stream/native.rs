@@ -561,6 +561,7 @@ async fn receive_chunk(
                             &b.workspace,
                             &b.session,
                             &state.inbox,
+                            Some(state.history_revision.as_ref()),
                             data,
                         )
                     } else {
@@ -572,6 +573,7 @@ async fn receive_chunk(
                         quota.skipped();
                     }
                     if state.catalogue.is_none() {
+                        state.history_revision.fetch_add(1, SeqCst);
                         state.inbox.record_ingress()
                     } else {
                         0

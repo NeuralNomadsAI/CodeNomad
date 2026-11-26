@@ -77,6 +77,7 @@ struct SubscriberSignals {
     closed: Option<Sender<()>>,
     placement: Option<Sender<()>>,
     inbox: Option<crate::inbox::InboxWire>,
+    history_revision: Option<Arc<std::sync::atomic::AtomicU64>>,
 }
 
 struct Subscriber {
@@ -162,13 +163,22 @@ impl Subscriber {
             && let Some((workspace, session)) = &self.signals.conversation
             && let Some(inbox) = &self.signals.inbox
         {
-            super::sessions::note_inbox_frame(workspace, session, inbox, data)
+            super::sessions::note_inbox_frame(
+                workspace,
+                session,
+                inbox,
+                self.signals.history_revision.as_deref(),
+                data,
+            )
         } else {
             0
         }
     }
 
     fn note_inbox_skipped(&self) -> u64 {
+        if let Some(rev) = &self.signals.history_revision {
+            rev.fetch_add(1, SeqCst);
+        }
         self.signals
             .inbox
             .as_ref()
@@ -886,6 +896,10 @@ pub(super) async fn read_shared(
         closed: Some(state.closed_signal()),
         placement: state.placement_signal(),
         inbox: state.catalogue.is_none().then(|| state.inbox.clone()),
+        history_revision: state
+            .catalogue
+            .is_none()
+            .then(|| state.history_revision.clone()),
     };
     enum SubscribeStep {
         Ready(Subscription),

@@ -196,7 +196,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             && s.workspace.as_ref().map(|ui| ui.active_key()) == target.as_deref()
         {
             s.pairing.retry_pending = None;
-            if !matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming) {
+            if s.screen.is_launcher()
+                || matches!(
+                    s.phase,
+                    crate::Phase::Failed
+                        | crate::Phase::WorkspaceMissing
+                        | crate::Phase::RestoreFailed
+                )
+            {
                 crate::retry_connection(s, tx);
             }
             return true;

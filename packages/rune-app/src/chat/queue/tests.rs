@@ -901,4 +901,68 @@ fn unconfirmed_queued_prompt_reconciles_on_authoritative_inbox_and_confirmed_can
     });
     assert_eq!(rt.state.composer.unconfirmed_id(), None);
     assert!(rt.state.draft.text.is_empty());
+
+    // An external cancel delta for an unconfirmed prompt never seen in the local queue must also
+    // unlock the conversation and remove any orphaned optimistic row.
+    while cmd_rx.try_recv().is_ok() {}
+    rt.state.draft = rune::edit::TextEdit::new("Third follow-up");
+    rt.update(|s, tx| crate::composer::send(s, tx, false));
+    let crate::transport::Command::Prompt(third) = cmd_rx.try_recv().unwrap() else {
+        panic!("expected third steer prompt command");
+    };
+    let third_id = third.id.expect("third prompt must carry an attempt id");
+    rt.update(|s, _| {
+        crate::composer::acknowledge(s, &third_id, crate::transport::PromptOutcome::Unconfirmed);
+    });
+    assert_eq!(rt.state.composer.unconfirmed_id(), Some(third_id.as_str()));
+    ev_tx
+        .try_send(Event::InboxDelta(
+            codenomad_client::inbox::InboxDelta::Removed(third_id.clone()),
+        ))
+        .unwrap();
+    rt.update(|s, _| {
+        assert!(crate::chat::events::poll_chat(s, 8));
+    });
+    assert_eq!(rt.state.composer.unconfirmed_id(), None);
+    assert!(rt.state.draft.text.is_empty());
+    assert!(rt.state.messages.is_empty());
+
+    // A Steer prompt whose HTTP Confirmed ACK arrives before Event::InboxDelta(Upsert) must still
+    // replace its optimistic row with the queued inbox item and expose queue controls.
+    rt.state.draft = rune::edit::TextEdit::new("Steer ACK before SSE");
+    rt.update(|s, tx| crate::composer::send(s, tx, false));
+    let crate::transport::Command::Prompt(fourth) = cmd_rx.try_recv().unwrap() else {
+        panic!("expected fourth steer prompt command");
+    };
+    let fourth_id = fourth.id.expect("fourth prompt must carry an attempt id");
+    rt.update(|s, _| {
+        crate::composer::acknowledge(
+            s,
+            &fourth_id,
+            crate::transport::PromptOutcome::Confirmed(fourth_id.clone()),
+        );
+    });
+    assert_eq!(rt.state.composer.optimistic_id(), Some(fourth_id.as_str()));
+    ev_tx
+        .try_send(Event::InboxDelta(
+            codenomad_client::inbox::InboxDelta::Upsert(queued(
+                &fourth_id,
+                Delivery::Steer,
+                "Steer ACK before SSE",
+            )),
+        ))
+        .unwrap();
+    rt.update(|s, _| {
+        assert!(crate::chat::events::poll_chat(s, 8));
+    });
+    assert_eq!(rt.state.composer.optimistic_id(), None);
+    assert!(rt.state.messages.is_empty());
+    assert!(
+        rt.state
+            .transcript_display
+            .queue
+            .items()
+            .iter()
+            .any(|item| item.id == fourth_id)
+    );
 }

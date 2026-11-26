@@ -654,17 +654,40 @@ fn drain_chat(
                 }
             }
             Event::InboxDelta(delta) => {
-                if let codenomad_client::inbox::InboxDelta::Upsert(ref item) = delta {
-                    if s.composer.optimistic_id() == Some(item.id.as_str()) {
-                        s.composer.clear_optimistic(Some(&item.id));
-                        if let Some(index) = s.messages.iter().position(|row| row.id == item.id) {
-                            s.messages.remove(index);
+                let mut local_changed = false;
+                match &delta {
+                    codenomad_client::inbox::InboxDelta::Upsert(item) => {
+                        local_changed |= composer::confirm_unconfirmed_id(s, &item.id);
+                        if s.composer.optimistic_id() == Some(item.id.as_str()) {
+                            s.composer.clear_optimistic(Some(&item.id));
+                            if let Some(index) = s.messages.iter().position(|row| row.id == item.id)
+                            {
+                                s.messages.remove(index);
+                                s.revision += 1;
+                                local_changed = true;
+                            }
+                        } else if s.messages.iter().any(|row| row.id == item.id) {
+                            changed |= local_changed;
+                            continue;
                         }
-                    } else if s.messages.iter().any(|row| row.id == item.id) {
-                        continue;
+                    }
+                    codenomad_client::inbox::InboxDelta::Delivery { id, .. } => {
+                        local_changed |= composer::confirm_unconfirmed_id(s, id);
+                    }
+                    codenomad_client::inbox::InboxDelta::Removed(id) => {
+                        local_changed |= composer::confirm_unconfirmed_id(s, id);
+                        if s.composer.optimistic_id() == Some(id.as_str()) {
+                            s.composer.clear_optimistic(Some(id));
+                            if let Some(index) = s.messages.iter().position(|row| row.id == *id) {
+                                s.messages.remove(index);
+                                s.revision += 1;
+                                local_changed = true;
+                            }
+                        }
                     }
                 }
                 let Some(next) = s.transcript_display.queue.preview_delta(&delta) else {
+                    changed |= local_changed;
                     continue;
                 };
                 chat::reader::preserve_anchor_on_inbox_change(s, &next);
