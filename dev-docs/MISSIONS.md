@@ -1180,8 +1180,13 @@ Directory task attention uses `task-marks` with one Mission ID and a 50-row wind
 The journal hint index retains only task IDs, keys, states, update versions, actor
 IDs and replacement keys for this projection. These windows share the 64-KiB wire
 transport and a 256-Ki-unit assembly bound, without native observation or map/body
-reads. The visible directory reads them independently of selection and expansion;
-failed windows keep explicit Retry. Keep these facts separate from volatile actor
+reads. Marks come in attention order (`missionTaskMarks`): the live tasks in plan
+order, then the others from the newest change to the oldest. The visible directory
+reads them independently of selection and expansion, and only while they can change
+the row: for an active or failed Mission, or one changed after this window's seen
+watermark. It reads no window past one ending on a finished task already seen
+(`missionTaskMarksCover`), nor past a loaded finished task still unseen; the windows
+left unread hold finished tasks alone. Failed windows keep explicit Retry. Keep these facts separate from volatile actor
 marks so slicing task metadata cannot repeat native family observations.
 Completion acknowledgement uses the exact task version and the existing per-window
 seen store. `taskMarksThrough` carries the indexed Mission's `updatedAt` as the

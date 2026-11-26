@@ -63,6 +63,13 @@ export function missionTaskUnseen(scope: string, missionId: string, task: Missio
   return task.updatedAt > value.watermark && !value.seen.includes(hash(`${task.id}:${task.updatedAt}`))
 }
 
+/** The change time through which none of a Mission's finished tasks asks to be seen:
+ * its watermark, or every time while the project has no first observation yet. */
+export function missionTasksSeenThrough(scope: string, missionId: string): number {
+  version()
+  return boundaries.has(scope) ? record(scope, missionId).watermark : Infinity
+}
+
 /** Marks finished tasks as seen: one at a time (selection, its icon), or every task
  * the Mission holds (Mark as read), which raises its watermark instead. */
 export function markMissionTasksSeen(scope: string, missionId: string, tasks: readonly MissionSeenTask[], all = false, through = 0): void {
