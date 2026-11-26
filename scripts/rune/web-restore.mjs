@@ -30,11 +30,12 @@ const targetStartId=(await verifyPrivateFixtureServer({targetPid,launcherPid,pro
 url.search='?locale=fr'
 const outReal=await createPrivateOutputDir(out,profile)
 const outputAuthorized=true
+const ALLOWED_OUTPUT_NAME=/^(?:summary\.json|mobile-drawers-proof\.json|mobile-drawers-fail-\d+\.aria\.yml)$/
 const writeOutput=async(name,content)=>{
-  assert(typeof name==='string'&&name.length>0&&path.basename(name)===name&&name!=='.'&&name!=='..',`Invalid output artifact name: ${name}`)
+  assert(typeof name==='string'&&ALLOWED_OUTPUT_NAME.test(name),`Invalid output artifact name: ${name}`)
   const currentOut=await realpath(outReal)
   assert(currentOut===outReal&&inside(profile,currentOut),`Output directory shifted outside fixture profile: ${currentOut}`)
-  await writePrivateFile(path.join(outReal,name),content,outReal)
+  await writePrivateFile(path.join(outReal,name),content,profile)
 }
 const rawStorage=JSON.parse(await readFile(storage,'utf8'))
 const realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
@@ -110,7 +111,7 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
     const page=await context.newPage();page.setDefaultTimeout(20000)
     const record={context:spec.name,phoneEmulated:spec.touch,requests:[],eventSource:[],storage:[],storageLocal:[],history:[],errors:[],forbidden:[],stages:[]}
     results.push(record)
-    let forbidRelease=false,sequence=0,outlineGate
+    let forbidRelease=false,sequence=0,outlineGate,specError=null
     const policy=workspacePolicy({origin:url.origin,project:values.project,assets,keyboardActions:Boolean(values['keyboard-viewport'])}),workspaces=policy.workspaces
     const stamp=()=>++sequence
     await page.addInitScript(({key,released,proof})=>{
@@ -454,8 +455,21 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
       assert.equal(record.errors.length,0);assert.equal(record.forbidden.length,0)
       await writePrivateFile(path.join(out,`${spec.name}-snapshot.json`),await saved([draftA,retryDraft]),profile)
       record.result='pass';record.limit='Phone emulated. Forced closure with unsaved edits is outside the restoration guarantee.'
-    }catch(error){record.result='fail';record.failure=error.message;await capture('failure').catch(()=>{});throw error}
-    finally{forbidRelease=false;try{await localProof(await page.evaluate(()=>globalThis.__runeRestoreProofDocumentId))}catch{}await context.close();await writePrivateFile(path.join(out,`${spec.name}-proof.json`),JSON.stringify(record,null,2),profile)}
+    }catch(error){specError=error;record.result='fail';record.failure=error?.message??String(error);await capture('failure').catch(()=>{});throw error}
+    finally{
+      forbidRelease=false
+      let specCleanupError=null
+      try{await localProof(await page.evaluate(()=>globalThis.__runeRestoreProofDocumentId))}catch{}
+      try{await context.close()}catch(closeError){
+        console.error(`Failed to close restore context: ${closeError.message}`)
+        specCleanupError??=closeError
+      }
+      try{await writePrivateFile(path.join(out,`${spec.name}-proof.json`),JSON.stringify(record,null,2),profile)}catch(writeError){
+        console.error(`Failed to write restore proof: ${writeError.message}`)
+        specCleanupError??=writeError
+      }
+      if(!specError&&specCleanupError)throw specCleanupError
+    }
   }
   }
 }catch(error){
@@ -463,7 +477,12 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
   throw error
 }finally{
   let cleanupError=null
-  await attestedFetch?.close().catch(()=>{})
+  if(attestedFetch){
+    try{await attestedFetch.close()}catch(closeError){
+      console.error(`Failed to close attested fetch: ${closeError.message}`)
+      cleanupError??=closeError
+    }
+  }
   if(ownedBrowser){
     try{await ownedBrowser.close()}catch(closeError){
       console.error(`Failed to close browser: ${closeError.message}`)

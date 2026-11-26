@@ -18,18 +18,23 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
   const linked = path.join(path.dirname(values.project), 'linked')
   const ownedDirectory = dir => samePath(dir, values.project) || samePath(dir, linked)
   let routeError = null
+  let cancelled = false
+  let closing = false
   let rejectRoute = () => {}
   const routeFailed = new Promise((_, reject) => {
     rejectRoute = reject
   })
   routeFailed.catch(() => {})
   const failRoute = error => {
+    cancelled = true
     if (!routeError) {
       routeError = error
       rejectRoute(error)
     }
     proof.errors.push(error?.message ?? String(error))
   }
+  const isShutdownError = error =>
+    closing && /Target page, context or browser has been closed|Route is already handled|Browser has been closed/i.test(error?.message ?? '')
   const proof = {
     runner: 'web-mobile-drawers',
     emulation: 'Chromium Playwright (isMobile+hasTouch), not Android ADB/Gboard',
@@ -72,54 +77,79 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
   }
 
   const contexts = []
+  const pendingContexts = new Set()
+  const inflightRoutes = new Set()
   const createPage = async ({width, height, colorScheme}) => {
+    if (cancelled) throw routeError ?? Error('Mobile drawers probe cancelled')
     const policy = workspacePolicy({origin: url.origin, project: values.project, assets})
-    const context = await browser.newContext({
-      viewport: {width, height},
-      deviceScaleFactor: 1,
-      colorScheme,
-      isMobile: true,
-      hasTouch: true,
-      storageState,
-    })
-    contexts.push(context)
-    await context.route('**/*', async route => {
-      try {
-        const req = route.request(), u = new URL(req.url()), p = u.pathname
-        let allowed = await policy.request(req)
-        if (!allowed && u.origin === url.origin && (await req.allHeaders()).cookie) {
-          const [, id, tail] = p.match(/^\/api\/workspaces\/([^/]+)\/(files|worktrees\/[^/]+\/git-status)$/) ?? []
-          const [, nativeId, nativeTail] = p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(location|worktree)$/) ?? []
-          if (req.method() === 'GET' && policy.workspaces.has(id)) {
-            if (tail === 'files') {
-              const keys = [...u.searchParams.keys()]
-              allowed = keys.every(k => k === 'directory' || k === 'path') && ownedDirectory(u.searchParams.get('directory')) && ['.', ''].includes(u.searchParams.get('path') ?? '')
-            } else {
-              allowed = u.search === ''
-            }
-          } else if (req.method() === 'GET' && policy.workspaces.has(nativeId)) {
-            if (nativeTail === 'location') {
-              const keys = [...u.searchParams.keys()]
-              allowed = keys.length === 1 && keys[0] === 'location[directory]' && ownedDirectory(u.searchParams.get('location[directory]'))
-            } else if (nativeTail === 'worktree') {
-              allowed = u.search === ''
+    const task = (async () => {
+      const created = await browser.newContext({
+        viewport: {width, height},
+        deviceScaleFactor: 1,
+        colorScheme,
+        isMobile: true,
+        hasTouch: true,
+        storageState,
+      })
+      if (cancelled) {
+        await created.close()
+        return null
+      }
+      contexts.push(created)
+      return created
+    })()
+    pendingContexts.add(task)
+    let context
+    try {
+      context = await task
+    } finally {
+      pendingContexts.delete(task)
+    }
+    if (!context || cancelled) throw routeError ?? Error('Mobile drawers probe cancelled')
+    await context.route('**/*', route => {
+      const handle = (async () => {
+        try {
+          const req = route.request(), u = new URL(req.url()), p = u.pathname
+          let allowed = await policy.request(req)
+          if (!allowed && u.origin === url.origin && (await req.allHeaders()).cookie) {
+            const [, id, tail] = p.match(/^\/api\/workspaces\/([^/]+)\/(files|worktrees\/[^/]+\/git-status)$/) ?? []
+            const [, nativeId, nativeTail] = p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(location|worktree)$/) ?? []
+            if (req.method() === 'GET' && policy.workspaces.has(id)) {
+              if (tail === 'files') {
+                const keys = [...u.searchParams.keys()]
+                allowed = keys.every(k => k === 'directory' || k === 'path') && ownedDirectory(u.searchParams.get('directory')) && ['.', ''].includes(u.searchParams.get('path') ?? '')
+              } else {
+                allowed = u.search === ''
+              }
+            } else if (req.method() === 'GET' && policy.workspaces.has(nativeId)) {
+              if (nativeTail === 'location') {
+                const keys = [...u.searchParams.keys()]
+                allowed = keys.length === 1 && keys[0] === 'location[directory]' && ownedDirectory(u.searchParams.get('location[directory]'))
+              } else if (nativeTail === 'worktree') {
+                allowed = u.search === ''
+              }
             }
           }
+          if (!allowed) {
+            proof.refused.push(`${req.method()} ${p}${u.search}`)
+            await route.abort('blockedbyclient')
+            return
+          }
+          if (req.method() === 'POST' && p === '/api/workspaces') {
+            await fulfillWorkspaceCreation(route, policy)
+            return
+          }
+          await route.continue()
+        } catch (error) {
+          if (!isShutdownError(error)) {
+            failRoute(error)
+            await route.abort('failed').catch(() => {})
+          }
         }
-        if (!allowed) {
-          proof.refused.push(`${req.method()} ${p}${u.search}`)
-          await route.abort('blockedbyclient').catch(() => {})
-          return
-        }
-        if (req.method() === 'POST' && p === '/api/workspaces') {
-          await fulfillWorkspaceCreation(route, policy)
-          return
-        }
-        await route.continue().catch(() => {})
-      } catch (error) {
-        failRoute(error)
-        await route.abort('failed').catch(() => {})
-      }
+      })()
+      inflightRoutes.add(handle)
+      handle.finally(() => inflightRoutes.delete(handle))
+      return handle
     })
     const page = await context.newPage()
     page.setDefaultTimeout(20000)
@@ -376,20 +406,48 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
     await waitExpanded(tLeft, true)
     await waitExpanded(tRight, false)
     proof.tablet.perOrientationMemory = true
-
-    assert.deepEqual(proof.refused, [], `Forbidden requests: ${JSON.stringify(proof.refused)}`)
-    assert.deepEqual(proof.errors, [], `Page errors: ${JSON.stringify(proof.errors)}`)
-    if (routeError) throw routeError
-    proof.result = 'pass'
-    console.log(JSON.stringify({runner: 'web-mobile-drawers', result: proof.result, out}))
+  }
+  const closeAllContexts = async () => {
+    cancelled = true
+    closing = true
+    let closeError = null
+    while (pendingContexts.size) {
+      const settled = await Promise.allSettled([...pendingContexts])
+      for (const outcome of settled) {
+        if (outcome.status === 'rejected') {
+          console.error(`Failed to settle pending mobile-drawers context: ${outcome.reason?.message ?? outcome.reason}`)
+          closeError ??= outcome.reason
+        }
+      }
+    }
+    const toClose = contexts.splice(0)
+    const closed = await Promise.allSettled(toClose.map(ctx => ctx.close()))
+    for (const outcome of closed) {
+      if (outcome.status === 'rejected') {
+        console.error(`Failed to close mobile-drawers context: ${outcome.reason?.message ?? outcome.reason}`)
+        closeError ??= outcome.reason
+      }
+    }
+    while (inflightRoutes.size) {
+      await Promise.allSettled([...inflightRoutes])
+    }
+    return closeError
   }
   try {
     const probePromise = runProbe()
     probePromise.catch(() => {})
     await Promise.race([probePromise, routeFailed])
+    await Promise.allSettled([...inflightRoutes])
+    const closeError = await closeAllContexts()
     if (routeError) throw routeError
+    assert.deepEqual(proof.refused, [], `Forbidden requests: ${JSON.stringify(proof.refused)}`)
+    assert.deepEqual(proof.errors, [], `Page errors: ${JSON.stringify(proof.errors)}`)
+    if (closeError) throw closeError
+    proof.result = 'pass'
+    console.log(JSON.stringify({runner: 'web-mobile-drawers', result: proof.result, out}))
   } catch (error) {
     primaryError = error
+    cancelled = true
     proof.result = 'fail'
     proof.failure = error?.message ?? String(error)
     await Promise.allSettled(contexts.flatMap(ctx => ctx.pages()).map(async (p, i) => {
@@ -397,14 +455,7 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
     }))
     throw error
   } finally {
-    let cleanupError = null
-    const closed = await Promise.allSettled(contexts.map(ctx => ctx.close()))
-    for (const outcome of closed) {
-      if (outcome.status === 'rejected') {
-        console.error(`Failed to close mobile-drawers context: ${outcome.reason?.message ?? outcome.reason}`)
-        cleanupError ??= outcome.reason
-      }
-    }
+    let cleanupError = await closeAllContexts()
     try {
       await writeOutput('mobile-drawers-proof.json', JSON.stringify(proof, null, 2))
     } catch (writeError) {
